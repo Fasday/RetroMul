@@ -57,6 +57,7 @@ uses
   RM.FrameUpload in 'RM.FrameUpload.pas',
   RM.Icons in 'RM.Icons.pas',
   RM.SearchEdit in 'RM.SearchEdit.pas',
+  RM.Dialogs in 'RM.Dialogs.pas' {RetroDialog: TFrame},
   RM.Input in 'RM.Input.pas',
   RM.Settings in 'RM.Settings.pas' {SettingsView: TFrame},
   RM.LibraryView in 'RM.LibraryView.pas' {LibraryView: TFrame},

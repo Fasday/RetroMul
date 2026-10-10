@@ -41,13 +41,15 @@ type
     FGames: TObjectList<TLibraryGame>;
     FState: TMemIniFile;
     FSelected, FRecent: TLibraryGame;
-    FSystemFilter: string;
+    FSystemFilter, FLetterFilter: string;
     FMode, FLimit: Integer;
     FSnapshotName: string;
     {$ENDREGION}
     {$REGION 'Runtime controls'}
     FBody, FHeader, FFilters, FContinue: TLayout;
     FSearch: TEdit;
+    FLetterScroll: TVertScrollBox;
+    FLetterButtons: TList<TButton>;
     FPlay, FFavorite, FMore, FGridButton, FListButton, FResume: TButton;
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
@@ -61,7 +63,7 @@ type
     FCards: TList<TLibraryCard>;
     {$ENDREGION}
     {$REGION 'Layout and view preferences'}
-    FListMode, FBuilding, FArranging, FLayouting, FShowPlatform: Boolean;
+    FListMode, FBuilding, FArranging, FLayouting, FShowPlatform, FShowLetters: Boolean;
     FCardWidth: Integer;
     FContinueCollapse, FContinueExtent: Single;
     {$ENDREGION}
@@ -78,6 +80,8 @@ type
     {$REGION 'Cards and layout'}
     procedure BuildCards;
     procedure ArrangeCards;
+    procedure UpdateLetterNavigation(const Games: TList<TLibraryGame>);
+    procedure ArrangeLetterNavigation;
     procedure UpdateViewIcons;
     procedure GridResize(Sender: TObject);
     procedure BodyResize(Sender: TObject);
@@ -98,9 +102,12 @@ type
     procedure FilterClick(Sender: TObject);
     procedure ModeClick(Sender: TObject);
     procedure SearchChange(Sender: TObject);
+    procedure LetterClick(Sender: TObject);
     procedure CardClick(Sender: TObject);
     {$IF Defined(ANDROID) or Defined(IOS)}
     procedure CardTap(Sender: TObject; const Point: TPointF);
+    {$ELSE}
+    procedure CardDblClick(Sender: TObject);
     {$ENDIF}
     procedure PlayClick(Sender: TObject);
     procedure ResumeClick(Sender: TObject);
@@ -134,9 +141,9 @@ implementation
 
 uses
   System.IOUtils, System.Math, System.Math.Vectors, System.Hash,
-  System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager, SCRP.GameList,
-  HGM.FMX.Image, Core.RomFormat, Core.SavePaths, RM.Icons, RM.SearchEdit,
-  RM.Styles;
+  System.Character, System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager,
+  SCRP.GameList, HGM.FMX.Image, Core.RomFormat, Core.SavePaths, RM.Icons,
+  RM.SearchEdit, RM.Styles;
 
 {$IF Defined(ANDROID) or Defined(IOS)}
 type
@@ -211,6 +218,14 @@ begin
   Result := THashSHA2.GetHashString(FileInfo.Location);
 end;
 
+function LibraryTitleLetter(const Title: string): string;
+begin
+  var Value := Title.Trim;
+  Result := '#';
+  if (Value <> '') and Value.Chars[0].IsLetter then
+    Result := Value.Substring(0, 1).ToUpper;
+end;
+
 function TextLabel(Owner: TComponent; Parent: TFmxObject; const Text: string; Size: Single = 14): TLabel;
 begin
   Result := TLabel.Create(Owner);
@@ -245,6 +260,7 @@ begin
   FStorage := Storage;
   FGames := TObjectList<TLibraryGame>.Create;
   FCards := TList<TLibraryCard>.Create;
+  FLetterButtons := TList<TButton>.Create;
   FState := FStorage.ReadConfig(FStorage.ConfigFile('library'));
   FLimit := 48;
   FSidebar := FindComponent('FSidebar') as TPanel;
@@ -256,6 +272,17 @@ begin
   FCompactActions := FindComponent('FCompactActions') as TLayout;
   FScroll := FindComponent('FScroll') as TVertScrollBox;
   FGrid := FindComponent('FGrid') as TLayout;
+  FLetterScroll := TVertScrollBox.Create(Self);
+  FLetterScroll.Name := 'LibraryLetters';
+  FLetterScroll.Parent := FBody;
+  FLetterScroll.ShowScrollBars := False;
+  FLetterScroll.ScrollAnimation := TBehaviorBoolean.True;
+  var AllLetters := ActionButton(Self, FLetterScroll, '*', LetterClick);
+  AllLetters.Name := 'LibraryAllLetters';
+  AllLetters.TagString := '';
+  AllLetters.Hint := Translate('All');
+  AllLetters.ShowHint := True;
+  FLetterButtons.Add(AllLetters);
   {$IF Defined(ANDROID) or Defined(IOS)}
   // Retain the standard control in the designer; use stable gesture coordinates at runtime.
   var Scroll := TLibraryScrollBox.Create(Self);
@@ -370,6 +397,7 @@ destructor TLibraryView.Destroy;
 begin
   FBuilding := True;
   FCards.Free;
+  FLetterButtons.Free;
   FGames.Free;
   FState.Free;
   inherited;
@@ -458,6 +486,9 @@ begin
   try
     FListMode := Ini.ReadString('Library', 'View', 'grid') = 'list';
     FShowPlatform := Ini.ReadBool('Library', 'ShowPlatform', True);
+    FShowLetters := Ini.ReadBool('Library', 'ShowLetters', False);
+    if not FShowLetters then
+      FLetterFilter := '';
     FCardWidth := EnsureRange(Ini.ReadInteger('Library', 'CardWidth', 170), 140, 240);
   finally
     Ini.Free;
@@ -581,6 +612,15 @@ begin
       for var Game in FGames do
         if Matches(Game) then
           MatchesList.Add(Game);
+      // Index the current search and platform before filtering by initial.
+      if FShowLetters then
+        UpdateLetterNavigation(MatchesList)
+      else
+        FLetterScroll.Visible := False;
+      if FLetterFilter <> '' then
+        for var I := MatchesList.Count - 1 downto 0 do
+          if LibraryTitleLetter(MatchesList[I].Title) <> FLetterFilter then
+            MatchesList.Delete(I);
       if FMode = 1 then
         MatchesList.Sort(TComparer<TLibraryGame>.Construct(
           function(const A, B: TLibraryGame): Integer
@@ -606,6 +646,7 @@ begin
         Card.OnTap := CardTap;
         {$ELSE}
         Card.OnClick := CardClick;
+        Card.OnDblClick := CardDblClick;
         {$ENDIF}
         FCards.Add(Card);
         var Cover := TImage.Create(Card);
@@ -666,6 +707,76 @@ begin
     FSidebarPlatformBorders[I].Visible := FSystemFilter = SystemIds[I];
   Resize;
   UpdateInspector;
+end;
+
+procedure TLibraryView.UpdateLetterNavigation(const Games: TList<TLibraryGame>);
+begin
+  var Letters := TStringList.Create;
+  try
+    Letters.Sorted := True;
+    Letters.Duplicates := dupIgnore;
+    for var Game in Games do
+      Letters.Add(LibraryTitleLetter(Game.Title));
+    for var Letter in Letters do
+    begin
+      var Found := False;
+      for var Button in FLetterButtons do
+        if Button.TagString = Letter then
+        begin
+          Found := True;
+          Break;
+        end;
+      if not Found then
+      begin
+        var Button := ActionButton(Self, FLetterScroll, Letter, LetterClick);
+        Button.TagString := Letter;
+        Button.StyledSettings := [];
+        Button.TextSettings.Font.Size := 13;
+        Button.TextSettings.Font.Style := [TFontStyle.fsBold];
+        FLetterButtons.Add(Button);
+      end;
+    end;
+    FLetterButtons.Sort(TComparer<TButton>.Construct(
+      function(const A, B: TButton): Integer
+      begin
+        Result := CompareText(A.TagString, B.TagString);
+      end));
+    for var Button in FLetterButtons do
+    begin
+      Button.Visible := (Button.TagString = '') or (Letters.IndexOf(Button.TagString) >= 0);
+      Button.StyledSettings := Button.StyledSettings - [TStyledSetting.FontColor];
+      if Button.TagString = FLetterFilter then
+      begin
+        Button.StyleLookup := 'buttonstyle_accent';
+        Button.TextSettings.FontColor := $FF1B2025;
+      end
+      else
+      begin
+        Button.StyleLookup := 'buttonstyle_subtle';
+        Button.TextSettings.FontColor := $FFE8ECF1;
+      end;
+    end;
+    FLetterButtons[0].Hint := Translate('All');
+    FLetterScroll.Visible := Games.Count > 0;
+  finally
+    Letters.Free;
+  end;
+end;
+
+procedure TLibraryView.ArrangeLetterNavigation;
+begin
+  var Count := 0;
+  for var Button in FLetterButtons do
+    if Button.Visible then
+      Inc(Count);
+  var H := EnsureRange(Floor(FLetterScroll.Height / Max(1, Count)), 24, 36);
+  var Y: Single := 0;
+  for var Button in FLetterButtons do
+    if Button.Visible then
+    begin
+      Button.SetBounds(0, Y, FLetterScroll.Width, H - 2);
+      Y := Y + H;
+    end;
 end;
 
 procedure TLibraryView.ArrangeCards;
@@ -800,10 +911,15 @@ begin
     Y := Y + 28;
     // Add the consumed header distance to the content before growing its viewport.
     // This keeps the scroll range and card motion continuous during the collapse.
-    FScroll.Width := ContentWidth;
+    var LetterWidth: Single := 0;
+    if FLetterScroll.Visible then
+      LetterWidth := 44;
+    FScroll.Width := Max(96, ContentWidth - LetterWidth);
     FGrid.Position.Y := FContinueCollapse;
     ArrangeCards;
-    FScroll.SetBounds(24, Y, ContentWidth, Max(0, FBody.Height - Y - 18));
+    FScroll.SetBounds(24 + LetterWidth, Y, FScroll.Width, Max(0, FBody.Height - Y - 18));
+    FLetterScroll.SetBounds(24, Y, 36, FScroll.Height);
+    ArrangeLetterNavigation;
   finally
     FLayouting := False;
   end;
@@ -839,7 +955,9 @@ begin
     // Move the grid as one unit, keeping every card and its content size unchanged.
     FGrid.Position.Y := Collapse;
     var Y := FCount.Position.Y + FCount.Height;
-    FScroll.SetBounds(24, Y, FScroll.Width, Max(0, FBody.Height - Y - 18));
+    FScroll.SetBounds(FScroll.Position.X, Y, FScroll.Width, Max(0, FBody.Height - Y - 18));
+    FLetterScroll.SetBounds(24, Y, 36, FScroll.Height);
+    ArrangeLetterNavigation;
   finally
     FLayouting := False;
   end;
@@ -1014,6 +1132,7 @@ end;
 procedure TLibraryView.FilterClick(Sender: TObject);
 begin
   FSystemFilter := SystemIds[TButton(Sender).Tag];
+  FLetterFilter := '';
   FLimit := 48;
   BuildCards;
   FScroll.ViewportPosition := TPointF.Zero;
@@ -1022,14 +1141,24 @@ end;
 procedure TLibraryView.ModeClick(Sender: TObject);
 begin
   FMode := TButton(Sender).Tag;
+  FLetterFilter := '';
   FLimit := 48;
   BuildCards;
 end;
 
 procedure TLibraryView.SearchChange(Sender: TObject);
 begin
+  FLetterFilter := '';
   FLimit := 48;
   BuildCards;
+end;
+
+procedure TLibraryView.LetterClick(Sender: TObject);
+begin
+  FLetterFilter := TButton(Sender).TagString;
+  FLimit := 48;
+  BuildCards;
+  FScroll.ViewportPosition := TPointF.Zero;
 end;
 
 procedure TLibraryView.CardClick(Sender: TObject);
@@ -1046,6 +1175,16 @@ end;
 procedure TLibraryView.CardTap(Sender: TObject; const Point: TPointF);
 begin
   CardClick(Sender);
+end;
+{$ELSE}
+
+procedure TLibraryView.CardDblClick(Sender: TObject);
+begin
+  if FInspector.Visible then
+  begin
+    CardClick(Sender);
+    PlayClick(Self);
+  end;
 end;
 {$ENDIF}
 

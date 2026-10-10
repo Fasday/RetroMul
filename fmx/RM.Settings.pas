@@ -168,6 +168,7 @@ type
     procedure PreviewChange(Sender: TObject);
     procedure ResetClick(Sender: TObject);
     procedure PathClick(Sender: TObject);
+    procedure CheckRomFolder(const Location: string);
     procedure ApplyClick(Sender: TObject);
     procedure BackClick(Sender: TObject);
     {$ENDREGION}
@@ -207,7 +208,8 @@ uses
   NES.PowerPad, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano,
   NES.Controller, NES.MiraclePianoDevice, FMX.BehaviorManager, FMX.Graphics,
   FMX.SpinBox.Style, FMX.Presentation.Style, FMX.Presentation.Factory,
-  RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles;
+  RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles, RM.Dialogs
+  {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 {$R *.fmx}
 
@@ -829,6 +831,7 @@ begin
       Combo('RowLibraryview', 'Library', 'View', [], ['grid', 'list'], 'grid');
       Combo('RowCardsize', 'Library', 'CardWidth', [], ['140', '170', '220'], '170');
       Check('RowShowplatformoncards', 'Library', 'ShowPlatform', True);
+      Check('RowLetternavigation', 'Library', 'ShowLetters', False);
       Heading('GroupMetadata');
       Row('RowCoversanddescriptions');
     end
@@ -2041,8 +2044,40 @@ begin
           for var F in FFields do
             if (F.Section = Section) and (F.Key = Key) then
               TEdit(F.Control).Text := Selection.Location;
+        FStatus.Text := Translate('Click Apply to save changes.');
+        if (Section = 'General') and (Key = 'Path') then
+          CheckRomFolder(Selection.Location);
       end;
     end);
+end;
+
+procedure TSettingsView.CheckRomFolder(const Location: string);
+begin
+  var SupportedFolders := '';
+  {$IFDEF ANDROID}
+  // Document provider URIs must be queried; combining them with a name is invalid.
+  if Location.StartsWith('content://') then
+    for var Folder in TAndroidStorage.Enumerate(Location, False, True) do
+      for var RomSystem := TRomSystem.NES to TRomSystem.NeoGeo do
+        if SameText(Folder.Name, RomSystemFolder(RomSystem)) then
+          Exit;
+  {$ENDIF}
+  for var RomSystem := TRomSystem.NES to TRomSystem.NeoGeo do
+  begin
+    var Name := RomSystemFolder(RomSystem);
+    {$IFDEF ANDROID}
+    if not Location.StartsWith('content://') then
+    {$ENDIF}
+      if FStorage.FolderExists(System.IOUtils.TPath.Combine(Location, Name)) then
+        Exit;
+    if SupportedFolders <> '' then
+      SupportedFolders := SupportedFolders + ', ';
+    SupportedFolders := SupportedFolders + Name;
+  end;
+  var Warning := Format(Translate('The selected folder contains no supported platform subfolders. ROMs must be placed in these subfolders: %s.'),
+    [SupportedFolders]);
+  FStatus.Text := Warning;
+  ShowRetroMessage(Self, Warning, TRetroDialogKind.Warning);
 end;
 
 procedure TSettingsView.PickLocation(Folder: Boolean; const Current: string; const Callback: TStorageSelectionCallback);

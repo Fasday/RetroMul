@@ -55,8 +55,8 @@ type
 implementation
 
 uses
-  Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.UITypes, System.Diagnostics,
-  System.Math, PCM.Audio;
+  Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.UITypes,
+  System.Diagnostics, System.Math, PCM.Audio;
 
 { TNeoGeoWorker }
 

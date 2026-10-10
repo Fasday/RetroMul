@@ -59,8 +59,7 @@ implementation
 
 uses
   Core.RomHashes, NES.RomMetadata, NES.Mapper.Factory, Core.SavePaths,
-  NES.Mapper.ExtendedMemory,
-  Core.RomFormat, System.Hash,
+  NES.Mapper.ExtendedMemory, Core.RomFormat, System.Hash,
   {$IFDEF MSWINDOWS}
   Winapi.Windows,
   {$ENDIF}
@@ -395,7 +394,7 @@ begin
   begin
     if (FMetadata.ChrNvRamSize <> 0) or
       ((FMetadata.PrgRamSize <> 0) and (FMetadata.PrgNvRamSize <> 0) and
-        not ((FMapperId = MAPPER_WAIXING164) and (FMetadata.PrgNvRamSize = 512) and (FSaveSize = 512))) or
+      not ((FMapperId = MAPPER_WAIXING164) and (FMetadata.PrgNvRamSize = 512) and (FSaveSize = 512))) or
       (FMetadata.PrgNvRamSize > UInt64(FSaveSize)) then
       raise ENesException.Create('Unsupported NES 2.0 persistent memory layout');
 

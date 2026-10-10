@@ -194,18 +194,25 @@ begin
     // Decode the physical An pin, not all address bits. Submapper 0 accepts
     // both board wirings; submapper 1 uses A3, submapper 2 uses A4.
     var SelectMask := $18;
-    if FSubmapper = 1 then SelectMask := $08
-    else if FSubmapper = 2 then SelectMask := $10;
+    if FSubmapper = 1 then
+      SelectMask := $08
+    else if FSubmapper = 2 then
+      SelectMask := $10;
     var Select := Ord((Address and SelectMask) <> 0);
     case (Address and $F000) or (Select shl 3) of
-      $8000: Prg8(0, Value and $3F);
-      $8008: Prg8(1, Value and $3F);
-      $9000: Prg8(2, Value and $3F);
+      $8000:
+        Prg8(0, Value and $3F);
+      $8008:
+        Prg8(1, Value and $3F);
+      $9000:
+        Prg8(2, Value and $3F);
       $9008:
         if ((FMode and $40) = 0) and (FSubmapper <> 1) then
-          if (Address and $20) = 0 then FFmAddress := Value
-          else FFm.WriteRegister(FFmAddress, Value);
-      $A000,$A008,$B000,$B008,$C000,$C008,$D000,$D008:
+          if (Address and $20) = 0 then
+            FFmAddress := Value
+          else
+            FFm.WriteRegister(FFmAddress, Value);
+      $A000, $A008, $B000, $B008, $C000, $C008, $D000, $D008:
         Chr1(((Address shr 12) - 10) * 2 + Select, Value);
       $E000:
         begin
@@ -219,9 +226,12 @@ begin
           Mirror(Value and 3);
           FRamEnabled := (Value and $80) <> 0;
         end;
-      $E008: WriteIrq(0, Value);
-      $F000: WriteIrq(1, Value);
-      $F008: WriteIrq(2, Value);
+      $E008:
+        WriteIrq(0, Value);
+      $F000:
+        WriteIrq(1, Value);
+      $F008:
+        WriteIrq(2, Value);
     end;
     Exit(True);
   end;
@@ -340,9 +350,11 @@ procedure TMapperVrcAudio.ClockFm;
 const
   FM_CLOCK = 3579545; // External oscillator; independent of the console region.
 begin
-  if FSubmapper = 1 then Exit; // VRC7b board has no audio oscillator.
+  if FSubmapper = 1 then
+    Exit; // VRC7b board has no audio oscillator.
   Inc(FFmClock, FM_CLOCK);
-  if FFmClock < FFmCpuHz * 72 then Exit;
+  if FFmClock < FFmCpuHz * 72 then
+    Exit;
   Dec(FFmClock, FFmCpuHz * 72);
   if (FMode and $40) <> 0 then
   begin

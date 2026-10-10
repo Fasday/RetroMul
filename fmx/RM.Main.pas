@@ -82,6 +82,9 @@ type
     FEmulationFaulted: Boolean;
     FUserPaused: Boolean;
     FAutoPaused: Boolean;
+    FDialogWasPaused: Boolean;
+    FDialogCore: IEmulationCore;
+    FPreviousExceptionHandler: FMX.Forms.TExceptionEvent;
     {$ENDREGION}
     {$REGION 'Library and toolbar state'}
     FLibrary: TLibraryView;
@@ -177,6 +180,8 @@ type
     procedure ApplyControlInset;
     procedure SetStatus(const Text: string);
     procedure SyncActivity;
+    procedure DialogActivityChanged(Sender: TObject);
+    procedure ApplicationException(Sender: TObject; E: Exception);
     {$ENDREGION}
     {$REGION 'ROM selection and session'}
     procedure OpenRom;
@@ -291,8 +296,8 @@ implementation
 
 uses
   System.IOUtils, System.Math, FMX.Ani, System.IniFiles, System.Messaging,
-  FMX.DialogService, RM.Styles, Core.Adapter.GB, Core.Adapter.NES,
-  Core.SavePaths, Core.RomFormat,
+  RM.Dialogs, RM.Styles, Core.Adapter.GB, Core.Adapter.NES, Core.SavePaths,
+  Core.RomFormat,
   {$IFDEF MSWINDOWS}
   FMX.Platform.Win, FMX.Helpers.Win, Winapi.MultiMon, Winapi.ShellAPI,
   {$ENDIF}
@@ -459,6 +464,9 @@ begin
   FormStyles := TFormStyles.Create(Application);
   inherited;
   // Screen changes are controlled by application state, not swipe gestures.
+  SetRetroDialogActivity(Self, DialogActivityChanged);
+  FPreviousExceptionHandler := Application.OnException;
+  Application.OnException := ApplicationException;
   ScreenTabs.AniCalculations.TouchTracking := [];
   OnCloseQuery := FormCloseQuery;
   FStorage := CreateStorage;
@@ -695,6 +703,8 @@ end;
 
 destructor TFormMain.Destroy;
 begin
+  if TMethod(Application.OnException).Data = Self then
+    Application.OnException := FPreviousExceptionHandler;
   {$IFDEF MSWINDOWS}
   if FWindowStateRestored and not FWindowStateSaved then
   try
@@ -1098,7 +1108,8 @@ end;
 
 procedure TFormMain.FormActivate(Sender: TObject);
 begin
-  if FAutoPaused and not FUserPaused and not FViewingLibrary and (FSettingsView = nil) and (FHelp = nil) then
+  if FAutoPaused and not FUserPaused and not FViewingLibrary and
+    not RetroDialogVisible(Self) and (FSettingsView = nil) and (FHelp = nil) then
   begin
     FAutoPaused := False;
     if (FEmulation <> nil) and not FEmulationFaulted then
@@ -1124,7 +1135,8 @@ procedure TFormMain.FormDeactivate(Sender: TObject);
 begin
   {$IF not Defined(ANDROID) and not Defined(IOS)}
   if FPauseOnFocusLoss and not HostInputHasFocus and not FViewingLibrary and
-    (FSettingsView = nil) and (FEmulation <> nil) and not FEmulation.IsPaused then
+    not RetroDialogVisible(Self) and (FSettingsView = nil) and
+    (FEmulation <> nil) and not FEmulation.IsPaused then
   begin
     FAutoPaused := True;
     FEmulation.Pause;
@@ -1154,7 +1166,42 @@ end;
 
 function TFormMain.HostInputHasFocus: Boolean;
 begin
-  Result := Active;
+  Result := Active and not RetroDialogVisible(Self);
+end;
+
+procedure TFormMain.ApplicationException(Sender: TObject; E: Exception);
+begin
+  if not (E is EAbort) then
+  begin
+    var MessageText := E.Message;
+    if MessageText.Trim = '' then
+      MessageText := E.ClassName;
+    ShowRetroMessage(Self, MessageText);
+  end;
+end;
+
+procedure TFormMain.DialogActivityChanged(Sender: TObject);
+begin
+  if RetroDialogVisible(Self) then
+  begin
+    FDialogCore := FEmulation;
+    FDialogWasPaused := (FEmulation = nil) or FEmulation.IsPaused;
+    FormDeactivate(Self);
+    if (FEmulation <> nil) and not FEmulationFaulted then
+      FEmulation.Pause;
+  end
+  else
+  begin
+    FSuppressInputUntilRelease := True;
+    FillChar(FKeysDown, SizeOf(FKeysDown), 0);
+    if (FDialogCore <> nil) and (FDialogCore = FEmulation) and
+      not FDialogWasPaused and not FEmulationFaulted and not FUserPaused and
+      not FAutoPaused and {$IF Defined(ANDROID) or Defined(IOS)}not FInBackground and {$ENDIF} not FOpeningRom and
+      not FViewingLibrary and (FSettingsView = nil) and (FHelp = nil) then
+      FEmulation.Resume;
+    FDialogCore := nil;
+  end;
+  SyncActivity;
 end;
 
 procedure TFormMain.SetStatus(const Text: string);
@@ -1174,6 +1221,13 @@ end;
 
 procedure TFormMain.SyncActivity;
 begin
+  if RetroDialogVisible(Self) and (FEmulation <> nil) and (FDialogCore <> FEmulation) then
+  begin
+    // A queued message may survive loading a new session.
+    FDialogCore := FEmulation;
+    FDialogWasPaused := FUserPaused;
+    FEmulation.Pause;
+  end;
   {$IF Defined(ANDROID) or Defined(IOS)}
   GamePause.Enabled := (FEmulation <> nil) and not FEmulationFaulted and not FOpeningRom;
   var UserPaused := (FEmulation <> nil) and (FUserPaused or FAutoPaused);
@@ -1297,16 +1351,17 @@ begin
   end;
   {$ENDIF}
   if FMiraclePiano <> nil then
-    FMiraclePiano.Enabled := FMiraclePiano.Enabled and not FInBackground;
-  var Paused := FInBackground or FOpeningRom or FViewingLibrary or FUserPaused or (FSettingsView <> nil) or (FHelp <> nil);
+    FMiraclePiano.Enabled := FMiraclePiano.Enabled and not FInBackground and not RetroDialogVisible(Self);
+  var Paused := FInBackground or FOpeningRom or FViewingLibrary or FUserPaused or
+    (FSettingsView <> nil) or (FHelp <> nil) or RetroDialogVisible(Self);
   if FPowerPad <> nil then
-    FPowerPad.Enabled := FPowerPad.Enabled and not FInBackground;
+    FPowerPad.Enabled := FPowerPad.Enabled and not FInBackground and not RetroDialogVisible(Self);
   if FGamepad <> nil then
-    FGamepad.Enabled := FGamepad.Enabled and not FInBackground;
+    FGamepad.Enabled := FGamepad.Enabled and not FInBackground and not RetroDialogVisible(Self);
   if FSuborKeyboard <> nil then
-    FSuborKeyboard.Enabled := FSuborKeyboard.Enabled and not FInBackground;
+    FSuborKeyboard.Enabled := FSuborKeyboard.Enabled and not FInBackground and not RetroDialogVisible(Self);
   if FFamicomKeyboard <> nil then
-    FFamicomKeyboard.Enabled := FFamicomKeyboard.Enabled and not FInBackground;
+    FFamicomKeyboard.Enabled := FFamicomKeyboard.Enabled and not FInBackground and not RetroDialogVisible(Self);
   if Paused <> FActivityPaused then
   begin
     FActivityPaused := Paused;
@@ -1340,7 +1395,7 @@ begin
       {$IFDEF MSWINDOWS}
       FWindowStateSaved := False;
       {$ENDIF}
-      ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
     end;
   end;
 end;
@@ -1350,7 +1405,8 @@ begin
   try
     Save;
   except
-    //
+    on E: Exception do
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 {$ENDREGION}
@@ -1363,7 +1419,7 @@ begin
     OpenRom;
   except
     on E: Exception do
-      ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -1409,7 +1465,7 @@ begin
           end;
         except
           on E: Exception do
-            ShowMessage(E.Message);
+            ShowRetroMessage(Self, E.Message);
         end;
       finally
         if not Importing then
@@ -1494,7 +1550,7 @@ begin
     on E: Exception do
     begin
       FinishFileSelection;
-      ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
     end;
   end;
 end;
@@ -1689,6 +1745,7 @@ begin
       if FEmulation <> nil then
         FEmulation.ClearInput;
       SetStatus(Translate('Input error: ') + E.Message);
+      ShowRetroMessage(Self, Translate('Input error: ') + E.Message);
       Exit;
     end;
   end;
@@ -1765,7 +1822,7 @@ end;
 
 procedure TFormMain.ReportAudioError(const MessageText: string);
 begin
-  ShowMessage(Translate('Sound unavailable; the game will continue without audio.') + SLineBreak + MessageText);
+  ShowRetroMessage(Self, Translate('Sound unavailable; the game will continue without audio.') + SLineBreak + MessageText, TRetroDialogKind.Warning);
 end;
 
 function TFormMain.AutosaveClock: UInt64;
@@ -1796,7 +1853,7 @@ begin
     SaveSnapshot(SNAPSHOT_AUTOSAVE);
   except
     on E: Exception do
-      TDialogService.ShowMessage(Translate('Autosave failed: ') + E.Message);
+      ShowRetroMessage(Self, Translate('Autosave failed: ') + E.Message);
   end;
 end;
 {$ENDREGION}
@@ -1815,7 +1872,7 @@ begin
       LoadSnapshot(Snapshot);
   except
     on E: Exception do
-      TDialogService.ShowMessage(Translate('Unable to open game: ') + E.Message);
+      ShowRetroMessage(Self, Translate('Unable to open game: ') + E.Message);
   end;
 end;
 
@@ -2318,7 +2375,7 @@ begin
     SaveSnapshot('Quick');
   except
     on E: Exception do
-      TDialogService.ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -2330,7 +2387,7 @@ begin
     LoadSnapshot('Quick');
   except
     on E: Exception do
-      TDialogService.ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -2386,7 +2443,7 @@ begin
     end;
   except
     on E: Exception do
-      SetStatus(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -2419,7 +2476,7 @@ begin
         SaveSnapshot(TPath.GetFullPath(Dialog.FileName));
     except
       on E: Exception do
-        TDialogService.ShowMessage(E.Message);
+        ShowRetroMessage(Self, E.Message);
     end;
   finally
     Dialog.Free;
@@ -2452,7 +2509,7 @@ begin
         LoadSnapshot(TPath.GetFullPath(Dialog.FileName));
     except
       on E: Exception do
-        TDialogService.ShowMessage(E.Message);
+        ShowRetroMessage(Self, E.Message);
     end;
   finally
     Dialog.Free;
@@ -2470,7 +2527,7 @@ begin
     LoadSnapshot(TMenuItem(Sender).TagString);
   except
     on E: Exception do
-      TDialogService.ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -2482,7 +2539,7 @@ begin
     SetStatus(Translate('Screenshot: ') + SaveScreenshot);
   except
     on E: Exception do
-      SetStatus(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -2508,7 +2565,7 @@ begin
     OpenDirectory(Directory);
   except
     on E: Exception do
-      TDialogService.ShowMessage(E.Message);
+      ShowRetroMessage(Self, E.Message);
   end;
 end;
 
@@ -2563,6 +2620,8 @@ procedure TFormMain.PollHostInput;
 begin
   FInput.Enabled := HostInputHasFocus and not FOpeningRom;
   FInput.Poll;
+  if RetroDialogVisible(Self) then
+    Exit;
   if FSettingsView <> nil then
   begin
     FSettingsView.Poll;
@@ -2635,6 +2694,21 @@ end;
 
 procedure TFormMain.KeyDown(var Key: Word; var KeyChar: WideChar; Shift: TShiftState);
 begin
+  {$IFDEF ANDROID}
+  // Handle Back on key-up, so the same press cannot also close settings.
+  if RetroDialogVisible(Self) and (Key = vkHardwareBack) then
+  begin
+    Key := 0;
+    KeyChar := #0;
+    Exit;
+  end;
+  {$ENDIF}
+  if HandleRetroDialogKey(Self, Key, KeyChar) then
+  begin
+    if Key = vkTab then
+      inherited;
+    Exit;
+  end;
   // Intercept before FMX dispatches to focused controls and handles Tab.
   if (FSettingsView <> nil) and FSettingsView.HandleCaptureKeyDown(Key, KeyChar) then
     Exit;
@@ -2643,6 +2717,8 @@ end;
 
 procedure TFormMain.FormKeyDown(Sender: TObject; var Key: Word; var KeyChar: WideChar; Shift: TShiftState);
 begin
+  if RetroDialogVisible(Self) then
+    Exit;
   if (FSettingsView <> nil) or FViewingLibrary then
     Exit;
   if (FInput <> nil) and not FDispatchingInput then
@@ -2729,7 +2805,7 @@ begin
         SetStatus(Translate('Screenshot: ') + SaveScreenshot);
       except
         on E: Exception do
-          ShowMessage(E.Message);
+          ShowRetroMessage(Self, E.Message);
       end;
     end
     else if (Code in [vkF5, vkF6]) and (FEmulation <> nil) and not KeyboardActive then
@@ -2741,7 +2817,7 @@ begin
           LoadSnapshot('quick');
       except
         on E: Exception do
-          ShowMessage(Translate('Snapshot: ') + E.Message);
+          ShowRetroMessage(Self, Translate('Snapshot: ') + E.Message);
       end;
     end;
   end;
@@ -2754,6 +2830,16 @@ end;
 
 procedure TFormMain.FormKeyUp(Sender: TObject; var Key: Word; var KeyChar: WideChar; Shift: TShiftState);
 begin
+  if RetroDialogVisible(Self) then
+  begin
+    {$IFDEF ANDROID}
+    if Key = vkHardwareBack then
+      HandleRetroDialogKey(Self, Key, KeyChar);
+    {$ENDIF}
+    Key := 0;
+    KeyChar := #0;
+    Exit;
+  end;
   {$IFDEF ANDROID}
   if Key = vkHardwareBack then
   begin
@@ -2980,7 +3066,7 @@ begin
     FDataRecorder.Progress := Tape.GetTapeProgress;
   except
     on E: Exception do
-      ShowMessage(Translate('Cassette: ') + E.Message);
+      ShowRetroMessage(Self, Translate('Cassette: ') + E.Message);
   end;
 end;
 
@@ -3017,7 +3103,7 @@ begin
     on E: Exception do
     begin
       FStorage.Delete(Path);
-      ShowMessage(Translate('Cassette: ') + E.Message);
+      ShowRetroMessage(Self, Translate('Cassette: ') + E.Message);
     end;
   end;
   {$ELSE}
@@ -3034,7 +3120,7 @@ begin
       FDataRecorder.Progress := Tape.GetTapeProgress;
     except
       on E: Exception do
-        ShowMessage(Translate('Cassette: ') + E.Message);
+        ShowRetroMessage(Self, Translate('Cassette: ') + E.Message);
     end;
   finally
     Dialog.Free;
@@ -3100,7 +3186,7 @@ begin
           LoadRom(FileName, DisplayName);
     except
       on E: Exception do
-        ShowMessage(E.Message);
+        ShowRetroMessage(Self, E.Message);
     end;
   finally
     FinishFileSelection;

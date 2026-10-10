@@ -958,7 +958,7 @@ object SettingsView: TSettingsView
     Visible = False
     object GroupGamelibrary: TPanel
       Size.Width = 900.000000000000000000
-      Size.Height = 380.000000000000000000
+      Size.Height = 458.000000000000000000
       Size.PlatformDefault = False
       StyleLookup = 'retromul_card'
       object GroupGamelibraryTitle: TLabel
@@ -1191,9 +1191,56 @@ object SettingsView: TSettingsView
           Size.PlatformDefault = False
         end
       end
+      object RowLetternavigation: TPanel
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 368.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object RowLetternavigationText: TLayout
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 756.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object RowLetternavigationTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 756.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Letter navigation'
+          end
+          object RowLetternavigationDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 756.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Filter ROMs by their first letter using the column on the left.'
+          end
+        end
+        object RowLetternavigationEditor: TSwitch
+          IsChecked = False
+          Position.X = 788.000000000000000000
+          Position.Y = 20.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
     end
     object GroupMetadata: TPanel
-      Position.Y = 396.000000000000000000
+      Position.Y = 474.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 146.000000000000000000
       Size.PlatformDefault = False

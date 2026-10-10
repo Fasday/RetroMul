@@ -20,6 +20,7 @@ type
         Buttons, Turbo: Byte;
         Phase: array[TNesButton.A..TNesButton.B] of Byte;
       end;
+
       TPlayerStates = array[1..INPUT_PLAYER_COUNT] of TPlayerState;
   private
     FSources: TDictionary<UInt32, TPlayerStates>;

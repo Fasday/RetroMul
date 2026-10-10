@@ -7,9 +7,17 @@ uses
   Core.InputConfig, NeoGeo.Cartridge, NeoGeo.Video, NeoGeo.Sound, Core.Snapshots;
 
 type
+  TNeoGeoProtection = (ngpOther,
+    ngpCt2k3sp, ngpCthd2k3, ngpFatfury2, ngpGarou, ngpGarouh,
+    ngpIrrmaze, ngpJockeygp, ngpKf2k3bl, ngpKf2k3pl, ngpKf2k3upl,
+    ngpKof10th, ngpKof2000, ngpKof2003, ngpKof2003h, ngpKof98,
+    ngpKof99, ngpKog, ngpMs5plus, ngpMslug3, ngpMslug3a, ngpMslug5,
+    ngpMslugx, ngpNeogeoMj, ngpSvc, ngpSvcboot, ngpSvcsplus, ngpVliner);
+
   TNeoGeoConsole = class
   private
     FCart: TNeoGeoCartridge;
+    FProtection: TNeoGeoProtection;
     FCPU: TM68kState;
     FCPUCallbacks: TM68kReadWriteCallbacks;
     FZ80: TZ80State;
@@ -155,6 +163,63 @@ begin
   if Cartridge = nil then
     raise EArgumentNilException.Create('Cartridge');
   FCart := Cartridge;
+  // Protection is immutable cartridge metadata. Classify it once so bus
+  // accesses do not manage temporary strings or repeat string comparisons.
+  FProtection := ngpOther;
+  if FCart.Protection = 'ct2k3sp' then
+    FProtection := ngpCt2k3sp
+  else if FCart.Protection = 'cthd2k3' then
+    FProtection := ngpCthd2k3
+  else if FCart.Protection = 'fatfury2' then
+    FProtection := ngpFatfury2
+  else if FCart.Protection = 'garou' then
+    FProtection := ngpGarou
+  else if FCart.Protection = 'garouh' then
+    FProtection := ngpGarouh
+  else if FCart.Protection = 'irrmaze' then
+    FProtection := ngpIrrmaze
+  else if FCart.Protection = 'jockeygp' then
+    FProtection := ngpJockeygp
+  else if FCart.Protection = 'kf2k3bl' then
+    FProtection := ngpKf2k3bl
+  else if FCart.Protection = 'kf2k3pl' then
+    FProtection := ngpKf2k3pl
+  else if FCart.Protection = 'kf2k3upl' then
+    FProtection := ngpKf2k3upl
+  else if FCart.Protection = 'kof10th' then
+    FProtection := ngpKof10th
+  else if FCart.Protection = 'kof2000' then
+    FProtection := ngpKof2000
+  else if FCart.Protection = 'kof2003' then
+    FProtection := ngpKof2003
+  else if FCart.Protection = 'kof2003h' then
+    FProtection := ngpKof2003h
+  else if FCart.Protection = 'kof98' then
+    FProtection := ngpKof98
+  else if FCart.Protection = 'kof99' then
+    FProtection := ngpKof99
+  else if FCart.Protection = 'kog' then
+    FProtection := ngpKog
+  else if FCart.Protection = 'ms5plus' then
+    FProtection := ngpMs5plus
+  else if FCart.Protection = 'mslug3' then
+    FProtection := ngpMslug3
+  else if FCart.Protection = 'mslug3a' then
+    FProtection := ngpMslug3a
+  else if FCart.Protection = 'mslug5' then
+    FProtection := ngpMslug5
+  else if FCart.Protection = 'mslugx' then
+    FProtection := ngpMslugx
+  else if FCart.Protection = 'neogeo_mj' then
+    FProtection := ngpNeogeoMj
+  else if FCart.Protection = 'svc' then
+    FProtection := ngpSvc
+  else if FCart.Protection = 'svcboot' then
+    FProtection := ngpSvcboot
+  else if FCart.Protection = 'svcsplus' then
+    FProtection := ngpSvcsplus
+  else if FCart.Protection = 'vliner' then
+    FProtection := ngpVliner;
   FInitialFixed := Copy(FCart.FixedROM);
   Video := TNeoGeoVideo.Create(FCart);
   Sound := TNeoGeoSound.Create(FCart);
@@ -194,9 +259,9 @@ begin
   FTrackY := 0;
   FSpecialBank := 0;
   FBootOverlay := Word(Integer(ROMByte(FCart.ProgramROM, $58196)) * 256 + ROMByte(FCart.ProgramROM, $58197));
-  if FCart.Protection = 'kf2k3bl' then
+  if FProtection = ngpKf2k3bl then
     FBootOverlay := 0;
-  if FCart.Protection = 'kof10th' then
+  if FProtection = ngpKof10th then
   begin
     FCart.FixedROM := Copy(FInitialFixed);
     for var I := 0 to High(FCartRAM) do
@@ -575,32 +640,32 @@ end;
 
 function TNeoGeoConsole.HasBootRAM: Boolean;
 begin
-  Result := (FCart.Protection = 'kf2k3bl') or (FCart.Protection = 'kf2k3pl') or
-    (FCart.Protection = 'kf2k3upl') or (FCart.Protection = 'kof10th');
+  Result := (FProtection = ngpKf2k3bl) or (FProtection = ngpKf2k3pl) or
+    (FProtection = ngpKf2k3upl) or (FProtection = ngpKof10th);
 end;
 
 function TNeoGeoConsole.ExtraRead(Address: Cardinal; out Value: Word): Boolean;
 begin
   Result := True;
-  var Kind := FCart.Protection;
+  var Kind := FProtection;
   if HasBootRAM and (Address >= $2FE000) and (Address <= $2FFFFE) then
     Value := FPvcRAM[(Address - $2FE000) shr 1]
-  else if ((Kind = 'kf2k3bl') or (Kind = 'kf2k3upl')) and (Address = $58196) then
+  else if ((Kind = ngpKf2k3bl) or (Kind = ngpKf2k3upl)) and (Address = $58196) then
     Value := FBootOverlay
-  else if (Kind = 'ms5plus') and (Address >= $2FFFF0) and (Address <= $2FFFFE) then
+  else if (Kind = ngpMs5plus) and (Address >= $2FFFF0) and (Address <= $2FFFFE) then
     Value := $A0
-  else if (Kind = 'kog') and (Address = $FFFFE) then
+  else if (Kind = ngpKog) and (Address = $FFFFE) then
     Value := 1 // English jumper.
-  else if (Kind = 'kof10th') and (Address >= $E0000) and (Address <= $FFFFE) then
+  else if (Kind = ngpKof10th) and (Address >= $E0000) and (Address <= $FFFFE) then
     Value := FCartRAM[(Address - $E0000) shr 1]
-  else if (Kind = 'kof10th') and (Address >= $10000) and (Address < $E0000) then
+  else if (Kind = ngpKof10th) and (Address >= $10000) and (Address < $E0000) then
   begin
     var A := Integer(Address) + FSpecialBank;
     Value := Word(Integer(ROMByte(FCart.ProgramROM, A)) * 256 + ROMByte(FCart.ProgramROM, A + 1));
   end
-  else if ((Kind = 'jockeygp') or (Kind = 'vliner')) and (Address >= $200000) and (Address <= $201FFE) then
+  else if ((Kind = ngpJockeygp) or (Kind = ngpVliner)) and (Address >= $200000) and (Address <= $201FFE) then
     Value := FCartRAM[(Address - $200000) shr 1]
-  else if (Kind = 'vliner') and (Address = $280000) then
+  else if (Kind = ngpVliner) and (Address = $280000) then
   begin
     Value := $FFFF;
     if FCoin1 > 0 then
@@ -612,7 +677,7 @@ begin
     if TEmulatorButton.Y in FInputs.Buttons then
       Value := Value and $FFDF;
   end
-  else if (Kind = 'vliner') and (Address = $2C0000) then
+  else if (Kind = ngpVliner) and (Address = $2C0000) then
     Value := $0003
   else
     Result := False;
@@ -623,13 +688,13 @@ const
   CTHDBank: array[0..7] of Integer = (1, 0, 1, 0, 1, 0, 3, 2);
 begin
   Result := True;
-  var Kind := FCart.Protection;
+  var Kind := FProtection;
   var Mask := 0;
   if HighByte then
     Mask := Mask or $FF00;
   if LowByte then
     Mask := Mask or $FF;
-  if ((Kind = 'jockeygp') or (Kind = 'vliner')) and (Address >= $200000) and (Address <= $201FFE) then
+  if ((Kind = ngpJockeygp) or (Kind = ngpVliner)) and (Address >= $200000) and (Address <= $201FFE) then
   begin
     var I := (Address - $200000) shr 1;
     var W := Word((FCartRAM[I] and (Mask xor $FFFF)) or (Value and Mask));
@@ -639,7 +704,7 @@ begin
       FBatteryDirty := True;
     end;
   end
-  else if (Kind = 'kof10th') and (Address >= $200000) and (Address < $240000) then
+  else if (Kind = ngpKof10th) and (Address >= $200000) and (Address < $240000) then
   begin
     var I := Integer((Address - $200000) shr 1);
     if FPvcRAM[$FFE] = 0 then
@@ -651,7 +716,7 @@ begin
   begin
     var I := Integer((Address - $2FE000) shr 1);
     var W := Word((FPvcRAM[I] and (Mask xor $FFFF)) or (Value and Mask));
-    if Kind = 'kof10th' then
+    if Kind = ngpKof10th then
     begin
       if (Address = $2FFFF8) and (FPvcRAM[I] <> W) then
         if (W and 1) <> 0 then
@@ -666,24 +731,24 @@ begin
       end;
     end;
     FPvcRAM[I] := W;
-    if (Kind <> 'kof10th') and ((Address = $2FFFF0) or (Address = $2FFFF2)) then
+    if (Kind <> ngpKof10th) and ((Address = $2FFFF0) or (Address = $2FFFF2)) then
     begin
       var Low := FPvcRAM[$FF8] shr 8;
-      if Kind = 'kf2k3pl' then
+      if Kind = ngpKf2k3pl then
         Low := FPvcRAM[$FF8] and $FF;
       FProgramBank := $100000 + Low + ((Integer(FPvcRAM[$FF9]) and $FF) shl 8) +
         ((Integer(FPvcRAM[$FF9]) shr 8) shl 16);
       FBootOverlay := (FBootOverlay and $FF00) or (FPvcRAM[$FF9] and $FF);
-      if Kind = 'kf2k3pl' then
+      if Kind = ngpKf2k3pl then
         FPvcRAM[$FF8] := FPvcRAM[$FF8] and $FFFE
       else
         FPvcRAM[$FF8] := (FPvcRAM[$FF8] and $FE00) or $A0;
       FPvcRAM[$FF9] := FPvcRAM[$FF9] and $7FFF;
     end;
   end
-  else if ((Kind = 'cthd2k3') or (Kind = 'ct2k3sp')) and (Address = $2FFFF0) then
+  else if ((Kind = ngpCthd2k3) or (Kind = ngpCt2k3sp)) and (Address = $2FFFF0) then
     FProgramBank := (CTHDBank[Value and 7] + 1) * $100000
-  else if (Kind = 'ms5plus') and (Address >= $2FFFF0) and (Address <= $2FFFFE) then
+  else if (Kind = ngpMs5plus) and (Address >= $2FFFF0) and (Address <= $2FFFFE) then
   begin
     if (Address = $2FFFF0) and (Value = $A0) then
       FProgramBank := $A0
@@ -720,9 +785,9 @@ end;
 
 function TNeoGeoConsole.HasPVC: Boolean;
 begin
-  Result := (FCart.Protection = 'mslug5') or (FCart.Protection = 'svc') or
-    (FCart.Protection = 'kof2003') or (FCart.Protection = 'kof2003h') or (FCart.Protection = 'svcboot') or
-    (FCart.Protection = 'svcsplus');
+  Result := (FProtection = ngpMslug5) or (FProtection = ngpSvc) or
+    (FProtection = ngpKof2003) or (FProtection = ngpKof2003h) or (FProtection = ngpSvcboot) or
+    (FProtection = ngpSvcsplus);
 end;
 
 procedure TNeoGeoConsole.PVCWrite(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean);
@@ -762,18 +827,18 @@ end;
 function TNeoGeoConsole.SMARead(Address: Cardinal; out Value: Word): Boolean;
 begin
   Result := False;
-  var Kind := FCart.Protection;
-  if not ((Kind = 'kof99') or (Kind = 'garou') or (Kind = 'garouh') or
-    (Kind = 'mslug3') or (Kind = 'mslug3a') or (Kind = 'kof2000')) then
+  var Kind := FProtection;
+  if not ((Kind = ngpKof99) or (Kind = ngpGarou) or (Kind = ngpGarouh) or
+    (Kind = ngpMslug3) or (Kind = ngpMslug3a) or (Kind = ngpKof2000)) then
     Exit;
   if Address = $2FE446 then
   begin
     Value := $9A37;
     Exit(True);
   end;
-  var RandomPort := ((Kind = 'kof99') and ((Address = $2FFFF8) or (Address = $2FFFFA))) or
-    (((Kind = 'garou') or (Kind = 'garouh')) and ((Address = $2FFFCC) or (Address = $2FFFF0))) or
-    ((Kind = 'kof2000') and ((Address = $2FFFD8) or (Address = $2FFFDA)));
+  var RandomPort := ((Kind = ngpKof99) and ((Address = $2FFFF8) or (Address = $2FFFFA))) or
+    (((Kind = ngpGarou) or (Kind = ngpGarouh)) and ((Address = $2FFFCC) or (Address = $2FFFF0))) or
+    ((Kind = ngpKof2000) and ((Address = $2FFFD8) or (Address = $2FFFDA)));
   if RandomPort then
   begin
     Value := FSmaRandom;
@@ -787,13 +852,13 @@ end;
 
 function TNeoGeoConsole.SMAWrite(Address: Cardinal; Value: Word): Boolean;
 begin
-  var Kind := FCart.Protection;
-  Result := ((Kind = 'kof99') and (Address = $2FFFF0)) or
-    (((Kind = 'garou') or (Kind = 'garouh')) and (Address = $2FFFC0)) or
-    (((Kind = 'mslug3') or (Kind = 'mslug3a')) and (Address = $2FFFE4)) or
-    ((Kind = 'kof2000') and (Address = $2FFFEC));
+  var Kind := FProtection;
+  Result := ((Kind = ngpKof99) and (Address = $2FFFF0)) or
+    (((Kind = ngpGarou) or (Kind = ngpGarouh)) and (Address = $2FFFC0)) or
+    (((Kind = ngpMslug3) or (Kind = ngpMslug3a)) and (Address = $2FFFE4)) or
+    ((Kind = ngpKof2000) and (Address = $2FFFEC));
   if Result then
-    FProgramBank := SMABank(Kind, Value);
+    FProgramBank := SMABank(FCart.Protection, Value);
 end;
 
 function TNeoGeoConsole.ReadBus(Address: Cardinal; HighByte, LowByte: Boolean): Word;
@@ -806,7 +871,7 @@ begin
   case Region of
     0:
       begin
-        if (FCart.Protection = 'kof98') and (FKof98Overlay <> 0) and
+        if (FProtection = ngpKof98) and (FKof98Overlay <> 0) and
           ((Address = $100) or (Address = $102)) then
         begin
           if FKof98Overlay = 1 then
@@ -834,9 +899,9 @@ begin
       Result := Word(Integer(FRAM[Offset]) * 256 + FRAM[Offset + 1]);
     2:
       begin
-        if FCart.Protection = 'fatfury2' then
+        if FProtection = ngpFatfury2 then
           Exit(FuryRead(Address));
-        if (FCart.Protection = 'mslugx') and (Address >= $2FFFE0) and (Address <= $2FFFEE) then
+        if (FProtection = ngpMslugx) and (Address >= $2FFFE0) and (Address <= $2FFFEE) then
         begin
           var Selection := -1;
           if FSlugCommand = 1 then
@@ -869,9 +934,9 @@ begin
           else
           begin
             var Pad := PadByte(FInputs.Buttons);
-            if FCart.Protection = 'neogeo_mj' then
+            if FProtection = ngpNeogeoMj then
               Pad := MahjongByte;
-            if FCart.Protection = 'irrmaze' then
+            if FProtection = ngpIrrmaze then
               if (FInputSelect and 1) <> 0 then
                 Pad := FTrackY
               else
@@ -893,7 +958,7 @@ begin
             Result := Word(Integer(FReply) * 256 + Coins);
           end;
         $34:
-          if FCart.Protection = 'irrmaze' then
+          if FProtection = ngpIrrmaze then
             Result := Word(Integer((PadByte(FInputs.Buttons) and $30) or
                 ((PadByte(FInputs.Buttons2) and $30) shl 2) or $F) * 256 + $FF)
           else
@@ -901,11 +966,11 @@ begin
         $38:
           begin
             Result := $FFFF; // MVS hardware, memory card absent, two joystick ports.
-            if (FCart.Protection <> 'jockeygp') and (TEmulatorButton.Start in FInputs.Buttons) then
+            if (FProtection <> ngpJockeygp) and (TEmulatorButton.Start in FInputs.Buttons) then
               Result := Result and $FEFF;
             if TEmulatorButton.Select in FInputs.Buttons then
               Result := Result and $FDFF;
-            if (FCart.Protection <> 'jockeygp') and (TEmulatorButton.Start in FInputs.Buttons2) then
+            if (FProtection <> ngpJockeygp) and (TEmulatorButton.Start in FInputs.Buttons2) then
               Result := Result and $FBFF;
             if TEmulatorButton.Select in FInputs.Buttons2 then
               Result := Result and $F7FF;
@@ -942,16 +1007,16 @@ begin
           FRAM[Offset + 1] := Value and $FF;
       end;
     2:
-      if FCart.Protection = 'fatfury2' then
+      if FProtection = ngpFatfury2 then
         FuryWrite(Address, Value)
-      else if (FCart.Protection = 'kof98') and (Address = $20AAAA) then
+      else if (FProtection = ngpKof98) and (Address = $20AAAA) then
       begin
         if Value = $90 then
           FKof98Overlay := 1
         else if Value = $F0 then
           FKof98Overlay := 2;
       end
-      else if (FCart.Protection = 'mslugx') and (Address >= $2FFFE0) and (Address <= $2FFFEE) then
+      else if (FProtection = ngpMslugx) and (Address >= $2FFFE0) and (Address <= $2FFFEE) then
       begin
         case Address and $F of
           0:
@@ -1091,7 +1156,7 @@ end;
 
 procedure TNeoGeoConsole.RunFrame;
 begin
-  if FCart.Protection = 'irrmaze' then
+  if FProtection = ngpIrrmaze then
   begin
     if TEmulatorButton.Left in FInputs.Buttons then
       FTrackX := Byte((Integer(FTrackX) + 252) and $FF);
@@ -1159,7 +1224,7 @@ function TNeoGeoConsole.BatteryData: TBytes;
 begin
   SetLength(Result, SizeOf(FBackup));
   Move(FBackup[0], Result[0], SizeOf(FBackup));
-  if (FCart.Protection = 'jockeygp') or (FCart.Protection = 'vliner') then
+  if (FProtection = ngpJockeygp) or (FProtection = ngpVliner) then
   begin
     SetLength(Result, SizeOf(FBackup) + $2000);
     for var I := 0 to $FFF do
@@ -1172,7 +1237,7 @@ end;
 
 procedure TNeoGeoConsole.LoadBattery(const Data: TBytes);
 begin
-  var HasCart := (FCart.Protection = 'jockeygp') or (FCart.Protection = 'vliner');
+  var HasCart := (FProtection = ngpJockeygp) or (FProtection = ngpVliner);
   if (Length(Data) <> SizeOf(FBackup)) and not (HasCart and (Length(Data) = SizeOf(FBackup) + $2000)) then
     raise EReadError.Create('Invalid Neo Geo backup RAM size');
   Move(Data[0], FBackup[0], SizeOf(FBackup));
@@ -1238,16 +1303,16 @@ begin
   if HasBootRAM then
   begin
     State.Field(FBootOverlay, SizeOf(FBootOverlay));
-    if FCart.Protection = 'kof10th' then
+    if FProtection = ngpKof10th then
     begin
       State.Field(FSpecialBank, SizeOf(FSpecialBank));
       State.Field(FCartRAM, SizeOf(FCartRAM));
       State.Field(FCart.FixedROM[0], Length(FCart.FixedROM));
     end;
   end;
-  if (FCart.Protection = 'jockeygp') or (FCart.Protection = 'vliner') then
+  if (FProtection = ngpJockeygp) or (FProtection = ngpVliner) then
     State.Field(FCartRAM, $2000);
-  if (FCart.Protection = 'neogeo_mj') or (FCart.Protection = 'irrmaze') then
+  if (FProtection = ngpNeogeoMj) or (FProtection = ngpIrrmaze) then
   begin
     State.Field(FInputSelect, SizeOf(FInputSelect));
     State.Field(FTrackX, SizeOf(FTrackX));
@@ -1256,7 +1321,7 @@ begin
   if State.Loading then
   begin
     FInZ80 := False;
-    if (FCart.Protection = 'kof10th') and (FSpecialBank <> 0) and (FSpecialBank <> $700000) and (FSpecialBank <> $800000) then
+    if (FProtection = ngpKof10th) and (FSpecialBank <> 0) and (FSpecialBank <> $700000) and (FSpecialBank <> $800000) then
       raise EReadError.Create('Invalid Neo Geo bootleg bank state');
     if (Video.PaletteBank < 0) or (Video.PaletteBank > 1) or
       (FProgramBank < 0) or (FProgramBank > $10000000) or (FFrameTime < 0) then
