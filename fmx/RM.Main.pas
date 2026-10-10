@@ -639,10 +639,10 @@ begin
   FGameTools[2].Name := 'GameLoad';
   FGameTools[3] := GameFullscreen;
   FGameTools[4] := GameSettings;
-  for var I := 1 to 2 do
+  for var i := 1 to 2 do
   begin
-    FGameTools[I].Parent := LayoutHead;
-    FGameTools[I].Width := 104;
+    FGameTools[i].Parent := LayoutHead;
+    FGameTools[i].Width := 104;
   end;
   FGameTools[0].OnClick := PauseClick;
   FGameTools[1].OnClick := SaveStateClick;
@@ -1773,11 +1773,11 @@ end;
 procedure TFormMain.ChooseMotionSensor(Sender: TObject; const Sensors: TSensorArray; var ChoseSensorIndex: Integer);
 begin
   ChoseSensorIndex := -1;
-  for var I := 0 to High(Sensors) do
-    if (Sensors[I] is TCustomMotionSensor) and
-      (TCustomMotionSensor(Sensors[I]).SensorType = TMotionSensorType.Accelerometer3D) then
+  for var i := 0 to High(Sensors) do
+    if (Sensors[i] is TCustomMotionSensor) and
+      (TCustomMotionSensor(Sensors[i]).SensorType = TMotionSensorType.Accelerometer3D) then
     begin
-      ChoseSensorIndex := I;
+      ChoseSensorIndex := i;
       Break;
     end;
 end;
@@ -1788,6 +1788,7 @@ begin
   {$IF not Defined(LINUX)}
   if FMotionSensor = nil then
     Exit;
+
   var Motion: IEmulationMotionInput;
   var Wanted := Supports(FEmulation, IEmulationMotionInput, Motion);
   if Wanted then
@@ -2034,6 +2035,7 @@ begin
     FOpeningRom or FViewingLibrary or (FSettingsView <> nil) or (FHelp <> nil) or
     FEmulation.IsPaused or not FEmulation.SupportsSnapshots then
     Exit;
+
   var Tick := AutosaveClock;
   if (Tick < FAutosaveLastTick) or
     (Tick - FAutosaveLastTick < UInt64(FAutosaveMinutes) * 60000) then
@@ -2294,10 +2296,10 @@ begin
   FSettingsClientVisible := LayoutClient.Visible;
   FSettingsView := TSettingsView.CreateSettings(Self, FStorage, FInput);
   if FEmulation <> nil then
-    for var I := Low(SettingsCoreIds) to High(SettingsCoreIds) do
-      if SettingsCoreIds[I] = FInputSystemId then
+    for var i := Low(SettingsCoreIds) to High(SettingsCoreIds) do
+      if SettingsCoreIds[i] = FInputSystemId then
       begin
-        FSettingsView.SelectCore(I, True);
+        FSettingsView.SelectCore(i, True);
         Break;
       end;
   FSettingsView.Parent := SettingsScreen;
