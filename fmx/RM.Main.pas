@@ -23,8 +23,11 @@ uses
   {$ENDIF}
   Core.Storage, RM.Storage.Dialogs, FMX.OpenDialog, RM.Gamepad, FMX.Edit,
   NES.FamicomDataRecorder, NES.DataRecorder, RM.FrameUpload, RM.Settings,
-  RM.Input, FMXInput, Core.InputConfig, RM.LibraryView, RM.ControlsHelp,
-  FMX.Menus;
+  RM.Rumble, RM.Input, FMXInput, Core.InputConfig, RM.LibraryView,
+  RM.ControlsHelp, FMX.Menus
+  {$IF not Defined(LINUX)}
+    , System.Sensors, System.Sensors.Components
+  {$ENDIF};
 
 type
   TFormMain = class(TWinUIForm)
@@ -126,9 +129,15 @@ type
     FMiraclePiano: TNesMiraclePiano;
     FPowerPad: TNesPowerPad;
     FDataRecorder: TNesDataRecorder;
+    FRumble: TRumblePlayer;
+    FRumbleDeviceId: string;
     FGamepadInput: TEmulatorInput;
     FKeysDown: array[0..2048] of Boolean;
     FZapperPixel: TPoint;
+    {$IF not Defined(LINUX)}
+    FMotionSensor: TMotionSensor;
+    FMotionAttempted: Boolean;
+    {$ENDIF}
     {$ENDREGION}
     {$REGION 'Windows state'}
     {$IFDEF MSWINDOWS}
@@ -153,6 +162,12 @@ type
     {$ENDIF}
     {$ENDREGION}
     {$REGION 'Initialization and lifetime'}
+    procedure PollRumble;
+    procedure SyncMotionSensor;
+    procedure PollMotionSensor;
+    {$IF not Defined(LINUX)}
+    procedure ChooseMotionSensor(Sender: TObject; const Sensors: TSensorArray; var ChoseSensorIndex: Integer);
+    {$ENDIF}
     procedure InitializeLibrary;
     procedure InitializeScreenshotTool;
     procedure InitializePeripherals;
@@ -507,6 +522,11 @@ begin
   ImageCanvas.Bitmap.SetSize(NES_WIDTH, NES_HEIGHT);
   ImageCanvas.Bitmap.Clear(TAlphaColors.Black);
   InitializePeripherals;
+  FRumble := TRumblePlayer.Create;
+  {$IF not Defined(LINUX)}
+  FMotionSensor := TMotionSensor.Create(Self);
+  FMotionSensor.OnSensorChoosing := ChooseMotionSensor;
+  {$ENDIF}
   FormResize(Self);
   TimerUpdate.Interval := 8;
   Load;
@@ -715,6 +735,7 @@ begin
   {$ENDIF}
   if Assigned(FInvalidateCallbacks) then
     FInvalidateCallbacks();
+  FreeAndNil(FRumble);
   if TimerUpdate <> nil then
     TimerUpdate.Enabled := False;
   try
@@ -725,6 +746,14 @@ begin
   FreeAndNil(FSettingsView);
   FreeAndNil(FHelp);
   FreeAndNil(FLibrary);
+  {$IF not Defined(LINUX)}
+  if FMotionSensor <> nil then
+  try
+    FMotionSensor.Active := False;
+  except
+  end;
+  FreeAndNil(FMotionSensor);
+  {$ENDIF}
   FreeAndNil(FInput);
   FreeAndNil(FSuborKeyboard);
   FreeAndNil(FFamicomKeyboard);
@@ -1133,6 +1162,8 @@ end;
 
 procedure TFormMain.FormDeactivate(Sender: TObject);
 begin
+  if FRumble <> nil then
+    FRumble.Stop;
   {$IF not Defined(ANDROID) and not Defined(IOS)}
   if FPauseOnFocusLoss and not HostInputHasFocus and not FViewingLibrary and
     not RetroDialogVisible(Self) and (FSettingsView = nil) and
@@ -1378,6 +1409,8 @@ begin
   {$ELSE}
   TimerUpdate.Enabled := (FInput <> nil) or ((FEmulation <> nil) and not FEmulationFaulted);
   {$ENDIF}
+  SyncMotionSensor;
+  PollRumble;
   UpdateGameChrome;
 end;
 
@@ -1593,7 +1626,10 @@ begin
   if FPowerPad <> nil then
     FPowerPad.ReleaseAll;
   TimerUpdate.Enabled := False;
+  if FRumble <> nil then
+    FRumble.Reset;
   FEmulation := nil; // Join before replacing the session.
+  SyncMotionSensor;
   FEmulation := NewEmulation;
 
   var InputSystem := ROM_SYSTEM_NES;
@@ -1732,6 +1768,157 @@ end;
 
 {$REGION 'Game loop and autosave'}
 
+{$IF not Defined(LINUX)}
+
+procedure TFormMain.ChooseMotionSensor(Sender: TObject; const Sensors: TSensorArray; var ChoseSensorIndex: Integer);
+begin
+  ChoseSensorIndex := -1;
+  for var I := 0 to High(Sensors) do
+    if (Sensors[I] is TCustomMotionSensor) and
+      (TCustomMotionSensor(Sensors[I]).SensorType = TMotionSensorType.Accelerometer3D) then
+    begin
+      ChoseSensorIndex := I;
+      Break;
+    end;
+end;
+{$ENDIF}
+
+procedure TFormMain.SyncMotionSensor;
+begin
+  {$IF not Defined(LINUX)}
+  if FMotionSensor = nil then
+    Exit;
+  var Motion: IEmulationMotionInput;
+  var Wanted := Supports(FEmulation, IEmulationMotionInput, Motion);
+  if Wanted then
+    Wanted := Motion.HasAccelerometer;
+  Wanted := Wanted and not FOpeningRom and not FEmulationFaulted and not FUserPaused and
+    not FAutoPaused and not FViewingLibrary and (FSettingsView = nil) and
+    (FHelp = nil) and not RetroDialogVisible(Self);
+  {$IF Defined(ANDROID) or Defined(IOS)}
+  Wanted := Wanted and not FInBackground;
+  {$ENDIF}
+  if not Wanted then
+  begin
+    if FMotionAttempted then
+    begin
+      try
+        FMotionSensor.Active := False;
+      except
+      end;
+      FMotionAttempted := False;
+    end;
+    if Motion <> nil then
+      Motion.SetAcceleration(0, 0);
+  end
+  else if not FMotionAttempted then
+  begin
+    FMotionAttempted := True;
+    try
+      FMotionSensor.Active := True;
+    except
+      // Desktop machines commonly have no accelerometer. Keep neutral input
+      // and avoid retrying a failed sensor every frame.
+      try
+        FMotionSensor.Active := False;
+      except
+      end;
+      Motion.SetAcceleration(0, 0);
+    end;
+  end;
+  {$ENDIF}
+end;
+
+procedure TFormMain.PollMotionSensor;
+begin
+  SyncMotionSensor;
+  {$IF not Defined(LINUX)}
+  var Motion: IEmulationMotionInput;
+  if not Supports(FEmulation, IEmulationMotionInput, Motion) or not Motion.HasAccelerometer then
+    Exit;
+  var X, Y: Double;
+  X := 0;
+  Y := 0;
+  if (FMotionSensor <> nil) and FMotionSensor.Active and (FMotionSensor.Sensor <> nil) then
+  try
+    // System.Sensors normalizes Android and iOS acceleration to g.
+    X := FMotionSensor.Sensor.AccelerationX;
+    Y := FMotionSensor.Sensor.AccelerationY;
+    {$IF Defined(ANDROID) or Defined(IOS)}
+    var Rotation := 0;
+    {$IFDEF ANDROID}
+    // Android sensor axes follow the device's natural orientation, which
+    // can be landscape on tablets. Use display rotation rather than shape.
+    if TAndroidHelper.Display <> nil then
+      Rotation := TAndroidHelper.Display.getRotation;
+    {$ELSE}
+    var ScreenService: IFMXScreenService;
+    if TPlatformServices.Current.SupportsPlatformService(IFMXScreenService, ScreenService) then
+      case ScreenService.GetScreenOrientation of
+        TScreenOrientation.Landscape:
+          Rotation := 1;
+        TScreenOrientation.InvertedPortrait:
+          Rotation := 2;
+        TScreenOrientation.InvertedLandscape:
+          Rotation := 3;
+      end;
+    {$ENDIF}
+    var OriginalX := X;
+    case Rotation of
+      1:
+        begin
+          X := -Y;
+          Y := OriginalX;
+        end;
+      2:
+        begin
+          X := -X;
+          Y := -Y;
+        end;
+      3:
+        begin
+          X := Y;
+          Y := -OriginalX;
+        end;
+    end;
+    {$ENDIF}
+  except
+    X := 0;
+    Y := 0;
+    try
+      FMotionSensor.Active := False;
+    except
+    end;
+  end;
+  Motion.SetAcceleration(X, Y);
+  {$ENDIF}
+end;
+
+procedure TFormMain.PollRumble;
+begin
+  if FRumble = nil then
+    Exit;
+  if FInput <> nil then
+  begin
+    var DeviceId := RumbleDeviceId(FInput, 0);
+    if DeviceId <> FRumbleDeviceId then
+    begin
+      FRumbleDeviceId := DeviceId;
+      FRumble.SetDevice(CreateGamepadRumbleDevice(FInput, DeviceId));
+    end;
+  end;
+  var Level: Byte := 0;
+  var Rumble: IEmulationRumbleOutput;
+  if (FEmulation <> nil) and not FEmulationFaulted and not FOpeningRom and
+    not FViewingLibrary and (FSettingsView = nil) and (FHelp = nil) and
+    not RetroDialogVisible(Self) and HostInputHasFocus and
+    {$IF Defined(ANDROID) or Defined(IOS)}not FInBackground and {$ENDIF}
+    not FEmulation.IsPaused and Supports(FEmulation, IEmulationRumbleOutput, Rumble) and
+    Rumble.HasRumble then
+    Level := Rumble.RumbleLevel;
+  FRumble.Update(Level, TThread.GetTickCount64);
+end;
+
 procedure TFormMain.TimerUpdateTimer(Sender: TObject);
 begin
   if FInput <> nil then
@@ -1742,6 +1929,8 @@ begin
     begin
       FInput.Enabled := False;
       TimerUpdate.Enabled := False;
+      if FRumble <> nil then
+        FRumble.Stop;
       if FEmulation <> nil then
         FEmulation.ClearInput;
       SetStatus(Translate('Input error: ') + E.Message);
@@ -1749,6 +1938,7 @@ begin
       Exit;
     end;
   end;
+  PollRumble;
   if FSettingsView <> nil then
     Exit;
   {$IFDEF ANDROID}
@@ -1762,6 +1952,7 @@ begin
     Exit;
   UpdatePauseOverlay;
   try
+    PollMotionSensor;
     UpdatePeripheralFeedback;
     UpdateFrame;
     PollAutosave;
@@ -2781,6 +2972,8 @@ begin
     begin
       TimerUpdate.Enabled := False;
       try
+        if FRumble <> nil then
+          FRumble.Reset;
         FEmulation.Reset;
         FUserPaused := False;
         FEmulationFaulted := False;
@@ -3041,6 +3234,8 @@ begin
   if (FEmulation = nil) or FEmulationFaulted then
     Exit;
   try
+    if FRumble <> nil then
+      FRumble.Reset;
     FEmulation.Reset;
   except
     StopOnError;

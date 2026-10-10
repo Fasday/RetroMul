@@ -52,6 +52,7 @@ type
     FMode3Cycles: Integer;
 
     FCGBMode: Boolean;
+    FBootCompatibilityPalettes: Boolean;
     FVBK: Byte;
     FBGPaletteIndex, FOBJPaletteIndex: Byte;
     FBGPaletteRAM, FOBJPaletteRAM: array[0..63] of Byte;
@@ -81,6 +82,7 @@ type
     procedure Step(Cycle: Integer); override;
 
     procedure SetCGBMode(Value: Boolean);
+    property BootCompatibilityPalettes: Boolean read FBootCompatibilityPalettes write FBootCompatibilityPalettes;
     procedure SetHBlankCallback(const Value: THBlankCallback);
     function CanAccessVRAM: Boolean; override;
 
@@ -157,11 +159,23 @@ begin
   end
   else
     Shade := BackgroundPalette[ColorIndex];
+  if FBootCompatibilityPalettes then
+  begin
+    if IsObject then
+      Result := FOBJColors[((PaletteIndex and 1) shl 2) or Shade]
+    else
+      Result := FBGColors[Shade];
+    Exit;
+  end;
+
   Result := -$01000000 or (DMGR[Shade] shl 16) or (DMGG[Shade] shl 8) or DMGB[Shade];
 end;
 
 procedure TGBCGPU.SetCGBMode(Value: Boolean);
 begin
+  if FCGBMode = Value then
+    Exit;
+
   FCGBMode := Value;
   if not Value then
     Exit;
@@ -555,6 +569,7 @@ procedure TGBCGPU.Step(Cycle: Integer);
 begin
   if not FLCDEnabled then
     Exit;
+
   var Duration: Integer;
   Inc(ModeClock, Cycle);
   while True do
@@ -632,6 +647,7 @@ begin
     if not FLCDEnabled then
       Exit;
   end;
+
   ProcessLCDStatus;
 end;
 

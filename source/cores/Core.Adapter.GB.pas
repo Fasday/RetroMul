@@ -3,8 +3,9 @@
 interface
 
 uses
-  System.Classes, System.IniFiles, Core.Storage, Core.InputConfig,
-  Core.Emulation, GB.EmulationThread, GB.Joypad, GB.GPU, GB.Camera;
+  System.SysUtils, System.Classes, System.IniFiles, Core.Storage,
+  Core.InputConfig, Core.Emulation, GB.EmulationThread, GB.Joypad, GB.GPU,
+  GB.Camera, GB.Memory;
 
 type
   TGBKeyMap = record
@@ -16,6 +17,14 @@ type
     function GetKeys: TGBKeyMap;
     procedure SetKeys(const Value: TGBKeyMap);
     property Keys: TGBKeyMap read GetKeys write SetKeys;
+    function GetRumbleEnabled: Boolean;
+    procedure SetRumbleEnabled(Value: Boolean);
+    property RumbleEnabled: Boolean read GetRumbleEnabled write SetRumbleEnabled;
+    function GetBootModel: TGBBootModel;
+    procedure SetBootModel(Value: TGBBootModel);
+    function GetBootROMFile(Model: TGBBootModel): string;
+    procedure SetBootROMFile(Model: TGBBootModel; const Value: string);
+    property BootModel: TGBBootModel read GetBootModel write SetBootModel;
     function GetScreenPalette: Integer;
     procedure SetScreenPalette(const Value: Integer);
     property ScreenPalette: Integer read GetScreenPalette write SetScreenPalette;
@@ -25,6 +34,9 @@ type
   private
     FKeys: TGBKeyMap;
     FScreenPalette: Integer;
+    FRumbleEnabled: Boolean;
+    FBootModel: TGBBootModel;
+    FBootROMFiles: array[TGBBootModel] of string;
   protected
     procedure LoadControls(Ini: TCustomIniFile);
     procedure SaveControls(Ini: TCustomIniFile);
@@ -35,14 +47,26 @@ type
     function GetKeys: TGBKeyMap;
     procedure SetKeys(const Value: TGBKeyMap);
 
+    function GetRumbleEnabled: Boolean;
+    procedure SetRumbleEnabled(Value: Boolean);
+    property RumbleEnabled: Boolean read GetRumbleEnabled write SetRumbleEnabled;
+    function GetBootModel: TGBBootModel;
+    procedure SetBootModel(Value: TGBBootModel);
+    function GetBootROMFile(Model: TGBBootModel): string;
+    procedure SetBootROMFile(Model: TGBBootModel; const Value: string);
+    property BootModel: TGBBootModel read GetBootModel write SetBootModel;
     function GetScreenPalette: Integer;
     procedure SetScreenPalette(const Value: Integer);
   end;
 
-  TGBCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IGBCameraInput)
+  TGBCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IGBCameraInput, IEmulationMotionInput, IEmulationRumbleOutput)
   protected
     FThread: TGBEmulationThread;
+    FColorHardware: Boolean;
+    FBootROMData: TBytes;
     FCameraSource: IGBCameraFrameSource;
+    FHasAccelerometer, FHasRumble: Boolean;
+    FAccelerationX, FAccelerationY: Double;
     FSnapshotDirectory: string;
     FSavePath: string;
     FStorage: IStorage;
@@ -85,6 +109,10 @@ type
     function TakeError: string;
     function GetConfig: IEmulatorConfig;
     function IsPaused: Boolean;
+    function GetHasRumble: Boolean;
+    function GetRumbleLevel: Byte;
+    function GetHasAccelerometer: Boolean;
+    procedure SetAcceleration(X, Y: Double);
     function GetHasCamera: Boolean;
     procedure SubmitCameraFrame(const Frame: TGBCameraFrame);
   end;
@@ -92,8 +120,33 @@ type
 implementation
 
 uses
-  Core.RomFormat, Core.Snapshots, Core.SavePaths, System.SysUtils, System.Math,
-  System.UITypes, GB.Palettes, GB.ROM, GB.MBC;
+  Core.RomFormat, Core.Snapshots, Core.SavePaths, System.Math, System.UITypes,
+  GB.Palettes, GB.ROM, GB.MBC, GBC.EmulationThread;
+
+function TGBCoreAdapter.GetHasRumble: Boolean;
+begin
+  Result := FHasRumble;
+end;
+
+function TGBCoreAdapter.GetRumbleLevel: Byte;
+begin
+  Result := 0;
+  if FHasRumble and FConfig.RumbleEnabled and (FThread <> nil) then
+    Result := FThread.GetRumbleLevel;
+end;
+
+function TGBCoreAdapter.GetHasAccelerometer: Boolean;
+begin
+  Result := FHasAccelerometer;
+end;
+
+procedure TGBCoreAdapter.SetAcceleration(X, Y: Double);
+begin
+  FAccelerationX := X;
+  FAccelerationY := Y;
+  if FThread <> nil then
+    FThread.SetAcceleration(X, Y);
+end;
 
 function TGBCoreAdapter.GetHasCamera: Boolean;
 begin
@@ -120,11 +173,20 @@ end;
 
 function TGBCoreAdapter.CreateWorker: TGBEmulationThread;
 begin
-  Result := TGBEmulationThread.Create(FROMData, FConfig.AudioEnabled, FCameraSource);
+  if FColorHardware then
+    Result := TGBCEmulationThread.Create(FROMData, FConfig.AudioEnabled, FCameraSource)
+  else
+    Result := TGBEmulationThread.Create(FROMData, FConfig.AudioEnabled, FCameraSource);
 end;
 
 procedure TGBCoreAdapter.CopyFrame(const Screen: TScreenArray; var Frame: TEmulatorFrame);
 begin
+  if FColorHardware then
+  begin
+    Move(Screen[0], Frame.Pixels[0], SizeOf(Screen));
+    Exit;
+  end;
+
   for var i := 0 to High(Screen) do
   begin
     var Shade := Screen[i];
@@ -157,7 +219,47 @@ begin
   var ROM := TGBROM.Create;
   try
     ROM.ReadROM(Stream);
-    FROMData := ROM.ROMData;
+    FROMData := ROM.ImageData;
+    if ROM.GetCartridgeType.MapperType = TMapperType.PocketCamera then
+      FCameraSource := TGBCameraFrameSource.Create;
+    FHasAccelerometer := ROM.GetCartridgeType.HasAccelerometer;
+    FHasRumble := (ROM.GetCartridgeType.MapperType = TMapperType.MBC5) and
+      ROM.GetCartridgeType.HasRumble;
+    FColorHardware := ConfigPrefix = ROM_SYSTEM_GBC;
+    if FConfig.BootModel <> TGBBootModel.Skip then
+    begin
+      FColorHardware := GBBootUsesColor(FConfig.BootModel);
+      if ROM.Cartridge.CGBOnly and not FColorHardware then
+        raise ENotSupportedException.Create('This cartridge requires a color boot ROM model');
+
+      var BootFile := FConfig.GetBootROMFile(FConfig.BootModel);
+      var BootData: TBytes;
+      if BootFile <> '' then
+      begin
+        var BootStream := FStorage.OpenRead(BootFile);
+        try
+          SetLength(BootData, $901);
+          var Count := 0;
+          while Count < Length(BootData) do
+          begin
+            var N := BootStream.Read(BootData[Count], Length(BootData) - Count);
+            if N = 0 then
+              Break;
+            Inc(Count, N);
+          end;
+          if Count = 0 then
+            raise EReadError.Create('Boot ROM file is empty');
+
+          SetLength(BootData, Count);
+        finally
+          BootStream.Free;
+        end;
+      end;
+      if (BootFile = '') and not (FConfig.BootModel in [TGBBootModel.DMG, TGBBootModel.MGB]) then
+        raise EReadError.Create('Select a boot ROM file for ' + GB_BOOT_MODEL_LABELS[FConfig.BootModel]);
+
+      FBootROMData := PrepareGBBootROM(FConfig.BootModel, BootData);
+    end;
     // Validate mapper support before the frontend replaces the active session.
     TGBMBC.Create(ROM).Free;
   finally
@@ -170,14 +272,14 @@ end;
 
 procedure TGBCoreAdapter.CreateThread;
 begin
-  if (FCameraSource = nil) and (Length(FROMData) > $147) and (FROMData[$147] = $FC) then
-    FCameraSource := TGBCameraFrameSource.Create;
   FThread := CreateWorker;
+  FThread.ConfigureBootROM(FConfig.BootModel, FBootROMData);
   FThread.Storage := FStorage;
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.SavePath := FSavePath;
   FThread.SoundVolume := FConfig.AudioVolume;
   FThread.ScreenPalette := FConfig.ScreenPalette;
+  FThread.SetAcceleration(FAccelerationX, FAccelerationY);
 end;
 
 destructor TGBCoreAdapter.Destroy;
@@ -192,6 +294,7 @@ begin
   Result := Default(TEmulatorInput);
   if not FControllerEnabled then
     Exit;
+
   Result.Buttons := (FGamepadInput.Buttons + FKeyboardInput.Buttons) * [TEmulatorButton.Up..TEmulatorButton.Start];
 end;
 
@@ -381,6 +484,7 @@ end;
 constructor TGBEmulatorConfig.Create(const AFileName: string; const Storage: IStorage);
 begin
   inherited Create(AFileName, Storage);
+  FRumbleEnabled := True;
   FKeys.A := vkZ;
   FKeys.B := vkX;
   FKeys.Select := vkSpace;
@@ -390,6 +494,36 @@ begin
   FKeys.Left := vkLeft;
   FKeys.Right := vkRight;
   FScreenPalette := 0;
+end;
+
+function TGBEmulatorConfig.GetRumbleEnabled: Boolean;
+begin
+  Result := FRumbleEnabled;
+end;
+
+procedure TGBEmulatorConfig.SetRumbleEnabled(Value: Boolean);
+begin
+  FRumbleEnabled := Value;
+end;
+
+function TGBEmulatorConfig.GetBootModel: TGBBootModel;
+begin
+  Result := FBootModel;
+end;
+
+procedure TGBEmulatorConfig.SetBootModel(Value: TGBBootModel);
+begin
+  FBootModel := Value;
+end;
+
+function TGBEmulatorConfig.GetBootROMFile(Model: TGBBootModel): string;
+begin
+  Result := FBootROMFiles[Model];
+end;
+
+procedure TGBEmulatorConfig.SetBootROMFile(Model: TGBBootModel; const Value: string);
+begin
+  FBootROMFiles[Model] := Value;
 end;
 
 procedure TGBEmulatorConfig.LoadControls(Ini: TCustomIniFile);
@@ -407,6 +541,10 @@ end;
 procedure TGBEmulatorConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
   LoadControls(Ini);
+  FRumbleEnabled := Ini.ReadBool('Peripherals', 'Rumble', True);
+  FBootModel := GBBootModel(Ini.ReadString('Boot', 'Model', 'none'));
+  for var Model := Low(TGBBootModel) to High(TGBBootModel) do
+    FBootROMFiles[Model] := Ini.ReadString('Boot', GB_BOOT_MODEL_KEYS[Model] + 'File', '');
   FScreenPalette := EnsureRange(Ini.ReadInteger('Video', 'Palette', 0), 0, SCREEN_PALETTE_COUNT - 1);
 end;
 
@@ -425,6 +563,10 @@ end;
 procedure TGBEmulatorConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
   SaveControls(Ini);
+  Ini.WriteBool('Peripherals', 'Rumble', FRumbleEnabled);
+  Ini.WriteString('Boot', 'Model', GB_BOOT_MODEL_KEYS[FBootModel]);
+  for var Model := Low(TGBBootModel) to High(TGBBootModel) do
+    Ini.WriteString('Boot', GB_BOOT_MODEL_KEYS[Model] + 'File', FBootROMFiles[Model]);
   Ini.WriteInteger('Video', 'Palette', FScreenPalette);
 end;
 

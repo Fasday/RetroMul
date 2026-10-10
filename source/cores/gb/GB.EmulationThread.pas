@@ -3,9 +3,9 @@
 interface
 
 uses
-  Core.RomFormat, Core.Storage, Core.Snapshots, System.Classes, System.SyncObjs,
-  System.Generics.Collections, System.Diagnostics, GB.Joypad, GB.GPU, GB.ROM,
-  GB.MBC, GB.Memory, GB.Timer, GB.InterruptManager, GB.Camera;
+  Core.RomFormat, Core.Storage, Core.Snapshots, System.SysUtils, System.Classes,
+  System.SyncObjs, System.Generics.Collections, System.Diagnostics, GB.Joypad,
+  GB.GPU, GB.ROM, GB.MBC, GB.Memory, GB.Timer, GB.InterruptManager, GB.Camera;
 
 type
   TGBInputEvent = record
@@ -21,6 +21,7 @@ type
     FSavePath: string;
     FStorage: IStorage;
     FROMData: TArray<Byte>;
+    FSnapshotIdentityData: TBytes;
     FEnableAudio: Boolean;
     FLock: TCriticalSection;
     FStopEvent: TEvent;
@@ -37,10 +38,16 @@ type
     FPauseRequested: Boolean;
     FCameraSource: IGBCameraFrameSource;
     FHasCamera: Boolean;
-    procedure ApplyInput;
+    FRumbleLevel: Byte;
+    FRumbleSamples, FRumbleWeightedLevel: UInt64;
+    FAccelerationX, FAccelerationY: Double;
+    procedure PublishRumble(Level: Byte; Clocks: UInt64 = 0);
+    procedure ApplyInput(MBC: TGBMBC);
     procedure SetSoundVolume(const Value: Single);
     procedure SetScreenPalette(const Value: Integer);
   protected
+    FBootROMData: TBytes;
+    FBootModel: TGBBootModel;
     procedure PublishFrame(const Screen: TScreenArray);
     function CoreID: string; virtual;
     function CreateVideo(ROM: TGBROM): TGBVideo; virtual;
@@ -64,8 +71,11 @@ type
     procedure RequestResume;
     procedure SetKeyState(Key: TGBKey; Pressed: Boolean);
     procedure ReleaseKeys;
+    procedure SetAcceleration(X, Y: Double);
+    procedure ConfigureBootROM(Model: TGBBootModel; const Data: TBytes);
     function TryGetFrame(out Screen: TScreenArray; out FramesPerSecond: Double): Boolean;
     function TakeError: string;
+    function GetRumbleLevel: Byte;
     property SoundVolume: Single read FSoundVolume write SetSoundVolume;
     property ScreenPalette: Integer write SetScreenPalette;
     property PauseRequested: Boolean read FPauseRequested;
@@ -76,8 +86,8 @@ type
 implementation
 
 uses
-  Core.SavePaths, Core.PerformanceHints, System.SysUtils, System.IOUtils,
-  System.Math, GB.CPU, GB.Sound, GB.Palettes;
+  Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.Math, GB.CPU,
+  GB.Sound, GB.Palettes;
 
 function TGBEmulationThread.CoreID: string;
 begin
@@ -128,19 +138,24 @@ begin
   FreeOnTerminate := False;
   FStorage := TStorage.Default;
   FROMData := Copy(ROMData);
-  FHasCamera := (Length(FROMData) > $147) and (FROMData[$147] = $FC);
-  if FHasCamera then
-  begin
-    FCameraSource := CameraSource;
-    if FCameraSource = nil then
-      FCameraSource := TGBCameraFrameSource.Create;
-  end;
+  FSnapshotIdentityData := FROMData;
   FEnableAudio := EnableAudio;
   FSoundVolume := 0.5;
   FLock := TCriticalSection.Create;
   FStopEvent := TEvent.Create(nil, True, False, '');
   FSnapshots := TSnapshotQueue.Create;
   FInputEvents := TQueue<TGBInputEvent>.Create;
+  var Footer := ReadGBXFooter(FROMData);
+  if Footer.Present then
+    FHasCamera := Footer.Mapper = 'CAMR'
+  else
+    FHasCamera := (Length(FROMData) > $147) and (FROMData[$147] = $FC);
+  if FHasCamera then
+  begin
+    FCameraSource := CameraSource;
+    if FCameraSource = nil then
+      FCameraSource := TGBCameraFrameSource.Create;
+  end;
 end;
 
 destructor TGBEmulationThread.Destroy;
@@ -155,10 +170,34 @@ begin
   FLock.Free;
 end;
 
+procedure TGBEmulationThread.ConfigureBootROM(Model: TGBBootModel; const Data: TBytes);
+begin
+  if not Suspended then
+    raise EInvalidOpException.Create('Boot ROM must be selected before starting');
+
+  if (Model <> TGBBootModel.Skip) and (GBBootUsesColor(Model) <> (CoreID = ROM_CORE_ID_GBC)) then
+    raise EArgumentException.Create('Boot ROM model does not match the worker');
+
+  FBootROMData := PrepareGBBootROM(Model, Data);
+  FBootModel := Model;
+  FSnapshotIdentityData := FROMData;
+  if Length(FBootROMData) > 0 then
+  begin
+    // Firmware is immutable session data. Reject snapshots made with another
+    // boot ROM, including snapshots saved before FF50 has unmapped it.
+    FSnapshotIdentityData := Copy(FROMData);
+    var Offset := Length(FSnapshotIdentityData);
+    SetLength(FSnapshotIdentityData, Offset + 1 + Length(FBootROMData));
+    FSnapshotIdentityData[Offset] := Ord(Model);
+    Move(FBootROMData[0], FSnapshotIdentityData[Offset + 1], Length(FBootROMData));
+  end;
+end;
+
 procedure TGBEmulationThread.SubmitCameraFrame(const Frame: TGBCameraFrame);
 begin
   if not FHasCamera then
     raise ENotSupportedException.Create('Cartridge has no camera');
+
   FCameraSource.SubmitFrame(Frame);
 end;
 
@@ -170,6 +209,45 @@ end;
 procedure TGBEmulationThread.LoadSnapshot(const Name: string);
 begin
   FSnapshots.Execute(Self, Name, True);
+end;
+
+procedure TGBEmulationThread.PublishRumble(Level: Byte; Clocks: UInt64);
+begin
+  FLock.Acquire;
+  try
+    FRumbleLevel := Level;
+    if Clocks = 0 then
+    begin
+      FRumbleSamples := 0;
+      FRumbleWeightedLevel := 0;
+    end
+    else
+    begin
+      Inc(FRumbleSamples, Clocks);
+      Inc(FRumbleWeightedLevel, UInt64(Level) * Clocks);
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TGBEmulationThread.GetRumbleLevel: Byte;
+begin
+  FLock.Acquire;
+  try
+    if Terminated or FPauseRequested then
+      Result := 0
+    else if FRumbleSamples > 0 then
+      Result := (FRumbleWeightedLevel + FRumbleSamples div 2) div FRumbleSamples
+    else
+      Result := FRumbleLevel;
+    // Accumulate all batches between frontend polls, including short pulses
+    // that ended before the UI woke up. A static line keeps its last level.
+    FRumbleSamples := 0;
+    FRumbleWeightedLevel := 0;
+  finally
+    FLock.Release;
+  end;
 end;
 
 procedure TGBEmulationThread.RequestStop;
@@ -184,6 +262,8 @@ begin
   FLock.Acquire;
   try
     FPauseRequested := True;
+    FRumbleSamples := 0;
+    FRumbleWeightedLevel := 0;
   finally
     FLock.Release;
   end;
@@ -251,10 +331,22 @@ begin
     SetKeyState(Key, False);
 end;
 
-procedure TGBEmulationThread.ApplyInput;
+procedure TGBEmulationThread.SetAcceleration(X, Y: Double);
 begin
   FLock.Acquire;
   try
+    FAccelerationX := X;
+    FAccelerationY := Y;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TGBEmulationThread.ApplyInput(MBC: TGBMBC);
+begin
+  FLock.Acquire;
+  try
+    MBC.SetAcceleration(FAccelerationX, FAccelerationY);
     while FInputEvents.Count > 0 do
     begin
       var Input := FInputEvents.Dequeue;
@@ -330,6 +422,7 @@ var
     begin
       if (Length(Data) = Length(Last)) and ((Length(Data) = 0) or CompareMem(@Data[0], @Last[0], Length(Data))) then
         Exit;
+
       var Stream := TBytesStream.Create(Data);
       try
         SaveStreamAtomically(Stream, Path, FStorage);
@@ -391,10 +484,12 @@ begin
         BatteryArmed := True;
       end;
       Memory := CreateMemory(MBC, GPU);
+      Memory.ConfigureBootROM(FBootROMData);
       Sound := TGBSound.Create(Memory, FEnableAudio);
       Sound.Volume := FSoundVolume;
       CPU := TGBCPU.Create(Memory, GPU, Sound);
-      CPU.SkipBIOS;
+      if Length(FBootROMData) = 0 then
+        CPU.SkipBIOS;
       FrameHints := TEmulationPerformanceHints.Create(Round(FrameCycles * 1000000000.0 / CPUClockFrequency), CoreID);
       HintNextCycles := CPU.Cycles + FrameCycles;
       var PacingStart := TStopwatch.GetTimeStamp;
@@ -421,7 +516,7 @@ begin
               end;
             if Loading then
             begin
-              LoadCoreSnapshot(Path, CoreID, FROMData, Transfer, FStorage);
+              LoadCoreSnapshot(Path, CoreID, FSnapshotIdentityData, Transfer, FStorage);
               if Sound.Audio <> nil then
                 Sound.Audio.Clear;
               // Host key state is authoritative after restoring the emulated JOYP.
@@ -435,11 +530,12 @@ begin
               finally
                 FLock.Release;
               end;
+              PublishRumble(MBC.TakeRumbleLevel);
               PublishFrame(GPU.Screen);
             end
             else
             begin
-              SaveCoreSnapshot(Path, CoreID, FROMData, Transfer, FStorage);
+              SaveCoreSnapshot(Path, CoreID, FSnapshotIdentityData, Transfer, FStorage);
               var Preview := GPU.Screen;
               if CoreID = ROM_CORE_ID_GB then
               begin
@@ -462,7 +558,7 @@ begin
             StartCycles := CPU.Cycles;
             PacingStart := TStopwatch.GetTimeStamp;
           end);
-        ApplyInput;
+        ApplyInput(MBC);
         FLock.Acquire;
         try
           if FPauseRequested then
@@ -486,9 +582,12 @@ begin
         end;
         FrameHints.BeginWork;
         Sound.Volume := FSoundVolume;
+        var RumbleStartCycles := CPU.Cycles;
         var NextCycles := CPU.Cycles + BatchCycles;
         while (CPU.Cycles < NextCycles) and not Terminated do
           CPU.Step;
+        if MBC.HasRumble then
+          PublishRumble(MBC.TakeRumbleLevel, CPU.Cycles - RumbleStartCycles);
         if BatteryWatch.ElapsedMilliseconds >= 2000 then
         begin
           SaveBattery(MBC);
@@ -515,6 +614,7 @@ begin
         end;
       end;
     finally
+      PublishRumble(0);
       try
         SaveBattery(MBC);
       finally

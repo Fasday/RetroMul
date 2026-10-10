@@ -33,7 +33,8 @@ end;
 function TGBCEmulationThread.CreateVideo(ROM: TGBROM): TGBVideo;
 begin
   var Video := TGBCGPU.Create(PublishFrame);
-  Video.SetCGBMode(ROM.Cartridge.SupportsCGB);
+  Video.SetCGBMode((Length(FBootROMData) > 0) or ROM.Cartridge.SupportsCGB);
+  Video.BootCompatibilityPalettes := Length(FBootROMData) > 0;
   Result := Video;
 end;
 

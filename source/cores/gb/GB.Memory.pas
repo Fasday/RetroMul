@@ -26,9 +26,30 @@ const
     $F5, $06, $19, $78, $86, $23, $05, $20, $FB, $86, $20, $FE, $3E, $01, $E0, $50);
 
 type
+  TGBBootModel = (Skip, DMG0, DMG, MGB, SGB, SGB2, CGB0, CGB, AGB0, AGB);
+
+const
+  GB_BOOT_MODEL_KEYS: array[TGBBootModel] of string =
+    ('none', 'dmg0', 'dmg', 'mgb', 'sgb', 'sgb2', 'cgb0', 'cgb', 'agb0', 'agb');
+  GB_BOOT_MODEL_LABELS: array[TGBBootModel] of string =
+    ('Skip boot ROM', 'Game Boy (DMG0)', 'Game Boy (DMG)', 'Game Boy Pocket / Light (MGB)',
+    'Super Game Boy (SGB)', 'Super Game Boy 2 (SGB2)', 'Game Boy Color (CGB0)',
+    'Game Boy Color (CGB)', 'Game Boy Advance (AGB0)', 'Game Boy Advance (AGB)');
+
+function GBBootModel(const Name: string): TGBBootModel;
+
+function GBBootUsesColor(Model: TGBBootModel): Boolean;
+// Empty DMG/MGB input selects the existing built-in DMG ROM (MGB differs by one byte).
+// Color dumps may be packed (2048 bytes) or include the header hole (2304 bytes).
+
+function PrepareGBBootROM(Model: TGBBootModel; const Data: TBytes): TBytes;
+
+type
   TGBMemory = class
   protected
     FGPU: TGBVideo;
+    FBootROMData: TBytes;
+    procedure DisableBootROM; virtual;
     function ProcessUnusedBits(Address, Value: Integer): Integer;
     function ReadWorkRAM(Offset: Integer): Byte; virtual;
     procedure WriteWorkRAM(Offset: Integer; Value: Byte); virtual;
@@ -87,11 +108,76 @@ type
     property InterruptManager: TGBInterruptManager read FInterruptManager;
     property Joypad: TGBJoypad read FJoypad;
     procedure InitializeMemory; virtual;
+    procedure ConfigureBootROM(const Data: TBytes);
     constructor Create(AMbc: TGBMBC; AGPU: TGBVideo; ATimer: TGBTimer = nil; AInterruptManager: TGBInterruptManager = nil; AJoypad: TGBJoypad = nil); overload;
     procedure SerializeState(State: TStateArchive); virtual;
   end;
 
 implementation
+
+function GBBootModel(const Name: string): TGBBootModel;
+begin
+  for var Model := Low(TGBBootModel) to High(TGBBootModel) do
+    if SameText(Name, GB_BOOT_MODEL_KEYS[Model]) then
+      Exit(Model);
+
+  raise EArgumentException.Create('Unknown Game Boy boot ROM model: ' + Name);
+end;
+
+function GBBootUsesColor(Model: TGBBootModel): Boolean;
+begin
+  Result := Model in [TGBBootModel.CGB0, TGBBootModel.CGB, TGBBootModel.AGB0, TGBBootModel.AGB];
+end;
+
+function PrepareGBBootROM(Model: TGBBootModel; const Data: TBytes): TBytes;
+begin
+  if Model = TGBBootModel.Skip then
+    Exit(nil);
+
+  if (Length(Data) = 0) and (Model in [TGBBootModel.DMG, TGBBootModel.MGB]) then
+  begin
+    SetLength(Result, 256);
+    for var I := 0 to 255 do
+      Result[I] := BootROM[I];
+    if Model = TGBBootModel.MGB then
+      Result[$FD] := $FF;
+    Exit;
+  end;
+
+  if GBBootUsesColor(Model) then
+  begin
+    if Length(Data) = $800 then
+    begin
+      SetLength(Result, $900);
+      Move(Data[0], Result[0], $100);
+      Move(Data[$100], Result[$200], $700);
+      Exit;
+    end;
+
+    if Length(Data) <> $900 then
+      raise EReadError.Create('Color boot ROM must contain 2048 or 2304 bytes');
+  end
+  else if Length(Data) <> $100 then
+    raise EReadError.Create('Monochrome boot ROM must contain 256 bytes');
+
+  Result := Copy(Data);
+end;
+
+procedure TGBMemory.ConfigureBootROM(const Data: TBytes);
+begin
+  if (Length(Data) <> 0) and (Length(Data) <> $100) and (Length(Data) <> $900) then
+    raise EArgumentException.Create('Invalid boot ROM mapping size');
+
+  FBootROMData := Copy(Data);
+  UseBIOS := Length(Data) > 0;
+  if UseBIOS then
+    FGPU.SetLCDControl(0);
+end;
+
+procedure TGBMemory.DisableBootROM;
+begin
+  UseBIOS := False;
+end;
 
 function TGBMemory.ReadWorkRAM(Offset: Integer): Byte;
 begin
@@ -144,6 +230,7 @@ begin
   Result := False;
   if not FDMAActive or ((Address >= $FF80) and (Address <= $FFFE)) or (Address = $FF46) then
     Exit;
+
   if not IsCGBMode then
     Exit(True);
 
@@ -329,7 +416,8 @@ function TGBMemory.ReadByte(Address: Integer): Byte;
 begin
   if DMABlocksCPU(Address) then
     Exit($FF);
-  if (Address >= $FF4D) and (Address <= $FF7F) and ReadModelRegister(Address, Result) then
+
+  if (Address >= $FF4C) and (Address <= $FF7F) and ReadModelRegister(Address, Result) then
     Exit;
 
   Result := $00;
@@ -339,13 +427,15 @@ begin
     begin
       if Address < $100 then
       begin
-        Result := BootROM[Address];
+        if Length(FBootROMData) > 0 then
+          Result := FBootROMData[Address]
+        else
+          Result := BootROM[Address];
         Exit;
-      end
-      else if Address = $100 then
-      begin
-        UseBIOS := False;
       end;
+
+      if (Length(FBootROMData) = $900) and (Address >= $200) and (Address < $900) then
+        Exit(FBootROMData[Address]);
     end;
 
     Result := FMBC.MbcRead(Address);
@@ -424,7 +514,8 @@ procedure TGBMemory.WriteByte(Address: Integer; Value: Byte);
 begin
   if DMABlocksCPU(Address) then
     Exit;
-  if (Address >= $FF4D) and (Address <= $FF7F) and WriteModelRegister(Address, Value) then
+
+  if (Address >= $FF4C) and (Address <= $FF7F) and WriteModelRegister(Address, Value) then
     Exit;
 
   if (Address >= 0) and (Address <= $7FFF) then
@@ -456,6 +547,9 @@ begin
   else if (Address >= $FF00) and (Address <= $FF7F) then
   begin
     case Address of
+      $FF50:
+        if UseBIOS and (Value <> 0) then
+          DisableBootROM;
       $FF02:
         begin
           IOPort[$02] := Value and $83;

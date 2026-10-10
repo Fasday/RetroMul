@@ -95,10 +95,12 @@ procedure TGBTimer.IncrementCounter;
 begin
   if FOverflow or FReloadCycle then
     Exit;
+
   Inc(FCounter);
   FCounter := FCounter mod $100;
   if FCounter <> 0 then
     Exit;
+
   FOverflow := True;
   FTicksSinceOverflow := 0;
 end;
@@ -125,6 +127,7 @@ procedure TGBTimer.SetCounter(Value: Integer);
 begin
   if FReloadCycle then
     Exit;
+
   FCounter := Value and $FF;
   FOverflow := False;
   FTicksSinceOverflow := 0;
@@ -154,6 +157,7 @@ begin
       Dec(StepCount);
       Continue;
     end;
+
     var Mask := 1 shl FFrequencyBits[FControl and 3];
     var Enabled := (FControl and 4) <> 0;
     var CurrentBit := Enabled and ((FDivider and Mask) <> 0);
@@ -164,6 +168,7 @@ begin
       Dec(StepCount);
       Continue;
     end;
+
     var Skip := StepCount;
     if Enabled then
     begin

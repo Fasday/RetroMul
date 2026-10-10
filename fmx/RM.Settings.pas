@@ -76,6 +76,7 @@ type
     {$REGION 'Storage and draft settings'}
     FStorage: IStorage;
     FPicker: TSettingsLocationPicker;
+    FPickingBootROM: Boolean;
     FInput: TInputManager; // Draft assignments owned by this view.
     FHostInput: TInputManager; // Shared device snapshots; owned by the form.
     FDrafts: array[0..6] of TMemIniFile;
@@ -113,6 +114,8 @@ type
     {$ENDREGION}
     {$REGION 'Initialization and lifetime'}
     procedure InitializeRuntimeControls;
+    procedure InitializeGBControls;
+    procedure ClearBootROMClick(Sender: TObject);
     {$ENDREGION}
     {$REGION 'Page construction and draft settings'}
     procedure BuildPage(PreserveScroll: Boolean = False);
@@ -204,11 +207,12 @@ const
 implementation
 
 uses
-  System.Math, System.TypInfo, RM.Input, GB.Palettes, FMX.OpenDialog, RM.Gamepad,
-  NES.PowerPad, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano,
-  NES.Controller, NES.MiraclePianoDevice, FMX.BehaviorManager, FMX.Graphics,
-  FMX.SpinBox.Style, FMX.Presentation.Style, FMX.Presentation.Factory,
-  RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles, RM.Dialogs
+  System.Math, System.TypInfo, RM.Input, GB.Memory, GB.Palettes, FMX.OpenDialog,
+  RM.Gamepad, NES.PowerPad, NES.SuborKeyboard, NES.FamicomKeyboard,
+  NES.MiraclePiano, NES.Controller, NES.MiraclePianoDevice, FMX.BehaviorManager,
+  FMX.Graphics, FMX.SpinBox.Style, FMX.Presentation.Style,
+  FMX.Presentation.Factory, RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles,
+  RM.Dialogs
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 {$R *.fmx}
@@ -682,6 +686,102 @@ begin
   BuildPage;
 end;
 
+procedure TSettingsView.ClearBootROMClick(Sender: TObject);
+begin
+  TEdit(TEditButton(Sender).TagObject).Text := '';
+end;
+
+procedure TSettingsView.InitializeGBControls;
+
+  function BootRow(const Name, Caption, Detail: string): TPanel;
+  begin
+    Result := TPanel.Create(Self);
+    Result.Name := Name;
+    Result.Parent := FComponentStore;
+    Result.StyleLookup := 'retromul_row';
+    Result.Padding.Rect := TRectF.Create(16, 12, 16, 12);
+    Result.SetBounds(16, 0, 868, 72);
+    var Text := TLayout.Create(Self);
+    Text.Name := Name + 'Text';
+    Text.Parent := Result;
+    Text.SetBounds(16, 12, 550, 48);
+    var Title := SettingsLabel(Self);
+    Title.Name := Name + 'Title';
+    Title.Parent := Text;
+    Title.Align := TAlignLayout.Top;
+    Title.Height := 24;
+    Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
+    Title.TextSettings.Font.Size := 15;
+    Title.Text := Caption;
+    var Note := SettingsLabel(Self);
+    Note.Name := Name + 'Detail';
+    Note.Parent := Text;
+    Note.Align := TAlignLayout.Client;
+    Note.Opacity := 0.72;
+    Note.Text := Detail;
+  end;
+
+begin
+  var Group := TPanel.Create(Self);
+  Group.Name := 'GroupBootROM';
+  Group.Parent := FComponentStore;
+  Group.StyleLookup := 'retromul_card';
+  Group.SetBounds(0, 0, 900, 230);
+  var Title := SettingsLabel(Self);
+  Title.Name := 'GroupBootROMTitle';
+  Title.Parent := Group;
+  Title.SetBounds(16, 14, 868, 36);
+  Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
+  Title.TextSettings.Font.Size := 20;
+  Title.Text := 'Boot ROM';
+  var ModelRow := BootRow('RowBootModel', 'Boot ROM model',
+    'Select a console boot sequence, or start the game directly.');
+  var Models := TSettingsComboBox.Create(Self);
+  Models.Name := 'RowBootModelEditor';
+  Models.Parent := ModelRow;
+  for var Model := TGBBootModel.DMG0 to High(TGBBootModel) do
+  begin
+    var Name := 'RowBootFile' + GB_BOOT_MODEL_KEYS[Model];
+    var Detail := 'Choose your boot ROM file for this model.';
+    if Model in [TGBBootModel.DMG, TGBBootModel.MGB] then
+      Detail := 'Leave empty to use the built-in boot ROM.';
+    var FileRow := BootRow(Name, 'Boot ROM file', Detail);
+    var Editor := TEdit.Create(Self);
+    Editor.Name := Name + 'Editor';
+    Editor.Parent := FileRow;
+    var Browse := TEditButton.Create(Self);
+    Browse.Name := Name + 'Browse';
+    Browse.Parent := Editor;
+    Browse.Width := 32;
+    Browse.Text := '…';
+    var Clear := TEditButton.Create(Self);
+    Clear.Name := Name + 'Clear';
+    Clear.Parent := Editor;
+    Clear.Width := 32;
+    Clear.Text := '×';
+    Clear.Hint := Translate('Clear');
+    Clear.TagObject := Editor;
+    Clear.OnClick := ClearBootROMClick;
+  end;
+  Group := TPanel.Create(Self);
+  Group.Name := 'GroupRumble';
+  Group.Parent := FComponentStore;
+  Group.StyleLookup := 'retromul_card';
+  Group.SetBounds(0, 0, 900, 150);
+  Title := SettingsLabel(Self);
+  Title.Name := 'GroupRumbleTitle';
+  Title.Parent := Group;
+  Title.SetBounds(16, 14, 868, 36);
+  Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
+  Title.TextSettings.Font.Size := 20;
+  Title.Text := 'Rumble';
+  var RumbleRow := BootRow('RowRumble', 'Cartridge rumble',
+    'Vibrate the device when the game activates its rumble motor.');
+  var RumbleSwitch := TSwitch.Create(Self);
+  RumbleSwitch.Name := 'RowRumbleEditor';
+  RumbleSwitch.Parent := RumbleRow;
+end;
+
 procedure TSettingsView.InitializeRuntimeControls;
 type
   TRuntimeControlClass = class of TControl;
@@ -709,6 +809,7 @@ type
   end;
 
 begin
+  InitializeGBControls;
   ReplaceRuntime('SettingsSearch', TSearchEdit);
   (TSearchEdit(FindComponent('SettingsSearch'))).TextPrompt := Translate('Search this section');
   ReplaceCombo('SettingsPagePicker', ['General', 'Library', 'Video and audio', 'Controls', 'Peripherals']);
@@ -878,6 +979,24 @@ begin
           Combo('RowNESregion', 'Video', 'Region', [], ['Auto', 'NTSC', 'PAL'], 'Auto');
         if FPage = 5 then
           Check('RowCropoverscan', 'Video', 'CropOverscan', False);
+        if FPage in [1, 2] then
+        begin
+          Heading('GroupBootROM');
+          var BootLabels, BootKeys: TArray<string>;
+          SetLength(BootLabels, Ord(High(TGBBootModel)) + 1);
+          SetLength(BootKeys, Length(BootLabels));
+          for var Model := Low(TGBBootModel) to High(TGBBootModel) do
+          begin
+            BootLabels[Ord(Model)] := Translate(GB_BOOT_MODEL_LABELS[Model]);
+            BootKeys[Ord(Model)] := GB_BOOT_MODEL_KEYS[Model];
+          end;
+          var BootModel := Combo('RowBootModel', 'Boot', 'Model', BootLabels, BootKeys, 'none');
+          BootModel.OnChange := PortChange;
+          var SelectedBoot := GBBootModel(FDrafts[FPage].ReadString('Boot', 'Model', 'none'));
+          if SelectedBoot <> TGBBootModel.Skip then
+            PathEdit('RowBootFile' + GB_BOOT_MODEL_KEYS[SelectedBoot], 'Boot',
+              GB_BOOT_MODEL_KEYS[SelectedBoot] + 'File', '', False);
+        end;
         Heading('GroupAudio');
         Check('RowAudio', 'Audio', 'Enabled', True);
         var VolumeRow := Row('RowVolume');
@@ -921,6 +1040,11 @@ begin
       end
       else
       begin
+        if FPage in [1, 2] then
+        begin
+          Heading('GroupRumble');
+          Check('RowRumble', 'Peripherals', 'Rumble', True);
+        end;
         if FPage = 3 then
         begin
           Heading('GroupAdditionalplayers');
@@ -2029,6 +2153,7 @@ begin
 
   var Page := FPage;
   var Alive: TFunc<Boolean> := FAlive;
+  FPickingBootROM := Section = 'Boot';
   PickLocation(Button.Tag = 1, Edit.Text,
     procedure(const Selection: TStorageSelection)
     begin
@@ -2097,8 +2222,16 @@ begin
     Dialog.Title := Translate('Choose ROM folder');
     if not Folder then
     begin
-      Dialog.Title := Translate('Choose cassette');
-      Dialog.Filter := Translate('Cassettes (*.tape)|*.tape|All files|*.*');
+      if FPickingBootROM then
+      begin
+        Dialog.Title := Translate('Choose boot ROM');
+        Dialog.Filter := 'Boot ROM (*.bin;*.rom;*.gb)|*.bin;*.rom;*.gb|All files|*.*';
+      end
+      else
+      begin
+        Dialog.Title := Translate('Choose cassette');
+        Dialog.Filter := Translate('Cassettes (*.tape)|*.tape|All files|*.*');
+      end;
       Dialog.FileMustExist := True;
     end;
     var Completion: TFMXSelectionCallback :=

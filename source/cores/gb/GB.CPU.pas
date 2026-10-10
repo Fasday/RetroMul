@@ -2290,6 +2290,7 @@ end;
 
 procedure TGBCPU.SkipBIOS;
 begin
+  FMemory.UseBIOS := False;
   if FMemory.IsCGBMode then
   begin
     // CGB-only ROMs observe these registers to distinguish a real CGB boot

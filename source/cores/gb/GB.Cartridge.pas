@@ -10,8 +10,8 @@ uses
 type
   // Header-recognized families; recognition does not imply emulation support.
   TMapperType = (
-    Unknown, ROMOnly, MBC1, MBC2, MBC3, MBC5, MBC6,
-    MBC7, MMM01, PocketCamera, TAMA5, HuC1, HuC3);
+    Unknown, ROMOnly, MBC1, MBC2, MBC3, MBC5, MBC6, MBC7,
+    MMM01, PocketCamera, TAMA5, HuC1, HuC3, MBC1M, MBC30, M161, WisdomTree);
 
   TCartridgeRegion = (Japanese, World, Unknown);
 
@@ -74,8 +74,9 @@ type
     function GetGlobalChecksumValid: Boolean;
     function GetInternalRAMSizeBytes: Integer;
   public
-    constructor Create(const Data: TBytes);
+    constructor Create(const Data: TBytes; HeaderOffset: Integer = 0);
     class function DecodeCartridgeType(Code: Byte): TCartridgeType; static;
+    procedure ApplyGBX(const Footer: TGBXFooter);
     // CGB headers have overlapping 15-character and 11+4 layouts. No flag
     // identifies the layout: preserve both interpretations instead of guessing.
     property Title: string read FTitle;
@@ -125,6 +126,7 @@ begin
   begin
     if Data[i] = 0 then
       Break;
+
     Result := Result + Char(Data[i]);
   end;
 end;
@@ -278,6 +280,7 @@ begin
     Result.Name := 'Unknown ($' + IntToHex(Code, 2) + ')';
     Result.MapperType := TMapperType.Unknown;
   end;
+
   Result.HasRAM := Code in [
       $02, $03, $08, $09, $0C, $0D, $10, $12, $13,
       $1A, $1B, $1D, $1E, $20, $22, $FC, $FE, $FF];
@@ -289,38 +292,38 @@ begin
   Result.HasAccelerometer := Code = $22;
 end;
 
-constructor TGBCartridge.Create(const Data: TBytes);
+constructor TGBCartridge.Create(const Data: TBytes; HeaderOffset: Integer);
 begin
   inherited Create;
-  if Length(Data) < CartridgeHeaderSize then
+  if (HeaderOffset < 0) or (HeaderOffset > Length(Data) - CartridgeHeaderSize) then
     raise EGBInvalidROM.CreateFmt('ROM is too short: %d bytes; header requires %d.', [Length(Data), CartridgeHeaderSize]);
 
   FActualROMSize := Length(Data);
-  FCGBFlag := Data[AddressCGBFlag];
+  FCGBFlag := Data[HeaderOffset + AddressCGBFlag];
   FSupportsCGB := (FCGBFlag and GB_ROM_CGB_SUPPORTED_FLAG) <> 0;
   FCGBOnly := (FCGBFlag and GB_ROM_CGB_ONLY_FLAG) = GB_ROM_CGB_ONLY_FLAG;
   if FSupportsCGB then
   begin
-    FTitle := HeaderText(Data, AddressTitleStart, GB_ROM_CGB_TITLE_SIZE);
-    FShortTitle := HeaderText(Data, AddressTitleStart, GB_ROM_CGB_SHORT_TITLE_SIZE);
-    FManufacturerCode := HeaderText(Data, GB_ROM_MANUFACTURER_OFFSET, GB_ROM_MANUFACTURER_SIZE);
+    FTitle := HeaderText(Data, HeaderOffset + AddressTitleStart, GB_ROM_CGB_TITLE_SIZE);
+    FShortTitle := HeaderText(Data, HeaderOffset + AddressTitleStart, GB_ROM_CGB_SHORT_TITLE_SIZE);
+    FManufacturerCode := HeaderText(Data, HeaderOffset + GB_ROM_MANUFACTURER_OFFSET, GB_ROM_MANUFACTURER_SIZE);
   end
   else
   begin
-    FTitle := HeaderText(Data, AddressTitleStart, GB_ROM_TITLE_SIZE);
+    FTitle := HeaderText(Data, HeaderOffset + AddressTitleStart, GB_ROM_TITLE_SIZE);
     FShortTitle := FTitle;
   end;
-  FOldLicenseeCode := Data[AddressOldLicensee];
-  FNewLicenseeCode := HeaderText(Data, AddressNewLicensee, GB_ROM_NEW_LICENSEE_SIZE);
+  FOldLicenseeCode := Data[HeaderOffset + AddressOldLicensee];
+  FNewLicenseeCode := HeaderText(Data, HeaderOffset + AddressNewLicensee, GB_ROM_NEW_LICENSEE_SIZE);
   FUsesNewLicenseeCode := FOldLicenseeCode = GB_ROM_NEW_LICENSEE_FLAG;
   if FUsesNewLicenseeCode then
     FLicenseeCode := FNewLicenseeCode
   else
     FLicenseeCode := IntToHex(FOldLicenseeCode, 2);
-  FSGBFlag := Data[AddressSGBFlag];
+  FSGBFlag := Data[HeaderOffset + AddressSGBFlag];
   FSupportsSGB := (FSGBFlag = GB_ROM_SGB_SUPPORTED_FLAG) and FUsesNewLicenseeCode;
-  FVersion := Data[AddressVersion];
-  FDestinationCode := Data[AddressLocale];
+  FVersion := Data[HeaderOffset + AddressVersion];
+  FDestinationCode := Data[HeaderOffset + AddressLocale];
   case FDestinationCode of
     0:
       FDestination := TCartridgeRegion.Japanese;
@@ -330,10 +333,10 @@ begin
     FDestination := TCartridgeRegion.Unknown;
     Include(FIssues, TCartridgeIssue.UnknownDestination);
   end;
-  FCartridgeType := DecodeCartridgeType(Data[AddressCartType]);
+  FCartridgeType := DecodeCartridgeType(Data[HeaderOffset + AddressCartType]);
   if FCartridgeType.MapperType = TMapperType.Unknown then
     Include(FIssues, TCartridgeIssue.UnknownCartridgeType);
-  FROMSizeCode := Data[AddressROMSize];
+  FROMSizeCode := Data[HeaderOffset + AddressROMSize];
   case FROMSizeCode of
     $00..$08:
       FROMBanks := 2 shl FROMSizeCode;
@@ -354,7 +357,7 @@ begin
     if FROMSizeBytes <> FActualROMSize then
       Include(FIssues, TCartridgeIssue.ROMSizeMismatch);
   end;
-  FRAMSizeCode := Data[AddressRAMSize];
+  FRAMSizeCode := Data[HeaderOffset + AddressRAMSize];
   case FRAMSizeCode of
     0:
       FRAMSizeBytes := 0;
@@ -376,24 +379,125 @@ begin
     FRAMBanks := (FRAMSizeBytes + $1FFF) div $2000
   else
     FRAMBanks := -1;
-  FLogoValid := CompareMem(@Data[AddressLogoStart], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO));
+  case FCartridgeType.MapperType of
+    TMapperType.MBC1:
+      if (Length(Data) >= $44000) and
+        CompareMem(@Data[$104], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO)) and
+        CompareMem(@Data[$40104], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO)) then
+      begin
+        FCartridgeType.MapperType := TMapperType.MBC1M;
+        FCartridgeType.Name := 'MBC1M multicart';
+      end;
+    TMapperType.MBC3:
+      if (FCartridgeType.ID = $10) and (FTitle = 'TETRIS SET') then
+      begin
+        FCartridgeType.MapperType := TMapperType.M161;
+        FCartridgeType.Name := 'M161 multicart';
+        FCartridgeType.HasRAM := False;
+        FCartridgeType.HasBattery := False;
+        FCartridgeType.HasTimer := False;
+      end
+      else if (FRAMSizeBytes > $8000) or (Length(Data) > $200000) then
+      begin
+        FCartridgeType.MapperType := TMapperType.MBC30;
+        FCartridgeType.Name := 'MBC30';
+      end;
+    TMapperType.ROMOnly:
+      if (Length(Data) > $8000) and (Data[$14D] = $E7) then
+      begin
+        var EmptyHeader := True;
+        for var i := $134 to $14B do
+          EmptyHeader := EmptyHeader and (Data[i] = 0);
+        for var i := $F0 to $FF do
+          EmptyHeader := EmptyHeader and (Data[i] = 0);
+        if EmptyHeader then
+          for var i := $300 to Length(Data) - 11 do
+            if (Data[i] = Ord('W')) and
+              (HeaderText(Data, i, 6) = 'WISDOM') and
+              (HeaderText(Data, i + 7, 4) = 'TREE') then
+            begin
+              FCartridgeType.MapperType := TMapperType.WisdomTree;
+              FCartridgeType.Name := 'Wisdom Tree';
+              Break;
+            end;
+      end;
+  end;
+  FLogoValid := CompareMem(@Data[HeaderOffset + AddressLogoStart], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO));
   if not FLogoValid then
     Include(FIssues, TCartridgeIssue.InvalidLogo);
   var Checksum: Integer := 0;
   for var i := AddressHeaderChecksumCalculatedStart to AddressHeaderChecksumCalculatedEnd do
-    Checksum := (Checksum - Data[i] - 1) and $FF;
+    Checksum := (Checksum - Data[HeaderOffset + i] - 1) and $FF;
   FCalculatedHeaderChecksum := Checksum;
-  FHeaderChecksum := Data[AddressHeaderChecksumExpected];
+  FHeaderChecksum := Data[HeaderOffset + AddressHeaderChecksumExpected];
   if not HeaderChecksumValid then
     Include(FIssues, TCartridgeIssue.HeaderChecksum);
   Checksum := 0;
   for var i: NativeInt := 0 to High(Data) do
-    if (i <> AddressGlobalChecksum) and (i <> AddressGlobalChecksum + 1) then
+    if (i <> HeaderOffset + AddressGlobalChecksum) and (i <> HeaderOffset + AddressGlobalChecksum + 1) then
       Checksum := (Checksum + Data[i]) and $FFFF;
   FCalculatedGlobalChecksum := Checksum;
-  FGlobalChecksum := (Word(Data[AddressGlobalChecksum]) shl 8) or Data[AddressGlobalChecksum + 1];
+  FGlobalChecksum := (Word(Data[HeaderOffset + AddressGlobalChecksum]) shl 8) or Data[HeaderOffset + AddressGlobalChecksum + 1];
   if not GlobalChecksumValid then
     Include(FIssues, TCartridgeIssue.GlobalChecksum);
+end;
+
+procedure TGBCartridge.ApplyGBX(const Footer: TGBXFooter);
+begin
+  if not Footer.Present then
+    Exit;
+
+  var Kind := TMapperType.Unknown;
+  if Footer.Mapper = 'ROM' then
+    Kind := TMapperType.ROMOnly
+  else if Footer.Mapper = 'MBC1' then
+    Kind := TMapperType.MBC1
+  else if Footer.Mapper = 'MB1M' then
+    Kind := TMapperType.MBC1M
+  else if Footer.Mapper = 'MBC2' then
+    Kind := TMapperType.MBC2
+  else if Footer.Mapper = 'MBC3' then
+  begin
+    Kind := TMapperType.MBC3;
+    if (Footer.RAMSize > $8000) or (Footer.ROMSize > $200000) then
+      Kind := TMapperType.MBC30;
+  end
+  else if Footer.Mapper = 'MBC5' then
+    Kind := TMapperType.MBC5
+  else if Footer.Mapper = 'MBC6' then
+    Kind := TMapperType.MBC6
+  else if Footer.Mapper = 'MBC7' then
+    Kind := TMapperType.MBC7
+  else if Footer.Mapper = 'MMM1' then
+    Kind := TMapperType.MMM01
+  else if Footer.Mapper = 'M161' then
+    Kind := TMapperType.M161
+  else if Footer.Mapper = 'HUC1' then
+    Kind := TMapperType.HuC1
+  else if Footer.Mapper = 'HUC3' then
+    Kind := TMapperType.HuC3
+  else if Footer.Mapper = 'CAMR' then
+    Kind := TMapperType.PocketCamera
+  else if Footer.Mapper = 'WISD' then
+    Kind := TMapperType.WisdomTree;
+  if Kind = TMapperType.Unknown then
+    raise ENotSupportedException.Create('Unsupported GBX mapper: ' + Footer.Mapper);
+
+  FCartridgeType := Default(TCartridgeType);
+  FCartridgeType.ID := -1;
+  FCartridgeType.Name := 'GBX ' + Footer.Mapper;
+  FCartridgeType.MapperType := Kind;
+  FCartridgeType.HasRAM := Footer.RAMSize > 0;
+  FCartridgeType.HasBattery := Footer.Battery;
+  FCartridgeType.HasRumble := Footer.Rumble;
+  FCartridgeType.HasTimer := Footer.Timer and (Kind in [TMapperType.MBC3, TMapperType.MBC30, TMapperType.HuC3]);
+  FCartridgeType.HasAccelerometer := Kind = TMapperType.MBC7;
+  FROMSizeBytes := Footer.ROMSize;
+  FROMBanks := FROMSizeBytes div GB_ROM_BANK_SIZE;
+  FRAMSizeBytes := Footer.RAMSize;
+  FRAMBanks := (FRAMSizeBytes + $1FFF) div $2000;
+  FIssues := FIssues - [TCartridgeIssue.UnknownCartridgeType, TCartridgeIssue.UnknownROMSize,
+      TCartridgeIssue.UnknownRAMSize, TCartridgeIssue.ROMSizeMismatch];
 end;
 
 function TGBCartridge.GetHeaderChecksumValid: Boolean;

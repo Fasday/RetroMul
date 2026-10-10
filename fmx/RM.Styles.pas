@@ -11,6 +11,7 @@ type
     StyleBookWinUI3: TStyleBook;
     Lang: TLang;
   public
+    constructor Create(AOwner: TComponent); override;
     procedure SetLanguage(const Language: string);
     procedure RelocalizeUI(Root: TFmxObject; const PreviousLanguage: string);
   end;
@@ -24,6 +25,42 @@ uses
   System.TypInfo, FMX.Edit, FMX.ListBox;
 
 {$R *.fmx}
+
+constructor TFormStyles.Create(AOwner: TComponent);
+
+  procedure Caption(const English, Russian, Portuguese: string);
+  begin
+    if Lang.Original.IndexOf(English) < 0 then
+      Lang.Original.Add(English);
+    Lang.LangStr['ru'].Values[English] := Russian;
+    Lang.LangStr['pt'].Values[English] := Portuguese;
+  end;
+
+begin
+  inherited;
+  Lang.AddLang('ru');
+  Lang.AddLang('pt');
+  Caption('Rumble', 'Вибрация', 'Vibração');
+  Caption('Cartridge rumble', 'Вибрация картриджа', 'Vibração do cartucho');
+  Caption('Vibrate the device when the game activates its rumble motor.',
+    'Вибрация устройства по сигналу игры.',
+    'Vibrar o dispositivo quando o jogo ativar o motor do cartucho.');
+  Caption('Boot ROM', 'Загрузочный ROM', 'ROM de inicialização');
+  Caption('Boot ROM model', 'Модель загрузочного ROM', 'Modelo da ROM de inicialização');
+  Caption('Boot ROM file', 'Файл загрузочного ROM', 'Arquivo da ROM de inicialização');
+  Caption('Skip boot ROM', 'Запуск без загрузочного ROM', 'Iniciar sem ROM de inicialização');
+  Caption('Select a console boot sequence, or start the game directly.',
+    'Выберите загрузчик модели консоли или прямой запуск игры.',
+    'Escolha a inicialização do console ou inicie o jogo diretamente.');
+  Caption('Choose your boot ROM file for this model.',
+    'Выберите файл загрузочного ROM для этой модели.',
+    'Escolha o arquivo da ROM de inicialização deste modelo.');
+  Caption('Leave empty to use the built-in boot ROM.',
+    'Оставьте поле пустым для встроенного загрузочного ROM.',
+    'Deixe vazio para usar a ROM de inicialização integrada.');
+  Caption('Choose boot ROM', 'Выбрать загрузочный ROM', 'Escolher ROM de inicialização');
+  Lang.Lang := Lang.Lang;
+end;
 
 procedure TFormStyles.SetLanguage(const Language: string);
 begin

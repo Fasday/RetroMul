@@ -85,6 +85,26 @@ type
     function TakeAudioError: string;
   end;
 
+  // Values are screen-space acceleration in g, including gravity. A missing
+  // host sensor supplies zero; sensor input is independent of joypad input.
+  IEmulationMotionInput = interface
+    ['{1B7C1D32-86B7-4DCC-BD4B-20B1D41120A7}']
+    function GetHasAccelerometer: Boolean;
+    procedure SetAcceleration(X, Y: Double);
+    property HasAccelerometer: Boolean read GetHasAccelerometer;
+  end;
+
+  // Motor duty since the previous read, 0..255; zero while paused/stopped.
+  // Reading consumes the accumulated sample. Host effects belong
+  // to the frontend; cores never call platform APIs from their worker thread.
+  IEmulationRumbleOutput = interface
+    ['{01F1B1AF-03D5-4DDE-AFBA-07744CA57D65}']
+    function GetHasRumble: Boolean;
+    function GetRumbleLevel: Byte;
+    property HasRumble: Boolean read GetHasRumble;
+    property RumbleLevel: Byte read GetRumbleLevel;
+  end;
+
   IEmulationSnapshotLocation = interface
     ['{E6C77DB0-6B7D-43F9-9C16-C9985DA992E9}']
     function GetSnapshotDirectory: string;

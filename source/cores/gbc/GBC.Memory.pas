@@ -18,6 +18,7 @@ type
     procedure ExecuteGeneralHDMA(Control: Byte);
     procedure ExecuteHDMABlock;
   protected
+    procedure DisableBootROM; override;
     function ReadWorkRAM(Offset: Integer): Byte; override;
     procedure WriteWorkRAM(Offset: Integer; Value: Byte); override;
     function ReadModelRegister(Address: Integer; out Value: Byte): Boolean; override;
@@ -105,6 +106,9 @@ function TGBCMemory.WriteModelRegister(Address: Integer; Value: Byte): Boolean;
 begin
   Result := True;
   case Address of
+    $FF4C:
+      if UseBIOS then
+        IOPort[$4C] := Value;
     $FF4D:
       FPrepareSpeedSwitch := IsCGBMode and ((Value and 1) <> 0);
     $FF4F:
@@ -157,6 +161,7 @@ procedure TGBCMemory.ExecuteHDMABlock;
 begin
   if FHDMARemainingBlocks <= 0 then
     Exit;
+
   for var i := 0 to $0F do
     FColorGPU.WriteVRAM((FHDMADestination + i) and $1FFF, ReadDMASource((FHDMASource + i) and $FFFF));
 
@@ -184,7 +189,17 @@ end;
 
 function TGBCMemory.IsCGBMode: Boolean;
 begin
-  Result := Assigned(FMBC) and FMBC.IsCGBCartridge;
+  if Length(FBootROMData) = $900 then
+    Result := UseBIOS or ((IOPort[$4C] and 4) = 0)
+  else
+    Result := Assigned(FMBC) and FMBC.IsCGBCartridge;
+end;
+
+procedure TGBCMemory.DisableBootROM;
+begin
+  if Length(FBootROMData) = $900 then
+    FColorGPU.SetCGBMode((IOPort[$4C] and 4) = 0);
+  inherited;
 end;
 
 function TGBCMemory.PerformSpeedSwitch: Boolean;

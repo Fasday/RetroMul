@@ -26,6 +26,7 @@ const
   ROM_EXTENSION_NES = '.nes';
   ROM_EXTENSION_GB = '.gb';
   ROM_EXTENSION_GBC = '.gbc';
+  ROM_EXTENSION_GBX = '.gbx';
   ROM_EXTENSION_MD = '.md';
   ROM_EXTENSION_SMD = '.smd';
   ROM_EXTENSION_BIN = '.bin';
@@ -160,6 +161,18 @@ function RomSystemId(System: TRomSystem): string;
 
 function RomSystemFolder(System: TRomSystem): string;
 
+type
+  TGBXFooter = record
+    Present: Boolean;
+    Mapper: string;
+    ROMSize, RAMSize, FooterSize, MinorVersion: Cardinal;
+    Battery, Rumble, Timer: Boolean;
+    Variables: array[0..7] of Cardinal;
+  end;
+
+// A signed but malformed/unsupported footer is an error, never a raw-ROM fallback.
+function ReadGBXFooter(const Data: TBytes): TGBXFooter;
+
 function RomExtensions(System: TRomSystem): TArray<string>;
 
 function DetectRom(const Data: TBytes): TRomFormatInfo; overload;
@@ -205,9 +218,9 @@ begin
     TRomSystem.NES:
       Result := [ROM_EXTENSION_NES];
     TRomSystem.GB:
-      Result := [ROM_EXTENSION_GB];
+      Result := [ROM_EXTENSION_GB, ROM_EXTENSION_GBX];
     TRomSystem.GBC:
-      Result := [ROM_EXTENSION_GBC];
+      Result := [ROM_EXTENSION_GBC, ROM_EXTENSION_GBX];
     TRomSystem.MD:
       Result := [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD];
     TRomSystem.SNES:
@@ -239,6 +252,58 @@ begin
   end;
 end;
 
+function ReadGBXFooter(const Data: TBytes): TGBXFooter;
+
+  function BigEndian(Offset: Integer): Cardinal;
+  begin
+    Result := (Cardinal(Data[Offset]) shl 24) or (Cardinal(Data[Offset + 1]) shl 16) or
+      (Cardinal(Data[Offset + 2]) shl 8) or Data[Offset + 3];
+  end;
+
+begin
+  Result := Default(TGBXFooter);
+  var Size := Length(Data);
+  if (Size < 4) or not CompareMem(@Data[Size - 4], PAnsiChar(AnsiString('GBX!')), 4) then
+    Exit;
+
+  if Size < 64 then
+    raise EReadError.Create('Truncated GBX footer');
+
+  if BigEndian(Size - 12) <> 1 then
+    raise EReadError.Create('Unsupported GBX major version');
+
+  Result.FooterSize := BigEndian(Size - 16);
+  if (Result.FooterSize < 64) or (Result.FooterSize > Cardinal(Size)) then
+    raise EReadError.Create('Invalid GBX footer size');
+
+  var Offset := Size - Integer(Result.FooterSize);
+  Result.ROMSize := BigEndian(Offset + 8);
+  Result.RAMSize := BigEndian(Offset + 12);
+  if (Result.ROMSize < GB_ROM_BANK_SIZE) or (Result.ROMSize > GB_ROM_MAX_SIZE) or
+    (Result.ROMSize mod GB_ROM_BANK_SIZE <> 0) or (Result.ROMSize <> Cardinal(Offset)) then
+    raise EReadError.Create('Invalid GBX ROM size');
+
+  if Result.RAMSize > $20000 then
+    raise EReadError.Create('Unsupported GBX RAM size');
+
+  if (Data[Offset + 4] > 1) or (Data[Offset + 5] > 1) or (Data[Offset + 6] > 1) then
+    raise EReadError.Create('Invalid GBX cartridge flags');
+
+  for var i := 0 to 3 do
+    if Data[Offset + i] <> 0 then
+      Result.Mapper := Result.Mapper + Char(Data[Offset + i]);
+  if (Result.Mapper = 'MMM1') and (Result.ROMSize < GB_ROM_MIN_SIZE) then
+    raise EReadError.Create('MMM01 needs at least two ROM banks');
+
+  Result.Battery := Data[Offset + 4] = 1;
+  Result.Rumble := Data[Offset + 5] = 1;
+  Result.Timer := Data[Offset + 6] = 1;
+  Result.MinorVersion := BigEndian(Size - 8);
+  for var i := 0 to 7 do
+    Result.Variables[i] := BigEndian(Offset + 16 + i * 4);
+  Result.Present := True;
+end;
+
 function DetectRom(const Data: TBytes): TRomFormatInfo;
 
   function Signature(Offset: Integer; const Text: AnsiString): Boolean;
@@ -249,6 +314,18 @@ function DetectRom(const Data: TBytes): TRomFormatInfo;
 
 begin
   Result := Default(TRomFormatInfo);
+  var GBX := ReadGBXFooter(Data);
+  if GBX.Present then
+  begin
+    Result.System := TRomSystem.GB;
+    var Header := 0;
+    if GBX.Mapper = 'MMM1' then
+      Header := Integer(GBX.ROMSize) - $8000;
+    if Data[Header + GB_ROM_CGB_FLAG_OFFSET] in [GB_ROM_CGB_SUPPORTED_FLAG, GB_ROM_CGB_ONLY_FLAG] then
+      Result.System := TRomSystem.GBC;
+    Exit;
+  end;
+
   if Signature(0, NEOGEO_ROM_SIGNATURE) or Signature(0, NEOGEO_ZIP_ROM_SIGNATURE) then
     Result.System := TRomSystem.NeoGeo
   else if Signature(0, NES_ROM_SIGNATURE) then
@@ -260,6 +337,10 @@ begin
     else
       Result.System := TRomSystem.GB;
   end
+  else if (Length(Data) >= GB_ROM_MIN_SIZE) and
+    (Data[Length(Data) - $8000 + GB_ROM_CARTRIDGE_TYPE_OFFSET] in [$0B..$0D]) and
+    CompareMem(@Data[Length(Data) - $8000 + GB_ROM_LOGO_OFFSET], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO)) then
+    Result.System := TRomSystem.GB
   else if Signature(MD_ROM_HEADER_OFFSET, MD_ROM_SIGNATURE) or Signature(MD_ROM_ALTERNATE_HEADER_OFFSET, MD_ROM_SIGNATURE) then
     Result.System := TRomSystem.MD
   else if Signature(MD_ROM_HEADER_OFFSET, MD_SWAPPED_ROM_SIGNATURE) or Signature(MD_ROM_ALTERNATE_HEADER_OFFSET, MD_SWAPPED_ROM_SIGNATURE) then
@@ -296,6 +377,16 @@ begin
   var Position := Stream.Position;
   try
     var Data: TBytes;
+    if Stream.Size - Position >= 4 then
+    begin
+      var SignatureBytes: array[0..3] of AnsiChar;
+      Stream.Position := Stream.Size - 4;
+      Stream.ReadBuffer(SignatureBytes, SizeOf(SignatureBytes));
+      Stream.Position := Position;
+      if CompareMem(@SignatureBytes[0], PAnsiChar(AnsiString('GBX!')), 4) then
+        Exit(DetectRom(ReadRomData(Stream)));
+    end;
+
     SetLength(Data, ROM_SIGNATURE_PROBE_SIZE);
     var Count := 0;
     while Count < Length(Data) do
@@ -303,6 +394,7 @@ begin
       var Read := Stream.Read(Data[Count], Length(Data) - Count);
       if Read = 0 then
         Break;
+
       Inc(Count, Read);
     end;
     SetLength(Data, Count);
@@ -346,6 +438,7 @@ begin
       var Count := Stream.Read(Buffer, SizeOf(Buffer));
       if Count = 0 then
         Break;
+
       if Memory.Size + Count > ROM_MAX_SIZE then
         raise EReadError.Create('ROM exceeds 64 MiB');
 

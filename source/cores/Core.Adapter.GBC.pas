@@ -51,11 +51,17 @@ end;
 
 function TGBCCoreAdapter.CreateWorker: TGBEmulationThread;
 begin
-  Result := TGBCEmulationThread.Create(FROMData, FConfig.AudioEnabled, FCameraSource);
+  Result := inherited CreateWorker;
 end;
 
 procedure TGBCCoreAdapter.CopyFrame(const Screen: TScreenArray; var Frame: TEmulatorFrame);
 begin
+  if not FColorHardware then
+  begin
+    inherited;
+    Exit;
+  end;
+
   // Preserve signed ARGB bit patterns, including when range checking is enabled.
   Move(Screen[0], Frame.Pixels[0], SizeOf(Screen));
   if (FConfig as TGBCEmulatorConfig).ColorCorrection then
@@ -79,13 +85,13 @@ end;
 
 procedure TGBCEmulatorConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
-  LoadControls(Ini);
+  inherited;
   ColorCorrection := Ini.ReadBool('Video', 'ColorCorrection', False);
 end;
 
 procedure TGBCEmulatorConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
-  SaveControls(Ini);
+  inherited;
   Ini.WriteBool('Video', 'ColorCorrection', ColorCorrection);
 end;
 

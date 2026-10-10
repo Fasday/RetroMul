@@ -36,6 +36,9 @@ procedure FilterInputBindings(Input: TInputManager; Ini: TCustomIniFile);
 
 function BindingCaption(Input: TInputManager; Action: Integer): string;
 
+// First available rumble controller bound to this player's pad buttons.
+function RumbleDeviceId(Input: TInputManager; Port: Integer): string;
+
 function ReadHostKeys(Input: TInputManager): THostKeys;
 
 function ReadPadInput(Input: TInputManager; const Ports: TCoreInputPorts): TEmulatorInput;
@@ -108,6 +111,21 @@ begin
     if (Code <> 0) and (HidToHostKey(i) = Code) then
       Exit(i);
   Result := 0;
+end;
+
+function RumbleDeviceId(Input: TInputManager; Port: Integer): string;
+begin
+  Result := '';
+  if Input = nil then
+    Exit;
+  var Devices := Input.Devices;
+  for var Binding in Input.Bindings do
+    for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
+      if Binding.Action = PadAction(Port, Button) then
+        for var Device in Devices do
+          if (Device.Id = Binding.DeviceId) and (Device.Kind = TInputDeviceKind.Controller) and Device.Available and
+            Device.RumbleSupported then
+            Exit(Device.Id);
 end;
 
 function PadAction(Port: Integer; Button: TEmulatorButton): Integer;
@@ -197,6 +215,7 @@ procedure EnsurePeripheralBindings(Input: TInputManager; Ini: TCustomIniFile);
 begin
   if Ini.ReadInteger('FMXInput', 'PeripheralVersion', 0) >= 1 then
     Exit;
+
   var Subor := TSuborKeyboard.Create;
   var Famicom := TFamicomKeyboard.Create;
   try
@@ -294,6 +313,7 @@ begin
       EnsurePeripheralBindings(Input, Ini);
     Exit;
   end;
+
   FillChar(Keys, SizeOf(Keys), 0);
   // Import the existing core keyboard maps once; all later assignments use FMXInput.
   if SystemId = ROM_SYSTEM_NES then
@@ -377,13 +397,16 @@ begin
   Result := Translate('Unassigned');
   if Input = nil then
     Exit;
+
   for var B in Input.Bindings do
     if B.Action = Action then
     begin
       if B.Kind = TInputElementKind.Key then
         Exit(InputKeyName(B.Code));
+
       if B.DeviceId = SystemMouseId then
         Exit(Translate(MouseElementName(B.Kind, B.Code)));
+
       Result := Format('%s %d', [Translate('Button'), B.Code + 1]);
       if B.Kind = TInputElementKind.Axis then
         Result := Format(Translate('Axis %d (%d)'), [B.Code, B.Direction]);
@@ -424,6 +447,7 @@ begin
       (((B.Action >= SuborAction) and (B.Action < ExtraPadAction)) or
       ((Ini.ReadString('Ports', 'Port1', 'auto') = 'piano') and (B.Action < 32))) then
       Continue;
+
     var Port := B.Action div 32;
     if (B.Action >= PowerPadAction) and (B.Action < SuborAction) then
       Port := 1;
@@ -448,6 +472,7 @@ begin
   Result := [];
   if Input = nil then
     Exit;
+
   for var K := Low(TSuborKey) to High(TSuborKey) do
     if (K <> SkNone) and Input.IsPressed(SuborAction + Ord(K)) then
       Include(Result, K);
@@ -458,6 +483,7 @@ begin
   Result := [];
   if Input = nil then
     Exit;
+
   for var K := Low(TFamicomKey) to High(TFamicomKey) do
     if (K <> FkNone) and Input.IsPressed(FamicomAction + Ord(K)) then
       Include(Result, K);
@@ -468,6 +494,7 @@ begin
   Result := [];
   if Input = nil then
     Exit;
+
   for var K := Low(TMiracleKey) to High(TMiracleKey) do
     if Input.IsPressed(PianoAction + K) then
       Include(Result, K);

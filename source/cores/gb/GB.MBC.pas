@@ -20,6 +20,19 @@ type
     FIsROMMode: Boolean;
     FRAM: array of Integer;
     FBankLow, FBankHigh, FROMBankCount: Integer;
+    FFixedROMBank: Integer;
+    FMapLocked, FIRMode, FIROutput: Boolean;
+    FMMMRegisters: array[0..3] of Byte;
+    FMBC6ROMBanks, FMBC6RAMBanks: array[0..1] of Byte;
+    FMBC6FlashBanks: array[0..1] of Boolean;
+    FFlashEnabled, FFlashWriteEnabled, FFlashSector0Protected: Boolean;
+    FFlash: TBytes;
+    FFlashHidden: array[0..255] of Byte;
+    FFlashBuffer: array[0..127] of Byte;
+    FFlashMode, FFlashSequence, FFlashCommand, FFlashProgramming: Byte;
+    FFlashProgramBase, FFlashProgramCount, FFlashLastAddress: Integer;
+    FHasRumble: Boolean;
+    FRumbleClocks, FRumbleOnClocks: UInt64;
     FHasTimer, FRTCLatched: Boolean;
     FRTC, FRTCSnapshot: array[0..4] of Byte;
     FRTCLatchWrite: Byte;
@@ -37,6 +50,13 @@ type
     FCameraRegisters, FCameraCaptureRegisters: array[0..$35] of Byte;
     FCameraClocks: Integer;
     FCamera: TGBCameraController;
+    function GetRumbleOn: Boolean;
+    function ExtendedROMBank(Address: Integer): Integer;
+    function ReadExtended(Address: Integer): Integer;
+    procedure WriteExtended(Address, Value: Integer);
+    function ReadFlash(Address: Integer): Byte;
+    procedure WriteFlash(Address: Integer; Value: Byte);
+    procedure ResetFlashCommand;
     procedure WriteEEPROM(Value: Byte);
     function ReadEEPROM: Byte;
     procedure ExecuteHuCCommand;
@@ -61,16 +81,21 @@ type
     procedure LoadRTCData(const Data: TBytes);
     function HasBattery: Boolean;
     property HasTimer: Boolean read FHasTimer;
+    property HasRumble: Boolean read FHasRumble;
+    property RumbleOn: Boolean read GetRumbleOn;
+    function TakeRumbleLevel: Byte;
     procedure SerializeState(State: TStateArchive);
     procedure Step(Clocks: Integer);
     // Raw ADXL202 sensor values; callers can supply tilt without changing ROMs.
     procedure SetAccelerometer(X, Y: Word);
+    // Screen-space acceleration in g: positive X points right, positive Y up.
+    procedure SetAcceleration(X, Y: Double);
   end;
 
 implementation
 
 uses
-  System.DateUtils;
+  System.DateUtils, System.Math;
 
 { TGBMBC }
 
@@ -79,12 +104,18 @@ begin
   inherited Create;
   if AROM = nil then
     raise EArgumentNilException.Create('ROM must not be nil');
+
   if not (AROM.GetCartridgeType.MapperType in
     [TMapperType.ROMOnly, TMapperType.MBC1, TMapperType.MBC2,
       TMapperType.MBC3, TMapperType.MBC5, TMapperType.MBC7,
-      TMapperType.PocketCamera, TMapperType.HuC3]) then
+      TMapperType.PocketCamera, TMapperType.HuC3, TMapperType.HuC1,
+      TMapperType.MBC1M, TMapperType.MBC30, TMapperType.MMM01,
+      TMapperType.M161, TMapperType.WisdomTree, TMapperType.MBC6]) then
     raise ENotSupportedException.Create('Unsupported cartridge: ' + AROM.GetCartridgeType.Name);
+
   FROM := AROM;
+  FHasRumble := (FROM.GetCartridgeType.MapperType = TMapperType.MBC5) and
+    FROM.GetCartridgeType.HasRumble;
   if FROM.GetCartridgeType.MapperType = TMapperType.PocketCamera then
     FCamera := TGBCameraController.Create(CameraSource);
   FRTCClock := RTCClock;
@@ -95,6 +126,8 @@ begin
     FROMBankCount := 1;
   FBankLow := 1;
   FBankHigh := 0;
+  if FROM.GetCartridgeType.MapperType in [TMapperType.M161, TMapperType.WisdomTree] then
+    FBankLow := 0;
   FRAMEnabled := False;
   FIsROMMode := True;
   FHasRAM := FROM.GetCartridgeType.HasRAM;
@@ -103,6 +136,13 @@ begin
   FLatchedX := $8000;
   FLatchedY := $8000;
   FEEPROMReadBit := -1;
+  if FROM.GetCartridgeType.MapperType = TMapperType.MBC6 then
+  begin
+    SetLength(FFlash, $100000);
+    FillChar(FFlash[0], Length(FFlash), $FF);
+    FillChar(FFlashHidden, SizeOf(FFlashHidden), $FF);
+    ResetFlashCommand;
+  end;
   if FROM.GetCartridgeType.MapperType = TMapperType.MBC7 then
   begin
     SetLength(FRAM, 256);
@@ -111,6 +151,8 @@ begin
   end
   else if FROM.GetCartridgeType.MapperType = TMapperType.MBC2 then
     SetLength(FRAM, $200) // 512 four-bit internal RAM cells
+  else if FROM.GetCartridgeType.MapperType = TMapperType.MBC6 then
+    SetLength(FRAM, $8000)
   else if FHasRAM and Assigned(FROM.Cartridge) then
     // The header also permits 64 KiB (8-bank) and 128 KiB (16-bank) RAM.
     // Do not silently turn these cartridges into RAM-less ones.
@@ -128,15 +170,40 @@ end;
 
 procedure TGBMBC.UpdateBanks;
 begin
+  if FROM.GetCartridgeType.MapperType = TMapperType.MBC6 then
+  begin
+    // The public bank number describes the first 8 KiB switchable window.
+    ROMBankSelected := FMBC6ROMBanks[0];
+    RAMBankSelected := FMBC6RAMBanks[0];
+    Exit;
+  end;
+
   if FROM.GetCartridgeType.MapperType in
-    [TMapperType.MBC7, TMapperType.PocketCamera, TMapperType.HuC3] then
+    [TMapperType.M161, TMapperType.WisdomTree, TMapperType.HuC1, TMapperType.MMM01] then
+  begin
+    FFixedROMBank := ExtendedROMBank(0);
+    ROMBankSelected := ExtendedROMBank($4000);
+    RAMBankSelected := FBankHigh;
+    if FROM.GetCartridgeType.MapperType = TMapperType.MMM01 then
+    begin
+      RAMBankSelected := FMMMRegisters[2] and 3;
+      if (FMMMRegisters[3] and $40) <> 0 then
+        RAMBankSelected := (FMMMRegisters[1] shr 5) and 3
+      else if (FMMMRegisters[3] and 1) = 0 then
+        RAMBankSelected := RAMBankSelected and ((FMMMRegisters[0] shr 4) and 3);
+      RAMBankSelected := RAMBankSelected or (((FMMMRegisters[2] shr 2) and 3) shl 2);
+    end;
+    Exit;
+  end;
+
+  if FROM.GetCartridgeType.MapperType in [TMapperType.MBC7, TMapperType.PocketCamera, TMapperType.HuC3] then
   begin
     ROMBankSelected := FBankLow mod FROMBankCount;
     RAMBankSelected := FPeripheralBank and $0F;
   end
-  else if FROM.GetCartridgeType.MapperType = TMapperType.MBC3 then
+  else if FROM.GetCartridgeType.MapperType in [TMapperType.MBC3, TMapperType.MBC30] then
   begin
-    ROMBankSelected := (FBankLow and $7F) mod FROMBankCount;
+    ROMBankSelected := FBankLow mod FROMBankCount;
     RAMBankSelected := FBankHigh and $0F;
   end
   else if FROM.GetCartridgeType.MapperType = TMapperType.MBC5 then
@@ -149,8 +216,18 @@ begin
   end
   else
   begin
-    ROMBankSelected := ((FBankHigh shl 5) or FBankLow) mod FROMBankCount;
-    if FIsROMMode then
+    var Shift := 5;
+    var Mask := $1F;
+    if FROM.GetCartridgeType.MapperType = TMapperType.MBC1M then
+    begin
+      Shift := 4;
+      Mask := $0F;
+    end;
+    ROMBankSelected := ((FBankHigh shl Shift) or (FBankLow and Mask)) mod FROMBankCount;
+    FFixedROMBank := 0;
+    if not FIsROMMode then
+      FFixedROMBank := (FBankHigh shl Shift) mod FROMBankCount;
+    if FIsROMMode or (Shift = 4) then
       RAMBankSelected := 0
     else
       RAMBankSelected := FBankHigh;
@@ -169,11 +246,13 @@ procedure TGBMBC.UpdateRTC;
 begin
   if not FHasTimer then
     Exit;
+
   var Current := RTCNow;
   var Elapsed := Current - FRTCLastTime;
   FRTCLastTime := Current;
   if (Elapsed <= 0) or ((FRTC[4] and $40) <> 0) then
     Exit;
+
   if FROM.GetCartridgeType.MapperType = TMapperType.HuC3 then
   begin
     FHuCSeconds := (FHuCSeconds + Elapsed) mod (Int64(4096) * 86400);
@@ -184,6 +263,7 @@ begin
     end;
     Exit;
   end;
+
   var Days := Integer(FRTC[3]) or ((Integer(FRTC[4]) and 1) shl 8);
   var Total := Int64(Days) * 86400 + Integer(FRTC[2]) * 3600 +
     Integer(FRTC[1]) * 60 + FRTC[0] + Elapsed;
@@ -204,6 +284,21 @@ end;
 
 function TGBMBC.SaveMemory: TBytes;
 begin
+  if FROM.GetCartridgeType.MapperType = TMapperType.MBC6 then
+  begin
+    SetLength(Result, 4 + Length(FRAM) + Length(FFlash) + SizeOf(FFlashHidden) + 1);
+    Result[0] := Ord('M');
+    Result[1] := Ord('B');
+    Result[2] := Ord('6');
+    Result[3] := 1;
+    for var i := 0 to High(FRAM) do
+      Result[4 + i] := FRAM[i];
+    Move(FFlash[0], Result[4 + Length(FRAM)], Length(FFlash));
+    Move(FFlashHidden, Result[4 + Length(FRAM) + Length(FFlash)], SizeOf(FFlashHidden));
+    Result[High(Result)] := Ord(FFlashSector0Protected);
+    Exit;
+  end;
+
   SetLength(Result, Length(FRAM));
   for var i := 0 to High(FRAM) do
     Result[i] := FRAM[i];
@@ -211,6 +306,21 @@ end;
 
 procedure TGBMBC.LoadSaveMemory(const Data: TBytes);
 begin
+  if FROM.GetCartridgeType.MapperType = TMapperType.MBC6 then
+  begin
+    if (Length(Data) <> 4 + Length(FRAM) + Length(FFlash) + SizeOf(FFlashHidden) + 1) or
+      (Data[0] <> Ord('M')) or (Data[1] <> Ord('B')) or (Data[2] <> Ord('6')) or
+      (Data[3] <> 1) or (Data[High(Data)] > 1) then
+      raise EReadError.Create('Invalid MBC6 battery save');
+
+    for var i := 0 to High(FRAM) do
+      FRAM[i] := Data[4 + i];
+    Move(Data[4 + Length(FRAM)], FFlash[0], Length(FFlash));
+    Move(Data[4 + Length(FRAM) + Length(FFlash)], FFlashHidden, SizeOf(FFlashHidden));
+    FFlashSector0Protected := Data[High(Data)] <> 0;
+    Exit;
+  end;
+
   if Length(Data) <> Length(FRAM) then
     raise EReadError.Create('Invalid Game Boy battery RAM size');
 
@@ -240,6 +350,7 @@ begin
     Move(FHuCMemory, Result[20], 256);
     Exit;
   end;
+
   SetLength(Result, 17);
   Result[0] := Ord('G');
   Result[1] := Ord('B');
@@ -255,6 +366,7 @@ begin
   begin
     if (Length(Data) <> 276) then
       raise EReadError.Create('Invalid HuC3 RTC save size');
+
     if (Data[0] <> Ord('H')) or (Data[1] <> Ord('U')) or (Data[2] <> Ord('C')) or (Data[3] <> 1) then
       raise EReadError.Create('Invalid HuC3 RTC save');
 
@@ -263,6 +375,7 @@ begin
     Move(Data[12], Stamp, 8);
     if (Seconds < 0) or (Seconds >= Int64(4096) * 86400) or (Stamp < 0) or (Stamp > 253402300799) then
       raise EReadError.Create('Invalid HuC3 RTC time');
+
     for var i := 20 to High(Data) do
       if Data[i] > 15 then
         raise EReadError.Create('Invalid HuC3 RTC nybble');
@@ -273,6 +386,7 @@ begin
     UpdateRTC;
     Exit;
   end;
+
   if not FHasTimer or (Length(Data) <> 17) then
     raise EReadError.Create('Invalid Game Boy RTC save size');
 
@@ -304,10 +418,14 @@ begin
   if (Address < 0) or (Address > $BFFF) then
     Exit;
 
+  if FROM.GetCartridgeType.MapperType in [TMapperType.MMM01, TMapperType.M161,
+      TMapperType.WisdomTree, TMapperType.HuC1, TMapperType.MBC6] then
+    Exit(ReadExtended(Address));
+
   if FROM.GetCartridgeType.MapperType in [TMapperType.MBC7, TMapperType.PocketCamera, TMapperType.HuC3] then
     Exit(ReadPeripheral(Address));
 
-  if (FROM.GetCartridgeType.MapperType = TMapperType.MBC3) and
+  if (FROM.GetCartridgeType.MapperType in [TMapperType.MBC3, TMapperType.MBC30]) and
     (Address >= $A000) and FRAMEnabled and FHasTimer and
     (RAMBankSelected >= 8) and (RAMBankSelected <= 12) then
   begin
@@ -318,6 +436,7 @@ begin
       Result := FRTC[RAMBankSelected - 8];
     Exit;
   end;
+
   case FROM.GetCartridgeType.MapperType of
     TMapperType.ROMOnly:
       if Address < $8000 then
@@ -327,15 +446,13 @@ begin
       end
       else if (Address >= $A000) and FHasRAM then
         Result := FRAM[(Address - $A000) mod Length(FRAM)];
-    TMapperType.MBC1:
+    TMapperType.MBC1, TMapperType.MBC1M:
       if Address < $8000 then
       begin
         var Bank: Integer;
         if Address < $4000 then
         begin
-          Bank := 0;
-          if not FIsROMMode then
-            Bank := (FBankHigh shl 5) mod FROMBankCount;
+          Bank := FFixedROMBank;
         end
         else
           Bank := ROMBankSelected;
@@ -359,7 +476,7 @@ begin
       end
       else if (Address >= $A000) and FRAMEnabled then
         Result := $F0 or FRAM[Address and $1FF];
-    TMapperType.MBC3:
+    TMapperType.MBC3, TMapperType.MBC30:
       if Address < $4000 then
         Result := FROM.ROMData[Address]
       else if Address < $8000 then
@@ -369,7 +486,7 @@ begin
           Result := FROM.ROMData[EffectiveAddress];
       end
       else if (Address >= $A000) and FRAMEnabled and FHasRAM and
-        (RAMBankSelected <= 3) then
+        ((RAMBankSelected <= 3) or ((FROM.GetCartridgeType.MapperType = TMapperType.MBC30) and (RAMBankSelected <= 7))) then
       begin
         var EffectiveAddress := (RAMBankSelected * $2000 + Address - $A000) mod Length(FRAM);
         Result := FRAM[EffectiveAddress];
@@ -396,6 +513,13 @@ begin
   if (Address < 0) or (Address > $BFFF) then
     Exit;
 
+  if FROM.GetCartridgeType.MapperType in [TMapperType.MMM01, TMapperType.M161,
+      TMapperType.WisdomTree, TMapperType.HuC1, TMapperType.MBC6] then
+  begin
+    WriteExtended(Address, Value and $FF);
+    Exit;
+  end;
+
   if FROM.GetCartridgeType.MapperType in [TMapperType.MBC7, TMapperType.PocketCamera, TMapperType.HuC3] then
   begin
     WritePeripheral(Address, Value and $FF);
@@ -408,7 +532,7 @@ begin
     if (Address >= $A000) and FHasRAM then
       FRAM[(Address - $A000) mod Length(FRAM)] := Value and $FF;
   end
-  else if FROM.GetCartridgeType.MapperType = TMapperType.MBC1 then
+  else if FROM.GetCartridgeType.MapperType in [TMapperType.MBC1, TMapperType.MBC1M] then
   begin
     if Address <= $1FFF then
       FRAMEnabled := (Value and $0F) = $0A
@@ -435,13 +559,16 @@ begin
       FRAM[EffectiveAddress] := Value and $FF;
     end;
   end
-  else if FROM.GetCartridgeType.MapperType = TMapperType.MBC3 then
+  else if FROM.GetCartridgeType.MapperType in [TMapperType.MBC3, TMapperType.MBC30] then
   begin
     if Address <= $1FFF then
       FRAMEnabled := (Value and $0F) = $0A
     else if Address <= $3FFF then
     begin
-      FBankLow := Value and $7F;
+      if FROM.GetCartridgeType.MapperType = TMapperType.MBC30 then
+        FBankLow := Value and $FF
+      else
+        FBankLow := Value and $7F;
       if FBankLow = 0 then
         FBankLow := 1;
       UpdateBanks;
@@ -477,7 +604,7 @@ begin
       end;
     end
     else if (Address >= $A000) and FRAMEnabled and FHasRAM and
-      (RAMBankSelected <= 3) then
+      ((RAMBankSelected <= 3) or ((FROM.GetCartridgeType.MapperType = TMapperType.MBC30) and (RAMBankSelected <= 7))) then
     begin
       var EffectiveAddress := (RAMBankSelected * $2000 + Address - $A000) mod Length(FRAM);
       FRAM[EffectiveAddress] := Value and $FF;
@@ -527,6 +654,374 @@ begin
   end;
 end;
 
+function TGBMBC.ExtendedROMBank(Address: Integer): Integer;
+begin
+  Result := 0;
+  case FROM.GetCartridgeType.MapperType of
+    TMapperType.M161, TMapperType.WisdomTree:
+      Result := FBankLow * 2 + Address div $4000;
+    TMapperType.HuC1:
+      if Address >= $4000 then
+        Result := FBankLow;
+    TMapperType.MMM01:
+      begin
+        if not FMapLocked then
+          Result := FROMBankCount - 2 + Address div $4000
+        else
+        begin
+          var Low := FMMMRegisters[1] and $1F;
+          var Mask := (FMMMRegisters[3] shr 1) and $1E;
+          var Mid := (FMMMRegisters[1] shr 5) and 3;
+          var High := ((FMMMRegisters[2] shr 4) and 3) shl 7;
+          if (FMMMRegisters[3] and $40) <> 0 then
+          begin
+            Mid := FMMMRegisters[2] and 3;
+            if (Address < $4000) and ((FMMMRegisters[3] and 1) = 0) then
+              Mid := Mid and ((FMMMRegisters[0] shr 4) and 3);
+          end;
+          if Address < $4000 then
+            Low := Low and Mask
+          else if (Low and ($1F xor Mask)) = 0 then
+            Low := Low or 1;
+          Result := High or (Mid shl 5) or Low;
+        end;
+      end;
+  end;
+  Result := Result mod FROMBankCount;
+end;
+
+function TGBMBC.ReadExtended(Address: Integer): Integer;
+begin
+  Result := $FF;
+  var Kind := FROM.GetCartridgeType.MapperType;
+  if Kind = TMapperType.MBC6 then
+  begin
+    if Address < $4000 then
+      Exit(FROM.ROMData[Address]);
+
+    if Address < $8000 then
+    begin
+      var Slot := (Address - $4000) div $2000;
+      var Offset := FMBC6ROMBanks[Slot] * $2000 + (Address and $1FFF);
+      if FMBC6FlashBanks[Slot] then
+      begin
+        if FFlashEnabled then
+          Result := ReadFlash(Offset);
+      end
+      else
+        Result := FROM.ROMData[Offset mod Length(FROM.ROMData)];
+    end
+    else if (Address >= $A000) and FRAMEnabled then
+      Result := FRAM[FMBC6RAMBanks[(Address - $A000) div $1000] * $1000 + (Address and $FFF)];
+    Exit;
+  end;
+
+  if Address < $8000 then
+  begin
+    var Bank := FFixedROMBank;
+    if Address >= $4000 then
+      Bank := ROMBankSelected;
+    Result := FROM.ROMData[(Bank mod FROMBankCount) * $4000 + (Address and $3FFF)];
+    Exit;
+  end;
+
+  if Address < $A000 then
+    Exit;
+
+  if (Kind = TMapperType.HuC1) and FIRMode then
+    Exit($C0);
+
+  if not FHasRAM or ((Kind <> TMapperType.HuC1) and not FRAMEnabled) then
+    Exit;
+
+  var Bank := RAMBankSelected;
+  Result := FRAM[(Bank * $2000 + (Address and $1FFF)) mod Length(FRAM)];
+end;
+
+procedure TGBMBC.WriteExtended(Address, Value: Integer);
+begin
+  var Kind := FROM.GetCartridgeType.MapperType;
+  if Kind = TMapperType.MBC6 then
+  begin
+    if Address < $4000 then
+    begin
+      case Address and $3C00 of
+        $0000:
+          FRAMEnabled := Value = $0A;
+        $0400:
+          FMBC6RAMBanks[0] := Value and 7;
+        $0800:
+          FMBC6RAMBanks[1] := Value and 7;
+        $0C00:
+          FFlashEnabled := (Value and 1) <> 0;
+        $1000:
+          FFlashWriteEnabled := (Value and 1) <> 0;
+        $2000, $2400:
+          FMBC6ROMBanks[0] := Value and $7F;
+        $2800, $2C00:
+          FMBC6FlashBanks[0] := Value = 8;
+        $3000, $3400:
+          FMBC6ROMBanks[1] := Value and $7F;
+        $3800, $3C00:
+          FMBC6FlashBanks[1] := Value = 8;
+      end;
+      UpdateBanks;
+    end
+    else if Address < $8000 then
+    begin
+      var Slot := (Address - $4000) div $2000;
+      if FFlashEnabled and FMBC6FlashBanks[Slot] then
+        WriteFlash(FMBC6ROMBanks[Slot] * $2000 + (Address and $1FFF), Value);
+    end
+    else if (Address >= $A000) and FRAMEnabled then
+      FRAM[FMBC6RAMBanks[(Address - $A000) div $1000] * $1000 + (Address and $FFF)] := Value;
+    Exit;
+  end;
+
+  if Address < $8000 then
+  begin
+    case Kind of
+      TMapperType.M161:
+        if not FMapLocked then
+        begin
+          FBankLow := Value and $0F;
+          FMapLocked := True;
+        end;
+      TMapperType.WisdomTree:
+        if Address < $4000 then
+          FBankLow := Address and $3F;
+      TMapperType.HuC1:
+        case Address and $6000 of
+          $0000:
+            FIRMode := (Value and $0F) = $0E;
+          $2000:
+            FBankLow := Value and $3F;
+          $4000:
+            FBankHigh := Value and 3;
+        end;
+      TMapperType.MMM01:
+        begin
+          var RegisterIndex := Address div $2000;
+          var Mask := 0;
+          case RegisterIndex of
+            0:
+              begin
+                FRAMEnabled := (Value and $0F) = $A;
+                if not FMapLocked then
+                  FMMMRegisters[0] := Value and $7F;
+                FMapLocked := FMapLocked or ((Value and $40) <> 0);
+              end;
+            1:
+              begin
+                Mask := (FMMMRegisters[3] shr 1) and $1E;
+                if FMapLocked then
+                  Mask := Mask or $60;
+                FMMMRegisters[1] := (FMMMRegisters[1] and Mask) or (Value and ($7F xor Mask));
+              end;
+            2:
+              begin
+                Mask := (FMMMRegisters[0] shr 4) and 3;
+                if FMapLocked then
+                  Mask := Mask or $7C;
+                FMMMRegisters[2] := (FMMMRegisters[2] and Mask) or (Value and ($7F xor Mask));
+              end;
+            3:
+              begin
+                if FMapLocked then
+                  Mask := $7E;
+                if (FMMMRegisters[2] and $40) <> 0 then
+                  Mask := Mask or 1;
+                FMMMRegisters[3] := ((FMMMRegisters[3] and Mask) or (Value and ($7F xor Mask))) and $7D;
+              end;
+          end;
+        end;
+    end;
+    UpdateBanks;
+    Exit;
+  end;
+
+  if Address < $A000 then
+    Exit;
+
+  if (Kind = TMapperType.HuC1) and FIRMode then
+  begin
+    FIROutput := (Value and 1) <> 0;
+    Exit;
+  end;
+
+  if not FHasRAM or ((Kind <> TMapperType.HuC1) and not FRAMEnabled) then
+    Exit;
+
+  var Bank := RAMBankSelected;
+  FRAM[(Bank * $2000 + (Address and $1FFF)) mod Length(FRAM)] := Value;
+end;
+
+procedure TGBMBC.ResetFlashCommand;
+begin
+  FFlashMode := 0;
+  FFlashSequence := 0;
+  FFlashCommand := 0;
+  FFlashProgramming := 0;
+  FFlashProgramBase := -1;
+  FFlashProgramCount := 0;
+  FFlashLastAddress := -1;
+end;
+
+function TGBMBC.ReadFlash(Address: Integer): Byte;
+begin
+  case FFlashMode of
+    1:
+      case Address and $FF of
+        0:
+          Result := $C2;
+        1:
+          Result := $81;
+        2:
+          Result := Ord(FFlashSector0Protected);
+      else
+        Result := $FF;
+      end;
+    2:
+      Result := FFlashHidden[Address and $FF];
+    3:
+      Result := $80 or (Ord(FFlashSector0Protected) shl 1);
+  else
+    Result := FFlash[Address];
+  end;
+end;
+
+procedure TGBMBC.WriteFlash(Address: Integer; Value: Byte);
+begin
+  // MX29F008TC commands use chip addresses, independent of the CPU window.
+  // Operations complete synchronously; status remains visible until F0.
+  if Value = $F0 then
+  begin
+    ResetFlashCommand;
+    Exit;
+  end;
+
+  if FFlashProgramming <> 0 then
+  begin
+    if FFlashProgramCount = 128 then
+    begin
+      if Address <> FFlashLastAddress then
+        Exit;
+
+      var Writable := FFlashWriteEnabled;
+      if FFlashProgramming = 1 then
+        Writable := (FFlashProgramBase >= $20000) or
+          (FFlashWriteEnabled and not FFlashSector0Protected);
+      if Writable then
+        for var i := 0 to 127 do
+          if FFlashProgramming = 2 then
+            FFlashHidden[(FFlashProgramBase + i) and $FF] :=
+              FFlashHidden[(FFlashProgramBase + i) and $FF] and FFlashBuffer[i]
+          else
+            FFlash[FFlashProgramBase + i] := FFlash[FFlashProgramBase + i] and FFlashBuffer[i];
+      FFlashProgramming := 0;
+      FFlashMode := 3;
+      Exit;
+    end;
+
+    var Base := Address and $FFF80;
+    if FFlashProgramBase < 0 then
+    begin
+      FFlashProgramBase := Base;
+      FillChar(FFlashBuffer, SizeOf(FFlashBuffer), $FF);
+    end;
+    if Base <> FFlashProgramBase then
+      Exit;
+
+    FFlashBuffer[Address and $7F] := Value;
+    FFlashLastAddress := Address;
+    Inc(FFlashProgramCount);
+    Exit;
+  end;
+
+  if FFlashMode <> 0 then
+    Exit;
+
+  case FFlashSequence of
+    0:
+      if (Address = $5555) and (Value = $AA) then
+        FFlashSequence := 1;
+    1:
+      if (Address = $2AAA) and (Value = $55) then
+        FFlashSequence := 2
+      else
+        FFlashSequence := 0;
+    2:
+      begin
+        FFlashSequence := 0;
+        if FFlashCommand <> 0 then
+        begin
+          case FFlashCommand of
+            $80:
+              if (Value = $10) and (Address = $5555) then
+              begin
+                var First := 0;
+                if not FFlashWriteEnabled or FFlashSector0Protected then
+                  First := $20000;
+                FillChar(FFlash[First], Length(FFlash) - First, $FF);
+                FFlashMode := 3;
+              end
+              else if Value = $30 then
+              begin
+                var First := Address and $E0000;
+                if (First <> 0) or (FFlashWriteEnabled and not FFlashSector0Protected) then
+                  FillChar(FFlash[First], $20000, $FF);
+                FFlashMode := 3;
+              end;
+            $60:
+              if (Address = $5555) and FFlashWriteEnabled then
+                case Value of
+                  $04:
+                    begin
+                      FillChar(FFlashHidden, SizeOf(FFlashHidden), $FF);
+                      FFlashMode := 3;
+                    end;
+                  $20, $40:
+                    begin
+                      FFlashSector0Protected := Value = $20;
+                      FFlashMode := 3;
+                    end;
+                  $E0:
+                    FFlashProgramming := 2;
+                end;
+            $77:
+              if (Address = $5555) and (Value = $77) then
+                FFlashMode := 2;
+          end;
+          FFlashCommand := 0;
+        end
+        else if Address = $5555 then
+          case Value of
+            $90:
+              FFlashMode := 1;
+            $A0:
+              FFlashProgramming := 1;
+            $80, $60, $77:
+              FFlashCommand := Value;
+          end;
+        if FFlashProgramming <> 0 then
+        begin
+          FFlashProgramBase := -1;
+          FFlashProgramCount := 0;
+        end;
+      end;
+  end;
+end;
+
+procedure TGBMBC.SetAcceleration(X, Y: Double);
+begin
+  if IsNan(X) or IsInfinite(X) then
+    X := 0;
+  if IsNan(Y) or IsInfinite(Y) then
+    Y := 0;
+  SetAccelerometer(Round(EnsureRange($81D0 - EnsureRange(X, -4.0, 4.0) * $70, 0.0, 65535.0)),
+    Round(EnsureRange($81D0 + EnsureRange(Y, -4.0, 4.0) * $70, 0.0, 65535.0)));
+end;
+
 procedure TGBMBC.SetAccelerometer(X, Y: Word);
 begin
   FTiltX := X;
@@ -556,6 +1051,7 @@ begin
     FEEPROMBits := 0;
     Exit;
   end;
+
   if ((Value and $40) = 0) or ((Previous and $40) <> 0) then
     Exit;
 
@@ -726,8 +1222,29 @@ begin
   FCameraRegisters[0] := FCameraRegisters[0] and 6;
 end;
 
+function TGBMBC.GetRumbleOn: Boolean;
+begin
+  Result := FHasRumble and ((FBankHigh and 8) <> 0);
+end;
+
+function TGBMBC.TakeRumbleLevel: Byte;
+begin
+  if FRumbleClocks = 0 then
+    Result := Ord(RumbleOn) * 255
+  else
+    Result := (FRumbleOnClocks * 255 + FRumbleClocks div 2) div FRumbleClocks;
+  FRumbleClocks := 0;
+  FRumbleOnClocks := 0;
+end;
+
 procedure TGBMBC.Step(Clocks: Integer);
 begin
+  if FHasRumble and (Clocks > 0) then
+  begin
+    Inc(FRumbleClocks, Clocks);
+    if RumbleOn then
+      Inc(FRumbleOnClocks, Clocks);
+  end;
   // Clocks are CPU T-cycles: PHI doubles along with CGB CPU speed.
   if (FCameraClocks <= 0) or ((FCameraRegisters[0] and 1) = 0) then
     Exit;
@@ -752,6 +1269,7 @@ begin
       Result := FROM.ROMData[Offset];
     Exit;
   end;
+
   if Address < $A000 then
     Exit;
 
@@ -879,7 +1397,14 @@ end;
 
 procedure TGBMBC.SerializeState(State: TStateArchive);
 begin
-  if not State.Loading then
+  if State.Loading then
+  begin
+    // Transient host feedback is not part of the snapshot. Motor state is
+    // already in FBankHigh; retain the existing MBC5 snapshot layout.
+    FRumbleClocks := 0;
+    FRumbleOnClocks := 0;
+  end
+  else
     UpdateRTC;
   State.Field(FRAMEnabled, SizeOf(FRAMEnabled));
   State.Field(FHasRAM, SizeOf(FHasRAM));
@@ -926,6 +1451,35 @@ begin
     if FCamera <> nil then
       FCamera.SerializeState(State);
   end;
+
+  if FROM.GetCartridgeType.MapperType in [TMapperType.MMM01, TMapperType.M161, TMapperType.WisdomTree, TMapperType.HuC1] then
+  begin
+    State.Field(FMapLocked, SizeOf(FMapLocked));
+    State.Field(FIRMode, SizeOf(FIRMode));
+    State.Field(FIROutput, SizeOf(FIROutput));
+    State.Field(FMMMRegisters, SizeOf(FMMMRegisters));
+  end;
+  if FROM.GetCartridgeType.MapperType = TMapperType.MBC6 then
+  begin
+    State.Field(FMBC6ROMBanks, SizeOf(FMBC6ROMBanks));
+    State.Field(FMBC6RAMBanks, SizeOf(FMBC6RAMBanks));
+    State.Field(FMBC6FlashBanks, SizeOf(FMBC6FlashBanks));
+    State.Field(FFlashEnabled, SizeOf(FFlashEnabled));
+    State.Field(FFlashWriteEnabled, SizeOf(FFlashWriteEnabled));
+    State.Field(FFlashSector0Protected, SizeOf(FFlashSector0Protected));
+    State.Field(FFlash[0], Length(FFlash));
+    State.Field(FFlashHidden, SizeOf(FFlashHidden));
+    State.Field(FFlashBuffer, SizeOf(FFlashBuffer));
+    State.Field(FFlashMode, SizeOf(FFlashMode));
+    State.Field(FFlashSequence, SizeOf(FFlashSequence));
+    State.Field(FFlashCommand, SizeOf(FFlashCommand));
+    State.Field(FFlashProgramming, SizeOf(FFlashProgramming));
+    State.Field(FFlashProgramBase, SizeOf(FFlashProgramBase));
+    State.Field(FFlashProgramCount, SizeOf(FFlashProgramCount));
+    State.Field(FFlashLastAddress, SizeOf(FFlashLastAddress));
+  end;
+  if State.Loading then
+    UpdateBanks;
   // Snapshot restores emulated clock values, not elapsed host time since capture.
   if State.Loading then
     FRTCLastTime := RTCNow;

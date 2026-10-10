@@ -55,6 +55,8 @@ uses
   NES.DataRecorder in 'devices\NES.DataRecorder.pas',
   RM.Main in 'RM.Main.pas' {FormMain},
   RM.FrameUpload in 'RM.FrameUpload.pas',
+  RM.Rumble in 'RM.Rumble.pas',
+  FMX.Vibrate in 'FMXVibration\FMX.Vibrate.pas',
   RM.Icons in 'RM.Icons.pas',
   RM.SearchEdit in 'RM.SearchEdit.pas',
   RM.Dialogs in 'RM.Dialogs.pas' {RetroDialog: TFrame},

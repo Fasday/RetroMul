@@ -7,3 +7,6 @@
 [submodule "source/input"]
 	path = source/input
 	url = https://github.com/HemulGM/FMXInput.git
+[submodule "fmx/FMXVibration"]
+	path = fmx/FMXVibration
+	url = https://github.com/HemulGM/FMXVibration

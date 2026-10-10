@@ -476,9 +476,11 @@ procedure TEnvelope.HandleSweep;
 begin
   if FIndex <= 0 then
     Exit;
+
   Dec(FIndex);
   if FIndex <> 0 then
     Exit;
+
   FIndex := FStepLength;
   if (FDirection = 1) and (FBase < $F) then
     Inc(FBase)
@@ -586,11 +588,11 @@ end;
 procedure TSquareWaveChannel.SetWaveDuty(Value: Integer);
 var
   Wave: TIntegerArray;
-  I: Integer;
+  i: Integer;
 begin
   System.SetLength(Wave, Length(SoundWavePattern[Value]));
-  for I := 0 to Length(SoundWavePattern[Value]) - 1 do
-    Wave[I] := SoundWavePattern[Value][I];
+  for i := 0 to Length(SoundWavePattern[Value]) - 1 do
+    Wave[i] := SoundWavePattern[Value][i];
   SetWave(Wave);
 end;
 
