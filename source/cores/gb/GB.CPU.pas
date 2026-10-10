@@ -13,6 +13,15 @@ type
     FMemory: TGBMemory;
     FGPU: TGBVideo;
     FSound: TGBSound;
+    FBusTiming: Boolean;
+    FBusCycles, FBaseClockPhase, FSpeedSwitchClocks: Integer;
+    FCPUStopped: Boolean;
+    function ReadBus(Address: Integer; Increment: Boolean = False): Byte;
+    procedure WriteBus(Address: Integer; Value: Byte);
+    function ReadBusWord(Address: Integer): Word;
+    procedure AdvanceHardware(Cycles: Integer);
+    procedure ClockRegisterChange(Address: Integer);
+  private
     FStopped: Boolean;
     FInstructionCount: UInt64;
     FCycles: UInt64;
@@ -168,10 +177,10 @@ begin
     $8D:
       Second := GetRegisterL;
     $8E:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $CE:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -215,7 +224,7 @@ begin
       Value := StackPointer;
     $E8:
       begin
-        Value := FMemory.ReadByte(ProgramCounter);
+        Value := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         if Value > 127 then
           Value := -((not Value + 1) and 255);
@@ -274,10 +283,10 @@ begin
     $85:
       Second := GetRegisterL;
     $86:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $C6:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -323,10 +332,10 @@ begin
     $A5:
       Second := GetRegisterL;
     $A6:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $E6:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -374,9 +383,9 @@ begin
     Exit;
   end;
 
-  var Address: Integer := FMemory.ReadByte(ProgramCounter);
+  var Address: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-  var Temp: Integer := FMemory.ReadByte(ProgramCounter);
+  var Temp: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
   if Condition then
   begin
@@ -408,7 +417,7 @@ begin
     $05, $0D:
       Result := GetRegisterL;
     $06, $0E:
-      Result := FMemory.ReadByte(GetRegisterHL);
+      Result := ReadBus(GetRegisterHL);
   else
     Result := 0;
   end;
@@ -454,30 +463,89 @@ begin
       end;
     $6, $E:
       begin
-        FMemory.WriteByte(GetRegisterHL, Value);
+        WriteBus(GetRegisterHL, Value);
         ConsumeClockCycles(16);
       end;
   end;
 end;
 
+procedure TGBCPU.AdvanceHardware(Cycles: Integer);
+begin
+  while Cycles > 0 do
+  begin
+    Dec(Cycles);
+    FMemory.Timer.Step(1);
+    FMemory.StepHardware(1);
+    Inc(FBaseClockPhase);
+    if not FMemory.DoubleSpeed or (FBaseClockPhase = 2) then
+    begin
+      FBaseClockPhase := 0;
+      Inc(FCycles);
+      FGPU.Step(1);
+      if FSound <> nil then
+        FSound.UpdateSound(1);
+    end;
+    var Stall := FMemory.ConsumeDMACyclePenalty;
+    if FMemory.DoubleSpeed then
+      Stall := Stall * 2;
+    Inc(Cycles, Stall);
+  end;
+end;
+
 procedure TGBCPU.ConsumeClockCycles(Cycles: Integer);
 begin
-  repeat
-    var BaseCycles := Cycles;
-    if FMemory.DoubleSpeed then
-      BaseCycles := BaseCycles div 2;
-    Inc(FCycles, BaseCycles);
-    FMemory.Timer.Step(Cycles);
-    FMemory.StepHardware(Cycles);
-    FGPU.Step(BaseCycles);
-    if FSound <> nil then
-      FSound.UpdateSound(BaseCycles);
-    // General DMA queues its stall while the CPU instruction writes FF55;
-    // HBlank DMA queues it from the GPU mode transition above.
-    Cycles := FMemory.ConsumeDMACyclePenalty;
-    if FMemory.DoubleSpeed then
-      Cycles := Cycles * 2;
-  until Cycles = 0;
+  if FBusTiming then
+  begin
+    Dec(Cycles, FBusCycles);
+    FBusCycles := 0;
+  end;
+  if Cycles > 0 then
+    AdvanceHardware(Cycles);
+end;
+
+function TGBCPU.ReadBus(Address: Integer; Increment: Boolean): Byte;
+begin
+  if FBusTiming then
+    AdvanceHardware(3);
+  if Increment then
+    Result := FMemory.ReadWithIncrement(Address)
+  else
+    Result := FMemory.ReadByte(Address);
+  if FBusTiming then
+  begin
+    AdvanceHardware(1);
+    Inc(FBusCycles, 4);
+  end;
+end;
+
+function TGBCPU.ReadBusWord(Address: Integer): Word;
+begin
+  var Low := ReadBus(Address, True);
+  var High := ReadBus((Address + 1) and $FFFF, True);
+  Result := Low or (High shl 8);
+end;
+
+procedure TGBCPU.WriteBus(Address: Integer; Value: Byte);
+begin
+  if FBusTiming then
+    AdvanceHardware(3);
+  FMemory.WriteByte(Address, Value);
+  if FBusTiming then
+  begin
+    AdvanceHardware(1);
+    Inc(FBusCycles, 4);
+  end;
+end;
+
+procedure TGBCPU.ClockRegisterChange(Address: Integer);
+begin
+  if FBusTiming then
+  begin
+    AdvanceHardware(3);
+    FMemory.ProcessOAMCorruption(Address, TGBOAMCorruption.Write);
+    AdvanceHardware(1);
+    Inc(FBusCycles, 4);
+  end;
 end;
 
 procedure TGBCPU.ExecuteCP(OpCode: Byte);
@@ -499,10 +567,10 @@ begin
     $bd:
       Second := GetRegisterL;
     $be:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $fe:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -587,8 +655,17 @@ begin
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF; // skip second byte 00
         // KEY1 prepares a CGB speed switch.  The STOP instruction completes
         // it and execution resumes at the following instruction.
-        if FMemory.StopHalts then
-          FIsHalted := True;
+        if FMemory.IsCGBMode and ((FMemory.ReadByte($FF4D) and 1) <> 0) then
+        begin
+          FSpeedSwitchClocks := 8200; // 2050 M cycles on the current CPU clock.
+          FGPU.SetCPUStop(True);
+        end
+        else
+        begin
+          FCPUStopped := True;
+          FGPU.SetCPUStop(True);
+        end;
+        FMemory.Timer.ClearDivider;
         ConsumeClockCycles(4);
       end;
     $F3: // DI
@@ -605,41 +682,49 @@ begin
       end;
     $03: // INC BC
       begin
+        ClockRegisterChange(GetRegisterBC);
         SetRegisterBC((GetRegisterBC + 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $13: // INC DE
       begin
+        ClockRegisterChange(GetRegisterDE);
         SetRegisterDE((GetRegisterDE + 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $23: // INC HL
       begin
+        ClockRegisterChange(GetRegisterHL);
         SetRegisterHL((GetRegisterHL + 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $33: // INC SP
       begin
+        ClockRegisterChange(StackPointer);
         StackPointer := (Integer(StackPointer) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
     $0b: // DEC BC
       begin
+        ClockRegisterChange(GetRegisterBC);
         SetRegisterBC((GetRegisterBC - 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $1b: // DEC DE
       begin
+        ClockRegisterChange(GetRegisterDE);
         SetRegisterDE((GetRegisterDE - 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $2b: // DEC HL
       begin
+        ClockRegisterChange(GetRegisterHL);
         SetRegisterHL((GetRegisterHL - 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $3b: // DEC SP
       begin
+        ClockRegisterChange(StackPointer);
         StackPointer := (Integer(StackPointer) - 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
@@ -703,7 +788,7 @@ begin
       end;
     $18: // JR r8
       begin
-        var Value: Integer := FMemory.ReadByte(ProgramCounter);
+        var Value: Integer := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         var Tmp: Integer := ProgramCounter;
         if (Value > 127) then
@@ -751,9 +836,9 @@ begin
       end;
     $CD: // CALL a16
       begin
-        var Value: Integer := FMemory.ReadByte(ProgramCounter);
+        var Value: Integer := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-        var Tmp: Integer := FMemory.ReadByte(ProgramCounter);
+        var Tmp: Integer := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         Tmp := Tmp shl 8;
         Value := Value or Tmp;
@@ -903,11 +988,11 @@ begin
     $35: //DEC (HL)
       begin
         var Address := GetRegisterHL;
-        Value := FMemory.ReadByte(Address);
+        Value := ReadBus(Address);
         OldValue := Value;
         Value := Byte(Value - 1);
         Value := Value and 255;
-        FMemory.WriteByte(Address, Value);
+        WriteBus(Address, Value);
       end;
     $3d: //DEC A
       begin
@@ -951,7 +1036,7 @@ end;
 
 function TGBCPU.GetOpCode: Integer;
 begin
-  Result := FMemory.ReadByte(ProgramCounter);
+  Result := ReadBus(ProgramCounter, True);
   if FSuppressPCIncrement then
     FSuppressPCIncrement := False
   else
@@ -959,7 +1044,7 @@ begin
   if Result = $cb then
   begin
     Result := Result shl 8;
-    Result := Result or FMemory.ReadByte(ProgramCounter);
+    Result := Result or ReadBus(ProgramCounter, True);
     ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
   end;
 end;
@@ -1076,8 +1161,8 @@ begin
     $34:
       begin
         var Address := GetRegisterHL;
-        Value := FMemory.ReadByte(Address) + 1;
-        FMemory.WriteByte(Address, (Value and 255));
+        Value := ReadBus(Address) + 1;
+        WriteBus(Address, (Value and 255));
       end;
   else
     Exit;
@@ -1094,9 +1179,9 @@ end;
 
 procedure TGBCPU.ExecuteJmp(OpCode: Byte);
 begin
-  var Address: Integer := FMemory.ReadByte(ProgramCounter);
+  var Address: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-  var Temp: Integer := FMemory.ReadByte(ProgramCounter);
+  var Temp: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
   Temp := Temp shl 8;
   Address := Address or Temp;
@@ -1117,9 +1202,9 @@ begin
     $DA:
       Condition := GetCarryFlag;
   end;
-  var Address: Integer := FMemory.ReadByte(ProgramCounter);
+  var Address: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-  var Temp: Integer := FMemory.ReadByte(ProgramCounter);
+  var Temp: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
   if Condition then
   begin
@@ -1145,7 +1230,7 @@ begin
     $38: //JR C,r8
       Condition := GetCarryFlag;
   end;
-  var N: Integer := FMemory.ReadByte(ProgramCounter);
+  var N: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
   if not Condition then
   begin
@@ -1163,37 +1248,37 @@ begin
   case OpCode of
     $06: //LD nn, n
       begin
-        SetRegisterB(FMemory.ReadByte(ProgramCounter));
+        SetRegisterB(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
     $0E:
       begin
-        SetRegisterC(FMemory.ReadByte(ProgramCounter));
+        SetRegisterC(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
     $16:
       begin
-        SetRegisterD(FMemory.ReadByte(ProgramCounter));
+        SetRegisterD(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
     $1E:
       begin
-        SetRegisterE(FMemory.ReadByte(ProgramCounter));
+        SetRegisterE(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
     $26:
       begin
-        SetRegisterH(FMemory.ReadByte(ProgramCounter));
+        SetRegisterH(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
     $2E:
       begin
-        SetRegisterL(FMemory.ReadByte(ProgramCounter));
+        SetRegisterL(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
@@ -1234,7 +1319,7 @@ begin
       end;
     $7E:
       begin
-        SetRegisterA(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterA(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $40:
@@ -1269,7 +1354,7 @@ begin
       end;
     $46:
       begin
-        SetRegisterB(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterB(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $48:
@@ -1304,7 +1389,7 @@ begin
       end;
     $4E:
       begin
-        SetRegisterC(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterC(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $50:
@@ -1339,7 +1424,7 @@ begin
       end;
     $56:
       begin
-        SetRegisterD(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterD(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $58:
@@ -1374,7 +1459,7 @@ begin
       end;
     $5E:
       begin
-        SetRegisterE(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterE(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $60:
@@ -1409,7 +1494,7 @@ begin
       end;
     $66:
       begin
-        SetRegisterH(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterH(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $68:
@@ -1444,65 +1529,65 @@ begin
       end;
     $6E:
       begin
-        SetRegisterL(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterL(ReadBus(GetRegisterHL));
         ConsumeClockCycles(8);
       end;
     $70:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterB);
+        WriteBus(GetRegisterHL, GetRegisterB);
         ConsumeClockCycles(8);
       end;
     $71:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterC);
+        WriteBus(GetRegisterHL, GetRegisterC);
         ConsumeClockCycles(8);
       end;
     $72:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterD);
+        WriteBus(GetRegisterHL, GetRegisterD);
         ConsumeClockCycles(8);
       end;
     $73:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterE);
+        WriteBus(GetRegisterHL, GetRegisterE);
         ConsumeClockCycles(8);
       end;
     $74:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterH);
+        WriteBus(GetRegisterHL, GetRegisterH);
         ConsumeClockCycles(8);
       end;
     $75:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterL);
+        WriteBus(GetRegisterHL, GetRegisterL);
         ConsumeClockCycles(8);
       end;
     $36:
       begin
-        FMemory.WriteByte(GetRegisterHL, FMemory.ReadByte(ProgramCounter));
+        WriteBus(GetRegisterHL, ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(12);
       end;
     $0A: //LD A,n
       begin
-        SetRegisterA(FMemory.ReadByte(GetRegisterBC));
+        SetRegisterA(ReadBus(GetRegisterBC));
         ConsumeClockCycles(8);
       end;
     $1A:
       begin
-        SetRegisterA(FMemory.ReadByte(GetRegisterDE));
+        SetRegisterA(ReadBus(GetRegisterDE));
         ConsumeClockCycles(8);
       end;
     $FA:
       begin
-        SetRegisterA(FMemory.ReadByte(FMemory.ReadWord(ProgramCounter)));
+        SetRegisterA(ReadBus(ReadBusWord(ProgramCounter)));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(16);
       end;
     $3E:
       begin
-        SetRegisterA(FMemory.ReadByte(ProgramCounter));
+        SetRegisterA(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(8);
       end;
@@ -1538,105 +1623,104 @@ begin
       end;
     $02:
       begin
-        FMemory.WriteByte(GetRegisterBC, GetRegisterA);
+        WriteBus(GetRegisterBC, GetRegisterA);
         ConsumeClockCycles(8);
       end;
     $12:
       begin
-        FMemory.WriteByte(GetRegisterDE, GetRegisterA);
+        WriteBus(GetRegisterDE, GetRegisterA);
         ConsumeClockCycles(8);
       end;
     $77:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterA);
+        WriteBus(GetRegisterHL, GetRegisterA);
         ConsumeClockCycles(8);
       end;
     $EA:
       begin
-        FMemory.WriteByte(FMemory.ReadWord(ProgramCounter), GetRegisterA);
+        WriteBus(ReadBusWord(ProgramCounter), GetRegisterA);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(16);
       end;
     $F2:
       begin
-        SetRegisterA(FMemory.ReadByte(GetRegisterC + $FF00));
+        SetRegisterA(ReadBus(GetRegisterC + $FF00));
         ConsumeClockCycles(8);
       end;
     $E2:
       begin
-        FMemory.WriteByte($FF00 + GetRegisterC, GetRegisterA);
+        WriteBus($FF00 + GetRegisterC, GetRegisterA);
         ConsumeClockCycles(8);
       end;
     $3A:
       begin
-        SetRegisterA(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterA(ReadBus(GetRegisterHL, True));
         SetRegisterHL((GetRegisterHL - 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $32:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterA);
+        WriteBus(GetRegisterHL, GetRegisterA);
         SetRegisterHL((GetRegisterHL - 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $2A:
       begin
-        SetRegisterA(FMemory.ReadByte(GetRegisterHL));
+        SetRegisterA(ReadBus(GetRegisterHL, True));
         SetRegisterHL((GetRegisterHL + 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $22:
       begin
-        FMemory.WriteByte(GetRegisterHL, GetRegisterA);
+        WriteBus(GetRegisterHL, GetRegisterA);
         SetRegisterHL((GetRegisterHL + 1) and $FFFF);
         ConsumeClockCycles(8);
       end;
     $E0:
       begin
-        FMemory.WriteByte($FF00 + FMemory.ReadByte(ProgramCounter), GetRegisterA);
+        WriteBus($FF00 + ReadBus(ProgramCounter, True), GetRegisterA);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(12);
       end;
     $F0:
       begin
-        var Address := $FF00 + FMemory.ReadByte(ProgramCounter);
+        var Address := $FF00 + ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         // LDH reads I/O in its third machine cycle. In particular, LY can
         // enter VBlank during this instruction, before the pending interrupt
         // is serviced. Sampling it at opcode fetch can miss line 144 forever
         // when the VBlank handler runs into the next frame.
-        ConsumeClockCycles(8);
-        SetRegisterA(FMemory.ReadByte(Address));
-        ConsumeClockCycles(4);
+        SetRegisterA(ReadBus(Address));
+        ConsumeClockCycles(12);
       end;
     $01: //LD BC,nn
       begin
-        SetRegisterC(FMemory.ReadByte(ProgramCounter));
+        SetRegisterC(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-        SetRegisterB(FMemory.ReadByte(ProgramCounter));
+        SetRegisterB(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(12);
       end;
     $11:
       begin
-        SetRegisterE(FMemory.ReadByte(ProgramCounter));
+        SetRegisterE(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-        SetRegisterD(FMemory.ReadByte(ProgramCounter));
+        SetRegisterD(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(12);
       end;
     $21:
       begin
-        SetRegisterL(FMemory.ReadByte(ProgramCounter));
+        SetRegisterL(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-        SetRegisterH(FMemory.ReadByte(ProgramCounter));
+        SetRegisterH(ReadBus(ProgramCounter, True));
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(12);
       end;
     $31:
       begin
-        StackPointer := FMemory.ReadWord(ProgramCounter);
+        StackPointer := ReadBusWord(ProgramCounter);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         ConsumeClockCycles(12);
@@ -1648,7 +1732,7 @@ begin
       end;
     $F8:
       begin
-        var Temp: Integer := FMemory.ReadByte(ProgramCounter);
+        var Temp: Integer := ReadBus(ProgramCounter, True);
         if Temp > 127 then
           Temp := -((not Temp + 1) and 255);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
@@ -1663,13 +1747,13 @@ begin
       end;
     $08:
       begin
-        var Low := FMemory.ReadByte(ProgramCounter);
+        var Low := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
-        var Up := FMemory.ReadByte(ProgramCounter);
+        var Up := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
         var Address := ((Up shl 8) + Low);
-        FMemory.WriteByte(Address, GetStackPointerLow);
-        FMemory.WriteByte(Address + 1, GetStackPointerHigh);
+        WriteBus(Address, GetStackPointerLow);
+        WriteBus(Address + 1, GetStackPointerHigh);
         ConsumeClockCycles(20);
       end;
   end;
@@ -1723,10 +1807,10 @@ begin
     $B5:
       Second := GetRegisterL;
     $B6:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $F6:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   end;
@@ -1743,11 +1827,11 @@ end;
 
 function TGBCPU.PopWord: Integer;
 begin
-  var Low: Integer := FMemory.ReadByte(StackPointer);
+  var Low: Integer := ReadBus(StackPointer, True);
   // The Game Boy stack wraps across $FFFF->$0000.  Widen before adding so
   // Delphi range checks do not reject the valid 16-bit wrap.
   StackPointer := (Integer(StackPointer) + 1) and $FFFF;
-  var High: Integer := FMemory.ReadByte(StackPointer);
+  var High: Integer := ReadBus(StackPointer);
   StackPointer := (Integer(StackPointer) + 1) and $FFFF;
   High := High shl 8;
   Result := High or Low;
@@ -1820,10 +1904,12 @@ end;
 
 procedure TGBCPU.PushWord(Value: Integer);
 begin
+  ClockRegisterChange(StackPointer);
   StackPointer := (Integer(StackPointer) - 1) and $FFFF;
-  FMemory.WriteByte(StackPointer, (Value and $FF00) shr 8);
+  WriteBus(StackPointer, (Value and $FF00) shr 8);
+  FMemory.ProcessOAMCorruption(StackPointer, TGBOAMCorruption.Write);
   StackPointer := (Integer(StackPointer) - 1) and $FFFF;
-  FMemory.WriteByte(StackPointer, Value and $00FF);
+  WriteBus(StackPointer, Value and $00FF);
 end;
 
 procedure TGBCPU.ExecutePush(OpCode: Integer);
@@ -1871,7 +1957,7 @@ begin
     $CB0D:
       Value := GetRegisterL;
     $CB0E:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -1895,7 +1981,7 @@ begin
     $CB0D:
       SetRegisterL(Result);
     $CB0E:
-      FMemory.WriteByte(GetRegisterHL, Result);
+      WriteBus(GetRegisterHL, Result);
   end;
   SetZeroFlag(Result = 0);
   SetSubtractFlag(False);
@@ -1964,7 +2050,7 @@ begin
     $CB05:
       Value := GetRegisterL;
     $CB06:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -1988,7 +2074,7 @@ begin
     $CB05:
       SetRegisterL(Result);
     $CB06:
-      FMemory.WriteByte(GetRegisterHL, Result);
+      WriteBus(GetRegisterHL, Result);
   end;
   SetCarryFlag(Bit7);
   SetHalfCarryFlag(False);
@@ -2019,7 +2105,7 @@ begin
     $CB15:
       Value := GetRegisterL;
     $CB16:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -2046,7 +2132,7 @@ begin
     $CB15:
       SetRegisterL(Result);
     $CB16:
-      FMemory.WriteByte(GetRegisterHL, Result);
+      WriteBus(GetRegisterHL, Result);
   end;
   SetZeroFlag(Result = 0);
   SetSubtractFlag(False);
@@ -2077,7 +2163,7 @@ begin
     $CB1D:
       Value := GetRegisterL;
     $CB1E:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -2103,7 +2189,7 @@ begin
     $CB1D:
       SetRegisterL(NewValue);
     $CB1E:
-      FMemory.WriteByte(GetRegisterHL, NewValue);
+      WriteBus(GetRegisterHL, NewValue);
   end;
   SetCarryFlag((Value and $1) = 1);
   SetZeroFlag(NewValue = 0);
@@ -2163,10 +2249,10 @@ begin
     $9D:
       Second := GetRegisterL;
     $9E:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $DE:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -2320,38 +2406,38 @@ begin
   StackPointer := $FFFE;
   ProgramCounter := $100;
   FMemory.Timer.SetDivider($AB);
-  FMemory.WriteByte($FF0F, $E1);
-  FMemory.WriteByte($FF05, $00); // TIMA
-  FMemory.WriteByte($FF06, $00); // TMA
-  FMemory.WriteByte($FF07, $00); // TAC
-  FMemory.WriteByte($FF10, $80); // NR10
-  FMemory.WriteByte($FF11, $BF); // NR11
-  FMemory.WriteByte($FF12, $F3); // NR12
-  FMemory.WriteByte($FF14, $BF); // NR14
-  FMemory.WriteByte($FF16, $3F); // NR21
-  FMemory.WriteByte($FF17, $00); // NR22
-  FMemory.WriteByte($FF19, $BF); // NR24
-  FMemory.WriteByte($FF1A, $7F); // NR30
-  FMemory.WriteByte($FF1B, $FF); // NR31
-  FMemory.WriteByte($FF1C, $9F); // NR32
-  FMemory.WriteByte($FF1E, $BF); // NR33
-  FMemory.WriteByte($FF20, $FF); // NR41
-  FMemory.WriteByte($FF21, $00); // NR42
-  FMemory.WriteByte($FF22, $00); // NR43
-  FMemory.WriteByte($FF23, $BF); // NR30
-  FMemory.WriteByte($FF24, $77); // NR50
-  FMemory.WriteByte($FF25, $F3); // NR51
-  FMemory.WriteByte($FF26, $F1); // NR52
-  FMemory.WriteByte($FF40, $91); // LCDC
-  FMemory.WriteByte($FF42, $00); // SCY
-  FMemory.WriteByte($FF43, $00); // SCX
-  FMemory.WriteByte($FF45, $00); // LYC
-  FMemory.WriteByte($FF47, $FC); // BGP
-  FMemory.WriteByte($FF48, $FF); // OBP0
-  FMemory.WriteByte($FF49, $FF); // OBP1
-  FMemory.WriteByte($FF4A, $00); // WY
-  FMemory.WriteByte($FF4B, $00); // WX
-  FMemory.WriteByte($FFFF, $00); // IE
+  WriteBus($FF0F, $E1);
+  WriteBus($FF05, $00); // TIMA
+  WriteBus($FF06, $00); // TMA
+  WriteBus($FF07, $00); // TAC
+  WriteBus($FF10, $80); // NR10
+  WriteBus($FF11, $BF); // NR11
+  WriteBus($FF12, $F3); // NR12
+  WriteBus($FF14, $BF); // NR14
+  WriteBus($FF16, $3F); // NR21
+  WriteBus($FF17, $00); // NR22
+  WriteBus($FF19, $BF); // NR24
+  WriteBus($FF1A, $7F); // NR30
+  WriteBus($FF1B, $FF); // NR31
+  WriteBus($FF1C, $9F); // NR32
+  WriteBus($FF1E, $BF); // NR33
+  WriteBus($FF20, $FF); // NR41
+  WriteBus($FF21, $00); // NR42
+  WriteBus($FF22, $00); // NR43
+  WriteBus($FF23, $BF); // NR30
+  WriteBus($FF24, $77); // NR50
+  WriteBus($FF25, $F3); // NR51
+  WriteBus($FF26, $F1); // NR52
+  WriteBus($FF40, $91); // LCDC
+  WriteBus($FF42, $00); // SCY
+  WriteBus($FF43, $00); // SCX
+  WriteBus($FF45, $00); // LYC
+  WriteBus($FF47, $FC); // BGP
+  WriteBus($FF48, $FF); // OBP0
+  WriteBus($FF49, $FF); // OBP1
+  WriteBus($FF4A, $00); // WY
+  WriteBus($FF4B, $00); // WX
+  WriteBus($FFFF, $00); // IE
 end;
 
 procedure TGBCPU.ExecuteSLA(OpCode: Word);
@@ -2373,7 +2459,7 @@ begin
     $CB25:
       Value := GetRegisterL;
     $CB26:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -2396,7 +2482,7 @@ begin
     $CB25:
       SetRegisterL(Result);
     $CB26:
-      FMemory.WriteByte(GetRegisterHL, Result);
+      WriteBus(GetRegisterHL, Result);
   end;
   SetZeroFlag(Result = 0);
   SetCarryFlag(Carry);
@@ -2427,7 +2513,7 @@ begin
     $CB2D:
       Value := GetRegisterL;
     $CB2E:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -2450,7 +2536,7 @@ begin
     $CB2D:
       SetRegisterL(Result);
     $CB2E:
-      FMemory.WriteByte(GetRegisterHL, Result);
+      WriteBus(GetRegisterHL, Result);
   end;
   SetCarryFlag(Carry);
   SetZeroFlag(Result = 0);
@@ -2481,7 +2567,7 @@ begin
     $CB3D:
       Value := GetRegisterL;
     $CB3E:
-      Value := FMemory.ReadByte(GetRegisterHL);
+      Value := ReadBus(GetRegisterHL);
   else
     Exit;
   end;
@@ -2504,7 +2590,7 @@ begin
     $CB3D:
       SetRegisterL(Result);
     $CB3E:
-      FMemory.WriteByte(GetRegisterHL, Result);
+      WriteBus(GetRegisterHL, Result);
   end;
   SetZeroFlag(Result = 0);
   SetCarryFlag(Carry);
@@ -2518,19 +2604,58 @@ end;
 
 procedure TGBCPU.Step;
 begin
-  ProcessInterrupts;
-  if not FIsHalted then
+  if FSpeedSwitchClocks > 0 then
   begin
-    Inc(FInstructionCount);
-
-    var OpCode := GetOpCode;
-    FLastOpCode := OpCode;
-
-    Decode(OpCode);
-    ProcessEI(OpCode);
-  end
-  else
-    ConsumeClockCycles(4);
+    // DIV is held in reset; APU/PPU keep running on the base clock.
+    for var I := 1 to 4 do
+    begin
+      Inc(FBaseClockPhase);
+      if not FMemory.DoubleSpeed or (FBaseClockPhase = 2) then
+      begin
+        FBaseClockPhase := 0;
+        Inc(FCycles);
+        FGPU.Step(1);
+        if FSound <> nil then
+          FSound.UpdateSound(1);
+      end;
+    end;
+    Dec(FSpeedSwitchClocks, 4);
+    if FSpeedSwitchClocks = 0 then
+    begin
+      FMemory.PerformSpeedSwitch;
+      FGPU.SetCPUStop(False);
+      FBaseClockPhase := 0;
+    end;
+    Exit;
+  end;
+  if FCPUStopped then
+  begin
+    if (FMemory.Joypad.GetPressedKeys and $0F) = $0F then
+      Exit;
+    FCPUStopped := False;
+    FGPU.SetCPUStop(False);
+  end;
+  FBusCycles := 0;
+  FBusTiming := True;
+  try
+    var PreviousCycles := FCycles;
+    ProcessInterrupts;
+    if FCycles <> PreviousCycles then
+      Exit;
+    if not FIsHalted then
+    begin
+      Inc(FInstructionCount);
+      var OpCode := GetOpCode;
+      FLastOpCode := OpCode;
+      Decode(OpCode);
+      ProcessEI(OpCode);
+    end
+    else
+      ConsumeClockCycles(4);
+  finally
+    FBusTiming := False;
+    FBusCycles := 0;
+  end;
 end;
 
 procedure TGBCPU.Stop;
@@ -2557,10 +2682,10 @@ begin
     $95:
       Second := GetRegisterL;
     $96:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $D6:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -2634,8 +2759,8 @@ begin
       end;
     $CB36:
       begin
-        Value := SwapNibbles(FMemory.ReadByte(GetRegisterHL));
-        FMemory.WriteByte(GetRegisterHL, Value);
+        Value := SwapNibbles(ReadBus(GetRegisterHL));
+        WriteBus(GetRegisterHL, Value);
       end;
   else
     Exit;
@@ -2670,10 +2795,10 @@ begin
     $AD:
       Second := GetRegisterL;
     $AE:
-      Second := FMemory.ReadByte(GetRegisterHL);
+      Second := ReadBus(GetRegisterHL);
     $EE:
       begin
-        Second := FMemory.ReadByte(ProgramCounter);
+        Second := ReadBus(ProgramCounter, True);
         ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
       end;
   else
@@ -2700,6 +2825,9 @@ end;
 
 procedure TGBCPU.SerializeState(State: TStateArchive);
 begin
+  State.Field(FBaseClockPhase, SizeOf(FBaseClockPhase));
+  State.Field(FSpeedSwitchClocks, SizeOf(FSpeedSwitchClocks));
+  State.Field(FCPUStopped, SizeOf(FCPUStopped));
   State.Field(FLastOpCode, SizeOf(FLastOpCode));
   State.Field(FStopped, SizeOf(FStopped));
   State.Field(FInstructionCount, SizeOf(FInstructionCount));

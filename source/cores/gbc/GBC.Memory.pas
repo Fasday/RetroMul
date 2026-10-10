@@ -27,6 +27,7 @@ type
   public
     constructor Create(AMbc: TGBCMBC; AGPU: TGBCGPU); reintroduce; overload;
     function IsCGBMode: Boolean; override;
+    function IsCGBHardware: Boolean; override;
     function PerformSpeedSwitch: Boolean; override;
     function StopHalts: Boolean; override;
     function ConsumeDMACyclePenalty: Integer; override;
@@ -96,6 +97,20 @@ begin
       Value := $F8 or FWRAMBank;
     $FF55:
       Value := IOPort[$55];
+    $FF72, $FF73:
+      Value := IOPort[Address - $FF00];
+    $FF74:
+      if IsCGBMode then
+        Value := IOPort[$74]
+      else
+        Value := $FF;
+    $FF75:
+      Value := IOPort[$75] or $8F;
+    $FF76, $FF77:
+      if Assigned(PCMRead) then
+        Value := PCMRead(Address)
+      else
+        Value := 0;
   else
     Value := 0;
     Result := False;
@@ -125,6 +140,15 @@ begin
       IOPort[Address - $FF00] := Value;
     $FF55:
       ExecuteGeneralHDMA(Value);
+    $FF72, $FF73:
+      IOPort[Address - $FF00] := Value;
+    $FF74:
+      if IsCGBMode then
+        IOPort[$74] := Value;
+    $FF75:
+      IOPort[$75] := Value and $70;
+    $FF76, $FF77:
+      ; // PCM channel outputs are read-only.
   else
     Result := False;
   end;
@@ -187,6 +211,11 @@ end;
 
 { TGBMemory }
 
+function TGBCMemory.IsCGBHardware: Boolean;
+begin
+  Result := True;
+end;
+
 function TGBCMemory.IsCGBMode: Boolean;
 begin
   if Length(FBootROMData) = $900 then
@@ -208,6 +237,7 @@ begin
   if Result then
   begin
     FDoubleSpeed := not FDoubleSpeed;
+    Timer.DoubleSpeed := FDoubleSpeed;
     FPrepareSpeedSwitch := False;
   end;
 end;

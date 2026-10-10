@@ -6,6 +6,8 @@ uses
   Core.Snapshots, System.Classes, System.SysUtils, GB.InterruptManager;
 
 type
+  TGBFrameClock = procedure of object;
+
   TGBTimer = class
   private
     class var
@@ -19,6 +21,9 @@ type
     procedure IncrementCounter;
     procedure UpdateDivider(NewDivider: Integer);
   public
+    OnFrameSequencer: TGBFrameClock;
+    DoubleSpeed: Boolean;
+    function FrameSequencerBit: Boolean;
     constructor Create(AInterruptManager: TGBInterruptManager = nil; ColorHardware: Boolean = False); overload;
     procedure Step(StepCount: Integer);
     procedure Tick;
@@ -149,6 +154,12 @@ procedure TGBTimer.Step(StepCount: Integer);
 begin
   while StepCount > 0 do
   begin
+    if Assigned(OnFrameSequencer) then
+    begin
+      Tick;
+      Dec(StepCount);
+      Continue;
+    end;
     // Reload/IRQ and write races remain single-clock events. Between falling
     // edges the divider can advance directly without invoking Tick per clock.
     if FOverflow or FReloadCycle then
@@ -209,9 +220,20 @@ begin
   UpdateDivider((FDivider + 1) and $FFFF);
 end;
 
+function TGBTimer.FrameSequencerBit: Boolean;
+begin
+  var Mask := $1000;
+  if DoubleSpeed then
+    Mask := $2000;
+  Result := (FDivider and Mask) <> 0;
+end;
+
 procedure TGBTimer.UpdateDivider(NewDivider: Integer);
 begin
+  var Previous := FrameSequencerBit;
   FDivider := NewDivider;
+  if Previous and not FrameSequencerBit and Assigned(OnFrameSequencer) then
+    OnFrameSequencer;
   var BitPosition := FFrequencyBits[FControl and 3];
   var TimerBit := ((FDivider and (1 shl BitPosition)) <> 0) and ((FControl and (1 shl 2)) <> 0);
   if not TimerBit and FPreviousBit then
@@ -221,6 +243,7 @@ end;
 
 procedure TGBTimer.SerializeState(State: TStateArchive);
 begin
+  State.Field(DoubleSpeed, SizeOf(DoubleSpeed));
   State.Field(FDivider, SizeOf(FDivider));
   State.Field(FControl, SizeOf(FControl));
   State.Field(FModulo, SizeOf(FModulo));

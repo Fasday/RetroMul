@@ -119,14 +119,10 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
-  // GB/GBC v2 adds OAM DMA, serial, timer reload and MBC3 RTC state.
+  // GB/GBC v4 includes DMA/timer/camera state, pixel FIFO, DIV-clocked APU
+  // and the pending CPU STOP/speed transition. Earlier layouts are rejected.
   if (PlatformCore = ROM_CORE_ID_GB) or (PlatformCore = ROM_CORE_ID_GBC) then
-    Result.Version := 2;
-  // Camera v3 records the latched sensor frame for an in-flight capture.
-  // Leave snapshot compatibility unchanged for all other GB/GBC cartridges.
-  if ((PlatformCore = ROM_CORE_ID_GB) or (PlatformCore = ROM_CORE_ID_GBC)) and
-    (Length(ROM) > GB_ROM_CARTRIDGE_TYPE_OFFSET) and (ROM[GB_ROM_CARTRIDGE_TYPE_OFFSET] = $FC) then
-    Result.Version := 3;
+    Result.Version := 4;
   // MD v5 adds Z80 IFF2 and the pending NMI latch.
   if PlatformCore = ROM_CORE_ID_MD then
     Result.Version := 5;

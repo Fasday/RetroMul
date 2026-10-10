@@ -45,6 +45,12 @@ function GBBootUsesColor(Model: TGBBootModel): Boolean;
 function PrepareGBBootROM(Model: TGBBootModel; const Data: TBytes): TBytes;
 
 type
+  TGBOAMCorruption = (Read, Write, ReadIncDec);
+
+  TGBAudioWrite = procedure(Address: Integer; Value: Byte) of object;
+
+  TGBAudioRead = function(Address: Integer): Byte of object;
+
   TGBMemory = class
   protected
     FGPU: TGBVideo;
@@ -64,6 +70,7 @@ type
     FDMASource, FDMAIndex, FDMAClocks: Integer;
     FDMAActive: Boolean;
     FSerialClocks, FSerialBits: Integer;
+    FSuppressCorruption: Boolean;
     function DMABlocksCPU(Address: Integer): Boolean;
   public
     // 0000-3FFF   16KB ROM Bank 00     (in cartridge, fixed at bank 00)
@@ -90,15 +97,20 @@ type
     // FF80-FFFE   High RAM (HRAM)
     HRAM: array[0..127] of Byte;
 
+    AudioWrite: TGBAudioWrite;
+    AudioRead, PCMRead: TGBAudioRead;
     FMBC: TGBMBC;
     UseBIOS: Boolean;
     procedure WriteByte(Address: Integer; Value: Byte); virtual;
     procedure WriteWord(Address: Integer; Value: Word);
 
     function ReadByte(Address: Integer): Byte; virtual;
+    function ReadWithIncrement(Address: Integer): Byte;
+    procedure ProcessOAMCorruption(Address: Integer; Kind: TGBOAMCorruption);
     function ReadWord(Address: Integer): Word;
     function GetROMBank: Integer;
     function IsCGBMode: Boolean; virtual;
+    function IsCGBHardware: Boolean; virtual;
     function PerformSpeedSwitch: Boolean; virtual;
     function StopHalts: Boolean; virtual;
     function ConsumeDMACyclePenalty: Integer; virtual;
@@ -196,6 +208,11 @@ begin
 end;
 
 function TGBMemory.WriteModelRegister(Address: Integer; Value: Byte): Boolean;
+begin
+  Result := False;
+end;
+
+function TGBMemory.IsCGBHardware: Boolean;
 begin
   Result := False;
 end;
@@ -412,10 +429,72 @@ begin
   Result := Ret;
 end;
 
+function TGBMemory.ReadWithIncrement(Address: Integer): Byte;
+begin
+  ProcessOAMCorruption(Address, TGBOAMCorruption.ReadIncDec);
+  FSuppressCorruption := True;
+  try
+    Result := ReadByte(Address);
+  finally
+    FSuppressCorruption := False;
+  end;
+end;
+
+procedure TGBMemory.ProcessOAMCorruption(Address: Integer; Kind: TGBOAMCorruption);
+
+  function OAMWord(Offset: Integer): Word;
+  begin
+    Result := OAM[Offset] or (OAM[Offset + 1] shl 8);
+  end;
+
+  procedure SetOAMWord(Offset: Integer; Value: Word);
+  begin
+    OAM[Offset] := Value and $FF;
+    OAM[Offset + 1] := Value shr 8;
+  end;
+
+begin
+  if IsCGBHardware or ((Address and $FF00) <> $FE00) then
+    Exit;
+  var Row := FGPU.OAMCorruptionRow;
+  if Row <= 0 then
+    Exit;
+  var Current := Row * 8;
+  var Previous := Current - 8;
+  if (Kind = TGBOAMCorruption.ReadIncDec) and (Row >= 4) and (Row < 19) then
+  begin
+    var A := OAMWord(Current - 16);
+    var B := OAMWord(Previous);
+    var C := OAMWord(Current);
+    var D := OAMWord(Previous + 4);
+    SetOAMWord(Previous, (B and (A or C or D)) or (A and C and D));
+    Move(OAM[Previous], OAM[Current], 8);
+    Move(OAM[Previous], OAM[Current - 16], 8);
+  end;
+  var A := OAMWord(Current);
+  var B := OAMWord(Previous);
+  var C := OAMWord(Previous + 4);
+  if Kind = TGBOAMCorruption.Write then
+    SetOAMWord(Current, ((A xor C) and (B xor C)) xor C)
+  else
+    SetOAMWord(Current, B or (A and C));
+  Move(OAM[Previous + 2], OAM[Current + 2], 6);
+  // Keep the PPU's OAM bus and decoded debugger view coherent.
+  for var I := 0 to 159 do
+    FGPU.BuildSprite(I, OAM[I]);
+end;
+
 function TGBMemory.ReadByte(Address: Integer): Byte;
 begin
+  if not FSuppressCorruption then
+    ProcessOAMCorruption(Address, TGBOAMCorruption.Read);
+  if ((Address and $FF00) = $FE00) and
+    ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
+    Exit($FF);
   if DMABlocksCPU(Address) then
     Exit($FF);
+  if Assigned(AudioRead) and (Address >= $FF10) and (Address <= $FF3F) then
+    Exit(AudioRead(Address));
 
   if (Address >= $FF4C) and (Address <= $FF7F) and ReadModelRegister(Address, Result) then
     Exit;
@@ -512,9 +591,18 @@ end;
 
 procedure TGBMemory.WriteByte(Address: Integer; Value: Byte);
 begin
+  ProcessOAMCorruption(Address, TGBOAMCorruption.Write);
+  if ((Address and $FF00) = $FE00) and
+    ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
+    Exit;
   if DMABlocksCPU(Address) then
     Exit;
 
+  if Assigned(AudioWrite) and (Address >= $FF10) and (Address <= $FF3F) then
+  begin
+    AudioWrite(Address, Value);
+    Exit;
+  end;
   if (Address >= $FF4C) and (Address <= $FF7F) and WriteModelRegister(Address, Value) then
     Exit;
 
@@ -573,6 +661,8 @@ begin
         end;
       $FF40:
         begin
+          if IsCGBHardware and ((FGPU.GetLCDControl and $10) <> 0) and ((Value and $10) = 0) then
+            FGPU.SetTileFetchGlitch;
           FGPU.SetLCDControl(Value);
         end;
       $FF41:

@@ -49,7 +49,6 @@ type
   TGBCGPU = class(TGBVideo)
   private
     FHBlankCallback: THBlankCallback;
-    FMode3Cycles: Integer;
 
     FCGBMode: Boolean;
     FBootCompatibilityPalettes: Boolean;
@@ -58,20 +57,16 @@ type
     FBGPaletteRAM, FOBJPaletteRAM: array[0..63] of Byte;
     // Derived ARGB colors; rebuild after loading, never store in snapshots.
     FBGColors, FOBJColors: array[0..31] of Integer;
-    FColorIndexBuffer, FPaletteIndexBuffer: array[0..23039] of Byte;
-    FObjectPixelBuffer: array[0..23039] of Boolean;
-    FDisplayVRAM, FDisplayVRAMBank1: array[0..$2000 - 1] of Integer;
     procedure RebuildPaletteColors;
+  protected
+    function ColorRendering: Boolean; override;
+    function CoordinatePriority: Boolean; override;
+    function ReadDisplayByte(Bank, Address: Integer): Byte; override;
+    function ResolvePixel(IsObject: Boolean; Attributes, Color: Integer): Integer; override;
+    procedure HBlankStarted; override;
+  private
     function CGBColor(const PaletteRAM: array of Byte; PaletteIndex, ColorIndex: Integer): Integer;
     function PixelColor(IsObject: Boolean; PaletteIndex, ColorIndex: Integer): Integer;
-    function GetMode3Cycles: Integer;
-    function DisplayTilePixel(Bank, Tile, Y, X: Integer): Integer;
-    procedure SnapshotDisplayVRAM;
-
-    procedure RenderScanLine;
-    procedure RenderWindow(var ScanlineRow: TScanlineRow; var PriorityRow: TScanlinePriorityRow);
-    procedure RenderBackground(var ScanlineRow: TScanlineRow; var PriorityRow: TScanlinePriorityRow);
-    procedure RenderSprites(const ScanlineRow: TScanlineRow; const PriorityRow: TScanlinePriorityRow);
 
   public
     VRAMBank1: array[0..$2000 - 1] of Integer;
@@ -173,9 +168,6 @@ end;
 
 procedure TGBCGPU.SetCGBMode(Value: Boolean);
 begin
-  if FCGBMode = Value then
-    Exit;
-
   FCGBMode := Value;
   if not Value then
     Exit;
@@ -291,6 +283,7 @@ end;
 
 procedure TGBCGPU.BuildSprite(Address, Value: Integer);
 begin
+  RecordOAM(Address, Value);
   var SpriteNumber: Integer := Address shr 2;
   if SpriteNumber >= 40 then
     Exit;
@@ -318,8 +311,6 @@ constructor TGBCGPU.Create(Callback: TDrawCallback);
 begin
   inherited Create(Callback, TGBCInterruptManager.Instance);
   FCGBMode := False;
-  FMode3Cycles := 172;
-  SnapshotDisplayVRAM;
   for var i := 0 to 39 do
     with SpriteList[i] do
     begin
@@ -335,320 +326,45 @@ begin
     end;
 end;
 
-procedure TGBCGPU.RenderBackground(var ScanlineRow: TScanlineRow; var PriorityRow: TScanlinePriorityRow);
-begin
-  var MapBase := $1800;
-  if FBackgroundTileMapHigh then
-    MapBase := $1C00;
-  var WorldY := (Line + ScrollY) and $FF;
-  for var i := 0 to 159 do
-  begin
-    var WorldX := (ScrollX + i) and $FF;
-    var MapAddress := MapBase + ((WorldY shr 3) shl 5) + (WorldX shr 3);
-    var Tile := FDisplayVRAM[MapAddress];
-    var Attribute := 0;
-    if FCGBMode then
-      Attribute := FDisplayVRAMBank1[MapAddress];
-    if (not FUnsignedTileData) and (Tile < 128) then
-      Inc(Tile, 256);
-    var TileX := WorldX and 7;
-    var TileY := WorldY and 7;
-    if (Attribute and $20) <> 0 then
-      TileX := 7 - TileX;
-    if (Attribute and $40) <> 0 then
-      TileY := 7 - TileY;
-    var ColorIndex := DisplayTilePixel((Attribute shr 3) and 1, Tile, TileY, TileX);
-    Screen[Line * 160 + i] := PixelColor(False, Attribute and 7, ColorIndex);
-    FColorIndexBuffer[Line * 160 + i] := ColorIndex;
-    FPaletteIndexBuffer[Line * 160 + i] := Attribute and 7;
-    FObjectPixelBuffer[Line * 160 + i] := False;
-    ScanlineRow[i] := ColorIndex;
-    PriorityRow[i] := FCGBMode and ((Attribute and $80) <> 0);
-  end;
-end;
-
-function TGBCGPU.GetMode3Cycles: Integer;
-begin
-  // Fine X scrolling and window startup delay the pixel fetcher.  HBlank is
-  // shortened by the same amount so a scanline remains exactly 456 cycles.
-  Result := 172 + (ScrollX and 7);
-  if FWindowEnabled and (Line >= WindowY) and (WindowX <= 166) then
-    Inc(Result, 6);
-  if Result > 376 then
-    Result := 376;
-end;
-
-function TGBCGPU.DisplayTilePixel(Bank, Tile, Y, X: Integer): Integer;
-var
-  Address, LowByte, HighByte: Integer;
-begin
-  // Each VRAM bank contains 384 tile slots ($0000..$17FF).  A malformed or
-  // transient map value must not address the map area beyond this range.
-  Tile := Tile mod 384;
-  if Tile < 0 then
-    Inc(Tile, 384);
-  Y := Y and 7;
-  X := X and 7;
-  Address := Tile * 16 + Y * 2;
-  if Bank = 0 then
-  begin
-    LowByte := FDisplayVRAM[Address];
-    HighByte := FDisplayVRAM[Address + 1];
-  end
-  else
-  begin
-    LowByte := FDisplayVRAMBank1[Address];
-    HighByte := FDisplayVRAMBank1[Address + 1];
-  end;
-  Result := ((LowByte shr (7 - X)) and 1) or (((HighByte shr (7 - X)) and 1) shl 1);
-end;
-
-procedure TGBCGPU.SnapshotDisplayVRAM;
-begin
-  Move(VRAM, FDisplayVRAM, SizeOf(VRAM));
-  Move(VRAMBank1, FDisplayVRAMBank1, SizeOf(VRAMBank1));
-end;
-
-procedure TGBCGPU.RenderWindow(var ScanlineRow: TScanlineRow; var PriorityRow: TScanlinePriorityRow);
-begin
-  if not (FWindowEnabled and FWindowTriggered) or (WindowX > 166) then
-    Exit;
-
-  var MapBase: Integer;
-  if FWindowTileMapHigh then
-    MapBase := $1C00
-  else
-    MapBase := $1800;
-  var StartX: Integer := WindowX - 7;
-  if StartX < 0 then
-    StartX := 0;
-  for var X := StartX to 159 do
-  begin
-    var WindowPixel: Integer := X - (WindowX - 7);
-    var MapAddress := MapBase + ((FWindowLine shr 3) * 32) + (WindowPixel shr 3);
-    var Tile: Integer := FDisplayVRAM[MapAddress];
-    var Attribute := 0;
-    if FCGBMode then
-      Attribute := FDisplayVRAMBank1[MapAddress];
-    if (not FUnsignedTileData) and (Tile < 128) then
-      Inc(Tile, 256);
-    var TileX := WindowPixel and 7;
-    var TileY := FWindowLine and 7;
-    if (Attribute and $20) <> 0 then
-      TileX := 7 - TileX;
-    if (Attribute and $40) <> 0 then
-      TileY := 7 - TileY;
-    var ColorIndex: Integer := DisplayTilePixel((Attribute shr 3) and 1, Tile, TileY, TileX);
-    ScanlineRow[X] := ColorIndex;
-    PriorityRow[X] := FCGBMode and ((Attribute and $80) <> 0);
-    Screen[Line * 160 + X] := PixelColor(False, Attribute and 7, ColorIndex);
-    FColorIndexBuffer[Line * 160 + X] := ColorIndex;
-    FPaletteIndexBuffer[Line * 160 + X] := Attribute and 7;
-    FObjectPixelBuffer[Line * 160 + X] := False;
-  end;
-  Inc(FWindowLine);
-end;
-
-procedure TGBCGPU.RenderScanLine;
-begin
-  if Line = WindowY then
-    FWindowTriggered := True;
-  var ScanlineRow: TScanlineRow;
-  var PriorityRow: TScanlinePriorityRow;
-  FillChar(ScanlineRow, SizeOf(ScanlineRow), 0);
-  FillChar(PriorityRow, SizeOf(PriorityRow), 0);
-  for var X := 0 to 159 do
-  begin
-    Screen[Line * 160 + X] := PixelColor(False, 0, 0);
-    FColorIndexBuffer[Line * 160 + X] := 0;
-    FPaletteIndexBuffer[Line * 160 + X] := 0;
-    FObjectPixelBuffer[Line * 160 + X] := False;
-  end;
-  // In CGB mode LCDC.0 controls BG-to-OBJ priority, not whether the BG and
-  // window generators run.  Suppressing them here produced a black screen in
-  // titles which clear the priority bit for their sprite layers.
-  if FCGBMode or FBackgroundEnabled then
-  begin
-    RenderBackground(ScanlineRow, PriorityRow);
-    RenderWindow(ScanlineRow, PriorityRow);
-  end;
-  if FSpritesEnabled then
-    RenderSprites(ScanlineRow, PriorityRow);
-end;
-
-procedure TGBCGPU.RenderSprites(const ScanlineRow: TScanlineRow; const PriorityRow: TScanlinePriorityRow);
-begin
-  var SpriteSize := GetSpriteHeight;
-  var Count: Integer := 0;
-
-  // OAM selection is limited to the first ten objects intersecting this line.
-  var Selected: array[0..9] of Integer;
-  for var i := 0 to 39 do
-    if (SpriteList[i].Y <= Line) and (SpriteList[i].Y + SpriteSize > Line) then
-    begin
-      Selected[Count] := i;
-      Inc(Count);
-      if Count = 10 then
-        Break;
-    end;
-
-  // DMG chooses the lowest X coordinate first. CGB preserves OAM order.
-  if not FCGBMode then
-    for var i := 1 to Count - 1 do
-    begin
-      var Index := Selected[i];
-      var j := i - 1;
-      while j >= 0 do
-      begin
-        if SpriteList[Selected[j]].X <= SpriteList[Index].X then
-          Break;
-        Selected[j + 1] := Selected[j];
-        Dec(j);
-      end;
-      Selected[j + 1] := Index;
-    end;
-
-  var Claimed: array[0..159] of Boolean;
-  FillChar(Claimed, SizeOf(Claimed), 0);
-  for var i := 0 to Count - 1 do
-  begin
-    var Sprite := SpriteList[Selected[i]];
-    var Row := Line - Sprite.Y;
-    if Sprite.IsYFlip then
-      Row := SpriteSize - 1 - Row;
-    var Tile := Sprite.TileNumber;
-    if SpriteSize = 16 then
-      Tile := (Tile and $FE) + (Row shr 3);
-    Row := Row and 7;
-    var PaletteIndex := Sprite.PaletteIndex;
-    for var j := 0 to 7 do
-    begin
-      var X := Sprite.X + j;
-      if (X < 0) or (X >= 160) then
-        Continue;
-      if Claimed[X] then
-        Continue;
-
-      var SourceX := j;
-      if Sprite.IsXFlip then
-        SourceX := 7 - j;
-      var ColorIndex := DisplayTilePixel(Sprite.VRAMBank, Tile, Row, SourceX);
-      if ColorIndex = 0 then
-        Continue;
-
-      Claimed[X] := True;
-      // CGB tile attributes can force every non-zero OBJ pixel behind a
-      // non-zero background pixel. DMG has no per-tile priority bit.
-      var DrawSprite: Boolean;
-      if FCGBMode then
-        DrawSprite :=
-          (not FBackgroundEnabled) or
-          (ScanlineRow[X] = 0) or
-          ((not PriorityRow[X]) and (not Sprite.BelowBackground))
-      else
-        DrawSprite := (not Sprite.BelowBackground) or (ScanlineRow[X] = 0);
-      if DrawSprite then
-      begin
-        if FCGBMode then
-        begin
-          Screen[Line * 160 + X] := PixelColor(True, PaletteIndex, ColorIndex);
-          FColorIndexBuffer[Line * 160 + X] := ColorIndex;
-          FPaletteIndexBuffer[Line * 160 + X] := PaletteIndex;
-          FObjectPixelBuffer[Line * 160 + X] := True;
-        end
-        else if Sprite.IsPalette1 then
-          Screen[Line * 160 + X] := PixelColor(True, 1, ColorIndex)
-        else
-          Screen[Line * 160 + X] := PixelColor(True, 0, ColorIndex);
-      end;
-    end;
-  end;
-end;
-
 procedure TGBCGPU.Step(Cycle: Integer);
 begin
-  if not FLCDEnabled then
-    Exit;
+  inherited;
+end;
 
-  var Duration: Integer;
-  Inc(ModeClock, Cycle);
-  while True do
-  begin
-    case FCurrentMode of
-      TGPUMode.OAMAccess:
-        Duration := 80;
-      TGPUMode.VRAMAccess:
-        Duration := FMode3Cycles;
-      TGPUMode.HBlank:
-        Duration := 456 - 80 - FMode3Cycles;
-    else
-      // LY becomes zero four dots into the final VBlank line, while STAT
-      // stays in mode 1 for the remaining 452 dots. Games use this interval
-      // to prepare palettes before the first visible line (Aladdin).
-      if Line = 153 then
-        Duration := 4
-      else if Line = 0 then
-        Duration := 452
-      else
-        Duration := 456;
-    end;
-    if ModeClock < Duration then
-      Break;
+function TGBCGPU.ColorRendering: Boolean;
+begin
+  Result := FCGBMode;
+end;
 
-    Dec(ModeClock, Duration);
-    case FCurrentMode of
-      TGPUMode.OAMAccess:
-        begin
-          // HBlank DMA and CPU writes may change tiles between scanlines.
-          // Latch the data for this line, not once for the entire frame.
-          SnapshotDisplayVRAM;
-          FMode3Cycles := GetMode3Cycles;
-          FCurrentMode := TGPUMode.VRAMAccess;
-        end;
-      TGPUMode.VRAMAccess:
-        begin
-          FCurrentMode := TGPUMode.HBlank;
-          RenderScanLine;
-          if Assigned(FHBlankCallback) then
-            FHBlankCallback;
-        end;
-      TGPUMode.HBlank:
-        begin
-          Inc(Line);
-          if Line = 144 then
-          begin
-            FCurrentMode := TGPUMode.VBlank;
-            FInterruptManager.RaiseInterruptByIndex(4);
-            ProcessLCDStatus;
-            // RenderScanLine has already resolved each line's palette.
-            // Recoloring here would erase raster palette effects (LEGO Racers).
-            if Assigned(FDrawCallback) then
-              FDrawCallback(Screen);
-          end
-          else
-            FCurrentMode := TGPUMode.OAMAccess;
-        end;
-      TGPUMode.VBlank:
-        begin
-          if Line = 153 then
-            Line := 0
-          else if Line = 0 then
-          begin
-            SnapshotDisplayVRAM;
-            FWindowLine := 0;
-            FWindowTriggered := False;
-            FCurrentMode := TGPUMode.OAMAccess;
-          end
-          else
-            Inc(Line);
-        end;
-    end;
-    ProcessLCDStatus;
-    if not FLCDEnabled then
-      Exit;
-  end;
+function TGBCGPU.CoordinatePriority: Boolean;
+begin
+  Result := not FCGBMode;
+end;
 
-  ProcessLCDStatus;
+function TGBCGPU.ReadDisplayByte(Bank, Address: Integer): Byte;
+begin
+  if FPipeline.StopVRAM then
+    Exit($FF);
+  if Bank = 1 then
+    Result := VRAMBank1[Address and $1FFF]
+  else
+    Result := VRAM[Address and $1FFF];
+end;
+
+function TGBCGPU.ResolvePixel(IsObject: Boolean; Attributes, Color: Integer): Integer;
+begin
+  if FPipeline.StopVRAM then
+    Exit(Integer($FF000000));
+  var PaletteIndex := Attributes and 7;
+  if not FCGBMode then
+    PaletteIndex := (Attributes shr 4) and 1;
+  Result := PixelColor(IsObject, PaletteIndex, Color);
+end;
+
+procedure TGBCGPU.HBlankStarted;
+begin
+  if Assigned(FHBlankCallback) then
+    FHBlankCallback;
 end;
 
 procedure TGBCGPU.UpdateTile(Address: Integer);
@@ -689,8 +405,8 @@ end;
 
 procedure TGBCGPU.SerializeState(State: TStateArchive);
 begin
+  SerializePipeline(State);
   State.Field(FCurrentMode, SizeOf(FCurrentMode));
-  State.Field(FMode3Cycles, SizeOf(FMode3Cycles));
   State.Field(FWindowLine, SizeOf(FWindowLine));
   State.Field(FWindowTriggered, SizeOf(FWindowTriggered));
   State.Field(FSTATLineActive, SizeOf(FSTATLineActive));
@@ -708,16 +424,12 @@ begin
   State.Field(FSpritesEnabled, SizeOf(FSpritesEnabled));
   State.Field(FBackgroundEnabled, SizeOf(FBackgroundEnabled));
   State.Field(FCGBMode, SizeOf(FCGBMode));
+  State.Field(FBootCompatibilityPalettes, SizeOf(FBootCompatibilityPalettes));
   State.Field(FVBK, SizeOf(FVBK));
   State.Field(FBGPaletteIndex, SizeOf(FBGPaletteIndex));
   State.Field(FOBJPaletteIndex, SizeOf(FOBJPaletteIndex));
   State.Field(FBGPaletteRAM, SizeOf(FBGPaletteRAM));
   State.Field(FOBJPaletteRAM, SizeOf(FOBJPaletteRAM));
-  State.Field(FColorIndexBuffer, SizeOf(FColorIndexBuffer));
-  State.Field(FPaletteIndexBuffer, SizeOf(FPaletteIndexBuffer));
-  State.Field(FObjectPixelBuffer, SizeOf(FObjectPixelBuffer));
-  State.Field(FDisplayVRAM, SizeOf(FDisplayVRAM));
-  State.Field(FDisplayVRAMBank1, SizeOf(FDisplayVRAMBank1));
   State.Field(ModeClock, SizeOf(ModeClock));
   State.Field(Width, SizeOf(Width));
   State.Field(Height, SizeOf(Height));

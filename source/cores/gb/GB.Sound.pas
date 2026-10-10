@@ -152,6 +152,15 @@ type
     procedure SerializeState(State: TStateArchive); override;
   end;
 
+  TGBHardwareChannel = record
+    Enabled, DAC, LengthEnabled, EnvelopeStopped, EnvelopeUp: Boolean;
+    SweepEnabled, SweepNegated: Boolean;
+    Length, Frequency, Timer, Position, Output, Volume: Integer;
+    EnvelopePeriod, EnvelopeTimer, SweepPeriod, SweepTimer, SweepShift: Integer;
+    SweepShadow, WaveBuffer, WaveAccessClocks, DACCounter, DACVolume: Integer;
+    LFSR: Word;
+  end;
+
   TGBSound = class
   private
     const
@@ -204,33 +213,33 @@ type
     // Interleaved stereo PCM16.
     FMixedBuffer: array[0..GB_AUDIO_BLOCK_SAMPLES * GB_AUDIO_CHANNELS - 1] of SmallInt;
     FVolume: Single;
+    FHardware: array[0..3] of TGBHardwareChannel;
+    FFrameStep, FSkipFrame: Integer;
+    FIntegrated: array[0..3] of Double;
+    FIntegratedClocks: Integer;
     procedure SetVolume(const Value: Single);
-    procedure InitChannels;
-    procedure InitChannel1;
-    procedure InitChannel2;
-    procedure InitChannel3;
-    procedure InitChannel4;
-    procedure UpdateChannel1;
-    procedure UpdateChannel2;
-    procedure UpdateChannel3;
-    procedure UpdateChannel4;
+    procedure ClockFrameSequencer;
+    procedure WriteHardware(Address: Integer; Value: Byte);
+    function ReadHardware(Address: Integer): Byte;
+    procedure Trigger(Index: Integer);
+    procedure ClockChannel(Index: Integer);
+    procedure UpdateOutput(Index: Integer);
+    procedure SyncChannels;
+    function SweepFrequency: Integer;
+    procedure ClockEnvelope(Index: Integer);
+    procedure WriteEnvelope(Index: Integer; Value: Byte);
+    function ChannelPeriod(Index: Integer): Integer;
     procedure MixSound;
     procedure FlushBuffer;
-    function IsSoundReset(ChannelNumber: Integer): Boolean;
-    procedure RemoveSoundReset(ChannelNumber: Integer);
-    function IsAllSoundOn: Boolean;
-    procedure SetSoundOn(ChannelNumber: Integer);
-    procedure SetSoundOff(ChannelNumber: Integer);
     function IsSoundToTerminal(ChannelNumber: Integer; OutputNumber: Integer): Boolean;
     function GetSoundLevel(OutputNumber: Integer): Integer;
-    procedure DisableAllChannels;
     function ReadRegister(Address: Integer): Byte;
-    procedure WriteRegister(Address: Integer; Value: Byte);
 
   public
     constructor Create(AMemory: TGBMemory; EnableOutput: Boolean = True; const Backend: IPCMAudioBackend = nil); overload;
     destructor Destroy; override;
 
+    function ReadPCM(Address: Integer): Byte;
     procedure StartAudio;
     procedure UpdateSound(Cycle: Integer);
     procedure PlaySound;
@@ -254,12 +263,6 @@ type
   end;
 
 implementation
-
-uses
-  GB.CPU;
-
-const
-  SoundFreq = CPUClockFrequency / GB_AUDIO_INTERNAL_RATE;
 
 { TEnvelope }
 
@@ -671,11 +674,22 @@ begin
   else
     FAudio := nil;
 
+  FChannel1.SetVolume(TEnvelope.Create);
+  FChannel2.SetVolume(TEnvelope.Create);
+  FChannel4.SetVolume(TEnvelope.Create);
   StartAudio;
+  FMemory.AudioRead := ReadHardware;
+  FMemory.AudioWrite := WriteHardware;
+  FMemory.PCMRead := ReadPCM;
+  FMemory.Timer.OnFrameSequencer := ClockFrameSequencer;
 end;
 
 destructor TGBSound.Destroy;
 begin
+  FMemory.AudioRead := nil;
+  FMemory.AudioWrite := nil;
+  FMemory.PCMRead := nil;
+  FMemory.Timer.OnFrameSequencer := nil;
   if Assigned(FAudio) then
     FAudio.Clear;
 
@@ -698,613 +712,505 @@ procedure TGBSound.StartAudio;
 begin
   FSoundTimer := 0;
   FOutputPhase := 0;
-  for var Channel := 0 to 1 do
-  begin
-    FFilter[Channel].Configure(GB_AUDIO_INTERNAL_RATE, 12000);
-    FFilter[Channel].Reset;
-    FDCFilter[Channel].Configure(GB_AUDIO_INTERNAL_RATE, 20);
-    FDCFilter[Channel].Reset;
-  end;
   FSoundBufferIndex := 0;
-
-  FillChar(FMixedBuffer, SizeOf(FMixedBuffer), 0);
+  FFrameStep := 0;
+  FSkipFrame := 0;
+  FillChar(FHardware, SizeOf(FHardware), 0);
+  FillChar(FIntegrated, SizeOf(FIntegrated), 0);
+  FIntegratedClocks := 0;
   FillChar(FChannelSamples, SizeOf(FChannelSamples), 0);
-
-  DisableAllChannels;
-
+  FillChar(FMixedBuffer, SizeOf(FMixedBuffer), 0);
+  for var I := 0 to 1 do
+  begin
+    FFilter[I].Configure(GB_AUDIO_INTERNAL_RATE, 12000);
+    FFilter[I].Reset;
+    FDCFilter[I].Configure(GB_AUDIO_INTERNAL_RATE, 20);
+    FDCFilter[I].Reset;
+  end;
+  SyncChannels;
   if Assigned(FAudio) then
     FAudio.Clear;
 end;
 
-procedure TGBSound.DisableAllChannels;
-begin
-  FChannel1.SetEnabled(False);
-  FChannel2.SetEnabled(False);
-  FChannel3.SetEnabled(False);
-  FChannel4.SetEnabled(False);
-end;
-
 function TGBSound.ReadRegister(Address: Integer): Byte;
 begin
-  // APU registers are internal hardware state, not CPU bus accesses. OAM DMA
-  // restricts the CPU only; it must never turn an APU register read into $FF.
   Result := FMemory.IOPort[Address - $FF00];
 end;
 
-procedure TGBSound.WriteRegister(Address: Integer; Value: Byte);
+function TGBSound.ReadHardware(Address: Integer): Byte;
+const
+  Masks: array[0..$1F] of Byte = (
+    $80, $3F, $00, $FF, $BF, $FF, $3F, $00, $FF, $BF, $7F, $FF, $9F, $FF, $BF, $FF,
+    $FF, $00, $00, $BF, $00, $00, $70, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF);
 begin
-  // Trigger acknowledgement and sweep writeback also run while CPU DMA is active.
-  FMemory.IOPort[Address - $FF00] := Value;
-end;
-
-function TGBSound.IsAllSoundOn: Boolean;
-begin
-  Result := (ReadRegister(NR52) and $80) <> 0;
-end;
-
-function TGBSound.IsSoundReset(ChannelNumber: Integer): Boolean;
-var
-  Value: Integer;
-begin
-  case ChannelNumber of
-    1:
-      Value := ReadRegister(NR14);
-    2:
-      Value := ReadRegister(NR24);
-    3:
-      Value := ReadRegister(NR34);
-    4:
-      Value := ReadRegister(NR44);
-  else
-    Exit(False);
+  if Address >= $FF30 then
+  begin
+    if FHardware[2].Enabled then
+    begin
+      if not FMemory.IsCGBHardware and (FHardware[2].WaveAccessClocks = 0) then
+        Exit($FF);
+      Address := $FF30 + FHardware[2].Position div 2;
+    end;
+    Exit(ReadRegister(Address));
   end;
-
-  Result := (Value and $80) <> 0;
+  Result := ReadRegister(Address) or Masks[Address - $FF10];
 end;
 
-procedure TGBSound.RemoveSoundReset(ChannelNumber: Integer);
-var
-  Address: Integer;
-  Value: Integer;
+function TGBSound.ChannelPeriod(Index: Integer): Integer;
+const
+  NoiseDivisors: array[0..7] of Integer = (8, 16, 32, 48, 64, 80, 96, 112);
 begin
-  case ChannelNumber of
-    1:
-      Address := NR14;
-    2:
-      Address := NR24;
-    3:
-      Address := NR34;
-    4:
-      Address := NR44;
+  if Index < 2 then
+    Result := (2048 - FHardware[Index].Frequency) * 4
+  else if Index = 2 then
+    Result := (2048 - FHardware[Index].Frequency) * 2
   else
+    Result := NoiseDivisors[ReadRegister(NR43) and 7] shl (ReadRegister(NR43) shr 4);
+end;
+
+procedure TGBSound.SyncChannels;
+begin
+  FChannel1.SetEnabled(FHardware[0].Enabled);
+  FChannel2.SetEnabled(FHardware[1].Enabled);
+  FChannel3.SetEnabled(FHardware[2].Enabled);
+  FChannel4.SetEnabled(FHardware[3].Enabled);
+  FChannel1.GetVolume.SetBase(FHardware[0].Volume);
+  FChannel2.GetVolume.SetBase(FHardware[1].Volume);
+  FChannel4.GetVolume.SetBase(FHardware[3].Volume);
+  var Status := ReadRegister(NR52) and $80;
+  for var I := 0 to 3 do
+    if FHardware[I].Enabled then
+      Status := Status or (1 shl I);
+  FMemory.IOPort[$26] := Status;
+end;
+
+procedure TGBSound.UpdateOutput(Index: Integer);
+const
+  Duty: array[0..3] of Byte = ($01, $81, $87, $7E);
+begin
+  FHardware[Index].Output := 0;
+  if not FHardware[Index].Enabled then
+    Exit;
+  if Index < 2 then
+  begin
+    var RegisterOffset := $11 + Index * 5;
+    if ((Duty[FMemory.IOPort[RegisterOffset] shr 6] shr FHardware[Index].Position) and 1) <> 0 then
+      FHardware[Index].Output := FHardware[Index].Volume;
+  end
+  else if Index = 2 then
+  begin
+    var Shift := (ReadRegister(NR32) shr 5) and 3;
+    if Shift = 0 then
+      Exit;
+    var Value := FHardware[2].WaveBuffer;
+    if (FHardware[2].Position and 1) = 0 then
+      Value := Value shr 4;
+    FHardware[2].Output := (Value and 15) shr (Shift - 1);
+  end
+  else if (FHardware[3].LFSR and 1) = 0 then
+    FHardware[3].Output := FHardware[3].Volume;
+end;
+
+procedure TGBSound.ClockChannel(Index: Integer);
+begin
+  if FHardware[Index].WaveAccessClocks > 0 then
+    Dec(FHardware[Index].WaveAccessClocks);
+  Dec(FHardware[Index].Timer);
+  if FHardware[Index].Timer <= 0 then
+  begin
+    Inc(FHardware[Index].Timer, ChannelPeriod(Index));
+    if Index < 2 then
+      FHardware[Index].Position := (FHardware[Index].Position + 1) and 7
+    else if Index = 2 then
+    begin
+      if FHardware[2].Enabled then
+      begin
+        FHardware[2].Position := (FHardware[2].Position + 1) and 31;
+        FHardware[2].WaveBuffer := FMemory.IOPort[$30 + FHardware[2].Position div 2];
+        FHardware[2].WaveAccessClocks := 2;
+      end;
+    end
+    else if (ReadRegister(NR43) shr 4) < 14 then
+    begin
+      var Bit := (FHardware[3].LFSR xor (FHardware[3].LFSR shr 1)) and 1;
+      FHardware[3].LFSR := (FHardware[3].LFSR shr 1) or (Bit shl 14);
+      if (ReadRegister(NR43) and 8) <> 0 then
+        FHardware[3].LFSR := (FHardware[3].LFSR and $7FBF) or (Bit shl 6);
+    end;
+    UpdateOutput(Index);
+  end;
+  Dec(FHardware[Index].DACCounter);
+  if FHardware[Index].DACCounter <= 0 then
+  begin
+    FHardware[Index].DACCounter := 250;
+    if FHardware[Index].DAC then
+      FHardware[Index].DACVolume := Min(100, FHardware[Index].DACVolume + 1)
+    else
+      FHardware[Index].DACVolume := Max(0, FHardware[Index].DACVolume - 1);
+  end;
+end;
+
+procedure TGBSound.ClockEnvelope(Index: Integer);
+begin
+  if FHardware[Index].EnvelopeTimer > 0 then
+    Dec(FHardware[Index].EnvelopeTimer);
+  if FHardware[Index].EnvelopeTimer <> 0 then
+    Exit;
+  FHardware[Index].EnvelopeTimer := FHardware[Index].EnvelopePeriod;
+  if FHardware[Index].EnvelopeTimer = 0 then
+    FHardware[Index].EnvelopeTimer := 8;
+  if (FHardware[Index].EnvelopePeriod = 0) or FHardware[Index].EnvelopeStopped then
+    Exit;
+  var NewVolume := FHardware[Index].Volume;
+  if FHardware[Index].EnvelopeUp then
+    Inc(NewVolume)
+  else
+    Dec(NewVolume);
+  if (NewVolume >= 0) and (NewVolume <= 15) then
+    FHardware[Index].Volume := NewVolume
+  else
+    FHardware[Index].EnvelopeStopped := True;
+  UpdateOutput(Index);
+end;
+
+function TGBSound.SweepFrequency: Integer;
+begin
+  var Delta := FHardware[0].SweepShadow shr FHardware[0].SweepShift;
+  if (ReadRegister(NR10) and 8) <> 0 then
+  begin
+    Result := FHardware[0].SweepShadow - Delta;
+    FHardware[0].SweepNegated := True;
+  end
+  else
+    Result := FHardware[0].SweepShadow + Delta;
+  if Result > 2047 then
+    FHardware[0].Enabled := False;
+end;
+
+procedure TGBSound.ClockFrameSequencer;
+begin
+  if (ReadRegister(NR52) and $80) = 0 then
+    Exit;
+  if FSkipFrame > 0 then
+  begin
+    Dec(FSkipFrame);
     Exit;
   end;
-
-  Value := ReadRegister(Address);
-  WriteRegister(Address, Value and $7F);
+  if (FFrameStep and 1) = 0 then
+    for var I := 0 to 3 do
+      if FHardware[I].LengthEnabled and (FHardware[I].Length > 0) then
+      begin
+        Dec(FHardware[I].Length);
+        if FHardware[I].Length = 0 then
+          FHardware[I].Enabled := False;
+        UpdateOutput(I);
+      end;
+  if (FFrameStep = 2) or (FFrameStep = 6) then
+  begin
+    if FHardware[0].SweepTimer > 0 then
+      Dec(FHardware[0].SweepTimer);
+    if FHardware[0].SweepTimer = 0 then
+    begin
+      FHardware[0].SweepTimer := FHardware[0].SweepPeriod;
+      if FHardware[0].SweepTimer = 0 then
+        FHardware[0].SweepTimer := 8;
+      if FHardware[0].SweepEnabled and (FHardware[0].SweepPeriod > 0) then
+      begin
+        var Frequency := SweepFrequency;
+        if (Frequency <= 2047) and (FHardware[0].SweepShift > 0) then
+        begin
+          FHardware[0].Frequency := Frequency;
+          FHardware[0].SweepShadow := Frequency;
+          FMemory.IOPort[$13] := Frequency and $FF;
+          FMemory.IOPort[$14] := (FMemory.IOPort[$14] and $F8) or (Frequency shr 8);
+          SweepFrequency;
+        end;
+      end;
+    end;
+  end;
+  if FFrameStep = 7 then
+  begin
+    ClockEnvelope(0);
+    ClockEnvelope(1);
+    ClockEnvelope(3);
+  end;
+  FFrameStep := (FFrameStep + 1) and 7;
+  SyncChannels;
 end;
 
-procedure TGBSound.SetSoundOn(ChannelNumber: Integer);
-var
-  Mask: Integer;
-  Value: Integer;
+procedure TGBSound.WriteEnvelope(Index: Integer; Value: Byte);
 begin
-  if (ChannelNumber < 1) or (ChannelNumber > 4) then
-    Exit;
-
-  Mask := 1 shl (ChannelNumber - 1);
-  Value := ReadRegister(NR52);
-  // The APU owns the status bits; CPU writes to NR52 cannot change them.
-  FMemory.IOPort[$26] := (Value or Mask) and $8F;
+  var Up := (Value and 8) <> 0;
+  var Period := Value and 7;
+  if FHardware[Index].Enabled and ((Value and $F8) <> 0) then
+  begin
+    var PreventIncrement := False;
+    if Up <> FHardware[Index].EnvelopeUp then
+    begin
+      if Up then
+      begin
+        if not FHardware[Index].EnvelopeStopped and (FHardware[Index].EnvelopePeriod = 0) then
+          FHardware[Index].Volume := FHardware[Index].Volume xor 15
+        else
+          FHardware[Index].Volume := 14 - FHardware[Index].Volume;
+        PreventIncrement := True;
+      end
+      else
+        FHardware[Index].Volume := 16 - FHardware[Index].Volume;
+    end;
+    if not PreventIncrement and not FHardware[Index].EnvelopeStopped and
+      (FHardware[Index].EnvelopePeriod = 0) and ((Period > 0) or Up) then
+      if Up then
+        Inc(FHardware[Index].Volume)
+      else
+        Dec(FHardware[Index].Volume);
+    FHardware[Index].Volume := FHardware[Index].Volume and 15;
+  end;
+  FHardware[Index].EnvelopePeriod := Period;
+  FHardware[Index].EnvelopeUp := Up;
+  FHardware[Index].DAC := (Value and $F8) <> 0;
+  if not FHardware[Index].DAC then
+    FHardware[Index].Enabled := False;
+  UpdateOutput(Index);
 end;
 
-procedure TGBSound.SetSoundOff(ChannelNumber: Integer);
-var
-  Mask: Integer;
-  Value: Integer;
+procedure TGBSound.Trigger(Index: Integer);
 begin
-  if (ChannelNumber < 1) or (ChannelNumber > 4) then
-    Exit;
+  if (Index = 2) and FHardware[2].Enabled and not FMemory.IsCGBHardware and
+    (FHardware[2].Timer <= 2) then
+  begin
+    var Address := ((FHardware[2].Position + 1) and 31) div 2;
+    if Address < 4 then
+      FMemory.IOPort[$30] := FMemory.IOPort[$30 + Address]
+    else
+    begin
+      Address := Address and $C;
+      Move(FMemory.IOPort[$30 + Address], FMemory.IOPort[$30], 4);
+    end;
+  end;
+  FHardware[Index].Enabled := FHardware[Index].DAC;
+  if FHardware[Index].Length = 0 then
+  begin
+    FHardware[Index].Length := 64;
+    if Index = 2 then
+      FHardware[Index].Length := 256;
+    if FHardware[Index].LengthEnabled and ((FFrameStep and 1) <> 0) then
+      Dec(FHardware[Index].Length);
+  end;
+  FHardware[Index].Timer := ChannelPeriod(Index);
+  if Index = 2 then
+  begin
+    FHardware[2].Position := 0;
+    Inc(FHardware[2].Timer, 6);
+  end
+  else if Index = 3 then
+    FHardware[3].LFSR := $7FFF;
+  if Index <> 2 then
+  begin
+    var Offset := $12 + Index * 5;
+    if Index = 3 then
+      Offset := $21;
+    FHardware[Index].Volume := FMemory.IOPort[Offset] shr 4;
+    FHardware[Index].EnvelopeStopped := False;
+    FHardware[Index].EnvelopeTimer := FHardware[Index].EnvelopePeriod;
+    if FHardware[Index].EnvelopeTimer = 0 then
+      FHardware[Index].EnvelopeTimer := 8;
+    if FFrameStep = 7 then
+      Inc(FHardware[Index].EnvelopeTimer);
+  end;
+  if Index = 0 then
+  begin
+    FHardware[0].SweepShadow := FHardware[0].Frequency;
+    FHardware[0].SweepTimer := FHardware[0].SweepPeriod;
+    if FHardware[0].SweepTimer = 0 then
+      FHardware[0].SweepTimer := 8;
+    FHardware[0].SweepNegated := False;
+    FHardware[0].SweepEnabled := (FHardware[0].SweepPeriod <> 0) or (FHardware[0].SweepShift <> 0);
+    if FHardware[0].SweepShift > 0 then
+      SweepFrequency;
+  end;
+  UpdateOutput(Index);
+end;
 
-  Mask := 1 shl (ChannelNumber - 1);
-  Value := ReadRegister(NR52);
-  FMemory.IOPort[$26] := (Value and not Mask) and $8F;
+procedure TGBSound.WriteHardware(Address: Integer; Value: Byte);
+begin
+  if Address >= $FF30 then
+  begin
+    if FHardware[2].Enabled then
+    begin
+      if not FMemory.IsCGBHardware and (FHardware[2].WaveAccessClocks = 0) then
+        Exit;
+      Address := $FF30 + FHardware[2].Position div 2;
+    end;
+    FMemory.IOPort[Address - $FF00] := Value;
+    Exit;
+  end;
+  if Address = NR52 then
+  begin
+    var WasOn := (ReadRegister(NR52) and $80) <> 0;
+    var OnNow := (Value and $80) <> 0;
+    if WasOn and not OnNow then
+    begin
+      for var I := $10 to $25 do
+        FMemory.IOPort[I] := 0;
+      for var I := 0 to 3 do
+      begin
+        var Length := FHardware[I].Length;
+        var Gain := FHardware[I].DACVolume;
+        FHardware[I] := Default(TGBHardwareChannel);
+        FHardware[I].DACVolume := Gain;
+        if not FMemory.IsCGBHardware then
+          FHardware[I].Length := Length;
+      end;
+    end;
+    if not WasOn and OnNow then
+    begin
+      FFrameStep := 0;
+      FSkipFrame := Ord(FMemory.Timer.FrameSequencerBit);
+    end;
+    FMemory.IOPort[$26] := Ord(OnNow) shl 7;
+    SyncChannels;
+    Exit;
+  end;
+  var Offset := Address - $FF00;
+  if (ReadRegister(NR52) and $80) = 0 then
+  begin
+    if FMemory.IsCGBHardware or (Address <> NR11) and (Address <> NR21) and (Address <> NR31) and (Address <> NR41) then
+      Exit;
+    if Address <> NR31 then
+      Value := Value and $3F;
+  end;
+  FMemory.IOPort[Offset] := Value;
+  case Address of
+    NR10:
+      begin
+        if FHardware[0].SweepNegated and ((Value and 8) = 0) then
+          FHardware[0].Enabled := False;
+        FHardware[0].SweepPeriod := (Value shr 4) and 7;
+        FHardware[0].SweepShift := Value and 7;
+      end;
+    NR11:
+      FHardware[0].Length := 64 - (Value and 63);
+    NR21:
+      FHardware[1].Length := 64 - (Value and 63);
+    NR31:
+      FHardware[2].Length := 256 - Value;
+    NR41:
+      FHardware[3].Length := 64 - (Value and 63);
+    NR12:
+      WriteEnvelope(0, Value);
+    NR22:
+      WriteEnvelope(1, Value);
+    NR42:
+      WriteEnvelope(3, Value);
+    NR30:
+      begin
+        FHardware[2].DAC := (Value and $80) <> 0;
+        if not FHardware[2].DAC then
+          FHardware[2].Enabled := False;
+      end;
+    NR13, NR14, NR23, NR24, NR33, NR34:
+      begin
+        var Index := 0;
+        if Address >= NR33 then
+          Index := 2
+        else if Address >= NR23 then
+          Index := 1;
+        var Low := $13 + Index * 5;
+        FHardware[Index].Frequency := FMemory.IOPort[Low] or ((FMemory.IOPort[Low + 1] and 7) shl 8);
+      end;
+  end;
+  if (Address = NR14) or (Address = NR24) or (Address = NR34) or (Address = NR44) then
+  begin
+    var Index := 3;
+    if Address = NR14 then
+      Index := 0
+    else if Address = NR24 then
+      Index := 1
+    else if Address = NR34 then
+      Index := 2;
+    var NewLength := (Value and $40) <> 0;
+    if NewLength and not FHardware[Index].LengthEnabled and ((FFrameStep and 1) <> 0) and
+      (FHardware[Index].Length > 0) then
+    begin
+      Dec(FHardware[Index].Length);
+      if FHardware[Index].Length = 0 then
+        FHardware[Index].Enabled := False;
+    end;
+    FHardware[Index].LengthEnabled := NewLength;
+    if (Value and $80) <> 0 then
+    begin
+      Trigger(Index);
+      FMemory.IOPort[Offset] := Value and $7F;
+    end;
+  end;
+  for var I := 0 to 3 do
+    UpdateOutput(I);
+  SyncChannels;
+end;
+
+procedure TGBSound.UpdateSound(Cycle: Integer);
+const
+  ClockRate = 4194304;
+begin
+  for var Tick := 1 to Cycle do
+  begin
+    for var I := 0 to 3 do
+    begin
+      ClockChannel(I);
+      var Value := (FHardware[I].Output * 2 - 15) * FHardware[I].DACVolume / 100;
+      if (I = 2) and ((ReadRegister(NR32) and $60) = 0) then
+        Value := 0;
+      FIntegrated[I] := FIntegrated[I] + Value;
+    end;
+    Inc(FIntegratedClocks);
+    FSoundTimer := FSoundTimer + GB_AUDIO_INTERNAL_RATE;
+    if FSoundTimer >= ClockRate then
+    begin
+      FSoundTimer := FSoundTimer - ClockRate;
+      for var I := 0 to 3 do
+      begin
+        FChannelSamples[I] := FIntegrated[I] / FIntegratedClocks;
+        FIntegrated[I] := 0;
+      end;
+      FIntegratedClocks := 0;
+      MixSound;
+      Inc(FOutputPhase);
+      if FOutputPhase = GB_AUDIO_OVERSAMPLE then
+      begin
+        FOutputPhase := 0;
+        Inc(FSoundBufferIndex);
+        if FSoundBufferIndex >= GB_AUDIO_BLOCK_SAMPLES then
+          FlushBuffer;
+      end;
+    end;
+  end;
 end;
 
 function TGBSound.IsSoundToTerminal(ChannelNumber: Integer; OutputNumber: Integer): Boolean;
 begin
-  var Mask := 1 shl ((ChannelNumber - 1) + ((OutputNumber - 1) * 4));
-  Result := (ReadRegister(NR51) and Mask) <> 0;
+  Result := (ReadRegister(NR51) and (1 shl (ChannelNumber - 1 + (OutputNumber - 1) * 4))) <> 0;
 end;
 
 function TGBSound.GetSoundLevel(OutputNumber: Integer): Integer;
 begin
-  var Value: Integer := ReadRegister(NR50);
-
-  if OutputNumber = 1 then
-    Result := (Value and $07) + 1
-  else
-    Result := ((Value shr 4) and $07) + 1;
-end;
-
-procedure TGBSound.InitChannels;
-begin
-  InitChannel1;
-  InitChannel2;
-  InitChannel3;
-  InitChannel4;
-end;
-
-procedure TGBSound.InitChannel1;
-var
-  NR10Value: Integer;
-  NR11Value: Integer;
-  NR12Value: Integer;
-  NR13Value: Integer;
-  NR14Value: Integer;
-  FrequencyValue: Integer;
-  Envelope: TEnvelope;
-  Period: Integer;
-begin
-  if not IsSoundReset(1) then
-    Exit;
-
-  RemoveSoundReset(1);
-
-  NR10Value := ReadRegister(NR10);
-  NR11Value := ReadRegister(NR11);
-  NR12Value := ReadRegister(NR12);
-  NR13Value := ReadRegister(NR13);
-  NR14Value := ReadRegister(NR14);
-
-  FrequencyValue := NR13Value or ((NR14Value and $07) shl 8);
-
-  FChannel1.SetEnabled(True);
-  FChannel1.SetWaveDuty((NR11Value shr 6) and $03);
-  FChannel1.SetIndex(0);
-  FChannel1.SetGBFrequency(FrequencyValue);
-
-  if FrequencyValue < 2048 then
-    FChannel1.SetFrequency(131072.0 / (2048 - FrequencyValue))
-  else
-    FChannel1.SetFrequency(0);
-
-  if (NR14Value and $40) <> 0 then
-  begin
-    FChannel1.SetLengthEnabled(True);
-    FChannel1.SetLength(((64 - (NR11Value and $3F)) * GB_AUDIO_INTERNAL_RATE) div 256);
-  end
-  else
-    FChannel1.SetLengthEnabled(False);
-
-  Envelope := TEnvelope.Create;
-  Envelope.SetBase((NR12Value shr 4) and $0F);
-
-  if (NR12Value and $08) <> 0 then
-    Envelope.SetDirection(1)
-  else
-    Envelope.SetDirection(-1);
-
-  Period := NR12Value and $07;
-
-  if Period = 0 then
-    Envelope.SetStepLength(0)
-  else
-    Envelope.SetStepLength(Period * GB_AUDIO_INTERNAL_RATE div 64);
-
-  Envelope.SetIndex(Envelope.GetStepLength);
-  FChannel1.SetVolume(Envelope);
-  Period := (NR10Value shr 4) and $07;
-
-  if Period = 0 then
-    Period := 8;
-
-  FChannel1.SetSweepLength(Period * GB_AUDIO_INTERNAL_RATE div 128);
-  FChannel1.SetSweepIndex(FChannel1.GetSweepLength);
-
-  if (NR10Value and $08) <> 0 then
-    FChannel1.SetSweepDirection(-1)
-  else
-    FChannel1.SetSweepDirection(1);
-
-  FChannel1.SetSweepShift(NR10Value and $07);
-  SetSoundOn(1);
-end;
-
-procedure TGBSound.InitChannel2;
-var
-  NR21Value: Integer;
-  NR22Value: Integer;
-  NR23Value: Integer;
-  NR24Value: Integer;
-  FrequencyValue: Integer;
-  Envelope: TEnvelope;
-  Period: Integer;
-begin
-  if not IsSoundReset(2) then
-    Exit;
-
-  RemoveSoundReset(2);
-
-  NR21Value := ReadRegister(NR21);
-  NR22Value := ReadRegister(NR22);
-  NR23Value := ReadRegister(NR23);
-  NR24Value := ReadRegister(NR24);
-
-  FrequencyValue := NR23Value or ((NR24Value and $07) shl 8);
-
-  FChannel2.SetEnabled(True);
-  FChannel2.SetWaveDuty((NR21Value shr 6) and $03);
-  FChannel2.SetIndex(0);
-
-  if FrequencyValue < 2048 then
-    FChannel2.SetFrequency(131072.0 / (2048 - FrequencyValue))
-  else
-    FChannel2.SetFrequency(0);
-
-  if (NR24Value and $40) <> 0 then
-  begin
-    FChannel2.SetLengthEnabled(True);
-    FChannel2.SetLength(((64 - (NR21Value and $3F)) * GB_AUDIO_INTERNAL_RATE) div 256);
-  end
-  else
-    FChannel2.SetLengthEnabled(False);
-
-  Envelope := TEnvelope.Create;
-  Envelope.SetBase((NR22Value shr 4) and $0F);
-
-  if (NR22Value and $08) <> 0 then
-    Envelope.SetDirection(1)
-  else
-    Envelope.SetDirection(-1);
-
-  Period := NR22Value and $07;
-
-  if Period = 0 then
-    Envelope.SetStepLength(0)
-  else
-    Envelope.SetStepLength(Period * GB_AUDIO_INTERNAL_RATE div 64);
-
-  Envelope.SetIndex(Envelope.GetStepLength);
-  FChannel2.SetVolume(Envelope);
-  SetSoundOn(2);
-end;
-
-procedure TGBSound.InitChannel3;
-var
-  NR30Value: Integer;
-  NR31Value: Integer;
-  NR33Value: Integer;
-  NR34Value: Integer;
-  FrequencyValue: Integer;
-  WaveSamples: TIntegerArray;
-  Value: Integer;
-begin
-  if not IsSoundReset(3) then
-    Exit;
-
-  RemoveSoundReset(3);
-
-  NR30Value := ReadRegister(NR30);
-  NR31Value := ReadRegister(NR31);
-  NR33Value := ReadRegister(NR33);
-  NR34Value := ReadRegister(NR34);
-
-  FChannel3.SetIndex(0);
-
-  if (NR30Value and $80) <> 0 then
-    FChannel3.SetEnabled(True)
-  else
-    FChannel3.SetEnabled(False);
-
-  FrequencyValue := NR33Value or ((NR34Value and $07) shl 8);
-
-  if FrequencyValue < 2048 then
-    FChannel3.SetFrequency(
-      65536.0 / (2048 - FrequencyValue)
-    )
-  else
-    FChannel3.SetFrequency(0);
-
-  SetLength(WaveSamples, 32);
-
-  for var i := $FF30 to $FF3F do
-  begin
-    Value := ReadRegister(i);
-    WaveSamples[(i - $FF30) * 2] := (Value shr 4) and $0F;
-    WaveSamples[((i - $FF30) * 2) + 1] := Value and $0F;
-  end;
-
-  FChannel3.SetWave(WaveSamples);
-
-  if (NR34Value and $40) <> 0 then
-  begin
-    FChannel3.SetLengthEnabled(True);
-    FChannel3.SetLength(((256 - NR31Value) * GB_AUDIO_INTERNAL_RATE) div 256);
-  end
-  else
-    FChannel3.SetLengthEnabled(False);
-
-  if FChannel3.IsEnabled then
-    SetSoundOn(3)
-  else
-    SetSoundOff(3);
-end;
-
-procedure TGBSound.InitChannel4;
-const
-  DivisorTable: array[0..7] of Double = (0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0);
-var
-  NR41Value: Integer;
-  NR42Value: Integer;
-  NR43Value: Integer;
-  NR44Value: Integer;
-  Envelope: TEnvelope;
-  Shift: Integer;
-  DivisorCode: Integer;
-  Period: Integer;
-  Frequency: Double;
-begin
-  if not IsSoundReset(4) then
-    Exit;
-
-  RemoveSoundReset(4);
-
-  NR41Value := ReadRegister(NR41);
-  NR42Value := ReadRegister(NR42);
-  NR43Value := ReadRegister(NR43);
-  NR44Value := ReadRegister(NR44);
-
-  FChannel4.SetEnabled(True);
-  FChannel4.SetIndex(0);
-  FChannel4.ResetLFSR;
-
-  if (NR44Value and $40) <> 0 then
-  begin
-    FChannel4.SetLengthEnabled(True);
-    FChannel4.SetLength(((64 - (NR41Value and $3F)) * GB_AUDIO_INTERNAL_RATE) div 256);
-  end
-  else
-    FChannel4.SetLengthEnabled(False);
-
-  Envelope := TEnvelope.Create;
-  Envelope.SetBase((NR42Value shr 4) and $0F);
-
-  if (NR42Value and $08) <> 0 then
-    Envelope.SetDirection(1)
-  else
-    Envelope.SetDirection(-1);
-
-  Period := NR42Value and $07;
-
-  if Period = 0 then
-    Envelope.SetStepLength(0)
-  else
-    Envelope.SetStepLength(Period * GB_AUDIO_INTERNAL_RATE div 64);
-
-  Envelope.SetIndex(Envelope.GetStepLength);
-
-  FChannel4.SetVolume(Envelope);
-
-  Shift := (NR43Value shr 4) and $0F;
-  DivisorCode := NR43Value and $07;
-
-  FChannel4.SetShiftFrequency(Shift);
-
-  if (NR43Value and $08) <> 0 then
-    FChannel4.SetCounterStep(1)
-  else
-    FChannel4.SetCounterStep(0);
-
-  FChannel4.SetDivisorRatio(DivisorTable[DivisorCode]);
-
-  Frequency := 262144.0 / DivisorTable[DivisorCode] / Power(2.0, Shift);
-  FChannel4.SetFrequency(Frequency);
-  SetSoundOn(4);
-end;
-
-procedure TGBSound.UpdateChannel1;
-var
-  Sample: Double;
-  NewFrequency: Integer;
-  Delta: Integer;
-  FrequencyRegister: Integer;
-begin
-  FChannelSamples[0] := 0;
-
-  if (ReadRegister(NR12) and $F8) = 0 then
-  begin
-    FChannel1.SetEnabled(False);
-    SetSoundOff(1);
-  end;
-  if not FChannel1.IsEnabled then
-    Exit;
-
-  FChannel1.SetWaveDuty((ReadRegister(NR11) shr 6) and 3);
-  FChannel1.SetFrequency(131072.0 / (2048 - (ReadRegister(NR13) or ((ReadRegister(NR14) and 7) shl 8))));
-  FChannel1.SetLengthEnabled((ReadRegister(NR14) and $40) <> 0);
-  FChannel1.SetGBFrequency(ReadRegister(NR13) or ((ReadRegister(NR14) and 7) shl 8));
-  Sample := FChannel1.NextWaveSample;
-
-  if FChannel1.GetVolume <> nil then
-    FChannelSamples[0] := Sample * FChannel1.GetVolume.GetBase;
-
-  if FChannel1.IsLengthEnabled then
-  begin
-    if FChannel1.GetLength > 0 then
-      FChannel1.DecLength;
-
-    if FChannel1.GetLength <= 0 then
-    begin
-      FChannel1.SetEnabled(False);
-      SetSoundOff(1);
-      FChannelSamples[0] := 0;
-      Exit;
-    end;
-  end;
-
-  if FChannel1.GetVolume <> nil then
-    FChannel1.GetVolume.HandleSweep;
-
-  if ((ReadRegister(NR10) and $70) <> 0) and (FChannel1.GetSweepLength > 0) and (FChannel1.GetSweepShift > 0) then
-  begin
-    FChannel1.DecSweepIndex;
-
-    if FChannel1.GetSweepIndex <= 0 then
-    begin
-      FChannel1.SetSweepIndex(FChannel1.GetSweepLength);
-      Delta := FChannel1.GetGBFrequency shr FChannel1.GetSweepShift;
-      NewFrequency := FChannel1.GetGBFrequency + Delta * FChannel1.GetSweepDirection;
-
-      if (NewFrequency < 0) or (NewFrequency > 2047) then
-      begin
-        FChannel1.SetEnabled(False);
-        SetSoundOff(1);
-        Exit;
-      end;
-
-      FChannel1.SetGBFrequency(NewFrequency);
-      FChannel1.SetFrequency(131072.0 / (2048 - NewFrequency));
-      WriteRegister(NR13, NewFrequency and $FF);
-      FrequencyRegister := (ReadRegister(NR14) and $F8) or ((NewFrequency shr 8) and $07);
-      WriteRegister(NR14, FrequencyRegister);
-    end;
-  end;
-end;
-
-procedure TGBSound.UpdateChannel2;
-begin
-  FChannelSamples[1] := 0;
-
-  if (ReadRegister(NR22) and $F8) = 0 then
-  begin
-    FChannel2.SetEnabled(False);
-    SetSoundOff(2);
-  end;
-  if not FChannel2.IsEnabled then
-    Exit;
-
-  FChannel2.SetWaveDuty((ReadRegister(NR21) shr 6) and 3);
-  FChannel2.SetFrequency(131072.0 / (2048 -
-    (ReadRegister(NR23) or ((ReadRegister(NR24) and 7) shl 8))));
-  FChannel2.SetLengthEnabled((ReadRegister(NR24) and $40) <> 0);
-  var Sample := FChannel2.NextWaveSample;
-
-  if FChannel2.GetVolume <> nil then
-    FChannelSamples[1] := Sample * FChannel2.GetVolume.GetBase;
-
-  if FChannel2.IsLengthEnabled then
-  begin
-    if FChannel2.GetLength > 0 then
-      FChannel2.DecLength;
-
-    if FChannel2.GetLength <= 0 then
-    begin
-      FChannel2.SetEnabled(False);
-      SetSoundOff(2);
-      FChannelSamples[1] := 0;
-      Exit;
-    end;
-  end;
-
-  if FChannel2.GetVolume <> nil then
-    FChannel2.GetVolume.HandleSweep;
-end;
-
-procedure TGBSound.UpdateChannel3;
-var
-  NR30Value: Integer;
-  NR32Value: Integer;
-  Sample: Double;
-  VolumeCode: Integer;
-begin
-  FChannelSamples[2] := 0;
-
-  NR30Value := ReadRegister(NR30);
-
-  // NR30 can be switched off and back on between audio samples. The cleared
-  // NR52 bit latches that stop until a fresh trigger, even with the DAC on.
-  if ((NR30Value and $80) = 0) or ((ReadRegister(NR52) and 4) = 0) then
-  begin
-    FChannel3.SetEnabled(False);
-    SetSoundOff(3);
-    Exit;
-  end;
-
-  if not FChannel3.IsEnabled then
-    Exit;
-
-  NR32Value := ReadRegister(NR32);
-  FChannel3.SetFrequency(65536.0 / (2048 - (ReadRegister(NR33) or ((ReadRegister(NR34) and 7) shl 8))));
-  FChannel3.SetLengthEnabled((ReadRegister(NR34) and $40) <> 0);
-  VolumeCode := (NR32Value shr 5) and $03;
-  Sample := FChannel3.NextWaveSample(Max(0, VolumeCode - 1));
-  if VolumeCode <> 0 then
-    FChannelSamples[2] := Sample * 2 - 15;
-
-  if FChannel3.IsLengthEnabled then
-  begin
-    if FChannel3.GetLength > 0 then
-      FChannel3.DecLength;
-
-    if FChannel3.GetLength <= 0 then
-    begin
-      FChannel3.SetEnabled(False);
-      SetSoundOff(3);
-      FChannelSamples[2] := 0;
-    end;
-  end;
-end;
-
-procedure TGBSound.UpdateChannel4;
-begin
-  FChannelSamples[3] := 0;
-
-  if (ReadRegister(NR42) and $F8) = 0 then
-  begin
-    FChannel4.SetEnabled(False);
-    SetSoundOff(4);
-  end;
-  if not FChannel4.IsEnabled then
-    Exit;
-
-  var NoiseRegister := ReadRegister(NR43);
-  var Divisor := (NoiseRegister and 7) * 16;
-  if Divisor = 0 then
-    Divisor := 8;
-  var Shift := NoiseRegister shr 4;
-  if Shift >= 14 then
-    FChannel4.SetFrequency(0)
-  else
-    FChannel4.SetFrequency(CPUClockFrequency / (Divisor shl Shift));
-  FChannel4.SetCounterStep(NoiseRegister and 8);
-  FChannel4.SetLengthEnabled((ReadRegister(NR44) and $40) <> 0);
-  var Sample := FChannel4.NextSample;
-
-  if FChannel4.GetVolume <> nil then
-    FChannelSamples[3] := Sample * FChannel4.GetVolume.GetBase;
-
-  if FChannel4.IsLengthEnabled then
-  begin
-    if FChannel4.GetLength > 0 then
-      FChannel4.DecLength;
-
-    if FChannel4.GetLength <= 0 then
-    begin
-      FChannel4.SetEnabled(False);
-      SetSoundOff(4);
-      FChannelSamples[3] := 0;
-      Exit;
-    end;
-  end;
-
-  if FChannel4.GetVolume <> nil then
-    FChannel4.GetVolume.HandleSweep;
+  var Shift := 0;
+  if OutputNumber = 2 then
+    Shift := 4;
+  Result := ((ReadRegister(NR50) shr Shift) and 7) + 1;
 end;
 
 procedure TGBSound.PlaySound;
 begin
   FlushBuffer;
+end;
+
+function TGBSound.ReadPCM(Address: Integer): Byte;
+begin
+  if Address = $FF76 then
+    Result := FHardware[0].Output or (FHardware[1].Output shl 4)
+  else
+    Result := FHardware[2].Output or (FHardware[3].Output shl 4);
 end;
 
 procedure TGBSound.MixSound;
@@ -1372,48 +1278,6 @@ end;
 procedure TGBSound.FlushPCM;
 begin
   FlushBuffer;
-end;
-
-procedure TGBSound.UpdateSound(Cycle: Integer);
-begin
-  if Cycle <= 0 then
-    Exit;
-
-  if IsAllSoundOn then
-    InitChannels
-  else
-    DisableAllChannels;
-
-  FSoundTimer := FSoundTimer + Cycle;
-
-  while FSoundTimer >= SoundFreq do
-  begin
-    FSoundTimer := FSoundTimer - SoundFreq;
-
-    if IsAllSoundOn then
-    begin
-      UpdateChannel1;
-      UpdateChannel2;
-      UpdateChannel3;
-      UpdateChannel4;
-
-      MixSound;
-    end
-    else
-    begin
-      FillChar(FChannelSamples, SizeOf(FChannelSamples), 0);
-      MixSound;
-    end;
-
-    Inc(FOutputPhase);
-    if FOutputPhase = GB_AUDIO_OVERSAMPLE then
-    begin
-      FOutputPhase := 0;
-      Inc(FSoundBufferIndex);
-      if FSoundBufferIndex >= GB_AUDIO_BLOCK_SAMPLES then
-        FlushBuffer;
-    end;
-  end;
 end;
 
 procedure TEnvelope.SerializeState(State: TStateArchive);
@@ -1489,6 +1353,11 @@ end;
 
 procedure TGBSound.SerializeState(State: TStateArchive);
 begin
+  State.Field(FHardware, SizeOf(FHardware));
+  State.Field(FFrameStep, SizeOf(FFrameStep));
+  State.Field(FSkipFrame, SizeOf(FSkipFrame));
+  State.Field(FIntegrated, SizeOf(FIntegrated));
+  State.Field(FIntegratedClocks, SizeOf(FIntegratedClocks));
   FChannel1.SerializeState(State);
   FChannel2.SerializeState(State);
   FChannel3.SerializeState(State);
