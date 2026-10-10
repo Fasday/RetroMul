@@ -144,6 +144,7 @@ end;
 {$ENDREGION}
 
 {$REGION 'Player diagram and assignments'}
+
 procedure TControlsHelpView.BuildPlayer;
 begin
   FDiagram.DeleteChildren;
@@ -190,7 +191,9 @@ begin
   begin
     var Pad := TScreenGamepad.Create(FDiagram);
     Pad.HitTest := False;
-    if FSystemId = ROM_SYSTEM_SNES then
+    if (FSystemId = ROM_SYSTEM_NES) and (FPorts.Devices[FPlayer] = 'paddendy') then
+      Pad.Layout := TScreenGamepadLayout.Dendy
+    else if FSystemId = ROM_SYSTEM_SNES then
       Pad.Layout := TScreenGamepadLayout.Snes
     else if FSystemId = ROM_SYSTEM_MD then
       Pad.Layout := TScreenGamepadLayout.Sega
@@ -304,6 +307,7 @@ end;
 {$ENDREGION}
 
 {$REGION 'Layout'}
+
 procedure TControlsHelpView.Resize;
 begin
   inherited;
@@ -372,6 +376,7 @@ end;
 {$ENDREGION}
 
 {$REGION 'View events'}
+
 procedure TControlsHelpView.PlayerClick(Sender: TObject);
 begin
   FPlayer := TButton(Sender).Tag;

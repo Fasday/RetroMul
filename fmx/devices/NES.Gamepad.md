@@ -1,5 +1,22 @@
 # Screen gamepad
 
+NES also offers `TScreenGamepadLayout.Dendy`, drawn after the four-button clone
+controller with black B/A and red Turbo B/Turbo A above them. Select
+**Dendy · Turbo** in NES / Famicom → Controls for the desired player port,
+apply settings, and reopen the ROM to connect the device. The standard NES
+gamepad remains available. The settings and controls-help diagrams use the
+selected layout, including independent keyboard or physical-pad assignments
+for both turbo buttons. Four Score ports can also use this device.
+
+The common input uses X for Turbo B and Y for Turbo A on a `paddendy` NES port.
+These buttons remain held in `TScreenGamepad.Buttons`; the NES worker converts
+them into ordinary serial A/B bits, with two frames pressed and two released
+(about 15 repeats/s at NTSC and 12.5 at PAL). Each button, source and player has
+its own phase; a fresh hold starts pressed, and repeated input updates preserve
+the phase. Ordinary A/B holds take priority over the released turbo phase.
+Pause freezes the phase. Releasing contacts, changing layouts, clearing input
+or disconnecting a source stops its turbo. Standard NES ports ignore X/Y.
+
 `TScreenGamepad` shares the touch tracking and painting implementation between
 NES and the six-button SEGA Mega Drive / Genesis layout. Set `Layout` to
 `TScreenGamepadLayout.Sega` for X/Y/Z above A/B/C, a D-pad, Start and Mode.

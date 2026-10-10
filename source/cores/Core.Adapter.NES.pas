@@ -97,6 +97,7 @@ type
   private
     FThread: TNesEmulationThread;
     FGamepadInput: TEmulatorInput;
+    FDendyPads: array[0..3] of Boolean;
     FConfig: INesEmulatorConfig;
     FFrameNumber: UInt64;
     FError, FAudioError: string;
@@ -151,7 +152,7 @@ type
 implementation
 
 uses
-  Core.RomFormat, System.SysUtils, System.UITypes;
+  Core.RomFormat, Core.InputConfig, System.SysUtils, System.UITypes;
 
 { TNesCoreAdapter }
 
@@ -212,6 +213,14 @@ begin
     ConfigPath := CoreStorage.ConfigFile(ROM_SYSTEM_NES);
   FConfig := TNesEmulatorConfig.Create(ConfigPath, CoreStorage);
   FConfig.Load;
+  var Ini := CoreStorage.ReadConfig(ConfigPath);
+  try
+    var Ports := ReadCoreInputPorts(Ini);
+    for var I := 0 to 3 do
+      FDendyPads[I] := Ports.Devices[I] = 'paddendy';
+  finally
+    Ini.Free;
+  end;
   FThread := TNesEmulationThread.Create(Stream, CoreStorage, RomName,
     FConfig.FourScore, FConfig.Region, FConfig.AudioEnabled, FConfig.AudioVolume, '', '', ConfigPath);
   // Select port 2 before starting the worker. A light gun replaces the pad
@@ -283,7 +292,7 @@ const
     TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right);
 var
   Pads: array[0..3] of TEmulatorButtons;
-  Buttons: TNesButtons;
+  Buttons, TurboButtons: TNesButtons;
 begin
   Pads[0] := FGamepadInput.Buttons;
   Pads[1] := FGamepadInput.Buttons2;
@@ -295,7 +304,16 @@ begin
     for var Button := Low(TNesButton) to High(TNesButton) do
       if Mapping[Button] in Pads[I] then
         Include(Buttons, Button);
-    FThread.SetButtons(INPUT_SCREEN_GAMEPAD, I + 1, Buttons);
+    TurboButtons := [];
+    if FDendyPads[I] then
+    begin
+      // NES Dendy uses the common pad's extra upper row: X = Turbo B, Y = Turbo A.
+      if TEmulatorButton.X in Pads[I] then
+        Include(TurboButtons, TNesButton.B);
+      if TEmulatorButton.Y in Pads[I] then
+        Include(TurboButtons, TNesButton.A);
+    end;
+    FThread.SetButtons(INPUT_SCREEN_GAMEPAD, I + 1, Buttons, TurboButtons);
   end;
 end;
 

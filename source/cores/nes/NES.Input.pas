@@ -16,7 +16,11 @@ type
   TNesInput = class
   private
     type
-      TPlayerStates = array[1..INPUT_PLAYER_COUNT] of Byte;
+      TPlayerState = record
+        Buttons, Turbo: Byte;
+        Phase: array[TNesButton.A..TNesButton.B] of Byte;
+      end;
+      TPlayerStates = array[1..INPUT_PLAYER_COUNT] of TPlayerState;
   private
     FSources: TDictionary<UInt32, TPlayerStates>;
     procedure CheckPlayer(Player: Integer);
@@ -24,6 +28,9 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure SetButton(Source: UInt32; Player: Integer; Button: TNesButton; Pressed: Boolean);
+    procedure SetTurboButton(Source: UInt32; Player: Integer; Button: TNesButton; Pressed: Boolean);
+    // Advance once per completed emulated frame, never while paused.
+    procedure AdvanceTurbo;
     procedure SetKey(Player: Integer; Code: UInt32; Pressed: Boolean; const Keys: TKeyMap);
     procedure ReleaseSource(Source: UInt32);
     procedure Clear;
@@ -59,10 +66,49 @@ begin
     FillChar(States, SizeOf(States), 0);
   var Mask: Byte := 1 shl Ord(Button);
   if Pressed then
-    States[Player] := States[Player] or Mask
+    States[Player].Buttons := States[Player].Buttons or Mask
   else
-    States[Player] := States[Player] and not Mask;
+    States[Player].Buttons := States[Player].Buttons and not Mask;
   FSources.AddOrSetValue(Source, States);
+end;
+
+procedure TNesInput.SetTurboButton(Source: UInt32; Player: Integer; Button: TNesButton; Pressed: Boolean);
+begin
+  CheckPlayer(Player);
+  if not (Button in [TNesButton.A, TNesButton.B]) then
+    raise EArgumentException.Create('Only A and B support turbo');
+  var States: TPlayerStates;
+  if not FSources.TryGetValue(Source, States) then
+    FillChar(States, SizeOf(States), 0);
+  var Mask: Byte := 1 shl Ord(Button);
+  if Pressed then
+  begin
+    if (States[Player].Turbo and Mask) = 0 then
+      States[Player].Phase[Button] := 0;
+    States[Player].Turbo := States[Player].Turbo or Mask;
+  end
+  else
+    States[Player].Turbo := States[Player].Turbo and not Mask;
+  FSources.AddOrSetValue(Source, States);
+end;
+
+procedure TNesInput.AdvanceTurbo;
+begin
+  // Updating dictionary values invalidates its enumerator; use a key snapshot.
+  for var Source in FSources.Keys.ToArray do
+  begin
+    var States := FSources[Source];
+    var Changed := False;
+    for var Player := 1 to INPUT_PLAYER_COUNT do
+      for var Button := TNesButton.A to TNesButton.B do
+        if (States[Player].Turbo and (1 shl Ord(Button))) <> 0 then
+        begin
+          States[Player].Phase[Button] := (States[Player].Phase[Button] + 1) mod 4;
+          Changed := True;
+        end;
+    if Changed then
+      FSources.AddOrSetValue(Source, States);
+  end;
 end;
 
 procedure TNesInput.SetKey(Player: Integer; Code: UInt32; Pressed: Boolean; const Keys: TKeyMap);
@@ -100,8 +146,15 @@ function TNesInput.IsPressed(Player: Integer; Button: TNesButton): Boolean;
 begin
   CheckPlayer(Player);
   for var Pair in FSources do
-    if (Pair.Value[Player] and (1 shl Ord(Button))) <> 0 then
+  begin
+    var State := Pair.Value[Player];
+    if (State.Buttons and (1 shl Ord(Button))) <> 0 then
       Exit(True);
+    if (Button in [TNesButton.A, TNesButton.B]) and
+      ((State.Turbo and (1 shl Ord(Button))) <> 0) then
+      if State.Phase[Button] < 2 then
+        Exit(True);
+  end;
 
   Result := False;
 end;

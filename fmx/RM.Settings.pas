@@ -76,7 +76,8 @@ type
     {$REGION 'Storage and draft settings'}
     FStorage: IStorage;
     FPicker: TSettingsLocationPicker;
-    FInput: TInputManager; // Shared with the frontend; ownership stays with the form.
+    FInput: TInputManager; // Draft assignments owned by this view.
+    FHostInput: TInputManager; // Shared device snapshots; owned by the form.
     FDrafts: array[0..6] of TMemIniFile;
     FFields: TObjectList<TSettingsField>;
     FDevices: TObjectList<TSettingsDevice>;
@@ -182,6 +183,8 @@ type
     property CorePage: Integer read FCorePage;
     procedure Poll;
     procedure CancelCapture;
+    property InputManager: TInputManager read FInput;
+    function HandleCaptureKeyDown(var Key: Word; var KeyChar: WideChar): Boolean;
     procedure ApplyLanguage(const PreviousLanguage: string);
     property OnApply: TNotifyEvent read FOnApply write FOnApply;
     property LocationPicker: TSettingsLocationPicker read FPicker write FPicker;
@@ -209,11 +212,23 @@ uses
 {$R *.fmx}
 
 type
-  TSettingsPreview = class(TControl)
+  TSettingsInputBackend = class(TInputBackend)
+  private
+    FHost: TInputManager;
   public
-    PaletteIndex: Integer;
-  protected
-    procedure Paint; override;
+    constructor Create(Host: TInputManager);
+    procedure Refresh; override;
+    procedure RefreshIfNeeded; override;
+    function Poll: TArray<TInputValue>; override;
+  end;
+
+  TSettingsPreview = class(TImage)
+  private
+    FPaletteIndex: Integer;
+    procedure SetPaletteIndex(Value: Integer);
+  public
+    constructor Create(AOwner: TComponent); override;
+    property PaletteIndex: Integer read FPaletteIndex write SetPaletteIndex;
   published
     property Align;
     property Margins;
@@ -246,6 +261,30 @@ type
   protected
     procedure MouseWheel(Shift: TShiftState; WheelDelta: Integer; var Handled: Boolean); override;
   end;
+
+constructor TSettingsInputBackend.Create(Host: TInputManager);
+begin
+  inherited Create;
+  FHost := Host;
+end;
+
+procedure TSettingsInputBackend.Refresh;
+begin
+  FHost.Refresh;
+  RefreshIfNeeded;
+end;
+
+procedure TSettingsInputBackend.RefreshIfNeeded;
+begin
+  FDevices := FHost.Devices;
+end;
+
+function TSettingsInputBackend.Poll: TArray<TInputValue>;
+begin
+  // The frontend polls the native backend once. Editing assignments must not
+  // replace the running game's map or consume relative input a second time.
+  Result := FHost.Values;
+end;
 
 function SettingsLabel(Owner: TComponent): TLabel;
 begin
@@ -295,34 +334,53 @@ begin
   inherited;
 end;
 
-procedure TSettingsPreview.Paint;
+constructor TSettingsPreview.Create(AOwner: TComponent);
 begin
   inherited;
-  var Palette := ScreenPalettes[EnsureRange(PaletteIndex, 0, SCREEN_PALETTE_COUNT - 1)];
-  var W := Width / 32;
-  var H := Height / 29;
-  Canvas.Fill.Kind := TBrushKind.Solid;
-  for var Y := 0 to 28 do
-    for var X := 0 to 31 do
-    begin
-      var Shade := 0;
-      if Y > 12 + Abs(16 - X) div 2 then
-        Shade := 1;
-      if Y > 19 then
-        Shade := 2;
-      if (Y = 20) or ((Y > 20) and ((X + Y) mod 4 = 0)) then
-        Shade := 3;
-      if (X in [4..7]) and (Y in [9..16]) then
-        Shade := 2;
-      if (X = 6) and (Y in [16..19]) then
-        Shade := 3;
-      if (X in [14..15]) and (Y in [16..19]) then
-        Shade := 3;
-      if (Y in [4..5]) and (X in [18..22]) then
-        Shade := 0;
-      Canvas.Fill.Color := Palette.Colors[Shade];
-      Canvas.FillRect(TRectF.Create(Floor(X * W), Floor(Y * H), Ceil((X + 1) * W), Ceil((Y + 1) * H)), 0, 0, [], AbsoluteOpacity);
-    end;
+  WrapMode := TImageWrapMode.Stretch;
+  DisableInterpolation := True;
+  FPaletteIndex := -1;
+  SetPaletteIndex(0);
+end;
+
+procedure TSettingsPreview.SetPaletteIndex(Value: Integer);
+begin
+  Value := EnsureRange(Value, 0, SCREEN_PALETTE_COUNT - 1);
+  if Value = FPaletteIndex then
+    Exit;
+  Bitmap.SetSize(160, 144);
+  var Data: TBitmapData;
+  if not Bitmap.Map(TMapAccess.Write, Data) then
+    Exit;
+  try
+    var Palette := ScreenPalettes[Value];
+    for var PixelY := 0 to Bitmap.Height - 1 do
+      for var PixelX := 0 to Bitmap.Width - 1 do
+      begin
+        var X := PixelX * 32 div Bitmap.Width;
+        var Y := PixelY * 29 div Bitmap.Height;
+        var Shade := 0;
+        if Y > 12 + Abs(16 - X) div 2 then
+          Shade := 1;
+        if Y > 19 then
+          Shade := 2;
+        if (Y = 20) or ((Y > 20) and ((X + Y) mod 4 = 0)) then
+          Shade := 3;
+        if (X in [4..7]) and (Y in [9..16]) then
+          Shade := 2;
+        if (X = 6) and (Y in [16..19]) then
+          Shade := 3;
+        if (X in [14..15]) and (Y in [16..19]) then
+          Shade := 3;
+        if (Y in [4..5]) and (X in [18..22]) then
+          Shade := 0;
+        Data.SetPixel(PixelX, PixelY, Palette.Colors[Shade]);
+      end;
+    FPaletteIndex := Value;
+  finally
+    Bitmap.Unmap(Data);
+  end;
+  Repaint;
 end;
 
 procedure TSettingsTrackBar.DoRealign;
@@ -566,7 +624,9 @@ begin
   inherited Create(AOwner);
   FCorePage := 1;
   FStorage := Storage;
-  FInput := Input;
+  FHostInput := Input;
+  if Input <> nil then
+    FInput := TInputManager.Create(TSettingsInputBackend.Create(Input));
   FFields := TObjectList<TSettingsField>.Create;
   FDevices := TObjectList<TSettingsDevice>.Create;
   var Alive := True;
@@ -677,9 +737,9 @@ begin
   for var Port := 1 to 8 do
     ReplaceCombo('RowConnecteddevice2Port' + IntToStr(Port) + 'Editor', ['Gamepad · 6 buttons', 'Gamepad · 3 buttons', 'None']);
   for var Port := 1 to 8 do
-    ReplaceCombo('RowConnecteddevice10Port' + IntToStr(Port) + 'Editor', ['Automatic', 'Gamepad', 'Miracle Piano', 'None']);
+    ReplaceCombo('RowConnecteddevice10Port' + IntToStr(Port) + 'Editor', ['Automatic', 'Gamepad', 'Dendy · Turbo', 'Miracle Piano', 'None']);
   for var Port := 1 to 8 do
-    ReplaceCombo('RowConnecteddevice18Port' + IntToStr(Port) + 'Editor', ['Automatic', 'Gamepad', 'Zapper', 'Power Pad', 'None']);
+    ReplaceCombo('RowConnecteddevice18Port' + IntToStr(Port) + 'Editor', ['Automatic', 'Gamepad', 'Dendy · Turbo', 'Zapper', 'Power Pad', 'None']);
   for var Port := 1 to 8 do
     ReplaceCombo('RowConnecteddevice26Port' + IntToStr(Port) + 'Editor', ['Gamepad', 'None']);
   for var Port := 0 to 7 do
@@ -696,6 +756,7 @@ begin
   FDevices.Free;
   for var Ini in FDrafts do
     Ini.Free;
+  FInput.Free;
   inherited;
 end;
 {$ENDREGION}
@@ -778,7 +839,7 @@ begin
       if FCategory = 2 then
       begin
         Heading('GroupVideo');
-        Combo('RowImagescaling', 'Video', 'Filter', [], ['nearest', 'linear'], 'nearest');
+        var Scaling := Combo('RowImagescaling', 'Video', 'Filter', [], ['nearest', 'linear'], 'nearest');
         if FPage = 1 then
         begin
           var Labels, Values: TArray<string>;
@@ -791,6 +852,7 @@ begin
           end;
           var Palette := Combo('RowGameBoypalette', 'Video', 'Palette', Labels, Values, '0');
           Palette.OnChange := PreviewChange;
+          Scaling.OnChange := PreviewChange;
           Heading('GroupPreview');
           FPreviewGroup := FGroup;
           var PreviewRow := Row('Row160144');
@@ -805,6 +867,7 @@ begin
           Preview.Align := TAlignLayout.Fit;
           FPreview := Preview;
           Preview.PaletteIndex := Palette.ItemIndex;
+          Preview.DisableInterpolation := Scaling.ItemIndex = 0;
         end;
         if FPage = 2 then
           Check('RowLCDcolors', 'Video', 'ColorCorrection', False);
@@ -1460,11 +1523,15 @@ begin
   else if FPage = 4 then
     C := Combo('RowConnecteddevice2Port' + IntToStr(Port + 1), 'Ports', Key, [], ['pad6', 'pad3', 'none'], 'pad6')
   else if (FPage = 3) and (Port = 0) then
-    C := Combo('RowConnecteddevice10Port' + IntToStr(Port + 1), 'Ports', Key, [], ['auto', 'pad', 'piano', 'none'], 'auto')
+    C := Combo('RowConnecteddevice10Port' + IntToStr(Port + 1), 'Ports', Key, [], ['auto', 'pad', 'paddendy', 'piano', 'none'], 'auto')
   else if (FPage = 3) and (Port = 1) then
-    C := Combo('RowConnecteddevice18Port' + IntToStr(Port + 1), 'Ports', Key, [], ['auto', 'pad', 'zapper', 'powerpad', 'none'], 'auto')
+    C := Combo('RowConnecteddevice18Port' + IntToStr(Port + 1), 'Ports', Key, [], ['auto', 'pad', 'paddendy', 'zapper', 'powerpad', 'none'], 'auto')
+  else if FPage = 3 then
+    C := Combo('RowConnecteddevice26Port' + IntToStr(Port + 1), 'Ports', Key,
+      ['Gamepad', 'Dendy · Turbo', 'None'], ['pad', 'paddendy', 'none'], 'pad')
   else
-    C := Combo('RowConnecteddevice26Port' + IntToStr(Port + 1), 'Ports', Key, [], ['pad', 'none'], 'pad');
+    C := Combo('RowConnecteddevice26Port' + IntToStr(Port + 1), 'Ports', Key,
+      ['Gamepad', 'None'], ['pad', 'none'], 'pad');
   // Normalize absent legacy values to the device displayed by the selector.
   for var F in FFields do
     if F.Control = C then
@@ -1594,7 +1661,10 @@ begin
       2:
         Pad.Layout := TScreenGamepadLayout.GameBoyColor;
       3:
-        Pad.Layout := TScreenGamepadLayout.Nes;
+        if Device = 'paddendy' then
+          Pad.Layout := TScreenGamepadLayout.Dendy
+        else
+          Pad.Layout := TScreenGamepadLayout.Nes;
       4:
         Pad.Layout := TScreenGamepadLayout.Sega;
       5:
@@ -1820,6 +1890,7 @@ begin
   FCaptureButton := TButton(Sender);
   FCaptureAction := FCaptureButton.Tag;
   var Port := StrToIntDef(FCaptureButton.TagString, 0);
+  FHostInput.Poll;
   FInput.BeginCapture(FCaptureAction, FDeviceIds[Port]);
   FCaptureDeadline := TThread.GetTickCount64 + 10000;
   FStatus.Text := Translate('Press a button or direction. Esc cancels. Waiting: 10 seconds.');
@@ -1856,8 +1927,26 @@ begin
   Resize;
 end;
 
+function TSettingsView.HandleCaptureKeyDown(var Key: Word; var KeyChar: WideChar): Boolean;
+begin
+  Result := FCaptureButton <> nil;
+  if not Result then
+    Exit;
+
+  // Native input captures the physical key. Do not also let the focused editor
+  // change the source, move focus, or restart capture with Enter/Space.
+  if Key = vkEscape then
+    CancelCaptureClick(Self);
+  Key := 0;
+  KeyChar := #0;
+end;
+
 procedure TSettingsView.Poll;
 begin
+  if FInput = nil then
+    Exit;
+  FInput.Enabled := FHostInput.Enabled;
+  FInput.Poll;
   if FCaptureButton = nil then
     Exit;
 
@@ -1900,8 +1989,9 @@ procedure TSettingsView.PreviewChange(Sender: TObject);
 begin
   if FPreview is TSettingsPreview then
   begin
-    TSettingsPreview(FPreview).PaletteIndex := TComboBox(Sender).ItemIndex;
-    FPreview.Repaint;
+    var Preview := TSettingsPreview(FPreview);
+    Preview.PaletteIndex := (FindComponent('RowGameBoypaletteEditor') as TComboBox).ItemIndex;
+    Preview.DisableInterpolation := (FindComponent('RowImagescalingEditor') as TComboBox).ItemIndex = 0;
   end;
 end;
 

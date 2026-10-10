@@ -227,6 +227,7 @@ type
     {$ENDREGION}
     {$REGION 'Input and peripherals'}
     procedure LoadHostInput(const SystemId: string);
+    procedure ReloadHostInputBindings;
     procedure PollHostInput;
     procedure ForwardKeyState(Code: Word; Pressed: Boolean);
     procedure GamepadChanged(Sender: TObject);
@@ -267,6 +268,7 @@ type
     procedure DoShow; override;
     {$ENDIF}
   public
+    procedure KeyDown(var Key: Word; var KeyChar: WideChar; Shift: TShiftState); override;
     procedure DragOver(const Data: TDragObject; const Point: TPointF; var Operation: TDragOperation); override;
     procedure DragDrop(const Data: TDragObject; const Point: TPointF); override;
     procedure SaveSnapshot(const Name: string);
@@ -662,6 +664,7 @@ end;
 {$ENDIF}
 
 {$IF Defined(ANDROID) or Defined(IOS)}
+
 procedure TFormMain.InitializeMobileViews;
 begin
   FAppEvents := TApplicationEvents.Create(Self);
@@ -1559,8 +1562,11 @@ begin
     FGamepad.Layout := TScreenGamepadLayout.GameBoyColor
   else if FEmulation.Config is TGBEmulatorConfig then
     FGamepad.Layout := TScreenGamepadLayout.GameBoy
+  else if FInputPorts.Devices[0] = 'paddendy' then
+    FGamepad.Layout := TScreenGamepadLayout.Dendy
   else
     FGamepad.Layout := TScreenGamepadLayout.Nes;
+  FGamepad.ButtonMask := CoreButtons(InputSystem, FInputPorts.Devices[0]);
 
   ImageCanvas.HitTest := False;
   ImageCanvas.CanFocus := False;
@@ -2086,8 +2092,7 @@ begin
     FLibrary.ApplyPreferences;
     FLibrary.Reload;
   end;
-  // Keep the active core's hardware connections until the ROM is reopened.
-  // Input assignments can be refreshed independently on close.
+  ReloadHostInputBindings;
 end;
 
 procedure TFormMain.SettingsClose(Sender: TObject);
@@ -2113,16 +2118,7 @@ begin
         FLibrary.Visible := FSettingsLibraryVisible;
       LayoutClient.Visible := FSettingsClientVisible;
       //LoadSystem(FSystemId);
-      if FInput <> nil then
-      begin
-        var Ini := FStorage.ReadConfig(FStorage.ConfigFile(FInputSystemId));
-        try
-          LoadInputBindings(FInput, Ini, FInputSystemId);
-          FilterInputBindings(FInput, Ini);
-        finally
-          Ini.Free;
-        end;
-      end;
+      ReloadHostInputBindings;
       FSuppressInputUntilRelease := True;
       if (FEmulation <> nil) and not FSettingsWasPaused and not FEmulationFaulted then
         FEmulation.Resume;
@@ -2541,30 +2537,39 @@ procedure TFormMain.LoadHostInput(const SystemId: string);
 begin
   FInputSystemId := SystemId;
   FInputPorts := LoadCoreInputPorts(FStorage, SystemId);
-  var Ini := FStorage.ReadConfig(FStorage.ConfigFile(SystemId));
+  ReloadHostInputBindings;
+end;
+
+procedure TFormMain.ReloadHostInputBindings;
+begin
+  if FInput = nil then
+    Exit;
+  // Assignments belong to the active game, independently of the settings page.
+  // Retain the hardware connections selected when this ROM was opened.
+  var Ini := FStorage.ReadConfig(FStorage.ConfigFile(FInputSystemId));
   try
-    if FInput <> nil then
-    begin
-      LoadInputBindings(FInput, Ini, SystemId);
-      FilterInputBindings(FInput, Ini);
-    end;
+    LoadInputBindings(FInput, Ini, FInputSystemId);
+    FilterInputBindings(FInput, Ini);
   finally
     Ini.Free;
   end;
   FSuppressInputUntilRelease := True;
+  FillChar(FKeysDown, SizeOf(FKeysDown), 0);
+  if FEmulation <> nil then
+    FEmulation.ClearInput;
 end;
 
 procedure TFormMain.PollHostInput;
 begin
   FInput.Enabled := HostInputHasFocus and not FOpeningRom;
   FInput.Poll;
-  if not FInput.Enabled then
-    Exit;
   if FSettingsView <> nil then
   begin
     FSettingsView.Poll;
     Exit;
   end;
+  if not FInput.Enabled then
+    Exit;
   if FViewingLibrary then
     Exit;
   if (Focused <> nil) and (Focused.GetObject is TCustomEdit) then
@@ -2626,6 +2631,14 @@ begin
       Peripheral.Zapper.TriggerPressed := FInput.IsPressed(ZapperTriggerAction);
     end;
   end;
+end;
+
+procedure TFormMain.KeyDown(var Key: Word; var KeyChar: WideChar; Shift: TShiftState);
+begin
+  // Intercept before FMX dispatches to focused controls and handles Tab.
+  if (FSettingsView <> nil) and FSettingsView.HandleCaptureKeyDown(Key, KeyChar) then
+    Exit;
+  inherited;
 end;
 
 procedure TFormMain.FormKeyDown(Sender: TObject; var Key: Word; var KeyChar: WideChar; Shift: TShiftState);
@@ -3057,6 +3070,7 @@ end;
 {$ENDIF}
 
 {$IFDEF ANDROID}
+
 procedure TFormMain.PollDocumentTransfer;
 begin
   if not FOpeningRom then

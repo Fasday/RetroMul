@@ -7,7 +7,7 @@ uses
   FMX.Types, FMX.Controls, FMX.Forms, NES.Controller, Core.Emulation;
 
 type
-  TScreenGamepadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo);
+  TScreenGamepadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy);
 
   // Coordinates passed to PointerDown/Move are local logical FMX coordinates.
   // OnChange runs on the UI thread. The consumer owns the emulator connection.
@@ -114,6 +114,11 @@ uses
   FMX.Graphics, RM.Icons;
 
 const
+  SnesActionCenterX = 317;
+  SnesActionCenterY = 98;
+  SnesActionRadius = 74;
+  SnesButtonOffset = 36;
+  SnesButtonDiameter = 34;
   NesButtonMap: array[TNesButton] of TEmulatorButton =
     (TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Select,
     TEmulatorButton.Start, TEmulatorButton.Up, TEmulatorButton.Down,
@@ -210,6 +215,12 @@ var
     Result := RectF(OX + X * U, OY + Y * U, OX + (X + W) * U, OY + (Y + H) * U);
   end;
 
+  procedure SnesAction(Button: TEmulatorButton; DX, DY: Single);
+  begin
+    FBounds[Button] := R(SnesActionCenterX + DX - SnesButtonDiameter / 2,
+      SnesActionCenterY + DY - SnesButtonDiameter / 2, SnesButtonDiameter, SnesButtonDiameter);
+  end;
+
   procedure SegaAction(Button: TEmulatorButton; X, Y, Diameter: Single);
   begin
     // The six-button base leans outward; its button rows still rise to the right.
@@ -237,7 +248,7 @@ begin
   Half := 52;
   Arm := 18;
   case FLayout of
-    TScreenGamepadLayout.Nes:
+    TScreenGamepadLayout.Nes, TScreenGamepadLayout.Dendy:
       begin
         CY := 111;
         Half := 37;
@@ -284,10 +295,19 @@ begin
   case FLayout of
     TScreenGamepadLayout.Nes:
       begin
-        FBounds[TEmulatorButton.B] := R(270, 111, 46, 46);
-        FBounds[TEmulatorButton.A] := R(330, 111, 46, 46);
-        FBounds[TEmulatorButton.Select] := R(153, 119, 39, 19);
-        FBounds[TEmulatorButton.Start] := R(207, 119, 39, 19);
+        FBounds[TEmulatorButton.B] := R(276.5, 113, 34, 34);
+        FBounds[TEmulatorButton.A] := R(328.5, 113, 34, 34);
+        FBounds[TEmulatorButton.Select] := R(149, 121, 39, 19);
+        FBounds[TEmulatorButton.Start] := R(203, 121, 39, 19);
+      end;
+    TScreenGamepadLayout.Dendy:
+      begin
+        FBounds[TEmulatorButton.B] := R(267, 116, 36, 36);
+        FBounds[TEmulatorButton.A] := R(321, 116, 36, 36);
+        FBounds[TEmulatorButton.X] := R(267, 57, 36, 36);
+        FBounds[TEmulatorButton.Y] := R(321, 57, 36, 36);
+        FBounds[TEmulatorButton.Select] := R(153, 128, 31, 13);
+        FBounds[TEmulatorButton.Start] := R(202, 128, 31, 13);
       end;
     TScreenGamepadLayout.Sega:
       begin
@@ -322,10 +342,10 @@ begin
       end;
     TScreenGamepadLayout.Snes:
       begin
-        FBounds[TEmulatorButton.X] := R(291, 42, 34, 34);
-        FBounds[TEmulatorButton.B] := R(291, 114, 34, 34);
-        FBounds[TEmulatorButton.Y] := R(255, 78, 34, 34);
-        FBounds[TEmulatorButton.A] := R(327, 78, 34, 34);
+        SnesAction(TEmulatorButton.X, 0, -SnesButtonOffset);
+        SnesAction(TEmulatorButton.B, 0, SnesButtonOffset);
+        SnesAction(TEmulatorButton.Y, -SnesButtonOffset, 0);
+        SnesAction(TEmulatorButton.A, SnesButtonOffset, 0);
         FBounds[TEmulatorButton.C] := R(38, 8, 94, 19);
         FBounds[TEmulatorButton.Z] := R(268, 8, 94, 19);
         FBounds[TEmulatorButton.Select] := R(153, 99, 34, 24);
@@ -368,6 +388,8 @@ begin
         TEmulatorButton.Z, TEmulatorButton.Mode]
   else
     Include(Result, TEmulatorButton.Select);
+  if FLayout = TScreenGamepadLayout.Dendy then
+    Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
   if FLayout = TScreenGamepadLayout.Snes then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.C, TEmulatorButton.Z];
   if FLayout = TScreenGamepadLayout.NeoGeo then
@@ -738,13 +760,13 @@ var
     end;
   end;
 
-  procedure TiltedCapsule(const Bounds: TRectF; Angle: Single; Top, Bottom: TAlphaColor);
+  procedure TiltedRoundedRect(const Bounds: TRectF; Angle, Radius: Single; Top, Bottom: TAlphaColor);
   begin
     var Path := TPathData.Create;
     try
       var C := Bounds.CenterPoint;
       Path.AddRectangle(RectF(-Bounds.Width / 2, -Bounds.Height / 2, Bounds.Width / 2, Bounds.Height / 2),
-        Bounds.Height / 2, Bounds.Height / 2, AllCorners);
+        Radius, Radius, AllCorners);
       Path.ApplyMatrix(TMatrix.CreateRotation(DegToRad(Angle)));
       Path.Translate(C.X, C.Y);
       Canvas.Stroke.Color := $FF080A0D;
@@ -792,6 +814,8 @@ begin
     Ink := $FFD9DCDA;
   end;
 
+  if FLayout = TScreenGamepadLayout.Dendy then
+    Shell := $FF474F58;
   if FLayout = TScreenGamepadLayout.NeoGeo then
     Shell := $FF353A35;
   if FLayout = TScreenGamepadLayout.Sega then
@@ -801,6 +825,8 @@ begin
     case FLayout of
       TScreenGamepadLayout.Nes:
         Body.AddRectangle(RectF(6, 10, 394, 177), 9, 9, AllCorners);
+      TScreenGamepadLayout.Dendy:
+        Body.AddRectangle(RectF(6, 10, 394, 177), 17, 17, AllCorners);
       TScreenGamepadLayout.Snes:
         begin
           Body.MoveTo(PointF(81, 20));
@@ -876,24 +902,48 @@ begin
     TScreenGamepadLayout.Nes:
       begin
         Box(R(16, 42, 368, 127), $FF28292B, 4);
-        Box(R(140, 42, 110, 15), $FF93948C, 3);
+        Solid($FF93948C);
+        Canvas.FillRect(R(140, 42, 110, 15), 3 * FUnit, 3 * FUnit,
+          [TCorner.BottomLeft, TCorner.BottomRight], Opacity);
         Box(R(140, 64, 110, 15), $FF93948C, 3);
         Box(R(140, 87, 110, 22), $FF93948C, 3);
-        Box(R(140, 153, 110, 16), $FF93948C, 3);
+        Solid($FF93948C);
+        Canvas.FillRect(R(140, 153, 110, 16), 3 * FUnit, 3 * FUnit,
+          [TCorner.TopLeft, TCorner.TopRight], Opacity);
         Box(R(140, 115, 111, 31), $FFDDDEDA, 3);
         Box(R(145, 119, 101, 23), $FFB1B2AE, 2);
-        Box(R(266, 108, 54, 53), $FFD8DADA, 4);
-        Box(R(326, 108, 54, 53), $FFD8DADA, 4);
-        Text(R(258, 60, 125, 25), 'Nintendo', $FFEC413C, 21);
-        Text(R(143, 90, 53, 15), 'SELECT', $FFDD3D35, 9);
-        Text(R(201, 90, 47, 15), 'START', $FFDD3D35, 9);
+        Box(R(272.5, 110, 42, 42), $FFD8DADA, 4);
+        Box(R(324.5, 110, 42, 42), $FFD8DADA, 4);
+        Text(R(258, 60, 100, 25), 'Nintendo', $FFEC413C, 18);
+        Text(R(142, 90, 53, 15), 'SELECT', $FFDD3D35, 9);
+        Text(R(199, 90, 47, 15), 'START', $FFDD3D35, 9);
+      end;
+    TScreenGamepadLayout.Dendy:
+      begin
+        Box(R(17, 24, 366, 138), $FFC9D1C8, 10);
+        Box(R(17, 140, 366, 1.5), $FF343D3C, 0);
+        Box(R(17, 146, 366, 1.5), $FF343D3C, 0);
+        Box(R(27, 34, 25, 25), $FFB62C2B, 0);
+        Text(R(27, 32, 25, 27), 'I', $FFF3F0DB, 23);
+        Box(R(260, 51, 104, 49), $FF343638, 24);
+        Box(R(143, 116, 101, 35), $FF4B5055, 17);
+        Box(R(148, 121, 91, 25), $FF303438, 12);
+        Text(R(151, 101, 38, 12), 'SELECT', $FF20282A, 8);
+        Text(R(200, 101, 36, 12), 'START', $FF20282A, 8);
+        Text(R(281, 38, 64, 12), 'TURBO', $FFA02F2E, 10);
+        Canvas.Stroke.Color := $FFA02F2E;
+        Canvas.Stroke.Thickness := FUnit;
+        Canvas.DrawLine(R(286, 43, 0, 8).TopLeft, R(286, 43, 0, 8).BottomRight, Opacity);
+        Canvas.DrawLine(R(341, 43, 0, 8).TopLeft, R(341, 43, 0, 8).BottomRight, Opacity);
       end;
     TScreenGamepadLayout.Snes:
       begin
-        Oval(R(243, 31, 136, 136), $FF8F9295, $FF767A7F);
+        var ActionCircle := R(SnesActionCenterX - SnesActionRadius,
+          SnesActionCenterY - SnesActionRadius, 2 * SnesActionRadius, 2 * SnesActionRadius);
+        Oval(ActionCircle, $FF8F9295, $FF767A7F);
         Canvas.Stroke.Color := $FFE0E0DA;
         Canvas.Stroke.Thickness := FUnit;
-        Canvas.DrawEllipse(R(243, 31, 136, 136), Opacity * 0.65);
+        Canvas.DrawEllipse(ActionCircle, Opacity * 0.65);
         Text(R(133, 43, 118, 15), 'SUPER NINTENDO', $FF55595D, 10);
         Text(R(133, 57, 118, 10), 'ENTERTAINMENT SYSTEM', $FF686C70, 5.7);
         // Four matching lobes echo the original Super Nintendo emblem.
@@ -1117,6 +1167,11 @@ begin
       case FLayout of
         TScreenGamepadLayout.Nes:
           Color := $FFD92F2D;
+        TScreenGamepadLayout.Dendy:
+          if B in [TEmulatorButton.X, TEmulatorButton.Y] then
+            Color := $FFB92F30
+          else
+            Color := $FF202529;
         TScreenGamepadLayout.Sega:
           if B in [TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.Z] then
             Color := $FF838689;
@@ -1158,8 +1213,16 @@ begin
       Canvas.DrawEllipse(Rim, Opacity * 0.7);
       case FLayout of
         TScreenGamepadLayout.Nes:
-          Text(RectF(Bounds.Left, Bounds.Bottom + 3 * FUnit, Bounds.Right,
-              Bounds.Bottom + 16 * FUnit), Caption, $FFED4237, 12);
+          Text(RectF(Bounds.Right - 8 * FUnit, Bounds.Bottom + 7 * FUnit,
+              Bounds.Right + 4 * FUnit, Bounds.Bottom + 20 * FUnit), Caption, $FFED4237, 12);
+        TScreenGamepadLayout.Dendy:
+          if B in [TEmulatorButton.A, TEmulatorButton.B] then
+          begin
+            var LabelBox := RectF(Bounds.Left + 10 * FUnit, Bounds.Top - 14 * FUnit,
+              Bounds.Right - 10 * FUnit, Bounds.Top - 4 * FUnit);
+            Box(LabelBox, $FF20282A, 5);
+            Text(LabelBox, Caption, $FFF0F0DB, 8);
+          end;
         TScreenGamepadLayout.Sega:
           begin
             var LetterColor := MixColor(Color, $FF000000, 0.65);
@@ -1168,15 +1231,23 @@ begin
             TiltedText(Face, Caption, LetterColor, 14, FSegaButtonsAngle);
           end;
         TScreenGamepadLayout.Snes:
-          case B of
-            TEmulatorButton.X:
-              Text(R(326, 38, 19, 14), Caption, $FFD2D4CF, 9);
-            TEmulatorButton.Y:
-              Text(R(244, 105, 16, 14), Caption, $FFD2D4CF, 9);
-            TEmulatorButton.B:
-              Text(R(306, 152, 16, 14), Caption, $FFD2D4CF, 9);
-            TEmulatorButton.A:
-              Text(R(365, 88, 16, 14), Caption, $FFD2D4CF, 9);
+          begin
+            var Pair := TEmulatorButton.B;
+            case B of
+              TEmulatorButton.X: Pair := TEmulatorButton.Y;
+              TEmulatorButton.Y: Pair := TEmulatorButton.X;
+              TEmulatorButton.B: Pair := TEmulatorButton.A;
+            end;
+            var LetterCenter := Bounds.CenterPoint;
+            var PairCenter := FBounds[Pair].CenterPoint;
+            var DX := LetterCenter.X - PairCenter.X;
+            var DY := LetterCenter.Y - PairCenter.Y;
+            var Distance := Hypot(DX, DY);
+            var Offset := Bounds.Width / 2 + 15 * FUnit;
+            // Continue each pair's diagonal beyond the button rim.
+            LetterCenter.Offset(DX / Distance * Offset, DY / Distance * Offset);
+            Text(RectF(LetterCenter.X - 8 * FUnit, LetterCenter.Y - 7 * FUnit,
+              LetterCenter.X + 8 * FUnit, LetterCenter.Y + 7 * FUnit), Caption, $FFD2D4CF, 9);
           end;
         TScreenGamepadLayout.NeoGeo:
           case B of
@@ -1197,7 +1268,7 @@ begin
       LabelBounds.Top := Bounds.Bottom + 3 * FUnit;
       LabelBounds.Bottom := LabelBounds.Top + 12 * FUnit;
       Color := MixColor(Color, $FFFFD56B, Level * 0.6);
-      if FLayout = TScreenGamepadLayout.Nes then
+      if FLayout in [TScreenGamepadLayout.Nes, TScreenGamepadLayout.Dendy] then
       begin
         Face.Inflate(-2 * FUnit, -3 * FUnit);
         Gradient($FF595C5E, $FF26292B);
@@ -1206,7 +1277,7 @@ begin
       else if (FLayout = TScreenGamepadLayout.Sega) and not SegaSixButtons then
       begin
         Face.Inflate(-3 * FUnit, -6 * FUnit);
-        TiltedCapsule(Face, -27, $FFB7C0C4, $FF4D555C);
+        TiltedRoundedRect(Face, -27, Face.Height / 2, $FFB7C0C4, $FF4D555C);
         TiltedText(R(253, 47, 50, 13), 'START', Ink, 7, -27);
       end
       else if (FLayout = TScreenGamepadLayout.Sega) and SegaSixButtons then
@@ -1234,7 +1305,10 @@ begin
           BottomColor := $FF7E8589;
         end;
         Face.Inflate(-2 * FUnit, -7 * FUnit);
-        TiltedOval(Face, Angle, MixColor(Color, $FFFFFFFF, 0.2), BottomColor);
+        if FLayout = TScreenGamepadLayout.Snes then
+          TiltedRoundedRect(Face, Angle, 3 * FUnit, MixColor(Color, $FFFFFFFF, 0.2), BottomColor)
+        else
+          TiltedOval(Face, Angle, MixColor(Color, $FFFFFFFF, 0.2), BottomColor);
         if FLayout in [TScreenGamepadLayout.NeoGeo, TScreenGamepadLayout.Sega] then
         begin
           LabelBounds.Bottom := Bounds.Top - 2 * FUnit;

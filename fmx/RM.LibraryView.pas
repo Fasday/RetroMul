@@ -82,8 +82,7 @@ type
     procedure GridResize(Sender: TObject);
     procedure BodyResize(Sender: TObject);
     {$IF Defined(ANDROID) or Defined(IOS)}
-    procedure ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF;
-      const ContentSizeChanged: Boolean);
+    procedure ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF; const ContentSizeChanged: Boolean);
     {$ENDIF}
     {$ENDREGION}
     {$REGION 'Selected game and continue panel'}
@@ -134,9 +133,10 @@ implementation
 {$R *.fmx}
 
 uses
-  System.IOUtils, System.Math, System.Math.Vectors, System.Hash, System.Generics.Defaults,
-  FMX.Graphics, FMX.BehaviorManager, SCRP.GameList, HGM.FMX.Image,
-  Core.RomFormat, Core.SavePaths, RM.Icons, RM.SearchEdit, RM.Styles;
+  System.IOUtils, System.Math, System.Math.Vectors, System.Hash,
+  System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager, SCRP.GameList,
+  HGM.FMX.Image, Core.RomFormat, Core.SavePaths, RM.Icons, RM.SearchEdit,
+  RM.Styles;
 
 {$IF Defined(ANDROID) or Defined(IOS)}
 type
@@ -820,8 +820,7 @@ begin
 end;
 
 {$IF Defined(ANDROID) or Defined(IOS)}
-procedure TLibraryView.ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF;
-  const ContentSizeChanged: Boolean);
+procedure TLibraryView.ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF; const ContentSizeChanged: Boolean);
 begin
   if FBuilding or FLayouting or not FContinue.Visible then
     Exit;
@@ -1017,6 +1016,7 @@ begin
   FSystemFilter := SystemIds[TButton(Sender).Tag];
   FLimit := 48;
   BuildCards;
+  FScroll.ViewportPosition := TPointF.Zero;
 end;
 
 procedure TLibraryView.ModeClick(Sender: TObject);

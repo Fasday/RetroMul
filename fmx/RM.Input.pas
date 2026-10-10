@@ -125,6 +125,8 @@ begin
     Exit;
   Result := [TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left,
       TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start];
+  if (SystemId = ROM_SYSTEM_NES) and (Device = 'paddendy') then
+    Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
   if SystemId = ROM_SYSTEM_MD then
   begin
     Include(Result, TEmulatorButton.C);
@@ -149,6 +151,13 @@ const
     ('↑', '↓', '←', '→', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
 begin
   Result := Names[Button];
+  if SystemId = ROM_SYSTEM_NES then
+    case Button of
+      TEmulatorButton.X:
+        Result := 'Turbo B';
+      TEmulatorButton.Y:
+        Result := 'Turbo A';
+    end;
   if (SystemId = ROM_SYSTEM_NEOGEO) and (Button = TEmulatorButton.X) then
     Result := 'D';
   if SystemId = ROM_SYSTEM_SNES then

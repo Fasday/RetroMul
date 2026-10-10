@@ -90,7 +90,7 @@ type
     function GetSuborIndicators: TSuborIndicators;
     function GetPowerPadButtons: TPowerPadButtons;
     procedure ClearInput;
-    procedure SetButtons(Source: UInt32; Player: Integer; const Buttons: TNesButtons);
+    procedure SetButtons(Source: UInt32; Player: Integer; const Buttons: TNesButtons; const TurboButtons: TNesButtons = []);
     procedure InsertCoin1;
     procedure InsertCoin2;
     procedure RequestReset;
@@ -574,12 +574,14 @@ begin
   end;
 end;
 
-procedure TNesEmulationThread.SetButtons(Source: UInt32; Player: Integer; const Buttons: TNesButtons);
+procedure TNesEmulationThread.SetButtons(Source: UInt32; Player: Integer; const Buttons, TurboButtons: TNesButtons);
 begin
   FLock.Enter;
   try
     for var Button := Low(TNesButton) to High(TNesButton) do
       FInput.SetButton(Source, Player, Button, Button in Buttons);
+    FInput.SetTurboButton(Source, Player, TNesButton.A, TNesButton.A in TurboButtons);
+    FInput.SetTurboButton(Source, Player, TNesButton.B, TNesButton.B in TurboButtons);
   finally
     FLock.Leave;
   end;
@@ -950,6 +952,7 @@ begin
           FFrame := FConsole.Ppu.Frame;
           FFramePending := True;
           Inc(FStatus.FrameNumber);
+          FInput.AdvanceTurbo;
           FStatus.TapeProgress := FConsole.DataRecorder.GetProgress;
           FStatus.TapeProgress.DefaultFile := FSelectedTapeFile = '';
           FStatus.TapeState := FConsole.DataRecorder.TransportState;
