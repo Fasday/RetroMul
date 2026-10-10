@@ -25,18 +25,17 @@ type
   end;
 
   TLibraryView = class(TFrame)
-    FSidebar, FInspector: TPanel;
-    FCompactActions: TLayout;
-    FScroll: TVertScrollBox;
-    FGrid: TLayout;
-    FTitle, FCount, FDetails, FDescription, FGameInfo, FSavesEmpty, FEmpty, FContinueTitle: TLabel;
-    FCover: TImage;
-    FContinuePreview: TLayout;
-    FContinueNoPreview: TLabel;
-    FContinueCaption, FContinuePlatform, FContinueLastPlayed, FContinueSave: TLabel;
-    Path1: TPath;
+    PanelSidebar, PanelInspector: TPanel;
+    LayoutCompactActions: TLayout;
+    VertScrollBoxScroll: TVertScrollBox;
+    LayoutGrid: TLayout;
+    LabelTitle, LabelCount, LabelDetails, LabelDescription, LabelGameInfo, LabelSavesEmpty, LabelEmpty, LabelContinueTitle: TLabel;
+    ImageCover: TImage;
+    LayoutContinuePreview: TLayout;
+    LabelContinueNoPreview: TLabel;
+    LabelContinueCaption, LabelContinuePlatform, LabelContinueLastPlayed, LabelContinueSave: TLabel;
+    PathPlayIcon: TPath;
   private
-    {$REGION 'Library data and selection'}
     FStorage: IStorage;
     FGames: TObjectList<TLibraryGame>;
     FState: TMemIniFile;
@@ -44,13 +43,11 @@ type
     FSystemFilter, FLetterFilter: string;
     FMode, FLimit: Integer;
     FSnapshotName: string;
-    {$ENDREGION}
-    {$REGION 'Runtime controls'}
-    FBody, FHeader, FFilters, FContinue: TLayout;
+    LayoutBody, LayoutHeader, LayoutFilters, FContinue: TLayout;
     FSearch: TEdit;
     FLetterScroll: TVertScrollBox;
     FLetterButtons: TList<TButton>;
-    FPlay, FFavorite, FMore, FGridButton, FListButton, FResume: TButton;
+    ButtonPlay, ButtonFavorite, ButtonMore, FGridButton, FListButton, FResume: TButton;
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
     FPlatformButtons: array[0..6] of TButton;
@@ -61,24 +58,16 @@ type
     FContinueCover: TRectangle;
     FContinueGamePreview: TImage;
     FCards: TList<TLibraryCard>;
-    {$ENDREGION}
-    {$REGION 'Layout and view preferences'}
     FListMode, FBuilding, FArranging, FLayouting, FShowPlatform, FShowLetters: Boolean;
     FCardWidth: Integer;
     FContinueCollapse, FContinueExtent: Single;
-    {$ENDREGION}
-    {$REGION 'View events'}
     FOnPlay, FOnSettings, FOnOpen: TNotifyEvent;
-    {$ENDREGION}
-    {$REGION 'Library data and preferences'}
     procedure SaveState;
     function Matches(Game: TLibraryGame): Boolean;
     function GetSelected: TLibraryGame;
     function Snapshots(Game: TLibraryGame): TArray<TStorageSnapshot>;
     procedure LoadImage(Image: TImage; const Location: string);
-    {$ENDREGION}
-    {$REGION 'Cards and layout'}
-    procedure BuildCards;
+    procedure BuildCards(AppendOnly: Boolean = False);
     procedure ArrangeCards;
     procedure UpdateLetterNavigation(const Games: TList<TLibraryGame>);
     procedure ArrangeLetterNavigation;
@@ -88,15 +77,11 @@ type
     {$IF Defined(ANDROID) or Defined(IOS)}
     procedure ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF; const ContentSizeChanged: Boolean);
     {$ENDIF}
-    {$ENDREGION}
-    {$REGION 'Selected game and continue panel'}
     procedure UpdateInspector;
     procedure SelectContinueGame;
     procedure UpdateContinue;
     procedure LoadContinueGamePreview;
     procedure ArrangeContinuePreview;
-    {$ENDREGION}
-    {$REGION 'View events'}
     procedure OpenClick(Sender: TObject);
     procedure SettingsClick(Sender: TObject);
     procedure FilterClick(Sender: TObject);
@@ -115,7 +100,6 @@ type
     procedure FavoriteClick(Sender: TObject);
     procedure ViewClick(Sender: TObject);
     procedure MoreClick(Sender: TObject);
-    {$ENDREGION}
   protected
     procedure Resize; override;
   public
@@ -252,7 +236,6 @@ begin
   Result.OnClick := Click;
 end;
 
-{$REGION 'Initialization and lifetime'}
 constructor TLibraryView.CreateLibrary(AOwner: TComponent; const Storage: IStorage);
 begin
   FBuilding := True;
@@ -263,22 +246,22 @@ begin
   FLetterButtons := TList<TButton>.Create;
   FState := FStorage.ReadConfig(FStorage.ConfigFile('library'));
   FLimit := 48;
-  FSidebar := FindComponent('FSidebar') as TPanel;
-  FInspector := FindComponent('FInspector') as TPanel;
-  FBody := FindComponent('FBody') as TLayout;
-  FHeader := FindComponent('FHeader') as TLayout;
-  FFilters := FindComponent('FFilters') as TLayout;
-  FContinue := FindComponent('LibraryContinue') as TLayout;
-  FCompactActions := FindComponent('FCompactActions') as TLayout;
-  FScroll := FindComponent('FScroll') as TVertScrollBox;
-  FGrid := FindComponent('FGrid') as TLayout;
+  PanelSidebar := FindComponent('PanelSidebar') as TPanel;
+  PanelInspector := FindComponent('PanelInspector') as TPanel;
+  LayoutBody := FindComponent('LayoutBody') as TLayout;
+  LayoutHeader := FindComponent('LayoutHeader') as TLayout;
+  LayoutFilters := FindComponent('LayoutFilters') as TLayout;
+  FContinue := FindComponent('LayoutContinue') as TLayout;
+  LayoutCompactActions := FindComponent('LayoutCompactActions') as TLayout;
+  VertScrollBoxScroll := FindComponent('VertScrollBoxScroll') as TVertScrollBox;
+  LayoutGrid := FindComponent('LayoutGrid') as TLayout;
   FLetterScroll := TVertScrollBox.Create(Self);
-  FLetterScroll.Name := 'LibraryLetters';
-  FLetterScroll.Parent := FBody;
+  FLetterScroll.Name := 'VertScrollBoxLetters';
+  FLetterScroll.Parent := LayoutBody;
   FLetterScroll.ShowScrollBars := False;
   FLetterScroll.ScrollAnimation := TBehaviorBoolean.True;
   var AllLetters := ActionButton(Self, FLetterScroll, '*', LetterClick);
-  AllLetters.Name := 'LibraryAllLetters';
+  AllLetters.Name := 'ButtonAllLetters';
   AllLetters.TagString := '';
   AllLetters.Hint := Translate('All');
   AllLetters.ShowHint := True;
@@ -286,60 +269,60 @@ begin
   {$IF Defined(ANDROID) or Defined(IOS)}
   // Retain the standard control in the designer; use stable gesture coordinates at runtime.
   var Scroll := TLibraryScrollBox.Create(Self);
-  Scroll.SetBounds(FScroll.Position.X, FScroll.Position.Y, FScroll.Width, FScroll.Height);
-  Scroll.ScrollAnimation := FScroll.ScrollAnimation;
-  Scroll.StyleLookup := FScroll.StyleLookup;
-  Scroll.Parent := FScroll.Parent;
-  Scroll.TabOrder := FScroll.TabOrder;
-  FGrid.Parent := Scroll;
-  FScroll.Free;
-  FScroll := Scroll;
-  FScroll.Name := 'FScroll';
+  Scroll.SetBounds(VertScrollBoxScroll.Position.X, VertScrollBoxScroll.Position.Y, VertScrollBoxScroll.Width, VertScrollBoxScroll.Height);
+  Scroll.ScrollAnimation := VertScrollBoxScroll.ScrollAnimation;
+  Scroll.StyleLookup := VertScrollBoxScroll.StyleLookup;
+  Scroll.Parent := VertScrollBoxScroll.Parent;
+  Scroll.TabOrder := VertScrollBoxScroll.TabOrder;
+  LayoutGrid.Parent := Scroll;
+  VertScrollBoxScroll.Free;
+  VertScrollBoxScroll := Scroll;
+  VertScrollBoxScroll.Name := 'LibraryScrollBoxScroll';
   {$ENDIF}
-  FTitle := FindComponent('FTitle') as TLabel;
-  FCount := FindComponent('FCount') as TLabel;
-  FDetails := FindComponent('FDetails') as TLabel;
-  FDescription := FindComponent('FDescription') as TLabel;
-  FGameInfo := FindComponent('FGameInfo') as TLabel;
-  FSavesEmpty := FindComponent('FSavesEmpty') as TLabel;
-  FEmpty := FindComponent('FEmpty') as TLabel;
-  FContinueTitle := FindComponent('FContinueTitle') as TLabel;
-  FCover := FindComponent('FCover') as TImage;
-  FPlay := FindComponent('FPlay') as TButton;
-  FFavorite := FindComponent('FFavorite') as TButton;
-  FMore := FindComponent('FMore') as TButton;
-  FGridButton := FindComponent('LibraryGridView') as TButton;
-  FListButton := FindComponent('LibraryListView') as TButton;
-  FGridIcon := FindComponent('LibraryDecoration11') as FMX.Objects.TPath;
-  FListIcon := FindComponent('LibraryDecoration10') as FMX.Objects.TPath;
-  FResume := FindComponent('LibraryResume') as TButton;
-  FContinuePreview := FindComponent('FContinuePreview') as TLayout;
-  FContinueCover := FindComponent('LibraryResumePreview') as TRectangle;
+  LabelTitle := FindComponent('LabelTitle') as TLabel;
+  LabelCount := FindComponent('LabelCount') as TLabel;
+  LabelDetails := FindComponent('LabelDetails') as TLabel;
+  LabelDescription := FindComponent('LabelDescription') as TLabel;
+  LabelGameInfo := FindComponent('LabelGameInfo') as TLabel;
+  LabelSavesEmpty := FindComponent('LabelSavesEmpty') as TLabel;
+  LabelEmpty := FindComponent('LabelEmpty') as TLabel;
+  LabelContinueTitle := FindComponent('LabelContinueTitle') as TLabel;
+  ImageCover := FindComponent('ImageCover') as TImage;
+  ButtonPlay := FindComponent('ButtonPlay') as TButton;
+  ButtonFavorite := FindComponent('ButtonFavorite') as TButton;
+  ButtonMore := FindComponent('ButtonMore') as TButton;
+  FGridButton := FindComponent('ButtonGridView') as TButton;
+  FListButton := FindComponent('ButtonListView') as TButton;
+  FGridIcon := FindComponent('PathGridViewIcon') as FMX.Objects.TPath;
+  FListIcon := FindComponent('PathListViewIcon') as FMX.Objects.TPath;
+  FResume := FindComponent('ButtonResume') as TButton;
+  LayoutContinuePreview := FindComponent('LayoutContinuePreview') as TLayout;
+  FContinueCover := FindComponent('RectangleContinueCover') as TRectangle;
   FContinueCover.Fill.Bitmap.WrapMode := TWrapMode.TileStretch;
-  FContinueGamePreview := FindComponent('LibraryResumeGamePreview') as TImage;
-  FContinueNoPreview := FindComponent('FContinueNoPreview') as TLabel;
-  FContinueCaption := FindComponent('FContinueCaption') as TLabel;
-  FContinuePlatform := FindComponent('FContinuePlatform') as TLabel;
-  FContinueLastPlayed := FindComponent('FContinueLastPlayed') as TLabel;
-  FContinueSave := FindComponent('FContinueSave') as TLabel;
+  FContinueGamePreview := FindComponent('ImageContinueGamePreview') as TImage;
+  LabelContinueNoPreview := FindComponent('LabelContinueNoPreview') as TLabel;
+  LabelContinueCaption := FindComponent('LabelContinueCaption') as TLabel;
+  LabelContinuePlatform := FindComponent('LabelContinuePlatform') as TLabel;
+  LabelContinueLastPlayed := FindComponent('LabelContinueLastPlayed') as TLabel;
+  LabelContinueSave := FindComponent('LabelContinueSave') as TLabel;
 
   for var I := 0 to 2 do
   begin
-    FNavButtons[I] := FindComponent('Nav' + IntToStr(I)) as TButton;
+    FNavButtons[I] := FindComponent('ButtonNav' + IntToStr(I)) as TButton;
     FNavButtons[I].OnClick := ModeClick;
     FNavButtons[I].TextSettings.HorzAlign := TTextAlign.Leading;
     FNavButtons[I].StylesData['text.Margins.Left'] := 48;
-    FNavIcons[I] := FindComponent('NavIcon' + IntToStr(I)) as FMX.Objects.TPath;
-    FSaveImages[I] := FindComponent('SavePreview' + IntToStr(I)) as TImage;
-    FSaveButtons[I] := FindComponent('SaveButton' + IntToStr(I)) as TButton;
+    FNavIcons[I] := FindComponent('PathNavIcon' + IntToStr(I)) as FMX.Objects.TPath;
+    FSaveImages[I] := FindComponent('ImageSavePreview' + IntToStr(I)) as TImage;
+    FSaveButtons[I] := FindComponent('ButtonSaveButton' + IntToStr(I)) as TButton;
     FSaveButtons[I].OnClick := SaveClick;
   end;
   for var I := 0 to 6 do
   begin
-    FPlatformButtons[I] := FindComponent('Filter' + IntToStr(I)) as TButton;
+    FPlatformButtons[I] := FindComponent('ButtonFilter' + IntToStr(I)) as TButton;
     FPlatformButtons[I].OnClick := FilterClick;
   end;
-  var Platforms := FindComponent('Platforms') as TLayout;
+  var Platforms := FindComponent('LayoutPlatforms') as TLayout;
   for var Child in Platforms.Children do
     if Child is TButton then
     begin
@@ -358,35 +341,35 @@ begin
       Border.HitTest := False;
       Border.Visible := False;
     end;
-  for var Name in ['LibraryOpenRom', 'Settings'] do
+  for var Name in ['ButtonOpenRom', 'ButtonSettings'] do
   begin
     var Button := FindComponent(Name) as TButton;
     Button.TextSettings.HorzAlign := TTextAlign.Leading;
     Button.StylesData['text.Margins.Left'] := 48;
   end;
-  var SearchHost := FindComponent('SearchHost') as TLayout;
+  var SearchHost := FindComponent('LayoutSearchHost') as TLayout;
   FSearch := TSearchEdit.Create(Self);
-  FSearch.Name := 'LibrarySearch';
+  FSearch.Name := 'SearchEditSearch';
   FSearch.Parent := SearchHost;
   FSearch.Align := TAlignLayout.Client;
   FSearch.TextPrompt := Translate('Search games');
   FSearch.OnChangeTracking := SearchChange;
-  (FindComponent('LibraryOpenRom') as TButton).OnClick := OpenClick;
-  (FindComponent('Settings') as TButton).OnClick := SettingsClick;
-  (FindComponent('CompactOpen') as TButton).OnClick := OpenClick;
-  (FindComponent('CompactSettings') as TButton).OnClick := SettingsClick;
+  (FindComponent('ButtonOpenRom') as TButton).OnClick := OpenClick;
+  (FindComponent('ButtonSettings') as TButton).OnClick := SettingsClick;
+  (FindComponent('ButtonCompactOpen') as TButton).OnClick := OpenClick;
+  (FindComponent('ButtonCompactSettings') as TButton).OnClick := SettingsClick;
   FormStyles.RelocalizeUI(Self, 'en');
-  FPlay.OnClick := PlayClick;
-  FFavorite.OnClick := FavoriteClick;
+  ButtonPlay.OnClick := PlayClick;
+  ButtonFavorite.OnClick := FavoriteClick;
   FResume.OnClick := ResumeClick;
   FListButton.OnClick := ViewClick;
   FGridButton.OnClick := ViewClick;
-  FMore.OnClick := MoreClick;
-  FBody.OnResize := BodyResize;
-  FGrid.OnResize := GridResize;
+  ButtonMore.OnClick := MoreClick;
+  LayoutBody.OnResize := BodyResize;
+  LayoutGrid.OnResize := GridResize;
   {$IF Defined(ANDROID) or Defined(IOS)}
   FContinue.ClipChildren := True;
-  FScroll.OnViewportPositionChange := ScrollViewportChanged;
+  VertScrollBoxScroll.OnViewportPositionChange := ScrollViewportChanged;
   {$ENDIF}
   FBuilding := False;
   ApplyPreferences;
@@ -402,9 +385,7 @@ begin
   FState.Free;
   inherited;
 end;
-{$ENDREGION}
 
-{$REGION 'Library data and preferences'}
 
 procedure TLibraryView.Reload;
 begin
@@ -594,19 +575,15 @@ begin
   UpdateContinue;
   Resize;
 end;
-{$ENDREGION}
 
-{$REGION 'Cards and layout'}
 
-procedure TLibraryView.BuildCards;
+procedure TLibraryView.BuildCards(AppendOnly: Boolean);
 begin
-  if FBuilding or (FGrid = nil) then
+  if FBuilding or (LayoutGrid = nil) then
     Exit;
+  var PreviousSelected := FSelected;
   FBuilding := True;
   try
-    for var Card in FCards do
-      Card.Free;
-    FCards.Clear;
     var MatchesList := TList<TLibraryGame>.Create;
     try
       for var Game in FGames do
@@ -627,6 +604,25 @@ begin
           begin
             Result := CompareValue(B.LastPlayed, A.LastPlayed);
           end));
+      // Append only when the existing cards still match the current prefix.
+      // A recorded session can change the order of the Recent list.
+      if AppendOnly then
+      begin
+        AppendOnly := FCards.Count <= Min(FLimit, MatchesList.Count);
+        if AppendOnly then
+          for var I := 0 to FCards.Count - 1 do
+            if FCards[I].TagObject <> MatchesList[I] then
+            begin
+              AppendOnly := False;
+              Break;
+            end;
+      end;
+      if not AppendOnly then
+      begin
+        for var Card in FCards do
+          Card.Free;
+        FCards.Clear;
+      end;
       var SelectedVisible := MatchesList.Contains(FSelected);
       if not SelectedVisible then
       begin
@@ -634,12 +630,12 @@ begin
         if MatchesList.Count > 0 then
           FSelected := MatchesList[0];
       end;
-      FCount.Text := IntToStr(MatchesList.Count) + Translate(' games');
-      for var i := 0 to Min(FLimit, MatchesList.Count) - 1 do
+      LabelCount.Text := IntToStr(MatchesList.Count) + Translate(' games');
+      for var i := FCards.Count to Min(FLimit, MatchesList.Count) - 1 do
       begin
         var Game := MatchesList[i];
-        var Card := TLibraryCard.Create(FGrid);
-        Card.Parent := FGrid;
+        var Card := TLibraryCard.Create(LayoutGrid);
+        Card.Parent := LayoutGrid;
         Card.StyleLookup := 'retromul_card';
         Card.TagObject := Game;
         {$IF Defined(ANDROID) or Defined(IOS)}
@@ -674,17 +670,24 @@ begin
         SelectedBorder.HitTest := False;
         SelectedBorder.Visible := FSelected = Game;
       end;
-      FMore.Visible := MatchesList.Count > FLimit;
-      FEmpty.Visible := MatchesList.Count = 0;
+      ButtonMore.Visible := MatchesList.Count > FLimit;
+      LabelEmpty.Visible := MatchesList.Count = 0;
       if FGames.Count = 0 then
-        FEmpty.Text := Translate('Your library is empty') + sLineBreak + Translate('Open settings and choose a ROM folder.')
+        LabelEmpty.Text := Translate('Your library is empty') + sLineBreak + Translate('Open settings and choose a ROM folder.')
       else
-        FEmpty.Text := Translate('No games found') + sLineBreak + Translate('Change your search or filter.');
+        LabelEmpty.Text := Translate('No games found') + sLineBreak + Translate('Change your search or filter.');
     finally
       MatchesList.Free;
     end;
   finally
     FBuilding := False;
+  end;
+  if AppendOnly then
+  begin
+    ArrangeCards;
+    if FSelected <> PreviousSelected then
+      UpdateInspector;
+    Exit;
   end;
   for var i := 0 to 2 do
   begin
@@ -781,13 +784,13 @@ end;
 
 procedure TLibraryView.ArrangeCards;
 begin
-  if FBuilding or FArranging or (FGrid = nil) then
+  if FBuilding or FArranging or (LayoutGrid = nil) then
     Exit;
 
   FArranging := True;
   try
-    var Available := Max(140, FScroll.Width - 16);
-    FGrid.Width := Available;
+    var Available := Max(140, VertScrollBoxScroll.Width - 16);
+    LayoutGrid.Width := Available;
     var Columns := Max(1, Floor((Available + 14) / (FCardWidth + 14)));
     {$IF Defined(ANDROID) or Defined(IOS)}
     // Mobile grid cards must fit at least two across, even at the largest setting.
@@ -820,9 +823,9 @@ begin
       end;
     end;
     var Y := Ceil(FCards.Count / Columns) * (H + 14);
-    FMore.SetBounds(Max(0, (Available - 180) / 2), Y + 4, 180, 42);
-    FEmpty.SetBounds(16, 28, Available - 32, 132);
-    FGrid.Height := Max(180, Y + IfThen(FMore.Visible, 64, 0));
+    ButtonMore.SetBounds(Max(0, (Available - 180) / 2), Y + 4, 180, 42);
+    LabelEmpty.SetBounds(16, 28, Available - 32, 132);
+    LayoutGrid.Height := Max(180, Y + IfThen(ButtonMore.Visible, 64, 0));
   finally
     FArranging := False;
   end;
@@ -830,25 +833,25 @@ end;
 
 procedure TLibraryView.Resize;
 begin
-  if (csLoading in ComponentState) or FBuilding or FLayouting or (FBody = nil) then
+  if (csLoading in ComponentState) or FBuilding or FLayouting or (LayoutBody = nil) then
     Exit;
 
   FLayouting := True;
   try
     inherited;
-    FSidebar.Visible := Width >= 900;
-    FCompactActions.Visible := not FSidebar.Visible;
-    FInspector.Visible := Width >= 1120;
-    var ContentWidth := Max(140, FBody.Width - 48);
+    PanelSidebar.Visible := Width >= 900;
+    LayoutCompactActions.Visible := not PanelSidebar.Visible;
+    PanelInspector.Visible := Width >= 1120;
+    var ContentWidth := Max(140, LayoutBody.Width - 48);
     var Y: Single := 22;
-    FHeader.SetBounds(24, Y, ContentWidth, 92);
+    LayoutHeader.SetBounds(24, Y, ContentWidth, 92);
     Y := Y + 96;
-    if FCompactActions.Visible then
+    if LayoutCompactActions.Visible then
     begin
-      FCompactActions.SetBounds(24, Y, ContentWidth, 48);
+      LayoutCompactActions.SetBounds(24, Y, ContentWidth, 48);
       Y := Y + 48;
     end;
-    FContinuePreview.Visible := ContentWidth >= 720;
+    LayoutContinuePreview.Visible := ContentWidth >= 720;
     FContinueCollapse := 0;
     FContinueExtent := 0;
     if FContinue.Visible then
@@ -858,9 +861,9 @@ begin
       FContinueExtent := Height + 16;
       {$IF Defined(ANDROID) or Defined(IOS)}
       // Reserve the wrapped filters, count, and a usable list viewport on short screens.
-      if FBody.Height - Y - FContinueExtent < 88 + 28 + 18 + 92 then
+      if LayoutBody.Height - Y - FContinueExtent < 88 + 28 + 18 + 92 then
         FContinueExtent := 0;
-      FContinueCollapse := EnsureRange(FScroll.ViewportPosition.Y, 0, FContinueExtent);
+      FContinueCollapse := EnsureRange(VertScrollBoxScroll.ViewportPosition.Y, 0, FContinueExtent);
       if FContinueExtent = 0 then
         FContinue.Opacity := 0
       else
@@ -869,26 +872,26 @@ begin
       {$ENDIF}
       FContinue.SetBounds(24, Y, ContentWidth, Max(0, Min(Height, FContinueExtent - FContinueCollapse)));
       var TextX: Single := 20;
-      if FContinuePreview.Visible then
+      if LayoutContinuePreview.Visible then
       begin
         var PreviewWidth: Single := 176;
-        FContinuePreview.SetBounds(12, 12, PreviewWidth, Height - 24);
+        LayoutContinuePreview.SetBounds(12, 12, PreviewWidth, Height - 24);
         ArrangeContinuePreview;
-        TextX := 12 + FContinuePreview.Width + 24;
+        TextX := 12 + LayoutContinuePreview.Width + 24;
       end;
       var ButtonWidth := Min(144, ContentWidth - 40);
       var TextWidth := ContentWidth - TextX - 20;
       if not Stacked then
         TextWidth := TextWidth - ButtonWidth - 20;
-      FContinueCaption.SetBounds(TextX, 16, TextWidth, 18);
-      FContinueTitle.SetBounds(TextX, 38, TextWidth, 32);
-      FContinuePlatform.SetBounds(TextX, 74, TextWidth, 18);
-      FContinueLastPlayed.SetBounds(TextX, 94, TextWidth, 18);
-      FContinueSave.SetBounds(TextX, 114, TextWidth, 18);
+      LabelContinueCaption.SetBounds(TextX, 16, TextWidth, 18);
+      LabelContinueTitle.SetBounds(TextX, 38, TextWidth, 32);
+      LabelContinuePlatform.SetBounds(TextX, 74, TextWidth, 18);
+      LabelContinueLastPlayed.SetBounds(TextX, 94, TextWidth, 18);
+      LabelContinueSave.SetBounds(TextX, 114, TextWidth, 18);
       FResume.SetBounds(ContentWidth - ButtonWidth - 18, Height - 58, ButtonWidth, 40);
       Y := Y + FContinueExtent - FContinueCollapse;
     end;
-    FFilters.SetBounds(24, Y, ContentWidth, 46);
+    LayoutFilters.SetBounds(24, Y, ContentWidth, 46);
     var X: Single := 0;
     var FilterY: Single := 4;
     for var B in FPlatformButtons do
@@ -905,20 +908,20 @@ begin
       B.SetBounds(X, FilterY, W, 34);
       X := X + W + 7;
     end;
-    FFilters.Height := FilterY + 42;
-    Y := Y + FFilters.Height;
-    FCount.SetBounds(24, Y, ContentWidth, 28);
+    LayoutFilters.Height := FilterY + 42;
+    Y := Y + LayoutFilters.Height;
+    LabelCount.SetBounds(24, Y, ContentWidth, 28);
     Y := Y + 28;
     // Add the consumed header distance to the content before growing its viewport.
     // This keeps the scroll range and card motion continuous during the collapse.
     var LetterWidth: Single := 0;
     if FLetterScroll.Visible then
       LetterWidth := 44;
-    FScroll.Width := Max(96, ContentWidth - LetterWidth);
-    FGrid.Position.Y := FContinueCollapse;
+    VertScrollBoxScroll.Width := Max(96, ContentWidth - LetterWidth);
+    LayoutGrid.Position.Y := FContinueCollapse;
     ArrangeCards;
-    FScroll.SetBounds(24 + LetterWidth, Y, FScroll.Width, Max(0, FBody.Height - Y - 18));
-    FLetterScroll.SetBounds(24, Y, 36, FScroll.Height);
+    VertScrollBoxScroll.SetBounds(24 + LetterWidth, Y, VertScrollBoxScroll.Width, Max(0, LayoutBody.Height - Y - 18));
+    FLetterScroll.SetBounds(24, Y, 36, VertScrollBoxScroll.Height);
     ArrangeLetterNavigation;
   finally
     FLayouting := False;
@@ -950,56 +953,54 @@ begin
     FContinue.Height := Max(0, Min(Height, FContinueExtent - Collapse));
     FContinue.Opacity := 1 - Collapse / FContinueExtent;
     FContinue.Enabled := Collapse < Height;
-    FFilters.Position.Y := FContinue.Position.Y + FContinueExtent - Collapse;
-    FCount.Position.Y := FFilters.Position.Y + FFilters.Height;
+    LayoutFilters.Position.Y := FContinue.Position.Y + FContinueExtent - Collapse;
+    LabelCount.Position.Y := LayoutFilters.Position.Y + LayoutFilters.Height;
     // Move the grid as one unit, keeping every card and its content size unchanged.
-    FGrid.Position.Y := Collapse;
-    var Y := FCount.Position.Y + FCount.Height;
-    FScroll.SetBounds(FScroll.Position.X, Y, FScroll.Width, Max(0, FBody.Height - Y - 18));
-    FLetterScroll.SetBounds(24, Y, 36, FScroll.Height);
+    LayoutGrid.Position.Y := Collapse;
+    var Y := LabelCount.Position.Y + LabelCount.Height;
+    VertScrollBoxScroll.SetBounds(VertScrollBoxScroll.Position.X, Y, VertScrollBoxScroll.Width, Max(0, LayoutBody.Height - Y - 18));
+    FLetterScroll.SetBounds(24, Y, 36, VertScrollBoxScroll.Height);
     ArrangeLetterNavigation;
   finally
     FLayouting := False;
   end;
 end;
 {$ENDIF}
-{$ENDREGION}
 
-{$REGION 'Selected game and continue panel'}
 
 procedure TLibraryView.UpdateInspector;
 begin
-  FPlay.Enabled := FSelected <> nil;
-  FFavorite.Enabled := FSelected <> nil;
+  ButtonPlay.Enabled := FSelected <> nil;
+  ButtonFavorite.Enabled := FSelected <> nil;
   if FSelected = nil then
   begin
-    FTitle.Text := Translate('Select a game');
-    FCover.Bitmap := nil;
-    FDetails.Text := '';
-    FDescription.Text := '';
-    FGameInfo.Text := '';
+    LabelTitle.Text := Translate('Select a game');
+    ImageCover.Bitmap := nil;
+    LabelDetails.Text := '';
+    LabelDescription.Text := '';
+    LabelGameInfo.Text := '';
   end
   else
   begin
-    FTitle.Text := FSelected.Title;
-    FDetails.Text := LibrarySystemName(FSelected.SystemId) + sLineBreak + FSelected.Developer;
-    FDescription.Text := FSelected.Description;
-    if FDescription.Text = '' then
-      FDescription.Text := FSelected.Genre;
-    FGameInfo.Text := '';
+    LabelTitle.Text := FSelected.Title;
+    LabelDetails.Text := LibrarySystemName(FSelected.SystemId) + sLineBreak + FSelected.Developer;
+    LabelDescription.Text := FSelected.Description;
+    if LabelDescription.Text = '' then
+      LabelDescription.Text := FSelected.Genre;
+    LabelGameInfo.Text := '';
     if FSelected.Genre <> '' then
-      FGameInfo.Text := Translate('Genre: ') + FSelected.Genre;
+      LabelGameInfo.Text := Translate('Genre: ') + FSelected.Genre;
     if FSelected.Players <> '' then
-      FGameInfo.Text := FGameInfo.Text + sLineBreak + Translate('Players: ') + FSelected.Players;
+      LabelGameInfo.Text := LabelGameInfo.Text + sLineBreak + Translate('Players: ') + FSelected.Players;
     if FSelected.Favorite then
-      FFavorite.Text := Translate('Remove from favorites')
+      ButtonFavorite.Text := Translate('Remove from favorites')
     else
-      FFavorite.Text := Translate('Add to favorites');
-    LoadImage(FCover, FSelected.Cover);
+      ButtonFavorite.Text := Translate('Add to favorites');
+    LoadImage(ImageCover, FSelected.Cover);
   end;
   var Saves := Snapshots(FSelected);
-  FSavesEmpty.Visible := Length(Saves) = 0;
-  FSavesEmpty.Text := Translate('No save states yet.');
+  LabelSavesEmpty.Visible := Length(Saves) = 0;
+  LabelSavesEmpty.Text := Translate('No save states yet.');
   for var i := 0 to 2 do
   begin
     FSaveButtons[i].Visible := i < Length(Saves);
@@ -1047,36 +1048,36 @@ begin
   if FRecent = nil then
     Exit;
 
-  FContinueTitle.Text := FRecent.Title;
-  FContinuePlatform.Text := LibrarySystemName(FRecent.SystemId);
+  LabelContinueTitle.Text := FRecent.Title;
+  LabelContinuePlatform.Text := LibrarySystemName(FRecent.SystemId);
   if FRecent.Genre <> '' then
-    FContinuePlatform.Text := FContinuePlatform.Text + ' · ' + FRecent.Genre;
-  FContinueLastPlayed.Text := Translate('Last played: ') + LibraryDate(FRecent.LastPlayed);
+    LabelContinuePlatform.Text := LabelContinuePlatform.Text + ' · ' + FRecent.Genre;
+  LabelContinueLastPlayed.Text := Translate('Last played: ') + LibraryDate(FRecent.LastPlayed);
   var Saves := Snapshots(FRecent);
   var Preview := '';
   if Length(Saves) > 0 then
   begin
-    FContinueCaption.Text := Translate('Continue playing');
+    LabelContinueCaption.Text := Translate('Continue playing');
     FResume.Text := Translate('Resume');
-    FContinueSave.Text := Translate('Save state: ') + Saves[0].Name + ' · ' + LibraryDate(Saves[0].Modified);
+    LabelContinueSave.Text := Translate('Save state: ') + Saves[0].Name + ' · ' + LibraryDate(Saves[0].Modified);
     if FStorage.Exists(Saves[0].PreviewLocation) then
       Preview := Saves[0].PreviewLocation;
   end
   else
   begin
-    FContinueCaption.Text := Translate('Recently played');
+    LabelContinueCaption.Text := Translate('Recently played');
     FResume.Text := Translate('Play');
-    FContinueSave.Text := Translate('No save states yet');
+    LabelContinueSave.Text := Translate('No save states yet');
   end;
   Bitmap.SetSize(0, 0);
   FContinueCover.Fill.Kind := TBrushKind.Solid;
   FContinueCover.Visible := True;
   FContinueGamePreview.Bitmap := nil;
   FContinueGamePreview.Visible := False;
-  FContinueNoPreview.Visible := True;
-  FContinueNoPreview.Text := Translate('No save-state screenshot');
+  LabelContinueNoPreview.Visible := True;
+  LabelContinueNoPreview.Text := Translate('No save-state screenshot');
   if Length(Saves) = 0 then
-    FContinueNoPreview.Text := Translate('No save state');
+    LabelContinueNoPreview.Text := Translate('No save state');
   ArrangeContinuePreview;
   if Preview <> '' then
     Bitmap.LoadFromFileAsync(FContinueCover, Preview, 320, 400,
@@ -1085,7 +1086,7 @@ begin
         if Success then
         begin
           FContinueCover.Fill.Kind := TBrushKind.Bitmap;
-          FContinueNoPreview.Visible := False;
+          LabelContinueNoPreview.Visible := False;
           Resize;
         end
         else
@@ -1099,8 +1100,8 @@ procedure TLibraryView.LoadContinueGamePreview;
 begin
   FContinueCover.Visible := False;
   FContinueGamePreview.Visible := True;
-  FContinueNoPreview.Text := Translate('Preview unavailable');
-  FContinueNoPreview.Visible := (FRecent.Cover = '') or not FStorage.Exists(FRecent.Cover);
+  LabelContinueNoPreview.Text := Translate('Preview unavailable');
+  LabelContinueNoPreview.Visible := (FRecent.Cover = '') or not FStorage.Exists(FRecent.Cover);
   LoadImage(FContinueGamePreview, FRecent.Cover);
 end;
 
@@ -1108,14 +1109,12 @@ procedure TLibraryView.ArrangeContinuePreview;
 begin
   var Bitmap := FContinueCover.Fill.Bitmap.Bitmap;
   if not Bitmap.IsEmpty then
-    FContinuePreview.Width := FContinuePreview.Height * Bitmap.Width / Bitmap.Height
+    LayoutContinuePreview.Width := LayoutContinuePreview.Height * Bitmap.Width / Bitmap.Height
   else
-    FContinuePreview.Width := 176;
-  FContinueCover.SetBounds(0, 0, FContinuePreview.Width, FContinuePreview.Height);
+    LayoutContinuePreview.Width := 176;
+  FContinueCover.SetBounds(0, 0, LayoutContinuePreview.Width, LayoutContinuePreview.Height);
 end;
-{$ENDREGION}
 
-{$REGION 'View events'}
 
 procedure TLibraryView.OpenClick(Sender: TObject);
 begin
@@ -1135,7 +1134,7 @@ begin
   FLetterFilter := '';
   FLimit := 48;
   BuildCards;
-  FScroll.ViewportPosition := TPointF.Zero;
+  VertScrollBoxScroll.ViewportPosition := TPointF.Zero;
 end;
 
 procedure TLibraryView.ModeClick(Sender: TObject);
@@ -1158,7 +1157,7 @@ begin
   FLetterFilter := TButton(Sender).TagString;
   FLimit := 48;
   BuildCards;
-  FScroll.ViewportPosition := TPointF.Zero;
+  VertScrollBoxScroll.ViewportPosition := TPointF.Zero;
 end;
 
 procedure TLibraryView.CardClick(Sender: TObject);
@@ -1167,7 +1166,7 @@ begin
   for var Card in FCards do
     Card.Selection.Visible := Card.TagObject = FSelected;
   UpdateInspector;
-  if not FInspector.Visible then
+  if not PanelInspector.Visible then
     PlayClick(Self);
 end;
 
@@ -1180,7 +1179,7 @@ end;
 
 procedure TLibraryView.CardDblClick(Sender: TObject);
 begin
-  if FInspector.Visible then
+  if PanelInspector.Visible then
   begin
     CardClick(Sender);
     PlayClick(Self);
@@ -1261,10 +1260,13 @@ end;
 
 procedure TLibraryView.MoreClick(Sender: TObject);
 begin
+  if FBuilding or (LayoutGrid = nil) then
+    Exit;
+  var Viewport := VertScrollBoxScroll.ViewportPosition;
   Inc(FLimit, 48);
-  BuildCards;
+  BuildCards(True);
+  VertScrollBoxScroll.ViewportPosition := Viewport;
 end;
-{$ENDREGION}
 
 end.
 

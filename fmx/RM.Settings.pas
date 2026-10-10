@@ -62,18 +62,17 @@ type
   end;
 
   TSettingsView = class(TFrame)
-    FSidebar: TPanel;
-    FCoreTabs: TLayout;
-    FReset: TButton;
-    FRefresh: TButton;
-    FNavigation: TListBox;
-    FBody, FContent, FHeader, FFooter: TLayout;
-    FScroll: TVertScrollBox;
-    FTitle, FStatus: TLabel;
-    FApply, FBack, FCancelCapture: TButton;
-    FComponentStore: TLayout;
+    PanelSidebar: TPanel;
+    LayoutCoreTabs: TLayout;
+    ButtonReset: TButton;
+    ButtonRefresh: TButton;
+    ListBoxNavigation: TListBox;
+    LayoutBody, LayoutContent, LayoutHeader, LayoutFooter: TLayout;
+    VertScrollBoxScroll: TVertScrollBox;
+    LabelTitle, LabelStatus: TLabel;
+    ButtonApply, ButtonBack, ButtonCancelCapture: TButton;
+    LayoutComponentStore: TLayout;
   private
-    {$REGION 'Storage and draft settings'}
     FStorage: IStorage;
     FPicker: TSettingsLocationPicker;
     FPickingBootROM: Boolean;
@@ -85,16 +84,12 @@ type
     FDeviceIds: array[0..7] of string;
     FAlive: TFunc<Boolean>;
     FInvalidate: TProc;
-    {$ENDREGION}
-    {$REGION 'Navigation state'}
     FSearch: TEdit;
     FPagePicker: TComboBox;
     FCategory, FCorePage, FPlayer: Integer;
     FCoreButtons: array[1..6] of TButton;
     FCategoryIcons: array[0..4] of TControl;
     FPage: Integer;
-    {$ENDREGION}
-    {$REGION 'Page controls and layout'}
     FGroup: TPanel;
     FPreview: TControl;
     FPreviewGroup: TPanel;
@@ -103,21 +98,13 @@ type
     FVolumeValue: TLabel;
     FFolderEdit: TEdit;
     FAutosaveMinutes: TSpinBox;
-    {$ENDREGION}
-    {$REGION 'Input capture state'}
     FCaptureAction: Integer;
     FCaptureDeadline: UInt64;
     FCaptureButton: TButton;
-    {$ENDREGION}
-    {$REGION 'View events'}
     FOnApply, FOnClose: TNotifyEvent;
-    {$ENDREGION}
-    {$REGION 'Initialization and lifetime'}
     procedure InitializeRuntimeControls;
     procedure InitializeGBControls;
     procedure ClearBootROMClick(Sender: TObject);
-    {$ENDREGION}
-    {$REGION 'Page construction and draft settings'}
     procedure BuildPage(PreserveScroll: Boolean = False);
     procedure RequestRebuild;
     procedure StorePage;
@@ -129,8 +116,6 @@ type
     function Number(const Name, Section, Key: string; Default, Max: Integer): TSpinBox;
     function EditText(const Name, Section, Key, Default: string): TEdit;
     function PathEdit(const Name, Section, Key, Default: string; Folder: Boolean): TEdit;
-    {$ENDREGION}
-    {$REGION 'Layout'}
     procedure ArrangeGroup(Group: TPanel);
     procedure ContentResize(Sender: TObject);
     procedure EditorResize(Sender: TObject);
@@ -138,15 +123,11 @@ type
     procedure RowResize(Sender: TObject);
     procedure DeviceResize(Sender: TObject);
     procedure BindingFooterResize(Sender: TObject);
-    {$ENDREGION}
-    {$REGION 'Navigation and search'}
     procedure NavigationChange(Sender: TObject);
     procedure PagePickerChange(Sender: TObject);
     procedure CoreClick(Sender: TObject);
     procedure SearchChange(Sender: TObject);
     procedure PlayerChange(Sender: TObject);
-    {$ENDREGION}
-    {$REGION 'Devices and bindings'}
     procedure BuildPort(Port: Integer; const Caption: string);
     procedure BuildBindings(Port: Integer; const Device: string);
     function AddBinding(const Caption: string; Action, Port: Integer): TButton;
@@ -159,13 +140,9 @@ type
     procedure DeviceChange(Sender: TObject);
     procedure RefreshDevicesClick(Sender: TObject);
     procedure PortChange(Sender: TObject);
-    {$ENDREGION}
-    {$REGION 'Input capture'}
     procedure CaptureClick(Sender: TObject);
     procedure ClearBindingClick(Sender: TObject);
     procedure CancelCaptureClick(Sender: TObject);
-    {$ENDREGION}
-    {$REGION 'Settings events and file selection'}
     procedure VolumeChange(Sender: TObject);
     procedure AutosaveToggle(Sender: TObject);
     procedure PreviewChange(Sender: TObject);
@@ -174,7 +151,6 @@ type
     procedure CheckRomFolder(const Location: string);
     procedure ApplyClick(Sender: TObject);
     procedure BackClick(Sender: TObject);
-    {$ENDREGION}
   protected
     procedure Resize; override;
     procedure PickLocation(Folder: Boolean; const Current: string; const Callback: TStorageSelectionCallback); virtual;
@@ -623,7 +599,6 @@ begin
   end;
 end;
 
-{$REGION 'Initialization and lifetime'}
 constructor TSettingsView.CreateSettings(AOwner: TComponent; const Storage: IStorage; Input: TInputManager);
 begin
   FBuilding := True;
@@ -651,38 +626,38 @@ begin
   for var i := 1 to High(SettingsCoreIds) do
     FDrafts[i] := FStorage.ReadConfig(FStorage.ConfigFile(SettingsCoreIds[i]));
   InitializeRuntimeControls;
-  FSearch := FindComponent('SettingsSearch') as TEdit;
-  FPagePicker := FindComponent('SettingsPagePicker') as TComboBox;
+  FSearch := FindComponent('SearchEditSettingsSearch') as TEdit;
+  FPagePicker := FindComponent('SettingsComboBoxSettingsPagePicker') as TComboBox;
   FormStyles.RelocalizeUI(Self, 'en');
-  FComponentStore.Parent := nil;
-  (FindComponent('SidebarBack') as TButton).OnClick := BackClick;
-  (FindComponent('SidebarBack') as TButton).StylesData['text.Margins.Left'] := 36;
-  (FindComponent('SidebarBack') as TButton).StylesData['text.Margins.Right'] := 10;
+  LayoutComponentStore.Parent := nil;
+  (FindComponent('ButtonSidebarBack') as TButton).OnClick := BackClick;
+  (FindComponent('ButtonSidebarBack') as TButton).StylesData['text.Margins.Left'] := 36;
+  (FindComponent('ButtonSidebarBack') as TButton).StylesData['text.Margins.Right'] := 10;
   for var I := 0 to High(FCategoryIcons) do
   begin
-    FCategoryIcons[I] := FindComponent('CategoryIcon' + IntToStr(I)) as TControl;
-    FNavigation.ListItems[I].StyledSettings := FNavigation.ListItems[I].StyledSettings + [TStyledSetting.Other];
-    FNavigation.ListItems[I].TextSettings.HorzAlign := TTextAlign.Leading;
-    FNavigation.ListItems[I].StylesData['text.Margins.Left'] := 48;
+    FCategoryIcons[I] := FindComponent('PathCategoryIcon' + IntToStr(I)) as TControl;
+    ListBoxNavigation.ListItems[I].StyledSettings := ListBoxNavigation.ListItems[I].StyledSettings + [TStyledSetting.Other];
+    ListBoxNavigation.ListItems[I].TextSettings.HorzAlign := TTextAlign.Leading;
+    ListBoxNavigation.ListItems[I].StylesData['text.Margins.Left'] := 48;
   end;
-  FNavigation.OnChange := NavigationChange;
+  ListBoxNavigation.OnChange := NavigationChange;
   FSearch.OnChangeTracking := SearchChange;
   FSearch.OnResize := EditorResize;
   for var I := 1 to 6 do
   begin
-    FCoreButtons[I] := FindComponent('Core' + IntToStr(I)) as TButton;
+    FCoreButtons[I] := FindComponent('ButtonCore' + IntToStr(I)) as TButton;
     FCoreButtons[I].OnClick := CoreClick;
   end;
   FPagePicker.OnResize := ComboResize;
   ComboResize(FPagePicker);
   FPagePicker.OnChange := PagePickerChange;
-  FApply.OnClick := ApplyClick;
-  FBack.OnClick := BackClick;
-  FReset.OnClick := ResetClick;
-  FRefresh.OnClick := RefreshDevicesClick;
-  FRefresh.Enabled := FInput <> nil;
-  FCancelCapture.OnClick := CancelCaptureClick;
-  FScroll.OnResize := ContentResize;
+  ButtonApply.OnClick := ApplyClick;
+  ButtonBack.OnClick := BackClick;
+  ButtonReset.OnClick := ResetClick;
+  ButtonRefresh.OnClick := RefreshDevicesClick;
+  ButtonRefresh.Enabled := FInput <> nil;
+  ButtonCancelCapture.OnClick := CancelCaptureClick;
+  VertScrollBoxScroll.OnResize := ContentResize;
   BuildPage;
 end;
 
@@ -696,17 +671,17 @@ procedure TSettingsView.InitializeGBControls;
   function BootRow(const Name, Caption, Detail: string): TPanel;
   begin
     Result := TPanel.Create(Self);
-    Result.Name := Name;
-    Result.Parent := FComponentStore;
+    Result.Name := 'Panel' + Name;
+    Result.Parent := LayoutComponentStore;
     Result.StyleLookup := 'retromul_row';
     Result.Padding.Rect := TRectF.Create(16, 12, 16, 12);
     Result.SetBounds(16, 0, 868, 72);
     var Text := TLayout.Create(Self);
-    Text.Name := Name + 'Text';
+    Text.Name := 'Layout' + Name + 'Text';
     Text.Parent := Result;
     Text.SetBounds(16, 12, 550, 48);
     var Title := SettingsLabel(Self);
-    Title.Name := Name + 'Title';
+    Title.Name := 'Label' + Name + 'Title';
     Title.Parent := Text;
     Title.Align := TAlignLayout.Top;
     Title.Height := 24;
@@ -714,7 +689,7 @@ procedure TSettingsView.InitializeGBControls;
     Title.TextSettings.Font.Size := 15;
     Title.Text := Caption;
     var Note := SettingsLabel(Self);
-    Note.Name := Name + 'Detail';
+    Note.Name := 'Label' + Name + 'Detail';
     Note.Parent := Text;
     Note.Align := TAlignLayout.Client;
     Note.Opacity := 0.72;
@@ -723,12 +698,12 @@ procedure TSettingsView.InitializeGBControls;
 
 begin
   var Group := TPanel.Create(Self);
-  Group.Name := 'GroupBootROM';
-  Group.Parent := FComponentStore;
+  Group.Name := 'PanelGroupBootROM';
+  Group.Parent := LayoutComponentStore;
   Group.StyleLookup := 'retromul_card';
   Group.SetBounds(0, 0, 900, 230);
   var Title := SettingsLabel(Self);
-  Title.Name := 'GroupBootROMTitle';
+  Title.Name := 'LabelGroupBootROMTitle';
   Title.Parent := Group;
   Title.SetBounds(16, 14, 868, 36);
   Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
@@ -737,7 +712,7 @@ begin
   var ModelRow := BootRow('RowBootModel', 'Boot ROM model',
     'Select a console boot sequence, or start the game directly.');
   var Models := TSettingsComboBox.Create(Self);
-  Models.Name := 'RowBootModelEditor';
+  Models.Name := 'SettingsComboBoxRowBootModelEditor';
   Models.Parent := ModelRow;
   for var Model := TGBBootModel.DMG0 to High(TGBBootModel) do
   begin
@@ -747,15 +722,15 @@ begin
       Detail := 'Leave empty to use the built-in boot ROM.';
     var FileRow := BootRow(Name, 'Boot ROM file', Detail);
     var Editor := TEdit.Create(Self);
-    Editor.Name := Name + 'Editor';
+    Editor.Name := 'Edit' + Name + 'Editor';
     Editor.Parent := FileRow;
     var Browse := TEditButton.Create(Self);
-    Browse.Name := Name + 'Browse';
+    Browse.Name := 'EditButton' + Name + 'Browse';
     Browse.Parent := Editor;
     Browse.Width := 32;
     Browse.Text := '…';
     var Clear := TEditButton.Create(Self);
-    Clear.Name := Name + 'Clear';
+    Clear.Name := 'EditButton' + Name + 'Clear';
     Clear.Parent := Editor;
     Clear.Width := 32;
     Clear.Text := '×';
@@ -764,12 +739,12 @@ begin
     Clear.OnClick := ClearBootROMClick;
   end;
   Group := TPanel.Create(Self);
-  Group.Name := 'GroupRumble';
-  Group.Parent := FComponentStore;
+  Group.Name := 'PanelGroupRumble';
+  Group.Parent := LayoutComponentStore;
   Group.StyleLookup := 'retromul_card';
   Group.SetBounds(0, 0, 900, 150);
   Title := SettingsLabel(Self);
-  Title.Name := 'GroupRumbleTitle';
+  Title.Name := 'LabelGroupRumbleTitle';
   Title.Parent := Group;
   Title.SetBounds(16, 14, 868, 36);
   Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
@@ -778,7 +753,7 @@ begin
   var RumbleRow := BootRow('RowRumble', 'Cartridge rumble',
     'Vibrate the device when the game activates its rumble motor.');
   var RumbleSwitch := TSwitch.Create(Self);
-  RumbleSwitch.Name := 'RowRumbleEditor';
+  RumbleSwitch.Name := 'SwitchRowRumbleEditor';
   RumbleSwitch.Parent := RumbleRow;
 end;
 
@@ -789,9 +764,9 @@ type
   procedure ReplaceRuntime(const Name: string; Kind: TRuntimeControlClass);
   begin
     // FMX stores ordinary layout slots so the designer needs no custom package.
-    var Slot := FindComponent(Name + 'Slot') as TLayout;
+    var Slot := FindComponent('Layout' + Name + 'Slot') as TLayout;
     var Control := Kind.Create(Self);
-    Control.Name := Name;
+    Control.Name := Copy(Kind.ClassName, 2, MaxInt) + Name;
     Control.SetBounds(Slot.Position.X, Slot.Position.Y, Slot.Width, Slot.Height);
     Control.Margins.Assign(Slot.Margins);
     Control.Align := Slot.Align;
@@ -803,7 +778,7 @@ type
   function ReplaceCombo(const Name: string; const Captions: array of string): TSettingsComboBox;
   begin
     ReplaceRuntime(Name, TSettingsComboBox);
-    Result := FindComponent(Name) as TSettingsComboBox;
+    Result := FindComponent('SettingsComboBox' + Name) as TSettingsComboBox;
     for var Caption in Captions do
       Result.Items.Add(Translate(Caption));
   end;
@@ -811,18 +786,18 @@ type
 begin
   InitializeGBControls;
   ReplaceRuntime('SettingsSearch', TSearchEdit);
-  (TSearchEdit(FindComponent('SettingsSearch'))).TextPrompt := Translate('Search this section');
+  (TSearchEdit(FindComponent('SearchEditSettingsSearch'))).TextPrompt := Translate('Search this section');
   ReplaceCombo('SettingsPagePicker', ['General', 'Library', 'Video and audio', 'Controls', 'Peripherals']);
-  (FindComponent('SettingsPagePicker') as TSettingsComboBox).ItemIndex := FCategory;
+  (FindComponent('SettingsComboBoxSettingsPagePicker') as TSettingsComboBox).ItemIndex := FCategory;
   ReplaceCombo('RowLanguageEditor', ['English', 'Русский', 'Português']);
   ReplaceRuntime('AutosaveMinutes', TSettingsSpinBox);
-  (TSettingsSpinBox(FindComponent('AutosaveMinutes'))).Min := 1;
-  (TSettingsSpinBox(FindComponent('AutosaveMinutes'))).Max := 1440;
-  (TSettingsSpinBox(FindComponent('AutosaveMinutes'))).ValueType := TNumValueType.Integer;
+  (TSettingsSpinBox(FindComponent('SettingsSpinBoxAutosaveMinutes'))).Min := 1;
+  (TSettingsSpinBox(FindComponent('SettingsSpinBoxAutosaveMinutes'))).Max := 1440;
+  (TSettingsSpinBox(FindComponent('SettingsSpinBoxAutosaveMinutes'))).ValueType := TNumValueType.Integer;
   ReplaceRuntime('RowBottominsetEditor', TSettingsSpinBox);
-  (TSettingsSpinBox(FindComponent('RowBottominsetEditor'))).Min := 0;
-  (TSettingsSpinBox(FindComponent('RowBottominsetEditor'))).ValueType := TNumValueType.Integer;
-  (TSettingsSpinBox(FindComponent('RowBottominsetEditor'))).Max := 400;
+  (TSettingsSpinBox(FindComponent('SettingsSpinBoxRowBottominsetEditor'))).Min := 0;
+  (TSettingsSpinBox(FindComponent('SettingsSpinBoxRowBottominsetEditor'))).ValueType := TNumValueType.Integer;
+  (TSettingsSpinBox(FindComponent('SettingsSpinBoxRowBottominsetEditor'))).Max := 400;
   ReplaceCombo('RowLibraryviewEditor', ['Covers', 'List']);
   ReplaceCombo('RowCardsizeEditor', ['Compact', 'Normal', 'Large']);
   ReplaceCombo('RowImagescalingEditor', ['Nearest neighbor', 'Smoothing']);
@@ -830,9 +805,9 @@ begin
   ReplaceRuntime('PalettePreview', TSettingsPreview);
   ReplaceCombo('RowNESregionEditor', ['Automatic', 'NTSC', 'PAL']);
   ReplaceRuntime('VolumeTrack', TSettingsTrackBar);
-  (TSettingsTrackBar(FindComponent('VolumeTrack'))).Min := 0;
-  (TSettingsTrackBar(FindComponent('VolumeTrack'))).Max := 100;
-  (TSettingsTrackBar(FindComponent('VolumeTrack'))).Value := 50;
+  (TSettingsTrackBar(FindComponent('SettingsTrackBarVolumeTrack'))).Min := 0;
+  (TSettingsTrackBar(FindComponent('SettingsTrackBarVolumeTrack'))).Max := 100;
+  (TSettingsTrackBar(FindComponent('SettingsTrackBarVolumeTrack'))).Value := 50;
   ReplaceCombo('RowPlayerEditor', []);
   ReplaceCombo('RowConnecteddeviceEditor', ['Automatic', 'None', 'Subor keyboard', 'Famicom keyboard', 'Data Recorder']);
   for var Port := 1 to 8 do
@@ -862,15 +837,13 @@ begin
   FInput.Free;
   inherited;
 end;
-{$ENDREGION}
 
-{$REGION 'Page construction and draft settings'}
 
 procedure TSettingsView.BuildPage(PreserveScroll: Boolean);
 begin
-  var Position := FScroll.ViewportPosition;
+  var Position := VertScrollBoxScroll.ViewportPosition;
   FBuilding := True;
-  FScroll.BeginUpdate;
+  VertScrollBoxScroll.BeginUpdate;
   try
     CancelCapture;
     FFolderEdit := nil;
@@ -883,19 +856,19 @@ begin
     // Keep resource cards; release only styles and data-dependent device views.
     for var I := 0 to ComponentCount - 1 do
       if (Components[I] is TPanel) and
-        (string(Components[I].Name).StartsWith('Row') or string(Components[I].Name).StartsWith('Group')) then
+        (string(Components[I].Name).StartsWith('PanelRow') or string(Components[I].Name).StartsWith('PanelGroup')) then
       begin
         var Card := TPanel(Components[I]);
         while Card.ComponentCount > 0 do
           Card.Components[0].Free;
-        Card.Parent := FComponentStore;
+        Card.Parent := LayoutComponentStore;
         Card.Visible := True;
         Card.OnResize := nil;
       end;
-    FContent.Width := Min(1240, Max(0, FScroll.Width - 16));
+    LayoutContent.Width := Min(1240, Max(0, VertScrollBoxScroll.Width - 16));
     FGroup := nil;
     FHeight := 0;
-    FStatus.Text := Translate('Click Apply to save changes.');
+    LabelStatus.Text := Translate('Click Apply to save changes.');
     if FCategory = 0 then
     begin
       Heading('GroupAppearance');
@@ -907,11 +880,11 @@ begin
       Check('RowStartinfullscreen', 'General', 'StartFullscreen', False);
       Heading('GroupAutosave');
       var ExitSave := Check('RowAutosaveonexit', 'General', 'AutosaveOnExit', True);
-      ExitSave.Name := 'AutosaveOnExit';
+      ExitSave.Name := 'SwitchAutosaveOnExit';
       var Periodic := Check('RowAutosaveeveryNminutes', 'General', 'AutosavePeriodic', False);
-      Periodic.Name := 'AutosavePeriodic';
-      FAutosaveMinutes := FindComponent('AutosaveMinutes') as TSettingsSpinBox;
-      FAutosaveMinutes.Name := 'AutosaveMinutes';
+      Periodic.Name := 'SwitchAutosavePeriodic';
+      FAutosaveMinutes := FindComponent('SettingsSpinBoxAutosaveMinutes') as TSettingsSpinBox;
+      FAutosaveMinutes.Name := 'SettingsSpinBoxAutosaveMinutes';
       Field(FAutosaveMinutes, 'General', 'AutosaveMinutes').DefaultValue := IntToStr(AUTOSAVE_DEFAULT_MINUTES);
       FAutosaveMinutes.Min := 1;
       FAutosaveMinutes.Max := AUTOSAVE_MAX_MINUTES;
@@ -964,7 +937,7 @@ begin
           PreviewRow.Padding.Rect := TRectF.Empty;
           PreviewRow.Height := 350;
           TLayout(TLabel(PreviewRow.TagObject).Parent).Visible := False;
-          var Preview := FindComponent('PalettePreview') as TSettingsPreview;
+          var Preview := FindComponent('SettingsPreviewPalettePreview') as TSettingsPreview;
           // Restore the original aspect ratio before the fit alignment recalculates.
           Preview.Align := TAlignLayout.None;
           Preview.SetBounds(0, 0, 320, 288);
@@ -1000,13 +973,13 @@ begin
         Heading('GroupAudio');
         Check('RowAudio', 'Audio', 'Enabled', True);
         var VolumeRow := Row('RowVolume');
-        var Volume := FindComponent('VolumeTrack') as TSettingsTrackBar;
+        var Volume := FindComponent('SettingsTrackBarVolumeTrack') as TSettingsTrackBar;
         Volume.OnChange := nil;
         var VolumeField := Field(Volume, 'Audio', 'Volume');
         VolumeField.Row := VolumeRow;
         VolumeField.DefaultValue := '0.5';
         Volume.Align := TAlignLayout.Client;
-        FVolumeValue := FindComponent('VolumeValue') as TLabel;
+        FVolumeValue := FindComponent('LabelVolumeValue') as TLabel;
         Volume.Value := EnsureRange(FDrafts[FPage].ReadFloat('Audio', 'Volume', 0.5), 0, 1) * 100;
         Volume.OnChange := VolumeChange;
         VolumeChange(Volume);
@@ -1025,7 +998,7 @@ begin
           Count := 8;
         FPlayer := EnsureRange(FPlayer, 0, Count - 1);
         Row('RowPlayer');
-        var Player := FindComponent('RowPlayerEditor') as TSettingsComboBox;
+        var Player := FindComponent('SettingsComboBoxRowPlayerEditor') as TSettingsComboBox;
         Player.OnChange := nil;
         Player.Items.Clear;
         Player.Align := TAlignLayout.None;
@@ -1077,17 +1050,17 @@ begin
             PathEdit('RowInitialcassette', 'Ports', 'TapeFile', '', False);
         end;
       end;
-      FStatus.Text := Translate('Settings are saved separately for each platform. Core options apply when you next open a ROM.');
+      LabelStatus.Text := Translate('Settings are saved separately for each platform. Core options apply when you next open a ROM.');
     end;
   finally
     FBuilding := False;
-    FScroll.EndUpdate;
+    VertScrollBoxScroll.EndUpdate;
     Resize;
     if PreserveScroll then
-      FScroll.ViewportPosition := TPointF.Create(0, EnsureRange(Position.Y, 0,
-          Max(0, FScroll.ContentBounds.Height - FScroll.ClientHeight)))
+      VertScrollBoxScroll.ViewportPosition := TPointF.Create(0, EnsureRange(Position.Y, 0,
+          Max(0, VertScrollBoxScroll.ContentBounds.Height - VertScrollBoxScroll.ClientHeight)))
     else
-      FScroll.ViewportPosition := TPointF.Zero;
+      VertScrollBoxScroll.ViewportPosition := TPointF.Zero;
     SearchChange(FSearch);
   end;
 end;
@@ -1135,22 +1108,22 @@ end;
 
 procedure TSettingsView.Heading(const Name: string);
 begin
-  FGroup := FindComponent(Name) as TPanel;
-  FGroup.Parent := FContent;
+  FGroup := FindComponent('Panel' + Name) as TPanel;
+  FGroup.Parent := LayoutContent;
   FGroup.Visible := True;
-  FGroup.Width := FScroll.Width - 16;
-  FGroup.TagString := (FindComponent(Name + 'Title') as TLabel).Text;
+  FGroup.Width := VertScrollBoxScroll.Width - 16;
+  FGroup.TagString := (FindComponent('Label' + Name + 'Title') as TLabel).Text;
 end;
 
 function TSettingsView.Row(const Name: string): TPanel;
 begin
-  Result := FindComponent(Name) as TPanel;
+  Result := FindComponent('Panel' + Name) as TPanel;
   Result.Parent := FGroup;
   Result.Visible := True;
-  Result.TagObject := FindComponent(Name + 'Title');
+  Result.TagObject := FindComponent('Label' + Name + 'Title');
   Result.TagString := TLabel(Result.TagObject).Text + ' ' +
-    (FindComponent(Name + 'Detail') as TLabel).Text;
-  Result.Width := FScroll.Width - 16;
+    (FindComponent('Label' + Name + 'Detail') as TLabel).Text;
+  Result.Width := VertScrollBoxScroll.Width - 16;
   Result.OnResize := RowResize;
   FHeight := FHeight + Result.Height + 8;
 end;
@@ -1174,7 +1147,7 @@ end;
 function TSettingsView.Combo(const Name, Section, Key: string; const Labels, Values: array of string; const Default: string): TComboBox;
 begin
   Row(Name);
-  Result := FindComponent(Name + 'Editor') as TSettingsComboBox;
+  Result := FindComponent('SettingsComboBox' + Name + 'Editor') as TSettingsComboBox;
   Result.OnChange := nil;
   if Length(Labels) > 0 then
   begin
@@ -1202,11 +1175,11 @@ function TSettingsView.Check(const Name, Section, Key: string; Default: Boolean)
 begin
   Row(Name);
   if Name = 'RowAutosaveonexit' then
-    Result := FindComponent('AutosaveOnExit') as TSwitch
+    Result := FindComponent('SwitchAutosaveOnExit') as TSwitch
   else if Name = 'RowAutosaveeveryNminutes' then
-    Result := FindComponent('AutosavePeriodic') as TSwitch
+    Result := FindComponent('SwitchAutosavePeriodic') as TSwitch
   else
-    Result := FindComponent(Name + 'Editor') as TSwitch;
+    Result := FindComponent('Switch' + Name + 'Editor') as TSwitch;
   Result.OnSwitch := nil;
   Field(Result, Section, Key).DefaultValue := IntToStr(Ord(Default));
   Result.Width := 64;
@@ -1216,7 +1189,7 @@ end;
 function TSettingsView.Number(const Name, Section, Key: string; Default, Max: Integer): TSpinBox;
 begin
   Row(Name);
-  Result := FindComponent(Name + 'Editor') as TSettingsSpinBox;
+  Result := FindComponent('SettingsSpinBox' + Name + 'Editor') as TSettingsSpinBox;
   Field(Result, Section, Key).DefaultValue := IntToStr(Default);
   Result.Min := 0;
   Result.Max := Max;
@@ -1227,7 +1200,7 @@ end;
 function TSettingsView.EditText(const Name, Section, Key, Default: string): TEdit;
 begin
   Row(Name);
-  Result := FindComponent(Name + 'Editor') as TEdit;
+  Result := FindComponent('Edit' + Name + 'Editor') as TEdit;
   Field(Result, Section, Key).DefaultValue := Default;
   Result.Text := FDrafts[FPage].ReadString(Section, Key, Default);
 end;
@@ -1238,7 +1211,7 @@ begin
   {$IF Defined(ANDROID) or Defined(IOS)}
   Result.ReadOnly := True;
   {$ENDIF}
-  var Browse := FindComponent(Name + 'Browse') as TEditButton;
+  var Browse := FindComponent('EditButton' + Name + 'Browse') as TEditButton;
   Browse.Hint := Translate('Choose file');
   if Folder then
     Browse.Hint := Translate('Choose folder');
@@ -1246,9 +1219,7 @@ begin
   Browse.TagObject := Result;
   Browse.OnClick := PathClick;
 end;
-{$ENDREGION}
 
-{$REGION 'Layout'}
 
 procedure TSettingsView.Resize;
 begin
@@ -1256,30 +1227,30 @@ begin
     Exit;
 
   inherited;
-  if (FBody = nil) or FArranging then
+  if (LayoutBody = nil) or FArranging then
     Exit;
 
   FArranging := True;
   try
-    FSidebar.Visible := Width >= 900;
-    FNavigation.Visible := FSidebar.Visible;
-    FPagePicker.Visible := not FSidebar.Visible;
-    FTitle.Text := Translate(SettingsCategoryNames[FCategory]);
+    PanelSidebar.Visible := Width >= 900;
+    ListBoxNavigation.Visible := PanelSidebar.Visible;
+    FPagePicker.Visible := not PanelSidebar.Visible;
+    LabelTitle.Text := Translate(SettingsCategoryNames[FCategory]);
     if FCategory = 0 then
-      FTitle.Text := Translate('General settings');
-    FCoreTabs.Visible := FCategory >= 2;
+      LabelTitle.Text := Translate('General settings');
+    LayoutCoreTabs.Visible := FCategory >= 2;
     for var i := 0 to High(FCategoryIcons) do
       if i = FCategory then
         TPath(FCategoryIcons[i]).Stroke.Color := $FFFFB344
       else
         TPath(FCategoryIcons[i]).Stroke.Color := $FFB9C2CC;
-    FHeader.Height := 60 + IfThen(FCoreTabs.Visible, 48, 0) + IfThen(FPagePicker.Visible, 44, 0);
+    LayoutHeader.Height := 60 + IfThen(LayoutCoreTabs.Visible, 48, 0) + IfThen(FPagePicker.Visible, 44, 0);
     FPagePicker.Align := TAlignLayout.None;
-    FPagePicker.SetBounds(0, 48, FHeader.Width, 32);
-    FCoreTabs.Align := TAlignLayout.None;
-    FCoreTabs.SetBounds(0, FHeader.Height - 48, FHeader.Width, 40);
-    FSearch.Visible := FHeader.Width >= 740;
-    FSearch.SetBounds(Max(0, FHeader.Width - 260), 0, 260, 32);
+    FPagePicker.SetBounds(0, 48, LayoutHeader.Width, 32);
+    LayoutCoreTabs.Align := TAlignLayout.None;
+    LayoutCoreTabs.SetBounds(0, LayoutHeader.Height - 48, LayoutHeader.Width, 40);
+    FSearch.Visible := LayoutHeader.Width >= 740;
+    FSearch.SetBounds(Max(0, LayoutHeader.Width - 260), 0, 260, 32);
     var X: Single := 0;
     for var i := 1 to 6 do
     begin
@@ -1294,14 +1265,14 @@ begin
         5:
           FCoreButtons[i].Text := 'SNES';
       end;
-      if FCoreTabs.Width < 600 then
+      if LayoutCoreTabs.Width < 600 then
         case i of
           4:
             FCoreButtons[i].Text := 'MD';
           6:
             FCoreButtons[i].Text := 'NG';
         end;
-      var W := Max(48, Min(104, (FCoreTabs.Width - 35) / 6));
+      var W := Max(48, Min(104, (LayoutCoreTabs.Width - 35) / 6));
       FCoreButtons[i].SetBounds(X, 0, W, 36);
       X := X + W + 7;
       if i = FCorePage then
@@ -1309,32 +1280,32 @@ begin
       else
         FCoreButtons[i].StyleLookup := 'buttonstyle';
     end;
-    if FContent = nil then
+    if LayoutContent = nil then
       Exit;
 
-    FContent.Width := Min(1240, Max(0, FScroll.Width - 16));
+    LayoutContent.Width := Min(1240, Max(0, VertScrollBoxScroll.Width - 16));
     var Y: Single := 0;
     var LeftY: Single := 0;
-    var Columns := (FCategory = 2) and (FPreviewGroup <> nil) and (FContent.Width >= 850);
-    for var i := 0 to FContent.ChildrenCount - 1 do
-      if FContent.Children[i] is TPanel then
+    var Columns := (FCategory = 2) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
+    for var i := 0 to LayoutContent.ChildrenCount - 1 do
+      if LayoutContent.Children[i] is TPanel then
       begin
-        var C := TPanel(FContent.Children[i]);
+        var C := TPanel(LayoutContent.Children[i]);
         if not C.Visible then
           Continue;
 
-        C.Width := FContent.Width;
+        C.Width := LayoutContent.Width;
         if Columns then
           if C = FPreviewGroup then
-            C.Width := FContent.Width * 0.38 - 8
+            C.Width := LayoutContent.Width * 0.38 - 8
           else
-            C.Width := FContent.Width * 0.62 - 8;
+            C.Width := LayoutContent.Width * 0.62 - 8;
         ArrangeGroup(C);
         C.Position.X := 0;
         if Columns then
           if C = FPreviewGroup then
           begin
-            C.Position.Point := TPointF.Create(FContent.Width * 0.62 + 8, 0);
+            C.Position.Point := TPointF.Create(LayoutContent.Width * 0.62 + 8, 0);
             Y := Max(Y, C.Height);
           end
           else
@@ -1349,16 +1320,16 @@ begin
           Y := Y + C.Height + 16;
         end;
       end;
-    FContent.Height := Y;
-    FApply.SetBounds(Max(0, FFooter.Width - 140), 52, 140, 40);
-    FBack.SetBounds(Max(0, FFooter.Width - 260), 52, 108, 40);
-    FReset.SetBounds(0, 52, 160, 40);
-    FReset.Visible := FFooter.Width >= 520;
-    FRefresh.SetBounds(176, 52, 176, 40);
-    FRefresh.Visible := (FCategory = 3) and (FFooter.Width >= 700);
-    FCancelCapture.SetBounds(Max(0, FFooter.Width - 150), 52, 150, 40);
-    FApply.Visible := FCaptureButton = nil;
-    FBack.Visible := FCaptureButton = nil;
+    LayoutContent.Height := Y;
+    ButtonApply.SetBounds(Max(0, LayoutFooter.Width - 140), 52, 140, 40);
+    ButtonBack.SetBounds(Max(0, LayoutFooter.Width - 260), 52, 108, 40);
+    ButtonReset.SetBounds(0, 52, 160, 40);
+    ButtonReset.Visible := LayoutFooter.Width >= 520;
+    ButtonRefresh.SetBounds(176, 52, 176, 40);
+    ButtonRefresh.Visible := (FCategory = 3) and (LayoutFooter.Width >= 700);
+    ButtonCancelCapture.SetBounds(Max(0, LayoutFooter.Width - 150), 52, 150, 40);
+    ButtonApply.Visible := FCaptureButton = nil;
+    ButtonBack.Visible := FCaptureButton = nil;
   finally
     FArranging := False;
   end;
@@ -1536,9 +1507,7 @@ begin
     Editors.Margins.Bottom := 14;
   end;
 end;
-{$ENDREGION}
 
-{$REGION 'Navigation and search'}
 
 procedure TSettingsView.SelectCategory(Index: Integer);
 begin
@@ -1553,7 +1522,7 @@ begin
     FPage := FCorePage;
   FBuilding := True;
   try
-    FNavigation.ItemIndex := Index;
+    ListBoxNavigation.ItemIndex := Index;
     FPagePicker.ItemIndex := Index;
   finally
     FBuilding := False;
@@ -1578,7 +1547,7 @@ begin
     FPage := FCorePage;
   FBuilding := True;
   try
-    FNavigation.ItemIndex := FCategory;
+    ListBoxNavigation.ItemIndex := FCategory;
     FPagePicker.ItemIndex := FCategory;
   finally
     FBuilding := False;
@@ -1589,7 +1558,7 @@ end;
 procedure TSettingsView.NavigationChange(Sender: TObject);
 begin
   // TListBox.OnChange passes the selected item as Sender.
-  SelectCategory(FNavigation.ItemIndex);
+  SelectCategory(ListBoxNavigation.ItemIndex);
 end;
 
 procedure TSettingsView.PagePickerChange(Sender: TObject);
@@ -1604,14 +1573,14 @@ end;
 
 procedure TSettingsView.SearchChange(Sender: TObject);
 begin
-  if FBuilding or (FContent = nil) then
+  if FBuilding or (LayoutContent = nil) then
     Exit;
 
   var Query := FSearch.Text.Trim.ToLower;
-  for var i := 0 to FContent.ChildrenCount - 1 do
-    if FContent.Children[i] is TPanel then
+  for var i := 0 to LayoutContent.ChildrenCount - 1 do
+    if LayoutContent.Children[i] is TPanel then
     begin
-      var Group := TPanel(FContent.Children[i]);
+      var Group := TPanel(LayoutContent.Children[i]);
       var ShowGroup := Query = '';
       for var J := 0 to Group.ChildrenCount - 1 do
         if Group.Children[J] is TPanel then
@@ -1634,9 +1603,7 @@ begin
   FPlayer := TComboBox(Sender).ItemIndex;
   RequestRebuild;
 end;
-{$ENDREGION}
 
-{$REGION 'Devices and bindings'}
 
 procedure TSettingsView.BuildPort(Port: Integer; const Caption: string);
 begin
@@ -1723,14 +1690,14 @@ end;
 function TSettingsView.AddBinding(const Caption: string; Action, Port: Integer): TButton;
 begin
   var P := Row('RowBinding' + IntToStr(Port));
-  var B := FindComponent('BindingEditorsCapture' + IntToStr(Port)) as TButton;
+  var B := FindComponent('ButtonBindingEditorsCapture' + IntToStr(Port)) as TButton;
   B.Text := Translate('Assign · ') + BindingCaption(FInput, Action);
   B.Tag := Action;
   B.TagString := IntToStr(Port);
   B.TagObject := P.TagObject;
   B.OnClick := CaptureClick;
   B.Enabled := FInput <> nil;
-  var Clear := FindComponent('BindingEditorsClear' + IntToStr(Port)) as TButton;
+  var Clear := FindComponent('ButtonBindingEditorsClear' + IntToStr(Port)) as TButton;
   Clear.Tag := Action;
   Clear.OnClick := ClearBindingClick;
   Clear.Enabled := FInput <> nil;
@@ -1810,12 +1777,12 @@ begin
   var Preview := D.Control;
   if D.Diagram <> nil then
     Preview := D.Diagram;
-  (FindComponent('PadAssignments' + IntToStr(Port)) as TControl).Visible := False;
+  (FindComponent('VertScrollBoxPadAssignments' + IntToStr(Port)) as TControl).Visible := False;
   if D.Control is TScreenGamepad then
   begin
-    D.Assignments := FindComponent('PadAssignments' + IntToStr(Port)) as TVertScrollBox;
+    D.Assignments := FindComponent('VertScrollBoxPadAssignments' + IntToStr(Port)) as TVertScrollBox;
     D.Assignments.Visible := True;
-    D.AssignmentList := FindComponent('PadAssignmentList' + IntToStr(Port)) as TLayout;
+    D.AssignmentList := FindComponent('LayoutPadAssignmentList' + IntToStr(Port)) as TLayout;
     var Y: Single := 8;
     for var B in TScreenGamepad(D.Control).ButtonMask do
     begin
@@ -1838,10 +1805,10 @@ begin
   Preview.Margins.Bottom := 8;
   D.Control.Tag := Port;
   // Keep the editor inside this card. No button is selected until the user clicks.
-  var Footer := FindComponent('BindingFooter' + IntToStr(Port)) as TLayout;
-  D.Caption := FindComponent('BindingCaption' + IntToStr(Port)) as TLabel;
+  var Footer := FindComponent('LayoutBindingFooter' + IntToStr(Port)) as TLayout;
+  D.Caption := FindComponent('LabelBindingCaption' + IntToStr(Port)) as TLabel;
   D.Caption.Text := '';
-  D.Capture := FindComponent('PadEditorsCapture' + IntToStr(Port)) as TButton;
+  D.Capture := FindComponent('ButtonPadEditorsCapture' + IntToStr(Port)) as TButton;
   D.Capture.Text := Translate('Assign');
   D.Capture.Tag := -1;
   D.Capture.TagString := IntToStr(Port);
@@ -1849,7 +1816,7 @@ begin
   D.Capture.OnClick := CaptureClick;
   D.Capture.Enabled := FInput <> nil;
   D.Capture.Visible := False;
-  D.Clear := FindComponent('PadEditorsClear' + IntToStr(Port)) as TButton;
+  D.Clear := FindComponent('ButtonPadEditorsClear' + IntToStr(Port)) as TButton;
   D.Clear.Tag := -1;
   D.Clear.OnClick := ClearBindingClick;
   D.Clear.Enabled := FInput <> nil;
@@ -2004,9 +1971,7 @@ begin
   StorePage;
   RequestRebuild;
 end;
-{$ENDREGION}
 
-{$REGION 'Input capture'}
 
 procedure TSettingsView.CaptureClick(Sender: TObject);
 begin
@@ -2020,9 +1985,9 @@ begin
   FHostInput.Poll;
   FInput.BeginCapture(FCaptureAction, FDeviceIds[Port]);
   FCaptureDeadline := TThread.GetTickCount64 + 10000;
-  FStatus.Text := Translate('Press a button or direction. Esc cancels. Waiting: 10 seconds.');
+  LabelStatus.Text := Translate('Press a button or direction. Esc cancels. Waiting: 10 seconds.');
   FCaptureButton.Text := Translate('Waiting for input…');
-  FCancelCapture.Visible := True;
+  ButtonCancelCapture.Visible := True;
   Resize;
 end;
 
@@ -2032,7 +1997,7 @@ begin
   FInput.RemoveBindings(TButton(Sender).Tag);
   StorePage;
   RefreshBindings;
-  FStatus.Text := Translate('Binding removed. Click Apply.');
+  LabelStatus.Text := Translate('Binding removed. Click Apply.');
   Resize;
 end;
 
@@ -2043,14 +2008,14 @@ begin
   if FCaptureButton <> nil then
     FCaptureButton.Text := Translate('Assign · ') + BindingCaption(FInput, FCaptureAction);
   FCaptureButton := nil;
-  if FCancelCapture <> nil then
-    FCancelCapture.Visible := False;
+  if ButtonCancelCapture <> nil then
+    ButtonCancelCapture.Visible := False;
 end;
 
 procedure TSettingsView.CancelCaptureClick(Sender: TObject);
 begin
   CancelCapture;
-  FStatus.Text := Translate('Binding cancelled.');
+  LabelStatus.Text := Translate('Binding cancelled.');
   Resize;
 end;
 
@@ -2090,15 +2055,13 @@ begin
     FInput.AddBinding(Binding);
     CancelCapture;
     RefreshBindings;
-    FStatus.Text := Translate('Binding saved in the draft. Click Apply.');
+    LabelStatus.Text := Translate('Binding saved in the draft. Click Apply.');
     Resize;
   end
   else if TThread.GetTickCount64 >= FCaptureDeadline then
     CancelCaptureClick(Self);
 end;
-{$ENDREGION}
 
-{$REGION 'Settings events and file selection'}
 
 procedure TSettingsView.VolumeChange(Sender: TObject);
 begin
@@ -2117,8 +2080,8 @@ begin
   if FPreview is TSettingsPreview then
   begin
     var Preview := TSettingsPreview(FPreview);
-    Preview.PaletteIndex := (FindComponent('RowGameBoypaletteEditor') as TComboBox).ItemIndex;
-    Preview.DisableInterpolation := (FindComponent('RowImagescalingEditor') as TComboBox).ItemIndex = 0;
+    Preview.PaletteIndex := (FindComponent('SettingsComboBoxRowGameBoypaletteEditor') as TComboBox).ItemIndex;
+    Preview.DisableInterpolation := (FindComponent('SettingsComboBoxRowImagescalingEditor') as TComboBox).ItemIndex = 0;
   end;
 end;
 
@@ -2134,7 +2097,7 @@ begin
     SaveInputBindings(FInput, FDrafts[FPage]);
   end;
   BuildPage;
-  FStatus.Text := Translate('Section reset. Click Apply to save.');
+  LabelStatus.Text := Translate('Section reset. Click Apply to save.');
 end;
 
 procedure TSettingsView.PathClick(Sender: TObject);
@@ -2161,7 +2124,7 @@ begin
         Exit;
 
       if Selection.Error <> '' then
-        FStatus.Text := Selection.Error
+        LabelStatus.Text := Selection.Error
       else if not Selection.Cancelled then
       begin
         FDrafts[Page].WriteString(Section, Key, Selection.Location);
@@ -2169,7 +2132,7 @@ begin
           for var F in FFields do
             if (F.Section = Section) and (F.Key = Key) then
               TEdit(F.Control).Text := Selection.Location;
-        FStatus.Text := Translate('Click Apply to save changes.');
+        LabelStatus.Text := Translate('Click Apply to save changes.');
         if (Section = 'General') and (Key = 'Path') then
           CheckRomFolder(Selection.Location);
       end;
@@ -2201,7 +2164,7 @@ begin
   end;
   var Warning := Format(Translate('The selected folder contains no supported platform subfolders. ROMs must be placed in these subfolders: %s.'),
     [SupportedFolders]);
-  FStatus.Text := Warning;
+  LabelStatus.Text := Warning;
   ShowRetroMessage(Self, Warning, TRetroDialogKind.Warning);
 end;
 
@@ -2282,10 +2245,10 @@ begin
     FStorage.RomFolder := Folder;
     if Assigned(FOnApply) then
       FOnApply(Self);
-    FStatus.Text := Translate('Saved. Core options and connected devices apply when you next open a ROM.');
+    LabelStatus.Text := Translate('Saved. Core options and connected devices apply when you next open a ROM.');
   except
     on E: Exception do
-      FStatus.Text := Translate('Unable to save settings: ') + E.Message;
+      LabelStatus.Text := Translate('Unable to save settings: ') + E.Message;
   end;
 end;
 
@@ -2294,7 +2257,7 @@ begin
   FBuilding := True;
   try
     FormStyles.RelocalizeUI(Self, PreviousLanguage);
-    FormStyles.RelocalizeUI(FComponentStore, PreviousLanguage);
+    FormStyles.RelocalizeUI(LayoutComponentStore, PreviousLanguage);
   finally
     FBuilding := False;
   end;
@@ -2315,7 +2278,6 @@ initialization
 finalization
   TPresentationProxyFactory.Current.Unregister(TSettingsSpinBox, TControlType.Styled,
     TStyledPresentationProxy<TSettingsSpinBoxStyle>);
-{$ENDREGION}
 
 end.
 

@@ -11,13 +11,13 @@ type
   TRetroDialogKind = (Information, Warning, Error, Confirmation);
 
   TRetroDialog = class(TFrame)
-    Backdrop: TRectangle;
-    Card: TPanel;
-    Accent: TRectangle;
-    Badge: TCircle;
-    BadgeText, TitleText, MessageText: TLabel;
-    MessageScroll: TVertScrollBox;
-    CloseButton, CancelButton, AcceptButton: TButton;
+    RectangleBackdrop: TRectangle;
+    PanelCard: TPanel;
+    RectangleAccent: TRectangle;
+    CircleBadge: TCircle;
+    LabelBadge, LabelTitle, LabelMessage: TLabel;
+    VertScrollBoxMessage: TVertScrollBox;
+    ButtonClose, ButtonCancel, ButtonAccept: TButton;
   private
     FReady, FConfirmation: Boolean;
     FOnResult: TProc<Boolean>;
@@ -149,10 +149,10 @@ constructor TRetroDialog.Create(AOwner: TComponent);
 begin
   inherited;
   Visible := False;
-  AcceptButton.OnClick := AcceptClick;
-  CancelButton.OnClick := CancelClick;
-  CloseButton.OnClick := CancelClick;
-  AddButtonIcon(CloseButton, IconClose, 16);
+  ButtonAccept.OnClick := AcceptClick;
+  ButtonCancel.OnClick := CancelClick;
+  ButtonClose.OnClick := CancelClick;
+  AddButtonIcon(ButtonClose, IconClose, 16);
   FReady := True;
 end;
 
@@ -163,26 +163,26 @@ const
 begin
   FOnResult := OnResult;
   FConfirmation := Kind = TRetroDialogKind.Confirmation;
-  TitleText.Text := Translate(Titles[Kind]);
-  BadgeText.Text := Symbols[Kind];
-  MessageText.Text := Text;
-  CloseButton.Hint := Translate('Close');
-  CancelButton.Text := Translate('Cancel');
+  LabelTitle.Text := Translate(Titles[Kind]);
+  LabelBadge.Text := Symbols[Kind];
+  LabelMessage.Text := Text;
+  ButtonClose.Hint := Translate('Close');
+  ButtonCancel.Text := Translate('Cancel');
   if FConfirmation then
-    AcceptButton.Text := Translate('Confirm')
+    ButtonAccept.Text := Translate('Confirm')
   else
-    AcceptButton.Text := Translate('OK');
-  CancelButton.Visible := FConfirmation;
-  MessageScroll.ViewportPosition := TPointF.Zero;
+    ButtonAccept.Text := Translate('OK');
+  ButtonCancel.Visible := FConfirmation;
+  VertScrollBoxMessage.ViewportPosition := TPointF.Zero;
   Arrange;
 end;
 
 procedure TRetroDialog.FocusDefault;
 begin
   if FConfirmation then
-    CancelButton.SetFocus
+    ButtonCancel.SetFocus
   else
-    AcceptButton.SetFocus;
+    ButtonAccept.SetFocus;
 end;
 
 procedure TRetroDialog.AcceptClick(Sender: TObject);
@@ -205,7 +205,7 @@ begin
     CancelClick(Self)
   else if Key = vkReturn then
   begin
-    if (FConfirmation and not AcceptButton.IsFocused) or CloseButton.IsFocused then
+    if (FConfirmation and not ButtonAccept.IsFocused) or ButtonClose.IsFocused then
       CancelClick(Self)
     else
       AcceptClick(Self);
@@ -234,10 +234,10 @@ begin
   var TextHeight: Single;
   try
     Layout.BeginUpdate;
-    Layout.Font.Assign(MessageText.TextSettings.Font);
+    Layout.Font.Assign(LabelMessage.TextSettings.Font);
     Layout.MaxSize := TPointF.Create(TextWidth, 100000);
     Layout.WordWrap := True;
-    Layout.Text := MessageText.Text;
+    Layout.Text := LabelMessage.Text;
     Layout.EndUpdate;
     TextHeight := Max(24, Ceil(Layout.TextHeight) + 8);
   finally
@@ -246,17 +246,17 @@ begin
   var FixedHeight := Padding * 2 + 44 + 16 + 16 + 42;
   var BodyHeight := Min(TextHeight, Max(0, Height - 32 - FixedHeight));
   var H := FixedHeight + BodyHeight;
-  Card.SetBounds((Width - W) / 2, Max(0, (Height - H) / 2), W, H);
-  Badge.SetBounds(Padding, Padding + 4, 36, 36);
-  CloseButton.SetBounds(W - Padding - 32, Padding + 6, 32, 32);
-  TitleText.SetBounds(Padding + 52, Padding + 4, Max(0, W - Padding * 2 - 92), 36);
-  MessageScroll.SetBounds(Padding, Padding + 60, W - Padding * 2, BodyHeight);
-  MessageText.SetBounds(0, 0, TextWidth, TextHeight);
+  PanelCard.SetBounds((Width - W) / 2, Max(0, (Height - H) / 2), W, H);
+  CircleBadge.SetBounds(Padding, Padding + 4, 36, 36);
+  ButtonClose.SetBounds(W - Padding - 32, Padding + 6, 32, 32);
+  LabelTitle.SetBounds(Padding + 52, Padding + 4, Max(0, W - Padding * 2 - 92), 36);
+  VertScrollBoxMessage.SetBounds(Padding, Padding + 60, W - Padding * 2, BodyHeight);
+  LabelMessage.SetBounds(0, 0, TextWidth, TextHeight);
   var ButtonWidth := Min(148, W - Padding * 2);
   if FConfirmation then
     ButtonWidth := Min(ButtonWidth, (W - Padding * 2 - 12) / 2);
-  AcceptButton.SetBounds(W - Padding - ButtonWidth, H - Padding - 42, ButtonWidth, 42);
-  CancelButton.SetBounds(AcceptButton.Position.X - ButtonWidth - 12, H - Padding - 42, ButtonWidth, 42);
+  ButtonAccept.SetBounds(W - Padding - ButtonWidth, H - Padding - 42, ButtonWidth, 42);
+  ButtonCancel.SetBounds(ButtonAccept.Position.X - ButtonWidth - 12, H - Padding - 42, ButtonWidth, 42);
 end;
 
 constructor TRetroDialogHost.Create(AOwner: TComponent);

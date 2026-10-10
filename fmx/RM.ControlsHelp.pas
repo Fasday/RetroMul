@@ -9,15 +9,14 @@ uses
 
 type
   TControlsHelpView = class(TFrame)
-    FSurface: TRectangle;
-    FHeader, FFooter, FContent, FLeft, FRight: TLayout;
-    FScroll: TVertScrollBox;
-    FTitle, FSubtitle, FNote, FDevice: TLabel;
-    FSettings, FFooterClose: TButton;
-    FPlayerTabs, FDiagram, FAssignments, FFunctions: TLayout;
-    FDivider: TRectangle;
+    RectangleSurface: TRectangle;
+    LayoutHeader, LayoutFooter, LayoutContent, LayoutLeft, LayoutRight: TLayout;
+    VertScrollBoxScroll: TVertScrollBox;
+    LabelTitle, LabelSubtitle, LabelNote, LabelDevice: TLabel;
+    ButtonSettings, ButtonFooterClose: TButton;
+    LayoutPlayerTabs, LayoutDiagram, LayoutAssignments, LayoutFunctions: TLayout;
+    RectangleDivider: TRectangle;
   private
-    {$REGION 'View state'}
     FInput: TInputManager;
     FOwnsInput: Boolean;
     FSystemId: string;
@@ -26,17 +25,12 @@ type
     FPlayerButtons: array[0..7] of TButton;
     FOnClose, FOnSettings: TNotifyEvent;
     FArranging: Boolean;
-    {$ENDREGION}
-    {$REGION 'Player diagram and assignments'}
     procedure BuildPlayer;
     function Assignments(Action: Integer): string;
     procedure AssignmentRow(Parent: TLayout; const Caption, Keys: string; Y: Single; Action: Integer = -1);
-    {$ENDREGION}
-    {$REGION 'View events'}
     procedure PlayerClick(Sender: TObject);
     procedure CloseClick(Sender: TObject);
     procedure SettingsClick(Sender: TObject);
-    {$ENDREGION}
   protected
     procedure Resize; override;
   public
@@ -85,7 +79,6 @@ begin
   Result.HitTest := False;
 end;
 
-{$REGION 'Initialization and lifetime'}
 constructor TControlsHelpView.CreateHelp(AOwner: TComponent; Input: TInputManager; const SystemId: string; const Ports: TCoreInputPorts; Players: Integer; KeyboardPeripheral: Boolean; const Storage: IStorage; HasCoinAcceptor: Boolean);
 begin
   inherited Create(AOwner);
@@ -107,31 +100,31 @@ begin
   FPorts := Ports;
   FPlayers := EnsureRange(Players, 1, 8);
   FormStyles.RelocalizeUI(Self, 'en');
-  FSubtitle.Text := Translate('Current bindings · ') + LibrarySystemName(SystemId) + Translate(' · game paused');
+  LabelSubtitle.Text := Translate('Current bindings · ') + LibrarySystemName(SystemId) + Translate(' · game paused');
   if KeyboardPeripheral then
-    FNote.Text := Translate('Letter shortcuts, F5, F6 and F8 are unavailable with keyboard peripherals.');
+    LabelNote.Text := Translate('Letter shortcuts, F5, F6 and F8 are unavailable with keyboard peripherals.');
   if KeyboardPeripheral and HasCoinAcceptor then
-    FNote.Text := Translate('Letter shortcuts, F5, F6, F8 and F9 are unavailable with keyboard peripherals.');
-  FSettings.OnClick := SettingsClick;
-  FSettings.StylesData['text.Margins.Left'] := 36;
-  FSettings.StylesData['text.Margins.Right'] := 10;
-  FFooterClose.OnClick := CloseClick;
+    LabelNote.Text := Translate('Letter shortcuts, F5, F6, F8 and F9 are unavailable with keyboard peripherals.');
+  ButtonSettings.OnClick := SettingsClick;
+  ButtonSettings.StylesData['text.Margins.Left'] := 36;
+  ButtonSettings.StylesData['text.Margins.Right'] := 10;
+  ButtonFooterClose.OnClick := CloseClick;
   for var I := 0 to High(FPlayerButtons) do
   begin
-    FPlayerButtons[I] := FindComponent('Player' + IntToStr(I + 1)) as TButton;
+    FPlayerButtons[I] := FindComponent('ButtonPlayer' + IntToStr(I + 1)) as TButton;
     FPlayerButtons[I].Text := Translate('Player ') + IntToStr(I + 1);
     FPlayerButtons[I].Visible := I < FPlayers;
     FPlayerButtons[I].OnClick := PlayerClick;
   end;
   for var I := 0 to 9 do
   begin
-    var Row := FindComponent('Function' + IntToStr(I)) as TLayout;
+    var Row := FindComponent('LayoutFunction' + IntToStr(I)) as TLayout;
     if KeyboardPeripheral and (I in [1, 2, 3, 4, 6, 7, 9]) then
       Row.Opacity := 0.4;
     if I = 9 then
       Row.Visible := HasCoinAcceptor;
   end;
-  FFunctions.Height := (9 + Ord(HasCoinAcceptor)) * 44;
+  LayoutFunctions.Height := (9 + Ord(HasCoinAcceptor)) * 44;
   BuildPlayer;
 end;
 
@@ -141,15 +134,13 @@ begin
     FInput.Free;
   inherited;
 end;
-{$ENDREGION}
 
-{$REGION 'Player diagram and assignments'}
 
 procedure TControlsHelpView.BuildPlayer;
 begin
-  FDiagram.DeleteChildren;
-  FAssignments.DeleteChildren;
-  FAssignments.Height := 0;
+  LayoutDiagram.DeleteChildren;
+  LayoutAssignments.DeleteChildren;
+  LayoutAssignments.Height := 0;
   for var i := 0 to FPlayers - 1 do
     if i = FPlayer then
       FPlayerButtons[i].StyleLookup := 'buttonstyle_accent'
@@ -177,19 +168,19 @@ begin
           if Devices.IndexOf(Name) < 0 then
             Devices.Add(Name);
         end;
-    FDevice.Text := Devices.DelimitedText.Replace('"', '').Replace(',', ' · ');
+    LabelDevice.Text := Devices.DelimitedText.Replace('"', '').Replace(',', ' · ');
   finally
     Devices.Free;
   end;
   if Buttons = [] then
   begin
-    var L := GameplayLabel(Self, FDiagram, Translate('No controller is connected to this port. Choose a device in the controls settings.'), 14);
+    var L := GameplayLabel(Self, LayoutDiagram, Translate('No controller is connected to this port. Choose a device in the controls settings.'), 14);
     L.Align := TAlignLayout.Client;
     L.TextSettings.WordWrap := True;
   end
   else
   begin
-    var Pad := TScreenGamepad.Create(FDiagram);
+    var Pad := TScreenGamepad.Create(LayoutDiagram);
     Pad.HitTest := False;
     if (FSystemId = ROM_SYSTEM_NES) and (FPorts.Devices[FPlayer] = 'paddendy') then
       Pad.Layout := TScreenGamepadLayout.Dendy
@@ -204,8 +195,8 @@ begin
     else if FSystemId = ROM_SYSTEM_NEOGEO then
       Pad.Layout := TScreenGamepadLayout.NeoGeo;
     Pad.ButtonMask := Buttons;
-    var Diagram := TDeviceCallouts.Create(FDiagram);
-    Diagram.Parent := FDiagram;
+    var Diagram := TDeviceCallouts.Create(LayoutDiagram);
+    Diagram.Parent := LayoutDiagram;
     Diagram.Align := TAlignLayout.Client;
     Diagram.Configure(Pad, FInput, FSystemId, FPlayer, nil);
     // This diagram is a reference; it cannot capture or forward controller input.
@@ -216,10 +207,10 @@ begin
     var Y: Single := 0;
     for var B in Buttons do
     begin
-      AssignmentRow(FAssignments, CoreButtonName(FSystemId, B), Assignments(PadAction(FPlayer, B)), Y, PadAction(FPlayer, B));
+      AssignmentRow(LayoutAssignments, CoreButtonName(FSystemId, B), Assignments(PadAction(FPlayer, B)), Y, PadAction(FPlayer, B));
       Y := Y + 34;
     end;
-    FAssignments.Height := Y;
+    LayoutAssignments.Height := Y;
   end;
   Resize;
 end;
@@ -278,13 +269,13 @@ begin
   Row.Parent := Parent;
   Row.Align := TAlignLayout.Top;
   Row.Height := 34;
-  if Parent = FFunctions then
+  if Parent = LayoutFunctions then
     Row.Height := 44;
   Row.Position.Y := Y;
   var L := GameplayLabel(Row, Row, Caption, 13);
   L.Align := TAlignLayout.Left;
   L.Width := 66;
-  if Parent = FFunctions then
+  if Parent = LayoutFunctions then
     L.Width := 260;
   var Key := TRectangle.Create(Row);
   Key.Parent := Row;
@@ -304,34 +295,32 @@ begin
   L.ShowHint := True;
   L.HitTest := True;
 end;
-{$ENDREGION}
 
-{$REGION 'Layout'}
 
 procedure TControlsHelpView.Resize;
 begin
   inherited;
-  if (csLoading in ComponentState) or FArranging or (FSurface = nil) or (FFunctions = nil) or (csDestroying in ComponentState) then
+  if (csLoading in ComponentState) or FArranging or (RectangleSurface = nil) or (LayoutFunctions = nil) or (csDestroying in ComponentState) then
     Exit;
   FArranging := True;
   try
     var W := Max(240, Min(1080, Width - 40));
     var H := Max(260, Min(740, Height - 40));
-    FSurface.SetBounds((Width - W) / 2, (Height - H) / 2, W, H);
-    FHeader.SetBounds(24, 20, W - 48, 70);
-    FTitle.SetBounds(60, 0, W - 154, 36);
-    FSubtitle.SetBounds(60, 38, W - 130, 24);
-    FTitle.TextSettings.Font.Size := IfThen(W < 650, 18, 25);
-    FFooter.SetBounds(24, H - 98, W - 48, 78);
-    FNote.SetBounds(0, 0, W - 48, 24);
+    RectangleSurface.SetBounds((Width - W) / 2, (Height - H) / 2, W, H);
+    LayoutHeader.SetBounds(24, 20, W - 48, 70);
+    LabelTitle.SetBounds(60, 0, W - 154, 36);
+    LabelSubtitle.SetBounds(60, 38, W - 130, 24);
+    LabelTitle.TextSettings.Font.Size := IfThen(W < 650, 18, 25);
+    LayoutFooter.SetBounds(24, H - 98, W - 48, 78);
+    LabelNote.SetBounds(0, 0, W - 48, 24);
     var CloseW := IfThen(W < 500, 100, 144);
-    FSettings.SetBounds(0, 30, Min(230, W - 60 - CloseW), 40);
-    FFooterClose.SetBounds(W - 48 - CloseW, 30, CloseW, 40);
+    ButtonSettings.SetBounds(0, 30, Min(230, W - 60 - CloseW), 40);
+    ButtonFooterClose.SetBounds(W - 48 - CloseW, 30, CloseW, 40);
     if W < 500 then
-      FSettings.Text := Translate('Settings')
+      ButtonSettings.Text := Translate('Settings')
     else
-      FSettings.Text := Translate('Configure controls');
-    FScroll.SetBounds(24, 100, W - 48, Max(80, H - 214));
+      ButtonSettings.Text := Translate('Configure controls');
+    VertScrollBoxScroll.SetBounds(24, 100, W - 48, Max(80, H - 214));
     var ContentW := W - 62;
     var ColumnW := ContentW;
     var TwoColumns := W >= 850;
@@ -339,43 +328,41 @@ begin
       ColumnW := (ContentW - 48) * 0.56;
     var TabColumns := Max(1, Trunc(ColumnW / 108));
     var TabsRows := Ceil(FPlayers / TabColumns);
-    FPlayerTabs.SetBounds(0, 38, ColumnW, TabsRows * 38);
+    LayoutPlayerTabs.SetBounds(0, 38, ColumnW, TabsRows * 38);
     for var i := 0 to FPlayers - 1 do
       FPlayerButtons[i].SetBounds((i mod TabColumns) * 108, (i div TabColumns) * 38, 100, 32);
-    FDevice.SetBounds(0, 40 + TabsRows * 38, ColumnW, 24);
-    FDiagram.SetBounds(0, 74 + TabsRows * 38, ColumnW, 180);
+    LabelDevice.SetBounds(0, 40 + TabsRows * 38, ColumnW, 24);
+    LayoutDiagram.SetBounds(0, 74 + TabsRows * 38, ColumnW, 180);
     var AssignmentColumns := 1;
     if ColumnW >= 380 then
       AssignmentColumns := 2;
-    var Rows := Ceil(FAssignments.ChildrenCount / AssignmentColumns);
-    FAssignments.SetBounds(0, 266 + TabsRows * 38, ColumnW, Rows * 34);
-    for var i := 0 to FAssignments.ChildrenCount - 1 do
+    var Rows := Ceil(LayoutAssignments.ChildrenCount / AssignmentColumns);
+    LayoutAssignments.SetBounds(0, 266 + TabsRows * 38, ColumnW, Rows * 34);
+    for var i := 0 to LayoutAssignments.ChildrenCount - 1 do
     begin
-      var Row := TControl(FAssignments.Children[i]);
+      var Row := TControl(LayoutAssignments.Children[i]);
       Row.Align := TAlignLayout.None;
       Row.SetBounds((i div Max(1, Rows)) * ColumnW / AssignmentColumns,
         (i mod Max(1, Rows)) * 34, ColumnW / AssignmentColumns - 10, 34);
       TControl(Row.Children[0]).Width := 40;
     end;
-    var LeftH := 270 + TabsRows * 38 + FAssignments.Height;
-    FLeft.SetBounds(0, 0, ColumnW, LeftH);
+    var LeftH := 270 + TabsRows * 38 + LayoutAssignments.Height;
+    LayoutLeft.SetBounds(0, 0, ColumnW, LeftH);
     var RightW := ContentW;
     if TwoColumns then
       RightW := ContentW - ColumnW - 48;
-    FRight.SetBounds(IfThen(TwoColumns, ColumnW + 48, 0), IfThen(TwoColumns, 0, LeftH + 24), RightW, FFunctions.Height + 72);
-    FFunctions.SetBounds(0, 70, RightW, FFunctions.Height);
-    for var Row in FFunctions.Children do
+    LayoutRight.SetBounds(IfThen(TwoColumns, ColumnW + 48, 0), IfThen(TwoColumns, 0, LeftH + 24), RightW, LayoutFunctions.Height + 72);
+    LayoutFunctions.SetBounds(0, 70, RightW, LayoutFunctions.Height);
+    for var Row in LayoutFunctions.Children do
       TControl(TFmxObject(Row).Children[0]).Width := Max(120, RightW - 128);
-    FDivider.Visible := TwoColumns;
-    FDivider.SetBounds(ColumnW + 24, 0, 1, Max(LeftH, FRight.Height));
-    FContent.SetBounds(0, 0, ContentW, IfThen(TwoColumns, Max(LeftH, FRight.Height), LeftH + 24 + FRight.Height));
+    RectangleDivider.Visible := TwoColumns;
+    RectangleDivider.SetBounds(ColumnW + 24, 0, 1, Max(LeftH, LayoutRight.Height));
+    LayoutContent.SetBounds(0, 0, ContentW, IfThen(TwoColumns, Max(LeftH, LayoutRight.Height), LeftH + 24 + LayoutRight.Height));
   finally
     FArranging := False;
   end;
 end;
-{$ENDREGION}
 
-{$REGION 'View events'}
 
 procedure TControlsHelpView.PlayerClick(Sender: TObject);
 begin
@@ -394,7 +381,6 @@ begin
   if Assigned(FOnSettings) then
     FOnSettings(Self);
 end;
-{$ENDREGION}
 
 end.
 

@@ -2,7 +2,7 @@ object RetroDialog: TRetroDialog
   Size.Width = 900.000000000000000000
   Size.Height = 640.000000000000000000
   Size.PlatformDefault = False
-  object Backdrop: TRectangle
+  object RectangleBackdrop: TRectangle
     Align = Contents
     Fill.Color = xA6000000
     Size.Width = 900.000000000000000000
@@ -10,7 +10,7 @@ object RetroDialog: TRetroDialog
     Size.PlatformDefault = False
     Stroke.Kind = None
   end
-  object Card: TPanel
+  object PanelCard: TPanel
     Position.X = 170.000000000000000000
     Position.Y = 190.000000000000000000
     Size.Width = 560.000000000000000000
@@ -18,7 +18,7 @@ object RetroDialog: TRetroDialog
     Size.PlatformDefault = False
     StyleLookup = 'retromul_card'
     TabOrder = 0
-    object Accent: TRectangle
+    object RectangleAccent: TRectangle
       Fill.Color = xFFFFB344
       HitTest = False
       Position.X = 24.000000000000000000
@@ -27,7 +27,7 @@ object RetroDialog: TRetroDialog
       Size.PlatformDefault = False
       Stroke.Kind = None
     end
-    object Badge: TCircle
+    object CircleBadge: TCircle
       Fill.Color = xFFFFB344
       HitTest = False
       Position.X = 24.000000000000000000
@@ -36,7 +36,7 @@ object RetroDialog: TRetroDialog
       Size.Height = 36.000000000000000000
       Size.PlatformDefault = False
       Stroke.Kind = None
-      object BadgeText: TLabel
+      object LabelBadge: TLabel
         Align = Contents
         StyledSettings = []
         Size.Width = 36.000000000000000000
@@ -49,7 +49,7 @@ object RetroDialog: TRetroDialog
         Text = '!'
       end
     end
-    object TitleText: TLabel
+    object LabelTitle: TLabel
       StyledSettings = []
       Position.X = 76.000000000000000000
       Position.Y = 28.000000000000000000
@@ -62,7 +62,7 @@ object RetroDialog: TRetroDialog
       TextSettings.WordWrap = False
       Text = 'Warning'
     end
-    object CloseButton: TButton
+    object ButtonClose: TButton
       Position.X = 504.000000000000000000
       Position.Y = 30.000000000000000000
       Size.Width = 32.000000000000000000
@@ -73,7 +73,7 @@ object RetroDialog: TRetroDialog
       ParentShowHint = False
       ShowHint = True
     end
-    object MessageScroll: TVertScrollBox
+    object VertScrollBoxMessage: TVertScrollBox
       Position.X = 24.000000000000000000
       Position.Y = 84.000000000000000000
       Size.Width = 512.000000000000000000
@@ -83,7 +83,7 @@ object RetroDialog: TRetroDialog
       TabStop = False
       Viewport.Width = 512.000000000000000000
       Viewport.Height = 80.000000000000000000
-      object MessageText: TLabel
+      object LabelMessage: TLabel
         StyledSettings = []
         Size.Width = 496.000000000000000000
         Size.Height = 80.000000000000000000
@@ -95,7 +95,7 @@ object RetroDialog: TRetroDialog
         TabOrder = 0
       end
     end
-    object CancelButton: TButton
+    object ButtonCancel: TButton
       StyledSettings = []
       Position.X = 228.000000000000000000
       Position.Y = 194.000000000000000000
@@ -108,7 +108,7 @@ object RetroDialog: TRetroDialog
       TextSettings.Font.Size = 14.000000000000000000
       TextSettings.FontColor = xFFE8ECF1
     end
-    object AcceptButton: TButton
+    object ButtonAccept: TButton
       StyledSettings = []
       Position.X = 388.000000000000000000
       Position.Y = 194.000000000000000000

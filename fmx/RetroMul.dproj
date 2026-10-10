@@ -473,6 +473,17 @@
         <DCCReference Include="RM.Main.pas">
             <Form>FormMain</Form>
         </DCCReference>
+        <DCCReference Include="RM.Main.View.pas"/>
+        <DCCReference Include="RM.Main.State.pas"/>
+        <DCCReference Include="RM.Controllers.Base.pas"/>
+        <DCCReference Include="RM.Toolbar.pas"/>
+        <DCCReference Include="RM.Controllers.Browser.pas"/>
+        <DCCReference Include="RM.Controllers.Window.pas"/>
+        <DCCReference Include="RM.Controllers.Settings.pas"/>
+        <DCCReference Include="RM.Controllers.Snapshots.pas"/>
+        <DCCReference Include="RM.Controllers.Input.pas"/>
+        <DCCReference Include="RM.Controllers.Mobile.pas"/>
+        <DCCReference Include="RM.Controllers.Session.pas"/>
         <DCCReference Include="RM.FrameUpload.pas"/>
         <DCCReference Include="RM.Rumble.pas"/>
         <DCCReference Include="FMXVibration\FMX.Vibrate.pas"/>

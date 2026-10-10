@@ -2,7 +2,7 @@ object ControlsHelpView: TControlsHelpView
   Size.Width = 1154.000000000000000000
   Size.Height = 790.000000000000000000
   Size.PlatformDefault = False
-  object Shade: TRectangle
+  object RectangleShade: TRectangle
     Align = Contents
     Fill.Color = xA0000000
     Size.Width = 1154.000000000000000000
@@ -10,7 +10,7 @@ object ControlsHelpView: TControlsHelpView
     Size.PlatformDefault = False
     Stroke.Kind = None
   end
-  object FSurface: TRectangle
+  object RectangleSurface: TRectangle
     Fill.Color = xFF23292F
     Position.X = 37.000000000000000000
     Position.Y = 25.000000000000000000
@@ -20,13 +20,13 @@ object ControlsHelpView: TControlsHelpView
     Stroke.Color = xFF47515D
     XRadius = 10.000000000000000000
     YRadius = 10.000000000000000000
-    object FHeader: TLayout
+    object LayoutHeader: TLayout
       Position.X = 24.000000000000000000
       Position.Y = 20.000000000000000000
       Size.Width = 1032.000000000000000000
       Size.Height = 70.000000000000000000
       Size.PlatformDefault = False
-      object HelpIcon: TPath
+      object PathHelpIcon: TPath
         Data.Path = {
           1C00000000000000000020410000C040010000000000C0410000C04002000000
           0000E0410000C040020000000000F04100000041020000000000F84100005041
@@ -49,7 +49,7 @@ object ControlsHelpView: TControlsHelpView
         Stroke.Thickness = 1.600000023841858000
         WrapMode = Fit
       end
-      object FTitle: TLabel
+      object LabelTitle: TLabel
         StyledSettings = []
         Position.X = 60.000000000000000000
         Size.Width = 926.000000000000000000
@@ -61,7 +61,7 @@ object ControlsHelpView: TControlsHelpView
         TextSettings.WordWrap = False
         Text = 'Controls and shortcuts'
       end
-      object FSubtitle: TLabel
+      object LabelSubtitle: TLabel
         StyledSettings = []
         Opacity = 0.649999976158142100
         Position.X = 60.000000000000000000
@@ -74,13 +74,13 @@ object ControlsHelpView: TControlsHelpView
         TextSettings.WordWrap = False
       end
     end
-    object FFooter: TLayout
+    object LayoutFooter: TLayout
       Position.X = 24.000000000000000000
       Position.Y = 642.000000000000000000
       Size.Width = 1032.000000000000000000
       Size.Height = 78.000000000000000000
       Size.PlatformDefault = False
-      object FNote: TLabel
+      object LabelNote: TLabel
         StyledSettings = []
         Opacity = 0.600000023841857900
         Size.Width = 1032.000000000000000000
@@ -90,7 +90,7 @@ object ControlsHelpView: TControlsHelpView
         TextSettings.WordWrap = False
         Text = 'Change bindings in the controls settings.'
       end
-      object FSettings: TButton
+      object ButtonSettings: TButton
         CanFocus = False
         StyledSettings = []
         Hint = 'Open controls settings'
@@ -104,7 +104,7 @@ object ControlsHelpView: TControlsHelpView
         TextSettings.FontColor = xFFE8ECF1
         ParentShowHint = False
         ShowHint = True
-        object FSettingsIcon: TPath
+        object PathSettingsIcon: TPath
           Data.Path = {
             2100000000000000000020410000803F01000000000080410000803F01000000
             000088410000A040010000000000A8410000E040010000000000C8410000C040
@@ -131,7 +131,7 @@ object ControlsHelpView: TControlsHelpView
           WrapMode = Fit
         end
       end
-      object FFooterClose: TButton
+      object ButtonFooterClose: TButton
         CanFocus = False
         StyledSettings = []
         Hint = 'Close '#183' Esc / F1'
@@ -148,7 +148,7 @@ object ControlsHelpView: TControlsHelpView
         ShowHint = True
       end
     end
-    object FScroll: TVertScrollBox
+    object VertScrollBoxScroll: TVertScrollBox
       Position.X = 24.000000000000000000
       Position.Y = 100.000000000000000000
       Size.Width = 1032.000000000000000000
@@ -157,16 +157,16 @@ object ControlsHelpView: TControlsHelpView
       ScrollAnimation = True
       Viewport.Width = 1032.000000000000000000
       Viewport.Height = 526.000000000000000000
-      object FContent: TLayout
+      object LayoutContent: TLayout
         Size.Width = 1018.000000000000000000
         Size.Height = 468.000000000000000000
         Size.PlatformDefault = False
         TabOrder = 0
-        object FLeft: TLayout
+        object LayoutLeft: TLayout
           Size.Width = 543.200012207031300000
           Size.Height = 444.000000000000000000
           Size.PlatformDefault = False
-          object ControllerTitle: TLabel
+          object LabelControllerTitle: TLabel
             StyledSettings = []
             Size.Width = 543.200012207031300000
             Size.Height = 30.000000000000000000
@@ -177,12 +177,12 @@ object ControlsHelpView: TControlsHelpView
             TextSettings.WordWrap = False
             Text = 'Game controller'
           end
-          object FPlayerTabs: TLayout
+          object LayoutPlayerTabs: TLayout
             Position.Y = 38.000000000000000000
             Size.Width = 543.200012207031300000
             Size.Height = 38.000000000000000000
             Size.PlatformDefault = False
-            object Player1: TButton
+            object ButtonPlayer1: TButton
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
               Size.Width = 100.000000000000000000
@@ -193,7 +193,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.FontColor = xFFE8ECF1
             end
-            object Player2: TButton
+            object ButtonPlayer2: TButton
               Tag = 1
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -206,7 +206,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.FontColor = xFFE8ECF1
             end
-            object Player3: TButton
+            object ButtonPlayer3: TButton
               Tag = 2
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -220,7 +220,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.FontColor = xFFE8ECF1
               Visible = False
             end
-            object Player4: TButton
+            object ButtonPlayer4: TButton
               Tag = 3
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -234,7 +234,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.FontColor = xFFE8ECF1
               Visible = False
             end
-            object Player5: TButton
+            object ButtonPlayer5: TButton
               Tag = 4
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -248,7 +248,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.FontColor = xFFE8ECF1
               Visible = False
             end
-            object Player6: TButton
+            object ButtonPlayer6: TButton
               Tag = 5
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -262,7 +262,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.FontColor = xFFE8ECF1
               Visible = False
             end
-            object Player7: TButton
+            object ButtonPlayer7: TButton
               Tag = 6
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -277,7 +277,7 @@ object ControlsHelpView: TControlsHelpView
               TextSettings.FontColor = xFFE8ECF1
               Visible = False
             end
-            object Player8: TButton
+            object ButtonPlayer8: TButton
               Tag = 7
               CanFocus = False
               StyledSettings = [Family, Size, Style, FontColor, Other]
@@ -293,7 +293,7 @@ object ControlsHelpView: TControlsHelpView
               Visible = False
             end
           end
-          object FDevice: TLabel
+          object LabelDevice: TLabel
             StyledSettings = []
             Opacity = 0.649999976158142100
             Position.Y = 78.000000000000000000
@@ -303,25 +303,25 @@ object ControlsHelpView: TControlsHelpView
             TextSettings.FontColor = xFFE8ECF1
             TextSettings.WordWrap = False
           end
-          object FDiagram: TLayout
+          object LayoutDiagram: TLayout
             Position.Y = 112.000000000000000000
             Size.Width = 543.200012207031300000
             Size.Height = 180.000000000000000000
             Size.PlatformDefault = False
           end
-          object FAssignments: TLayout
+          object LayoutAssignments: TLayout
             Position.Y = 304.000000000000000000
             Size.Width = 543.200012207031300000
             Size.Height = 136.000000000000000000
             Size.PlatformDefault = False
           end
         end
-        object FRight: TLayout
+        object LayoutRight: TLayout
           Position.X = 591.200012207031300000
           Size.Width = 426.799987792968800000
           Size.Height = 468.000000000000000000
           Size.PlatformDefault = False
-          object FunctionsTitle: TLabel
+          object LabelFunctionsTitle: TLabel
             StyledSettings = []
             Size.Width = 426.799987792968800000
             Size.Height = 30.000000000000000000
@@ -332,7 +332,7 @@ object ControlsHelpView: TControlsHelpView
             TextSettings.WordWrap = False
             Text = 'RetroMul functions'
           end
-          object FunctionsSubtitle: TLabel
+          object LabelFunctionsSubtitle: TLabel
             StyledSettings = []
             Opacity = 0.649999976158142100
             Position.Y = 30.000000000000000000
@@ -344,17 +344,17 @@ object ControlsHelpView: TControlsHelpView
             TextSettings.WordWrap = False
             Text = 'Emulator shortcuts'
           end
-          object FFunctions: TLayout
+          object LayoutFunctions: TLayout
             Position.Y = 70.000000000000000000
             Size.Width = 426.799987792968800000
             Size.Height = 396.000000000000000000
             Size.PlatformDefault = False
-            object Function0: TLayout
+            object LayoutFunction0: TLayout
               Align = Top
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption0: TLabel
+              object LabelFunctionCaption0: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -367,7 +367,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Show controls help'
               end
-              object FunctionKeyBox0: TRectangle
+              object RectangleFunctionKeyBox0: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -380,7 +380,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey0: TLabel
+                object LabelFunctionKey0: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -399,7 +399,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon0: TPath
+              object PathFunctionIcon0: TPath
                 Data.Path = {
                   1C00000000000000000020410000C040010000000000C0410000C04002000000
                   0000E0410000C040020000000000F04100000041020000000000F84100005041
@@ -423,13 +423,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function1: TLayout
+            object LayoutFunction1: TLayout
               Align = Top
               Position.Y = 44.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption1: TLabel
+              object LabelFunctionCaption1: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -442,7 +442,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Save state'
               end
-              object FunctionKeyBox1: TRectangle
+              object RectangleFunctionKeyBox1: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -455,7 +455,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey1: TLabel
+                object LabelFunctionKey1: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -474,7 +474,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon1: TPath
+              object PathFunctionIcon1: TPath
                 Data.Path = {
                   0E000000000000000000004000000040010000000000A8410000004001000000
                   0000D0410000E040010000000000D0410000D04101000000000000400000D041
@@ -493,13 +493,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function2: TLayout
+            object LayoutFunction2: TLayout
               Align = Top
               Position.Y = 88.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption2: TLabel
+              object LabelFunctionCaption2: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -512,7 +512,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Load state'
               end
-              object FunctionKeyBox2: TRectangle
+              object RectangleFunctionKeyBox2: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -525,7 +525,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey2: TLabel
+                object LabelFunctionKey2: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -544,7 +544,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon2: TPath
+              object PathFunctionIcon2: TPath
                 Data.Path = {
                   0C000000000000000000803F0000E04001000000000020410000E04001000000
                   0000504100002041010000000000D04100002041010000000000D0410000D041
@@ -562,13 +562,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function3: TLayout
+            object LayoutFunction3: TLayout
               Align = Top
               Position.Y = 132.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption3: TLabel
+              object LabelFunctionCaption3: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -581,7 +581,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Take screenshot'
               end
-              object FunctionKeyBox3: TRectangle
+              object RectangleFunctionKeyBox3: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -594,7 +594,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey3: TLabel
+                object LabelFunctionKey3: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -613,7 +613,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon3: TPath
+              object PathFunctionIcon3: TPath
                 Data.Path = {
                   11000000000000000000803F0000E040010000000000E0400000E04001000000
                   0000204100000040010000000000984100000040010000000000B0410000E040
@@ -633,13 +633,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function4: TLayout
+            object LayoutFunction4: TLayout
               Align = Top
               Position.Y = 176.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption4: TLabel
+              object LabelFunctionCaption4: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -652,7 +652,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Pause / resume'
               end
-              object FunctionKeyBox4: TRectangle
+              object RectangleFunctionKeyBox4: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -665,7 +665,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey4: TLabel
+                object LabelFunctionKey4: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -684,7 +684,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon4: TPath
+              object PathFunctionIcon4: TPath
                 Data.Path = {
                   0400000000000000000080400000004001000000000080400000C04100000000
                   000080410000004001000000000080410000C041}
@@ -699,13 +699,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function5: TLayout
+            object LayoutFunction5: TLayout
               Align = Top
               Position.Y = 220.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption5: TLabel
+              object LabelFunctionCaption5: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -718,7 +718,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Full screen'
               end
-              object FunctionKeyBox5: TRectangle
+              object RectangleFunctionKeyBox5: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -731,7 +731,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey5: TLabel
+                object LabelFunctionKey5: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -750,7 +750,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon5: TPath
+              object PathFunctionIcon5: TPath
                 Data.Path = {
                   0C000000000000000000803F00001041010000000000803F0000803F01000000
                   000010410000803F00000000000098410000803F010000000000D8410000803F
@@ -768,13 +768,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function6: TLayout
+            object LayoutFunction6: TLayout
               Align = Top
               Position.Y = 264.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption6: TLabel
+              object LabelFunctionCaption6: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -787,7 +787,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Restart game'
               end
-              object FunctionKeyBox6: TRectangle
+              object RectangleFunctionKeyBox6: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -800,7 +800,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey6: TLabel
+                object LabelFunctionKey6: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -819,7 +819,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon6: TPath
+              object PathFunctionIcon6: TPath
                 Data.Path = {
                   0C000000000000000000803F00002041020000000000803F0000000002000000
                   0000B84100000000020000000000B84100002041000000000000B84100002041
@@ -837,13 +837,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function7: TLayout
+            object LayoutFunction7: TLayout
               Align = Top
               Position.Y = 308.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption7: TLabel
+              object LabelFunctionCaption7: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -856,7 +856,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Open ROM'
               end
-              object FunctionKeyBox7: TRectangle
+              object RectangleFunctionKeyBox7: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -869,7 +869,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey7: TLabel
+                object LabelFunctionKey7: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -888,7 +888,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon7: TPath
+              object PathFunctionIcon7: TPath
                 Data.Path = {
                   07000000000000000000803F0000C04001000000000020410000C04001000000
                   0000504100001041010000000000C84100001041010000000000C8410000C841
@@ -904,13 +904,13 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function8: TLayout
+            object LayoutFunction8: TLayout
               Align = Top
               Position.Y = 352.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
-              object FunctionCaption8: TLabel
+              object LabelFunctionCaption8: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -923,7 +923,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Exit full screen'
               end
-              object FunctionKeyBox8: TRectangle
+              object RectangleFunctionKeyBox8: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -936,7 +936,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey8: TLabel
+                object LabelFunctionKey8: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -955,7 +955,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon8: TPath
+              object PathFunctionIcon8: TPath
                 Data.Path = {
                   0C000000000000000000803F00001041010000000000803F0000803F01000000
                   000010410000803F00000000000098410000803F010000000000D8410000803F
@@ -973,14 +973,14 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object Function9: TLayout
+            object LayoutFunction9: TLayout
               Align = Top
               Position.Y = 396.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
               Visible = False
-              object FunctionCaption9: TLabel
+              object LabelFunctionCaption9: TLabel
                 Align = Left
                 StyledSettings = []
                 Margins.Left = 34.000000000000000000
@@ -993,7 +993,7 @@ object ControlsHelpView: TControlsHelpView
                 TextSettings.WordWrap = False
                 Text = 'Insert coin'
               end
-              object FunctionKeyBox9: TRectangle
+              object RectangleFunctionKeyBox9: TRectangle
                 Align = Client
                 Fill.Color = xFF1B2126
                 HitTest = False
@@ -1006,7 +1006,7 @@ object ControlsHelpView: TControlsHelpView
                 Stroke.Color = xFF586572
                 XRadius = 5.000000000000000000
                 YRadius = 5.000000000000000000
-                object FunctionKey9: TLabel
+                object LabelFunctionKey9: TLabel
                   Tag = -1
                   Align = Client
                   StyledSettings = []
@@ -1025,7 +1025,7 @@ object ControlsHelpView: TControlsHelpView
                   ShowHint = True
                 end
               end
-              object FunctionIcon9: TPath
+              object PathFunctionIcon9: TPath
                 Data.Path = {
                   1200000000000000000060410000803F020000000000F8410000803F02000000
                   0000F8410000D84102000000000060410000D84102000000000040C00000D841
@@ -1047,7 +1047,7 @@ object ControlsHelpView: TControlsHelpView
             end
           end
         end
-        object FDivider: TRectangle
+        object RectangleDivider: TRectangle
           Fill.Color = xFF404A55
           Position.X = 567.200012207031300000
           Size.Width = 1.000000000000000000
