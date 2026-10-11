@@ -5,7 +5,8 @@ interface
 uses
   Core.RomFormat, Core.Storage, Core.Snapshots, System.SysUtils, System.Classes,
   System.SyncObjs, System.Generics.Collections, System.Diagnostics, GB.Joypad,
-  GB.GPU, GB.ROM, GB.MBC, GB.Memory, GB.Timer, GB.InterruptManager, GB.Camera;
+  GB.GPU, GB.ROM, GB.MBC, GB.Memory, GB.Timer, GB.InterruptManager, GB.Camera,
+  GB.Palettes, GB.CPU, GB.Sound;
 
 type
   TGBInputEvent = record
@@ -27,7 +28,9 @@ type
     FStopEvent: TEvent;
     FInputEvents: TQueue<TGBInputEvent>;
     FPressedKeys: set of TGBKey;
-    FFrame: TScreenArray;
+    FFrame, FPreviousFrame: TScreenArray;
+    FHasPreviousFrame: Boolean;
+    FRuntimeOptions: TGBRuntimeOptions;
     FFrameAvailable, FHasFrame: Boolean;
     FFramesPerSecond: Double;
     FFrameRateStopwatch: TStopwatch;
@@ -44,6 +47,8 @@ type
     procedure PublishRumble(Level: Byte; Clocks: UInt64 = 0);
     procedure ApplyInput(MBC: TGBMBC);
     procedure SetSoundVolume(const Value: Single);
+    procedure SetRuntimeOptions(const Value: TGBRuntimeOptions);
+    procedure ApplyRuntimeOptions(CPU: TGBCPU; GPU: TGBVideo; Sound: TGBSound);
     procedure SetScreenPalette(const Value: Integer);
   protected
     FBootROMData: TBytes;
@@ -73,7 +78,9 @@ type
     procedure ReleaseKeys;
     procedure SetAcceleration(X, Y: Double);
     procedure ConfigureBootROM(Model: TGBBootModel; const Data: TBytes);
-    function TryGetFrame(out Screen: TScreenArray; out FramesPerSecond: Double): Boolean;
+    property RuntimeOptions: TGBRuntimeOptions write SetRuntimeOptions;
+    function TryGetFrame(out Screen: TScreenArray; out FramesPerSecond: Double): Boolean; overload;
+    function TryGetFrame(out Screen, Previous: TScreenArray; out HasPrevious: Boolean; out FramesPerSecond: Double): Boolean; overload;
     function TakeError: string;
     function GetRumbleLevel: Byte;
     property SoundVolume: Single read FSoundVolume write SetSoundVolume;
@@ -86,8 +93,7 @@ type
 implementation
 
 uses
-  Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.Math, GB.CPU,
-  GB.Sound, GB.Palettes;
+  Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.Math;
 
 function TGBEmulationThread.CoreID: string;
 begin
@@ -141,6 +147,7 @@ begin
   FSnapshotIdentityData := FROMData;
   FEnableAudio := EnableAudio;
   FSoundVolume := 0.5;
+  FRuntimeOptions := TGBRuntimeOptions.Defaults;
   FLock := TCriticalSection.Create;
   FStopEvent := TEvent.Create(nil, True, False, '');
   FSnapshots := TSnapshotQueue.Create;
@@ -309,6 +316,42 @@ begin
   end;
 end;
 
+procedure TGBEmulationThread.SetRuntimeOptions(const Value: TGBRuntimeOptions);
+begin
+  var Options := Value;
+  Options.Normalize;
+  FLock.Acquire;
+  try
+    var Changed := (Options.FrameBlending <> FRuntimeOptions.FrameBlending);
+    for var i := 0 to 2 do
+      Changed := Changed or (Options.Palettes[i] <> FRuntimeOptions.Palettes[i]);
+    FRuntimeOptions := Options;
+    if Changed then
+    begin
+      FHasPreviousFrame := False;
+      if FHasFrame then
+        FFrameAvailable := True;
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TGBEmulationThread.ApplyRuntimeOptions(CPU: TGBCPU; GPU: TGBVideo; Sound: TGBSound);
+begin
+  FLock.Acquire;
+  try
+    GPU.RuntimeOptions := FRuntimeOptions;
+    GPU.TagMonochromePixels := True;
+    CPU.Overclock := FRuntimeOptions.Overclock;
+    Sound.Volume := FSoundVolume;
+    for var i := 0 to 3 do
+      Sound.SetChannelVolume(i, FRuntimeOptions.ChannelVolumes[i] / 100);
+  finally
+    FLock.Release;
+  end;
+end;
+
 procedure TGBEmulationThread.SetScreenPalette(const Value: Integer);
 begin
   FLock.Acquire;
@@ -317,6 +360,7 @@ begin
     if FScreenPalette <> Palette then
     begin
       FScreenPalette := Palette;
+      FHasPreviousFrame := False;
       if FHasFrame then
         FFrameAvailable := True;
     end;
@@ -366,6 +410,8 @@ begin
   FLock.Acquire;
   try
     // Copy GPU memory; a slow UI simply skips older frames instead of accumulating them.
+    FPreviousFrame := FFrame;
+    FHasPreviousFrame := FHasFrame;
     FFrame := Screen;
     FHasFrame := True;
     FFrameAvailable := True;
@@ -383,13 +429,22 @@ end;
 
 function TGBEmulationThread.TryGetFrame(out Screen: TScreenArray; out FramesPerSecond: Double): Boolean;
 begin
+  var Previous: TScreenArray;
+  var HasPrevious: Boolean;
+  Result := TryGetFrame(Screen, Previous, HasPrevious, FramesPerSecond);
+end;
+
+function TGBEmulationThread.TryGetFrame(out Screen, Previous: TScreenArray; out HasPrevious: Boolean; out FramesPerSecond: Double): Boolean;
+begin
   FLock.Acquire;
   try
     Result := FFrameAvailable;
     FramesPerSecond := FFramesPerSecond;
+    HasPrevious := FHasPreviousFrame;
     if Result then
     begin
       Screen := FFrame;
+      Previous := FPreviousFrame;
       FFrameAvailable := False;
     end;
   finally
@@ -486,8 +541,8 @@ begin
       Memory := CreateMemory(MBC, GPU);
       Memory.ConfigureBootROM(FBootROMData);
       Sound := TGBSound.Create(Memory, FEnableAudio);
-      Sound.Volume := FSoundVolume;
       CPU := TGBCPU.Create(Memory, GPU, Sound);
+      ApplyRuntimeOptions(CPU, GPU, Sound);
       if Length(FBootROMData) = 0 then
         CPU.SkipBIOS;
       FrameHints := TEmulationPerformanceHints.Create(Round(FrameCycles * 1000000000.0 / CPUClockFrequency), CoreID);
@@ -531,26 +586,29 @@ begin
                 FLock.Release;
               end;
               PublishRumble(MBC.TakeRumbleLevel);
+              FLock.Acquire;
+              try
+                FHasFrame := False;
+                FHasPreviousFrame := False;
+              finally
+                FLock.Release;
+              end;
+              ApplyRuntimeOptions(CPU, GPU, Sound);
               PublishFrame(GPU.Screen);
             end
             else
             begin
               SaveCoreSnapshot(Path, CoreID, FSnapshotIdentityData, Transfer, FStorage);
               var Preview := GPU.Screen;
-              if CoreID = ROM_CORE_ID_GB then
-              begin
-                var Palette: Integer;
-                FLock.Acquire;
-                try
-                  Palette := FScreenPalette;
-                finally
-                  FLock.Release;
-                end;
+              FLock.Acquire;
+              try
                 for var i := 0 to High(Preview) do
                 begin
-                  var Color := ScreenPalettes[Palette].Colors[EnsureRange(Preview[i], 0, 3)];
+                  var Color := FRuntimeOptions.PresentationColor(Preview[i], FScreenPalette, CoreID = ROM_CORE_ID_GBC);
                   Move(Color, Preview[i], SizeOf(Color));
                 end;
+              finally
+                FLock.Release;
               end;
               SaveSnapshotPreview(Path, 160, 144, 160, @Preview[0], FStorage);
             end;
@@ -581,7 +639,7 @@ begin
           FLock.Release;
         end;
         FrameHints.BeginWork;
-        Sound.Volume := FSoundVolume;
+        ApplyRuntimeOptions(CPU, GPU, Sound);
         var RumbleStartCycles := CPU.Cycles;
         var NextCycles := CPU.Cycles + BatchCycles;
         while (CPU.Cycles < NextCycles) and not Terminated do

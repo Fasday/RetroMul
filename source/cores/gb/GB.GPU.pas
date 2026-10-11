@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.Snapshots, System.Classes, GB.InterruptManager;
+  Core.Snapshots, System.Classes, GB.InterruptManager, GB.Palettes;
 
 {$SCOPEDENUMS ON}
 
@@ -52,8 +52,8 @@ type
     WindowActive, WindowDrawn, TileGlitch, StopVRAM, StopOAM, FirstLine: Boolean;
     FIFO: array[0..15] of TGBFifoPixel;
     OAM: array[0..159] of Byte;
-    Selected: array[0..9] of Integer;
-    Fetched: array[0..9] of Boolean;
+    Selected: array[0..39] of Integer;
+    Fetched: array[0..39] of Boolean;
     Objects: array[0..15] of TGBFifoPixel;
     ObjectRank: array[0..15] of Integer;
   end;
@@ -97,6 +97,8 @@ type
     FInterruptManager: TGBInterruptManager;
     function GetSpriteHeight: Integer;
   public
+    RuntimeOptions: TGBRuntimeOptions;
+    TagMonochromePixels: Boolean;
     ModeClock: Integer;
     Width, Height: Integer;
     Line, LYC: Integer;
@@ -160,6 +162,7 @@ function TGBVideo.ReadDisplayByte(Bank, Address: Integer): Byte;
 begin
   if FPipeline.StopVRAM then
     Exit($FF);
+
   Result := VRAM[Address and $1FFF];
 end;
 
@@ -169,6 +172,8 @@ begin
     Result := SpritePalette[(Attributes shr 4) and 1][Color]
   else
     Result := BackgroundPalette[Color];
+  if IsObject and TagMonochromePixels then
+    Result := Result or ((((Attributes shr 4) and 1) + 1) shl 2);
 end;
 
 procedure TGBVideo.HBlankStarted;
@@ -194,8 +199,7 @@ end;
 function TGBVideo.OAMCorruptionRow: Integer;
 begin
   Result := -1;
-  if FLCDEnabled and (FCurrentMode = TGPUMode.OAMAccess) and
-    (FPipeline.Dot >= 4) and (FPipeline.Dot < 80) then
+  if FLCDEnabled and (FCurrentMode = TGPUMode.OAMAccess) and (FPipeline.Dot >= 4) and (FPipeline.Dot < 80) then
     Result := FPipeline.Dot div 4;
 end;
 
@@ -223,8 +227,8 @@ begin
   FPipeline.TileGlitch := False;
   FillChar(FPipeline.Fetched, SizeOf(FPipeline.Fetched), 0);
   FillChar(FPipeline.Objects, SizeOf(FPipeline.Objects), 0);
-  for var I := 0 to 15 do
-    FPipeline.ObjectRank[I] := MaxInt;
+  for var i := 0 to 15 do
+    FPipeline.ObjectRank[i] := MaxInt;
 end;
 
 procedure TGBVideo.ClockTileFetcher;
@@ -232,6 +236,7 @@ begin
   Inc(FPipeline.FetchTick);
   if FPipeline.FetchTick < 2 then
     Exit;
+
   FPipeline.FetchTick := 0;
   case FPipeline.FetchStage of
     0:
@@ -283,6 +288,7 @@ begin
       begin
         if FPipeline.Count > 8 then
           Exit;
+
         PushBackground;
       end;
   end;
@@ -297,14 +303,13 @@ end;
 
 procedure TGBVideo.PushBackground;
 begin
-  for var I := 0 to 7 do
+  for var i := 0 to 7 do
   begin
-    var Bit := 7 - I;
+    var Bit := 7 - i;
     if (FPipeline.TileAttributes and $20) <> 0 then
-      Bit := I;
+      Bit := i;
     var Tail := (FPipeline.Head + FPipeline.Count) and 15;
-    FPipeline.FIFO[Tail].Color := ((FPipeline.LowByte shr Bit) and 1) or
-      (((FPipeline.HighByte shr Bit) and 1) shl 1);
+    FPipeline.FIFO[Tail].Color := ((FPipeline.LowByte shr Bit) and 1) or (((FPipeline.HighByte shr Bit) and 1) shl 1);
     FPipeline.FIFO[Tail].Attributes := FPipeline.TileAttributes;
     Inc(FPipeline.Count);
   end;
@@ -338,18 +343,20 @@ begin
   var Rank := FPipeline.Selected[Index];
   if CoordinatePriority then
     Rank := (X + 8) * 40 + Rank;
-  for var I := 0 to 7 do
+  for var i := 0 to 7 do
   begin
-    var Destination := X + I;
+    var Destination := X + i;
     if (Destination < FPipeline.X) or (Destination >= 160) then
       Continue;
-    var Bit := 7 - I;
+
+    var Bit := 7 - i;
     if (Attributes and $20) <> 0 then
-      Bit := I;
+      Bit := i;
     var Color := ((Low shr Bit) and 1) or (((High shr Bit) and 1) shl 1);
     Destination := Destination and 15;
     if (Color = 0) or (Rank >= FPipeline.ObjectRank[Destination]) then
       Continue;
+
     FPipeline.ObjectRank[Destination] := Rank;
     FPipeline.Objects[Destination].Color := Color;
     FPipeline.Objects[Destination].Attributes := Attributes;
@@ -369,12 +376,14 @@ begin
       FetchObject(FPipeline.PendingSprite);
     Exit;
   end;
+
   if FPipeline.Startup > 0 then
   begin
     ClockTileFetcher;
     Dec(FPipeline.Startup);
     Exit;
   end;
+
   if FWindowEnabled and FWindowTriggered and (WindowX <= 166) and
     (ColorRendering or FBackgroundEnabled) and not FPipeline.WindowActive and
     (FPipeline.X >= WindowX - 7) then
@@ -395,20 +404,32 @@ begin
     ClockTileFetcher;
     Exit;
   end;
+
   if (FSpritesEnabled or ColorRendering) and not FPipeline.StopOAM then
-    for var I := 0 to FPipeline.SpriteCount - 1 do
+    for var i := 0 to FPipeline.SpriteCount - 1 do
     begin
-      var SX := Integer(FPipeline.OAM[FPipeline.Selected[I] * 4 + 1]) - 8;
-      if FPipeline.Fetched[I] or (SX > FPipeline.X) or (SX >= 160) then
+      var SX := Integer(FPipeline.OAM[FPipeline.Selected[i] * 4 + 1]) - 8;
+      if FPipeline.Fetched[i] or (SX > FPipeline.X) or (SX >= 160) then
         Continue;
-      FPipeline.Fetched[I] := True;
-      FPipeline.PendingSprite := I;
+
+      FPipeline.Fetched[i] := True;
+      if i >= 10 then
+      begin
+        // Additional host sprites do not extend mode 3 or alter hardware DMA/STAT timing.
+        FPipeline.ObjectLowByte := ReadObjectData(i, False);
+        FPipeline.ObjectHighByte := ReadObjectData(i, True);
+        FetchObject(i);
+        Continue;
+      end;
+
+      FPipeline.PendingSprite := i;
       var Alignment := (SX + ScrollX) and 7;
       if Alignment > 5 then
         Alignment := 5;
       FPipeline.SpriteStall := 10 - Alignment;
       Exit;
     end;
+
   if FPipeline.Count > 0 then
   begin
     var BG := FPipeline.FIFO[FPipeline.Head];
@@ -423,15 +444,20 @@ begin
       var Obj := FPipeline.Objects[FPipeline.X and 15];
       FPipeline.Objects[FPipeline.X and 15] := Default(TGBFifoPixel);
       FPipeline.ObjectRank[FPipeline.X and 15] := MaxInt;
-      if FPipeline.WindowActive and (WindowX <> FPipeline.WindowStartX) and
-        (FPipeline.X = WindowX - 7) then
+      if FPipeline.WindowActive and (WindowX <> FPipeline.WindowStartX) and (FPipeline.X = WindowX - 7) then
         BG.Color := 0;
       if FPipeline.StopVRAM then
       begin
         BG.Color := 3;
         Obj.Color := 0;
       end;
-      var DrawObject := FSpritesEnabled and (Obj.Color <> 0);
+      if (FPipeline.WindowActive and not RuntimeOptions.ShowWindow) or
+        (not FPipeline.WindowActive and not RuntimeOptions.ShowBackground) then
+      begin
+        BG.Color := 0;
+        BG.Attributes := 0;
+      end;
+      var DrawObject := FSpritesEnabled and RuntimeOptions.ShowSprites and (Obj.Color <> 0);
       if BG.Color <> 0 then
       begin
         if ColorRendering then
@@ -466,6 +492,7 @@ begin
   begin
     if not FLCDEnabled then
       Exit;
+
     if (FPipeline.Dot = 0) and (FCurrentMode = TGPUMode.OAMAccess) then
     begin
       FPipeline.SpriteCount := 0;
@@ -488,7 +515,7 @@ begin
       begin
         var Index := FPipeline.Dot div 2 - 1;
         var Y := Integer(FPipeline.OAM[Index * 4]) - 16;
-        if (FPipeline.SpriteCount < 10) and (Line >= Y) and (Line < Y + GetSpriteHeight) then
+        if (FPipeline.SpriteCount < 10 + Ord(RuntimeOptions.RemoveSpriteLimit) * 30) and (Line >= Y) and (Line < Y + GetSpriteHeight) then
         begin
           FPipeline.Selected[FPipeline.SpriteCount] := Index;
           Inc(FPipeline.SpriteCount);
@@ -543,6 +570,7 @@ begin
   inherited Create;
   FInterruptManager := InterruptManager;
   FDrawCallback := Callback;
+  RuntimeOptions := TGBRuntimeOptions.Defaults;
   Width := 160;
   Height := 144;
 
@@ -683,6 +711,7 @@ begin
     FSTATLineActive := False;
     Exit;
   end;
+
   FLineMatchesLYC := Line = LYC;
   // from The Cycle Accurate Game Boy Document (TCAGBD.pdf)
   if (FLineMatchesLYC and FLYCInterruptEnabled) or
@@ -747,6 +776,7 @@ end;
 constructor TGBGPU.Create(Callback: TDrawCallback);
 begin
   inherited Create(Callback, TGBInterruptManager.Instance);
+
   for var i := 0 to 39 do
     with SpriteList[i] do
     begin

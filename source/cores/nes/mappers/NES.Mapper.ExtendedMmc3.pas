@@ -139,6 +139,11 @@ begin
     State.Field(FChrExtra[0], Length(FChrExtra));
   if FBoard = MAPPER_FK23C then
     State.Field(FPrgExtra, SizeOf(FPrgExtra));
+  if FBoard = MAPPER_MMC3_CHR_RAM_195 then
+    if State.Version >= 20 then
+      State.Field(FPrgExtra[0], $1000)
+    else if State.Loading then
+      FillChar(FPrgExtra, SizeOf(FPrgExtra), 0);
 end;
 
 function TMapperExtendedMmc3.PermuteChr(Bank: Integer): Integer;
@@ -731,6 +736,15 @@ const
   Protect187: array[0..3] of Byte = ($83, $83, $42, 0);
   Protect258: array[0..7] of Byte = (0, 0, 0, 1, 2, 4, 15, 0);
 begin
+  // Waixing 195 has a separate, always-enabled 4 KiB RAM at $5000.
+  if (FBoard = MAPPER_MMC3_CHR_RAM_195) and (Address >= $5000) and (Address < $8000) then
+  begin
+    if Address < $6000 then
+      Value := FPrgExtra[Address and $FFF]
+    else
+      Value := FPrgRam[Address and $1FFF];
+    Exit(True);
+  end;
   if (FBoard = MAPPER_DRAGON_FIGHTER) and (Address >= $6000) and (Address < $7000) then
   begin
     if (Address and 1) = 0 then
@@ -833,6 +847,20 @@ const
   Reg215: array[0..4, 0..7] of Byte = ((0, 1, 2, 3, 4, 5, 6, 7), (0, 2, 6, 1, 7, 3, 4, 5), (0, 5, 4, 1, 7, 2, 6, 3), (0, 6, 3, 7, 5, 2, 4, 1), (0, 2, 5, 3, 6, 1, 7, 4));
   Addr215: array[0..4, 0..7] of Byte = ((0, 1, 2, 3, 4, 5, 6, 7), (3, 2, 0, 4, 1, 5, 6, 7), (0, 1, 2, 3, 4, 5, 6, 7), (5, 0, 1, 2, 3, 7, 6, 4), (3, 1, 0, 5, 2, 4, 6, 7));
 begin
+  if FBoard = MAPPER_MMC3_CHR_RAM_195 then
+  begin
+    if (Address >= $5000) and (Address < $8000) then
+    begin
+      if Address < $6000 then
+        FPrgExtra[Address and $FFF] := Value
+      else
+        FPrgRam[Address and $1FFF] := Value;
+      Exit(True);
+    end;
+    // This board does not decode the MMC3 RAM protection register.
+    if (Address >= $8000) and ((Address and $E001) = $A001) then
+      Exit(True);
+  end;
   if (FBoard = MAPPER_DRAGON_FIGHTER) and (Address >= $6000) and (Address < $8000) then
   begin
     if (Address and 1) = 0 then
@@ -959,9 +987,16 @@ begin
   begin
     if Address < $8000 then
     begin
+      // In RAM configuration mode bit 6 enables outer registers, not
+      // write protection: the selected $6000 RAM bank remains writable.
+      if (Address >= $6000) and ((FRegs[6] and $20) <> 0) then
+      begin
+        FPrgExtra[(FRegs[6] and 3) * $2000 + (Address and $1FFF)] := Value;
+        Exit(True);
+      end;
       if ((FRegs[6] and $40) <> 0) or ((FRegs[6] and $20) = 0) then
       begin
-        if (Address and $5010) = $5010 then
+        if (Address < $6000) and ((Address and $5010) = $5010) then
         begin
           FRegs[Address and 3] := Value;
           case Address and 3 of
@@ -997,7 +1032,8 @@ begin
     case Address and $E001 of
       $8000:
         begin
-          if (Length(FPrgRom) = $1000000) and (Value in [$46, $47]) then
+          if ((FSubmapper = 2) or (Length(FPrgRom) = $1000000)) and
+            ((Value and $40) <> 0) and ((Value and 7) >= 6) then
             Value := Value xor 1;
           FBankSelect := Value;
           Exit(True)

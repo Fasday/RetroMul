@@ -62,8 +62,8 @@ begin
     Exit;
   end;
 
-  // Preserve signed ARGB bit patterns, including when range checking is enabled.
-  Move(Screen[0], Frame.Pixels[0], SizeOf(Screen));
+  // Resolve optional monochrome palette tags before applying LCD color correction.
+  inherited CopyFrame(Screen, Frame);
   if (FConfig as TGBCEmulatorConfig).ColorCorrection then
     for var I := 0 to High(Frame.Pixels) do
     begin

@@ -5,7 +5,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.IniFiles, Core.Storage,
   Core.InputConfig, Core.Emulation, GB.EmulationThread, GB.Joypad, GB.GPU,
-  GB.Camera, GB.Memory;
+  GB.Camera, GB.Memory, GB.Palettes;
 
 type
   TGBKeyMap = record
@@ -25,6 +25,9 @@ type
     function GetBootROMFile(Model: TGBBootModel): string;
     procedure SetBootROMFile(Model: TGBBootModel; const Value: string);
     property BootModel: TGBBootModel read GetBootModel write SetBootModel;
+    function GetRuntimeOptions: TGBRuntimeOptions;
+    procedure SetRuntimeOptions(const Value: TGBRuntimeOptions);
+    property RuntimeOptions: TGBRuntimeOptions read GetRuntimeOptions write SetRuntimeOptions;
     function GetScreenPalette: Integer;
     procedure SetScreenPalette(const Value: Integer);
     property ScreenPalette: Integer read GetScreenPalette write SetScreenPalette;
@@ -34,6 +37,7 @@ type
   private
     FKeys: TGBKeyMap;
     FScreenPalette: Integer;
+    FRuntimeOptions: TGBRuntimeOptions;
     FRumbleEnabled: Boolean;
     FBootModel: TGBBootModel;
     FBootROMFiles: array[TGBBootModel] of string;
@@ -55,6 +59,9 @@ type
     function GetBootROMFile(Model: TGBBootModel): string;
     procedure SetBootROMFile(Model: TGBBootModel; const Value: string);
     property BootModel: TGBBootModel read GetBootModel write SetBootModel;
+    function GetRuntimeOptions: TGBRuntimeOptions;
+    procedure SetRuntimeOptions(const Value: TGBRuntimeOptions);
+    property RuntimeOptions: TGBRuntimeOptions read GetRuntimeOptions write SetRuntimeOptions;
     function GetScreenPalette: Integer;
     procedure SetScreenPalette(const Value: Integer);
   end;
@@ -121,7 +128,7 @@ implementation
 
 uses
   Core.RomFormat, Core.Snapshots, Core.SavePaths, System.Math, System.UITypes,
-  GB.Palettes, GB.ROM, GB.MBC, GBC.EmulationThread;
+  GB.ROM, GB.MBC, GBC.EmulationThread;
 
 function TGBCoreAdapter.GetHasRumble: Boolean;
 begin
@@ -181,19 +188,10 @@ end;
 
 procedure TGBCoreAdapter.CopyFrame(const Screen: TScreenArray; var Frame: TEmulatorFrame);
 begin
-  if FColorHardware then
-  begin
-    Move(Screen[0], Frame.Pixels[0], SizeOf(Screen));
-    Exit;
-  end;
-
+  var Options := FConfig.RuntimeOptions;
+  var Palette := FConfig.ScreenPalette;
   for var i := 0 to High(Screen) do
-  begin
-    var Shade := Screen[i];
-    if (Shade < 0) or (Shade > 3) then
-      Shade := 0;
-    Frame.Pixels[i] := ScreenPalettes[FConfig.ScreenPalette].Colors[Shade];
-  end;
+    Frame.Pixels[i] := Options.PresentationColor(Screen[i], Palette, FColorHardware);
 end;
 
 constructor TGBCoreAdapter.Create(const FileName: string);
@@ -277,8 +275,9 @@ begin
   FThread.Storage := FStorage;
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.SavePath := FSavePath;
-  FThread.SoundVolume := FConfig.AudioVolume;
   FThread.ScreenPalette := FConfig.ScreenPalette;
+  FThread.RuntimeOptions := FConfig.RuntimeOptions;
+  FThread.SoundVolume := FConfig.AudioVolume;
   FThread.SetAcceleration(FAccelerationX, FAccelerationY);
 end;
 
@@ -383,6 +382,8 @@ end;
 procedure TGBCoreAdapter.SaveSnapshot(const Name: string);
 begin
   FThread.ScreenPalette := FConfig.ScreenPalette;
+  FThread.RuntimeOptions := FConfig.RuntimeOptions;
+  FThread.SoundVolume := FConfig.AudioVolume;
   FThread.SaveSnapshot(Name);
 end;
 
@@ -461,12 +462,15 @@ end;
 
 function TGBCoreAdapter.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
 var
-  Screen: TScreenArray;
+  Screen, Previous: TScreenArray;
+  HasPrevious: Boolean;
   FramesPerSecond: Double;
 begin
   // Palette changes also republish the last frame while the worker is paused.
   FThread.ScreenPalette := FConfig.ScreenPalette;
-  Result := FThread.TryGetFrame(Screen, FramesPerSecond);
+  FThread.RuntimeOptions := FConfig.RuntimeOptions;
+  FThread.SoundVolume := FConfig.AudioVolume;
+  Result := FThread.TryGetFrame(Screen, Previous, HasPrevious, FramesPerSecond);
   if not Result then
     Exit;
 
@@ -474,6 +478,14 @@ begin
   Frame.Height := 144;
   SetLength(Frame.Pixels, Frame.Width * Frame.Height);
   CopyFrame(Screen, Frame);
+  if FConfig.RuntimeOptions.FrameBlending and HasPrevious then
+  begin
+    var PreviousFrame: TEmulatorFrame;
+    SetLength(PreviousFrame.Pixels, Length(Frame.Pixels));
+    CopyFrame(Previous, PreviousFrame);
+    for var i := 0 to High(Frame.Pixels) do
+      Frame.Pixels[i] := GBBlendColor(Frame.Pixels[i], PreviousFrame.Pixels[i]);
+  end;
   Inc(FFrameNumber);
   Frame.FrameNumber := FFrameNumber;
   Frame.FramesPerSecond := FramesPerSecond;
@@ -494,6 +506,7 @@ begin
   FKeys.Left := vkLeft;
   FKeys.Right := vkRight;
   FScreenPalette := 0;
+  FRuntimeOptions := TGBRuntimeOptions.Defaults;
 end;
 
 function TGBEmulatorConfig.GetRumbleEnabled: Boolean;
@@ -541,6 +554,7 @@ end;
 procedure TGBEmulatorConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
   LoadControls(Ini);
+  FRuntimeOptions.Load(Ini);
   FRumbleEnabled := Ini.ReadBool('Peripherals', 'Rumble', True);
   FBootModel := GBBootModel(Ini.ReadString('Boot', 'Model', 'none'));
   for var Model := Low(TGBBootModel) to High(TGBBootModel) do
@@ -563,11 +577,23 @@ end;
 procedure TGBEmulatorConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
   SaveControls(Ini);
+  FRuntimeOptions.Save(Ini);
   Ini.WriteBool('Peripherals', 'Rumble', FRumbleEnabled);
   Ini.WriteString('Boot', 'Model', GB_BOOT_MODEL_KEYS[FBootModel]);
   for var Model := Low(TGBBootModel) to High(TGBBootModel) do
     Ini.WriteString('Boot', GB_BOOT_MODEL_KEYS[Model] + 'File', FBootROMFiles[Model]);
   Ini.WriteInteger('Video', 'Palette', FScreenPalette);
+end;
+
+function TGBEmulatorConfig.GetRuntimeOptions: TGBRuntimeOptions;
+begin
+  Result := FRuntimeOptions;
+end;
+
+procedure TGBEmulatorConfig.SetRuntimeOptions(const Value: TGBRuntimeOptions);
+begin
+  FRuntimeOptions := Value;
+  FRuntimeOptions.Normalize;
 end;
 
 function TGBEmulatorConfig.GetKeys: TGBKeyMap;

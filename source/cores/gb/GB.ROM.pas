@@ -111,14 +111,14 @@ begin
 
   var HeaderOffset := 0;
   var MenuOffset := Length(Data) - $8000;
+
   // Native MMM01 dumps boot from the last two banks. Older dumpers put the
   // menu first; rotate those dumps once, before creating the cartridge.
   if (MenuOffset >= 0) and ((not Footer.Present and (Data[MenuOffset + $147] in [$0B..$0D])) or
     (Footer.Present and (Footer.Mapper = 'MMM1'))) and
     CompareMem(@Data[MenuOffset + $104], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO)) then
     HeaderOffset := MenuOffset
-  else if (MenuOffset >= 0) and (Data[$147] in [$0B..$0D]) and
-    (not Footer.Present or (Footer.Mapper = 'MMM1')) then
+  else if (MenuOffset >= 0) and (Data[$147] in [$0B..$0D]) and (not Footer.Present or (Footer.Mapper = 'MMM1')) then
   begin
     var Menu := Copy(Data, 0, $8000);
     if MenuOffset > 0 then
@@ -126,8 +126,10 @@ begin
     Move(Menu[0], Data[MenuOffset], $8000);
     HeaderOffset := MenuOffset;
   end;
+
   if Footer.Present and (Footer.Mapper = 'MMM1') then
     HeaderOffset := MenuOffset;
+
   var ParsedCartridge: TGBCartridge := TGBCartridge.Create(Data, HeaderOffset);
   try
     ParsedCartridge.ApplyGBX(Footer);

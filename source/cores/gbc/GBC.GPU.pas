@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.Snapshots, System.Classes, GBC.InterruptManager, GB.GPU;
+  Core.Snapshots, System.Classes, GBC.InterruptManager, GB.GPU, GB.Palettes;
 
 {$SCOPEDENUMS ON}
 
@@ -121,10 +121,10 @@ end;
 
 procedure TGBCGPU.RebuildPaletteColors;
 begin
-  for var I := 0 to 31 do
+  for var i := 0 to 31 do
   begin
-    FBGColors[I] := CGBColor(FBGPaletteRAM, I shr 2, I and 3);
-    FOBJColors[I] := CGBColor(FOBJPaletteRAM, I shr 2, I and 3);
+    FBGColors[i] := CGBColor(FBGPaletteRAM, i shr 2, i and 3);
+    FOBJColors[i] := CGBColor(FOBJPaletteRAM, i shr 2, i and 3);
   end;
 end;
 
@@ -154,16 +154,27 @@ begin
   end
   else
     Shade := BackgroundPalette[ColorIndex];
+
   if FBootCompatibilityPalettes then
   begin
     if IsObject then
       Result := FOBJColors[((PaletteIndex and 1) shl 2) or Shade]
     else
       Result := FBGColors[Shade];
-    Exit;
-  end;
+  end
+  else
+    Result := -$01000000 or (DMGR[Shade] shl 16) or (DMGG[Shade] shl 8) or DMGB[Shade];
 
-  Result := -$01000000 or (DMGR[Shade] shl 16) or (DMGG[Shade] shl 8) or DMGB[Shade];
+  var Group := 0;
+  if IsObject then
+    Group := 1 + (PaletteIndex and 1);
+  if TagMonochromePixels then
+    Result := (Result and $FFFFFF) or ((-$40000000) + ((Group * 4 + Shade) shl 24))
+  else if RuntimeOptions.Palettes[Group] >= 0 then
+  begin
+    var HostColor := ScreenPalettes[RuntimeOptions.Palettes[Group]].Colors[Shade];
+    Move(HostColor, Result, SizeOf(Result));
+  end;
 end;
 
 procedure TGBCGPU.SetCGBMode(Value: Boolean);
@@ -345,6 +356,7 @@ function TGBCGPU.ReadDisplayByte(Bank, Address: Integer): Byte;
 begin
   if FPipeline.StopVRAM then
     Exit($FF);
+
   if Bank = 1 then
     Result := VRAMBank1[Address and $1FFF]
   else
@@ -355,6 +367,7 @@ function TGBCGPU.ResolvePixel(IsObject: Boolean; Attributes, Color: Integer): In
 begin
   if FPipeline.StopVRAM then
     Exit(Integer($FF000000));
+
   var PaletteIndex := Attributes and 7;
   if not FCGBMode then
     PaletteIndex := (Attributes shr 4) and 1;

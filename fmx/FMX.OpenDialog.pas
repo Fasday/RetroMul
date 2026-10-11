@@ -23,7 +23,7 @@ type
     FTitle, FFilter, FInitialDirectory, FMimeType: string;
     FMultipleSelection: Boolean;
     FFileMustExist: Boolean;
-    procedure Select(AFolder: Boolean; const ACallback: TFMXSelectionCallback);
+    procedure Select(AFolder: Boolean; const ACallback: TFMXSelectionCallback; const SaveName: string = '');
   public
     constructor Create(AOwner: TComponent); override;
     // Call on the main thread. Completion is always deferred to the main thread.
@@ -31,6 +31,7 @@ type
     // Callbacks must manage the lifetime of any objects they capture.
     procedure SelectFiles(const ACallback: TFMXSelectionCallback);
     procedure SelectFolder(const ACallback: TFMXSelectionCallback);
+    procedure SaveFile(const SuggestedName: string; const ACallback: TFMXSelectionCallback);
     property Title: string read FTitle write FTitle;
     property Filter: string read FFilter write FFilter;
     // Desktop filesystem directory. Android providers control the initial folder.
@@ -61,7 +62,7 @@ type
   TSelectionRequest = class(TInterfacedObject, ISelectionRequest)
   private
     FFolder, FMultiple, FCompleted, FFileMustExist: Boolean;
-    FTitle, FFilter, FDirectory, FMime: string;
+    FTitle, FFilter, FDirectory, FMime, FSaveName: string;
     FCallback: TFMXSelectionCallback;
     {$IFDEF ANDROID}
     FRequestCode: Integer;
@@ -70,7 +71,7 @@ type
     {$ENDIF}
     procedure Complete(const AResult: TFMXSelectionResult);
   public
-    constructor Create(ADialog: TFMXOpenDialog; AFolder: Boolean; const ACallback: TFMXSelectionCallback);
+    constructor Create(ADialog: TFMXOpenDialog; AFolder: Boolean; const ACallback: TFMXSelectionCallback; const SaveName: string);
     destructor Destroy; override;
     procedure Start;
   end;
@@ -112,7 +113,14 @@ begin
   Select(True, ACallback);
 end;
 
-procedure TFMXOpenDialog.Select(AFolder: Boolean; const ACallback: TFMXSelectionCallback);
+procedure TFMXOpenDialog.SaveFile(const SuggestedName: string; const ACallback: TFMXSelectionCallback);
+begin
+  if SuggestedName = '' then
+    raise EArgumentException.Create('A suggested file name is required');
+  Select(False, ACallback, SuggestedName);
+end;
+
+procedure TFMXOpenDialog.Select(AFolder: Boolean; const ACallback: TFMXSelectionCallback; const SaveName: string);
 begin
   if TThread.CurrentThread.ThreadID <> MainThreadID then
     raise EInvalidOperation.Create('File selection must start on the main thread');
@@ -129,7 +137,7 @@ begin
     Exit;
   end;
 
-  var Request: ISelectionRequest := TSelectionRequest.Create(Self, AFolder, ACallback);
+  var Request: ISelectionRequest := TSelectionRequest.Create(Self, AFolder, ACallback, SaveName);
   ActiveRequest := Request;
   TThread.ForceQueue(nil,
     procedure
@@ -138,7 +146,7 @@ begin
     end);
 end;
 
-constructor TSelectionRequest.Create(ADialog: TFMXOpenDialog; AFolder: Boolean; const ACallback: TFMXSelectionCallback);
+constructor TSelectionRequest.Create(ADialog: TFMXOpenDialog; AFolder: Boolean; const ACallback: TFMXSelectionCallback; const SaveName: string);
 begin
   inherited Create;
   FFolder := AFolder;
@@ -148,6 +156,7 @@ begin
   FFilter := ADialog.Filter;
   FDirectory := ADialog.InitialDirectory;
   FMime := ADialog.MimeType;
+  FSaveName := SaveName;
   FCallback := ACallback;
   {$IFDEF ANDROID}
   FRequestCode := NextRequestCode;
@@ -199,15 +208,24 @@ begin
       Intent := TJIntent.JavaClass.init(TJIntent.JavaClass.ACTION_OPEN_DOCUMENT_TREE)
     else
     begin
-      Intent := TJIntent.JavaClass.init(TJIntent.JavaClass.ACTION_OPEN_DOCUMENT);
+      if FSaveName <> '' then
+      begin
+        Intent := TJIntent.JavaClass.init(TJIntent.JavaClass.ACTION_CREATE_DOCUMENT);
+        Intent.putExtra(TJIntent.JavaClass.EXTRA_TITLE, StringToJString(FSaveName));
+      end
+      else
+        Intent := TJIntent.JavaClass.init(TJIntent.JavaClass.ACTION_OPEN_DOCUMENT);
       Intent.addCategory(TJIntent.JavaClass.CATEGORY_OPENABLE);
       if FMime = '' then
         FMime := '*/*';
       Intent.setType(StringToJString(FMime));
-      Intent.putExtra(TJIntent.JavaClass.EXTRA_ALLOW_MULTIPLE, FMultiple);
+      if FSaveName = '' then
+        Intent.putExtra(TJIntent.JavaClass.EXTRA_ALLOW_MULTIPLE, FMultiple);
     end;
     Intent.addFlags(TJIntent.JavaClass.FLAG_GRANT_READ_URI_PERMISSION or
       TJIntent.JavaClass.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+    if FSaveName <> '' then
+      Intent.addFlags(TJIntent.JavaClass.FLAG_GRANT_WRITE_URI_PERMISSION);
     if FFolder then
       Intent.addFlags(TJIntent.JavaClass.FLAG_GRANT_PREFIX_URI_PERMISSION);
     TMessageManager.DefaultManager.SubscribeToMessage(TMessageResultNotification, ActivityResult);
@@ -224,39 +242,61 @@ begin
     raise ENotSupportedException.Create('iOS document selection is not implemented');
     {$ENDIF}
 
-    var Dialog := TOpenDialog.Create(nil);
-    try
-      Dialog.Title := FTitle;
-      // GTK treats *.* literally: it excludes names without a dot, including
-      // directories. Folder selection must ignore any file-extension filter.
-      if FFolder then
-        Dialog.Filter := 'Folders|*'
-      else
-        Dialog.Filter := FFilter;
-      Dialog.InitialDir := FDirectory;
-      Dialog.Options := [TOpenOption.ofPathMustExist, TOpenOption.ofNoChangeDir];
-      if FFileMustExist and not FFolder then
-        Dialog.Options := Dialog.Options + [TOpenOption.ofFileMustExist];
-      if FMultiple and not FFolder then
-        Dialog.Options := Dialog.Options + [TOpenOption.ofAllowMultiSelect];
-      var Files: TStrings := TStringList.Create;
+    if FSaveName <> '' then
+    begin
+      var SaveDialog := TSaveDialog.Create(nil);
       try
-        var DialogType := TDialogType.Standard;
-        if FFolder then
-          DialogType := TDialogType.Directory;
-        if Service.DialogOpenFiles(Dialog, Files, DialogType) then
+        SaveDialog.Title := FTitle;
+        SaveDialog.Filter := FFilter;
+        SaveDialog.InitialDir := FDirectory;
+        SaveDialog.FileName := FSaveName;
+        SaveDialog.DefaultExt := ExtractFileExt(FSaveName).TrimLeft(['.']);
+        SaveDialog.Options := [TOpenOption.ofPathMustExist, TOpenOption.ofNoChangeDir, TOpenOption.ofOverwritePrompt];
+        if SaveDialog.Execute then
         begin
-          Selection.Locations := Files.ToStringArray;
-          if Length(Selection.Locations) = 0 then
-            raise EInvalidOperation.Create('The picker returned no selection');
-
+          Selection.Locations := [SaveDialog.FileName];
           Selection.Status := TFMXSelectionStatus.Selected;
         end;
       finally
-        Files.Free;
+        SaveDialog.Free;
       end;
-    finally
-      Dialog.Free;
+    end
+    else
+    begin
+      var Dialog := TOpenDialog.Create(nil);
+      try
+        Dialog.Title := FTitle;
+        // GTK treats *.* literally: it excludes names without a dot, including
+        // directories. Folder selection must ignore any file-extension filter.
+        if FFolder then
+          Dialog.Filter := 'Folders|*'
+        else
+          Dialog.Filter := FFilter;
+        Dialog.InitialDir := FDirectory;
+        Dialog.Options := [TOpenOption.ofPathMustExist, TOpenOption.ofNoChangeDir];
+        if FFileMustExist and not FFolder then
+          Dialog.Options := Dialog.Options + [TOpenOption.ofFileMustExist];
+        if FMultiple and not FFolder then
+          Dialog.Options := Dialog.Options + [TOpenOption.ofAllowMultiSelect];
+        var Files: TStrings := TStringList.Create;
+        try
+          var DialogType := TDialogType.Standard;
+          if FFolder then
+            DialogType := TDialogType.Directory;
+          if Service.DialogOpenFiles(Dialog, Files, DialogType) then
+          begin
+            Selection.Locations := Files.ToStringArray;
+            if Length(Selection.Locations) = 0 then
+              raise EInvalidOperation.Create('The picker returned no selection');
+
+            Selection.Status := TFMXSelectionStatus.Selected;
+          end;
+        finally
+          Files.Free;
+        end;
+      finally
+        Dialog.Free;
+      end;
     end;
     {$ENDIF}
   except
@@ -316,7 +356,10 @@ begin
       // Preserve read access when the provider grants persistable permission.
       if (Intent.getFlags and TJIntent.JavaClass.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) <> 0 then
       begin
-        var Flags := Intent.getFlags and TJIntent.JavaClass.FLAG_GRANT_READ_URI_PERMISSION;
+        var PermissionMask := TJIntent.JavaClass.FLAG_GRANT_READ_URI_PERMISSION;
+        if FSaveName <> '' then
+          PermissionMask := PermissionMask or TJIntent.JavaClass.FLAG_GRANT_WRITE_URI_PERMISSION;
+        var Flags := Intent.getFlags and PermissionMask;
         for var Location in Selection.Locations do
           TAndroidHelper.Context.getContentResolver.takePersistableUriPermission(
             TJnet_Uri.JavaClass.parse(StringToJString(Location)), Flags);

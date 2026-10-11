@@ -119,10 +119,10 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
-  // GB/GBC v4 includes DMA/timer/camera state, pixel FIFO, DIV-clocked APU
-  // and the pending CPU STOP/speed transition. Earlier layouts are rejected.
+  // GB/GBC v5 extends the sprite FIFO selection and stores fractional CPU clocks.
+  // Earlier layouts are rejected; host enhancement settings are not restored.
   if (PlatformCore = ROM_CORE_ID_GB) or (PlatformCore = ROM_CORE_ID_GBC) then
-    Result.Version := 4;
+    Result.Version := 5;
   // MD v5 adds Z80 IFF2 and the pending NMI latch.
   if PlatformCore = ROM_CORE_ID_MD then
     Result.Version := 5;

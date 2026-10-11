@@ -189,10 +189,10 @@ begin
   State.Field(FMasterEnabled, SizeOf(FMasterEnabled));
   State.Field(FEnableRegisterUpperBits, SizeOf(FEnableRegisterUpperBits));
   State.Field(FFlagRegisterUpperBits, SizeOf(FFlagRegisterUpperBits));
-  for var I := 0 to High(FInterrupts) do
+  for var i := 0 to High(FInterrupts) do
   begin
-    State.Field(FInterrupts[I].IsRaised, SizeOf(Boolean));
-    State.Field(FInterrupts[I].IsEnabled, SizeOf(Boolean));
+    State.Field(FInterrupts[i].IsRaised, SizeOf(Boolean));
+    State.Field(FInterrupts[i].IsEnabled, SizeOf(Boolean));
   end;
 end;
 

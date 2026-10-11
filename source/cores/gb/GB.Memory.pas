@@ -149,8 +149,8 @@ begin
   if (Length(Data) = 0) and (Model in [TGBBootModel.DMG, TGBBootModel.MGB]) then
   begin
     SetLength(Result, 256);
-    for var I := 0 to 255 do
-      Result[I] := BootROM[I];
+    for var i := 0 to 255 do
+      Result[i] := BootROM[i];
     if Model = TGBBootModel.MGB then
       Result[$FD] := $FF;
     Exit;
@@ -480,19 +480,21 @@ begin
     SetOAMWord(Current, B or (A and C));
   Move(OAM[Previous + 2], OAM[Current + 2], 6);
   // Keep the PPU's OAM bus and decoded debugger view coherent.
-  for var I := 0 to 159 do
-    FGPU.BuildSprite(I, OAM[I]);
+  for var i := 0 to 159 do
+    FGPU.BuildSprite(i, OAM[i]);
 end;
 
 function TGBMemory.ReadByte(Address: Integer): Byte;
 begin
   if not FSuppressCorruption then
     ProcessOAMCorruption(Address, TGBOAMCorruption.Read);
-  if ((Address and $FF00) = $FE00) and
-    ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
+
+  if ((Address and $FF00) = $FE00) and ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
     Exit($FF);
+
   if DMABlocksCPU(Address) then
     Exit($FF);
+
   if Assigned(AudioRead) and (Address >= $FF10) and (Address <= $FF3F) then
     Exit(AudioRead(Address));
 
@@ -592,9 +594,9 @@ end;
 procedure TGBMemory.WriteByte(Address: Integer; Value: Byte);
 begin
   ProcessOAMCorruption(Address, TGBOAMCorruption.Write);
-  if ((Address and $FF00) = $FE00) and
-    ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
+  if ((Address and $FF00) = $FE00) and ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
     Exit;
+
   if DMABlocksCPU(Address) then
     Exit;
 
@@ -603,6 +605,7 @@ begin
     AudioWrite(Address, Value);
     Exit;
   end;
+
   if (Address >= $FF4C) and (Address <= $FF7F) and WriteModelRegister(Address, Value) then
     Exit;
 

@@ -41,3 +41,4 @@ __recovery/
 *.rsm
 /tune/soundfonts/*
 /tune/Win64/*
+/fmx/Lang/*

@@ -178,8 +178,7 @@ begin
     Exit;
   end;
 
-  if FROM.GetCartridgeType.MapperType in
-    [TMapperType.M161, TMapperType.WisdomTree, TMapperType.HuC1, TMapperType.MMM01] then
+  if FROM.GetCartridgeType.MapperType in [TMapperType.M161, TMapperType.WisdomTree, TMapperType.HuC1, TMapperType.MMM01] then
   begin
     FFixedROMBank := ExtendedROMBank(0);
     ROMBankSelected := ExtendedROMBank($4000);

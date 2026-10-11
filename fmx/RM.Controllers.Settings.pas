@@ -35,10 +35,23 @@ begin
     var Language := Ini.ReadString('General', 'Language', 'en');
     if FirstLaunch then
       Language := FView.SystemLanguage;
-    FormStyles.SetLanguage(Language);
+    var Translation: TStringList := nil;
+    var TranslationError := '';
+    try
+      try
+        Translation := FormStyles.LoadTranslation(FState.Session.Storage,
+          Ini.ReadString('General', 'TranslationFile', '').Trim, Language);
+      except
+        on E: Exception do
+          TranslationError := E.Message;
+      end;
+      FormStyles.SetLanguage(Language, Translation);
+    finally
+      Translation.Free;
+    end;
     if FirstLaunch then
     begin
-      Ini.WriteString('General', 'Language', FormStyles.Lang.Lang);
+      Ini.WriteString('General', 'Language', FormStyles.SelectedLanguage);
       FState.Session.Storage.WriteConfig(Ini);
     end;
     if PreviousLanguage <> FormStyles.Lang.Lang then
@@ -60,6 +73,8 @@ begin
     FState.Autosave.Minutes := EnsureRange(Ini.ReadInteger('General', 'AutosaveMinutes',
         AUTOSAVE_DEFAULT_MINUTES), 1, AUTOSAVE_MAX_MINUTES);
     FState.Autosave.LastTick := FView.CurrentTick;
+    if TranslationError <> '' then
+      FView.SetStatus(Translate('Unable to load translation: ') + TranslationError);
   finally
     Ini.Free;
   end;
@@ -135,9 +150,10 @@ begin
     try
       Config.Filter := Ini.ReadString('Video', 'Filter', Config.Filter);
       var GBConfig: IGBEmulatorConfig;
-      if (FState.Input.SystemId = ROM_SYSTEM_GB) and Supports(Config, IGBEmulatorConfig, GBConfig) then
-        GBConfig.ScreenPalette := Ini.ReadInteger('Video', 'Palette', GBConfig.ScreenPalette);
+      if Supports(Config, IGBEmulatorConfig, GBConfig) then
+        Config.Load;
       FView.ImageCanvas.DisableInterpolation := SameText(Config.Filter, 'nearest');
+      FView.UpdateFrame;
       FView.ImageCanvas.Repaint;
     finally
       Ini.Free;
@@ -292,7 +308,7 @@ begin
           for var i := Low(SettingsCoreIds) to High(SettingsCoreIds) do
             if SettingsCoreIds[i] = FState.Input.SystemId then
               FState.Settings.View.SelectCore(i);
-          FState.Settings.View.SelectCategory(3);
+          FState.Settings.View.SelectCategory(SETTINGS_CATEGORY_CONTROLS);
         end;
       end
       else

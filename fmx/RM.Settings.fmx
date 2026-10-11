@@ -510,7 +510,7 @@ object SettingsView: TSettingsView
         TabOrder = 0
         object PanelGroupAppearance: TPanel
           Size.Width = 900.000000000000000000
-          Size.Height = 224.000000000000000000
+          Size.Height = 380.000000000000000000
           Size.PlatformDefault = False
           StyleLookup = 'retromul_card'
           object LabelGroupAppearanceTitle: TLabel
@@ -574,13 +574,154 @@ object SettingsView: TSettingsView
               Size.PlatformDefault = False
             end
           end
-          object PanelRowTheme: TPanel
+          object PanelRowTranslationfile: TPanel
             Padding.Left = 16.000000000000000000
             Padding.Top = 12.000000000000000000
             Padding.Right = 16.000000000000000000
             Padding.Bottom = 12.000000000000000000
             Position.X = 16.000000000000000000
             Position.Y = 134.000000000000000000
+            Size.Width = 868.000000000000000000
+            Size.Height = 72.000000000000000000
+            Size.PlatformDefault = False
+            StyleLookup = 'retromul_row'
+            object LayoutRowTranslationfileText: TLayout
+              Position.X = 16.000000000000000000
+              Position.Y = 12.000000000000000000
+              Size.Width = 600.000000000000000000
+              Size.Height = 48.000000000000000000
+              Size.PlatformDefault = False
+              object LabelRowTranslationfileTitle: TLabel
+                Align = Top
+                StyledSettings = [Family, Style, FontColor]
+                Size.Width = 600.000000000000000000
+                Size.Height = 24.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 15.000000000000000000
+                TextSettings.WordWrap = False
+                Text = 'Translation file'
+              end
+              object LabelRowTranslationfileDetail: TLabel
+                Align = Client
+                StyledSettings = [Family, Style, FontColor]
+                Opacity = 0.720000028610229500
+                Size.Width = 600.000000000000000000
+                Size.Height = 24.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 14.000000000000000000
+                Text = 
+                  'Overrides the selected language. Leave empty to use the built-in' +
+                  ' translation.'
+              end
+            end
+            object EditRowTranslationfileEditor: TEdit
+              Touch.InteractiveGestures = [LongTap, DoubleTap]
+              Position.X = 632.000000000000000000
+              Position.Y = 20.000000000000000000
+              Size.Width = 220.000000000000000000
+              Size.Height = 32.000000000000000000
+              Size.PlatformDefault = False
+              object EditButtonRowTranslationfileBrowse: TEditButton
+                Touch.InteractiveGestures = [LongTap]
+                CanFocus = False
+                Cursor = crArrow
+                Hint = 'Choose translation file'
+                Size.Width = 32.000000000000000000
+                Size.Height = 32.000000000000000000
+                Size.PlatformDefault = False
+                TabOrder = 0
+                object PathRowTranslationfileBrowseIcon: TPath
+                  Align = Center
+                  Data.Path = {
+                    18000000000000000000804000002041020000006666D6400000204102000000
+                    6666D64000006041020000000000804000006041020000006666A63F00006041
+                    020000006666A63F000020410200000000008040000020410300000000008040
+                    000020410000000000004041000020410200000033336B410000204102000000
+                    33336B410000604102000000000040410000604102000000CDCC144100006041
+                    02000000CDCC1441000020410200000000004041000020410300000000004041
+                    00002041000000000000A04100002041020000009A99B5410000204102000000
+                    9A99B54100006041020000000000A041000060410200000066668A4100006041
+                    0200000066668A4100002041020000000000A04100002041030000000000A041
+                    00002041}
+                  Fill.Kind = None
+                  HitTest = False
+                  Size.Width = 16.000000000000000000
+                  Size.Height = 16.000000000000000000
+                  Size.PlatformDefault = False
+                  Stroke.Color = xFFE8ECF1
+                  Stroke.Thickness = 1.600000023841858000
+                  WrapMode = Fit
+                end
+              end
+              object EditButtonRowTranslationfileClear: TEditButton
+                Touch.InteractiveGestures = [LongTap]
+                CanFocus = False
+                Cursor = crArrow
+                Hint = 'Clear'
+                Size.Width = 32.000000000000000000
+                Size.Height = 32.000000000000000000
+                Size.PlatformDefault = False
+                TabOrder = 1
+                Text = #215
+              end
+            end
+          end
+          object PanelRowTranslationtemplate: TPanel
+            Padding.Left = 16.000000000000000000
+            Padding.Top = 12.000000000000000000
+            Padding.Right = 16.000000000000000000
+            Padding.Bottom = 12.000000000000000000
+            Position.X = 16.000000000000000000
+            Position.Y = 212.000000000000000000
+            Size.Width = 868.000000000000000000
+            Size.Height = 72.000000000000000000
+            Size.PlatformDefault = False
+            StyleLookup = 'retromul_row'
+            object LayoutRowTranslationtemplateText: TLayout
+              Position.X = 16.000000000000000000
+              Position.Y = 12.000000000000000000
+              Size.Width = 600.000000000000000000
+              Size.Height = 48.000000000000000000
+              Size.PlatformDefault = False
+              object LabelRowTranslationtemplateTitle: TLabel
+                Align = Top
+                StyledSettings = [Family, Style]
+                Size.Width = 600.000000000000000000
+                Size.Height = 24.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 15.000000000000000000
+                TextSettings.FontColor = claWhite
+                TextSettings.WordWrap = False
+                Text = 'Translation template'
+              end
+              object LabelRowTranslationtemplateDetail: TLabel
+                Align = Client
+                StyledSettings = [Family, Style]
+                Opacity = 0.720000028610229500
+                Size.Width = 600.000000000000000000
+                Size.Height = 24.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 14.000000000000000000
+                TextSettings.FontColor = claWhite
+                Text = 'Save all original strings to a UTF-8 file for translation.'
+              end
+            end
+            object ButtonSaveTranslationTemplate: TButton
+              Position.X = 632.000000000000000000
+              Position.Y = 20.000000000000000000
+              Size.Width = 220.000000000000000000
+              Size.Height = 32.000000000000000000
+              Size.PlatformDefault = False
+              Text = 'Save translation template'
+            end
+          end
+          object PanelRowTheme: TPanel
+            Padding.Left = 16.000000000000000000
+            Padding.Top = 12.000000000000000000
+            Padding.Right = 16.000000000000000000
+            Padding.Bottom = 12.000000000000000000
+            Position.X = 16.000000000000000000
+            Position.Y = 290.000000000000000000
             Size.Width = 868.000000000000000000
             Size.Height = 72.000000000000000000
             Size.PlatformDefault = False
@@ -628,7 +769,7 @@ object SettingsView: TSettingsView
           end
         end
         object PanelGroupDuringgameplay: TPanel
-          Position.Y = 240.000000000000000000
+          Position.Y = 396.000000000000000000
           Size.Width = 900.000000000000000000
           Size.Height = 224.000000000000000000
           Size.PlatformDefault = False
@@ -746,7 +887,7 @@ object SettingsView: TSettingsView
           end
         end
         object PanelGroupAutosave: TPanel
-          Position.Y = 480.000000000000000000
+          Position.Y = 636.000000000000000000
           Size.Width = 900.000000000000000000
           Size.Height = 224.000000000000000000
           Size.PlatformDefault = False

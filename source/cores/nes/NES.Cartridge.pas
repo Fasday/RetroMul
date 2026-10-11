@@ -343,6 +343,16 @@ begin
     Mirror := TMirrorMode.Single0;
     FMetadata.MirrorMode := Mirror
   end;
+  // Mapper 218 uses bits 3/0 to select CIRAM A10 from PPU A10..A13.
+  // Bit 3 selects A12/A13 rather than four-screen nametable RAM.
+  if (FMapperId = MAPPER_MAGIC_FLOOR218) and ((Header.Flags6 and 8) <> 0) then
+  begin
+    if (Header.Flags6 and 1) = 0 then
+      Mirror := TMirrorMode.Single0
+    else
+      Mirror := TMirrorMode.Single1;
+    FMetadata.MirrorMode := Mirror
+  end;
   FMapper := CreateMapper(FMapperId, PrgRom, ChrRom, ChrRam, Mirror,
     FMetadata.Format = TRomFormat.INes, FMetadata.Submapper, FMetadata.HasBattery);
   if FMapper = nil then
@@ -394,7 +404,9 @@ begin
   begin
     if (FMetadata.ChrNvRamSize <> 0) or
       ((FMetadata.PrgRamSize <> 0) and (FMetadata.PrgNvRamSize <> 0) and
-      not ((FMapperId = MAPPER_WAIXING164) and (FMetadata.PrgNvRamSize = 512) and (FSaveSize = 512))) or
+      not ((FMapperId = MAPPER_WAIXING164) and (FMetadata.PrgNvRamSize = 512) and (FSaveSize = 512)) and
+      not ((FMapperId = MAPPER_MMC3_CHR_RAM_195) and (FMetadata.PrgRamSize = $1000) and
+        (FMetadata.PrgNvRamSize = $2000) and (FSaveSize = $2000))) or
       (FMetadata.PrgNvRamSize > UInt64(FSaveSize)) then
       raise ENesException.Create('Unsupported NES 2.0 persistent memory layout');
 

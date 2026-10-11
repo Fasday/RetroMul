@@ -9,6 +9,33 @@ uses
   FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox, FMX.Controls.Presentation,
   Core.Storage, Core.Emulation, FMXInput, FMX.Objects;
 
+const
+  SETTINGS_CATEGORY_GENERAL = 0;
+  SETTINGS_CATEGORY_LIBRARY = 1;
+  SETTINGS_CATEGORY_VIDEO_AUDIO = 2;
+  SETTINGS_CATEGORY_CONTROLS = 3;
+  SETTINGS_CATEGORY_PERIPHERALS = 4;
+
+const
+  SETTINGS_PAGE_MAIN = 0;
+  SETTINGS_PAGE_GB = 1;
+  SETTINGS_PAGE_GBC = 2;
+  SETTINGS_PAGE_NES = 3;
+  SETTINGS_PAGE_MD = 4;
+  SETTINGS_PAGE_SNES = 5;
+  SETTINGS_PAGE_NEOGEO = 6;
+
+const
+  AUTOSAVE_DEFAULT_MINUTES = 10;
+  AUTOSAVE_MAX_MINUTES = 1440;
+
+const
+  SettingsCategoryNames: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of string = ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
+  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_NEOGEO] of string = (
+    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO);
+  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_NEOGEO] of string = ('Main', 'Game Boy', 'Game Boy Color',
+    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo');
+
 type
   TDeviceCallouts = class;
 
@@ -43,6 +70,8 @@ type
 
   TSettingsLocationPicker = reference to procedure(Folder: Boolean; const Current: string; const Callback: TStorageSelectionCallback);
 
+  TSettingsTemplatePicker = reference to procedure(const SuggestedName: string; const Callback: TStorageSelectionCallback);
+
   TSettingsField = class
     Control: TControl;
     Row: TPanel;
@@ -75,10 +104,12 @@ type
   private
     FStorage: IStorage;
     FPicker: TSettingsLocationPicker;
+    FTemplatePicker: TSettingsTemplatePicker;
     FPickingBootROM: Boolean;
+    FPickingTranslation: Boolean;
     FInput: TInputManager; // Draft assignments owned by this view.
     FHostInput: TInputManager; // Shared device snapshots; owned by the form.
-    FDrafts: array[0..6] of TMemIniFile;
+    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_NEOGEO] of TMemIniFile;
     FFields: TObjectList<TSettingsField>;
     FDevices: TObjectList<TSettingsDevice>;
     FDeviceIds: array[0..7] of string;
@@ -87,8 +118,8 @@ type
     FSearch: TEdit;
     FPagePicker: TComboBox;
     FCategory, FCorePage, FPlayer: Integer;
-    FCoreButtons: array[1..6] of TButton;
-    FCategoryIcons: array[0..4] of TControl;
+    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_NEOGEO] of TButton;
+    FCategoryIcons: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of TControl;
     FPage: Integer;
     FGroup: TPanel;
     FPreview: TControl;
@@ -104,7 +135,8 @@ type
     FOnApply, FOnClose: TNotifyEvent;
     procedure InitializeRuntimeControls;
     procedure InitializeGBControls;
-    procedure ClearBootROMClick(Sender: TObject);
+    procedure ClearPathClick(Sender: TObject);
+    procedure SaveTemplateClick(Sender: TObject);
     procedure BuildPage(PreserveScroll: Boolean = False);
     procedure RequestRebuild;
     procedure StorePage;
@@ -154,6 +186,7 @@ type
   protected
     procedure Resize; override;
     procedure PickLocation(Folder: Boolean; const Current: string; const Callback: TStorageSelectionCallback); virtual;
+    procedure PickTemplateLocation(const Callback: TStorageSelectionCallback); virtual;
   public
     constructor CreateSettings(AOwner: TComponent; const Storage: IStorage; Input: TInputManager);
     destructor Destroy; override;
@@ -168,17 +201,9 @@ type
     procedure ApplyLanguage(const PreviousLanguage: string);
     property OnApply: TNotifyEvent read FOnApply write FOnApply;
     property LocationPicker: TSettingsLocationPicker read FPicker write FPicker;
+    property TemplateLocationPicker: TSettingsTemplatePicker read FTemplatePicker write FTemplatePicker;
     property OnClose: TNotifyEvent read FOnClose write FOnClose;
   end;
-
-const
-  AUTOSAVE_DEFAULT_MINUTES = 10;
-  AUTOSAVE_MAX_MINUTES = 1440;
-  SettingsCategoryNames: array[0..4] of string = ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
-  SettingsCoreIds: array[1..6] of string = (
-    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO);
-  SettingsPageNames: array[0..6] of string = ('Main', 'Game Boy', 'Game Boy Color',
-    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo');
 
 implementation
 
@@ -603,7 +628,9 @@ constructor TSettingsView.CreateSettings(AOwner: TComponent; const Storage: ISto
 begin
   FBuilding := True;
   inherited Create(AOwner);
-  FCorePage := 1;
+  FCategory := SETTINGS_CATEGORY_GENERAL;
+  FPage := SETTINGS_PAGE_MAIN;
+  FCorePage := SETTINGS_PAGE_GB;
   FStorage := Storage;
   FHostInput := Input;
   if Input <> nil then
@@ -621,9 +648,9 @@ begin
     begin
       Alive := False;
     end;
-  FDrafts[0] := FStorage.ReadConfig(FStorage.ConfigFile('config'));
-  FDrafts[0].WriteString('General', 'Path', FStorage.RomFolder);
-  for var i := 1 to High(SettingsCoreIds) do
+  FDrafts[SETTINGS_PAGE_MAIN] := FStorage.ReadConfig(FStorage.ConfigFile('config'));
+  FDrafts[SETTINGS_PAGE_MAIN].WriteString('General', 'Path', FStorage.RomFolder);
+  for var i := Low(SettingsCoreIds) to High(SettingsCoreIds) do
     FDrafts[i] := FStorage.ReadConfig(FStorage.ConfigFile(SettingsCoreIds[i]));
   InitializeRuntimeControls;
   FSearch := FindComponent('SearchEditSettingsSearch') as TEdit;
@@ -633,20 +660,21 @@ begin
   (FindComponent('ButtonSidebarBack') as TButton).OnClick := BackClick;
   (FindComponent('ButtonSidebarBack') as TButton).StylesData['text.Margins.Left'] := 36;
   (FindComponent('ButtonSidebarBack') as TButton).StylesData['text.Margins.Right'] := 10;
-  for var I := 0 to High(FCategoryIcons) do
+  for var i := Low(FCategoryIcons) to High(FCategoryIcons) do
   begin
-    FCategoryIcons[I] := FindComponent('PathCategoryIcon' + IntToStr(I)) as TControl;
-    ListBoxNavigation.ListItems[I].StyledSettings := ListBoxNavigation.ListItems[I].StyledSettings + [TStyledSetting.Other];
-    ListBoxNavigation.ListItems[I].TextSettings.HorzAlign := TTextAlign.Leading;
-    ListBoxNavigation.ListItems[I].StylesData['text.Margins.Left'] := 48;
+    FCategoryIcons[i] := FindComponent('PathCategoryIcon' + IntToStr(i)) as TControl;
+    ListBoxNavigation.ListItems[i].StyledSettings := ListBoxNavigation.ListItems[i].StyledSettings + [TStyledSetting.Other];
+    ListBoxNavigation.ListItems[i].TextSettings.HorzAlign := TTextAlign.Leading;
+    ListBoxNavigation.ListItems[i].StylesData['text.Margins.Left'] := 48;
   end;
   ListBoxNavigation.OnChange := NavigationChange;
   FSearch.OnChangeTracking := SearchChange;
   FSearch.OnResize := EditorResize;
-  for var I := 1 to 6 do
+  for var i := Low(FCoreButtons) to High(FCoreButtons) do
   begin
-    FCoreButtons[I] := FindComponent('ButtonCore' + IntToStr(I)) as TButton;
-    FCoreButtons[I].OnClick := CoreClick;
+    FCoreButtons[i] := FindComponent('ButtonCore' + IntToStr(i)) as TButton;
+    FCoreButtons[i].Tag := i;
+    FCoreButtons[i].OnClick := CoreClick;
   end;
   FPagePicker.OnResize := ComboResize;
   ComboResize(FPagePicker);
@@ -661,7 +689,7 @@ begin
   BuildPage;
 end;
 
-procedure TSettingsView.ClearBootROMClick(Sender: TObject);
+procedure TSettingsView.ClearPathClick(Sender: TObject);
 begin
   TEdit(TEditButton(Sender).TagObject).Text := '';
 end;
@@ -736,7 +764,7 @@ begin
     Clear.Text := '×';
     Clear.Hint := Translate('Clear');
     Clear.TagObject := Editor;
-    Clear.OnClick := ClearBootROMClick;
+    Clear.OnClick := ClearPathClick;
   end;
   Group := TPanel.Create(Self);
   Group.Name := 'PanelGroupRumble';
@@ -755,6 +783,53 @@ begin
   var RumbleSwitch := TSwitch.Create(Self);
   RumbleSwitch.Name := 'SwitchRowRumbleEditor';
   RumbleSwitch.Parent := RumbleRow;
+  Group := TPanel.Create(Self);
+  Group.Name := 'PanelGroupGBEnhancements';
+  Group.Parent := LayoutComponentStore;
+  Group.StyleLookup := 'retromul_card';
+  Group.SetBounds(0, 0, 900, 500);
+  Title := SettingsLabel(Self);
+  Title.Name := 'LabelGroupGBEnhancementsTitle';
+  Title.Parent := Group;
+  Title.SetBounds(16, 14, 868, 36);
+  Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
+  Title.TextSettings.Font.Size := 20;
+  Title.Text := 'Game Boy enhancements';
+  var Names: TArray<string> := ['FrameBlending', 'BGPalette', 'OBJ0Palette', 'OBJ1Palette',
+      'ShowBackground', 'ShowWindow', 'ShowSprites', 'RemoveSpriteLimit', 'Overclock',
+      'Channel1Volume', 'Channel2Volume', 'Channel3Volume', 'Channel4Volume'];
+  var Captions: TArray<string> := ['Frame blending', 'Background palette', 'OBJ0 palette', 'OBJ1 palette',
+      'Show background', 'Show window', 'Show sprites', 'Remove sprite limit', 'CPU speed (%)',
+      'Channel 1 volume (%)', 'Channel 2 volume (%)', 'Wave channel volume (%)', 'Noise channel volume (%)'];
+  var Details: TArray<string> := ['Blend the current and previous emulated frames equally.',
+      'Palette for monochrome games.', 'Palette for monochrome games.', 'Palette for monochrome games.',
+      'Display the background layer.', 'Display the window layer.', 'Display the sprite layer.',
+      'Display up to 40 sprites per line; games may show unexpected graphics.',
+      '100 is normal speed; higher values reduce CPU slowdown and may affect games.',
+      'Square wave with frequency sweep.', 'Second square wave channel.', 'Programmable wave channel.', 'Noise channel.'];
+  for var i := 0 to High(Names) do
+  begin
+    var Name := 'RowGB' + Names[i];
+    var OptionRow := BootRow(Name, Captions[i], Details[i]);
+    if i in [0, 4, 5, 6, 7] then
+    begin
+      var Toggle := TSwitch.Create(Self);
+      Toggle.Name := 'Switch' + Name + 'Editor';
+      Toggle.Parent := OptionRow;
+    end
+    else if i in [1, 2, 3] then
+    begin
+      var Choice := TSettingsComboBox.Create(Self);
+      Choice.Name := 'SettingsComboBox' + Name + 'Editor';
+      Choice.Parent := OptionRow;
+    end
+    else
+    begin
+      var Percent := TSettingsSpinBox.Create(Self);
+      Percent.Name := 'SettingsSpinBox' + Name + 'Editor';
+      Percent.Parent := OptionRow;
+    end;
+  end;
 end;
 
 procedure TSettingsView.InitializeRuntimeControls;
@@ -785,6 +860,10 @@ type
 
 begin
   InitializeGBControls;
+  var ClearTranslation := FindComponent('EditButtonRowTranslationfileClear') as TEditButton;
+  ClearTranslation.TagObject := FindComponent('EditRowTranslationfileEditor');
+  ClearTranslation.OnClick := ClearPathClick;
+  (FindComponent('ButtonSaveTranslationTemplate') as TButton).OnClick := SaveTemplateClick;
   ReplaceRuntime('SettingsSearch', TSearchEdit);
   (TSearchEdit(FindComponent('SearchEditSettingsSearch'))).TextPrompt := Translate('Search this section');
   ReplaceCombo('SettingsPagePicker', ['General', 'Library', 'Video and audio', 'Controls', 'Peripherals']);
@@ -838,7 +917,6 @@ begin
   inherited;
 end;
 
-
 procedure TSettingsView.BuildPage(PreserveScroll: Boolean);
 begin
   var Position := VertScrollBoxScroll.ViewportPosition;
@@ -854,11 +932,11 @@ begin
     FDevices.Clear;
     FFields.Clear;
     // Keep resource cards; release only styles and data-dependent device views.
-    for var I := 0 to ComponentCount - 1 do
-      if (Components[I] is TPanel) and
-        (string(Components[I].Name).StartsWith('PanelRow') or string(Components[I].Name).StartsWith('PanelGroup')) then
+    for var i := 0 to ComponentCount - 1 do
+      if (Components[i] is TPanel) and
+        (string(Components[i].Name).StartsWith('PanelRow') or string(Components[i].Name).StartsWith('PanelGroup')) then
       begin
-        var Card := TPanel(Components[I]);
+        var Card := TPanel(Components[i]);
         while Card.ComponentCount > 0 do
           Card.Components[0].Free;
         Card.Parent := LayoutComponentStore;
@@ -869,10 +947,13 @@ begin
     FGroup := nil;
     FHeight := 0;
     LabelStatus.Text := Translate('Click Apply to save changes.');
-    if FCategory = 0 then
+    if FCategory = SETTINGS_CATEGORY_GENERAL then
     begin
       Heading('GroupAppearance');
       Combo('RowLanguage', 'General', 'Language', [], ['en', 'ru', 'pt'], 'en');
+      PathEdit('RowTranslationfile', 'General', 'TranslationFile', '', False);
+      (FindComponent('EditButtonRowTranslationfileClear') as TEditButton).Hint := Translate('Clear');
+      Row('RowTranslationtemplate');
       Row('RowTheme');
 
       Heading('GroupDuringgameplay');
@@ -889,7 +970,7 @@ begin
       FAutosaveMinutes.Min := 1;
       FAutosaveMinutes.Max := AUTOSAVE_MAX_MINUTES;
       FAutosaveMinutes.ValueType := TNumValueType.Integer;
-      FAutosaveMinutes.Value := EnsureRange(FDrafts[0].ReadInteger('General', 'AutosaveMinutes',
+      FAutosaveMinutes.Value := EnsureRange(FDrafts[SETTINGS_PAGE_MAIN].ReadInteger('General', 'AutosaveMinutes',
           AUTOSAVE_DEFAULT_MINUTES), 1, AUTOSAVE_MAX_MINUTES);
       Periodic.Align := TAlignLayout.Right;
       FAutosaveMinutes.Align := TAlignLayout.Client;
@@ -898,7 +979,7 @@ begin
       Heading('GroupOnscreenbuttons');
       Number('RowBottominset', 'General', 'ControlBottomInset', 100, 400);
     end
-    else if FCategory = 1 then
+    else if FCategory = SETTINGS_CATEGORY_LIBRARY then
     begin
       Heading('GroupGamelibrary');
       FFolderEdit := PathEdit('RowROMfolder', 'General', 'Path', FStorage.RomFolder, True);
@@ -913,11 +994,11 @@ begin
     begin
       if FInput <> nil then
         LoadInputBindings(FInput, FDrafts[FPage], SettingsCoreIds[FPage]);
-      if FCategory = 2 then
+      if FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO then
       begin
         Heading('GroupVideo');
         var Scaling := Combo('RowImagescaling', 'Video', 'Filter', [], ['nearest', 'linear'], 'nearest');
-        if FPage = 1 then
+        if FPage = SETTINGS_PAGE_GB then
         begin
           var Labels, Values: TArray<string>;
           SetLength(Labels, SCREEN_PALETTE_COUNT);
@@ -946,13 +1027,38 @@ begin
           Preview.PaletteIndex := Palette.ItemIndex;
           Preview.DisableInterpolation := Scaling.ItemIndex = 0;
         end;
-        if FPage = 2 then
+        if FPage = SETTINGS_PAGE_GBC then
           Check('RowLCDcolors', 'Video', 'ColorCorrection', False);
-        if FPage = 3 then
+        if FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC] then
+        begin
+          Heading('GroupGBEnhancements');
+          Check('RowGBFrameBlending', 'Video', 'FrameBlending', False);
+          var PaletteLabels, PaletteValues: TArray<string>;
+          SetLength(PaletteLabels, SCREEN_PALETTE_COUNT + 1);
+          SetLength(PaletteValues, SCREEN_PALETTE_COUNT + 1);
+          PaletteLabels[0] := Translate('Default palette');
+          PaletteValues[0] := '-1';
+          for var i := 0 to SCREEN_PALETTE_COUNT - 1 do
+          begin
+            PaletteLabels[i + 1] := ScreenPalettes[i].Name;
+            PaletteValues[i + 1] := IntToStr(i);
+          end;
+          Combo('RowGBBGPalette', 'Video', 'BGPalette', PaletteLabels, PaletteValues, '-1');
+          Combo('RowGBOBJ0Palette', 'Video', 'OBJ0Palette', PaletteLabels, PaletteValues, '-1');
+          Combo('RowGBOBJ1Palette', 'Video', 'OBJ1Palette', PaletteLabels, PaletteValues, '-1');
+          Check('RowGBShowBackground', 'Video', 'ShowBackground', True);
+          Check('RowGBShowWindow', 'Video', 'ShowWindow', True);
+          Check('RowGBShowSprites', 'Video', 'ShowSprites', True);
+          Check('RowGBRemoveSpriteLimit', 'Video', 'RemoveSpriteLimit', False);
+          var CPUPercent := Number('RowGBOverclock', 'Emulation', 'Overclock', 100, 400);
+          CPUPercent.Min := 100;
+          CPUPercent.Value := EnsureRange(CPUPercent.Value, 100, 400);
+        end;
+        if FPage = SETTINGS_PAGE_NES then
           Combo('RowNESregion', 'Video', 'Region', [], ['Auto', 'NTSC', 'PAL'], 'Auto');
-        if FPage = 5 then
+        if FPage = SETTINGS_PAGE_SNES then
           Check('RowCropoverscan', 'Video', 'CropOverscan', False);
-        if FPage in [1, 2] then
+        if FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC] then
         begin
           Heading('GroupBootROM');
           var BootLabels, BootKeys: TArray<string>;
@@ -983,18 +1089,21 @@ begin
         Volume.Value := EnsureRange(FDrafts[FPage].ReadFloat('Audio', 'Volume', 0.5), 0, 1) * 100;
         Volume.OnChange := VolumeChange;
         VolumeChange(Volume);
+        if FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC] then
+          for var i := 1 to 4 do
+            Number('RowGBChannel' + IntToStr(i) + 'Volume', 'Audio', 'Channel' + IntToStr(i) + 'Volume', 100, 100);
       end
-      else if FCategory = 3 then
+      else if FCategory = SETTINGS_CATEGORY_CONTROLS then
       begin
         Heading('GroupController');
         var Count := 2;
-        if FPage <= 2 then
+        if FPage <= SETTINGS_PAGE_GBC then
           Count := 1;
-        if (FPage = 3) and FDrafts[FPage].ReadBool('Input', 'FourScore', False) then
+        if (FPage = SETTINGS_PAGE_NES) and FDrafts[FPage].ReadBool('Input', 'FourScore', False) then
           Count := 4;
-        if (FPage = 5) and FDrafts[FPage].ReadBool('Input', 'Multitap2', False) then
+        if (FPage = SETTINGS_PAGE_SNES) and FDrafts[FPage].ReadBool('Input', 'Multitap2', False) then
           Count := 5;
-        if (FPage = 5) and FDrafts[FPage].ReadBool('Input', 'Multitap1', False) then
+        if (FPage = SETTINGS_PAGE_SNES) and FDrafts[FPage].ReadBool('Input', 'Multitap1', False) then
           Count := 8;
         FPlayer := EnsureRange(FPlayer, 0, Count - 1);
         Row('RowPlayer');
@@ -1013,18 +1122,18 @@ begin
       end
       else
       begin
-        if FPage in [1, 2] then
+        if FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC] then
         begin
           Heading('GroupRumble');
           Check('RowRumble', 'Peripherals', 'Rumble', True);
         end;
-        if FPage = 3 then
+        if FPage = SETTINGS_PAGE_NES then
         begin
           Heading('GroupAdditionalplayers');
           var FourScore := Check('RowFourScore', 'Input', 'FourScore', False);
           FourScore.OnSwitch := PortChange;
         end;
-        if FPage = 5 then
+        if FPage = SETTINGS_PAGE_SNES then
         begin
           Heading('GroupAdditionalplayers');
           var Multi := Check('RowMultitapport2', 'Input', 'Multitap2', False);
@@ -1033,9 +1142,9 @@ begin
           Multi.OnSwitch := PortChange;
         end;
         BuildPort(0, Translate('Port 1'));
-        if FPage > 2 then
+        if FPage > SETTINGS_PAGE_GBC then
           BuildPort(1, Translate('Port 2'));
-        if FPage = 3 then
+        if FPage = SETTINGS_PAGE_NES then
         begin
           Heading('GroupFamicomexpansionport');
           var Expansion := Combo('RowConnecteddevice', 'Ports', 'Expansion', [], ['auto', 'none', 'subor', 'famicom', 'recorder'], 'auto');
@@ -1102,7 +1211,7 @@ begin
     else if F.Control is TEdit then
       FDrafts[FPage].WriteString(F.Section, F.Key, TEdit(F.Control).Text.Trim);
   end;
-  if (FPage > 0) and (FInput <> nil) then
+  if (FPage > SETTINGS_PAGE_MAIN) and (FInput <> nil) then
     SaveInputBindings(FInput, FDrafts[FPage]);
 end;
 
@@ -1220,7 +1329,6 @@ begin
   Browse.OnClick := PathClick;
 end;
 
-
 procedure TSettingsView.Resize;
 begin
   if (csLoading in ComponentState) or FBuilding or (csDestroying in ComponentState) then
@@ -1236,10 +1344,10 @@ begin
     ListBoxNavigation.Visible := PanelSidebar.Visible;
     FPagePicker.Visible := not PanelSidebar.Visible;
     LabelTitle.Text := Translate(SettingsCategoryNames[FCategory]);
-    if FCategory = 0 then
+    if FCategory = SETTINGS_CATEGORY_GENERAL then
       LabelTitle.Text := Translate('General settings');
-    LayoutCoreTabs.Visible := FCategory >= 2;
-    for var i := 0 to High(FCategoryIcons) do
+    LayoutCoreTabs.Visible := FCategory >= SETTINGS_CATEGORY_VIDEO_AUDIO;
+    for var i := Low(FCategoryIcons) to High(FCategoryIcons) do
       if i = FCategory then
         TPath(FCategoryIcons[i]).Stroke.Color := $FFFFB344
       else
@@ -1252,27 +1360,27 @@ begin
     FSearch.Visible := LayoutHeader.Width >= 740;
     FSearch.SetBounds(Max(0, LayoutHeader.Width - 260), 0, 260, 32);
     var X: Single := 0;
-    for var i := 1 to 6 do
+    for var i := Low(FCoreButtons) to High(FCoreButtons) do
     begin
       FCoreButtons[i].Text := SettingsPageNames[i];
       case i of
-        1:
+        SETTINGS_PAGE_GB:
           FCoreButtons[i].Text := 'GB';
-        2:
+        SETTINGS_PAGE_GBC:
           FCoreButtons[i].Text := 'GBC';
-        3:
+        SETTINGS_PAGE_NES:
           FCoreButtons[i].Text := 'NES';
-        5:
+        SETTINGS_PAGE_SNES:
           FCoreButtons[i].Text := 'SNES';
       end;
       if LayoutCoreTabs.Width < 600 then
         case i of
-          4:
+          SETTINGS_PAGE_MD:
             FCoreButtons[i].Text := 'MD';
-          6:
+          SETTINGS_PAGE_NEOGEO:
             FCoreButtons[i].Text := 'NG';
         end;
-      var W := Max(48, Min(104, (LayoutCoreTabs.Width - 35) / 6));
+      var W := Max(48, Min(104, (LayoutCoreTabs.Width - 35) / Length(SettingsCoreIds)));
       FCoreButtons[i].SetBounds(X, 0, W, 36);
       X := X + W + 7;
       if i = FCorePage then
@@ -1286,7 +1394,7 @@ begin
     LayoutContent.Width := Min(1240, Max(0, VertScrollBoxScroll.Width - 16));
     var Y: Single := 0;
     var LeftY: Single := 0;
-    var Columns := (FCategory = 2) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
+    var Columns := (FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
     for var i := 0 to LayoutContent.ChildrenCount - 1 do
       if LayoutContent.Children[i] is TPanel then
       begin
@@ -1326,7 +1434,7 @@ begin
     ButtonReset.SetBounds(0, 52, 160, 40);
     ButtonReset.Visible := LayoutFooter.Width >= 520;
     ButtonRefresh.SetBounds(176, 52, 176, 40);
-    ButtonRefresh.Visible := (FCategory = 3) and (LayoutFooter.Width >= 700);
+    ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
     ButtonCancelCapture.SetBounds(Max(0, LayoutFooter.Width - 150), 52, 150, 40);
     ButtonApply.Visible := FCaptureButton = nil;
     ButtonBack.Visible := FCaptureButton = nil;
@@ -1338,7 +1446,7 @@ end;
 procedure TSettingsView.ArrangeGroup(Group: TPanel);
 begin
   var Y: Single := 14;
-  if (FCategory = 3) and (Group.TagString = Translate('Controller')) and (Group.Width >= 850) then
+  if (FCategory = SETTINGS_CATEGORY_CONTROLS) and (Group.TagString = Translate('Controller')) and (Group.Width >= 850) then
   begin
     var Index := 0;
     Y := 132;
@@ -1403,6 +1511,7 @@ begin
       end;
       if not C.Visible then
         Continue;
+
       C.SetBounds(16, Y, C.Width, C.Height);
       Y := Y + C.Height + 6;
     end;
@@ -1508,16 +1617,15 @@ begin
   end;
 end;
 
-
 procedure TSettingsView.SelectCategory(Index: Integer);
 begin
-  if FBuilding or (Index < 0) or (Index > High(SettingsCategoryNames)) or (Index = FCategory) then
+  if FBuilding or (Index < Low(SettingsCategoryNames)) or (Index > High(SettingsCategoryNames)) or (Index = FCategory) then
     Exit;
 
   StorePage;
   FCategory := Index;
-  if Index < 2 then
-    FPage := 0
+  if Index < SETTINGS_CATEGORY_VIDEO_AUDIO then
+    FPage := SETTINGS_PAGE_MAIN
   else
     FPage := FCorePage;
   FBuilding := True;
@@ -1533,16 +1641,16 @@ end;
 
 procedure TSettingsView.SelectCore(Index: Integer; PreserveCategory: Boolean);
 begin
-  if FBuilding or (Index < 1) or (Index > High(SettingsCoreIds)) then
+  if FBuilding or (Index < Low(SettingsCoreIds)) or (Index > High(SettingsCoreIds)) then
     Exit;
 
   StorePage;
   FCorePage := Index;
   FPlayer := 0;
-  if (FCategory < 2) and not PreserveCategory then
-    FCategory := 2;
-  if FCategory < 2 then
-    FPage := 0
+  if (FCategory < SETTINGS_CATEGORY_VIDEO_AUDIO) and not PreserveCategory then
+    FCategory := SETTINGS_CATEGORY_VIDEO_AUDIO;
+  if FCategory < SETTINGS_CATEGORY_VIDEO_AUDIO then
+    FPage := SETTINGS_PAGE_MAIN
   else
     FPage := FCorePage;
   FBuilding := True;
@@ -1604,23 +1712,22 @@ begin
   RequestRebuild;
 end;
 
-
 procedure TSettingsView.BuildPort(Port: Integer; const Caption: string);
 begin
-  if FCategory <> 3 then
+  if FCategory <> SETTINGS_CATEGORY_CONTROLS then
     Heading('GroupPort' + IntToStr(Port + 1));
   var Key := 'Port' + IntToStr(Port + 1);
   var Device := FDrafts[FPage].ReadString('Ports', Key, 'auto');
   var C: TComboBox;
-  if FPage <= 2 then
+  if FPage <= SETTINGS_PAGE_GBC then
     C := Combo('RowControllerPort' + IntToStr(Port + 1), 'Ports', Key, [], ['pad', 'none'], 'pad')
-  else if FPage = 4 then
+  else if FPage = SETTINGS_PAGE_MD then
     C := Combo('RowConnecteddevice2Port' + IntToStr(Port + 1), 'Ports', Key, [], ['pad6', 'pad3', 'none'], 'pad6')
-  else if (FPage = 3) and (Port = 0) then
+  else if (FPage = SETTINGS_PAGE_NES) and (Port = 0) then
     C := Combo('RowConnecteddevice10Port' + IntToStr(Port + 1), 'Ports', Key, [], ['auto', 'pad', 'paddendy', 'piano', 'none'], 'auto')
-  else if (FPage = 3) and (Port = 1) then
+  else if (FPage = SETTINGS_PAGE_NES) and (Port = 1) then
     C := Combo('RowConnecteddevice18Port' + IntToStr(Port + 1), 'Ports', Key, [], ['auto', 'pad', 'paddendy', 'zapper', 'powerpad', 'none'], 'auto')
-  else if FPage = 3 then
+  else if FPage = SETTINGS_PAGE_NES then
     C := Combo('RowConnecteddevice26Port' + IntToStr(Port + 1), 'Ports', Key,
       ['Gamepad', 'Dendy · Turbo', 'None'], ['pad', 'paddendy', 'none'], 'pad')
   else
@@ -1631,7 +1738,7 @@ begin
     if F.Control = C then
       Device := F.Values[C.ItemIndex];
   C.OnChange := PortChange;
-  if FCategory = 3 then
+  if FCategory = SETTINGS_CATEGORY_CONTROLS then
     BuildBindings(Port, Device);
 end;
 
@@ -1639,6 +1746,7 @@ procedure TSettingsView.BuildBindings(Port: Integer; const Device: string);
 begin
   if Device = 'none' then
     Exit;
+
   var Labels, Values: TArray<string>;
   var Devices: TArray<TInputDevice>;
   if FInput <> nil then
@@ -1657,7 +1765,7 @@ begin
     Values[i + 1] := Devices[i].Id;
   end;
   var SourceKey := 'Source' + IntToStr(Port + 1);
-  if (FPage = 3) and (Port = 4) then
+  if (FPage = SETTINGS_PAGE_NES) and (Port = 4) then
     SourceKey := 'SourceExpansion';
   var SavedId := FDrafts[FPage].ReadString('Ports', SourceKey, '');
   var Found := SavedId = '';
@@ -1750,20 +1858,20 @@ begin
   begin
     var Pad := TScreenGamepad.Create(P);
     case FPage of
-      1:
+      SETTINGS_PAGE_GB:
         Pad.Layout := TScreenGamepadLayout.GameBoy;
-      2:
+      SETTINGS_PAGE_GBC:
         Pad.Layout := TScreenGamepadLayout.GameBoyColor;
-      3:
+      SETTINGS_PAGE_NES:
         if Device = 'paddendy' then
           Pad.Layout := TScreenGamepadLayout.Dendy
         else
           Pad.Layout := TScreenGamepadLayout.Nes;
-      4:
+      SETTINGS_PAGE_MD:
         Pad.Layout := TScreenGamepadLayout.Sega;
-      5:
+      SETTINGS_PAGE_SNES:
         Pad.Layout := TScreenGamepadLayout.Snes;
-      6:
+      SETTINGS_PAGE_NEOGEO:
         Pad.Layout := TScreenGamepadLayout.NeoGeo;
     end;
     Pad.ButtonMask := CoreButtons(SettingsCoreIds[FPage], Device);
@@ -1867,6 +1975,7 @@ procedure TSettingsView.CalloutClick(Sender: TObject);
 begin
   if FBuilding or (FInput = nil) then
     Exit;
+
   var LabelControl := TLabel(Sender);
   for var D in FDevices do
     if D.Diagram = LabelControl.Parent then
@@ -1885,6 +1994,7 @@ const
 begin
   if FBuilding or (FInput = nil) then
     Exit;
+
   for var D in FDevices do
     if D.Control = Sender then
     begin
@@ -1898,6 +2008,7 @@ begin
             Caption := Translate('Button ') + CoreButtonName(SettingsCoreIds[FPage], B);
             Break;
           end;
+
       if Sender is TNesPowerPad then
         for var B in TNesPowerPad(Sender).Buttons do
         begin
@@ -1905,6 +2016,7 @@ begin
           Caption := Translate('Pad ') + IntToStr(B);
           Break;
         end;
+
       if Sender is TNesSuborKeyboard then
         for var K in TNesSuborKeyboard(Sender).Keys do
         begin
@@ -1912,6 +2024,7 @@ begin
           Caption := Translate('Key ') + Copy(GetEnumName(TypeInfo(TSuborKey), Ord(K)), 3, MaxInt);
           Break;
         end;
+
       if Sender is TNesFamicomKeyboard then
         for var K in TNesFamicomKeyboard(Sender).Keys do
         begin
@@ -1919,6 +2032,7 @@ begin
           Caption := Translate('Key ') + Copy(GetEnumName(TypeInfo(TFamicomKey), Ord(K)), 3, MaxInt);
           Break;
         end;
+
       if Sender is TNesMiraclePiano then
       begin
         for var K in TNesMiraclePiano(Sender).Keys do
@@ -1930,6 +2044,7 @@ begin
             Caption := Translate('Piano button ') + IntToStr(K);
           Break;
         end;
+
         if Action < 0 then
           for var B in TNesMiraclePiano(Sender).Buttons do
           begin
@@ -1940,6 +2055,7 @@ begin
       end;
       if Action < 0 then
         Exit;
+
       SelectBinding(D, Action, Caption);
       Exit;
     end;
@@ -1949,6 +2065,7 @@ procedure TSettingsView.DeviceChange(Sender: TObject);
 begin
   if FBuilding then
     Exit;
+
   var C := TComboBox(Sender);
   for var F in FFields do
     if F.Control = C then
@@ -1971,7 +2088,6 @@ begin
   StorePage;
   RequestRebuild;
 end;
-
 
 procedure TSettingsView.CaptureClick(Sender: TObject);
 begin
@@ -2037,6 +2153,7 @@ procedure TSettingsView.Poll;
 begin
   if FInput = nil then
     Exit;
+
   FInput.Enabled := FHostInput.Enabled;
   FInput.Poll;
   if FCaptureButton = nil then
@@ -2061,7 +2178,6 @@ begin
   else if TThread.GetTickCount64 >= FCaptureDeadline then
     CancelCaptureClick(Self);
 end;
-
 
 procedure TSettingsView.VolumeChange(Sender: TObject);
 begin
@@ -2090,7 +2206,7 @@ begin
   CancelCapture;
   for var Field in FFields do
     FDrafts[FPage].WriteString(Field.Section, Field.Key, Field.DefaultValue);
-  if (FCategory = 3) and (FInput <> nil) then
+  if (FCategory = SETTINGS_CATEGORY_CONTROLS) and (FInput <> nil) then
   begin
     FDrafts[FPage].DeleteKey('FMXInput', 'Bindings');
     LoadInputBindings(FInput, FDrafts[FPage], SettingsCoreIds[FPage]);
@@ -2117,6 +2233,7 @@ begin
   var Page := FPage;
   var Alive: TFunc<Boolean> := FAlive;
   FPickingBootROM := Section = 'Boot';
+  FPickingTranslation := (Section = 'General') and (Key = 'TranslationFile');
   PickLocation(Button.Tag = 1, Edit.Text,
     procedure(const Selection: TStorageSelection)
     begin
@@ -2142,6 +2259,7 @@ end;
 procedure TSettingsView.CheckRomFolder(const Location: string);
 begin
   var SupportedFolders := '';
+
   {$IFDEF ANDROID}
   // Document provider URIs must be queried; combining them with a name is invalid.
   if Location.StartsWith('content://') then
@@ -2150,6 +2268,7 @@ begin
         if SameText(Folder.Name, RomSystemFolder(RomSystem)) then
           Exit;
   {$ENDIF}
+
   for var RomSystem := TRomSystem.NES to TRomSystem.NeoGeo do
   begin
     var Name := RomSystemFolder(RomSystem);
@@ -2158,6 +2277,7 @@ begin
     {$ENDIF}
       if FStorage.FolderExists(System.IOUtils.TPath.Combine(Location, Name)) then
         Exit;
+
     if SupportedFolders <> '' then
       SupportedFolders := SupportedFolders + ', ';
     SupportedFolders := SupportedFolders + Name;
@@ -2185,7 +2305,12 @@ begin
     Dialog.Title := Translate('Choose ROM folder');
     if not Folder then
     begin
-      if FPickingBootROM then
+      if FPickingTranslation then
+      begin
+        Dialog.Title := Translate('Choose translation file');
+        Dialog.Filter := Translate('Translation files (*.txt;*.lng)|*.txt;*.lng|All files|*.*');
+      end
+      else if FPickingBootROM then
       begin
         Dialog.Title := Translate('Choose boot ROM');
         Dialog.Filter := 'Boot ROM (*.bin;*.rom;*.gb)|*.bin;*.rom;*.gb|All files|*.*';
@@ -2216,27 +2341,84 @@ begin
   end;
 end;
 
+procedure TSettingsView.PickTemplateLocation(const Callback: TStorageSelectionCallback);
+begin
+  if Assigned(FTemplatePicker) then
+  begin
+    FTemplatePicker('lang_template.txt', Callback);
+    Exit;
+  end;
+  var Dialog := TFMXOpenDialog.Create(nil);
+  try
+    Dialog.Title := Translate('Save translation template');
+    Dialog.Filter := Translate('Text files (*.txt)|*.txt|All files|*.*');
+    Dialog.MimeType := 'text/plain';
+    Dialog.SaveFile('lang_template.txt',
+      procedure(const Selection: TFMXSelectionResult)
+      begin
+        var Result := Default(TStorageSelection);
+        Result.Cancelled := Selection.Status = TFMXSelectionStatus.Cancelled;
+        Result.Error := Selection.Error;
+        if Selection.Status = TFMXSelectionStatus.Selected then
+          Result.Location := Selection.Locations[0];
+        Callback(Result);
+      end);
+  finally
+    Dialog.Free;
+  end;
+end;
+
+procedure TSettingsView.SaveTemplateClick(Sender: TObject);
+begin
+  CancelCapture;
+  var Alive: TFunc<Boolean> := FAlive;
+  try
+    PickTemplateLocation(
+      procedure(const Selection: TStorageSelection)
+      begin
+        if not Alive() or Selection.Cancelled then
+          Exit;
+        try
+          if Selection.Error <> '' then
+            raise Exception.Create(Selection.Error);
+          FormStyles.SaveTranslationTemplate(FStorage, Selection.Location);
+          LabelStatus.Text := Translate('Translation template saved.');
+        except
+          on E: Exception do
+            LabelStatus.Text := Translate('Unable to save translation template: ') + E.Message;
+        end;
+      end);
+  except
+    on E: Exception do
+      LabelStatus.Text := Translate('Unable to save translation template: ') + E.Message;
+  end;
+end;
+
 procedure TSettingsView.ApplyClick(Sender: TObject);
 begin
   try
     CancelCapture;
     StorePage;
-    var Folder := FDrafts[0].ReadString('General', 'Path', '').Trim;
+    var Translation := FormStyles.LoadTranslation(FStorage,
+      FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'TranslationFile', '').Trim,
+      FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Language', 'en'));
+    Translation.Free; // Validate the file before writing any settings.
+    var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Path', '').Trim;
 
     {$IF not Defined(ANDROID) and not Defined(IOS)}
     if (Folder <> '') and not TDirectory.Exists(Folder) then
       raise Exception.Create(Translate('ROM folder not found. Choose an existing folder.'));
     {$ENDIF}
 
-    if FDrafts[3].ReadBool('Input', 'FourScore', False) and
-      ((FDrafts[3].ReadString('Ports', 'Port1', 'auto') = 'piano') or
-      (FDrafts[3].ReadString('Ports', 'Port2', 'auto') = 'zapper') or
-      (FDrafts[3].ReadString('Ports', 'Port2', 'auto') = 'powerpad')) then
+    if FDrafts[SETTINGS_PAGE_NES].ReadBool('Input', 'FourScore', False) and
+      ((FDrafts[SETTINGS_PAGE_NES].ReadString('Ports', 'Port1', 'auto') = 'piano') or
+      (FDrafts[SETTINGS_PAGE_NES].ReadString('Ports', 'Port2', 'auto') = 'zapper') or
+      (FDrafts[SETTINGS_PAGE_NES].ReadString('Ports', 'Port2', 'auto') = 'powerpad')) then
       raise Exception.Create(Translate('Disable Four Score to use Zapper, Power Pad or Miracle Piano.'));
 
-    if (FDrafts[3].ReadString('Ports', 'Port1', 'auto') = 'piano') and
-      ((FDrafts[3].ReadString('Ports', 'Port2', 'auto') = 'zapper') or
-      (FDrafts[3].ReadString('Ports', 'Port2', 'auto') = 'powerpad')) then
+    if (FDrafts[SETTINGS_PAGE_NES].ReadString('Ports', 'Port1', 'auto') = 'piano') and
+      ((FDrafts[SETTINGS_PAGE_NES].ReadString('Ports', 'Port2', 'auto') = 'zapper') or
+      (FDrafts[SETTINGS_PAGE_NES].ReadString('Ports', 'Port2', 'auto') = 'powerpad')) then
       raise Exception.Create(Translate('Miracle Piano uses both ports. Disconnect Zapper or Power Pad.'));
 
     // Config writes are per core and retain all settings that this UI does not expose.

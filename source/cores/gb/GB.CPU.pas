@@ -3,8 +3,8 @@
 interface
 
 uses
-  Core.Snapshots, System.Classes, GB.Memory, GB.InterruptManager, GB.Timer,
-  GB.GPU, System.SysUtils, GB.Sound;
+  System.Math, Core.Snapshots, System.Classes, GB.Memory, GB.InterruptManager,
+  GB.Timer, GB.GPU, System.SysUtils, GB.Sound;
 
 type
   TGBCPU = class
@@ -16,6 +16,8 @@ type
     FBusTiming: Boolean;
     FBusCycles, FBaseClockPhase, FSpeedSwitchClocks: Integer;
     FCPUStopped: Boolean;
+    FOverclock, FOverclockPhase: Integer;
+    procedure SetOverclock(Value: Integer);
     function ReadBus(Address: Integer; Increment: Boolean = False): Byte;
     procedure WriteBus(Address: Integer; Value: Byte);
     function ReadBusWord(Address: Integer): Word;
@@ -145,6 +147,7 @@ type
     property InstructionCount: UInt64 read FInstructionCount;
     property LastOpCode: Integer read FLastOpCode;
 
+    property Overclock: Integer read FOverclock write SetOverclock;
     procedure SerializeState(State: TStateArchive);
   end;
 
@@ -469,11 +472,26 @@ begin
   end;
 end;
 
+procedure TGBCPU.SetOverclock(Value: Integer);
+begin
+  Value := EnsureRange(Value, 100, 400);
+  if FOverclock <> Value then
+  begin
+    FOverclock := Value;
+    FOverclockPhase := 0;
+  end;
+end;
+
 procedure TGBCPU.AdvanceHardware(Cycles: Integer);
 begin
   while Cycles > 0 do
   begin
     Dec(Cycles);
+    // Host overclock changes instruction throughput; timer, DMA and APU clocks stay fixed.
+    Inc(FOverclockPhase, 100);
+    if FOverclockPhase < FOverclock then
+      Continue;
+    Dec(FOverclockPhase, FOverclock);
     FMemory.Timer.Step(1);
     FMemory.StepHardware(1);
     Inc(FBaseClockPhase);
@@ -488,7 +506,7 @@ begin
     var Stall := FMemory.ConsumeDMACyclePenalty;
     if FMemory.DoubleSpeed then
       Stall := Stall * 2;
-    Inc(Cycles, Stall);
+    Inc(Cycles, (Stall * FOverclock + 99) div 100);
   end;
 end;
 
@@ -591,6 +609,7 @@ end;
 
 constructor TGBCPU.Create(AMemory: TGBMemory; AGPU: TGBVideo; ASound: TGBSound);
 begin
+  FOverclock := 100;
   FMemory := AMemory;
   FGPU := AGPU;
   FSound := ASound;
@@ -1232,11 +1251,13 @@ begin
   end;
   var N: Integer := ReadBus(ProgramCounter, True);
   ProgramCounter := (Integer(ProgramCounter) + 1) and $FFFF;
+
   if not Condition then
   begin
     ConsumeClockCycles(8);
     Exit;
   end;
+
   if N > 127 then
     N := -((not N + 1) and 255);
   ProgramCounter := (Integer(ProgramCounter) + N) and $FFFF;
@@ -1867,6 +1888,7 @@ procedure TGBCPU.ProcessEI(OpCode: Integer);
 begin
   if FPendingInterruptEnable <= 0 then
     Exit;
+
   Dec(FPendingInterruptEnable);
   if FPendingInterruptEnable = 0 then
     FMemory.InterruptManager.MasterEnable;
@@ -2607,7 +2629,7 @@ begin
   if FSpeedSwitchClocks > 0 then
   begin
     // DIV is held in reset; APU/PPU keep running on the base clock.
-    for var I := 1 to 4 do
+    for var i := 1 to 4 do
     begin
       Inc(FBaseClockPhase);
       if not FMemory.DoubleSpeed or (FBaseClockPhase = 2) then
@@ -2628,10 +2650,12 @@ begin
     end;
     Exit;
   end;
+
   if FCPUStopped then
   begin
     if (FMemory.Joypad.GetPressedKeys and $0F) = $0F then
       Exit;
+
     FCPUStopped := False;
     FGPU.SetCPUStop(False);
   end;
@@ -2642,6 +2666,7 @@ begin
     ProcessInterrupts;
     if FCycles <> PreviousCycles then
       Exit;
+
     if not FIsHalted then
     begin
       Inc(FInstructionCount);
@@ -2825,6 +2850,9 @@ end;
 
 procedure TGBCPU.SerializeState(State: TStateArchive);
 begin
+  State.Field(FOverclockPhase, SizeOf(FOverclockPhase));
+  if State.Loading then
+    FOverclockPhase := EnsureRange(FOverclockPhase, 0, FOverclock - 1);
   State.Field(FBaseClockPhase, SizeOf(FBaseClockPhase));
   State.Field(FSpeedSwitchClocks, SizeOf(FSpeedSwitchClocks));
   State.Field(FCPUStopped, SizeOf(FCPUStopped));
