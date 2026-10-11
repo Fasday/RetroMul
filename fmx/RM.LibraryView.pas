@@ -35,6 +35,21 @@ type
     LabelContinueNoPreview: TLabel;
     LabelContinueCaption, LabelContinuePlatform, LabelContinueLastPlayed, LabelContinueSave: TLabel;
     PathPlayIcon: TPath;
+    VertScrollBoxPlatforms: TVertScrollBox;
+    ButtonSidebarMD: TButton;
+    PathSidebarMDIcon: TPath;
+    ButtonSidebarSNES: TButton;
+    PathSidebarSNESIcon: TPath;
+    ButtonSidebarNeoGeo: TButton;
+    PathSidebarNeoGeoIcon: TPath;
+    ButtonSidebarNES: TButton;
+    PathSidebarNESIcon: TPath;
+    ButtonSidebarGBA: TButton;
+    PathSidebarGBAIcon: TPath;
+    ButtonSidebarGBC: TButton;
+    PathSidebarGBCIcon: TPath;
+    ButtonSidebarGB: TButton;
+    PathSidebarGBIcon: TPath;
   private
     FStorage: IStorage;
     FGames: TObjectList<TLibraryGame>;
@@ -50,8 +65,8 @@ type
     ButtonPlay, ButtonFavorite, ButtonMore, FGridButton, FListButton, FResume: TButton;
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
-    FPlatformButtons: array[0..6] of TButton;
-    FSidebarPlatformBorders: array[1..6] of TRectangle;
+    FPlatformButtons: array[0..7] of TButton;
+    FSidebarPlatformBorders: array[1..7] of TRectangle;
     FNavButtons: array[0..2] of TButton;
     FNavIcons: array[0..2] of TPath;
     FGridIcon, FListIcon: TPath;
@@ -176,8 +191,8 @@ end;
 {$ENDIF}
 
 const
-  SystemIds: array[0..6] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO);
-  SystemNames: array[0..6] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo');
+  SystemIds: array[0..7] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA);
+  SystemNames: array[0..7] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo', 'GBA');
 
 function LibrarySystemName(const Id: string): string;
 begin
@@ -317,13 +332,13 @@ begin
     FSaveButtons[I] := FindComponent('ButtonSaveButton' + IntToStr(I)) as TButton;
     FSaveButtons[I].OnClick := SaveClick;
   end;
-  for var I := 0 to 6 do
+  for var I := 0 to High(FPlatformButtons) do
   begin
     FPlatformButtons[I] := FindComponent('ButtonFilter' + IntToStr(I)) as TButton;
     FPlatformButtons[I].OnClick := FilterClick;
   end;
-  var Platforms := FindComponent('LayoutPlatforms') as TLayout;
-  for var Child in Platforms.Children do
+  var Platforms := FindComponent('VertScrollBoxPlatforms') as TVertScrollBox;
+  for var Child in Platforms.Content.Children do
     if Child is TButton then
     begin
       TButton(Child).OnClick := FilterClick;
@@ -385,7 +400,6 @@ begin
   FState.Free;
   inherited;
 end;
-
 
 procedure TLibraryView.Reload;
 begin
@@ -575,7 +589,6 @@ begin
   UpdateContinue;
   Resize;
 end;
-
 
 procedure TLibraryView.BuildCards(AppendOnly: Boolean);
 begin
@@ -967,7 +980,6 @@ begin
 end;
 {$ENDIF}
 
-
 procedure TLibraryView.UpdateInspector;
 begin
   ButtonPlay.Enabled := FSelected <> nil;
@@ -1114,7 +1126,6 @@ begin
     LayoutContinuePreview.Width := 176;
   FContinueCover.SetBounds(0, 0, LayoutContinuePreview.Width, LayoutContinuePreview.Height);
 end;
-
 
 procedure TLibraryView.OpenClick(Sender: TObject);
 begin

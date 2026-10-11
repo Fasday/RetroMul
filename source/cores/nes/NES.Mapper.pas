@@ -327,8 +327,11 @@ type
     procedure ClockCpuWrite; virtual;
     procedure ClockPpuRead; virtual;
     function HasPpuClockCallbacks: Boolean;
+    function HasPpuRenderCallbacks: Boolean;
     // Opt in only when repeated PPU reads/fetch context have no side effects.
     function AllowsPpuReadCaching: Boolean; virtual;
+    // Opt in only if PpuRead never depends on rendering/sprite context.
+    function AllowsDirectPpuRead: Boolean; virtual;
     procedure ClockScanline(Line: Integer; Rendering: Boolean); virtual;
     procedure SetPpuFetchKind(Sprite: Boolean; X, Y: Integer); virtual;
     procedure SetPpuControl(Value: UInt8); virtual;
@@ -389,6 +392,11 @@ begin
   Result := False;
 end;
 
+function TMapper.AllowsDirectPpuRead: Boolean;
+begin
+  Result := False;
+end;
+
 function TMapper.HasPpuClockCallbacks: Boolean;
 type
   TAddressCallback = procedure(Address: UInt16; PpuCycle: UInt64) of object;
@@ -402,6 +410,21 @@ begin
   ReadCallback := ClockPpuRead;
   Result := (TMethod(AddressCallback).Code <> @TMapper.ClockPpuAddress) or
     (TMethod(ReadCallback).Code <> @TMapper.ClockPpuRead);
+end;
+
+function TMapper.HasPpuRenderCallbacks: Boolean;
+type
+  TFetchCallback = procedure(Sprite: Boolean; X, Y: Integer) of object;
+
+  TSpriteCallback = procedure(Index: Integer) of object;
+var
+  FetchCallback: TFetchCallback;
+  SpriteCallback: TSpriteCallback;
+begin
+  FetchCallback := SetPpuFetchKind;
+  SpriteCallback := SetPpuSpriteIndex;
+  Result := (TMethod(FetchCallback).Code <> @TMapper.SetPpuFetchKind) or
+    (TMethod(SpriteCallback).Code <> @TMapper.SetPpuSpriteIndex);
 end;
 
 procedure TMapper.SerializeState(State: TNesStateArchive);

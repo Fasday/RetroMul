@@ -160,6 +160,7 @@ begin
   var ConfigPath := InputConfigFile;
   if ConfigPath = '' then
     ConfigPath := FStorage.ConfigFile(ROM_SYSTEM_NES);
+
   // Preserve the legacy Zapper option when port 2 still follows automatic selection.
   var PortIni := FStorage.ReadConfig(ConfigPath);
   var Ports := ReadCoreInputPorts(PortIni);
@@ -169,6 +170,7 @@ begin
   finally
     PortIni.Free;
   end;
+
   FConsole.ConfigureInputPorts(Ports);
   FUsesSuborKeyboard := FConsole.SuborKeyboard.Connected;
   FUsesFamicomKeyboard := FConsole.FamicomKeyboard.Connected;
@@ -179,6 +181,7 @@ begin
     SnapshotBase := FStorage.SnapshotRoot;
   FSnapshotDirectory := FStorage.GamePath(SnapshotBase, RomName, FConsole.RomIdentity, '');
   FTapeDirectory := FStorage.GamePath(FSaveDirectory, RomName, FConsole.RomIdentity, '');
+
   if FUsesDataRecorder then
   begin
     var Ini := FStorage.ReadConfig(ConfigPath);
@@ -191,6 +194,7 @@ begin
       Ini.Free;
     end;
   end;
+
   FStatus.TapeProgress := FConsole.DataRecorder.GetProgress;
   FStatus.TapeProgress.DefaultFile := True;
   FStatus.Region := FConsole.Region;
@@ -470,10 +474,13 @@ begin
         FInput.SetButton(INPUT_KEYBOARD, 1, TNesButton.A, Pressed);
       Exit;
     end;
+
     if FUsesSuborKeyboard then
       FConsole.SuborKeyboard.SetHostKey(Code, Pressed);
+
     if FUsesFamicomKeyboard then
       FConsole.FamicomKeyboard.SetHostKey(Code, Pressed);
+
     FInput.SetKey(1, Code, Pressed, Keys);
     FInput.SetKey(2, Code, Pressed, Keys2);
     FInput.SetKey(3, Code, Pressed, Keys3);
@@ -844,6 +851,7 @@ begin
         finally
           FLock.Leave;
         end;
+
         if ResetRequested then
         begin
           FrameHints.Pause;
@@ -865,6 +873,7 @@ begin
           FPaused := False;
           Failed := False;
         end;
+
         if ResumeRequested and FPaused and not Failed then
         begin
           FPaused := False;
@@ -872,6 +881,7 @@ begin
           FpsStart := NextFrame;
           Frames := 0;
         end;
+
         if PauseRequested then
         begin
           FrameHints.Pause;
@@ -879,6 +889,7 @@ begin
           FPaused := True;
           FConsole.SaveBattery;
         end;
+
         if FPaused then
         begin
           FrameHints.Pause;
@@ -914,8 +925,10 @@ begin
         finally
           FLock.Leave;
         end;
+
         if FUsesMiraclePiano then
           FConsole.MiraclePiano.ApplyKeys(PianoKeys);
+
         var T1 := TStopwatch.GetTimeStamp;
         FConsole.RunFrame;
         var T2 := TStopwatch.GetTimeStamp;
@@ -946,6 +959,7 @@ begin
           FConsole.SaveBattery;
           NextSave := ClockNow + TStopwatch.Frequency * 5;
         end;
+
         FLock.Enter;
         try
           // One bounded mailbox: a slow UI skips old frames instead of queuing them.
@@ -967,6 +981,7 @@ begin
         finally
           FLock.Leave;
         end;
+
         Inc(NextFrame, FramePeriod);
         // Discard stale deadlines without adding an idle frame when already late.
         if ClockNow - NextFrame > FramePeriod * 3 then

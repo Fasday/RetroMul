@@ -31,6 +31,7 @@ type
     FConfiguredFourScore: Boolean;
     FPortsConfigured: Boolean;
     FDmcDmaCycles: Integer;
+    FMapperHasCpuClock, FMapperHasIrq, FMapperHasAudio: Boolean;
     procedure SerializeState(Stream: TStream; Loading: Boolean; Version: Integer = 21);
     function GetRomIdentity: string;
     function GetUsesMiraclePiano: Boolean;
@@ -414,6 +415,16 @@ begin
 end;
 
 procedure TNesConsole.Reset;
+type
+  TClockCallback = procedure of object;
+
+  TIrqCallback = function: Boolean of object;
+
+  TAudioCallback = function: Double of object;
+var
+  ClockCallback: TClockCallback;
+  IrqCallback: TIrqCallback;
+  AudioCallback: TAudioCallback;
 begin
   FDataRecorder.Reset;
   FZapper.TriggerPressed := False;
@@ -424,6 +435,20 @@ begin
   end;
   FPpu.Reset;
   FPpu.ConnectMapper(FCartridge.Mapper);
+  // Virtual method identity is fixed for the loaded board. Avoid calling the
+  // base mapper's empty clock and constant IRQ/audio queries every CPU cycle.
+  FMapperHasCpuClock := False;
+  FMapperHasIrq := False;
+  FMapperHasAudio := False;
+  if FCartridge.Mapper <> nil then
+  begin
+    ClockCallback := FCartridge.Mapper.ClockCpu;
+    IrqCallback := FCartridge.Mapper.IrqPending;
+    AudioCallback := FCartridge.Mapper.ExpansionAudio;
+    FMapperHasCpuClock := TMethod(ClockCallback).Code <> @TMapper.ClockCpu;
+    FMapperHasIrq := TMethod(IrqCallback).Code <> @TMapper.IrqPending;
+    FMapperHasAudio := TMethod(AudioCallback).Code <> @TMapper.ExpansionAudio;
+  end;
   FApu.Reset;
   FBus.Reset;
   FMiraclePiano.Reset;
@@ -461,7 +486,7 @@ begin
   end;
 
   FBus.ClockIo;
-  if FCartridge.Mapper <> nil then
+  if FMapperHasAudio then
     FApu.SetExpansionAudio(FCartridge.Mapper.ExpansionAudio)
   else
     FApu.SetExpansionAudio(0);
@@ -470,9 +495,9 @@ begin
   // arriving on this phase prevents playback, but cannot recover that cycle.
   if FApu.ConsumeDmcAbort and (FDmcDmaCycles <> 1) then
     FDmcDmaCycles := 0;
-  if FCartridge.Mapper <> nil then
+  if FMapperHasCpuClock then
     FCartridge.Mapper.ClockCpu;
-  FCpu.SetIrqLine(FApu.IrqPending or ((FCartridge.Mapper <> nil) and FCartridge.Mapper.IrqPending));
+  FCpu.SetIrqLine(FApu.IrqPending or (FMapperHasIrq and FCartridge.Mapper.IrqPending));
 
   var DmcHaltStarted := False;
   if (FDmcDmaCycles = 0) and FApu.DmcDmaRequested then

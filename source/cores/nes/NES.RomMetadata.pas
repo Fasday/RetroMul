@@ -183,6 +183,7 @@ begin
   // Match payload identity, never a filename or all cartridges on mapper 2.
   if (Length(Prg) <> $20000) or (Length(Chr) <> 0) then
     Exit;
+
   var Hash := THashSHA1.Create;
   Hash.Update(Prg[0], Length(Prg));
   Result :=
@@ -196,6 +197,7 @@ begin
   var Relevant := False;
   for var entry in MAPPER_IDENTITIES do
     Relevant := Relevant or (entry.Declared = Declared);
+
   if not Relevant or (Length(Prg) = 0) then
     Exit;
 

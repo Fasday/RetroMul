@@ -7,7 +7,7 @@ uses
   FMX.Types, FMX.Controls, FMX.Forms, NES.Controller, Core.Emulation;
 
 type
-  TScreenGamepadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy);
+  TScreenGamepadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance);
 
   // Coordinates passed to PointerDown/Move are local logical FMX coordinates.
   // OnChange runs on the UI thread. The consumer owns the emulator connection.
@@ -218,7 +218,7 @@ var
   procedure SnesAction(Button: TEmulatorButton; DX, DY: Single);
   begin
     FBounds[Button] := R(SnesActionCenterX + DX - SnesButtonDiameter / 2,
-      SnesActionCenterY + DY - SnesButtonDiameter / 2, SnesButtonDiameter, SnesButtonDiameter);
+        SnesActionCenterY + DY - SnesButtonDiameter / 2, SnesButtonDiameter, SnesButtonDiameter);
   end;
 
   procedure SegaAction(Button: TEmulatorButton; X, Y, Diameter: Single);
@@ -237,6 +237,7 @@ begin
   FSegaPod := TRectF.Empty;
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
     FBounds[Button] := TRectF.Empty;
+
   // One coordinate system for artwork and input, including wide tablet panels.
   U := Max(0.001, Min(Width / 400, Height / ArtworkHeight));
   OX := (Width - 400 * U) / 2;
@@ -283,6 +284,7 @@ begin
         Arm := 12;
       end;
   end;
+
   FDPad := R(CX - Half - 4, CY - Half - 4, 2 * Half + 8, 2 * Half + 8);
   FBounds[TEmulatorButton.Up] := R(CX - Arm, CY - Half, 2 * Arm, Half - Arm);
   FBounds[TEmulatorButton.Down] := R(CX - Arm, CY + Arm, 2 * Arm, Half - Arm);
@@ -292,6 +294,7 @@ begin
   FBounds[TEmulatorButton.A] := R(330, 92, 46, 46);
   FBounds[TEmulatorButton.Select] := R(151, 119, 44, 18);
   FBounds[TEmulatorButton.Start] := R(207, 119, 44, 18);
+
   case FLayout of
     TScreenGamepadLayout.Nes:
       begin
@@ -360,12 +363,20 @@ begin
         FBounds[TEmulatorButton.Select] := R(183, 80, 40, 26);
         FBounds[TEmulatorButton.Start] := R(183, 130, 40, 26);
       end;
-    TScreenGamepadLayout.GameBoy, TScreenGamepadLayout.GameBoyColor:
+    TScreenGamepadLayout.GameBoy, TScreenGamepadLayout.GameBoyColor, TScreenGamepadLayout.GameBoyAdvance:
       begin
+        if FLayout = TScreenGamepadLayout.GameBoyAdvance then
+        begin
+          FBounds[TEmulatorButton.C] := R(38, 8, 94, 19);
+          FBounds[TEmulatorButton.Z] := R(268, 8, 94, 19);
+          FBounds[TEmulatorButton.X] := TRectF.Empty;
+          FBounds[TEmulatorButton.Y] := TRectF.Empty;
+        end;
         FBounds[TEmulatorButton.B] := R(269, 100, 46, 46);
         FBounds[TEmulatorButton.A] := R(327, 76, 46, 46);
       end;
   end;
+
   FActionArea := TRectF.Empty;
   for var Button in (ActiveButtons * ActionButtons) do
   begin
@@ -376,6 +387,7 @@ begin
       FActionArea := RectF(Min(FActionArea.Left, Bounds.Left), Min(FActionArea.Top, Bounds.Top),
         Max(FActionArea.Right, Bounds.Right), Max(FActionArea.Bottom, Bounds.Bottom));
   end;
+
   FActionArea.Inflate(6 * FUnit, 6 * FUnit);
 end;
 
@@ -390,6 +402,8 @@ begin
     Include(Result, TEmulatorButton.Select);
   if FLayout = TScreenGamepadLayout.Dendy then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
+  if FLayout = TScreenGamepadLayout.GameBoyAdvance then
+    Result := Result + [TEmulatorButton.C, TEmulatorButton.Z];
   if FLayout = TScreenGamepadLayout.Snes then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.C, TEmulatorButton.Z];
   if FLayout = TScreenGamepadLayout.NeoGeo then
@@ -403,6 +417,7 @@ procedure TScreenGamepad.SetButtonMask(const Value: TEmulatorButtons);
 begin
   if FButtonMask = Value then
     Exit;
+
   ReleaseAll;
   FButtonMask := Value;
   LayoutButtons;
@@ -423,6 +438,7 @@ end;
 procedure TScreenGamepad.Resize;
 begin
   inherited;
+
   // A rotation/layout change invalidates all old contact coordinates.
   ReleaseAll;
   LayoutButtons;
@@ -464,10 +480,13 @@ begin
   Result := TRegion.None;
   if not LocalRect.Contains(Point) then
     Exit;
+
   if FDPad.Contains(Point) then
     Exit(TRegion.DPad);
+
   if ButtonsAt(Point, TRegion.Actions) <> [] then
     Exit(TRegion.Actions);
+
   if ButtonsAt(Point, TRegion.Menu) <> [] then
     Exit(TRegion.Menu);
 end;
@@ -484,6 +503,7 @@ begin
         var Delta := Point - FDPad.CenterPoint;
         var DX := Abs(Delta.X);
         var DY := Abs(Delta.Y);
+
         // A small center dead zone; diagonal sectors overlap adjacent directions.
         if Max(DX, DY) < 13 * FUnit then
           Exit;
@@ -503,7 +523,7 @@ begin
       for var Button in (ActiveButtons * ActionButtons) do
       begin
         var Bounds := FBounds[Button];
-        if (FLayout = TScreenGamepadLayout.Snes) and
+        if (FLayout in [TScreenGamepadLayout.Snes, TScreenGamepadLayout.GameBoyAdvance]) and
           (Button in [TEmulatorButton.C, TEmulatorButton.Z]) then
         begin
           Bounds.Inflate(4 * FUnit, 4 * FUnit);
@@ -587,6 +607,7 @@ begin
   FContacts.Clear;
   FCoreButtons := [];
   UpdateButtons;
+
   // Backgrounded/hidden controls should not keep an animation timer alive.
   if FAnimation <> nil then
     FAnimation.Enabled := False;
@@ -798,6 +819,7 @@ var
 begin
   if FUnit <= 0 then
     Exit;
+
   OX := (Width - 400 * FUnit) / 2;
   OY := (Height - ArtworkHeight * FUnit) / 2;
   Opacity := AbsoluteOpacity;
@@ -820,6 +842,7 @@ begin
     Shell := $FF353A35;
   if FLayout = TScreenGamepadLayout.Sega then
     Shell := $FF292B30;
+
   var Body := TPathData.Create;
   try
     case FLayout of
@@ -947,8 +970,8 @@ begin
         Text(R(133, 43, 118, 15), 'SUPER NINTENDO', $FF55595D, 10);
         Text(R(133, 57, 118, 10), 'ENTERTAINMENT SYSTEM', $FF686C70, 5.7);
         // Four matching lobes echo the original Super Nintendo emblem.
-        for var I := 0 to 3 do
-          Oval(R(120 + (I mod 2) * 5, 45 + (I div 2) * 5, 5, 5), $FF73777B, $FF55595D);
+        for var i := 0 to 3 do
+          Oval(R(120 + (i mod 2) * 5, 45 + (i div 2) * 5, 5, 5), $FF73777B, $FF55595D);
       end;
     TScreenGamepadLayout.Sega:
       begin
@@ -1067,6 +1090,7 @@ begin
   finally
     Cross.Free;
   end;
+
   Oval(RectF(Center.X - 5 * FUnit, Center.Y - 5 * FUnit,
       Center.X + 5 * FUnit, Center.Y + 5 * FUnit), $FF111315, $FF424649);
 
@@ -1088,6 +1112,7 @@ begin
         Angle := 270;
     end;
     Arrow(X, Y, Angle, $FF16191B);
+
     if (FLayout = TScreenGamepadLayout.Sega) and not SegaSixButtons then
     begin
       X := (Center.X - OX) / FUnit;
@@ -1104,6 +1129,7 @@ begin
       end;
       Arrow(X, Y, Angle, $FFE35541);
     end;
+
     if FLayout = TScreenGamepadLayout.NeoGeo then
     begin
       X := (Center.X - OX) / FUnit;
@@ -1131,6 +1157,7 @@ begin
     Face.Offset(0, 1.3 * FUnit * Level);
     var Color: TAlphaColor := $FF36383A;
     var Caption := '';
+
     case B of
       TEmulatorButton.A:
         Caption := 'A';
@@ -1151,6 +1178,7 @@ begin
       TEmulatorButton.Mode:
         Caption := 'MODE';
     end;
+
     var Shoulder := (FLayout = TScreenGamepadLayout.Snes) and (B in [TEmulatorButton.C, TEmulatorButton.Z]);
     if Shoulder then
     begin
@@ -1162,6 +1190,7 @@ begin
       Text(Face, Caption, $FF686C70, 8);
       Continue;
     end;
+
     if B in ActionButtons then
     begin
       case FLayout of
@@ -1201,6 +1230,7 @@ begin
               end;
           end;
       end;
+
       var Bezel := Face;
       Bezel.Inflate(2.7 * FUnit, 2.7 * FUnit);
       Oval(Bezel, $FF0A0C0E, $FF606467);
@@ -1211,6 +1241,7 @@ begin
       var Rim := Face;
       Rim.Inflate(-1.4 * FUnit, -1.4 * FUnit);
       Canvas.DrawEllipse(Rim, Opacity * 0.7);
+
       case FLayout of
         TScreenGamepadLayout.Nes:
           Text(RectF(Bounds.Right - 8 * FUnit, Bounds.Bottom + 7 * FUnit,
@@ -1234,9 +1265,12 @@ begin
           begin
             var Pair := TEmulatorButton.B;
             case B of
-              TEmulatorButton.X: Pair := TEmulatorButton.Y;
-              TEmulatorButton.Y: Pair := TEmulatorButton.X;
-              TEmulatorButton.B: Pair := TEmulatorButton.A;
+              TEmulatorButton.X:
+                Pair := TEmulatorButton.Y;
+              TEmulatorButton.Y:
+                Pair := TEmulatorButton.X;
+              TEmulatorButton.B:
+                Pair := TEmulatorButton.A;
             end;
             var LetterCenter := Bounds.CenterPoint;
             var PairCenter := FBounds[Pair].CenterPoint;
@@ -1244,10 +1278,11 @@ begin
             var DY := LetterCenter.Y - PairCenter.Y;
             var Distance := Hypot(DX, DY);
             var Offset := Bounds.Width / 2 + 15 * FUnit;
+
             // Continue each pair's diagonal beyond the button rim.
             LetterCenter.Offset(DX / Distance * Offset, DY / Distance * Offset);
             Text(RectF(LetterCenter.X - 8 * FUnit, LetterCenter.Y - 7 * FUnit,
-              LetterCenter.X + 8 * FUnit, LetterCenter.Y + 7 * FUnit), Caption, $FFD2D4CF, 9);
+                LetterCenter.X + 8 * FUnit, LetterCenter.Y + 7 * FUnit), Caption, $FFD2D4CF, 9);
           end;
         TScreenGamepadLayout.NeoGeo:
           case B of
@@ -1268,6 +1303,7 @@ begin
       LabelBounds.Top := Bounds.Bottom + 3 * FUnit;
       LabelBounds.Bottom := LabelBounds.Top + 12 * FUnit;
       Color := MixColor(Color, $FFFFD56B, Level * 0.6);
+
       if FLayout in [TScreenGamepadLayout.Nes, TScreenGamepadLayout.Dendy] then
       begin
         Face.Inflate(-2 * FUnit, -3 * FUnit);
@@ -1349,13 +1385,15 @@ var
 
 begin
   inherited;
-  if not (FLayout in [TScreenGamepadLayout.GameBoy, TScreenGamepadLayout.GameBoyColor]) then
+  if not (FLayout in [TScreenGamepadLayout.GameBoy, TScreenGamepadLayout.GameBoyColor, TScreenGamepadLayout.GameBoyAdvance]) then
   begin
     PaintConsole;
     Exit;
   end;
+
   if FUnit <= 0 then
     Exit;
+
   Canvas.Fill.Kind := TBrushKind.Solid;
   Canvas.Stroke.Kind := TBrushKind.Solid;
   Canvas.Font.Family := 'Arial';
@@ -1367,7 +1405,7 @@ begin
   OY := (Height - 184 * FUnit) / 2;
   ShellColor := $FFD4D0BD;
   Ink := $FF303D78;
-  if FLayout = TScreenGamepadLayout.GameBoyColor then
+  if FLayout in [TScreenGamepadLayout.GameBoyColor, TScreenGamepadLayout.GameBoyAdvance] then
   begin
     ShellColor := $FF50448A;
     Ink := $FFE7E5EE;
@@ -1384,13 +1422,17 @@ begin
   finally
     Body.Free;
   end;
+
   Text(R(140, 32, 122, 25), 'Nintendo', Ink, 15);
   if FLayout = TScreenGamepadLayout.GameBoy then
     Text(R(133, 57, 136, 20), 'GAME BOY', Ink, 17)
+  else if FLayout = TScreenGamepadLayout.GameBoyAdvance then
+    Text(R(125, 57, 151, 20), 'GAME BOY ADVANCE', Ink, 12)
   else
     Text(R(131, 57, 139, 20), 'GAME BOY COLOR', Ink, 13);
-  for var I := 0 to 4 do
-    Box(R(309 + I * 13, 166, 7, 2), $FF777478, 1);
+  for var i := 0 to 4 do
+    Box(R(309 + i * 13, 166, 7, 2), $FF777478, 1);
+
   // The four arms meet the center to form the original solid plastic cross.
   Canvas.Fill.Color := $FF19191C;
   Canvas.FillEllipse(R(19, 37, 118, 118), Opacity * 0.18);
@@ -1419,18 +1461,30 @@ begin
   finally
     Cross.Free;
   end;
+
   for var Button in ActiveButtons do
   begin
     var Bounds := FBounds[Button];
     var Level := FLevels[Button];
+    if (FLayout = TScreenGamepadLayout.GameBoyAdvance) and (Button in [TEmulatorButton.C, TEmulatorButton.Z]) then
+    begin
+      Box(Bounds, MixColor($FF33343A, $FFE1CA8B, Level * 0.65), 5);
+      if Button = TEmulatorButton.C then
+        Text(Bounds, 'L', Ink, 10)
+      else
+        Text(Bounds, 'R', Ink, 10);
+      Continue;
+    end;
+
     var RoundButton := Button in ActionButtons;
     var Face := Bounds;
     Face.Inflate(-Face.Width * 0.035 * Level, -Face.Height * 0.035 * Level);
     Face.Offset(0, 1.5 * FUnit * Level);
-    var Directional := Button in [TEmulatorButton.Up, TEmulatorButton.Down,
-        TEmulatorButton.Left, TEmulatorButton.Right];
+    var Directional := Button in [TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right];
+
     if Button in MenuButtons then
       Face.Inflate(-3 * FUnit, -4 * FUnit);
+
     var Bezel := Face;
     Bezel.Inflate(3 * FUnit, 3 * FUnit);
     Canvas.Fill.Color := $FF17171A;
@@ -1438,12 +1492,14 @@ begin
       Canvas.FillEllipse(Bezel, Opacity)
     else if not Directional then
       Box(Bezel, $FF17171A, 5);
+
     ButtonColor := $FF343438;
     if RoundButton then
       if FLayout = TScreenGamepadLayout.GameBoy then
         ButtonColor := $FF8C2351
       else
         ButtonColor := $FF33343A;
+
     Canvas.Fill.Color := MixColor(ButtonColor, $FFE1CA8B, Level * 0.65);
     if RoundButton then
       Canvas.FillEllipse(Face, Opacity)
@@ -1455,11 +1511,12 @@ begin
       Canvas.DrawEllipse(Face, Opacity)
     else if not Directional then
       Canvas.DrawRect(Face, 3 * FUnit, 3 * FUnit, AllCorners, Opacity);
+
     var Caption := Labels[Button];
     if RoundButton then
     begin
       if FLayout in [TScreenGamepadLayout.Nes, TScreenGamepadLayout.GameBoy,
-          TScreenGamepadLayout.GameBoyColor] then
+          TScreenGamepadLayout.GameBoyColor, TScreenGamepadLayout.GameBoyAdvance] then
       begin
         var LabelBounds := Bounds;
         LabelBounds.Top := Bounds.Bottom + 3 * FUnit;
@@ -1485,13 +1542,13 @@ begin
       // Raised ridges on the cross arms.
       var C := Face.CenterPoint;
       Canvas.Stroke.Color := $FF67676B;
-      for var I := -1 to 1 do
+      for var i := -1 to 1 do
         if Button in [TEmulatorButton.Up, TEmulatorButton.Down] then
-          Canvas.DrawLine(PointF(C.X - 7 * FUnit, C.Y + I * 4 * FUnit),
-            PointF(C.X + 7 * FUnit, C.Y + I * 4 * FUnit), Opacity)
+          Canvas.DrawLine(PointF(C.X - 7 * FUnit, C.Y + i * 4 * FUnit),
+            PointF(C.X + 7 * FUnit, C.Y + i * 4 * FUnit), Opacity)
         else
-          Canvas.DrawLine(PointF(C.X + I * 4 * FUnit, C.Y - 7 * FUnit),
-            PointF(C.X + I * 4 * FUnit, C.Y + 7 * FUnit), Opacity);
+          Canvas.DrawLine(PointF(C.X + i * 4 * FUnit, C.Y - 7 * FUnit),
+            PointF(C.X + i * 4 * FUnit, C.Y + 7 * FUnit), Opacity);
     end;
   end;
 end;

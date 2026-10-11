@@ -14,8 +14,6 @@ implementation
 uses
   NeoGeo.Protection;
 
-// MAME BSD-3-Clause: S. Smith, David Haywood, Fabio Priuli. See LICENSE.txt.
-// All offsets refer to bounded arrays. Program words use the core's big endian order.
 function BootlegBits(Value: Integer; const Order: array of Integer): Integer;
 begin
   Result := 0;

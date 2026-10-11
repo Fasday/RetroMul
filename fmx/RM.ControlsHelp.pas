@@ -192,6 +192,8 @@ begin
       Pad.Layout := TScreenGamepadLayout.GameBoy
     else if FSystemId = ROM_SYSTEM_GBC then
       Pad.Layout := TScreenGamepadLayout.GameBoyColor
+    else if FSystemId = ROM_SYSTEM_GBA then
+      Pad.Layout := TScreenGamepadLayout.GameBoyAdvance
     else if FSystemId = ROM_SYSTEM_NEOGEO then
       Pad.Layout := TScreenGamepadLayout.NeoGeo;
     Pad.ButtonMask := Buttons;

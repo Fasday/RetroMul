@@ -26,6 +26,8 @@ type
     AddressBus, AddressValue: UInt16;
   end;
 
+  TSpriteLinePixels = array[0..NES_WIDTH - 1] of UInt8;
+
   TPPU = class
   private
     FRegion: TNesRegion;
@@ -80,6 +82,8 @@ type
     FPpuClock: UInt64;
     FFetchTile: UInt8;
     FMapperHasPpuClock: Boolean;
+    FMapperHasRenderCallbacks: Boolean;
+    FMapperAllowsDirectRead: Boolean;
     FCacheBackground: Boolean;
     // Derived row data; valid only inside synchronous RenderScanline.
     FSpriteRowCached: array[0..63] of Boolean;
@@ -93,6 +97,7 @@ type
     procedure RefreshOpenBus(Value, Mask: UInt8);
     procedure ClockOam;
     function AdvanceWaitingSprites(Offset: Integer): Boolean; inline;
+    procedure ShiftSpriteGroup(Offset: Integer); inline;
     procedure ClockPixels;
     procedure ClockMemory;
     procedure IncrementX;
@@ -105,10 +110,11 @@ type
     procedure PpuWriteMemory(Address: UInt16; Value: UInt8);
     procedure SetVblank(Value: Boolean);
     procedure UpdateNmiState;
-    function VblankStartLine: Integer;
+    function VblankStartLine: Integer; inline;
     procedure CaptureSplitState;
     function SampleBackgroundPixel(X, Y: Integer; out PaletteIndex: UInt8): UInt8;
     function SampleSpritePixel(X, Y: Integer; out PaletteIndex: UInt8; out PriorityBehindBg: Boolean; out IsSpriteZero: Boolean): UInt8;
+    procedure BuildSpriteLine(out Pixels: TSpriteLinePixels);
     procedure RenderScanline;
   public
     procedure SerializeState(State: TNesStateArchive);
@@ -122,7 +128,7 @@ type
     function CpuRead(Address: UInt16): UInt8;
     procedure CpuWrite(Address: UInt16; Value: UInt8);
     procedure WriteOamDma(Index: Integer; Value: UInt8);
-    function ConsumeNmi: Boolean;
+    function ConsumeNmi: Boolean; inline;
     procedure RebuildFrame;
     // Borrowed mask, invalidated by Clock, Reset and snapshot loading.
     function GetZapperMask: PNesZapperMask;
@@ -242,6 +248,8 @@ begin
   FMapper := AMapper;
   // Cache callback presence once; plain cartridges need no timed mapper fetches.
   FMapperHasPpuClock := (AMapper <> nil) and AMapper.HasPpuClockCallbacks;
+  FMapperHasRenderCallbacks := (AMapper <> nil) and AMapper.HasPpuRenderCallbacks;
+  FMapperAllowsDirectRead := (AMapper <> nil) and AMapper.AllowsDirectPpuRead;
 end;
 
 procedure TPPU.Reset;
@@ -376,8 +384,16 @@ function TPPU.PpuReadMemory(Address: UInt16; Rendering: Boolean; Sprite: Boolean
 begin
   var Temp: UInt8;
   Address := Address and $3FFF;
-  if (Address < $3F00) and (FMapper <> nil) and FMapper.PpuReadContext(Address, Rendering, Temp, Sprite) then
-    Exit(Temp);
+  if (Address < $3F00) and (FMapper <> nil) then
+  begin
+    if FMapperAllowsDirectRead then
+    begin
+      if FMapper.PpuRead(Address, Temp) then
+        Exit(Temp);
+    end
+    else if FMapper.PpuReadContext(Address, Rendering, Temp, Sprite) then
+      Exit(Temp);
+  end;
 
   if Address < $2000 then
   begin
@@ -405,10 +421,12 @@ begin
   Address := Address and $3FFF;
   if (Address < $3F00) and (FMapper <> nil) and FMapper.PpuWrite(Address, Value) then
     Exit;
+
   if Address < $2000 then
   begin
     Exit;
   end;
+
   if Address < $3F00 then
   begin
     FNameTable[MirrorNameTableAddress(Address)] := Value;
@@ -492,11 +510,13 @@ procedure TPPU.ClockMapperAddress;
 begin
   if not FMapperHasPpuClock then
     Exit;
+
   if (FMask and $18) = 0 then
   begin
     FMapper.ClockPpuAddress(FV and $3FFF, FPpuClock);
     Exit;
   end;
+
   if (FScanline >= 240) and (FScanline <> FPreRenderLine) then
     Exit;
 
@@ -835,13 +855,30 @@ begin
   var Bits := Counters and $FEFEFEFE;
   // Each byte must be at least two: no output this dot, no counter expiry,
   // and subtracting one from all four bytes cannot borrow across lanes.
-  Result := ((((Bits and $7F7F7F7F) + $7F7F7F7F) or Bits or $7F7F7F7F)
-    and $80808080) = $80808080;
+  Result := ((((Bits and $7F7F7F7F) + $7F7F7F7F) or Bits or $7F7F7F7F) and $80808080) = $80808080;
   if Result then
   begin
     Counters := Counters - $01010101;
     Move(Counters, FPixel.SpriteX[Offset], SizeOf(Counters));
   end;
+end;
+
+procedure TPPU.ShiftSpriteGroup(Offset: Integer);
+begin
+  var Attributes, Low, High: UInt32;
+  Move(FPixel.SpriteAttr[Offset], Attributes, SizeOf(Attributes));
+  Move(FPixel.SpriteLow[Offset], Low, SizeOf(Low));
+  Move(FPixel.SpriteHigh[Offset], High, SizeOf(High));
+
+  // Expand each horizontal-flip bit to a byte mask. Strip cross-byte carries
+  // so all four shifters advance independently, including transparent ones.
+  var Reverse := ((Attributes and $40404040) shr 6) * $FF;
+  Low := ((Low shl 1) and $FEFEFEFE and not Reverse) or
+    ((Low shr 1) and $7F7F7F7F and Reverse);
+  High := ((High shl 1) and $FEFEFEFE and not Reverse) or
+    ((High shr 1) and $7F7F7F7F and Reverse);
+  Move(Low, FPixel.SpriteLow[Offset], SizeOf(Low));
+  Move(High, FPixel.SpriteHigh[Offset], SizeOf(High));
 end;
 
 procedure TPPU.ClockPixels;
@@ -861,6 +898,24 @@ begin
     var X := FCycle - 1;
     var FirstSprite := 0;
     var LastSprite := 7;
+    var HitPossible :=
+      ((FStatus and $40) = 0) and ((FMask and $18) = $18) and
+      ((X >= 8) or ((FMask and 6) = 6)) and (X <> 255);
+
+    // Active groups can shift together once sprite-zero overlap is impossible.
+    if Rendering and not HitPossible then
+    begin
+      if (FPixel.Counting and $0F) = 0 then
+      begin
+        ShiftSpriteGroup(0);
+        FirstSprite := 4;
+      end;
+      if (FPixel.Counting and $F0) = 0 then
+      begin
+        ShiftSpriteGroup(4);
+        LastSprite := 3;
+      end;
+    end;
     // The skipped odd-frame dot makes waiting sprites output at X=0.
     if not ((X = 0) and FPixel.DotSkipped) then
     begin
@@ -869,6 +924,7 @@ begin
       if ((FPixel.Counting and $F0) = $F0) and AdvanceWaitingSprites(4) then
         LastSprite := 3;
     end;
+
     for var i := FirstSprite to LastSprite do
     begin
       var OutputSprite := ((FPixel.Counting and (1 shl i)) = 0) or ((X = 0) and FPixel.DotSkipped);
@@ -879,8 +935,8 @@ begin
         if FPixel.SpriteX[i] = 0 then
           FPixel.Counting := FPixel.Counting and not (1 shl i);
       end;
-      if OutputSprite and Rendering and
-        ((FPixel.SpriteLow[i] or FPixel.SpriteHigh[i]) <> 0) then
+
+      if OutputSprite and Rendering and ((FPixel.SpriteLow[i] or FPixel.SpriteHigh[i]) <> 0) then
       begin
         // All eight shifters still advance on every dot. Their pixel values
         // are needed here only while a sprite-zero hit is still possible.
@@ -889,8 +945,7 @@ begin
           ((X >= 8) or ((FMask and 2) <> 0)) and
           ((X >= 8) or ((FMask and 4) <> 0)) and (X <> 255) then
         begin
-          var Background := ((FPixel.Low shr (15 - FFineX)) and 1) or
-            (((FPixel.High shr (15 - FFineX)) and 1) shl 1);
+          var Background := ((FPixel.Low shr (15 - FFineX)) and 1) or (((FPixel.High shr (15 - FFineX)) and 1) shl 1);
           if Background <> 0 then
           begin
             var SpritePixel: UInt8;
@@ -920,6 +975,7 @@ begin
     end;
     FPixel.DotSkipped := False;
   end;
+
   if not Rendering then
     Exit;
 
@@ -1004,7 +1060,8 @@ begin
 
   if FCycle = 1 then
     FZapperMaskValid := False;
-  ClockMapperAddress;
+  if FMapperHasPpuClock then
+    ClockMapperAddress;
 
   Inc(FPpuClock);
   if RenderingEnabled and ((FScanline < 240) or (FScanline = FPreRenderLine)) then
@@ -1028,12 +1085,13 @@ begin
   begin
     if (((FScanline >= 0) and (FScanline < 240)) or (FScanline = FPreRenderLine)) then
     begin
-      if (((FCycle >= 1) and (FCycle <= 256)) or ((FCycle >= 321) and (FCycle <= 336))) and (((FCycle - 1) mod 8) = 7) then
+      if (((FCycle >= 1) and (FCycle <= 256)) or ((FCycle >= 321) and (FCycle <= 336))) and ((FCycle and 7) = 0) then
         IncrementX;
       if FCycle = 256 then
         IncrementY;
       if FCycle = 257 then
         CopyX;
+
       // Sprite fetches force the primary OAM address back to zero.
       if (FCycle >= 257) and (FCycle <= 320) then
         FOamAddress := 0;
@@ -1104,6 +1162,7 @@ end;
 procedure TPPU.RefreshOpenBus(Value, Mask: UInt8);
 begin
   FOpenBus := (FOpenBus and not Mask) or (Value and Mask);
+
   // Analogue retention varies with temperature/chip. Use a deterministic
   // ~0.3 second lifetime (20 NTSC frames), independently for each driven bit.
   for var i := 0 to 7 do
@@ -1118,6 +1177,7 @@ begin
   for var i := 0 to 7 do
     if FPpuClock >= FOpenBusExpiry[i] then
       FOpenBus := FOpenBus and not (1 shl i);
+
   Result := FOpenBus;
   case Address and 7 of
     2:
@@ -1145,6 +1205,7 @@ begin
       begin
         Result := FOam[FOamAddress];
         DrivenMask := $FF;
+
         // Attribute bits 2..4 are unimplemented in primary OAM.
         if (FOamAddress and 3) = 2 then
           Result := Result and $E3;
@@ -1313,6 +1374,7 @@ begin
     Inc(ScrollX, 16);
   while ScrollX < 0 do
     Inc(ScrollX, 512);
+
   var WorldX: Integer := (X + ScrollX) mod 512;
   if FRenderingLine and FCacheBackground and (FBackgroundTileX = (WorldX shr 3)) then
   begin
@@ -1321,6 +1383,7 @@ begin
     Exit((((FBackgroundHigh shr Shift) and 1) shl 1) or ((FBackgroundLow shr Shift) and 1));
   end;
   var ScrollY: Integer := (((Integer(RenderV shr 5)) and $1F) shl 3) or ((RenderV shr 12) and 7);
+
   // PPUCTRL writes t's nametable bits, but PPUADDR and scrolling can change
   // them independently. Fetches must use the captured VRAM address, including
   // the nametable toggle from the two pre-render tile fetches above.
@@ -1395,6 +1458,7 @@ begin
     SpriteHeight := 16
   else
     SpriteHeight := 8;
+
   // RenderScanline selected all sprites intersecting this row in OAM order.
   // Keep pattern reads here: mapper latches/fetch context can change per pixel.
   for var Candidate := 0 to FLineSpriteCount - 1 do
@@ -1461,6 +1525,58 @@ begin
   end;
 end;
 
+procedure TPPU.BuildSpriteLine(out Pixels: TSpriteLinePixels);
+begin
+  FillChar(Pixels, SizeOf(Pixels), 0);
+  // Called only for passive reads with no per-pixel mapper context callbacks.
+  // Select the first opaque OAM pixel before applying background priority.
+  var Height := 8;
+  if (FRenderCtrl and $20) <> 0 then
+    Height := 16;
+  var LeftClip := 0;
+  if (FRenderMask and $04) = 0 then
+    LeftClip := 8;
+
+  for var Candidate := 0 to FLineSpriteCount - 1 do
+  begin
+    var i := Integer(FLineSprites[Candidate]);
+    var SpriteX := Integer(FOam[i * 4 + 3]);
+    var FirstX := SpriteX;
+    if FirstX < LeftClip then
+      FirstX := LeftClip;
+    var LastX := SpriteX + 7;
+    if LastX >= NES_WIDTH then
+      LastX := NES_WIDTH - 1;
+    if FirstX > LastX then
+      Continue;
+
+    var Attributes := FOam[i * 4 + 2];
+    var Row := FScanline - Integer(FOam[i * 4]) - 1;
+    if (Attributes and $80) <> 0 then
+      Row := Height - 1 - Row;
+    var Tile := FOam[i * 4 + 1];
+    var Address: UInt16;
+    if Height = 16 then
+      Address := (UInt16(Tile and 1) shl 12) or (UInt16(Tile and $FE) shl 4) or
+        ((Row and 8) shl 1) or (Row and 7)
+    else
+      Address := (UInt16(FRenderCtrl and $08) shl 9) or (UInt16(Tile) shl 4) or (Row and 7);
+    var Lo := PpuReadMemory(Address, True, True);
+    var Hi := PpuReadMemory(Address + 8, True, True);
+    var PaletteAndPriority := ((4 + (Attributes and 3)) shl 2) or (Attributes and $20);
+    for var X := FirstX to LastX do
+      if Pixels[X] = 0 then
+      begin
+        var Shift := 7 - (X - SpriteX);
+        if (Attributes and $40) <> 0 then
+          Shift := 7 - Shift;
+        var Pixel := ((Lo shr Shift) and 1) or (((Hi shr Shift) and 1) shl 1);
+        if Pixel <> 0 then
+          Pixels[X] := PaletteAndPriority or Pixel;
+      end;
+  end;
+end;
+
 procedure TPPU.RenderScanline;
 begin
   var BgPixel: UInt8;
@@ -1503,6 +1619,7 @@ begin
       Colors[i] := NES_PALETTE[ColorIndex];
   end;
   var Y: Integer := FScanline;
+
   // OAM and control registers cannot change during this synchronous render.
   // Preserve the existing unlimited-sprite behavior (do not impose an 8 limit).
   FLineSpriteCount := 0;
@@ -1518,7 +1635,11 @@ begin
         Inc(FLineSpriteCount);
       end;
   end;
+  var BatchSprites := FCacheBackground and not FMapperHasRenderCallbacks;
+  var SpritePixels: TSpriteLinePixels;
   try
+    if BatchSprites then
+      BuildSpriteLine(SpritePixels);
     var BackgroundPixelsLeft := 0;
     for var X := 0 to NES_WIDTH - 1 do
     begin
@@ -1538,7 +1659,15 @@ begin
         if FCacheBackground and (FBackgroundTileX >= 0) then
           BackgroundPixelsLeft := 7 - ((X + FRenderFineX) and 7);
       end;
-      SprPixel := SampleSpritePixel(X, Y, SprPalette, PriorityBehindBg, SpriteZero);
+      if BatchSprites then
+      begin
+        var Sprite := SpritePixels[X];
+        SprPixel := Sprite and 3;
+        SprPalette := (Sprite shr 2) and 7;
+        PriorityBehindBg := (Sprite and $20) <> 0;
+      end
+      else
+        SprPixel := SampleSpritePixel(X, Y, SprPalette, PriorityBehindBg, SpriteZero);
       if (BgPixel = 0) and (SprPixel = 0) then
         FinalPaletteAddress := 0
       else if (BgPixel = 0) and (SprPixel <> 0) then

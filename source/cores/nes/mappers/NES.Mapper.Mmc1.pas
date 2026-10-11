@@ -25,6 +25,12 @@ type
     FBoard, FOuter, FInit: Integer;
     FLocked, FIrqEnabled, FPending: Boolean;
     FIrqCounter: UInt32;
+    // Derived slot offsets; excluded from snapshots and rebuilt on load.
+    FUseBankCache: Boolean;
+    FPrgOffsets, FChrOffsets: array[0..1] of Integer;
+    procedure UpdateBankOffsets;
+    function GetPrgOffset(Address: UInt16): Integer;
+    function GetChrOffset(Address: UInt16): Integer;
     procedure UpdateEvent;
     function GetPrgBankCount: Integer;
     function GetChrBankCount4K: Integer;
@@ -44,10 +50,17 @@ type
     function PpuWrite(Address: UInt16; Value: UInt8): Boolean; override;
     function GetMirrorMode: TMirrorMode; override;
     function AllowsPpuReadCaching: Boolean; override;
+    function AllowsDirectPpuRead: Boolean; override;
     procedure Reset; override;
   end;
 
 implementation
+
+function TMapperMmc1.AllowsDirectPpuRead: Boolean;
+begin
+  // Derived boards retain the contextual path unless they explicitly opt in.
+  Result := ClassType = TMapperMmc1;
+end;
 
 function TMapperMmc1.AllowsPpuReadCaching: Boolean;
 begin
@@ -80,6 +93,8 @@ begin
     State.Field(FPending, SizeOf(FPending));
     State.Field(FIrqCounter, SizeOf(FIrqCounter));
   end;
+  if State.Loading then
+    UpdateBankOffsets;
 end;
 
 function TMapperMmc1.GetSaveMemory: TByteArray;
@@ -105,6 +120,7 @@ begin
   FHasChrRam := AHasChrRam;
   FForceRamEnabled := ForceRamEnabled;
   FBoard := Board;
+  FUseBankCache := ClassType = TMapperMmc1;
   FBoardMirrorMode := AMirrorMode;
   if Length(FChrMemory) = 0 then
     SetLength(FChrMemory, $2000);
@@ -143,22 +159,9 @@ begin
     Inc(Result, GetChrBankCount4K);
 end;
 
-function TMapperMmc1.CpuRead(Address: UInt16; out Value: UInt8): Boolean;
+function TMapperMmc1.GetPrgOffset(Address: UInt16): Integer;
 begin
-  var Bank16K: Integer;
-  var Offset: Integer;
-  if (Address >= $6000) and (Address < $8000) then
-  begin
-    if not FForceRamEnabled and ((FPrgBank and $10) <> 0) then
-      Exit(False); // Unmapped PRG RAM leaves the CPU's open bus intact.
-    Value := FPrgRam[Address and $1FFF];
-    Exit(True);
-  end;
-
-  Result := Address >= $8000;
-  if not Result then
-    Exit;
-
+  var Bank16K, Offset: Integer;
   var PrgMode: Integer := (FControl shr 2) and 3;
   if FBoard = MAPPER_MMC1_105 then
   begin
@@ -177,8 +180,7 @@ begin
       Bank16K := (FPrgBank and 7) or 8
     else
       Bank16K := 15;
-    Value := FPrgRom[(MapPrgBank(Bank16K) * $4000 + (Address and $3FFF)) mod Length(FPrgRom)];
-    Exit(True);
+    Exit((MapPrgBank(Bank16K) * $4000 + (Address and $3FFF)) mod Length(FPrgRom));
   end;
   var OuterBank := 0;
   // SUROM connects CHR A16 to PRG A18, including the fixed bank.
@@ -212,7 +214,27 @@ begin
     end;
   end;
 
-  Value := FPrgRom[Offset mod Length(FPrgRom)];
+  Result := Offset mod Length(FPrgRom);
+end;
+
+function TMapperMmc1.CpuRead(Address: UInt16; out Value: UInt8): Boolean;
+begin
+  if (Address >= $6000) and (Address < $8000) then
+  begin
+    if not FForceRamEnabled and ((FPrgBank and $10) <> 0) then
+      Exit(False); // Unmapped PRG RAM leaves the CPU's open bus intact.
+    Value := FPrgRam[Address and $1FFF];
+    Exit(True);
+  end;
+
+  Result := Address >= $8000;
+  if not Result then
+    Exit;
+
+  if FUseBankCache then
+    Value := FPrgRom[FPrgOffsets[(Address - $8000) shr 14] + (Address and $3FFF)]
+  else
+    Value := FPrgRom[GetPrgOffset(Address)];
 end;
 
 function TMapperMmc1.CpuWrite(Address: UInt16; Value: UInt8): Boolean;
@@ -224,7 +246,8 @@ begin
       if not FLocked and ((FPrgBank and $10) = 0) then
       begin
         FOuter := (Value and $70) shr 1;
-        FLocked := (Value and 8) <> 0
+        FLocked := (Value and 8) <> 0;
+        UpdateBankOffsets;
       end;
       Exit(True);
     end;
@@ -243,6 +266,7 @@ begin
     FWriteCount := 0;
     FControl := FControl or $0C;
     UpdateEvent;
+    UpdateBankOffsets;
     Exit;
   end;
 
@@ -266,6 +290,17 @@ begin
   FShiftRegister := $10;
   FWriteCount := 0;
   UpdateEvent;
+  UpdateBankOffsets;
+end;
+
+procedure TMapperMmc1.UpdateBankOffsets;
+begin
+  if not FUseBankCache then
+    Exit;
+  FPrgOffsets[0] := GetPrgOffset($8000);
+  FPrgOffsets[1] := GetPrgOffset($C000);
+  FChrOffsets[0] := GetChrOffset($0000);
+  FChrOffsets[1] := GetChrOffset($1000);
 end;
 
 procedure TMapperMmc1.UpdateEvent;
@@ -315,19 +350,14 @@ begin
   Result := CpuWrite(Address, Value);
 end;
 
-function TMapperMmc1.PpuRead(Address: UInt16; out Value: UInt8): Boolean;
+function TMapperMmc1.GetChrOffset(Address: UInt16): Integer;
 begin
   if (FBoard = MAPPER_MMC1_105) and (Address < $2000) then
   begin
-    Value := FChrMemory[Address];
-    Exit(True)
+    Exit(Address)
   end;
   var Bank4K: Integer;
   var Offset: Integer;
-  Result := Address < $2000;
-  if not Result then
-    Exit;
-
   var ChrMode: Integer := (FControl shr 4) and 1;
   if ChrMode = 0 then
   begin
@@ -343,38 +373,29 @@ begin
     Offset := Bank4K * $1000 + (Address and $0FFF);
   end;
 
-  Value := FChrMemory[Offset mod Length(FChrMemory)];
+  Result := Offset mod Length(FChrMemory);
+end;
+
+function TMapperMmc1.PpuRead(Address: UInt16; out Value: UInt8): Boolean;
+begin
+  Result := Address < $2000;
+  if not Result then
+    Exit;
+  if FUseBankCache then
+    Value := FChrMemory[FChrOffsets[Address shr 12] + (Address and $0FFF)]
+  else
+    Value := FChrMemory[GetChrOffset(Address)];
 end;
 
 function TMapperMmc1.PpuWrite(Address: UInt16; Value: UInt8): Boolean;
 begin
-  if (FBoard = MAPPER_MMC1_105) and (Address < $2000) and FHasChrRam then
-  begin
-    FChrMemory[Address] := Value;
-    Exit(True)
-  end;
-  var Bank4K: Integer;
-  var Offset: Integer;
   Result := (Address < $2000) and FHasChrRam;
   if not Result then
     Exit;
-
-  var ChrMode: Integer := (FControl shr 4) and 1;
-  if ChrMode = 0 then
-  begin
-    Bank4K := MapChrBank4K((FChrBank0 and $1E) + (Address div $1000));
-    Offset := Bank4K * $1000 + (Address and $0FFF);
-  end
+  if FUseBankCache then
+    FChrMemory[FChrOffsets[Address shr 12] + (Address and $0FFF)] := Value
   else
-  begin
-    if Address < $1000 then
-      Bank4K := MapChrBank4K(FChrBank0)
-    else
-      Bank4K := MapChrBank4K(FChrBank1);
-    Offset := Bank4K * $1000 + (Address and $0FFF);
-  end;
-
-  FChrMemory[Offset mod Length(FChrMemory)] := Value;
+    FChrMemory[GetChrOffset(Address)] := Value;
 end;
 
 function TMapperMmc1.GetMirrorMode: TMirrorMode;
@@ -412,6 +433,7 @@ begin
   FPending := False;
   if FBoard = MAPPER_MMC1_105 then
     FChrBank0 := $10;
+  UpdateBankOffsets;
 end;
 
 end.

@@ -228,7 +228,7 @@ begin
   var Players := 2;
   if FState.Input.SystemId = ROM_SYSTEM_GB then
     Players := 1;
-  if FState.Input.SystemId = ROM_SYSTEM_GBC then
+  if (FState.Input.SystemId = ROM_SYSTEM_GBC) or (FState.Input.SystemId = ROM_SYSTEM_GBA) then
     Players := 1;
   if FState.Input.SystemId = ROM_SYSTEM_SNES then
     if FState.Input.Ports.Multitap[1] then

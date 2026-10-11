@@ -50,9 +50,6 @@ implementation
 uses
   System.Math;
 
-{ Derived from emu2413 v1.5.9, https://github.com/digital-sound-antiques/emu2413
-  Copyright (c) 2001-2020 Mitsutaka Okazaki }
-
 const
   EG_ATTACK = 0;
   EG_DECAY = 1;
@@ -112,18 +109,20 @@ end;
 
 procedure InitializeTables;
 begin
-  for var I := 0 to 255 do
+  for var i := 0 to 255 do
   begin
-    ExpTable[I] := Floor((Power(2, I / 256.0) - 1) * 1024 + 0.5);
-    SineTable[0, I] := Floor(-Log2(Sin((I + 0.5) * Pi / 512)) * 256 + 0.5);
-    SineTable[0, 511 - I] := SineTable[0, I];
+    ExpTable[i] := Floor((Power(2, i / 256.0) - 1) * 1024 + 0.5);
+    SineTable[0, i] := Floor(-Log2(Sin((i + 0.5) * Pi / 512)) * 256 + 0.5);
+    SineTable[0, 511 - i] := SineTable[0, i];
   end;
-  for var I := 0 to 511 do
+
+  for var i := 0 to 511 do
   begin
-    SineTable[0, 512 + I] := $8000 or SineTable[0, I];
-    SineTable[1, I] := SineTable[0, I];
-    SineTable[1, 512 + I] := $FFF;
+    SineTable[0, 512 + i] := $8000 or SineTable[0, i];
+    SineTable[1, i] := SineTable[0, i];
+    SineTable[1, 512 + i] := $FFF;
   end;
+
   for var Block := 0 to 7 do
     for var Fnum := 0 to 15 do
       for var Level := 0 to 63 do
@@ -138,15 +137,16 @@ begin
           end;
           LevelTable[Block * 16 + Fnum, Level, Scale] := Level * 2 + Extra;
         end;
+
   // Verified OPLL tremolo: 8 samples per step, a 3-sample peak, 7-sample tail.
-  for var I := 0 to 103 do
-    AmplitudeLfo[I] := I div 8;
-  for var I := 104 to 106 do
-    AmplitudeLfo[I] := 13;
-  for var I := 107 to 202 do
-    AmplitudeLfo[I] := 12 - (I - 107) div 8;
-  for var I := 203 to 209 do
-    AmplitudeLfo[I] := 0;
+  for var i := 0 to 103 do
+    AmplitudeLfo[i] := i div 8;
+  for var i := 104 to 106 do
+    AmplitudeLfo[i] := 13;
+  for var i := 107 to 202 do
+    AmplitudeLfo[i] := 12 - (i - 107) div 8;
+  for var i := 203 to 209 do
+    AmplitudeLfo[i] := 0;
 end;
 
 procedure TVrc7Fm.DecodePatch(Index: Integer; const Data: array of Byte);
@@ -179,16 +179,19 @@ procedure TVrc7Fm.Reset(PreserveVibrato: Boolean);
 begin
   var Vibrato := FVibratoPhase;
   FillChar(Self, SizeOf(Self), 0);
+
   if PreserveVibrato then
     FVibratoPhase := Vibrato;
-  for var I := 0 to 15 do
-    DecodePatch(I, Instruments[I]);
-  for var I := 0 to 11 do
+
+  for var i := 0 to 15 do
+    DecodePatch(i, Instruments[i]);
+
+  for var i := 0 to 11 do
   begin
-    FSlots[I].PatchIndex := I and 1;
-    FSlots[I].Stage := EG_RELEASE;
-    FSlots[I].Envelope := EG_MUTE;
-    FSlots[I].Updates := UPDATE_ALL;
+    FSlots[i].PatchIndex := i and 1;
+    FSlots[i].Stage := EG_RELEASE;
+    FSlots[i].Envelope := EG_MUTE;
+    FSlots[i].Updates := UPDATE_ALL;
   end;
 end;
 
@@ -200,6 +203,7 @@ begin
     ((Address >= $20) and (Address <= $25)) or
     ((Address >= $30) and (Address <= $35))) then
     Exit;
+
   FRegisters[Address] := Value;
   if Address <= 7 then
   begin
@@ -291,11 +295,13 @@ begin
       Level := P.TL;
     S.TotalLevel := LevelTable[S.BlockFnum shr 5, Level, P.KL];
   end;
+
   if (S.Updates and UPDATE_RKS) <> 0 then
     if P.KR <> 0 then
       S.RateScale := S.Block * 2 + (S.Fnum shr 8)
     else
       S.RateScale := S.Block shr 1;
+
   if (S.Updates and (UPDATE_RKS or UPDATE_EG)) <> 0 then
   begin
     var Rate := 0;
@@ -323,9 +329,11 @@ begin
       S.Shift := 0;
       S.RateHigh := 0;
       S.RateLow := 0;
+
       // Keep the update pending, as emu2413 does for a stopped envelope.
       Exit;
     end;
+
     S.RateHigh := Min(15, Rate + (S.RateScale shr 2));
     S.RateLow := S.RateScale and 3;
     if S.Stage = EG_ATTACK then
@@ -347,8 +355,7 @@ begin
   var Step := 0;
   if S.Stage = EG_ATTACK then
   begin
-    if (S.Envelope > 0) and (S.RateHigh > 0) and
-      ((FEnvelopeCounter and Mask and not 3) = 0) then
+    if (S.Envelope > 0) and (S.RateHigh > 0) and ((FEnvelopeCounter and Mask and not 3) = 0) then
     begin
       case S.RateHigh of
         12, 13, 14:
@@ -414,11 +421,13 @@ function TVrc7Fm.LinearOutput(Index, Phase: Integer): Integer;
 begin
   var S: PVrc7Slot := @FSlots[Index];
   var Envelope := S.Envelope;
+
   // Test bit 0 overrides the output; it must not corrupt the running envelope.
   if (FTest and 1) <> 0 then
     Envelope := 0;
   if Envelope > EG_MAX then
     Exit(0);
+
   var Amplitude := 0;
   if FPatches[S.PatchIndex].AM <> 0 then
     Amplitude := FTremolo;
@@ -449,13 +458,14 @@ begin
   end;
   FTremolo := AmplitudeLfo[FTremoloPhase shr 6];
   FEnvelopeCounter := (Cardinal(FEnvelopeCounter) + 1) and $FFFF;
-  for var I := 0 to 11 do
+
+  for var i := 0 to 11 do
   begin
-    var S: PVrc7Slot := @FSlots[I];
+    var S: PVrc7Slot := @FSlots[i];
     var P: PVrc7Patch := @FPatches[S.PatchIndex];
     if S.Updates <> 0 then
-      CommitSlot(I);
-    ClockEnvelope(I);
+      CommitSlot(i);
+    ClockEnvelope(i);
     if (FTest and 4) <> 0 then
       S.Phase := 0;
     var Pitch := 0;
@@ -464,6 +474,7 @@ begin
     S.Phase := (S.Phase + Cardinal(((S.Fnum * 2 + Pitch) * Multipliers[P.ML]) shl S.Block shr 2)) and $7FFFF;
     S.PhaseOutput := S.Phase shr 9;
   end;
+
   var Mix := 0;
   for var Ch := 0 to 5 do
   begin

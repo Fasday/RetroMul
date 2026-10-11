@@ -77,10 +77,10 @@ type
     function Pull: UInt8;
     function Read16(Address: UInt16): UInt16;
     function Read16Bug(Address: UInt16): UInt16;
-    function GetFlag(Flag: UInt8): Boolean;
-    procedure SetFlag(Flag: UInt8; Value: Boolean);
-    procedure SetZeroNegative(Value: UInt8);
-    function Imm: UInt16;
+    function GetFlag(Flag: UInt8): Boolean; inline;
+    procedure SetFlag(Flag: UInt8; Value: Boolean); inline;
+    procedure SetZeroNegative(Value: UInt8); inline;
+    function Imm: UInt16; inline;
     function Zp0: UInt16;
     function Zpx: UInt16;
     function Zpy: UInt16;
@@ -129,9 +129,9 @@ type
     procedure Reset;
     procedure Clock(DeferInterruptPoll: Boolean = False);
     procedure PollInterrupts;
-    procedure TriggerNmi;
+    procedure TriggerNmi; inline;
     procedure TriggerIrq;
-    procedure SetIrqLine(Active: Boolean);
+    procedure SetIrqLine(Active: Boolean); inline;
     function NextCycleIsWrite: Boolean;
     function NextReadAddress: UInt16;
     procedure NotifyDmaHalt;
@@ -291,6 +291,7 @@ begin
     Inc(FLatchedReadIndex);
     Exit;
   end;
+
   Result := FRead(Address);
 end;
 
@@ -348,8 +349,8 @@ end;
 
 procedure TCPU6502.SetZeroNegative(Value: UInt8);
 begin
-  SetFlag(FLAG_ZERO, Value = 0);
-  SetFlag(FLAG_NEGATIVE, (Value and $80) <> 0);
+  P := (P and not (FLAG_ZERO or FLAG_NEGATIVE)) or
+    (Value and FLAG_NEGATIVE) or (Ord(Value = 0) shl 1);
 end;
 
 function TCPU6502.Imm: UInt16;
@@ -886,6 +887,7 @@ begin
     FExecutingOpcode := False;
     FApplyLatchedReads := False;
   end;
+
   CyclesRemaining := Remaining;
   FBusSequence.Active := False;
 end;

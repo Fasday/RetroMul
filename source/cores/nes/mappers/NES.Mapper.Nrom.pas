@@ -25,9 +25,16 @@ type
     function GetMirrorMode: TMirrorMode; override;
     procedure Reset; override;
     function AllowsPpuReadCaching: Boolean; override;
+    function AllowsDirectPpuRead: Boolean; override;
   end;
 
 implementation
+
+function TMapperNrom.AllowsDirectPpuRead: Boolean;
+begin
+  // Derived boards retain the contextual path unless they explicitly opt in.
+  Result := ClassType = TMapperNrom;
+end;
 
 function TMapperNrom.AllowsPpuReadCaching: Boolean;
 begin

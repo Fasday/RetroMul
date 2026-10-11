@@ -164,6 +164,7 @@ begin
   if Suspended then
     Start;
   WaitFor;
+
   // Preserve failed SRAM until an explicit retry succeeds. No worker can mutate it now.
   if Length(FPendingBattery) > 0 then
   try
@@ -174,6 +175,7 @@ begin
     on E: Exception do
       raise EInOutError.Create('Neo Geo SRAM: ' + E.Message);
   end;
+
   if FFinalSaveError <> '' then
     raise EInOutError.Create('Neo Geo SRAM: ' + FFinalSaveError);
 end;
@@ -261,6 +263,7 @@ begin
       Deadline := TStopwatch.GetTimeStamp;
       WasPaused := False;
       WasEnabled := False;
+
       while not Terminated do
       begin
         FSnapshots.Process(
@@ -303,6 +306,7 @@ begin
             end;
             Deadline := TStopwatch.GetTimeStamp;
           end);
+
         var Input, Input2: TEmulatorButtons;
         FLock.Acquire;
         try
@@ -316,6 +320,7 @@ begin
         finally
           FLock.Release;
         end;
+
         if ResetRequested then
         begin
           FrameHints.Pause;
@@ -325,6 +330,7 @@ begin
             Audio.Clear;
           Deadline := TStopwatch.GetTimeStamp;
         end;
+
         if Paused then
         begin
           FrameHints.Pause;
@@ -339,6 +345,7 @@ begin
           Deadline := TStopwatch.GetTimeStamp;
           Continue;
         end;
+
         WasPaused := False;
         FrameHints.TargetDurationNanos := Round(1000000000.0 / Console.FramesPerSecond);
         FrameHints.BeginWork;
@@ -358,18 +365,21 @@ begin
           FLock.Release;
         end;
         Console.RunFrame;
+
         if Terminated then
           Break;
+
         Frame.Width := Console.Width;
         Frame.Height := Console.Height;
         Frame.FrameNumber := Console.FrameNumber;
         Frame.FramesPerSecond := Console.FramesPerSecond;
+
         // Allocate a new publication buffer: previously delivered frames remain immutable.
         Frame.Pixels := nil;
         SetLength(Frame.Pixels, Frame.Width * Frame.Height);
         for var Y := 0 to Frame.Height - 1 do
-          Move(Console.Video.Pixels[Y * 320], Frame.Pixels[Y * Frame.Width],
-            Frame.Width * SizeOf(Frame.Pixels[0]));
+          Move(Console.Video.Pixels[Y * 320], Frame.Pixels[Y * Frame.Width], Frame.Width * SizeOf(Frame.Pixels[0]));
+
         FLock.Acquire;
         try
           FFrame := Frame;
@@ -377,6 +387,7 @@ begin
         finally
           FLock.Release;
         end;
+
         if Enabled and not AudioFailed then
         try
           if Audio = nil then
@@ -406,6 +417,7 @@ begin
             Audio.Clear;
           AudioFailed := False; // A later explicit audio enable may retry the device.
         end;
+
         FrameHints.EndWork;
         WasEnabled := Enabled;
         if Console.FrameNumber mod 120 = 0 then
@@ -436,6 +448,7 @@ procedure TNeoGeoWorker.InsertCoin(Player: Integer);
 begin
   if not (Player in [1, 2]) then
     Exit;
+
   FLock.Acquire;
   try
     FCoins[Player - 1] := True;

@@ -53,7 +53,7 @@ implementation
 
 uses
   Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, GB.Joypad, NES.Input, NES.Types, MD.Console, SNES.Console,
+  Core.Adapter.NeoGeo, Core.Adapter.GBA, GB.Joypad, NES.Input, NES.Types, MD.Console, SNES.Console,
   System.Math, FMX.Types;
 
 function HidToHostKey(Code: Integer): Word;
@@ -157,6 +157,8 @@ begin
     Include(Result, TEmulatorButton.Select);
     if SystemId = ROM_SYSTEM_NEOGEO then
       Result := Result + [TEmulatorButton.C, TEmulatorButton.X];
+    if SystemId = ROM_SYSTEM_GBA then
+      Result := Result + [TEmulatorButton.C, TEmulatorButton.Z];
     if SystemId = ROM_SYSTEM_SNES then
       Result := Result + [TEmulatorButton.X, TEmulatorButton.Y,
           TEmulatorButton.C, TEmulatorButton.Z];
@@ -178,7 +180,7 @@ begin
     end;
   if (SystemId = ROM_SYSTEM_NEOGEO) and (Button = TEmulatorButton.X) then
     Result := 'D';
-  if SystemId = ROM_SYSTEM_SNES then
+  if (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_GBA) then
     case Button of
       TEmulatorButton.C:
         Result := 'L';
@@ -345,6 +347,13 @@ begin
       Keys[1, B] := C.Keys2[B];
     end;
   end
+  else if SystemId = ROM_SYSTEM_GBA then
+  begin
+    var C := TGBAConfig.Create('');
+    Config := C;
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      Keys[0,B] := C.Keys[B];
+  end
   else if SystemId = ROM_SYSTEM_SNES then
   begin
     var C := TSnesConfig.Create('');
@@ -369,14 +378,14 @@ begin
     Count := 4;
   if SystemId = ROM_SYSTEM_SNES then
     Count := 8;
-  if (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) then
+  if (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
     Count := 1;
   for var Port := 0 to Count - 1 do
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
       if B in CoreButtons(SystemId, 'auto') then
       begin
         var Section := 'Controls';
-        if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) then
+        if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_GBA) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);

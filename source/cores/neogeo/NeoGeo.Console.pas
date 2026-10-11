@@ -162,7 +162,9 @@ begin
   inherited Create;
   if Cartridge = nil then
     raise EArgumentNilException.Create('Cartridge');
+
   FCart := Cartridge;
+
   // Protection is immutable cartridge metadata. Classify it once so bus
   // accesses do not manage temporary strings or repeat string comparisons.
   FProtection := ngpOther;
@@ -264,8 +266,8 @@ begin
   if FProtection = ngpKof10th then
   begin
     FCart.FixedROM := Copy(FInitialFixed);
-    for var I := 0 to High(FCartRAM) do
-      FCartRAM[I] := Word(Integer(ROMByte(FCart.ProgramROM, $E0000 + I * 2)) * 256 + ROMByte(FCart.ProgramROM, $E0001 + I * 2));
+    for var i := 0 to High(FCartRAM) do
+      FCartRAM[i] := Word(Integer(ROMByte(FCart.ProgramROM, $E0000 + i * 2)) * 256 + ROMByte(FCart.ProgramROM, $E0001 + i * 2));
   end;
   FillChar(FPvcRAM, SizeOf(FPvcRAM), 0);
   FBanks[0] := $F000;
@@ -327,9 +329,9 @@ const
     TEmulatorButton.B, TEmulatorButton.C, TEmulatorButton.X);
 begin
   Result := $FF;
-  for var I := 0 to 7 do
-    if Mapping[I] in Buttons then
-      Result := Byte(Result and ($FF xor (1 shl I)));
+  for var i := 0 to 7 do
+    if Mapping[i] in Buttons then
+      Result := Byte(Result and ($FF xor (1 shl i)));
 end;
 
 procedure TNeoGeoConsole.SetInput(const Input: TEmulatorInput);
@@ -380,6 +382,7 @@ procedure TNeoGeoConsole.SyncZ80(Target: Int64);
 begin
   if FInZ80 then
     Exit;
+
   FInZ80 := True;
   try
     while FZTime < Target do
@@ -398,12 +401,15 @@ function TNeoGeoConsole.ReadZMemory(Address: Word): Byte;
 begin
   if Address >= $F800 then
     Exit(FZRAM[Address and $7FF]);
+
   if Address < $8000 then
   begin
     if FCartAudio then
       Exit(ROMByte(FCart.AudioROM, Address));
+
     Exit(ROMByte(FCart.AudioBIOS, Address));
   end;
+
   var Bank := 0;
   var Offset := Integer(Address and $7FF);
   if Address < $C000 then
@@ -448,8 +454,7 @@ begin
   begin
     var Bank := Port and 3;
     var Mask := ($800 shl Bank) - 1;
-    FBanks[Bank] := ((Address shr 8) * ($800 shl Bank)) and
-      ((Length(FCart.AudioROM) - 1) and (not Mask));
+    FBanks[Bank] := ((Address shr 8) * ($800 shl Bank)) and ((Length(FCart.AudioROM) - 1) and (not Mask));
   end;
 end;
 
@@ -492,6 +497,7 @@ begin
       FRTCShift := (FRTCShift shr 1) or (UInt64(Incoming) shl 47);
     FRTCBits := Min(64, FRTCBits + 1);
   end;
+
   if ((FRTCControl and 4) = 0) and ((Value and 4) <> 0) then
   begin
     FRTCMode := FRTCCommand;
@@ -559,10 +565,10 @@ begin
   begin
     var Ticks := Max(Int64(0), FBusTime - FRTCTestBase) * 8192 div 24000000;
     Result := 0;
-    for var I := 0 to 5 do
+    for var i := 0 to 5 do
     begin
-      var Counter := (((FRTCCalendar shr (I * 8)) and $FF) + UInt64(Ticks)) and $FF;
-      Result := Result or (Counter shl (I * 8));
+      var Counter := (((FRTCCalendar shr (i * 8)) and $FF) + UInt64(Ticks)) and $FF;
+      Result := Result or (Counter shl (i * 8));
     end;
   end
   else
@@ -584,12 +590,13 @@ function TNeoGeoConsole.RTCData: Boolean;
 begin
   if FRTCMode in [1, 2] then
     Exit((FRTCShift and 1) <> 0);
+
   if FRTCTesting then
   begin
     var Counter := RTCCounter;
     Result := False;
-    for var I := 0 to 5 do
-      if ((Counter shr (I * 8)) and $FF) = 0 then
+    for var i := 0 to 5 do
+      if ((Counter shr (i * 8)) and $FF) = 0 then
         Exit(True);
   end
   else
@@ -630,7 +637,8 @@ end;
 procedure TNeoGeoConsole.FuryWrite(Address: Cardinal; Value: Word);
 begin
   if (Address and 2) <> 0 then
-    FFuryShift := (WireBits((Address shr 4) and $FFFF, [15, 11, 14, 10, 13, 9, 12, 8, 7, 3, 6, 2, 5, 1, 4, 0]) shl 16) or
+    FFuryShift := (
+      WireBits((Address shr 4) and $FFFF, [15, 11, 14, 10, 13, 9, 12, 8, 7, 3, 6, 2, 5, 1, 4, 0]) shl 16) or
       WireBits(Value, [15, 11, 14, 10, 13, 9, 12, 8, 7, 3, 6, 2, 5, 1, 4, 0])
   else if (Address and 8) <> 0 then
     FFuryShift := (FFuryShift and $3F3F3F3F) shl 2
@@ -696,29 +704,29 @@ begin
     Mask := Mask or $FF;
   if ((Kind = ngpJockeygp) or (Kind = ngpVliner)) and (Address >= $200000) and (Address <= $201FFE) then
   begin
-    var I := (Address - $200000) shr 1;
-    var W := Word((FCartRAM[I] and (Mask xor $FFFF)) or (Value and Mask));
-    if W <> FCartRAM[I] then
+    var i := (Address - $200000) shr 1;
+    var W := Word((FCartRAM[i] and (Mask xor $FFFF)) or (Value and Mask));
+    if W <> FCartRAM[i] then
     begin
-      FCartRAM[I] := W;
+      FCartRAM[i] := W;
       FBatteryDirty := True;
     end;
   end
   else if (Kind = ngpKof10th) and (Address >= $200000) and (Address < $240000) then
   begin
-    var I := Integer((Address - $200000) shr 1);
+    var i := Integer((Address - $200000) shr 1);
     if FPvcRAM[$FFE] = 0 then
-      FCartRAM[I and $FFFF] := Word((FCartRAM[I and $FFFF] and (Mask xor $FFFF)) or (Value and Mask))
-    else if I < Length(FCart.FixedROM) then
-      FCart.FixedROM[I] := Byte(BootlegBits(Value and $FF, [7, 6, 0, 4, 3, 2, 1, 5]));
+      FCartRAM[i and $FFFF] := Word((FCartRAM[i and $FFFF] and (Mask xor $FFFF)) or (Value and Mask))
+    else if i < Length(FCart.FixedROM) then
+      FCart.FixedROM[i] := Byte(BootlegBits(Value and $FF, [7, 6, 0, 4, 3, 2, 1, 5]));
   end
   else if HasBootRAM and (Address >= $2FE000) and (Address <= $2FFFFE) then
   begin
-    var I := Integer((Address - $2FE000) shr 1);
-    var W := Word((FPvcRAM[I] and (Mask xor $FFFF)) or (Value and Mask));
+    var i := Integer((Address - $2FE000) shr 1);
+    var W := Word((FPvcRAM[i] and (Mask xor $FFFF)) or (Value and Mask));
     if Kind = ngpKof10th then
     begin
-      if (Address = $2FFFF8) and (FPvcRAM[I] <> W) then
+      if (Address = $2FFFF8) and (FPvcRAM[i] <> W) then
         if (W and 1) <> 0 then
           FSpecialBank := $800000
         else
@@ -730,7 +738,7 @@ begin
           FProgramBank := $100000;
       end;
     end;
-    FPvcRAM[I] := W;
+    FPvcRAM[i] := W;
     if (Kind <> ngpKof10th) and ((Address = $2FFFF0) or (Address = $2FFFF2)) then
     begin
       var Low := FPvcRAM[$FF8] shr 8;
@@ -771,16 +779,16 @@ const
     TEmulatorButton.Z, TEmulatorButton.Mode, TEmulatorButton.Select);
 begin
   Result := $FF;
-  for var I := 0 to 6 do
+  for var i := 0 to 6 do
   begin
-    if ((FInputSelect and 1) <> 0) and (TileButtons[I] in FInputs.Buttons) then
-      Result := Result and Byte($FF xor (1 shl I));
-    if ((FInputSelect and 2) <> 0) and (TileButtons[I] in FInputs.Buttons2) then
-      Result := Result and Byte($FF xor (1 shl I));
+    if ((FInputSelect and 1) <> 0) and (TileButtons[i] in FInputs.Buttons) then
+      Result := Result and Byte($FF xor (1 shl i));
+    if ((FInputSelect and 2) <> 0) and (TileButtons[i] in FInputs.Buttons2) then
+      Result := Result and Byte($FF xor (1 shl i));
   end;
-  for var I := 0 to 4 do
-    if ((FInputSelect and 4) <> 0) and (ActionButtons[I] in FInputs.Buttons2) then
-      Result := Result and Byte($FF xor (1 shl I));
+  for var i := 0 to 4 do
+    if ((FInputSelect and 4) <> 0) and (ActionButtons[i] in FInputs.Buttons2) then
+      Result := Result and Byte($FF xor (1 shl i));
 end;
 
 function TNeoGeoConsole.HasPVC: Boolean;
@@ -831,14 +839,17 @@ begin
   if not ((Kind = ngpKof99) or (Kind = ngpGarou) or (Kind = ngpGarouh) or
     (Kind = ngpMslug3) or (Kind = ngpMslug3a) or (Kind = ngpKof2000)) then
     Exit;
+
   if Address = $2FE446 then
   begin
     Value := $9A37;
     Exit(True);
   end;
+
   var RandomPort := ((Kind = ngpKof99) and ((Address = $2FFFF8) or (Address = $2FFFFA))) or
     (((Kind = ngpGarou) or (Kind = ngpGarouh)) and ((Address = $2FFFCC) or (Address = $2FFFF0))) or
     ((Kind = ngpKof2000) and ((Address = $2FFFD8) or (Address = $2FFFDA)));
+
   if RandomPort then
   begin
     Value := FSmaRandom;
@@ -865,14 +876,14 @@ function TNeoGeoConsole.ReadBus(Address: Cardinal; HighByte, LowByte: Boolean): 
 begin
   if ExtraRead(Address, Result) then
     Exit;
+
   Result := $FFFF;
   var Region := Address shr 20;
   var Offset := Integer(Address and $FFFF);
   case Region of
     0:
       begin
-        if (FProtection = ngpKof98) and (FKof98Overlay <> 0) and
-          ((Address = $100) or (Address = $102)) then
+        if (FProtection = ngpKof98) and (FKof98Overlay <> 0) and ((Address = $100) or (Address = $102)) then
         begin
           if FKof98Overlay = 1 then
           begin
@@ -889,6 +900,7 @@ begin
               Exit($4F2D);
           end;
         end;
+
         var Data := FCart.ProgramROM;
         if (Address < $80) and not FCartVectors then
           Data := FCart.BIOS;
@@ -901,6 +913,7 @@ begin
       begin
         if FProtection = ngpFatfury2 then
           Exit(FuryRead(Address));
+
         if (FProtection = ngpMslugx) and (Address >= $2FFFE0) and (Address <= $2FFFEE) then
         begin
           var Selection := -1;
@@ -917,10 +930,13 @@ begin
               ((not Selection) and 7)) and 1;
           Exit;
         end;
+
         if HasPVC and (Address >= $2FE000) then
           Exit(FPvcRAM[(Address - $2FE000) shr 1]);
+
         if SMARead(Address, Result) then
           Exit;
+
         var A := FProgramBank + Integer(Address and $FFFFF);
         if Length(FCart.ProgramROM) <= $100000 then
           A := Integer(Address and $FFFFF);
@@ -959,8 +975,7 @@ begin
           end;
         $34:
           if FProtection = ngpIrrmaze then
-            Result := Word(Integer((PadByte(FInputs.Buttons) and $30) or
-                ((PadByte(FInputs.Buttons2) and $30) shl 2) or $F) * 256 + $FF)
+            Result := Word(Integer((PadByte(FInputs.Buttons) and $30) or ((PadByte(FInputs.Buttons2) and $30) shl 2) or $F) * 256 + $FF)
           else
             Result := Word(Integer(PadByte(FInputs.Buttons2)) * 256 + $FF);
         $38:
@@ -977,8 +992,7 @@ begin
           end;
         $3C:
           if HighByte then
-            Result := Video.ReadRegister((Address shr 1) and 3,
-              Integer((FBusTime mod NG_FRAME_CLOCKS) div NG_LINE_CLOCKS));
+            Result := Video.ReadRegister((Address shr 1) and 3, Integer((FBusTime mod NG_FRAME_CLOCKS) div NG_LINE_CLOCKS));
       end;
     4, 5, 6, 7:
       Result := Video.Palette[Video.PaletteBank * $1000 + Integer((Address shr 1) and $FFF)];
@@ -996,6 +1010,7 @@ procedure TNeoGeoConsole.WriteBus(Address: Cardinal; Value: Word; HighByte, LowB
 begin
   if ExtraWrite(Address, Value, HighByte, LowByte) then
     Exit;
+
   var Region := Address shr 20;
   var Offset := Integer(Address and $FFFF);
   case Region of
@@ -1144,6 +1159,7 @@ function TNeoGeoConsole.ReadWord(Address: Cardinal): Word;
 begin
   if Odd(Address) then
     raise EArgumentException.Create('Unaligned Neo Geo word');
+
   Result := ReadBus(Address and $FFFFFF, True, True);
 end;
 
@@ -1151,6 +1167,7 @@ procedure TNeoGeoConsole.WriteWord(Address: Cardinal; Value: Word);
 begin
   if Odd(Address) then
     raise EArgumentException.Create('Unaligned Neo Geo word');
+
   WriteBus(Address and $FFFFFF, Value, True, True);
 end;
 
@@ -1167,27 +1184,63 @@ begin
     if TEmulatorButton.Down in FInputs.Buttons then
       FTrackY := Byte((Integer(FTrackY) + 4) and $FF);
   end;
+
   var DisplayReady := Video.StartupVideoReady;
   Sound.BeginFrame;
+  // MAME neogeo.h/neogeo.cpp: IRQ1 is latched 58 master clocks into
+  // VBlank; the display counter reload follows at master clock 1146.
+  var VBlankStart := FFrameTime + Int64(240) * NG_LINE_CLOCKS;
+  var VBlankIRQDone := False;
+  var VBlankReloadDone := False;
   for var Line := 0 to NG_LINES - 1 do
   begin
     var Target := FFrameTime + Int64(Line + 1) * NG_LINE_CLOCKS;
-    if Line = 240 then
-    begin
-      FIRQ1 := True;
-      if (FIRQControl and $40) <> 0 then
-        FIRQDeadline := FFrameTime + Int64(Line) * NG_LINE_CLOCKS + (Int64(FDisplayCounter) + 1) * 4;
-    end;
     while FCPUTime < Target do
     begin
-      if (FIRQDeadline >= 0) and (FCPUTime >= FIRQDeadline) then
+      // Process timer events in timestamp order before the next instruction.
+      // A late CPU instruction can cross both an IRQ2 deadline and reload.
+      while True do
       begin
-        if (FIRQControl and $10) <> 0 then
-          FIRQ2 := True;
-        if (FIRQControl and $80) <> 0 then
-          Inc(FIRQDeadline, (Int64(FDisplayCounter) + 1) * 4)
-        else
-          FIRQDeadline := -1;
+        var EventTime := FIRQDeadline;
+        var Event := 0;
+        if Line >= 240 then
+        begin
+          if not VBlankIRQDone and ((EventTime < 0) or (VBlankStart + 58 < EventTime)) then
+          begin
+            EventTime := VBlankStart + 58;
+            Event := 1;
+          end;
+          if not VBlankReloadDone and ((EventTime < 0) or (VBlankStart + 1146 < EventTime)) then
+          begin
+            EventTime := VBlankStart + 1146;
+            Event := 2;
+          end;
+        end;
+        if (EventTime < 0) or (EventTime > FCPUTime) then
+          Break;
+
+        case Event of
+          0:
+            begin
+              if (FIRQControl and $10) <> 0 then
+                FIRQ2 := True;
+              if (FIRQControl and $80) <> 0 then
+                Inc(FIRQDeadline, (Int64(FDisplayCounter) + 1) * 4)
+              else
+                FIRQDeadline := -1;
+            end;
+          1:
+            begin
+              FIRQ1 := True;
+              VBlankIRQDone := True;
+            end;
+          2:
+            begin
+              if (FIRQControl and $40) <> 0 then
+                FIRQDeadline := EventTime + (Int64(FDisplayCounter) + 1) * 4;
+              VBlankReloadDone := True;
+            end;
+        end;
       end;
       UpdateIRQ;
       FCPUBase := FCPUTime;
@@ -1200,6 +1253,7 @@ begin
     SyncSound(Target);
     Video.RenderLine(Line);
   end;
+
   // Only mask the host framebuffer; the CPU, VRAM and timing run normally.
   // Require readiness at both ends so a mid-frame clear cannot leak test pixels.
   if not DisplayReady or not Video.StartupVideoReady then
@@ -1227,10 +1281,10 @@ begin
   if (FProtection = ngpJockeygp) or (FProtection = ngpVliner) then
   begin
     SetLength(Result, SizeOf(FBackup) + $2000);
-    for var I := 0 to $FFF do
+    for var i := 0 to $FFF do
     begin
-      Result[SizeOf(FBackup) + I * 2] := FCartRAM[I] shr 8;
-      Result[SizeOf(FBackup) + I * 2 + 1] := FCartRAM[I] and $FF;
+      Result[SizeOf(FBackup) + i * 2] := FCartRAM[i] shr 8;
+      Result[SizeOf(FBackup) + i * 2 + 1] := FCartRAM[i] and $FF;
     end;
   end;
 end;
@@ -1240,10 +1294,12 @@ begin
   var HasCart := (FProtection = ngpJockeygp) or (FProtection = ngpVliner);
   if (Length(Data) <> SizeOf(FBackup)) and not (HasCart and (Length(Data) = SizeOf(FBackup) + $2000)) then
     raise EReadError.Create('Invalid Neo Geo backup RAM size');
+
   Move(Data[0], FBackup[0], SizeOf(FBackup));
   if HasCart and (Length(Data) > SizeOf(FBackup)) then
-    for var I := 0 to $FFF do
-      FCartRAM[I] := Word(Integer(Data[SizeOf(FBackup) + I * 2]) * 256 + Data[SizeOf(FBackup) + I * 2 + 1]);
+    for var i := 0 to $FFF do
+      FCartRAM[i] := Word(Integer(Data[SizeOf(FBackup) + i * 2]) * 256 + Data[SizeOf(FBackup) + i * 2 + 1]);
+
   FBatteryDirty := False;
 end;
 
@@ -1299,6 +1355,7 @@ begin
   State.Field(FRTCTesting, SizeOf(FRTCTesting));
   Video.SerializeState(State);
   Sound.SerializeState(State);
+
   // These boards previously could not load; standard-cart snapshots retain their layout.
   if HasBootRAM then
   begin
@@ -1323,9 +1380,10 @@ begin
     FInZ80 := False;
     if (FProtection = ngpKof10th) and (FSpecialBank <> 0) and (FSpecialBank <> $700000) and (FSpecialBank <> $800000) then
       raise EReadError.Create('Invalid Neo Geo bootleg bank state');
-    if (Video.PaletteBank < 0) or (Video.PaletteBank > 1) or
-      (FProgramBank < 0) or (FProgramBank > $10000000) or (FFrameTime < 0) then
+
+    if (Video.PaletteBank < 0) or (Video.PaletteBank > 1) or (FProgramBank < 0) or (FProgramBank > $10000000) or (FFrameTime < 0) then
       raise EReadError.Create('Invalid Neo Geo snapshot state');
+
     // Older snapshots may contain an unfiltered BIOS test framebuffer.
     if not Video.StartupVideoReady then
       Video.ClearFrame;

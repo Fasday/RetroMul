@@ -24,6 +24,7 @@ const
   SETTINGS_PAGE_MD = 4;
   SETTINGS_PAGE_SNES = 5;
   SETTINGS_PAGE_NEOGEO = 6;
+  SETTINGS_PAGE_GBA = 7;
 
 const
   AUTOSAVE_DEFAULT_MINUTES = 10;
@@ -31,10 +32,14 @@ const
 
 const
   SettingsCategoryNames: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of string = ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
-  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_NEOGEO] of string = (
-    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO);
-  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_NEOGEO] of string = ('Main', 'Game Boy', 'Game Boy Color',
-    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo');
+  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_GBA] of string = (
+    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA);
+  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_GBA] of string = ('Main', 'Game Boy', 'Game Boy Color',
+    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo', 'Game Boy Advance');
+  // Presentation order is independent of the page IDs used by drafts and core selection.
+  SettingsCoreOrder: array[0..6] of Integer = (
+    SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC, SETTINGS_PAGE_GBA, SETTINGS_PAGE_NES,
+    SETTINGS_PAGE_MD, SETTINGS_PAGE_SNES, SETTINGS_PAGE_NEOGEO);
 
 type
   TDeviceCallouts = class;
@@ -109,7 +114,7 @@ type
     FPickingTranslation: Boolean;
     FInput: TInputManager; // Draft assignments owned by this view.
     FHostInput: TInputManager; // Shared device snapshots; owned by the form.
-    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_NEOGEO] of TMemIniFile;
+    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_GBA] of TMemIniFile;
     FFields: TObjectList<TSettingsField>;
     FDevices: TObjectList<TSettingsDevice>;
     FDeviceIds: array[0..7] of string;
@@ -118,7 +123,7 @@ type
     FSearch: TEdit;
     FPagePicker: TComboBox;
     FCategory, FCorePage, FPlayer: Integer;
-    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_NEOGEO] of TButton;
+    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_GBA] of TButton;
     FCategoryIcons: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of TControl;
     FPage: Integer;
     FGroup: TPanel;
@@ -742,10 +747,15 @@ begin
   var Models := TSettingsComboBox.Create(Self);
   Models.Name := 'SettingsComboBoxRowBootModelEditor';
   Models.Parent := ModelRow;
-  for var Model := TGBBootModel.DMG0 to High(TGBBootModel) do
+  for var Model := TGBBootModel.Skip to High(TGBBootModel) do
   begin
     var Name := 'RowBootFile' + GB_BOOT_MODEL_KEYS[Model];
     var Detail := 'Choose your boot ROM file for this model.';
+    if Model = TGBBootModel.Skip then
+    begin
+      Name := 'RowBootFileGBA';
+      Detail := 'Optional 16 KiB GBA BIOS. Leave empty to use the built-in emibios.';
+    end;
     if Model in [TGBBootModel.DMG, TGBBootModel.MGB] then
       Detail := 'Leave empty to use the built-in boot ROM.';
     var FileRow := BootRow(Name, 'Boot ROM file', Detail);
@@ -766,6 +776,19 @@ begin
     Clear.TagObject := Editor;
     Clear.OnClick := ClearPathClick;
   end;
+  Group := TPanel.Create(Self);
+  Group.Name := 'PanelGroupGBACartridge'; Group.Parent:=LayoutComponentStore;
+  Group.StyleLookup:='retromul_card'; Group.SetBounds(0,0,900,230);
+  Title:=SettingsLabel(Self); Title.Name:='LabelGroupGBACartridgeTitle'; Title.Parent:=Group;
+  Title.SetBounds(16,14,868,36); Title.Text:='GBA cartridge';
+  var SaveRow:=BootRow('RowGBASaveType','Save memory',
+    'Auto detects the cartridge. Override only when a ROM uses an unrecognized save format.');
+  var SaveChoice:=TSettingsComboBox.Create(Self);
+  SaveChoice.Name:='SettingsComboBoxRowGBASaveTypeEditor'; SaveChoice.Parent:=SaveRow;
+  var SolarRow:=BootRow('RowGBASolarLevel','Sunlight',
+    'Boktai sensor level: 0 is darkness, 255 is maximum light.');
+  var SolarValue:=TSettingsSpinBox.Create(Self);
+  SolarValue.Name:='SettingsSpinBoxRowGBASolarLevelEditor'; SolarValue.Parent:=SolarRow;
   Group := TPanel.Create(Self);
   Group.Name := 'PanelGroupRumble';
   Group.Parent := LayoutComponentStore;
@@ -1076,6 +1099,17 @@ begin
             PathEdit('RowBootFile' + GB_BOOT_MODEL_KEYS[SelectedBoot], 'Boot',
               GB_BOOT_MODEL_KEYS[SelectedBoot] + 'File', '', False);
         end;
+        if FPage = SETTINGS_PAGE_GBA then
+        begin
+          Heading('GroupBootROM');
+          PathEdit('RowBootFileGBA', 'Boot', 'File', '', False);
+          Heading('GroupGBACartridge');
+          Combo('RowGBASaveType','Cartridge','SaveType',
+            [Translate('Auto'), Translate('None'), Translate('SRAM'),
+             Translate('Flash 64 KiB'), Translate('Flash 128 KiB'), Translate('EEPROM')],
+            ['-1','0','1','2','3','4'],'-1');
+          Number('RowGBASolarLevel','Cartridge','SolarLevel',128,255);
+        end;
         Heading('GroupAudio');
         Check('RowAudio', 'Audio', 'Enabled', True);
         var VolumeRow := Row('RowVolume');
@@ -1097,7 +1131,7 @@ begin
       begin
         Heading('GroupController');
         var Count := 2;
-        if FPage <= SETTINGS_PAGE_GBC then
+        if (FPage <= SETTINGS_PAGE_GBC) or (FPage = SETTINGS_PAGE_GBA) then
           Count := 1;
         if (FPage = SETTINGS_PAGE_NES) and FDrafts[FPage].ReadBool('Input', 'FourScore', False) then
           Count := 4;
@@ -1122,7 +1156,7 @@ begin
       end
       else
       begin
-        if FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC] then
+        if (FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC]) or (FPage=SETTINGS_PAGE_GBA) then
         begin
           Heading('GroupRumble');
           Check('RowRumble', 'Peripherals', 'Rumble', True);
@@ -1142,7 +1176,7 @@ begin
           Multi.OnSwitch := PortChange;
         end;
         BuildPort(0, Translate('Port 1'));
-        if FPage > SETTINGS_PAGE_GBC then
+        if (FPage > SETTINGS_PAGE_GBC) and (FPage <> SETTINGS_PAGE_GBA) then
           BuildPort(1, Translate('Port 2'));
         if FPage = SETTINGS_PAGE_NES then
         begin
@@ -1360,7 +1394,7 @@ begin
     FSearch.Visible := LayoutHeader.Width >= 740;
     FSearch.SetBounds(Max(0, LayoutHeader.Width - 260), 0, 260, 32);
     var X: Single := 0;
-    for var i := Low(FCoreButtons) to High(FCoreButtons) do
+    for var i in SettingsCoreOrder do
     begin
       FCoreButtons[i].Text := SettingsPageNames[i];
       case i of
@@ -1368,6 +1402,8 @@ begin
           FCoreButtons[i].Text := 'GB';
         SETTINGS_PAGE_GBC:
           FCoreButtons[i].Text := 'GBC';
+        SETTINGS_PAGE_GBA:
+          FCoreButtons[i].Text := 'GBA';
         SETTINGS_PAGE_NES:
           FCoreButtons[i].Text := 'NES';
         SETTINGS_PAGE_SNES:
@@ -1380,7 +1416,8 @@ begin
           SETTINGS_PAGE_NEOGEO:
             FCoreButtons[i].Text := 'NG';
         end;
-      var W := Max(48, Min(104, (LayoutCoreTabs.Width - 35) / Length(SettingsCoreIds)));
+      var W := Max(32, Min(104, (LayoutCoreTabs.Width -
+        (Length(SettingsCoreIds) - 1) * 7) / Length(SettingsCoreIds)));
       FCoreButtons[i].SetBounds(X, 0, W, 36);
       X := X + W + 7;
       if i = FCorePage then
@@ -1719,7 +1756,7 @@ begin
   var Key := 'Port' + IntToStr(Port + 1);
   var Device := FDrafts[FPage].ReadString('Ports', Key, 'auto');
   var C: TComboBox;
-  if FPage <= SETTINGS_PAGE_GBC then
+  if (FPage <= SETTINGS_PAGE_GBC) or (FPage = SETTINGS_PAGE_GBA) then
     C := Combo('RowControllerPort' + IntToStr(Port + 1), 'Ports', Key, [], ['pad', 'none'], 'pad')
   else if FPage = SETTINGS_PAGE_MD then
     C := Combo('RowConnecteddevice2Port' + IntToStr(Port + 1), 'Ports', Key, [], ['pad6', 'pad3', 'none'], 'pad6')
@@ -1862,6 +1899,8 @@ begin
         Pad.Layout := TScreenGamepadLayout.GameBoy;
       SETTINGS_PAGE_GBC:
         Pad.Layout := TScreenGamepadLayout.GameBoyColor;
+      SETTINGS_PAGE_GBA:
+        Pad.Layout := TScreenGamepadLayout.GameBoyAdvance;
       SETTINGS_PAGE_NES:
         if Device = 'paddendy' then
           Pad.Layout := TScreenGamepadLayout.Dendy
@@ -2264,12 +2303,12 @@ begin
   // Document provider URIs must be queried; combining them with a name is invalid.
   if Location.StartsWith('content://') then
     for var Folder in TAndroidStorage.Enumerate(Location, False, True) do
-      for var RomSystem := TRomSystem.NES to TRomSystem.NeoGeo do
+      for var RomSystem := TRomSystem.NES to High(TRomSystem) do
         if SameText(Folder.Name, RomSystemFolder(RomSystem)) then
           Exit;
   {$ENDIF}
 
-  for var RomSystem := TRomSystem.NES to TRomSystem.NeoGeo do
+  for var RomSystem := TRomSystem.NES to High(TRomSystem) do
   begin
     var Name := RomSystemFolder(RomSystem);
     {$IFDEF ANDROID}

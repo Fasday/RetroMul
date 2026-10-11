@@ -38,6 +38,7 @@ function ReadNeoGeoData(Stream: TStream): TBytes;
 begin
   if Stream = nil then
     raise EArgumentNilException.Create('Stream');
+
   var Buffer: array[0..65535] of Byte;
   var Memory := TMemoryStream.Create;
   try
@@ -46,8 +47,10 @@ begin
       var Count := Stream.Read(Buffer, SizeOf(Buffer));
       if Count = 0 then
         Break;
+
       if (Count < 0) or (Memory.Size + Count > NG_MAX_CONTAINER) then
         raise EReadError.Create('Neo Geo container exceeds 256 MiB');
+
       Memory.WriteBuffer(Buffer, Count);
     end;
     SetLength(Result, Memory.Size);
@@ -74,6 +77,7 @@ procedure SwapWords(var Data: TBytes);
 begin
   if Odd(Length(Data)) then
     raise EReadError.Create('Odd Neo Geo 68000 ROM size');
+
   for var i := 0 to Length(Data) div 2 - 1 do
   begin
     var B := Data[i * 2];
@@ -104,8 +108,10 @@ procedure TNeoGeoCartridge.LoadNeo(const Data: TBytes);
   begin
     var Size := UInt64(Data[Offset]) or (UInt64(Data[Offset + 1]) shl 8) or
       (UInt64(Data[Offset + 2]) shl 16) or (UInt64(Data[Offset + 3]) shl 24);
+
     if Size > NG_MAX_CONTAINER then
       raise EReadError.Create('Oversized Neo Geo region');
+
     Result := Integer(Size);
   end;
 
@@ -113,6 +119,7 @@ begin
   if (Length(Data) < NEOGEO_ROM_HEADER_SIZE) or
     (Data[NEOGEO_ROM_MAGIC_SIZE] <> Ord(NEOGEO_ROM_SIGNATURE[NEOGEO_ROM_MAGIC_SIZE + 1])) then
     raise EReadError.Create('Unsupported or truncated NeoSD NEO header');
+
   var Sizes: array[0..NEOGEO_ROM_REGION_COUNT - 1] of Integer;
   var Total: Int64 := NEOGEO_ROM_HEADER_SIZE;
   for var i := 0 to High(Sizes) do
@@ -120,8 +127,10 @@ begin
     Sizes[i] := SizeAt(NEOGEO_ROM_REGION_SIZES_OFFSET + i * SizeOf(Cardinal));
     Inc(Total, Sizes[i]);
   end;
+
   if Total <> Length(Data) then
     raise EReadError.Create('NeoSD region sizes do not match the file');
+
   var Offset := NEOGEO_ROM_HEADER_SIZE;
   ProgramROM := Copy(Data, Offset, Sizes[0]);
   Inc(Offset, Sizes[0]);
@@ -133,6 +142,7 @@ begin
   Inc(Offset, Sizes[3]);
   SamplesB := SamplesA;
   SpriteROM := Copy(Data, Offset, Sizes[4]);
+
   // NeoSD stores P in chip order; accept already normalized homebrew images too.
   if (Length(ProgramROM) > $106) and (ProgramROM[$100] = Ord('E')) and (ProgramROM[$101] = Ord('N')) then
     SwapWords(ProgramROM);
@@ -151,6 +161,7 @@ var
     Result := -1;
     if Zip = nil then
       Exit;
+
     for var i := 0 to Zip.FileCount - 1 do
       if SameText(ExtractFileName(Zip.FileNames[i]), Name) then
         Exit(i);
@@ -161,6 +172,7 @@ var
     var Header := Zip.FileInfo[Index];
     if Header.UncompressedSize > 64 * 1024 * 1024 then
       raise EReadError.Create('Neo Geo ZIP member exceeds 64 MiB');
+
     Zip.Read(Index, Result);
   end;
 
@@ -173,6 +185,7 @@ var
       Zip := Parent;
       Index := FindFile(Zip, Name);
     end;
+
     if (Index < 0) or not SameText(IntToHex(Zip.FileInfo[Index].CRC32, 8), CRC) then
     begin
       // CRC aliases allow older ROM-set filenames, without guessing chip order.
@@ -188,8 +201,10 @@ var
               Break;
             end;
     end;
+
     if Index < 0 then
       raise EReadError.Create('Missing Neo Geo ROM: ' + Name);
+
     if not SameText(IntToHex(Zip.FileInfo[Index].CRC32, 8), CRC) then
       raise EReadError.Create('Incorrect Neo Geo ROM CRC: ' + Name);
 
@@ -200,6 +215,7 @@ var
   begin
     if (Storage = nil) or (Location = '') or Location.StartsWith('content://') then
       Exit;
+
     var Path := TPath.Combine(ExtractFilePath(Location.Replace('/', PathDelim)), Name + ROM_EXTENSION_ZIP);
     if not Storage.Exists(Path) then
       Exit;
@@ -248,8 +264,10 @@ var
       if (Source < 0) or (Count <= 0) or (Int64(Source) + Count > Length(Bytes)) or
         (Dest < 0) or (Int64(Dest) + Int64(Count - 1) * Step >= Size) then
         raise EReadError.Create('Truncated or invalid Neo Geo ROM: ' + F[1]);
+
       if WordInterleave and (Int64(Dest) + Int64(Count div 2 - 1) * 4 + 1 >= Size) then
         raise EReadError.Create('Truncated interleaved Neo Geo program');
+
       if ((F[5] = 'W') or WordInterleave) and (Odd(Count) or Odd(Source)) then
         raise EReadError.Create('Invalid word-swapped ROM');
 
@@ -282,12 +300,14 @@ begin
     SetLength(CRCs, Archive.FileCount);
     for var i := 0 to Archive.FileCount - 1 do
       CRCs[i] := IntToHex(Archive.FileInfo[i].CRC32, 8);
+
     var Description := SelectNeoGeoSet(SetName, CRCs);
     if Description = '' then
     begin
       SetName := IdentifyNeoGeoSet(Archive.FileNames);
       Description := SelectNeoGeoSet(SetName, CRCs);
     end;
+
     if Description = '' then
       raise EReadError.Create('Unknown Neo Geo ZIP ROM set; use a named MAME set or an unencrypted .neo image');
 
@@ -324,10 +344,12 @@ begin
         raise;
       end;
     end;
+
     for var Zip in TArray<TZipFile>.Create(Parent) + Ancestors do
       if Zip <> nil then
         for var i := 0 to Zip.FileCount - 1 do
           CRCs := CRCs + [IntToHex(Zip.FileInfo[i].CRC32, 8)];
+
     Description := SelectNeoGeoSet(SetName, CRCs);
     Parts := Description.Split(['|']);
     OpenSibling(ROM_SYSTEM_NEOGEO, Firmware, FirmwareStream);
@@ -375,7 +397,6 @@ begin
       else
         BIOS := Copy(BIOS, $20000, $20000);
       DecryptPCBGraphics(SpriteROM, KOFPCB);
-      FixedBankType := 2;
       if Machine = 'ms5pcb' then
         Machine := 'mslug5'
       else if KOFPCB then
@@ -385,6 +406,21 @@ begin
       if not KOFPCB then
         SetLength(ProgramROM, $800000);
     end;
+    // FIX bank wiring from MAME's cmc/sma/pcm2/pvc/kof2k2 cartridge profiles.
+    // PCB and Matrimelee bootleg boards use the column-based bank table.
+    if PCB or (Machine = 'matrimbl') or (Machine = 'matrim') or
+      (Machine = 'kof2000') or (Machine = 'kof2000n') or (Machine = 'svc') or
+      (Machine = 'kof2003') or (Machine = 'kof2003h') then
+      FixedBankType := 2
+    else if (Machine = 'kof99') or (Machine = 'garou') or (Machine = 'garouh') or
+      (Machine = 'mslug3') or (Machine = 'mslug3a') or (Machine = 'mslug3h') or
+      (Machine = 'zupapa') or (Machine = 'ganryu') or (Machine = 's1945p') or
+      (Machine = 'preisle2') or (Machine = 'bangbead') or (Machine = 'nitd') or
+      (Machine = 'sengoku3') or (Machine = 'kof99k') or (Machine = 'kof2001') or
+      (Machine = 'jockeygp') or (Machine = 'mslug4') or (Machine = 'rotd') or
+      (Machine = 'pnyaa') or (Machine = 'mslug5') or (Machine = 'samsho5') or
+      (Machine = 'samsh5sp') then
+      FixedBankType := 1;
     Protection := Machine;
     var Key := -1;
     var CMC50 := False;
@@ -403,8 +439,6 @@ begin
     if IsBootleg then
     begin
       DecryptBootleg(ProgramROM, FixedROM, AudioROM, SamplesA, SpriteROM, Machine, Parts[11] = '1');
-      if Machine = 'matrimbl' then
-        FixedBankType := 2;
     end
     else if (Machine = 'jockeygp') then
     begin
@@ -431,7 +465,6 @@ begin
       else
       begin
         Key := $9D;
-        FixedBankType := 2;
         DecryptPCM(SamplesA, 0, 5);
       end;
     end
@@ -444,24 +477,20 @@ begin
       else if (Machine = 'garou') or (Machine = 'garouh') then
       begin
         Key := 6;
-        FixedBankType := 1;
       end
       else if Machine = 'kof2000' then
       begin
         Key := 0;
         CMC50 := True;
-        FixedBankType := 2;
       end
       else
       begin
         Key := $AD;
-        FixedBankType := 1;
       end;
     end
     else if Machine = 'mslug3h' then
     begin
       Key := $AD;
-      FixedBankType := 1;
     end
     else if Machine = 'zupapa' then
       Key := $BD
@@ -483,13 +512,11 @@ begin
     begin
       Key := $1E;
       CMC50 := True;
-      FixedBankType := 2;
     end
     else if Machine = 'kof2000n' then
     begin
       Key := 0;
       CMC50 := True;
-      FixedBankType := 2;
     end
     else if (Machine = 'mslug4') or (Machine = 'ms4plus') then
     begin
@@ -523,7 +550,6 @@ begin
       ReorderProgram(ProgramROM, Machine);
       Key := $6A;
       CMC50 := True;
-      FixedBankType := 2;
       DecryptPCM(SamplesA, 0, 1);
     end
     else if Machine = 'samsho5' then

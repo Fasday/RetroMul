@@ -122,6 +122,7 @@ begin
   // Keep packets whole, even if an application stops polling the keyboard.
   if Length(Bytes) > Length(FQueue) - FCount then
     Exit;
+
   for var B in Bytes do
   begin
     FQueue[FHead] := B;
@@ -134,6 +135,7 @@ procedure TMiraclePianoDevice.Write(Value: Byte; Cycle: UInt64);
 begin
   if not FConnected then
     Exit;
+
   FOutputBit := Value and 1;
   case FState of
     Idle, Receive:
@@ -170,6 +172,7 @@ begin
   Result := 0;
   if not FConnected then
     Exit;
+
   if FState = Receive then
   begin
     if FRxBits = 9 then
@@ -204,23 +207,26 @@ begin
     NoteOff(Channel, Note);
     Exit;
   end;
+
   var Slot := -1;
   var Quietest := 0;
-  for var I := 0 to High(FVoices) do
+  for var i := 0 to High(FVoices) do
   begin
-    if FVoices[I].Active and (FVoices[I].Channel = Channel) and
-      (FVoices[I].Note = Note) then
+    if FVoices[i].Active and (FVoices[i].Channel = Channel) and (FVoices[i].Note = Note) then
     begin
-      Slot := I;
+      Slot := i;
       Break;
     end;
-    if not FVoices[I].Active then
-      Slot := I;
-    if FVoices[I].Level < FVoices[Quietest].Level then
-      Quietest := I;
+
+    if not FVoices[i].Active then
+      Slot := i;
+    if FVoices[i].Level < FVoices[Quietest].Level then
+      Quietest := i;
   end;
+
   if Slot < 0 then
     Slot := Quietest;
+
   FVoices[Slot] := Default(TVoice);
   FVoices[Slot].Active := True;
   FVoices[Slot].Held := True;
@@ -233,9 +239,9 @@ end;
 
 procedure TMiraclePianoDevice.NoteOff(Channel, Note: Byte);
 begin
-  for var I := 0 to High(FVoices) do
-    if (FVoices[I].Channel = Channel) and (FVoices[I].Note = Note) then
-      FVoices[I].Held := False;
+  for var i := 0 to High(FVoices) do
+    if (FVoices[i].Channel = Channel) and (FVoices[i].Note = Note) then
+      FVoices[i].Held := False;
 end;
 
 procedure TMiraclePianoDevice.Sustain(Channel: Byte; Down: Boolean);
@@ -246,16 +252,16 @@ end;
 
 procedure TMiraclePianoDevice.AllNotesOff(Channel: Byte);
 begin
-  for var I := 0 to High(FVoices) do
-    if (FVoices[I].Channel and 7) = (Channel and 7) then
-      FVoices[I].Active := False;
+  for var i := 0 to High(FVoices) do
+    if (FVoices[i].Channel and 7) = (Channel and 7) then
+      FVoices[i].Active := False;
 end;
 
 procedure TMiraclePianoDevice.HandleSysEx;
 begin
-  if (FSysExCount < 6) or (FSysEx[0] <> 0) or (FSysEx[1] <> 0) or
-    (FSysEx[2] <> $42) or (FSysEx[3] <> 1) then
+  if (FSysExCount < 6) or (FSysEx[0] <> 0) or (FSysEx[1] <> 0) or (FSysEx[2] <> $42) or (FSysEx[3] <> 1) then
     Exit;
+
   case FSysEx[4] of
     $04:
       Enqueue([$F0, 0, 0, $42, 1, 5, 1, 0, $F7]);
@@ -284,6 +290,7 @@ begin
     end;
     Exit;
   end;
+
   if Value = $F0 then
   begin
     FInSysEx := True;
@@ -291,6 +298,7 @@ begin
     FStatus := 0;
     Exit;
   end;
+
   if FInSysEx then
   begin
     if Value = $F7 then
@@ -311,14 +319,17 @@ begin
       FInSysEx := False;
     Exit;
   end;
+
   if Value >= $80 then
   begin
     FStatus := Value;
     FDataCount := 0;
     Exit;
   end;
+
   if (FStatus < $80) or (FStatus >= $F0) then
     Exit;
+
   FData[FDataCount] := Value;
   Inc(FDataCount);
   var Kind := FStatus and $F0;
@@ -327,6 +338,7 @@ begin
     Needed := 1;
   if FDataCount < Needed then
     Exit;
+
   FDataCount := 0;
   var Channel := FStatus and 7;
   case Kind of
@@ -364,6 +376,7 @@ const
 begin
   if not FConnected then
     Exit;
+
   var Changed := (Keys - FAppliedKeys) + (FAppliedKeys - Keys);
   FAppliedKeys := Keys;
   for var Key in Changed do
@@ -428,9 +441,10 @@ const
     vkG, vkB, vkH, vkN, vkJ, vkM, vkQ, vk2, vkW, vk3, vkE, vkR,
     vk5, vkT, vk6, vkY, vk7, vkU, vkI, vk9, vkO, vk0, vkP);
 begin
-  for var I := 0 to High(Codes) do
-    if Code = Codes[I] then
-      Exit(12 + I); // C3..E5, chromatic piano layout.
+  for var i := 0 to High(Codes) do
+    if Code = Codes[i] then
+      Exit(12 + i); // C3..E5, chromatic piano layout.
+
   case Code of
     vkSpace:
       Exit(MIRACLE_PEDAL);
@@ -449,6 +463,7 @@ begin
   var Key := HostKey(Code);
   if Key < 0 then
     Exit;
+
   if Pressed then
     Include(FHostKeys, TMiracleKey(Key))
   else
@@ -475,13 +490,14 @@ procedure TMiraclePianoDevice.MixAudio(var Samples: array of SmallInt; Count, Sa
 begin
   if not FConnected or (SampleRate <= 0) then
     Exit;
+
   // Portable additive voices avoid a platform MIDI driver and its extra latency.
   var ReleaseFactor := Exp(-1 / (0.07 * SampleRate));
   var DecayFactor := Exp(-1 / (1.8 * SampleRate));
   var Steps: array[0..31] of Double;
   for var V := 0 to High(FVoices) do
     Steps[V] := 2 * Pi * 440 * Power(2, (Integer(FVoices[V].Note) - 69) / 12) / SampleRate;
-  for var I := 0 to Min(Count, Length(Samples)) - 1 do
+  for var i := 0 to Min(Count, Length(Samples)) - 1 do
   begin
     var Value: Double := 0;
     for var V := 0 to High(FVoices) do
@@ -512,7 +528,7 @@ begin
         if FVoices[V].Level < 0.0001 then
           FVoices[V].Active := False;
       end;
-    Samples[I] := EnsureRange(Round(Samples[I] + Value * 2200 * FVolume / 127), -32768, 32767);
+    Samples[i] := EnsureRange(Round(Samples[i] + Value * 2200 * FVolume / 127), -32768, 32767);
   end;
 end;
 
@@ -541,16 +557,16 @@ begin
   State.Field(FSustain, SizeOf(FSustain));
   State.Field(FAppliedKeys, SizeOf(FAppliedKeys));
   // Write voice fields individually; record alignment differs on Win32/Win64.
-  for var I := 0 to High(FVoices) do
+  for var i := 0 to High(FVoices) do
   begin
-    State.Field(FVoices[I].Active, SizeOf(Boolean));
-    State.Field(FVoices[I].Held, SizeOf(Boolean));
-    State.Field(FVoices[I].Channel, SizeOf(Byte));
-    State.Field(FVoices[I].Note, SizeOf(Byte));
-    State.Field(FVoices[I].Patch, SizeOf(Byte));
-    State.Field(FVoices[I].Velocity, SizeOf(Byte));
-    State.Field(FVoices[I].Phase, SizeOf(Double));
-    State.Field(FVoices[I].Level, SizeOf(Double));
+    State.Field(FVoices[i].Active, SizeOf(Boolean));
+    State.Field(FVoices[i].Held, SizeOf(Boolean));
+    State.Field(FVoices[i].Channel, SizeOf(Byte));
+    State.Field(FVoices[i].Note, SizeOf(Byte));
+    State.Field(FVoices[i].Patch, SizeOf(Byte));
+    State.Field(FVoices[i].Velocity, SizeOf(Byte));
+    State.Field(FVoices[i].Phase, SizeOf(Double));
+    State.Field(FVoices[i].Level, SizeOf(Double));
   end;
 end;
 

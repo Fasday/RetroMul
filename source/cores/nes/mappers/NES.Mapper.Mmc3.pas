@@ -36,6 +36,7 @@ type
     function PpuWrite(Address: UInt16; Value: UInt8): Boolean; override;
     function GetMirrorMode: TMirrorMode; override;
     function AllowsPpuReadCaching: Boolean; override;
+    function AllowsDirectPpuRead: Boolean; override;
     procedure ClockPpuAddress(Address: UInt16; PpuCycle: UInt64); override;
     function IrqPending: Boolean; override;
     procedure Reset; override;
@@ -353,6 +354,12 @@ end;
 function TMapperMmc3.GetMirrorMode: TMirrorMode;
 begin
   Result := FMirrorMode;
+end;
+
+function TMapperMmc3.AllowsDirectPpuRead: Boolean;
+begin
+  // Derived boards retain the contextual path unless they explicitly opt in.
+  Result := ClassType = TMapperMmc3;
 end;
 
 function TMapperMmc3.AllowsPpuReadCaching: Boolean;

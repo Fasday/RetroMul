@@ -18,7 +18,7 @@ type
   private
     FCart: TNeoGeoCartridge;
     FSpriteMask: Integer;
-    FAddress, FModulo: Word;
+    FAddress, FModulo, FReadBuffer: Word;
     FAnimation, FAnimationDelay, FAnimationSpeed: Byte;
     FAnimationDisabled: Boolean;
     function Color(Index: Integer): TAlphaColor;
@@ -67,6 +67,7 @@ begin
   FillChar(Palette, SizeOf(Palette), 0);
   FAddress := 0;
   FModulo := 0;
+  FReadBuffer := 0;
   FAnimation := 0;
   FAnimationDelay := 0;
   FAnimationSpeed := 0;
@@ -79,8 +80,8 @@ end;
 
 procedure TNeoGeoVideo.ClearFrame;
 begin
-  for var I := Low(Pixels) to High(Pixels) do
-    Pixels[I] := $FF000000;
+  for var i := Low(Pixels) to High(Pixels) do
+    Pixels[i] := $FF000000;
 end;
 
 function TNeoGeoVideo.StartupVideoReady: Boolean;
@@ -88,6 +89,7 @@ begin
   // Cartridge graphics, including the animated BIOS logo, are ready to show.
   if CartFixed then
     Exit(True);
+
   // The system FIX map is cleared to ASCII spaces before the BIOS displays
   // menus or errors. Reject the AA/55/address patterns left by its RAM tests.
   // Checking every visible entry also rejects a partially cleared test map.
@@ -98,6 +100,7 @@ begin
       var Code := VRAM[$7000 + Column * 32 + Row] and $FFF;
       if Code >= $100 then
         Exit(False);
+
       if Code = $20 then
         Result := True;
     end;
@@ -108,6 +111,9 @@ begin
   FAddress := Value;
   if (Value and $8000) <> 0 then
     FAddress := Value and $87FF;
+
+  // LSPC fetches data when the address is latched, including after a write.
+  FReadBuffer := VRAM[FAddress];
 end;
 
 procedure TNeoGeoVideo.WriteData(Value: Word);
@@ -120,7 +126,7 @@ function TNeoGeoVideo.ReadRegister(Index, Line: Integer): Word;
 begin
   case Index and 3 of
     0, 1:
-      Result := VRAM[FAddress];
+      Result := FReadBuffer;
     2:
       Result := FModulo;
   else
@@ -149,26 +155,25 @@ begin
 end;
 
 function TNeoGeoVideo.Color(Index: Integer): TAlphaColor;
+const
+  // 5-bit RGB DAC: 3900/2200/1000/470/220 ohms. The dark bit adds
+  // an 8200-ohm pulldown; screen shadow adds 150 ohms. Values use
+  // the same normal-mode scale and nearest rounding as MAME neogeo_v.cpp.
+  RGB: array[0..3, 0..31] of Byte = (
+    (0, 8, 14, 22, 30, 38, 44, 52, 65, 73, 79, 86, 95, 103, 109, 117,
+    138, 146, 152, 160, 169, 176, 182, 190, 203, 211, 217, 225, 233, 241, 247, 255),
+    (0, 8, 14, 21, 30, 38, 44, 51, 64, 71, 77, 85, 94, 101, 107, 115,
+    136, 144, 150, 158, 166, 174, 180, 188, 200, 208, 214, 221, 230, 238, 244, 251),
+    (0, 4, 8, 12, 17, 21, 25, 29, 36, 40, 44, 48, 53, 57, 61, 65,
+    77, 81, 85, 89, 94, 98, 102, 106, 113, 117, 121, 125, 130, 134, 138, 142),
+    (0, 4, 8, 12, 17, 21, 24, 29, 36, 40, 43, 48, 53, 57, 60, 65,
+    76, 81, 84, 88, 93, 98, 101, 105, 112, 116, 120, 124, 129, 133, 137, 141));
 begin
   var Value := Palette[PaletteBank * $1000 + (Index and $FFF)];
-  var R := ((Value shr 14) and 1) or ((Value shr 7) and $1E);
-  var G := ((Value shr 13) and 1) or ((Value shr 3) and $1E);
-  var B := ((Value shr 12) and 1) or ((Value shl 1) and $1E);
-  R := R * 255 div 31;
-  G := G * 255 div 31;
-  B := B * 255 div 31;
-  if (Value and $8000) <> 0 then
-  begin
-    R := R * 8 div 9;
-    G := G * 8 div 9;
-    B := B * 8 div 9;
-  end;
-  if Shadow then
-  begin
-    R := R div 2;
-    G := G div 2;
-    B := B div 2;
-  end;
+  var Mode := Ord((Value and $8000) <> 0) + 2 * Ord(Shadow);
+  var R := RGB[Mode, ((Value shr 14) and 1) or ((Value shr 7) and $1E)];
+  var G := RGB[Mode, ((Value shr 13) and 1) or ((Value shr 3) and $1E)];
+  var B := RGB[Mode, ((Value shr 12) and 1) or ((Value shl 1) and $1E)];
   Result := $FF000000 or (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
 end;
 
@@ -179,6 +184,7 @@ begin
   Result := 0;
   if Base + 3 >= Length(FCart.SpriteROM) then
     Exit;
+
   var Bit := X and 7;
   Result := ((FCart.SpriteROM[Base] shr Bit) and 1) or
     (((FCart.SpriteROM[Base + 2] shr Bit) and 1) shl 1) or
@@ -194,6 +200,7 @@ const
 begin
   if (Line < 0) or (Line >= NG_LINES) then
     Exit;
+
   var Visible := (Line >= 16) and (Line < 240);
   var Row := (Line - 16) * NG_WIDTH;
   if Visible then
@@ -206,6 +213,7 @@ begin
   var ZY := 0;
   var Active := 0;
   var List := $8600 + (Line and 1) * $80;
+
   // Neo Pong's background consumes the physical line limit before its UI.
   // Render these releases permissively while keeping the hardware sprite list bounded.
   var Permissive := (FCart.SetName = 'neopong') or (FCart.SetName = 'neopong10');
@@ -229,6 +237,7 @@ begin
     var SpriteLine := (Line + $200 - Y) and $1FF;
     if (Rows = 0) or ((Rows < 32) and (SpriteLine >= Rows * 16)) then
       Continue;
+
     if Active < 96 then
     begin
       VRAM[List + Active] := Sprite;
@@ -288,10 +297,12 @@ begin
     if (Active = 96) and not Permissive then
       Break;
   end;
-  for var I := Active to 96 do
-    VRAM[List + I] := 0;
+
+  for var i := Active to 96 do
+    VRAM[List + i] := 0;
   if not Visible then
     Exit;
+
   var FixedData := FCart.FixedBIOS;
   if CartFixed then
     FixedData := FCart.FixedROM;
@@ -316,6 +327,7 @@ begin
     end;
     FixedBank := $1000 * (Banks[((Line shr 3) - 2) and 31] xor 3);
   end;
+
   for var Column := 0 to 39 do
   begin
     var Entry := VRAM[$7000 + Column * 32 + (Line shr 3)];
@@ -350,6 +362,7 @@ begin
   State.Field(Pixels, SizeOf(Pixels));
   State.Field(FAddress, SizeOf(FAddress));
   State.Field(FModulo, SizeOf(FModulo));
+  State.Field(FReadBuffer, SizeOf(FReadBuffer));
   State.Field(FAnimation, SizeOf(FAnimation));
   State.Field(FAnimationDelay, SizeOf(FAnimationDelay));
   State.Field(FAnimationSpeed, SizeOf(FAnimationSpeed));

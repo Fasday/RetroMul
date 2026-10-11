@@ -59,8 +59,8 @@ begin
   FCart := Cart;
   FSSG := TYM2149F.Create(2000000, NG_SAMPLE_RATE);
   FSSG.AYModel := True;
-  for var I := 0 to 2 do
-    FSSG.SetPan(I, 0.33, 0.33);
+  for var i := 0 to 2 do
+    FSSG.SetPan(i, 0.33, 0.33);
   Reset;
 end;
 
@@ -153,13 +153,13 @@ begin
   end
   else if Index = 0 then
   begin
-    for var I := 0 to 5 do
-      if (Value and (1 shl I)) <> 0 then
+    for var i := 0 to 5 do
+      if (Value and (1 shl i)) <> 0 then
       begin
         if (Value and $80) <> 0 then
-          FVoices[I].Playing := False
+          FVoices[i].Playing := False
         else
-          StartVoice(I);
+          StartVoice(i);
       end;
   end
   else if (Index >= $30) and (Index <= $B6) then
@@ -208,39 +208,42 @@ end;
 
 procedure TNeoGeoSound.ClockADPCMA;
 const
-  Steps: array[0..48] of Integer = (16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
-    50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279,
-    307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552);
+  Steps: array[0..48] of Integer = (
+    16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253,
+    279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876,
+    963, 1060, 1166, 1282, 1411, 1552);
   Adjust: array[0..7] of Integer = (-1, -1, -1, -1, 2, 5, 7, 9);
 begin
-  for var I := 0 to 5 do
-    if FVoices[I].Playing then
+  for var i := 0 to 5 do
+    if FVoices[i].Playing then
     begin
-      var Pos := FVoices[I].Position;
-      if (Pos >= FVoices[I].Ending) or (Pos div 2 >= Length(FCart.SamplesA)) then
+      var Pos := FVoices[i].Position;
+      if (Pos >= FVoices[i].Ending) or (Pos div 2 >= Length(FCart.SamplesA)) then
       begin
-        FVoices[I].Playing := False;
-        FVoices[I].Output := 0;
-        FEndFlags := Byte(FEndFlags or (1 shl I));
+        FVoices[i].Playing := False;
+        FVoices[i].Output := 0;
+        FEndFlags := Byte(FEndFlags or (1 shl i));
         Continue;
       end;
+
       var N := (FCart.SamplesA[Pos div 2] shr ((1 - (Pos and 1)) * 4)) and 15;
-      var Delta := (2 * (N and 7) + 1) * Steps[FVoices[I].Step] div 8;
+      var Delta := (2 * (N and 7) + 1) * Steps[FVoices[i].Step] div 8;
       if (N and 8) <> 0 then
         Delta := -Delta;
-      var Sum := (FVoices[I].Predictor + Delta + $1000) and $FFF;
-      FVoices[I].Predictor := (Sum and $7FF) - (Sum and $800);
-      FVoices[I].Step := EnsureRange(FVoices[I].Step + Adjust[N and 7], 0, 48);
+      var Sum := (FVoices[i].Predictor + Delta + $1000) and $FFF;
+      FVoices[i].Predictor := (Sum and $7FF) - (Sum and $800);
+      FVoices[i].Step := EnsureRange(FVoices[i].Step + Adjust[N and 7], 0, 48);
       var Attenuation := (FRegisters[$101] xor $3F) and $3F;
-      Inc(Attenuation, (FRegisters[$108 + I] xor $1F) and $1F);
+      Inc(Attenuation, (FRegisters[$108 + i] xor $1F) and $1F);
       if Attenuation >= 63 then
-        FVoices[I].Output := 0
+        FVoices[i].Output := 0
       else
       begin
-        var Product := FVoices[I].Predictor * 16 * (15 - (Attenuation and 7));
-        FVoices[I].Output := Integer(Floor(Product / Double(1 shl (5 + (Attenuation shr 3))))) and (not 3);
+        var Product := FVoices[i].Predictor * 16 * (15 - (Attenuation and 7));
+        FVoices[i].Output := Integer(Floor(Product / Double(1 shl (5 + (Attenuation shr 3))))) and (not 3);
       end;
-      Inc(FVoices[I].Position);
+      Inc(FVoices[i].Position);
     end;
 end;
 
@@ -250,6 +253,7 @@ const
 begin
   if not FVoices[6].Playing then
     Exit;
+
   var Pos := FVoices[6].Position;
   if (Pos >= FVoices[6].Ending) or (Pos div 2 >= Length(FCart.SamplesB)) then
   begin
@@ -266,8 +270,10 @@ begin
       Exit;
     end;
   end;
+
   if Pos div 2 >= Length(FCart.SamplesB) then
     Exit;
+
   var N := (FCart.SamplesB[Pos div 2] shr ((1 - (Pos and 1)) * 4)) and 15;
   var Delta := (2 * (N and 7) + 1) * FVoices[6].Step div 8;
   if (N and 8) <> 0 then
@@ -339,16 +345,16 @@ begin
     for var C := 0 to 5 do
       FMChannelSetPhaseModulation(FFM.State.Channels[C].State, FFM.State.LFO.PhaseModulation);
   GenerateFM;
-  for var I := 0 to 1 do
-    if (FRegisters[$27] and (1 shl I)) <> 0 then
+  for var i := 0 to 1 do
+    if (FRegisters[$27] and (1 shl i)) <> 0 then
     begin
-      if FFM.State.Timers[I].Counter > 1 then
-        Dec(FFM.State.Timers[I].Counter)
+      if FFM.State.Timers[i].Counter > 1 then
+        Dec(FFM.State.Timers[i].Counter)
       else
       begin
-        FFM.State.Timers[I].Counter := FFM.State.Timers[I].Value;
-        if FFM.State.Timers[I].Enabled <> 0 then
-          FFM.State.Status := Byte(FFM.State.Status or (1 shl I));
+        FFM.State.Timers[i].Counter := FFM.State.Timers[i].Value;
+        if FFM.State.Timers[i].Enabled <> 0 then
+          FFM.State.Status := Byte(FFM.State.Status or (1 shl i));
       end;
     end;
   Inc(FAFraction);
@@ -363,15 +369,15 @@ begin
     Dec(FBFraction, $10000);
     ClockADPCMB;
   end;
-  for var I := 0 to 6 do
+  for var i := 0 to 6 do
   begin
-    var Pan := FRegisters[$108 + I];
-    if I = 6 then
+    var Pan := FRegisters[$108 + i];
+    if i = 6 then
       Pan := FRegisters[$11];
     if (Pan and $80) <> 0 then
-      Inc(FNativeLeft, FVoices[I].Output);
+      Inc(FNativeLeft, FVoices[i].Output);
     if (Pan and $40) <> 0 then
-      Inc(FNativeRight, FVoices[I].Output);
+      Inc(FNativeRight, FVoices[i].Output);
   end;
 end;
 
@@ -379,9 +385,10 @@ procedure TNeoGeoSound.Advance(MasterClocks: Integer);
 begin
   if (MasterClocks < 0) or (MasterClocks > 4096) then
     raise EArgumentOutOfRangeException.Create('YM2610 clock slice');
+
   FBusy := Max(0, FBusy - MasterClocks);
   // Both synthesis and host sampling are clocked from the same 24 MHz timeline.
-  for var I := 1 to MasterClocks do
+  for var i := 1 to MasterClocks do
   begin
     Inc(FClockRemainder);
     if FClockRemainder = 432 then
@@ -424,6 +431,7 @@ begin
   State.Field(FNativeLeft, SizeOf(FNativeLeft));
   State.Field(FNativeRight, SizeOf(FNativeRight));
   FSSG.SerializeState(State.Field);
+
   if State.Loading then
     Samples := nil;
 end;

@@ -379,9 +379,19 @@ object SettingsView: TSettingsView
           Text = 'Game Boy Color'
           TextSettings.Trimming = Character
         end
+        object ButtonCore7: TButton
+          Tag = 7
+          Position.X = 222.000000000000000000
+          Size.Width = 104.000000000000000000
+          Size.Height = 36.000000000000000000
+          Size.PlatformDefault = False
+          StyleLookup = 'buttonstyle'
+          Text = 'Game Boy Advance'
+          TextSettings.Trimming = Character
+        end
         object ButtonCore3: TButton
           Tag = 3
-          Position.X = 222.000000000000000000
+          Position.X = 333.000000000000000000
           Size.Width = 104.000000000000000000
           Size.Height = 36.000000000000000000
           Size.PlatformDefault = False
@@ -391,7 +401,7 @@ object SettingsView: TSettingsView
         end
         object ButtonCore4: TButton
           Tag = 4
-          Position.X = 333.000000000000000000
+          Position.X = 444.000000000000000000
           Size.Width = 104.000000000000000000
           Size.Height = 36.000000000000000000
           Size.PlatformDefault = False
@@ -401,7 +411,7 @@ object SettingsView: TSettingsView
         end
         object ButtonCore5: TButton
           Tag = 5
-          Position.X = 444.000000000000000000
+          Position.X = 555.000000000000000000
           Size.Width = 104.000000000000000000
           Size.Height = 36.000000000000000000
           Size.PlatformDefault = False
@@ -411,7 +421,7 @@ object SettingsView: TSettingsView
         end
         object ButtonCore6: TButton
           Tag = 6
-          Position.X = 555.000000000000000000
+          Position.X = 666.000000000000000000
           Size.Width = 104.000000000000000000
           Size.Height = 36.000000000000000000
           Size.PlatformDefault = False
@@ -504,8 +514,9 @@ object SettingsView: TSettingsView
       Viewport.Width = 900.000000000000000000
       Viewport.Height = 608.000000000000000000
       object LayoutContent: TLayout
+        Position.Y = -8.000000000000000000
         Size.Width = 900.000000000000000000
-        Size.Height = 882.000000000000000000
+        Size.Height = 1041.000000000000000000
         Size.PlatformDefault = False
         TabOrder = 0
         object PanelGroupAppearance: TPanel
@@ -593,22 +604,24 @@ object SettingsView: TSettingsView
               Size.PlatformDefault = False
               object LabelRowTranslationfileTitle: TLabel
                 Align = Top
-                StyledSettings = [Family, Style, FontColor]
+                StyledSettings = [Family, Style]
                 Size.Width = 600.000000000000000000
                 Size.Height = 24.000000000000000000
                 Size.PlatformDefault = False
                 TextSettings.Font.Size = 15.000000000000000000
+                TextSettings.FontColor = claWhite
                 TextSettings.WordWrap = False
                 Text = 'Translation file'
               end
               object LabelRowTranslationfileDetail: TLabel
                 Align = Client
-                StyledSettings = [Family, Style, FontColor]
+                StyledSettings = [Family, Style]
                 Opacity = 0.720000028610229500
                 Size.Width = 600.000000000000000000
                 Size.Height = 24.000000000000000000
                 Size.PlatformDefault = False
                 TextSettings.Font.Size = 14.000000000000000000
+                TextSettings.FontColor = claWhite
                 Text = 
                   'Overrides the selected language. Leave empty to use the built-in' +
                   ' translation.'
@@ -627,7 +640,7 @@ object SettingsView: TSettingsView
                 Cursor = crArrow
                 Hint = 'Choose translation file'
                 Size.Width = 32.000000000000000000
-                Size.Height = 32.000000000000000000
+                Size.Height = 28.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
                 object PathRowTranslationfileBrowseIcon: TPath
@@ -658,8 +671,9 @@ object SettingsView: TSettingsView
                 CanFocus = False
                 Cursor = crArrow
                 Hint = 'Clear'
+                Position.X = 32.000000000000000000
                 Size.Width = 32.000000000000000000
-                Size.Height = 32.000000000000000000
+                Size.Height = 28.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 1
                 Text = #215
@@ -1019,7 +1033,7 @@ object SettingsView: TSettingsView
           end
         end
         object PanelGroupOnscreenbuttons: TPanel
-          Position.Y = 720.000000000000000000
+          Position.Y = 876.000000000000000000
           Size.Width = 900.000000000000000000
           Size.Height = 146.000000000000000000
           Size.PlatformDefault = False
@@ -1165,7 +1179,7 @@ object SettingsView: TSettingsView
             Cursor = crArrow
             Hint = 'Choose folder'
             Size.Width = 32.000000000000000000
-            Size.Height = 32.000000000000000000
+            Size.Height = 28.000000000000000000
             Size.PlatformDefault = False
             TabOrder = 0
             object PathRowROMfolderBrowseIcon: TPath
@@ -2276,7 +2290,7 @@ object SettingsView: TSettingsView
             Cursor = crArrow
             Hint = 'Choose file'
             Size.Width = 32.000000000000000000
-            Size.Height = 32.000000000000000000
+            Size.Height = 28.000000000000000000
             Size.PlatformDefault = False
             TabOrder = 0
             object PathRowInitialcassetteBrowseIcon: TPath

@@ -79,6 +79,19 @@ type
     FramesPerSecond: Double;
   end;
 
+  // Worker throughput over wall time, independent of the hardware frame rate.
+  // Reset at pause, reset or snapshot load so idle time does not lower the rate.
+  TEmulationFrameRate = record
+  private
+    FStartFrame: UInt64;
+    FStartTicks: Int64;
+    FValue: Double;
+  public
+    procedure Reset(FrameNumber: UInt64; TimeStamp: Int64);
+    function Update(FrameNumber: UInt64; TimeStamp, Frequency: Int64): Double;
+    property Value: Double read FValue;
+  end;
+
   // Device warnings do not stop emulation; frontends may report them once.
   IEmulationAudioDiagnostics = interface
     ['{FB3848EA-CA1B-4D12-A7ED-1D31776921A6}']
@@ -92,6 +105,14 @@ type
     function GetHasAccelerometer: Boolean;
     procedure SetAcceleration(X, Y: Double);
     property HasAccelerometer: Boolean read GetHasAccelerometer;
+  end;
+
+  // Rotation about the screen normal, normalized to 180 degrees per second.
+  IEmulationRotationInput = interface
+    ['{94335543-B087-4B1B-A26F-5AC933E13A21}']
+    function GetHasGyroscope: Boolean;
+    procedure SetRotation(Value: Double);
+    property HasGyroscope: Boolean read GetHasGyroscope;
   end;
 
   // Motor duty since the previous read, 0..255; zero while paused/stopped.
@@ -151,6 +172,27 @@ implementation
 
 uses
   Core.SavePaths;
+
+procedure TEmulationFrameRate.Reset(FrameNumber: UInt64; TimeStamp: Int64);
+begin
+  FStartFrame := FrameNumber;
+  FStartTicks := TimeStamp;
+  FValue := 0;
+end;
+
+function TEmulationFrameRate.Update(FrameNumber: UInt64; TimeStamp, Frequency: Int64): Double;
+begin
+  if (FrameNumber < FStartFrame) or (TimeStamp < FStartTicks) then
+    Reset(FrameNumber, TimeStamp);
+  var Elapsed := TimeStamp - FStartTicks;
+  if (Frequency > 0) and (Elapsed > 0) and (Elapsed >= Frequency div 2) then
+  begin
+    FValue := (FrameNumber - FStartFrame) * (Frequency / Double(Elapsed));
+    FStartFrame := FrameNumber;
+    FStartTicks := TimeStamp;
+  end;
+  Result := FValue;
+end;
 
 function ReadEmulatorKey(Ini: TCustomIniFile; const Section, Name: string; DefaultValue: UInt32): UInt32;
 begin

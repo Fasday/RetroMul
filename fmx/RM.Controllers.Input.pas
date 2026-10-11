@@ -156,6 +156,7 @@ begin
   FState.Input.Gamepad.Enabled := False;
   FState.Input.Gamepad.Visible := False;
   FState.Input.Gamepad.Margins.Bottom := 100;
+
   FState.Input.SuborKeyboard := TNesSuborKeyboard.Create(FView);
   FState.Input.SuborKeyboard.Name := 'ScreenSuborKeyboard';
   FState.Input.SuborKeyboard.Parent := FView.LayoutClient;
@@ -165,6 +166,7 @@ begin
   FState.Input.SuborKeyboard.OnReset := FView.SuborKeyboardPower;
   FState.Input.SuborKeyboard.Enabled := False;
   FState.Input.SuborKeyboard.Visible := False;
+
   FState.Input.FamicomKeyboard := TNesFamicomKeyboard.Create(FView);
   FState.Input.FamicomKeyboard.Name := 'ScreenFamicomKeyboard';
   FState.Input.FamicomKeyboard.Parent := FView.LayoutClient;
@@ -172,6 +174,7 @@ begin
   FState.Input.FamicomKeyboard.OnChange := FView.FamicomKeyboardChanged;
   FState.Input.FamicomKeyboard.Enabled := False;
   FState.Input.FamicomKeyboard.Visible := False;
+
   FState.Input.MiraclePiano := TNesMiraclePiano.Create(FView);
   FState.Input.MiraclePiano.Name := 'ScreenMiraclePiano';
   FState.Input.MiraclePiano.Parent := FView.LayoutClient;
@@ -179,6 +182,7 @@ begin
   FState.Input.MiraclePiano.OnChange := FView.MiraclePianoChanged;
   FState.Input.MiraclePiano.Enabled := False;
   FState.Input.MiraclePiano.Visible := False;
+
   FState.Input.PowerPad := TNesPowerPad.Create(FView);
   FState.Input.PowerPad.Name := 'ScreenPowerPad';
   FState.Input.PowerPad.Parent := FView.LayoutClient;
@@ -187,6 +191,7 @@ begin
   FState.Input.PowerPad.Enabled := False;
   FState.Input.PowerPad.Visible := False;
   FState.Input.PowerPad.Margins.Bottom := 100;
+
   FState.Input.DataRecorder := TNesDataRecorder.Create(FView);
   FState.Input.DataRecorder.Name := 'ScreenDataRecorder';
   FState.Input.DataRecorder.Parent := FView.LayoutClient;
@@ -212,6 +217,7 @@ begin
     not FState.Session.Emulation.IsPaused and Supports(FState.Session.Emulation, IEmulationRumbleOutput, Rumble) and
     Rumble.HasRumble then
     Level := Rumble.RumbleLevel;
+
   // No device search is needed for a silent, paused or absent core.
   if Level <> 0 then
   begin
@@ -230,20 +236,26 @@ end;
 
 procedure TInputController.SyncMotionSensor;
 begin
-  {$IF not Defined(LINUX)}
+  {$IF Defined(LINUX)}
+  Exit;
+  {$ENDIF}
+
   if FState.Input.MotionSensor = nil then
     Exit;
 
   var Motion: IEmulationMotionInput;
+  var RotationInput: IEmulationRotationInput;
+  var WantsRotation := Supports(FState.Session.Emulation, IEmulationRotationInput, RotationInput) and RotationInput.HasGyroscope;
   var Wanted := Supports(FState.Session.Emulation, IEmulationMotionInput, Motion);
   if Wanted then
     Wanted := Motion.HasAccelerometer;
-  Wanted := Wanted and not FState.Session.OpeningRom and not FState.Session.EmulationFaulted and not FState.Session.UserPaused and
+  Wanted := (Wanted or WantsRotation) and not FState.Session.OpeningRom and not FState.Session.EmulationFaulted and not FState.Session.UserPaused and
     not FState.Session.AutoPaused and not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and
     (FState.Help.View = nil) and not RetroDialogVisible(FView);
   {$IF Defined(ANDROID) or Defined(IOS)}
   Wanted := Wanted and not FState.Mobile.InBackground;
   {$ENDIF}
+
   if not Wanted then
   begin
     if FState.Input.MotionAttempted then
@@ -256,6 +268,8 @@ begin
     end;
     if Motion <> nil then
       Motion.SetAcceleration(0, 0);
+    if RotationInput <> nil then
+      RotationInput.SetRotation(0);
   end
   else if not FState.Input.MotionAttempted then
   begin
@@ -269,16 +283,42 @@ begin
         FState.Input.MotionSensor.Active := False;
       except
       end;
-      Motion.SetAcceleration(0, 0);
+      if Motion <> nil then
+        Motion.SetAcceleration(0, 0);
+      if RotationInput <> nil then
+        RotationInput.SetRotation(0);
     end;
   end;
-  {$ENDIF}
 end;
 
 procedure TInputController.PollMotionSensor;
 begin
   FView.SyncMotionSensor;
   {$IF not Defined(LINUX)}
+  var RotationInput: IEmulationRotationInput;
+  if Supports(FState.Session.Emulation, IEmulationRotationInput, RotationInput) and RotationInput.HasGyroscope then
+  begin
+    var Value: Double := 0;
+    if (FState.Input.MotionSensor <> nil) and FState.Input.MotionSensor.Active and (FState.Input.MotionSensor.Sensor <> nil) then
+    try
+      Value := FState.Input.MotionSensor.Sensor.AngleAccelZ;
+
+      // Android's RTL returns the native gyroscope value in radians/second.
+      {$IFDEF ANDROID}
+      Value := Value / Pi;
+      {$ELSE}
+      Value := Value / 180;
+      {$ENDIF}
+
+      if IsNan(Value) or IsInfinite(Value) then
+        Value := 0;
+    except
+      Value := 0;
+    end;
+    RotationInput.SetRotation(Value);
+    Exit;
+  end;
+
   var Motion: IEmulationMotionInput;
   if not Supports(FState.Session.Emulation, IEmulationMotionInput, Motion) or not Motion.HasAccelerometer then
     Exit;
@@ -345,16 +385,19 @@ end;
 procedure TInputController.ChooseMotionSensor(Sender: TObject; const Sensors: TSensorArray; var ChoseSensorIndex: Integer);
 begin
   ChoseSensorIndex := -1;
+  var Desired := TMotionSensorType.Accelerometer3D;
+  var RotationInput: IEmulationRotationInput;
+  if Supports(FState.Session.Emulation, IEmulationRotationInput, RotationInput) and RotationInput.HasGyroscope then
+    Desired := TMotionSensorType.Gyrometer3D;
   for var i := 0 to High(Sensors) do
-    if (Sensors[i] is TCustomMotionSensor) and
-      (TCustomMotionSensor(Sensors[i]).SensorType = TMotionSensorType.Accelerometer3D) then
+    if (Sensors[i] is TCustomMotionSensor) and (TCustomMotionSensor(Sensors[i]).SensorType = Desired) then
     begin
       ChoseSensorIndex := i;
       Break;
     end;
 end;
-
 {$ENDIF}
+
 procedure TInputController.LoadHostInput(const SystemId: string);
 begin
   FState.Input.SystemId := SystemId;
@@ -387,6 +430,7 @@ begin
   FState.Input.Manager.Enabled := FView.InputHasFocus and not FState.Session.OpeningRom;
   if not FState.Input.Manager.Enabled then
     Exit;
+
   FState.Input.Manager.Poll;
   if RetroDialogVisible(FView) then
     Exit;
@@ -418,6 +462,7 @@ begin
     for var V in FState.Input.Manager.Values do
       if (V.Kind in [TInputElementKind.Key, TInputElementKind.Button]) and (V.Value > 0.5) then
         Exit;
+
     FState.Input.SuppressInputUntilRelease := False;
   end;
 
@@ -428,6 +473,7 @@ begin
     Include(Shift, ssCtrl);
   if Keys[vkMenu] then
     Include(Shift, ssAlt);
+
   FState.Input.DispatchingInput := True;
   try
     for var i := 1 to High(Keys) do
@@ -476,8 +522,7 @@ begin
   if (FState.Settings.View <> nil) or FState.Browser.ViewingLibrary then
     Exit;
 
-  if (FState.Input.Manager <> nil) and (FState.Session.Emulation <> nil) and
-    not FState.Input.DispatchingInput then
+  if (FState.Input.Manager <> nil) and (FState.Session.Emulation <> nil) and not FState.Input.DispatchingInput then
   begin
     if (FState.Session.Emulation <> nil) and ((FView.Focused = nil) or not (FView.Focused.GetObject is TCustomEdit)) then
     begin
@@ -504,12 +549,14 @@ begin
   var KeyboardActive := SuborKeyboardActive or
     (Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) and Peripheral.UsesFamicomKeyboard) or
     (Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano);
+
   var WasDown: Boolean := False;
   if Code <= High(FState.Input.KeysDown) then
   begin
     WasDown := FState.Input.KeysDown[Code];
     FState.Input.KeysDown[Code] := True;
   end;
+
   if not WasDown then
   begin
     if FState.Help.View <> nil then
@@ -582,9 +629,11 @@ begin
       end;
     end;
   end;
+
   if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift)) then
     if (FState.Session.Emulation <> nil) and (FState.Input.Manager = nil) then
       FView.ForwardKeyState(Code, True);
+
   Key := 0;
   KeyChar := #0;
 end;
@@ -622,8 +671,7 @@ begin
   if (FState.Settings.View <> nil) or FState.Browser.ViewingLibrary then
     Exit;
 
-  if (FState.Input.Manager <> nil) and (FState.Session.Emulation <> nil) and
-    not FState.Input.DispatchingInput then
+  if (FState.Input.Manager <> nil) and (FState.Session.Emulation <> nil) and not FState.Input.DispatchingInput then
   begin
     if (FState.Session.Emulation <> nil) and ((FView.Focused = nil) or not (FView.Focused.GetObject is TCustomEdit)) then
     begin
@@ -646,8 +694,10 @@ begin
   var Code: Word := Key;
   if Code <= High(FState.Input.KeysDown) then
     FState.Input.KeysDown[Code] := False;
+
   if (FState.Help.View = nil) and (FState.Session.Emulation <> nil) and (FState.Input.Manager = nil) then
     FView.ForwardKeyState(Code, False);
+
   Key := 0;
   KeyChar := #0;
 end;
@@ -696,8 +746,10 @@ begin
     Result.Buttons7 := Host.Buttons7;
     Result.Buttons8 := Host.Buttons8;
   end;
+
   if FState.Input.Ports.Devices[0] = 'none' then
     Result.Buttons := [];
+
   var Piano: INesMiraclePianoCore;
   if Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano then
   begin
@@ -729,6 +781,7 @@ begin
       Peripheral.SetPowerPadButtons(Buttons);
     end;
   end;
+
   var Piano: INesMiraclePianoCore;
   if Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano then
     Piano.SetMiracleKeys(FState.Input.MiraclePiano.Keys + ReadPianoInput(FState.Input.Manager));

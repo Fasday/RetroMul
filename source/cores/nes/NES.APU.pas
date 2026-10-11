@@ -104,6 +104,8 @@ type
     FMixKey: Integer;
     FMixValue: Double;
     FMixValid: Boolean;
+    // Channel DACs change only on register, sequencer and timer events.
+    FMixDirty: Boolean;
     FHp90Coefficient: Double;
     FHp440Coefficient: Double;
     FLp14Coefficient: Double;
@@ -135,13 +137,13 @@ type
     procedure SetRegion(Value: TNesRegion);
     procedure Reset;
     procedure SetSampleRate(Value: Integer);
-    procedure SetExpansionAudio(Value: Double);
+    procedure SetExpansionAudio(Value: Double); inline;
     procedure CpuWrite(Address: UInt16; Value: UInt8);
     function CpuReadStatus: UInt8;
-    function IrqPending: Boolean;
+    function IrqPending: Boolean; inline;
     procedure Clock;
-    function DmcDmaRequested: Boolean;
-    function ConsumeDmcAbort: Boolean;
+    function DmcDmaRequested: Boolean; inline;
+    function ConsumeDmcAbort: Boolean; inline;
     function DmcDmaAddress: UInt16;
     procedure CompleteDmcDma(Value: UInt8);
     function PopSamples(var Samples: array of SmallInt): Integer;
@@ -291,6 +293,8 @@ end;
 
 procedure TApu.Reset;
 begin
+  FMixValid := False;
+  FMixDirty := True;
   FillChar(FPulse1, SizeOf(FPulse1), 0);
   FillChar(FPulse2, SizeOf(FPulse2), 0);
   FillChar(FTriangle, SizeOf(FTriangle), 0);
@@ -497,6 +501,7 @@ end;
 
 procedure TApu.QuarterFrame;
 begin
+  FMixDirty := True;
   ClockPulseEnvelope(FPulse1);
   ClockPulseEnvelope(FPulse2);
   ClockNoiseEnvelope;
@@ -505,6 +510,7 @@ end;
 
 procedure TApu.HalfFrame;
 begin
+  FMixDirty := True;
   ClockLengthCounters;
   ClockSweep(FPulse1, 1);
   ClockSweep(FPulse2, 0);
@@ -514,6 +520,7 @@ procedure TApu.CpuWrite(Address: UInt16; Value: UInt8);
 begin
   if Assigned(FOnRegisterWrite) then
     FOnRegisterWrite(FCycle, Address, Value);
+  FMixDirty := True;
   if (Address >= $4000) and (Address <= $4017) then
     Inc(FWriteCounts[Address]);
 
@@ -703,6 +710,9 @@ end;
 
 function TApu.MixSample: Double;
 begin
+  if FMixValid and not FMixDirty then
+    Exit(FMixValue);
+  FMixDirty := False;
   var PulseMix: Double;
   var TndMix: Double;
   var PulseDenom: Double;
@@ -832,6 +842,7 @@ begin
   FDmcReloaded := True;
   if not FDmc.Silence then
   begin
+    FMixDirty := True;
     if (FDmc.Shift and 1) <> 0 then
     begin
       if FDmc.OutputLevel <= 125 then
@@ -941,6 +952,8 @@ begin
     begin
       FPulse1.Timer := FPulse1.TimerReload;
       FPulse1.SequenceStep := (FPulse1.SequenceStep + 1) and 7;
+      if FPulse1.Enabled and (FPulse1.LengthCounter > 0) then
+        FMixDirty := True;
     end
     else
       Dec(FPulse1.Timer);
@@ -949,6 +962,8 @@ begin
     begin
       FPulse2.Timer := FPulse2.TimerReload;
       FPulse2.SequenceStep := (FPulse2.SequenceStep + 1) and 7;
+      if FPulse2.Enabled and (FPulse2.LengthCounter > 0) then
+        FMixDirty := True;
     end
     else
       Dec(FPulse2.Timer);
@@ -963,6 +978,8 @@ begin
     else
       Feedback := ((FNoise.Shift and 1) xor ((FNoise.Shift shr 1) and 1));
     FNoise.Shift := (FNoise.Shift shr 1) or (Feedback shl 14);
+    if FNoise.Enabled and (FNoise.LengthCounter > 0) then
+      FMixDirty := True;
   end
   else
     Dec(FNoise.Timer);
@@ -973,7 +990,10 @@ begin
   begin
     FTriangle.Timer := FTriangle.TimerReload;
     if (FTriangle.LengthCounter > 0) and (FTriangle.LinearCounter > 0) then
+    begin
       FTriangle.SequenceStep := (FTriangle.SequenceStep + 1) and 31;
+      FMixDirty := True;
+    end;
   end
   else
     Dec(FTriangle.Timer);

@@ -65,9 +65,9 @@ type
     function DmaRead(Address: UInt16): UInt8;
     function DmaTransferRead(Address: UInt16): UInt8;
     procedure CpuWrite(Address: UInt16; Value: UInt8);
-    function IsDmaActive: Boolean;
+    function IsDmaActive: Boolean; inline;
     procedure ClockDma(CpuCycleOdd: Boolean);
-    procedure ClockIo;
+    procedure ClockIo; inline;
     function DebugCpuRead(Address: UInt16): UInt8;
     property CpuCycle: UInt64 read FCpuCycle write FCpuCycle;
     property DmaWritePending: Boolean read FDmaHaveData;
@@ -282,7 +282,10 @@ end;
 
 function TNesBus.CpuRead(Address: UInt16): UInt8;
 begin
-  Result := ReadDevice(Address);
+  if Address < $2000 then
+    Result := FRam[Address and $07FF]
+  else
+    Result := ReadDevice(Address);
   FInternalDataBus := Result;
   // $4015 is internal to the CPU; it does not drive the external bus.
   if Address <> $4015 then

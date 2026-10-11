@@ -108,14 +108,17 @@ begin
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
+
   FCartridge := TNeoGeoCartridge.Create(ReadNeoGeoData(Stream), FStorage, RomName);
   var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_NEOGEO), FStorage);
   FConfig := Config;
   Config.Load;
   FKeys := Config.Keys;
   FKeys2 := Config.Keys2;
+
   var Hash := THashSHA2.Create;
   Hash.Update(FCartridge.Identity);
+
   var Identity := Hash.HashAsString;
   FSavePath := FStorage.GameSave(ROM_SYSTEM_NEOGEO, RomName, Identity);
   FSnapshotDirectory := FStorage.GameSnapshots(ROM_SYSTEM_NEOGEO, RomName, Identity);
@@ -139,6 +142,7 @@ procedure TNeoGeoCoreAdapter.Start;
 begin
   if FThread <> nil then
     Exit;
+
   FThread := TNeoGeoWorker.Create(FCartridge, FSavePath, FStorage);
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.InputPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_NEOGEO);
@@ -150,6 +154,7 @@ procedure TNeoGeoCoreAdapter.Stop;
 begin
   if FThread = nil then
     Exit;
+
   FThread.StopAndSave;
   FError := FThread.TakeError;
   FreeAndNil(FThread);
@@ -194,6 +199,7 @@ const
 begin
   if Code = 0 then
     Exit;
+
   if FCartridge.Protection = 'neogeo_mj' then
   begin
     if (Code >= vkA) and (Code <= vkG) then
@@ -225,6 +231,7 @@ begin
     ApplySettings;
     Exit;
   end;
+
   if FCartridge.Protection = 'vliner' then
   begin
     if Code = vkF1 then
@@ -238,6 +245,7 @@ begin
       else
         Exclude(FKeyboard, TEmulatorButton.Y);
   end;
+
   for var B in Buttons do
   begin
     if Code = FKeys[B] then
@@ -251,6 +259,7 @@ begin
       else
         Exclude(FKeyboard2, B);
   end;
+
   ApplySettings;
 end;
 
@@ -272,6 +281,7 @@ procedure TNeoGeoCoreAdapter.SaveSnapshot(const Name: string);
 begin
   if FThread = nil then
     raise EInvalidOpException.Create('Emulation worker is not running');
+
   FThread.SaveSnapshot(Name);
 end;
 
@@ -279,6 +289,7 @@ procedure TNeoGeoCoreAdapter.LoadSnapshot(const Name: string);
 begin
   if FThread = nil then
     raise EInvalidOpException.Create('Emulation worker is not running');
+
   FThread.LoadSnapshot(Name);
 end;
 

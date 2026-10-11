@@ -399,6 +399,7 @@ begin
   State.Field(FOutput, SizeOf(FOutput));
   var Size := Length(FData);
   State.Field(Size, SizeOf(Size));
+
   if (Size < 0) or (Size > MAX_TAPE_BYTES) then
     raise EReadError.Create('Invalid tape size');
 
@@ -409,6 +410,7 @@ begin
   var PathData := TEncoding.UTF8.GetBytes(FPath);
   Size := Length(PathData);
   State.Field(Size, SizeOf(Size));
+
   if (Size < 0) or (Size > 32768) then
     raise EReadError.Create('Invalid tape path');
 

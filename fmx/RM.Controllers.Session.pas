@@ -38,7 +38,7 @@ uses
   System.Classes, System.UITypes, System.Math, RM.Input, System.IOUtils,
   FMX.Forms, FMX.Objects, FMX.Graphics, FMX.OpenDialog, Core.Emulation,
   Core.Storage, Core.EmulatorFactory, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
+  Core.Adapter.NeoGeo, Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
   Core.InputConfig, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
   RM.Dialogs, RM.Styles, RM.Icons;
 
@@ -491,6 +491,8 @@ begin
     InputSystem := ROM_SYSTEM_NEOGEO
   else if FState.Session.Emulation.Config is TSnesConfig then
     InputSystem := ROM_SYSTEM_SNES
+  else if FState.Session.Emulation.Config is TGBAConfig then
+    InputSystem := ROM_SYSTEM_GBA
   else if FState.Session.Emulation.Config is TGBCEmulatorConfig then
     InputSystem := ROM_SYSTEM_GBC
   else if FState.Session.Emulation.Config is TGBEmulatorConfig then
@@ -502,6 +504,8 @@ begin
     FState.Input.Gamepad.Layout := TScreenGamepadLayout.NeoGeo
   else if FState.Session.Emulation.Config is TSnesConfig then
     FState.Input.Gamepad.Layout := TScreenGamepadLayout.Snes
+  else if FState.Session.Emulation.Config is TGBAConfig then
+    FState.Input.Gamepad.Layout := TScreenGamepadLayout.GameBoyAdvance
   else if FState.Session.Emulation.Config is TGBCEmulatorConfig then
     FState.Input.Gamepad.Layout := TScreenGamepadLayout.GameBoyColor
   else if FState.Session.Emulation.Config is TGBEmulatorConfig then

@@ -9,6 +9,7 @@ const
   ROM_SYSTEM_NES = 'nes';
   ROM_SYSTEM_GB = 'gb';
   ROM_SYSTEM_GBC = 'gbc';
+  ROM_SYSTEM_GBA = 'gba';
   ROM_SYSTEM_MD = 'md';
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_NEOGEO = 'neogeo';
@@ -18,6 +19,7 @@ const
   ROM_CORE_ID_NES = 'NES';
   ROM_CORE_ID_GB = 'GB';
   ROM_CORE_ID_GBC = 'GBC';
+  ROM_CORE_ID_GBA = 'GBA';
   ROM_CORE_ID_MD = 'MD';
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
@@ -26,6 +28,7 @@ const
   ROM_EXTENSION_NES = '.nes';
   ROM_EXTENSION_GB = '.gb';
   ROM_EXTENSION_GBC = '.gbc';
+  ROM_EXTENSION_GBA = '.gba';
   ROM_EXTENSION_GBX = '.gbx';
   ROM_EXTENSION_MD = '.md';
   ROM_EXTENSION_SMD = '.smd';
@@ -145,7 +148,7 @@ const
   NEOGEO_ROM_NAME_SIZE = 33;
 
 type
-  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo);
+  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA);
 
   TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier);
 
@@ -186,7 +189,7 @@ function NormalizeRom(const Data: TBytes; const Format: TRomFormatInfo): TBytes;
 implementation
 
 uses
-  SNES.Cartridge;
+  SNES.Cartridge, GBA.Cartridge;
 
 { TRomFormatInfo }
 
@@ -197,7 +200,7 @@ end;
 
 function RomSystemFromId(const SystemId: string): TRomSystem;
 begin
-  for var System := TRomSystem.NES to TRomSystem.NeoGeo do
+  for var System := TRomSystem.NES to High(TRomSystem) do
     if SameText(SystemId, RomSystemId(System)) or SameText(SystemId, RomSystemFolder(System)) then
       Exit(System);
 
@@ -221,6 +224,8 @@ begin
       Result := [ROM_EXTENSION_GB, ROM_EXTENSION_GBX];
     TRomSystem.GBC:
       Result := [ROM_EXTENSION_GBC, ROM_EXTENSION_GBX];
+    TRomSystem.GBA:
+      Result := [ROM_EXTENSION_GBA];
     TRomSystem.MD:
       Result := [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD];
     TRomSystem.SNES:
@@ -241,6 +246,8 @@ begin
       Result := ROM_SYSTEM_GB;
     TRomSystem.GBC:
       Result := ROM_SYSTEM_GBC;
+    TRomSystem.GBA:
+      Result := ROM_SYSTEM_GBA;
     TRomSystem.MD:
       Result := ROM_SYSTEM_MD;
     TRomSystem.SNES:
@@ -328,6 +335,8 @@ begin
 
   if Signature(0, NEOGEO_ROM_SIGNATURE) or Signature(0, NEOGEO_ZIP_ROM_SIGNATURE) then
     Result.System := TRomSystem.NeoGeo
+  else if IsGBAROM(Data) then
+    Result.System := TRomSystem.GBA
   else if Signature(0, NES_ROM_SIGNATURE) then
     Result.System := TRomSystem.NES
   else if (Length(Data) >= GB_ROM_HEADER_SIZE) and CompareMem(@Data[GB_ROM_LOGO_OFFSET], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO)) then

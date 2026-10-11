@@ -25,9 +25,6 @@ procedure DecryptPVC(var ProgramData: TBytes; const Kind: string);
 
 implementation
 
-// Adapted from MAME, BSD-3-Clause. Copyright S. Smith, David Haywood,
-// Fabio Priuli and the contributors listed in LICENSE.txt.
-
 type
   TTable = array[0..255] of Byte;
 
@@ -406,6 +403,7 @@ var
 begin
   if (Length(Graphics) = 0) or (Length(Graphics) mod 4 <> 0) then
     raise EReadError.Create('Invalid CMC graphics size');
+
   if CMC50 then
   begin
     T03 := kof2000_type0_t03;
@@ -430,13 +428,14 @@ begin
     A16b := kof99_address_16_23_xor2;
     A0 := kof99_address_0_7_xor;
   end;
+
   SetLength(Buffer, Length(Graphics));
   for var Position := 0 to Length(Graphics) div 4 - 1 do
   begin
     Pair(Position, 0, 3, T03, T12, U03, ((Position shr 8) and 1) <> 0);
-    Pair(Position, 1, 2, T12, T03, U12,
-      (((Position shr 16) xor A16b[(Position shr 8) and $FF]) and 1) <> 0);
+    Pair(Position, 1, 2, T12, T03, U12, (((Position shr 16) xor A16b[(Position shr 8) and $FF]) and 1) <> 0);
   end;
+
   for var Position := 0 to Length(Graphics) div 4 - 1 do
   begin
     var Base := Position xor Key;
@@ -461,9 +460,10 @@ begin
     end
     else
       Base := Base and (Length(Graphics) div 4 - 1);
-    for var I := 0 to 3 do
-      Graphics[Position * 4 + I] := Buffer[Base * 4 + I];
+    for var i := 0 to 3 do
+      Graphics[Position * 4 + i] := Buffer[Base * 4 + i];
   end;
+
   if ExtractFixed then
     ExtractCMCText(Graphics, Fixed);
   if CMC50 and EncryptedAudio then
@@ -474,9 +474,10 @@ procedure ExtractCMCText(const Graphics: TBytes; var Fixed: TBytes);
 begin
   if (Length(Fixed) > Length(Graphics)) or (Length(Fixed) mod 32 <> 0) then
     raise EReadError.Create('Invalid CMC fixed layer size');
-  for var I := 0 to Length(Fixed) - 1 do
-    Fixed[I] := Graphics[Length(Graphics) - Length(Fixed) + (I and $7FFFFFE0) +
-        ((I and 7) shl 2) + (((not I) and 8) shr 2) + ((I and $10) shr 4)];
+
+  for var i := 0 to Length(Fixed) - 1 do
+    Fixed[i] := Graphics[Length(Graphics) - Length(Fixed) + (i and $7FFFFFE0) +
+        ((i and 7) shl 2) + (((not i) and 8) shr 2) + ((i and $10) shr 4)];
 end;
 
 procedure DecryptCMCAudio(var Audio: TBytes);
@@ -495,20 +496,22 @@ var
 begin
   if (Length(Audio) < $10000) or (Length(Audio) > $80000) then
     raise EReadError.Create('Invalid CMC50 audio size');
+
   SetLength(Audio, $80000);
   var Sum := 0;
-  for var I := 0 to $FFFF do
-    Sum := (Sum + Audio[I]) and $FFFF;
+  for var i := 0 to $FFFF do
+    Sum := (Sum + Audio[i]) and $FFFF;
   var AudioKey := Bits(Sum, [12, 0, 2, 4, 8, 15, 7, 13, 10, 1, 3, 6, 11, 9, 14, 5]);
+
   SetLength(Buffer, $80000);
-  for var I := 0 to $7FFFF do
+  for var i := 0 to $7FFFF do
   begin
-    var Block := I shr 16;
-    var Address := Bits((I and $FFFF) xor AudioKey, M1Order[Block]);
+    var Block := i shr 16;
+    var Address := Bits((i and $FFFF) xor AudioKey, M1Order[Block]);
     Address := Address xor m1_address_0_7_xor[(Address shr 8) and $FF];
     Address := Address xor (Integer(m1_address_8_15_xor[Address and $FF]) shl 8);
     Address := Bits(Address, [7, 15, 14, 6, 5, 13, 12, 4, 11, 3, 10, 2, 9, 1, 8, 0]);
-    Buffer[I] := Audio[Block * $10000 + Address];
+    Buffer[i] := Audio[Block * $10000 + Address];
   end;
   Audio := Buffer;
 end;
@@ -527,18 +530,20 @@ begin
   begin
     if not (BlockSize in [4, 8, 16]) or (Length(Samples) mod BlockSize <> 0) then
       raise EReadError.Create('Invalid PCM2 sample size');
-    for var I := 0 to Length(Samples) - 1 do
-      Samples[I] := Buffer[I xor (BlockSize div 2)];
+
+    for var i := 0 to Length(Samples) - 1 do
+      Samples[i] := Buffer[i xor (BlockSize div 2)];
   end
   else
   begin
     if (Variant < 0) or (Variant > 6) or (Length(Samples) <> $1000000) then
       raise EReadError.Create('Invalid late PCM2 sample size');
-    for var I := 0 to $FFFFFF do
+
+    for var i := 0 to $FFFFFF do
     begin
       // Only address bits zero and sixteen change places.
-      var J := ((I and $FEFFFE) or ((I and 1) shl 16) or ((I shr 16) and 1)) xor Addresses[Variant, 1];
-      var Source := (I + Addresses[Variant, 0]) and $FFFFFF;
+      var J := ((i and $FEFFFE) or ((i and 1) shl 16) or ((i shr 16) and 1)) xor Addresses[Variant, 1];
+      var Source := (i + Addresses[Variant, 0]) and $FFFFFF;
       Samples[J] := Buffer[Source] xor Xors[Variant, J and 7];
     end;
   end;
@@ -562,6 +567,7 @@ begin
   end;
   if Length(Buffer) < Base + Count * $80000 then
     raise EReadError.Create('Truncated encrypted program');
+
   for var Block := 0 to Count - 1 do
   begin
     var Source: Integer;
@@ -573,8 +579,9 @@ begin
       Source := SP[Block]
     else
       raise ENotSupportedException.Create('Unknown program permutation');
-    for var I := 0 to $7FFFF do
-      ProgramData[Base + Block * $80000 + I] := Buffer[Base + Source + I];
+
+    for var i := 0 to $7FFFF do
+      ProgramData[Base + Block * $80000 + i] := Buffer[Base + Source + i];
   end;
 end;
 
@@ -584,14 +591,14 @@ var
 
   procedure Data(const Order: array of Integer);
   begin
-    for var I := $80000 to $47FFFF do
-      Words[I] := Word(Bits(Words[I], Order));
+    for var i := $80000 to $47FFFF do
+      Words[i] := Word(Bits(Words[i], Order));
   end;
 
   procedure FixedPart(Source: Integer; const Order: array of Integer);
   begin
-    for var I := 0 to $5FFFF do
-      Words[I] := Words[Source div 2 + Bits(I, Order)];
+    for var i := 0 to $5FFFF do
+      Words[i] := Words[Source div 2 + Bits(i, Order)];
   end;
 
   procedure Banks(Count, BlockSize: Integer; const Order: array of Integer);
@@ -600,19 +607,20 @@ var
     for var Block := 0 to Count div BlockSize - 1 do
     begin
       var Base := $80000 + Block * (BlockSize div 2);
-      for var I := 0 to High(Buffer) do
-        Buffer[I] := Words[Base + I];
-      for var I := 0 to High(Buffer) do
-        Words[Base + I] := Buffer[Bits(I, Order)];
+      for var i := 0 to High(Buffer) do
+        Buffer[i] := Words[Base + i];
+      for var i := 0 to High(Buffer) do
+        Words[Base + i] := Buffer[Bits(i, Order)];
     end;
   end;
 
 begin
   if Length(ProgramData) <> $900000 then
     raise EReadError.Create('Invalid SMA program size');
+
   SetLength(Words, $480000);
-  for var I := 0 to High(Words) do
-    Words[I] := Word(Integer(ProgramData[I * 2]) * 256 + ProgramData[I * 2 + 1]);
+  for var i := 0 to High(Words) do
+    Words[i] := Word(Integer(ProgramData[i * 2]) * 256 + ProgramData[i * 2 + 1]);
   if Kind = 'kof99' then
   begin
     Data([13, 7, 3, 0, 9, 4, 5, 6, 1, 12, 8, 14, 10, 11, 2, 15]);
@@ -651,10 +659,11 @@ begin
   end
   else
     raise ENotSupportedException.Create('Unknown SMA cartridge');
-  for var I := 0 to High(Words) do
+
+  for var i := 0 to High(Words) do
   begin
-    ProgramData[I * 2] := Words[I] shr 8;
-    ProgramData[I * 2 + 1] := Words[I] and $FF;
+    ProgramData[i * 2] := Words[i] shr 8;
+    ProgramData[i * 2 + 1] := Words[i] and $FF;
   end;
 end;
 
@@ -774,12 +783,12 @@ begin
     FillChar(X1, SizeOf(X1), 0);
     X2 := pcb_xor2;
     AddressXor := $300;
-    for var I := 0 to 15 do
-      DOrder[I] := pcb_data[I];
-    for var I := 0 to 7 do
+    for var i := 0 to 15 do
+      DOrder[i] := pcb_data[i];
+    for var i := 0 to 7 do
     begin
-      BOrder[I] := pcb_banks[I];
-      FOrder[I] := pcb_fixed[I];
+      BOrder[i] := pcb_banks[i];
+      FOrder[i] := pcb_fixed[i];
     end;
   end
   else if Kind = 'mslug5' then
@@ -936,21 +945,23 @@ begin
   end
   else
     raise ENotSupportedException.Create('Unknown PVC cartridge');
+
   var Size := $800000;
   if (Kind = 'kof2003') or (Kind = 'kof2003h') or (Kind = 'kf2k3pcb') then
     Size := $900000;
   if Length(ProgramData) <> Size then
     raise EReadError.Create('Invalid PVC program size');
+
   if Size = $900000 then
-    for var I := 0 to $FFFFF do
-      ProgramData[$800000 + I] := ProgramData[$800000 + I] xor ProgramData[$100002 or I];
-  for var I := 0 to $FFFFF do
-    ProgramData[I] := ProgramData[I] xor X1[(I xor 1) and 31];
-  for var I := $100000 to $7FFFFF do
-    ProgramData[I] := ProgramData[I] xor X2[(I xor 1) and 31];
-  for var I := $40000 to $1FFFFF do
+    for var i := 0 to $FFFFF do
+      ProgramData[$800000 + i] := ProgramData[$800000 + i] xor ProgramData[$100002 or i];
+  for var i := 0 to $FFFFF do
+    ProgramData[i] := ProgramData[i] xor X1[(i xor 1) and 31];
+  for var i := $100000 to $7FFFFF do
+    ProgramData[i] := ProgramData[i] xor X2[(i xor 1) and 31];
+  for var i := $40000 to $1FFFFF do
   begin
-    var Base := I * 4;
+    var Base := i * 4;
     var Value := Bits(Integer(ProgramData[Base]) or (Integer(ProgramData[Base + 3]) shl 8), DOrder);
     ProgramData[Base] := Value and $FF;
     ProgramData[Base + 3] := Value shr 8;
@@ -959,23 +970,23 @@ begin
   for var Block := 0 to 15 do
   begin
     var Source := Bits(Block, FOrder) * $10000;
-    for var I := 0 to $FFFF do
-      Buffer[Block * $10000 + I] := ProgramData[Source + I];
+    for var i := 0 to $FFFF do
+      Buffer[Block * $10000 + i] := ProgramData[Source + i];
   end;
   for var Block := $1000 to Size div $100 - 1 do
   begin
     var Base := Block * $100;
     var Source := (Base and $F000FF) + ((Base and $F00) xor AddressXor) +
       (Bits((Base shr 12) and $FF, BOrder) shl 12);
-    for var I := 0 to $FF do
-      Buffer[Base + I] := ProgramData[Source + I];
+    for var i := 0 to $FF do
+      Buffer[Base + i] := ProgramData[Source + i];
   end;
-  for var I := 0 to $FFFFF do
-    ProgramData[I] := Buffer[I];
-  for var I := 0 to $FFFFF do
-    ProgramData[$100000 + I] := Buffer[Size - $100000 + I];
-  for var I := 0 to Size - $200000 - 1 do
-    ProgramData[$200000 + I] := Buffer[$100000 + I];
+  for var i := 0 to $FFFFF do
+    ProgramData[i] := Buffer[i];
+  for var i := 0 to $FFFFF do
+    ProgramData[$100000 + i] := Buffer[Size - $100000 + i];
+  for var i := 0 to Size - $200000 - 1 do
+    ProgramData[$200000 + i] := Buffer[$100000 + i];
 end;
 
 procedure DecryptKOF98(var ProgramData: TBytes);
@@ -985,6 +996,7 @@ const
 begin
   if Length(ProgramData) < $600000 then
     raise EReadError.Create('Invalid KOF98 program size');
+
   var Buffer := Copy(ProgramData, 0, $200000);
   for var Block := 4 to $7FF do
   begin
@@ -1017,8 +1029,8 @@ begin
       ProgramData[Base + $102 + B] := Buffer[Base + $100100 + B];
     end;
   end;
-  for var I := 0 to $3FFFFF do
-    ProgramData[$100000 + I] := ProgramData[$200000 + I];
+  for var i := 0 to $3FFFFF do
+    ProgramData[$100000 + i] := ProgramData[$200000 + i];
   SetLength(ProgramData, $500000);
 end;
 

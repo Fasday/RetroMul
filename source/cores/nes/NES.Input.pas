@@ -78,6 +78,7 @@ begin
   CheckPlayer(Player);
   if not (Button in [TNesButton.A, TNesButton.B]) then
     raise EArgumentException.Create('Only A and B support turbo');
+
   var States: TPlayerStates;
   if not FSources.TryGetValue(Source, States) then
     FillChar(States, SizeOf(States), 0);
@@ -151,8 +152,8 @@ begin
     var State := Pair.Value[Player];
     if (State.Buttons and (1 shl Ord(Button))) <> 0 then
       Exit(True);
-    if (Button in [TNesButton.A, TNesButton.B]) and
-      ((State.Turbo and (1 shl Ord(Button))) <> 0) then
+
+    if (Button in [TNesButton.A, TNesButton.B]) and ((State.Turbo and (1 shl Ord(Button))) <> 0) then
       if State.Phase[Button] < 2 then
         Exit(True);
   end;

@@ -2,7 +2,7 @@
 
 ![RetroMul](https://github.com/HemulGM/RetroMul/blob/main/screen/screen0.png?raw=true)
 
-RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, SEGA Mega Drive / Genesis, Super Nintendo, and Neo Geo MVS. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
+RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, Super Nintendo, and Neo Geo MVS. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
 
 ## Supported systems and ROM formats
 
@@ -11,6 +11,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | NES / Famicom | `.nes` |
 | Game Boy | `.gb`, `.gbx` |
 | Game Boy Color | `.gbc`, `.gbx` |
+| Game Boy Advance (experimental) | `.gba` |
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
@@ -18,6 +19,8 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers.
 
 Neo Geo runs in MVS arcade mode with embedded system firmware. Split ROM sets need their parent ZIPs in the same directory. The loader recognizes catalogued original, decrypted, bootleg, and PCB variants; a ZIP extension alone does not guarantee a supported set. Neo Geo CD is not supported. See the [Neo Geo core notes](source/cores/neogeo/README.txt) for hardware coverage, controls, and limitations.
+
+Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmware, stereo audio, SRAM/Flash/EEPROM saves, RTC and sensor cartridges, and save states. The firmware, corresponding source and license occupy approximately 295 KiB in program resources. A replacement 16 KiB BIOS can be selected in GBA settings. Compatibility is still incomplete; see the [GBA core notes](source/cores/gba/README.md).
 
 ## Features
 
@@ -44,6 +47,7 @@ ROMS/
   nes/
   gb/
   gbc/
+  gba/
   megadrive/
   snes/
   neogeo/

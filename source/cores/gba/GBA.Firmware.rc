@@ -1,0 +1,3 @@
+GBA_EMIBIOS RCDATA "firmware\\emibios-0.1.6.bin"
+GBA_EMIBIOS_SOURCE RCDATA "firmware\\emibios-0.1.6-source.zip"
+GBA_EMIBIOS_LICENSE RCDATA "firmware\\LICENSE-emibios.txt"

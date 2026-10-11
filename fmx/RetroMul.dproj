@@ -164,7 +164,7 @@
         <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
         <Icns_MainIcns>$(BDS)\bin\delphi_PROJECTICNS.icns</Icns_MainIcns>
         <SanitizedProjectName>RetroMul</SanitizedProjectName>
-        <DCC_UnitSearchPath>FMXVibration;..\source\cores\neogeo;..\source\cores\atari;..\source\cores\c64;..\source\cores\zx;..\source\input;..\source\cores\pc;devices;..\source\cores;..\source\cores\snes;..\source\cores\md;..\source\cores\nes;..\source\cores\nes\mappers;..\source\cores\gb;..\source\cores\gbc;..\source\gamelist;..\source\PCM;DelphiWinUI3\Sources;DelphiWinUI3\DelphiWindowStyle;DelphiWinUI3\FMXWindowsDispatch;DelphiWinUI3\FMXWindowsHint;DelphiWinUI3\WindowsNotificationManager;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\source\cores\gba;FMXVibration;..\source\cores\neogeo;..\source\cores\atari;..\source\cores\c64;..\source\cores\zx;..\source\input;..\source\cores\pc;devices;..\source\cores;..\source\cores\snes;..\source\cores\md;..\source\cores\nes;..\source\cores\nes\mappers;..\source\cores\gb;..\source\cores\gbc;..\source\gamelist;..\source\PCM;DelphiWinUI3\Sources;DelphiWinUI3\DelphiWindowStyle;DelphiWinUI3\FMXWindowsDispatch;DelphiWinUI3\FMXWindowsHint;DelphiWinUI3\WindowsNotificationManager;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Android)'!=''">
         <DCC_UsePackage>fmx;DbxCommonDriver;bindengine;IndyIPCommon;emsclient;IndyProtocols;dbxcds;FmxTeeUI;FireDACSqliteDriver;DbxClientDriver;soapmidas;dbexpress;inet;FireDACDBXDriver;CustomIPTransport;IndySystem;FireDACCommon;emsserverresource;bindcompdbx;rtl;DBXSqliteDriver;DataSnapFireDAC;FireDAC;xmlrtl;dsnap;DataSnapNativeClient;emshosting;FireDACCommonDriver;IndyIPClient;emsedge;bindcompfmx;fmxFireDAC;FMXAudioHGM;DataSnapCommon;fmxase;dbrtl;DBXInterBaseDriver;bindcomp;VLCPlayer;inetstn;IndyCore;RESTBackendComponents;RESTComponents;IndyIPServer;dsnapxml;DataSnapClient;DataSnapProviderClient;emsclientfiredac;FireDACDSDriver;tethering;CloudService;FMXTee;soaprtl;soapserver;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
@@ -530,6 +530,16 @@
         <DCCReference Include="..\source\cores\Core.Adapter.NES.pas"/>
         <DCCReference Include="..\source\cores\Core.Adapter.GB.pas"/>
         <DCCReference Include="..\source\cores\Core.Adapter.GBC.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Emulation.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Console.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Peripherals.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Firmware.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Sound.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Video.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Cartridge.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.Multiply.pas"/>
+        <DCCReference Include="..\source\cores\gba\GBA.CPU.pas"/>
+        <DCCReference Include="..\source\cores\Core.Adapter.GBA.pas"/>
         <DCCReference Include="..\source\cores\Core.Adapter.NeoGeo.pas"/>
         <DCCReference Include="..\source\cores\neogeo\NeoGeo.Cartridge.pas"/>
         <DCCReference Include="..\source\cores\neogeo\NeoGeo.Protection.pas"/>

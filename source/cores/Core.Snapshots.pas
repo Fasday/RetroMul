@@ -129,6 +129,12 @@ begin
   // SNES v10 adds the S-DSP phase latches, SPC MMIO latches and PPU mosaic counter.
   if PlatformCore = ROM_CORE_ID_SNES then
     Result.Version := 10;
+  // GBA v6 adds the clocked video pipeline and HALT synchronizer.
+  if PlatformCore = ROM_CORE_ID_GBA then
+    Result.Version := 6;
+  // Neo Geo v2 adds the LSPC VRAM read latch.
+  if PlatformCore = ROM_CORE_ID_NEOGEO then
+    Result.Version := 2;
   var Core := AnsiString(PlatformCore);
   if (Length(Core) = 0) or (Length(Core) > 8) then
     raise EArgumentException.Create('Invalid snapshot platform');
