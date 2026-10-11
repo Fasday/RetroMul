@@ -2,7 +2,7 @@
 
 ![RetroMul](https://github.com/HemulGM/RetroMul/blob/main/screen/screen0.png?raw=true)
 
-RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, Super Nintendo, and Neo Geo MVS. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
+RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, Super Nintendo, Neo Geo MVS, and Neo Geo CD. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
 
 ## Supported systems and ROM formats
 
@@ -15,24 +15,32 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
+| Neo Geo CD / CDZ (experimental) | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
 
-ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers.
+Cartridge ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers. For Neo Geo CD, open the disc's `.cue`, `.iso`, or `.chd` file.
 
-Neo Geo runs in MVS arcade mode with embedded system firmware. Split ROM sets need their parent ZIPs in the same directory. The loader recognizes catalogued original, decrypted, bootleg, and PCB variants; a ZIP extension alone does not guarantee a supported set. Neo Geo CD is not supported. See the [Neo Geo core notes](source/cores/neogeo/README.txt) for hardware coverage, controls, and limitations.
+Neo Geo runs in MVS arcade mode with embedded system firmware. Split ROM sets need their parent ZIPs in the same directory. The loader recognizes catalogued original, decrypted, bootleg, and PCB variants; a ZIP extension alone does not guarantee a supported set. See the [Neo Geo core notes](source/cores/neogeo/README.txt) for hardware coverage, controls, and limitations.
 
-Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmware, stereo audio, SRAM/Flash/EEPROM saves, RTC and sensor cartridges, and save states. The firmware, corresponding source and license occupy approximately 295 KiB in program resources. A replacement 16 KiB BIOS can be selected in GBA settings. Compatibility is still incomplete; see the [GBA core notes](source/cores/gba/README.md).
+Neo Geo CD / CDZ is experimental. It boots through an external 512 KiB CD/CDZ BIOS named `neocd.bin`, placed beside the image or in `ROMS/neogeocd/`. Common BIOS names such as `top-sp1.bin`, `front-sp1.bin`, and `neocd_z.rom` are also accepted. MVS firmware cannot boot CD games.
+
+CD images support Mode 1 ISO data, CUE sheets with MODE1/2048 or MODE1/2352 data and BINARY or 44.1 kHz stereo 16-bit PCM WAV audio, and CHD images. Keep every file referenced by a CUE together; choose the CUE to retain CD music. The library hides a matching ISO when a CUE with the same base name exists. Extract CD ZIP archives first. Compressed audio CUE tracks and parent/differential CHDs are not supported by the CD frontend.
+
+CD games use the **Neo Geo (CD)** input settings for both players, with Select in place of Coin. CDDA music mixes with the emulated YM2610 audio. Backup saves and snapshots are kept separately from MVS games. Disc images load in the background with a loading indicator and Cancel button; large images can take several seconds to open. Android disc access uses the selected ROM folder through the system storage picker. CHD decoding uses the native cross-platform Delphi library in `source/chd`, with no external decoder binaries. See the [Neo Geo CD notes](source/cores/neogeo/README.txt) and [decoder documentation](source/chd/README.md) for compatibility and image limits.
+
+Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmware, stereo audio, SRAM/Flash/EEPROM saves, RTC, tilt, gyroscope and solar-sensor cartridges, cartridge rumble, and save states. GBA settings allow automatic or manual save-memory selection and a Boktai sunlight level from 0 to 255. A replacement 16 KiB BIOS can be selected in GBA settings. Compatibility is still incomplete; see the [GBA firmware notes](source/cores/gba/firmware/README.md) for the bundled firmware, source and license.
 
 ## Features
 
-- Browse a game library with cover art and information from `gamelist.xml`, search by title, filter by system or initial letter, and keep favorites and recently played games. ROM files can also be opened directly.
+- Browse a game library in grid or list view with cover art and information from `gamelist.xml`, search by title, filter by system or initial letter, and keep favorites and recently played games. ROM files can also be opened directly or dropped onto the desktop application.
 - Assign keyboard keys, controller buttons, axes, and D-pad directions for each system and controller port. View the active bindings in the in-game controls help.
 - Play with an Android screen gamepad, including NES / Dendy turbo buttons and six-button SEGA controls.
 - Use multiple controllers, NES Four Score, and SNES Multitap in compatible games.
 - Pause, reset, save and restore game states with preview images, and keep battery-backed saves. Continue games from saved states in the library.
 - Switch to fullscreen, resize the game display, and capture screenshots.
 - Configure video filtering, audio, Game Boy palettes and boot ROMs, and system-specific hardware and peripherals. Supported settings can be applied during a game.
-- Use Game Boy / Game Boy Color cartridge rumble on supported devices.
-- Use supported NES peripherals, including Zapper, Power Pad, Family BASIC and Subor keyboards, and the Famicom Data Recorder.
+- Customize Game Boy / Game Boy Color frame blending, separate monochrome background and sprite palettes, layer visibility, sprite limits, CPU speed (100–400%), and individual sound-channel volume. Game Boy Color also offers LCD color correction. Higher CPU speeds and relaxed sprite limits can change game behavior.
+- Use Game Boy / Game Boy Color / Game Boy Advance cartridge rumble and cartridge motion inputs on supported devices; tilt and rotation depend on available device sensors.
+- Use supported NES peripherals, including Zapper, Power Pad, Family BASIC and Subor keyboards, Miracle Piano, and the Famicom Data Recorder. Four Score must be disabled when using Zapper, Power Pad or Miracle Piano.
 - Use an English or Russian interface, with language selection in settings.
 - Listen to native streaming audio. Supported audio platforms include Windows, Linux, Android, macOS, and iOS.
 
@@ -51,11 +59,25 @@ ROMS/
   megadrive/
   snes/
   neogeo/
+  neogeocd/
 ```
 
 Place ROMs in the corresponding folders. On desktop, an optional `gamelist.xml` in each system folder supplies titles, descriptions, cover paths, and other metadata; games without metadata use their filenames. On Android, choose the ROM folder through the system folder picker.
 
 Choose input devices and button bindings in Settings before playing. Use the game toolbar to pause, save or load a state, return to the library, or open settings and controls help.
+
+For Neo Geo CD, put the BIOS and all disc companion files in `neogeocd/` before opening the game. On Android, grant access to the ROM folder so the loader can find the BIOS and CUE tracks. A standalone data ISO does not include CD music tracks.
+
+Desktop shortcuts during gameplay:
+
+| Key | Action |
+| --- | --- |
+| `P` | Pause / resume |
+| `F5` | Save the quick state |
+| `F6` | Load the quick state |
+| `F8` | Take a screenshot |
+
+These shortcuts are suspended while an emulated NES keyboard is active. The Save and Load toolbar menus provide access to other snapshot slots.
 
 ## Building from source
 

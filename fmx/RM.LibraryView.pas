@@ -42,6 +42,8 @@ type
     PathSidebarSNESIcon: TPath;
     ButtonSidebarNeoGeo: TButton;
     PathSidebarNeoGeoIcon: TPath;
+    ButtonSidebarNeoGeoCD: TButton;
+    PathSidebarNeoGeoCDIcon: TPath;
     ButtonSidebarNES: TButton;
     PathSidebarNESIcon: TPath;
     ButtonSidebarGBA: TButton;
@@ -65,8 +67,8 @@ type
     ButtonPlay, ButtonFavorite, ButtonMore, FGridButton, FListButton, FResume: TButton;
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
-    FPlatformButtons: array[0..7] of TButton;
-    FSidebarPlatformBorders: array[1..7] of TRectangle;
+    FPlatformButtons: array[0..8] of TButton;
+    FSidebarPlatformBorders: array[1..8] of TRectangle;
     FNavButtons: array[0..2] of TButton;
     FNavIcons: array[0..2] of TPath;
     FGridIcon, FListIcon: TPath;
@@ -191,8 +193,8 @@ end;
 {$ENDIF}
 
 const
-  SystemIds: array[0..7] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA);
-  SystemNames: array[0..7] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo', 'GBA');
+  SystemIds: array[0..8] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_NEOGEOCD);
+  SystemNames: array[0..8] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo', 'GBA', 'Neo Geo CD');
 
 function LibrarySystemName(const Id: string): string;
 begin
@@ -270,11 +272,13 @@ begin
   LayoutCompactActions := FindComponent('LayoutCompactActions') as TLayout;
   VertScrollBoxScroll := FindComponent('VertScrollBoxScroll') as TVertScrollBox;
   LayoutGrid := FindComponent('LayoutGrid') as TLayout;
+
   FLetterScroll := TVertScrollBox.Create(Self);
   FLetterScroll.Name := 'VertScrollBoxLetters';
   FLetterScroll.Parent := LayoutBody;
   FLetterScroll.ShowScrollBars := False;
   FLetterScroll.ScrollAnimation := TBehaviorBoolean.True;
+
   var AllLetters := ActionButton(Self, FLetterScroll, '*', LetterClick);
   AllLetters.Name := 'ButtonAllLetters';
   AllLetters.TagString := '';
@@ -289,6 +293,7 @@ begin
   Scroll.StyleLookup := VertScrollBoxScroll.StyleLookup;
   Scroll.Parent := VertScrollBoxScroll.Parent;
   Scroll.TabOrder := VertScrollBoxScroll.TabOrder;
+
   LayoutGrid.Parent := Scroll;
   VertScrollBoxScroll.Free;
   VertScrollBoxScroll := Scroll;
@@ -321,22 +326,24 @@ begin
   LabelContinueLastPlayed := FindComponent('LabelContinueLastPlayed') as TLabel;
   LabelContinueSave := FindComponent('LabelContinueSave') as TLabel;
 
-  for var I := 0 to 2 do
+  for var i := 0 to 2 do
   begin
-    FNavButtons[I] := FindComponent('ButtonNav' + IntToStr(I)) as TButton;
-    FNavButtons[I].OnClick := ModeClick;
-    FNavButtons[I].TextSettings.HorzAlign := TTextAlign.Leading;
-    FNavButtons[I].StylesData['text.Margins.Left'] := 48;
-    FNavIcons[I] := FindComponent('PathNavIcon' + IntToStr(I)) as FMX.Objects.TPath;
-    FSaveImages[I] := FindComponent('ImageSavePreview' + IntToStr(I)) as TImage;
-    FSaveButtons[I] := FindComponent('ButtonSaveButton' + IntToStr(I)) as TButton;
-    FSaveButtons[I].OnClick := SaveClick;
+    FNavButtons[i] := FindComponent('ButtonNav' + IntToStr(i)) as TButton;
+    FNavButtons[i].OnClick := ModeClick;
+    FNavButtons[i].TextSettings.HorzAlign := TTextAlign.Leading;
+    FNavButtons[i].StylesData['text.Margins.Left'] := 48;
+    FNavIcons[i] := FindComponent('PathNavIcon' + IntToStr(i)) as FMX.Objects.TPath;
+    FSaveImages[i] := FindComponent('ImageSavePreview' + IntToStr(i)) as TImage;
+    FSaveButtons[i] := FindComponent('ButtonSaveButton' + IntToStr(i)) as TButton;
+    FSaveButtons[i].OnClick := SaveClick;
   end;
-  for var I := 0 to High(FPlatformButtons) do
+
+  for var i := 0 to High(FPlatformButtons) do
   begin
-    FPlatformButtons[I] := FindComponent('ButtonFilter' + IntToStr(I)) as TButton;
-    FPlatformButtons[I].OnClick := FilterClick;
+    FPlatformButtons[i] := FindComponent('ButtonFilter' + IntToStr(i)) as TButton;
+    FPlatformButtons[i].OnClick := FilterClick;
   end;
+
   var Platforms := FindComponent('VertScrollBoxPlatforms') as TVertScrollBox;
   for var Child in Platforms.Content.Children do
     if Child is TButton then
@@ -344,6 +351,7 @@ begin
       TButton(Child).OnClick := FilterClick;
       TButton(Child).TextSettings.HorzAlign := TTextAlign.Leading;
       TButton(Child).StylesData['text.Margins.Left'] := 48;
+
       var Border := TRectangle.Create(Child);
       FSidebarPlatformBorders[TButton(Child).Tag] := Border;
       Border.Parent := Child;
@@ -356,12 +364,14 @@ begin
       Border.HitTest := False;
       Border.Visible := False;
     end;
+
   for var Name in ['ButtonOpenRom', 'ButtonSettings'] do
   begin
     var Button := FindComponent(Name) as TButton;
     Button.TextSettings.HorzAlign := TTextAlign.Leading;
     Button.StylesData['text.Margins.Left'] := 48;
   end;
+
   var SearchHost := FindComponent('LayoutSearchHost') as TLayout;
   FSearch := TSearchEdit.Create(Self);
   FSearch.Name := 'SearchEditSearch';
@@ -369,6 +379,7 @@ begin
   FSearch.Align := TAlignLayout.Client;
   FSearch.TextPrompt := Translate('Search games');
   FSearch.OnChangeTracking := SearchChange;
+
   (FindComponent('ButtonOpenRom') as TButton).OnClick := OpenClick;
   (FindComponent('ButtonSettings') as TButton).OnClick := SettingsClick;
   (FindComponent('ButtonCompactOpen') as TButton).OnClick := OpenClick;
@@ -594,6 +605,7 @@ procedure TLibraryView.BuildCards(AppendOnly: Boolean);
 begin
   if FBuilding or (LayoutGrid = nil) then
     Exit;
+
   var PreviousSelected := FSelected;
   FBuilding := True;
   try
@@ -602,40 +614,44 @@ begin
       for var Game in FGames do
         if Matches(Game) then
           MatchesList.Add(Game);
+
       // Index the current search and platform before filtering by initial.
       if FShowLetters then
         UpdateLetterNavigation(MatchesList)
       else
         FLetterScroll.Visible := False;
       if FLetterFilter <> '' then
-        for var I := MatchesList.Count - 1 downto 0 do
-          if LibraryTitleLetter(MatchesList[I].Title) <> FLetterFilter then
-            MatchesList.Delete(I);
+        for var i := MatchesList.Count - 1 downto 0 do
+          if LibraryTitleLetter(MatchesList[i].Title) <> FLetterFilter then
+            MatchesList.Delete(i);
       if FMode = 1 then
         MatchesList.Sort(TComparer<TLibraryGame>.Construct(
           function(const A, B: TLibraryGame): Integer
           begin
             Result := CompareValue(B.LastPlayed, A.LastPlayed);
           end));
+
       // Append only when the existing cards still match the current prefix.
       // A recorded session can change the order of the Recent list.
       if AppendOnly then
       begin
         AppendOnly := FCards.Count <= Min(FLimit, MatchesList.Count);
         if AppendOnly then
-          for var I := 0 to FCards.Count - 1 do
-            if FCards[I].TagObject <> MatchesList[I] then
+          for var i := 0 to FCards.Count - 1 do
+            if FCards[i].TagObject <> MatchesList[i] then
             begin
               AppendOnly := False;
               Break;
             end;
       end;
+
       if not AppendOnly then
       begin
         for var Card in FCards do
           Card.Free;
         FCards.Clear;
       end;
+
       var SelectedVisible := MatchesList.Contains(FSelected);
       if not SelectedVisible then
       begin
@@ -643,6 +659,7 @@ begin
         if MatchesList.Count > 0 then
           FSelected := MatchesList[0];
       end;
+
       LabelCount.Text := IntToStr(MatchesList.Count) + Translate(' games');
       for var i := FCards.Count to Min(FLimit, MatchesList.Count) - 1 do
       begin
@@ -695,6 +712,7 @@ begin
   finally
     FBuilding := False;
   end;
+
   if AppendOnly then
   begin
     ArrangeCards;
@@ -702,6 +720,7 @@ begin
       UpdateInspector;
     Exit;
   end;
+
   for var i := 0 to 2 do
   begin
     if i = FMode then
@@ -714,13 +733,16 @@ begin
     else
       FNavIcons[i].Stroke.Color := $FFB9C2CC;
   end;
+
   for var i := 0 to High(SystemIds) do
     if FSystemFilter = SystemIds[i] then
       FPlatformButtons[i].StyleLookup := 'buttonstyle_accent'
     else
       FPlatformButtons[i].StyleLookup := 'buttonstyle';
-  for var I := Low(FSidebarPlatformBorders) to High(FSidebarPlatformBorders) do
-    FSidebarPlatformBorders[I].Visible := FSystemFilter = SystemIds[I];
+
+  for var i := Low(FSidebarPlatformBorders) to High(FSidebarPlatformBorders) do
+    FSidebarPlatformBorders[i].Visible := FSystemFilter = SystemIds[i];
+
   Resize;
   UpdateInspector;
 end;
@@ -742,6 +764,7 @@ begin
           Found := True;
           Break;
         end;
+
       if not Found then
       begin
         var Button := ActionButton(Self, FLetterScroll, Letter, LetterClick);
@@ -752,11 +775,13 @@ begin
         FLetterButtons.Add(Button);
       end;
     end;
+
     FLetterButtons.Sort(TComparer<TButton>.Construct(
       function(const A, B: TButton): Integer
       begin
         Result := CompareText(A.TagString, B.TagString);
       end));
+
     for var Button in FLetterButtons do
     begin
       Button.Visible := (Button.TagString = '') or (Letters.IndexOf(Button.TagString) >= 0);
@@ -785,6 +810,7 @@ begin
   for var Button in FLetterButtons do
     if Button.Visible then
       Inc(Count);
+
   var H := EnsureRange(Floor(FLetterScroll.Height / Max(1, Count)), 24, 36);
   var Y: Single := 0;
   for var Button in FLetterButtons do
@@ -815,6 +841,7 @@ begin
     var H := W * 1.1 + 66;
     if FListMode then
       H := 92;
+
     for var i := 0 to FCards.Count - 1 do
     begin
       var Card := FCards[i];
@@ -1010,6 +1037,7 @@ begin
       ButtonFavorite.Text := Translate('Add to favorites');
     LoadImage(ImageCover, FSelected.Cover);
   end;
+
   var Saves := Snapshots(FSelected);
   LabelSavesEmpty.Visible := Length(Saves) = 0;
   LabelSavesEmpty.Text := Translate('No save states yet.');

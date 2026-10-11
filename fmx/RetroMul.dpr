@@ -1,7 +1,6 @@
 ﻿program RetroMul;
 
 uses
-
   System.StartUpCopy,
   A2600.AudioMachine in '..\source\cores\a2600\A2600.AudioMachine.pas',
   A2600.Sound.TIA in '..\source\cores\a2600\A2600.Sound.TIA.pas',
@@ -79,7 +78,6 @@ uses
   FMXInput in '..\source\input\FMXInput.pas',
   {$IFDEF ANDROID}
   RM.DocumentTransfer.Android in 'RM.DocumentTransfer.Android.pas',
-  Core.Storage.Android in '..\source\cores\Core.Storage.Android.pas',
   {$ENDIF }
   {$IF Defined(ANDROID) and not Defined(PCM_AUDIO_NULL)}
   PCM.Audio.Android.AudioTrack in '..\source\PCM\PCM.Audio.Android.AudioTrack.pas',
@@ -119,15 +117,6 @@ uses
   GBA.CPU in '..\source\cores\gba\GBA.CPU.pas',
   Core.Adapter.GBA in '..\source\cores\Core.Adapter.GBA.pas',
   Core.Adapter.NeoGeo in '..\source\cores\Core.Adapter.NeoGeo.pas',
-  NeoGeo.Cartridge in '..\source\cores\neogeo\NeoGeo.Cartridge.pas',
-  NeoGeo.Protection in '..\source\cores\neogeo\NeoGeo.Protection.pas',
-  NeoGeo.Bootleg in '..\source\cores\neogeo\NeoGeo.Bootleg.pas',
-  NeoGeo.PCB in '..\source\cores\neogeo\NeoGeo.PCB.pas',
-  NeoGeo.RomSets in '..\source\cores\neogeo\NeoGeo.RomSets.pas',
-  NeoGeo.Video in '..\source\cores\neogeo\NeoGeo.Video.pas',
-  NeoGeo.Sound in '..\source\cores\neogeo\NeoGeo.Sound.pas',
-  NeoGeo.Console in '..\source\cores\neogeo\NeoGeo.Console.pas',
-  NeoGeo.Emulation in '..\source\cores\neogeo\NeoGeo.Emulation.pas',
   Core.Adapter.MD in '..\source\cores\Core.Adapter.MD.pas',
   Core.Adapter.SNES in '..\source\cores\Core.Adapter.SNES.pas',
   SNES.Cartridge in '..\source\cores\snes\SNES.Cartridge.pas',
@@ -234,7 +223,27 @@ uses
   FMX.Windows.Hints in 'DelphiWinUI3\FMXWindowsHint\FMX.Windows.Hints.pas',
   HGM.FMX.Image in 'HGM.FMX.Image.pas',
   Core.SavePaths in '..\source\cores\Core.SavePaths.pas',
-  MD.Emulation in '..\source\cores\md\MD.Emulation.pas';
+  MD.Emulation in '..\source\cores\md\MD.Emulation.pas',
+  CHD.AVHuff in '..\source\chd\CHD.AVHuff.pas',
+  CHD.Codecs in '..\source\chd\CHD.Codecs.pas',
+  CHD.Common in '..\source\chd\CHD.Common.pas',
+  CHD.Deflate in '..\source\chd\CHD.Deflate.pas',
+  CHD.FLAC in '..\source\chd\CHD.FLAC.pas',
+  CHD.LZMA in '..\source\chd\CHD.LZMA.pas',
+  CHD in '..\source\chd\CHD.pas',
+  CHD.Zstd in '..\source\chd\CHD.Zstd.pas',
+  NeoGeo.Bootleg in '..\source\cores\neogeo\NeoGeo.Bootleg.pas',
+  NeoGeo.Cartridge in '..\source\cores\neogeo\NeoGeo.Cartridge.pas',
+  NeoGeo.Console in '..\source\cores\neogeo\NeoGeo.Console.pas',
+  NeoGeo.Emulation in '..\source\cores\neogeo\NeoGeo.Emulation.pas',
+  NeoGeo.PCB in '..\source\cores\neogeo\NeoGeo.PCB.pas',
+  NeoGeo.Protection in '..\source\cores\neogeo\NeoGeo.Protection.pas',
+  NeoGeo.RomSets in '..\source\cores\neogeo\NeoGeo.RomSets.pas',
+  NeoGeo.Sound in '..\source\cores\neogeo\NeoGeo.Sound.pas',
+  NeoGeo.Video in '..\source\cores\neogeo\NeoGeo.Video.pas',
+  NeoGeoCD.CHD in '..\source\cores\neogeo\NeoGeoCD.CHD.pas',
+  NeoGeoCD.Controller in '..\source\cores\neogeo\NeoGeoCD.Controller.pas',
+  NeoGeoCD.Disc in '..\source\cores\neogeo\NeoGeoCD.Disc.pas';
 
 {$R *.res}
 

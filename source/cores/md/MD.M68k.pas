@@ -582,9 +582,13 @@ procedure Clown68000Reset(var State: TM68kState; var Callbacks: TM68kReadWriteCa
 
 procedure Clown68000Interrupt(var State: TM68kState; Level: Cardinal);
 
-function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal): Cardinal;
+function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal; InterruptVector: Integer = -1): Cardinal;
 
 implementation
+
+var
+  // Immutable after unit initialization; no per-console or snapshot state.
+  InstructionLookup: array[0..65535] of Byte;
 
 constructor ECPUException.CreateCode(Value: Integer);
 begin
@@ -1008,7 +1012,20 @@ begin
   SplitOpcode.PrimaryAddressMode := Integer((SplitOpcode.Raw shr 3) and 7);
   SplitOpcode.SecondaryAddressMode := Integer((SplitOpcode.Raw shr 6) and 7);
   SplitOpcode.SecondaryRegister := (SplitOpcode.Raw shr 9) and 7;
-  Result := GetInstruction(SplitOpcode);
+  if OpCode <= High(InstructionLookup) then
+    Result := InstructionLookup[OpCode]
+  else
+    Result := GetInstruction(SplitOpcode);
+end;
+
+procedure InitialiseInstructionLookup;
+begin
+  var Split := Default(TSplitOpcode);
+  for var Opcode := Low(InstructionLookup) to High(InstructionLookup) do
+  begin
+    DecodeOpcode(Split, Opcode);
+    InstructionLookup[Opcode] := GetInstruction(Split);
+  end;
 end;
 
 function ReadAddress(var Stuff: TInstructionContext; Address: Cardinal): Cardinal;
@@ -3202,11 +3219,11 @@ begin
   StateRef^.PendingInterrupt := Byte(Level);
 end;
 
-function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal): Cardinal;
+function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal; InterruptVector: Integer): Cardinal;
 begin
   var StateRef: PM68kState := @State;
   var CallbacksRef: PM68kReadWriteCallbacks := @Callbacks;
-  var PendingInterrupt: Cardinal;
+  var PendingInterrupt, InterruptMaskBefore: Cardinal;
   var Instruction: Integer;
   if StateRef^.Halted <> 0 then
     Exit(CyclesToDo);
@@ -3225,6 +3242,7 @@ begin
 
     try
       PendingInterrupt := Cardinal(StateRef^.PendingInterrupt);
+      InterruptMaskBefore := (Cardinal(StateRef^.StatusRegister) shr 8) and 7;
       Stuff.CyclesLeftInInstruction := 4;
       Stuff.StartingProgramCounter := StateRef^.ProgramCounter;
       if StateRef^.Stopped = 0 then
@@ -4224,10 +4242,19 @@ begin
             end;
         end;
       end;
-      if (PendingInterrupt = 7) or (PendingInterrupt > ((Cardinal(StateRef^.StatusRegister) shr 8) and 7)) then
+      // RTE polls IPL before the restored SR takes effect. A newly unmasked
+      // interrupt must allow the following instruction to execute first.
+      // Otherwise a four-clock raster repeat can permanently trap its ISR.
+      var InterruptMask := (Cardinal(StateRef^.StatusRegister) shr 8) and 7;
+      if (StateRef^.Stopped = 0) and (Stuff.OpCode.Raw = $4E73) and (InterruptMaskBefore > InterruptMask) then
+        InterruptMask := InterruptMaskBefore;
+      if (PendingInterrupt = 7) or (PendingInterrupt > InterruptMask) then
       begin
         StateRef^.Stopped := 0;
-        DoInterrupt(Stuff, (Add32(24, PendingInterrupt)));
+        if InterruptVector >= 0 then
+          DoInterrupt(Stuff, Cardinal(InterruptVector))
+        else
+          DoInterrupt(Stuff, (Add32(24, PendingInterrupt)));
         Stuff.CyclesLeftInInstruction := Cardinal(Stuff.CyclesLeftInInstruction + 14);
         StateRef^.StatusRegister := Word(StateRef^.StatusRegister and (not STATUS_INTERRUPT_MASK));
         StateRef^.StatusRegister := Word(StateRef^.StatusRegister or (PendingInterrupt shl 8));
@@ -4256,6 +4283,9 @@ begin
   end;
   Result := Stuff.CyclesDone;
 end;
+
+initialization
+  InitialiseInstructionLookup;
 
 end.
 

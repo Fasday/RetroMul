@@ -1,4 +1,4 @@
-unit Core.Storage.Android;
+﻿unit Core.Storage.Android;
 
 interface
 
@@ -8,6 +8,7 @@ uses
 type
   TAndroidStorage = class
   public
+    class function SameDocument(const Left, Right: string): Boolean; static;
     class function OpenUri(const Uri: string): TStream; static;
     class function OpenWriteUri(const Uri: string): TStream; static;
     class function Exists(const Uri: string): Boolean; static;
@@ -61,6 +62,27 @@ end;
 function Resolver: JContentResolver;
 begin
   Result := TAndroidHelper.Context.getContentResolver;
+end;
+
+class function TAndroidStorage.SameDocument(const Left, Right: string): Boolean;
+begin
+  if Left = Right then Exit(True);
+  Result := False;
+  try
+    var A := ParseUri(Left);
+    var B := ParseUri(Right);
+    if not SameText(JStringToString(A.getScheme), 'content') or
+      not SameText(JStringToString(B.getScheme), 'content') or
+      not SameText(JStringToString(A.getAuthority), JStringToString(B.getAuthority)) then
+      Exit;
+    // IDs are opaque and case-sensitive; a picker URI need not contain the
+    // tree grant used to enumerate the very same document.
+    Result := JStringToString(TJDocumentsContract.JavaClass.getDocumentId(A)) =
+      JStringToString(TJDocumentsContract.JavaClass.getDocumentId(B));
+  except
+    // Non-document content providers cannot identify a sibling this way.
+    Result := False;
+  end;
 end;
 
 constructor TDocumentWriteStream.Create(const Uri: string);

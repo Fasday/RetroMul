@@ -1,4 +1,4 @@
-Neo Geo MVS core
+Neo Geo MVS / CD cores
 
 Load named MAME ZIP sets or unencrypted NeoSD .neo images. Keep split-set
 parents in the same directory. The current and legacy catalogs select ROM
@@ -35,7 +35,7 @@ Mahjong (Bakatono, Minasan, Janshin): A-N select tiles, O = Pon, P = Chi,
 Q = Kan, R = Ron, S = Reach, Enter = Start, 5 = Coin.
 V-Liner: F1 = operator key, F2 = clear key, 5 = coin.
 
-Limits: Neo Geo CD, linked cabinets/MCUs, physical analog paddle input,
+MVS limits: linked cabinets/MCUs, physical analog paddle input,
 and unlisted protection boards are not implemented. Paddle games use
 their joystick mode. Memory card hardware is absent. The built-in BIOS runs in
 MVS arcade mode, including when loading compatible AES cartridge dumps.
@@ -50,5 +50,48 @@ The shared Z80 state has two new latches. Mega Drive snapshot format is
 therefore version 5; earlier version 4 snapshots require the previous build.
 Battery saves are unaffected.
 
-Reference algorithms and attribution: LICENSE.txt. Firmware: firmware/README.txt.
+Reference algorithms are documented in the source; CHD licenses are in
+../../chd/LICENSE.txt. Firmware: firmware/README.txt.
 Development probes and checks are under codex-work/neo-geo and codex-work/tests.
+
+Neo Geo CD / CDZ (experimental)
+
+Select ISO (2048-byte Mode 1), CUE (MODE1/2048 or MODE1/2352 with BINARY or
+44100 Hz stereo 16-bit PCM WAV audio), or CHD. Keep CUE companions in the same
+directory. Compressed audio CUE tracks, parent/differential CHDs and CD ZIP
+archives are not supported; unpack ZIPs and open their CUE. A paired data ISO
+is hidden from the library when a CUE of the same name exists.
+
+Place a 512 KiB CD or CDZ BIOS named neocd.bin beside the disc image or in
+ROMS/neogeocd. top-sp1.bin, front-sp1.bin and neocd_t/f/z.rom are also accepted.
+The BIOS is external; MVS firmware cannot boot CD games. Byte-swapped chip
+and big-endian dumps are accepted. The default machine region is Europe.
+
+The CD core uses the shared 68000/Z80/YM2610/video implementation, 2 MiB
+program RAM, 4 MiB sprite RAM, 128 KiB FIX RAM, 64 KiB sound RAM, 1 MiB PCM RAM,
+LC8951 sector decoding, vectored CD interrupts and memory/DMA upload modes.
+CDDA mixes with YM2610 output. Master clock: 24.168 MHz, about 59.60 frames/s.
+Data runs at 75 sectors/s (CD) or 150 sectors/s (CDZ). Backups are 8 KiB;
+mutable memory, drive registers and CDDA sample position are saved in states.
+CD saves use the neogeocd namespace and do not overwrite MVS saves.
+
+Both controllers use Neo Geo settings: A/B/C/D, Start and Select (default 5
+for player 1, 6 for player 2). Select does not insert an arcade coin.
+
+BIOS boot and deterministic snapshots were checked with NeoThunder, Neo3D,
+240p Test Suite, Double Dragon, Fatal Fury 3, Metal Slug, Metal Slug 2,
+Neo-Geo CD Special, Rally Chase and Xeno Crisis. Metal Slug and Xeno Crisis
+reached playable scenes. These checks do not establish complete gameplay compatibility.
+
+CHD uses the native Delphi library in source/chd with a one-hunk cache
+and reads through IStorage,
+including Android SAF. Discs are hashed for state identity before startup;
+large BIN/CHD sets can take several seconds to open. Limits: 99 tracks,
+800 MiB per source file, 2 GiB CHD logical size, 100-minute TOC. CUE indexes
+above 01/subchannel dumps are not emulated. CDZ protection indexes are
+synthesized for standard images; unusual protection can remain incompatible.
+
+Development fixtures, build logs and probes: codex-work/neogeocd and
+codex-work/tests/NeoGeoCDTests.dpr. Hardware behavior was checked against
+MAME neogeocd and NeoCD (https://github.com/libretro/neocd_libretro); their
+BIOS, timing and controller implementations were used as reference.

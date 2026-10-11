@@ -454,7 +454,7 @@ procedure TGBMemory.ProcessOAMCorruption(Address: Integer; Kind: TGBOAMCorruptio
   end;
 
 begin
-  if IsCGBHardware or ((Address and $FF00) <> $FE00) then
+  if ((Address and $FF00) <> $FE00) or IsCGBHardware then
     Exit;
   var Row := FGPU.OAMCorruptionRow;
   if Row <= 0 then
@@ -486,7 +486,7 @@ end;
 
 function TGBMemory.ReadByte(Address: Integer): Byte;
 begin
-  if not FSuppressCorruption then
+  if not FSuppressCorruption and ((Address and $FF00) = $FE00) then
     ProcessOAMCorruption(Address, TGBOAMCorruption.Read);
 
   if ((Address and $FF00) = $FE00) and ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
@@ -593,7 +593,8 @@ end;
 
 procedure TGBMemory.WriteByte(Address: Integer; Value: Byte);
 begin
-  ProcessOAMCorruption(Address, TGBOAMCorruption.Write);
+  if (Address and $FF00) = $FE00 then
+    ProcessOAMCorruption(Address, TGBOAMCorruption.Write);
   if ((Address and $FF00) = $FE00) and ((Address >= $FEA0) or not FGPU.CanAccessOAM) then
     Exit;
 

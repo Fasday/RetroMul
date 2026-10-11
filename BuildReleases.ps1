@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
 Builds Release binaries and packages them into releases/RetroMul-<platform>.zip.
@@ -104,6 +104,15 @@ foreach ($prefix in ($Platforms | Select-Object -Unique)) {
             if ($prefix -eq 'linux64') {
                 # Unix regular file, mode 0755: preserve execute permission on unzip.
                 $entry.ExternalAttributes = -2115174400
+            }
+            if (-not $isAndroid) {
+                foreach ($companion in @('NeoGeoCD-LICENSE.txt')) {
+                    $companionPath = Join-Path $outputDirectory $companion
+                    if (-not (Test-Path -LiteralPath $companionPath -PathType Leaf)) {
+                        throw "CHD license missing: $companionPath"
+                    }
+                    [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $companionPath, $companion, [IO.Compression.CompressionLevel]::Optimal)
+                }
             }
         } finally { $zip.Dispose() }
         Move-Item -LiteralPath $temporaryArchive -Destination $archivePath -Force

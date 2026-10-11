@@ -28,6 +28,7 @@ type
     Palette: array[0..$1FFF] of Word;
     PaletteBank: Integer;
     CartFixed, Shadow: Boolean;
+    DisplayEnabled, SpritesEnabled, FixedEnabled: Boolean;
     Pixels: array[0..NG_WIDTH * NG_HEIGHT - 1] of TAlphaColor;
     constructor Create(Cart: TNeoGeoCartridge);
     procedure Reset;
@@ -74,6 +75,9 @@ begin
   FAnimationDisabled := False;
   PaletteBank := 0;
   CartFixed := False;
+  DisplayEnabled := True;
+  SpritesEnabled := True;
+  FixedEnabled := True;
   Shadow := False;
   ClearFrame;
 end;
@@ -186,6 +190,14 @@ begin
     Exit;
 
   var Bit := X and 7;
+  if FCart.Disc <> nil then
+  begin
+    Result := ((FCart.SpriteROM[Base + 1] shr Bit) and 1) or
+      (((FCart.SpriteROM[Base] shr Bit) and 1) shl 1) or
+      (((FCart.SpriteROM[Base + 3] shr Bit) and 1) shl 2) or
+      (((FCart.SpriteROM[Base + 2] shr Bit) and 1) shl 3);
+    Exit;
+  end;
   Result := ((FCart.SpriteROM[Base] shr Bit) and 1) or
     (((FCart.SpriteROM[Base + 2] shr Bit) and 1) shl 1) or
     (((FCart.SpriteROM[Base + 1] shr Bit) and 1) shl 2) or
@@ -206,6 +218,12 @@ begin
   if Visible then
     for var X := 0 to NG_WIDTH - 1 do
       Pixels[Row + X] := Color($FFF);
+  if not DisplayEnabled then
+  begin
+    if Visible then
+      for var X := 0 to NG_WIDTH - 1 do Pixels[Row + X] := $FF000000;
+    Exit;
+  end;
   var X := 0;
   var Y := 0;
   var Rows := 0;
@@ -217,6 +235,7 @@ begin
   // Neo Pong's background consumes the physical line limit before its UI.
   // Render these releases permissively while keeping the hardware sprite list bounded.
   var Permissive := (FCart.SetName = 'neopong') or (FCart.SetName = 'neopong10');
+  if SpritesEnabled then
   for var Sprite := 0 to 380 do
   begin
     var Control := VRAM[$8200 + Sprite];
@@ -300,7 +319,7 @@ begin
 
   for var i := Active to 96 do
     VRAM[List + i] := 0;
-  if not Visible then
+  if not Visible or not FixedEnabled then
     Exit;
 
   var FixedData := FCart.FixedBIOS;

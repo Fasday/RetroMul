@@ -492,7 +492,7 @@ begin
     if FOverclockPhase < FOverclock then
       Continue;
     Dec(FOverclockPhase, FOverclock);
-    FMemory.Timer.Step(1);
+    FMemory.Timer.Tick;
     FMemory.StepHardware(1);
     Inc(FBaseClockPhase);
     if not FMemory.DoubleSpeed or (FBaseClockPhase = 2) then
@@ -504,9 +504,12 @@ begin
         FSound.UpdateSound(1);
     end;
     var Stall := FMemory.ConsumeDMACyclePenalty;
-    if FMemory.DoubleSpeed then
-      Stall := Stall * 2;
-    Inc(Cycles, (Stall * FOverclock + 99) div 100);
+    if Stall <> 0 then
+    begin
+      if FMemory.DoubleSpeed then
+        Stall := Stall * 2;
+      Inc(Cycles, (Stall * FOverclock + 99) div 100);
+    end;
   end;
 end;
 

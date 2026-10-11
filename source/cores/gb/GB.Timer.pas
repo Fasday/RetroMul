@@ -230,9 +230,13 @@ end;
 
 procedure TGBTimer.UpdateDivider(NewDivider: Integer);
 begin
-  var Previous := FrameSequencerBit;
+  var FrameMask := $1000;
+  if DoubleSpeed then
+    FrameMask := $2000;
+  var PreviousDivider := FDivider;
   FDivider := NewDivider;
-  if Previous and not FrameSequencerBit and Assigned(OnFrameSequencer) then
+  if ((PreviousDivider and FrameMask) <> 0) and
+    ((NewDivider and FrameMask) = 0) and Assigned(OnFrameSequencer) then
     OnFrameSequencer;
   var BitPosition := FFrequencyBits[FControl and 3];
   var TimerBit := ((FDivider and (1 shl BitPosition)) <> 0) and ((FControl and (1 shl 2)) <> 0);

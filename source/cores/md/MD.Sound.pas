@@ -216,13 +216,13 @@ procedure FMPhaseSetDetuneAndMultiplier(var Phase: TFMPhase; Modulation: Cardina
 
 procedure FMPhaseSetModulationAndSensitivity(var Phase: TFMPhase; Modulation: Cardinal; Sensitivity: Cardinal);
 
-function GetSSGEGCorrectedAttenuation(var State: TFMOperator; DisableInversion: Byte): Cardinal;
+function GetSSGEGCorrectedAttenuation(var State: TFMOperator; DisableInversion: Byte): Cardinal; inline;
 
-function CalculateRate(var State: TFMOperator): Cardinal;
+function CalculateRate(var State: TFMOperator): Cardinal; inline;
 
 procedure EnterAttackMode(var State: TFMOperator);
 
-function InversePow2(Value: Cardinal): Cardinal;
+function InversePow2(Value: Cardinal): Cardinal; inline;
 
 procedure FMOperatorInitialise(var State: TFMOperator);
 
@@ -242,7 +242,7 @@ procedure UpdateEnvelopeSSGEG(var State: TFMOperator);
 
 procedure UpdateEnvelopeADSR(var State: TFMOperator);
 
-function GetEnvelopeAttenuation(var State: TFMOperator; AmplitudeModulation: Cardinal; AmplitudeModulationShift: Cardinal): Cardinal;
+function GetEnvelopeAttenuation(var State: TFMOperator; AmplitudeModulation: Cardinal; AmplitudeModulationShift: Cardinal): Cardinal; inline;
 
 function UpdateEnvelope(var State: TFMOperator; AmplitudeModulation: Cardinal; AmplitudeModulationShift: Cardinal): Cardinal;
 
@@ -264,7 +264,7 @@ procedure FMChannelSetModulationSensitivity(var Channel: TFMChannel; PhaseModula
 
 procedure FMChannelSetPhaseModulation(var Channel: TFMChannel; PhaseModulation: Cardinal);
 
-function FMChannelMixSamples(A: Cardinal; B: Cardinal): Cardinal;
+function FMChannelMixSamples(A: Cardinal; B: Cardinal): Cardinal; inline;
 
 function FMChannelGetSample(var Channel: TFMChannel; AmplitudeModulation: Cardinal): Cardinal;
 
@@ -286,7 +286,7 @@ procedure FMDoData(var Fm: TFM; Data: Cardinal);
 
 function GetFinalSample(var Fm: TFM; Sample: Integer; Enabled: Byte): Integer;
 
-function FMToNativeSigned(Value: Cardinal): Integer;
+function FMToNativeSigned(Value: Cardinal): Integer; inline;
 
 procedure FMOutputSamples(var Fm: TFM; var SampleBuffer: array of SmallInt);
 
@@ -511,7 +511,10 @@ function InversePow2(Value: Cardinal): Cardinal;
 begin
   var Whole: Cardinal := Value shr 8;
   var Fraction: Cardinal := Value and $FF;
-  Result := Cardinal(ArithmeticShiftRight(Integer(POWER_TABLE[Fraction] shl 2), Whole));
+  // A Word shifted by two is always non-negative. Preserve the explicit
+  // >=32 case instead of relying on the host's masked shift count.
+  if Whole >= 32 then Exit(0);
+  Result := (Cardinal(POWER_TABLE[Fraction]) shl 2) shr Whole;
 end;
 
 procedure FMOperatorInitialise(var State: TFMOperator);
@@ -1340,8 +1343,12 @@ begin
         Sample := FmSample;
       if ChannelDisabled = 0 then
       begin
-        SampleBuffer[SampleIndex] := SmallInt(SampleBuffer[SampleIndex] + GetFinalSample(Fm, Sample, PanLeft));
-        SampleBuffer[SampleIndex + 1] := SmallInt(SampleBuffer[SampleIndex + 1] + GetFinalSample(Fm, Sample, PanRight));
+        var LeftSample := GetFinalSample(Fm, Sample, PanLeft);
+        var RightSample := LeftSample;
+        if PanLeft <> PanRight then
+          RightSample := GetFinalSample(Fm, Sample, PanRight);
+        SampleBuffer[SampleIndex] := SmallInt(SampleBuffer[SampleIndex] + LeftSample);
+        SampleBuffer[SampleIndex + 1] := SmallInt(SampleBuffer[SampleIndex + 1] + RightSample);
       end;
     end;
     for var TimerIndex := 0 to High(Fm.State.Timers) do

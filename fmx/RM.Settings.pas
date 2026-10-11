@@ -35,7 +35,7 @@ const
   SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_GBA] of string = (
     ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA);
   SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_GBA] of string = ('Main', 'Game Boy', 'Game Boy Color',
-    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo', 'Game Boy Advance');
+    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo (CD)', 'Game Boy Advance');
   // Presentation order is independent of the page IDs used by drafts and core selection.
   SettingsCoreOrder: array[0..6] of Integer = (
     SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC, SETTINGS_PAGE_GBA, SETTINGS_PAGE_NES,
@@ -777,18 +777,25 @@ begin
     Clear.OnClick := ClearPathClick;
   end;
   Group := TPanel.Create(Self);
-  Group.Name := 'PanelGroupGBACartridge'; Group.Parent:=LayoutComponentStore;
-  Group.StyleLookup:='retromul_card'; Group.SetBounds(0,0,900,230);
-  Title:=SettingsLabel(Self); Title.Name:='LabelGroupGBACartridgeTitle'; Title.Parent:=Group;
-  Title.SetBounds(16,14,868,36); Title.Text:='GBA cartridge';
-  var SaveRow:=BootRow('RowGBASaveType','Save memory',
+  Group.Name := 'PanelGroupGBACartridge';
+  Group.Parent := LayoutComponentStore;
+  Group.StyleLookup := 'retromul_card';
+  Group.SetBounds(0, 0, 900, 230);
+  Title := SettingsLabel(Self);
+  Title.Name := 'LabelGroupGBACartridgeTitle';
+  Title.Parent := Group;
+  Title.SetBounds(16, 14, 868, 36);
+  Title.Text := 'GBA cartridge';
+  var SaveRow := BootRow('RowGBASaveType', 'Save memory',
     'Auto detects the cartridge. Override only when a ROM uses an unrecognized save format.');
-  var SaveChoice:=TSettingsComboBox.Create(Self);
-  SaveChoice.Name:='SettingsComboBoxRowGBASaveTypeEditor'; SaveChoice.Parent:=SaveRow;
-  var SolarRow:=BootRow('RowGBASolarLevel','Sunlight',
+  var SaveChoice := TSettingsComboBox.Create(Self);
+  SaveChoice.Name := 'SettingsComboBoxRowGBASaveTypeEditor';
+  SaveChoice.Parent := SaveRow;
+  var SolarRow := BootRow('RowGBASolarLevel', 'Sunlight',
     'Boktai sensor level: 0 is darkness, 255 is maximum light.');
-  var SolarValue:=TSettingsSpinBox.Create(Self);
-  SolarValue.Name:='SettingsSpinBoxRowGBASolarLevelEditor'; SolarValue.Parent:=SolarRow;
+  var SolarValue := TSettingsSpinBox.Create(Self);
+  SolarValue.Name := 'SettingsSpinBoxRowGBASolarLevelEditor';
+  SolarValue.Parent := SolarRow;
   Group := TPanel.Create(Self);
   Group.Name := 'PanelGroupRumble';
   Group.Parent := LayoutComponentStore;
@@ -1104,11 +1111,11 @@ begin
           Heading('GroupBootROM');
           PathEdit('RowBootFileGBA', 'Boot', 'File', '', False);
           Heading('GroupGBACartridge');
-          Combo('RowGBASaveType','Cartridge','SaveType',
+          Combo('RowGBASaveType', 'Cartridge', 'SaveType',
             [Translate('Auto'), Translate('None'), Translate('SRAM'),
-             Translate('Flash 64 KiB'), Translate('Flash 128 KiB'), Translate('EEPROM')],
-            ['-1','0','1','2','3','4'],'-1');
-          Number('RowGBASolarLevel','Cartridge','SolarLevel',128,255);
+              Translate('Flash 64 KiB'), Translate('Flash 128 KiB'), Translate('EEPROM')],
+            ['-1', '0', '1', '2', '3', '4'], '-1');
+          Number('RowGBASolarLevel', 'Cartridge', 'SolarLevel', 128, 255);
         end;
         Heading('GroupAudio');
         Check('RowAudio', 'Audio', 'Enabled', True);
@@ -1156,7 +1163,7 @@ begin
       end
       else
       begin
-        if (FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC]) or (FPage=SETTINGS_PAGE_GBA) then
+        if (FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC]) or (FPage = SETTINGS_PAGE_GBA) then
         begin
           Heading('GroupRumble');
           Check('RowRumble', 'Peripherals', 'Rumble', True);
@@ -1417,7 +1424,7 @@ begin
             FCoreButtons[i].Text := 'NG';
         end;
       var W := Max(32, Min(104, (LayoutCoreTabs.Width -
-        (Length(SettingsCoreIds) - 1) * 7) / Length(SettingsCoreIds)));
+          (Length(SettingsCoreIds) - 1) * 7) / Length(SettingsCoreIds)));
       FCoreButtons[i].SetBounds(X, 0, W, 36);
       X := X + W + 7;
       if i = FCorePage then

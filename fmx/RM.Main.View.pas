@@ -171,7 +171,7 @@ type
     {$ENDIF}
     procedure SaveSnapshot(const Name: string); virtual; abstract;
     procedure LoadSnapshot(const Name: string); virtual; abstract;
-    procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False); virtual; abstract;
+    procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = ''); virtual; abstract;
     procedure SelectTapeFile(const FileName: string); virtual; abstract;
     function SaveScreenshot: string; virtual; abstract;
   end;

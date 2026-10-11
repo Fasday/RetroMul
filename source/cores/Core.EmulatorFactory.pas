@@ -7,8 +7,8 @@ uses
 
 function CreateEmulationCore(const FileName: string): IEmulationCore; overload;
 
-// The caller owns Stream. Construction copies and validates its remaining bytes.
-// RomName must retain the source location: split Neo Geo sets resolve sibling ZIPs.
+// The caller owns Stream. Cartridges copy bytes; CD cores own separate track streams.
+// RomName must retain the location for Neo Geo parent ZIPs and CD tracks/BIOS.
 function CreateEmulationCore(Stream: TStream; const Storage: IStorage; const RomName: string = ''): IEmulationCore; overload;
 
 implementation
@@ -30,6 +30,14 @@ end;
 
 function CreateEmulationCore(Stream: TStream; const Storage: IStorage; const RomName: string): IEmulationCore;
 begin
+  // Disc streams exceed cartridge limits; keep them on disk and read sectors.
+  var SourceName := RomName;
+  if (Storage <> nil) and RomName.StartsWith('content://', True) then
+    SourceName := Storage.Describe(RomName).Name;
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CUE) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ISO) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) then
+    Exit(TNeoGeoCoreAdapter.Create(Stream, Storage, RomName, True));
   var Data := ReadNeoGeoData(Stream);
   var Format := DetectRom(Data);
   if (Format.System=TRomSystem.Unknown) and SameText(ExtractFileExt(RomName),ROM_EXTENSION_GBA) then Format.System:=TRomSystem.GBA;

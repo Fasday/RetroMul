@@ -127,9 +127,7 @@ begin
   var Game := FState.Browser.View.Selected;
   var Snapshot := FState.Browser.View.SnapshotName;
   try
-    FView.LoadRom(Game.FileInfo.Location, Game.Title, Snapshot <> '');
-    if Snapshot <> '' then
-      FView.LoadSnapshot(Snapshot);
+    FView.LoadRom(Game.FileInfo.Location, Game.Title, Snapshot <> '', Snapshot);
   except
     on E: Exception do
       ShowRetroMessage(FView, Translate('Unable to open game: ') + E.Message);

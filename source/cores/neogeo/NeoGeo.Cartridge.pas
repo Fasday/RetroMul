@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.RomFormat, System.SysUtils, System.Classes, Core.Storage;
+  Core.RomFormat, System.SysUtils, System.Classes, Core.Storage, NeoGeoCD.Disc;
 
 const
   NG_MAX_CONTAINER = NEOGEO_ROM_MAX_CONTAINER_SIZE;
@@ -15,12 +15,16 @@ type
     procedure LoadZip(const Data: TBytes; const Storage: IStorage; const Location: string);
     procedure Validate;
   public
+    Disc: TNeoGeoCDDisc;
+    CDZ: Boolean;
     ProgramROM, FixedROM, AudioROM, SamplesA, SamplesB, SpriteROM: TBytes;
     BIOS, FixedBIOS, AudioBIOS, ZoomROM: TBytes;
     SetName: string;
     FixedBankType: Integer;
     Protection: string;
     constructor Create(const Data: TBytes; const Storage: IStorage = nil; const Location: string = '');
+    constructor CreateCD(Stream: TStream; const Storage: IStorage; const Location: string);
+    destructor Destroy; override;
     function Identity: TBytes;
   end;
 
@@ -100,6 +104,62 @@ begin
   else
     LoadZip(Data, Storage, Location);
   Validate;
+end;
+
+constructor TNeoGeoCartridge.CreateCD(Stream: TStream; const Storage: IStorage; const Location: string);
+begin
+  inherited Create;
+  Disc := TNeoGeoCDDisc.Create(Stream, Storage, Location);
+  ZoomROM := ResourceBytes('NG_ZOOM');
+  // The CD has writable graphics, sound and program memory, no cartridge ROM.
+  SetLength(ProgramROM, $200000);
+  SetLength(SpriteROM, $400000);
+  SetLength(FixedROM, $20000);
+  SetLength(AudioROM, $10000);
+  SetLength(SamplesA, $100000);
+  SamplesB := SamplesA;
+  var SourceName := Location;
+  if Location.StartsWith('content://', True) then SourceName := Storage.Describe(Location).Name;
+  SetName := ChangeFileExt(ExtractFileName(SourceName), '');
+  var SourceFolder := ExtractFilePath(Location);
+  if Location.StartsWith('content://', True) then SourceFolder := Location;
+  var Folders := TArray<string>.Create(SourceFolder,
+    TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD),
+    TPath.Combine(Storage.Root, 'bios'), Storage.Root);
+  for var Folder in Folders do
+    for var Name in ['neocd.bin', 'neocd_z.rom', 'neocd_t.bin', 'neocd_f.bin', 'top-sp1.bin', 'neocd_t.rom', 'front-sp1.bin', 'neocd_f.rom'] do
+    begin
+      var Path := '';
+      if Folder.StartsWith('content://', True) then
+      begin
+        try Path := CDSibling(Storage, Location, Name);
+        except on E: EReadError do Continue; end;
+      end
+      else Path := TPath.Combine(Folder, Name);
+      if not Storage.Exists(Path) then Continue;
+      var Input := Storage.OpenRead(Path);
+      try
+        if Input.Size <> $80000 then
+          raise EReadError.Create('Neo Geo CD BIOS must be 512 KiB: ' + Name);
+        SetLength(BIOS, $80000);
+        Input.ReadBuffer(BIOS[0], Length(BIOS));
+      finally
+        Input.Free;
+      end;
+      // Accept chip byte order and normalized big-endian dumps.
+      if (BIOS[4] <> 0) or (BIOS[5] <> $C0) then SwapWords(BIOS);
+      if (BIOS[4] <> 0) or (BIOS[5] <> $C0) then
+        raise EReadError.Create('Invalid Neo Geo CD BIOS reset vector');
+      CDZ := (BIOS[$6D] = $C0) and (BIOS[$6E] = $A3) and (BIOS[$6F] = $E8);
+      Exit;
+    end;
+  raise EReadError.Create('Neo Geo CD BIOS missing: place neocd.bin (512 KiB CD/CDZ) beside the image or in the neogeocd ROM folder');
+end;
+
+destructor TNeoGeoCartridge.Destroy;
+begin
+  Disc.Free;
+  inherited;
 end;
 
 procedure TNeoGeoCartridge.LoadNeo(const Data: TBytes);
@@ -625,6 +685,13 @@ end;
 
 function TNeoGeoCartridge.Identity: TBytes;
 begin
+  if Disc <> nil then
+  begin
+    var Hash := THashSHA2.Create;
+    Hash.Update(Disc.Identity);
+    Hash.Update(BIOS);
+    Exit(Hash.HashAsBytes);
+  end;
   var Hash := THashSHA2.Create;
   Hash.Update(ProgramROM);
   Hash.Update(FixedROM);

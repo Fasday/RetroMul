@@ -148,7 +148,7 @@ type
     procedure DragDrop(const Data: TDragObject; const Point: TPointF); override;
     procedure SaveSnapshot(const Name: string); override;
     procedure LoadSnapshot(const Name: string); override;
-    procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False); override;
+    procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = ''); override;
     procedure SelectTapeFile(const FileName: string); override;
     function SaveScreenshot: string; override;
     constructor Create(AOwner: TComponent); override;
@@ -558,9 +558,9 @@ begin
   end;
 end;
 
-procedure TFormMain.LoadRom(const FileName: string; const DisplayName: string; StartPaused: Boolean);
+procedure TFormMain.LoadRom(const FileName: string; const DisplayName: string; StartPaused: Boolean; const SnapshotName: string);
 begin
-  FSessionController.LoadRom(FileName, DisplayName, StartPaused);
+  FSessionController.LoadRom(FileName, DisplayName, StartPaused, SnapshotName);
 end;
 
 procedure TFormMain.ButtonCloseRomClick(Sender: TObject);

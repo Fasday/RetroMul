@@ -20,6 +20,7 @@ type
     FLock: TCriticalSection;
     FWake: TEvent;
     FData: TBytes;
+    FCoreId: string;
     FCartridge: TNeoGeoCartridge;
     FCoins: array[0..1] of Boolean;
     FSavePath: string;
@@ -72,6 +73,8 @@ begin
   FWake := TEvent.Create(nil, False, False, '');
   FCartridge := Cartridge;
   FData := Cartridge.Identity;
+  FCoreId := ROM_CORE_ID_NEOGEO;
+  if Cartridge.Disc <> nil then FCoreId := ROM_CORE_ID_NEOGEOCD;
   FSavePath := SavePath;
 end;
 
@@ -249,7 +252,7 @@ begin
     try
       Console := TNeoGeoConsole.Create(FCartridge);
       Console.ConfigureInputPorts(InputPorts);
-      FrameHints := TEmulationPerformanceHints.Create(Round(1000000000.0 / Console.FramesPerSecond), ROM_CORE_ID_NEOGEO);
+      FrameHints := TEmulationPerformanceHints.Create(Round(1000000000.0 / Console.FramesPerSecond), FCoreId);
       if FStorage.Exists(FSavePath) then
       begin
         LastBattery := FStorage.ReadBytes(FSavePath);
@@ -278,7 +281,7 @@ begin
               end;
             if Loading then
             begin
-              LoadCoreSnapshot(Path, ROM_CORE_ID_NEOGEO, FData, Transfer, FStorage);
+              LoadCoreSnapshot(Path, FCoreId, FData, Transfer, FStorage);
               Console.MarkBatteryDirty;
               if Audio <> nil then
                 Audio.Clear;
@@ -301,7 +304,7 @@ begin
             end
             else
             begin
-              SaveCoreSnapshot(Path, ROM_CORE_ID_NEOGEO, FData, Transfer, FStorage);
+              SaveCoreSnapshot(Path, FCoreId, FData, Transfer, FStorage);
               SaveSnapshotPreview(Path, Console.Width, Console.Height, 320, @Console.Video.Pixels[0], FStorage);
             end;
             Deadline := TStopwatch.GetTimeStamp;

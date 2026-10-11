@@ -13,6 +13,7 @@ const
   ROM_SYSTEM_MD = 'md';
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_NEOGEO = 'neogeo';
+  ROM_SYSTEM_NEOGEOCD = 'neogeocd';
   ROM_FOLDER_MD = 'megadrive';
 
   // Uppercase IDs are persisted in snapshots and used by emulation workers.
@@ -23,6 +24,7 @@ const
   ROM_CORE_ID_MD = 'MD';
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
+  ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
 
 const
   ROM_EXTENSION_NES = '.nes';
@@ -41,6 +43,9 @@ const
   ROM_EXTENSION_GENERIC = '.rom';
   ROM_EXTENSION_ZIP = '.zip';
   ROM_EXTENSION_NEO = '.neo';
+  ROM_EXTENSION_CUE = '.cue';
+  ROM_EXTENSION_ISO = '.iso';
+  ROM_EXTENSION_CHD = '.chd';
 
 const
   ROM_MAX_SIZE = 64 * 1024 * 1024;
@@ -148,7 +153,7 @@ const
   NEOGEO_ROM_NAME_SIZE = 33;
 
 type
-  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA);
+  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD);
 
   TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier);
 
@@ -232,6 +237,8 @@ begin
       Result := [ROM_EXTENSION_SFC, ROM_EXTENSION_SMC, ROM_EXTENSION_SWC, ROM_EXTENSION_FIG];
     TRomSystem.NeoGeo:
       Result := [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO];
+    TRomSystem.NeoGeoCD:
+      Result := [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD];
   else
     Result := nil;
   end;
@@ -254,6 +261,8 @@ begin
       Result := ROM_SYSTEM_SNES;
     TRomSystem.NeoGeo:
       Result := ROM_SYSTEM_NEOGEO;
+    TRomSystem.NeoGeoCD:
+      Result := ROM_SYSTEM_NEOGEOCD;
   else
     Result := '';
   end;

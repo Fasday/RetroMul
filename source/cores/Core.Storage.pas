@@ -613,8 +613,18 @@ begin
       if (RomSystem = TRomSystem.NeoGeo) and (SameText(Item.Name, 'neogeo.zip') or SameText(Item.Name, 'gg-bios.zip') or
         SameText(Item.Name, 'neocd.zip')) then
         Continue;
+      // Prefer the CUE with its complete TOC/audio over the paired data ISO.
+      if (RomSystem = TRomSystem.NeoGeoCD) and SameText(ExtractFileExt(Item.Name), '.iso') then
+      begin
+        var HasCue := False;
+        for var Candidate in Candidates do
+          if SameText(Candidate.Name, ChangeFileExt(Item.Name, '.cue')) then HasCue := True;
+        if HasCue then Continue;
+      end;
       // Listing never opens ROM streams. Header validation belongs to loading.
       var MaxSize := FMaxRomFileSize;
+      if (RomSystem = TRomSystem.NeoGeoCD) and (MaxSize = ROM_MAX_SIZE) then
+        MaxSize := Int64(800) * 1024 * 1024;
       if (RomSystem = TRomSystem.NeoGeo) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := 256 * 1024 * 1024;
       if (FCheckRomFileSize and (Item.Size > MaxSize)) or not MatchText(ExtractFileExt(Item.Name), Extensions) then

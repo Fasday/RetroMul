@@ -51,7 +51,7 @@ type
 implementation
 
 uses
-  System.Math;
+  System.Math, NeoGeoCD.Controller;
 
 constructor TNeoGeoSound.Create(Cart: TNeoGeoCartridge);
 begin
@@ -387,7 +387,9 @@ begin
     raise EArgumentOutOfRangeException.Create('YM2610 clock slice');
 
   FBusy := Max(0, FBusy - MasterClocks);
-  // Both synthesis and host sampling are clocked from the same 24 MHz timeline.
+  var MasterClock := 24000000;
+  if FCart.Disc <> nil then MasterClock := NGCD_MASTER_CLOCK;
+  // Synthesis and sampling share the machine's master-clock timeline.
   for var i := 1 to MasterClocks do
   begin
     Inc(FClockRemainder);
@@ -397,9 +399,9 @@ begin
       NativeTick;
     end;
     Inc(FSamplePhase, NG_SAMPLE_RATE);
-    if FSamplePhase >= 24000000 then
+    if FSamplePhase >= MasterClock then
     begin
-      Dec(FSamplePhase, 24000000);
+      Dec(FSamplePhase, MasterClock);
       var L, R: SmallInt;
       FSSG.Sample(L, R);
       var Index := Length(Samples);

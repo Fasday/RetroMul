@@ -384,8 +384,9 @@ begin
     Exit;
   end;
 
+  var IsColor := ColorRendering;
   if FWindowEnabled and FWindowTriggered and (WindowX <= 166) and
-    (ColorRendering or FBackgroundEnabled) and not FPipeline.WindowActive and
+    (IsColor or FBackgroundEnabled) and not FPipeline.WindowActive and
     (FPipeline.X >= WindowX - 7) then
   begin
     FPipeline.WindowActive := True;
@@ -405,11 +406,13 @@ begin
     Exit;
   end;
 
-  if (FSpritesEnabled or ColorRendering) and not FPipeline.StopOAM then
+  if (FSpritesEnabled or IsColor) and not FPipeline.StopOAM then
     for var i := 0 to FPipeline.SpriteCount - 1 do
     begin
+      if FPipeline.Fetched[i] then
+        Continue;
       var SX := Integer(FPipeline.OAM[FPipeline.Selected[i] * 4 + 1]) - 8;
-      if FPipeline.Fetched[i] or (SX > FPipeline.X) or (SX >= 160) then
+      if (SX > FPipeline.X) or (SX >= 160) then
         Continue;
 
       FPipeline.Fetched[i] := True;
@@ -439,7 +442,7 @@ begin
       Dec(FPipeline.Discard)
     else
     begin
-      if not ColorRendering and not FBackgroundEnabled then
+      if not IsColor and not FBackgroundEnabled then
         BG.Color := 0;
       var Obj := FPipeline.Objects[FPipeline.X and 15];
       FPipeline.Objects[FPipeline.X and 15] := Default(TGBFifoPixel);
@@ -460,7 +463,7 @@ begin
       var DrawObject := FSpritesEnabled and RuntimeOptions.ShowSprites and (Obj.Color <> 0);
       if BG.Color <> 0 then
       begin
-        if ColorRendering then
+        if IsColor then
           DrawObject := DrawObject and (not FBackgroundEnabled or
             (((BG.Attributes or Obj.Attributes) and $80) = 0))
         else

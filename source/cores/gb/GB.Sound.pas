@@ -223,7 +223,7 @@ type
     procedure WriteHardware(Address: Integer; Value: Byte);
     function ReadHardware(Address: Integer): Byte;
     procedure Trigger(Index: Integer);
-    procedure ClockChannel(Index: Integer);
+    procedure ClockChannel(Index: Integer); {$IFNDEF CPUX86}inline;{$ENDIF}
     procedure UpdateOutput(Index: Integer);
     procedure SyncChannels;
     function SweepFrequency: Integer;
@@ -234,7 +234,7 @@ type
     procedure FlushBuffer;
     function IsSoundToTerminal(ChannelNumber: Integer; OutputNumber: Integer): Boolean;
     function GetSoundLevel(OutputNumber: Integer): Integer;
-    function ReadRegister(Address: Integer): Byte;
+    function ReadRegister(Address: Integer): Byte; inline;
 
   public
     constructor Create(AMemory: TGBMemory; EnableOutput: Boolean = True; const Backend: IPCMAudioBackend = nil); overload;
@@ -265,6 +265,19 @@ type
   end;
 
 implementation
+
+{$IFNDEF CPUX86}
+var
+  // The DAC numerator is an integer in [-1500, 1500]. Keep Extended here
+  // to preserve the original expression precision on each target.
+  DACLevels: array[-1500..1500] of Extended;
+
+procedure InitializeDACLevels;
+begin
+  for var Numerator := Low(DACLevels) to High(DACLevels) do
+    DACLevels[Numerator] := Numerator / 100;
+end;
+{$ENDIF}
 
 { TEnvelope }
 
@@ -1185,7 +1198,12 @@ begin
     for var i := 0 to 3 do
     begin
       ClockChannel(i);
+      {$IFDEF CPUX86}
+      // x87 division benchmarks faster than indexed Extended loads on Win32.
       var Value := (FHardware[i].Output * 2 - 15) * FHardware[i].DACVolume / 100;
+      {$ELSE}
+      var Value := DACLevels[(FHardware[i].Output * 2 - 15) * FHardware[i].DACVolume];
+      {$ENDIF}
       if (i = 2) and ((ReadRegister(NR32) and $60) = 0) then
         Value := 0;
       FIntegrated[i] := FIntegrated[i] + Value;
@@ -1401,5 +1419,9 @@ begin
     raise EReadError.Create('Invalid sound buffer index');
 end;
 
-end.
+{$IFNDEF CPUX86}
+initialization
+  InitializeDACLevels;
+{$ENDIF}
 
+end.

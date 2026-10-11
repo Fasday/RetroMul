@@ -1,4 +1,4 @@
-object SettingsView: TSettingsView
+﻿object SettingsView: TSettingsView
   Size.Width = 1228.000000000000000000
   Size.Height = 796.000000000000000000
   Size.PlatformDefault = False
@@ -426,7 +426,7 @@ object SettingsView: TSettingsView
           Size.Height = 36.000000000000000000
           Size.PlatformDefault = False
           StyleLookup = 'buttonstyle'
-          Text = 'Neo Geo'
+          Text = 'Neo Geo (CD)'
           TextSettings.Trimming = Character
         end
       end
@@ -1163,7 +1163,7 @@ object SettingsView: TSettingsView
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Subfolders: nes, snes, gb, gbc, megadrive, neogeo.'
+            Text = 'Subfolders: nes, snes, gb, gbc, gba, megadrive, neogeo, neogeocd.'
           end
         end
         object EditRowROMfolderEditor: TEdit

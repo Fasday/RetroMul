@@ -22,7 +22,7 @@ type
     constructor Create(const Data: TBytes; const Extension: string); overload;
     constructor Create(Stream: TStream); overload;
     constructor Create(const FileName: string); overload;
-    function ReadByte(Address: Cardinal): Byte;
+    function ReadByte(Address: Cardinal): Byte; inline;
     function ReadWord(Address: Cardinal): Word;
     property Data: TBytes read FData;
     property Title: string read FTitle;

@@ -33,7 +33,7 @@ type
     FSavePath, FSnapshotDirectory, FError: string;
     procedure ApplySettings;
   public
-    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
+    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False);
     destructor Destroy; override;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
@@ -102,14 +102,21 @@ begin
   end;
 end;
 
-constructor TNeoGeoCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string);
+constructor TNeoGeoCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean);
 begin
   inherited Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
 
-  FCartridge := TNeoGeoCartridge.Create(ReadNeoGeoData(Stream), FStorage, RomName);
+  if CD then
+    FCartridge := TNeoGeoCartridge.CreateCD(Stream, FStorage, RomName)
+  else
+    FCartridge := TNeoGeoCartridge.Create(ReadNeoGeoData(Stream), FStorage, RomName);
+
+  var SystemId := ROM_SYSTEM_NEOGEO;
+  if CD then
+    SystemId := ROM_SYSTEM_NEOGEOCD;
   var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_NEOGEO), FStorage);
   FConfig := Config;
   Config.Load;
@@ -120,8 +127,8 @@ begin
   Hash.Update(FCartridge.Identity);
 
   var Identity := Hash.HashAsString;
-  FSavePath := FStorage.GameSave(ROM_SYSTEM_NEOGEO, RomName, Identity);
-  FSnapshotDirectory := FStorage.GameSnapshots(ROM_SYSTEM_NEOGEO, RomName, Identity);
+  FSavePath := FStorage.GameSave(SystemId, RomName, Identity);
+  FSnapshotDirectory := FStorage.GameSnapshots(SystemId, RomName, Identity);
 end;
 
 destructor TNeoGeoCoreAdapter.Destroy;
@@ -321,7 +328,10 @@ end;
 
 function TNeoGeoCoreAdapter.GetName: string;
 begin
-  Result := 'SNK Neo Geo MVS';
+  if FCartridge.Disc <> nil then
+    Result := 'SNK Neo Geo CD'
+  else
+    Result := 'SNK Neo Geo MVS';
 end;
 
 function TNeoGeoCoreAdapter.GetSnapshotDirectory: string;
@@ -341,7 +351,7 @@ end;
 
 function TNeoGeoCoreAdapter.GetHasCoinAcceptor: Boolean;
 begin
-  Result := True;
+  Result := FCartridge.Disc = nil;
 end;
 
 procedure TNeoGeoCoreAdapter.InsertCoin1;

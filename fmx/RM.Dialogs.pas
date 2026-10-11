@@ -8,7 +8,7 @@ uses
   FMX.Controls.Presentation;
 
 type
-  TRetroDialogKind = (Information, Warning, Error, Confirmation);
+  TRetroDialogKind = (Information, Warning, Error, Confirmation, Loading);
 
   TRetroDialog = class(TFrame)
     RectangleBackdrop: TRectangle;
@@ -19,7 +19,8 @@ type
     VertScrollBoxMessage: TVertScrollBox;
     ButtonClose, ButtonCancel, ButtonAccept: TButton;
   private
-    FReady, FConfirmation: Boolean;
+    FReady, FConfirmation, FLoading: Boolean;
+    FBusyIndicator: TAniIndicator;
     FOnResult: TProc<Boolean>;
     procedure AcceptClick(Sender: TObject);
     procedure CancelClick(Sender: TObject);
@@ -37,6 +38,10 @@ type
 procedure ShowRetroMessage(Owner: TComponent; const Text: string; Kind: TRetroDialogKind = TRetroDialogKind.Error);
 
 procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>);
+
+procedure ShowRetroLoading(Owner: TComponent; const Text: string; const OnCancel: TProc);
+
+procedure CloseRetroLoading(Owner: TComponent);
 
 procedure SetRetroDialogActivity(Owner: TCustomForm; OnActivity: TNotifyEvent);
 
@@ -87,9 +92,11 @@ begin
   Result := nil;
   if (Form = nil) or (csDestroying in Form.ComponentState) then
     Exit;
-  for var I := 0 to Form.ComponentCount - 1 do
-    if Form.Components[I] is TRetroDialogHost then
-      Exit(TRetroDialogHost(Form.Components[I]));
+
+  for var i := 0 to Form.ComponentCount - 1 do
+    if Form.Components[i] is TRetroDialogHost then
+      Exit(TRetroDialogHost(Form.Components[i]));
+
   if CreateIfMissing then
     Result := TRetroDialogHost.Create(Form);
 end;
@@ -100,9 +107,10 @@ begin
   begin
     if Owner is TCustomForm then
       Exit(TCustomForm(Owner));
-    if (Owner is TControl) and (TControl(Owner).Root <> nil) and
-      (TControl(Owner).Root.GetObject is TCustomForm) then
+
+    if (Owner is TControl) and (TControl(Owner).Root <> nil) and (TControl(Owner).Root.GetObject is TCustomForm) then
       Exit(TCustomForm(TControl(Owner).Root.GetObject));
+
     Owner := Owner.Owner;
   end;
   Result := nil;
@@ -131,6 +139,31 @@ begin
     Host.FOnActivity := OnActivity;
 end;
 
+procedure ShowRetroLoading(Owner: TComponent; const Text: string; const OnCancel: TProc);
+begin
+  var Host := FindHost(OwnerForm(Owner), True);
+  if Host <> nil then
+    Host.Enqueue(Owner, Text, TRetroDialogKind.Loading,
+      procedure(Confirmed: Boolean)
+      begin
+        if Assigned(OnCancel) then
+          OnCancel();
+      end);
+end;
+
+procedure CloseRetroLoading(Owner: TComponent);
+begin
+  var Host := FindHost(OwnerForm(Owner), False);
+  if Host = nil then
+    Exit;
+
+  for var i := Host.FQueue.Count - 1 downto 0 do
+    if (Host.FQueue[i].Requester = Owner) and (Host.FQueue[i].Kind = TRetroDialogKind.Loading) then
+      Host.FQueue.Delete(i);
+  if (Host.FActive <> nil) and (Host.FActive.Requester = Owner) and (Host.FActive.Kind = TRetroDialogKind.Loading) then
+    Host.Complete(False, False);
+end;
+
 function RetroDialogVisible(Owner: TCustomForm): Boolean;
 begin
   var Host := FindHost(Owner, False);
@@ -153,16 +186,29 @@ begin
   ButtonCancel.OnClick := CancelClick;
   ButtonClose.OnClick := CancelClick;
   AddButtonIcon(ButtonClose, IconClose, 16);
+
+  FBusyIndicator := TAniIndicator.Create(Self);
+  FBusyIndicator.Name := 'LoadingIndicator';
+  FBusyIndicator.Parent := CircleBadge;
+  FBusyIndicator.Align := TAlignLayout.Client;
+  FBusyIndicator.HitTest := False;
+  FBusyIndicator.Visible := False;
+
   FReady := True;
 end;
 
 procedure TRetroDialog.Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>);
 const
-  Titles: array[TRetroDialogKind] of string = ('Information', 'Warning', 'Error', 'Confirmation');
-  Symbols: array[TRetroDialogKind] of string = ('i', '!', '!', '?');
+  Titles: array[TRetroDialogKind] of string = ('Information', 'Warning', 'Error', 'Confirmation', 'Loading...');
+  Symbols: array[TRetroDialogKind] of string = ('i', '!', '!', '?', '');
 begin
   FOnResult := OnResult;
   FConfirmation := Kind = TRetroDialogKind.Confirmation;
+  FLoading := Kind = TRetroDialogKind.Loading;
+  FBusyIndicator.Visible := FLoading;
+  FBusyIndicator.Enabled := FLoading;
+  LabelBadge.Visible := not FLoading;
+  ButtonAccept.Visible := not FLoading;
   LabelTitle.Text := Translate(Titles[Kind]);
   LabelBadge.Text := Symbols[Kind];
   LabelMessage.Text := Text;
@@ -172,14 +218,14 @@ begin
     ButtonAccept.Text := Translate('Confirm')
   else
     ButtonAccept.Text := Translate('OK');
-  ButtonCancel.Visible := FConfirmation;
+  ButtonCancel.Visible := FConfirmation or FLoading;
   VertScrollBoxMessage.ViewportPosition := TPointF.Zero;
   Arrange;
 end;
 
 procedure TRetroDialog.FocusDefault;
 begin
-  if FConfirmation then
+  if FConfirmation or FLoading then
     ButtonCancel.SetFocus
   else
     ButtonAccept.SetFocus;
@@ -205,11 +251,12 @@ begin
     CancelClick(Self)
   else if Key = vkReturn then
   begin
-    if (FConfirmation and not ButtonAccept.IsFocused) or ButtonClose.IsFocused then
+    if FLoading or (FConfirmation and not ButtonAccept.IsFocused) or ButtonClose.IsFocused then
       CancelClick(Self)
     else
       AcceptClick(Self);
   end;
+
   // Tab is handled by FMX; the rest must never reach game shortcuts.
   if Key <> vkTab then
   begin
@@ -230,8 +277,9 @@ begin
   var W := Max(1, Min(560, Width - 32));
   var Padding := Min(24, Max(8, W / 12));
   var TextWidth := Max(1, W - Padding * 2 - 16);
-  var Layout := TTextLayoutManager.DefaultTextLayout.Create;
   var TextHeight: Single;
+
+  var Layout := TTextLayoutManager.DefaultTextLayout.Create;
   try
     Layout.BeginUpdate;
     Layout.Font.Assign(LabelMessage.TextSettings.Font);
@@ -243,6 +291,7 @@ begin
   finally
     Layout.Free;
   end;
+
   var FixedHeight := Padding * 2 + 44 + 16 + 16 + 42;
   var BodyHeight := Min(TextHeight, Max(0, Height - 32 - FixedHeight));
   var H := FixedHeight + BodyHeight;
@@ -257,6 +306,8 @@ begin
     ButtonWidth := Min(ButtonWidth, (W - Padding * 2 - 12) / 2);
   ButtonAccept.SetBounds(W - Padding - ButtonWidth, H - Padding - 42, ButtonWidth, 42);
   ButtonCancel.SetBounds(ButtonAccept.Position.X - ButtonWidth - 12, H - Padding - 42, ButtonWidth, 42);
+  if FLoading then
+    ButtonCancel.Position.X := ButtonAccept.Position.X;
 end;
 
 constructor TRetroDialogHost.Create(AOwner: TComponent);
@@ -285,6 +336,7 @@ begin
   inherited;
   if Operation <> TOperation.opRemove then
     Exit;
+
   if AComponent = FDialog then
     FDialog := nil;
   if AComponent = FPreviousFocus then
@@ -292,9 +344,10 @@ begin
   if (FBlocked <> nil) and (AComponent is TControl) then
     FBlocked.Remove(TControl(AComponent));
   if FQueue <> nil then
-    for var I := FQueue.Count - 1 downto 0 do
-      if FQueue[I].Requester = AComponent then
-        FQueue.Delete(I);
+    for var i := FQueue.Count - 1 downto 0 do
+      if FQueue[i].Requester = AComponent then
+        FQueue.Delete(i);
+
   if (FActive <> nil) and (FActive.Requester = AComponent) and
     not (csDestroying in ComponentState) and not (csDestroying in FForm.ComponentState) then
     Complete(False, False);
@@ -304,17 +357,19 @@ procedure TRetroDialogHost.BeginModal;
 begin
   if FModal then
     Exit;
+
   FModal := True;
   if (FForm.Focused <> nil) and (FForm.Focused.GetObject is TControl) then
   begin
     FPreviousFocus := TControl(FForm.Focused.GetObject);
     FPreviousFocus.FreeNotification(Self);
   end;
+
   // Disable only controls that were enabled, preserving their original state.
-  for var I := 0 to FForm.ChildrenCount - 1 do
-    if (FForm.Children[I] is TControl) and (FForm.Children[I] <> FDialog) then
+  for var i := 0 to FForm.ChildrenCount - 1 do
+    if (FForm.Children[i] is TControl) and (FForm.Children[i] <> FDialog) then
     begin
-      var Control := TControl(FForm.Children[I]);
+      var Control := TControl(FForm.Children[i]);
       if Control.Enabled then
       begin
         FBlocked.Add(Control);
@@ -322,6 +377,7 @@ begin
         Control.Enabled := False;
       end;
     end;
+
   if Assigned(FOnActivity) then
     FOnActivity(Self);
 end;
@@ -330,6 +386,7 @@ procedure TRetroDialogHost.EndModal;
 begin
   FModal := False;
   FDialog.Visible := False;
+  FDialog.FBusyIndicator.Enabled := False;
   for var Control in FBlocked do
     Control.Enabled := True;
   FBlocked.Clear;
@@ -344,12 +401,14 @@ procedure TRetroDialogHost.ShowNext;
 begin
   if FCompleting or (FActive <> nil) or (csDestroying in FForm.ComponentState) then
     Exit;
+
   if FQueue.Count = 0 then
   begin
     if FModal then
       EndModal;
     Exit;
   end;
+
   FActive := FQueue.Extract(FQueue[0]);
   BeginModal;
   FDialog.Configure(FActive.Text, FActive.Kind,
@@ -366,6 +425,7 @@ procedure TRetroDialogHost.Complete(Confirmed: Boolean; InvokeCallback: Boolean)
 begin
   if (FActive = nil) or FCompleting then
     Exit;
+
   var Callback := FActive.OnResult;
   FreeAndNil(FActive);
   FCompleting := True;
@@ -384,10 +444,12 @@ begin
   begin
     if (FActive <> nil) and (FActive.Text = Text) and (FActive.Kind = Kind) then
       Exit;
+
     for var Queued in FQueue do
       if (Queued.Text = Text) and (Queued.Kind = Kind) then
         Exit;
   end;
+
   var Request := TDialogRequest.Create;
   Request.Requester := Requester;
   Request.Text := Text;

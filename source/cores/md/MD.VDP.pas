@@ -206,9 +206,9 @@ function GetSpriteTableAddress(const State: TVDPState): Cardinal;
 
 function GetWindowPlaneTableAddress(const State: TVDPState): Cardinal;
 
-function DecodeVRAMAddress(const State: TVDPState; Address: Cardinal): Cardinal;
+function DecodeVRAMAddress(const State: TVDPState; Address: Cardinal): Cardinal; inline;
 
-function ReadVRAM(const State: TVDPState; Address: Cardinal): Cardinal;
+function ReadVRAM(const State: TVDPState; Address: Cardinal): Cardinal; inline;
 
 procedure WriteVRAM(var Vdp: TVDP; Address: Cardinal; Value: Cardinal);
 
@@ -222,9 +222,9 @@ procedure ConstantInitialise;
 
 procedure VDPInitialise(var Vdp: TVDP);
 
-function GetHScrollTableOffset(const State: TVDPState; Scanline: Cardinal): Cardinal;
+function GetHScrollTableOffset(const State: TVDPState; Scanline: Cardinal): Cardinal; inline;
 
-function GetVScrollValue(var Vdp: TVDP; PlaneIndex: Cardinal; TilePair: Cardinal): Cardinal;
+function GetVScrollValue(var Vdp: TVDP; PlaneIndex: Cardinal; TilePair: Cardinal): Cardinal; inline;
 
 procedure RenderTilePair(var Vdp: TVDP; PixelYInPlane: Cardinal; VramAddress: Cardinal; BaseTileVramAddress: Cardinal; var Metapixels: array of Byte; var PixelIndex: Integer; const BlitLookupList: TBlitLookup);
 
@@ -270,7 +270,12 @@ function VDPGetCachedSprite(const State: TVDPState; SpriteIndex: Cardinal): TVDP
 
 implementation
 
-function VDPNextAccessSlot(const Vdp: TVDP; AfterTime: Int64): Int64;
+var
+  // H32/H40 x active/vblank/disabled x master-clock position. Built once
+  // using the original slot scheduler, then shared read-only by all consoles.
+  AccessSlotLookup: array[0..1, 0..2, 0..3419] of Word;
+
+function CalculateNextAccessSlot(const Vdp: TVDP; AfterTime: Int64): Int64;
 const
   H32: array[0..15] of Integer = (230, 510, 810, 970, 1130, 1450, 1610, 1770, 2090, 2250, 2410, 2730, 2890, 3050, 3350, 3370);
   H40: array[0..17] of Integer = (352, 820, 948, 1076, 1332, 1460, 1588, 1844, 1972, 2100, 2356, 2484, 2612, 2868, 2996, 3124, 3364, 3380);
@@ -303,6 +308,39 @@ begin
   while (Index < Slots) and ((Index mod 32 = 0) or ((Vdp.State.DisplayEnabled = 0) and (Index > 1) and (Index mod 32 = 1))) do
     Inc(Index);
   Result := Base + (Int64(Index) * 3420 + Slots - 1) div Slots;
+end;
+
+procedure InitialiseAccessSlotLookup;
+begin
+  var Vdp := Default(TVDP);
+  for var H40 := 0 to 1 do
+  begin
+    Vdp.State.H40Enabled := H40;
+    for var Mode := 0 to 2 do
+    begin
+      Vdp.State.DisplayEnabled := Ord(Mode <> 2);
+      var Base: Int64 := 0;
+      if Mode = 1 then Base := 224 * 3420;
+      for var Position := 0 to 3419 do
+        AccessSlotLookup[H40, Mode, Position] := CalculateNextAccessSlot(Vdp, Base + Position) - Base;
+    end;
+  end;
+end;
+
+function VDPNextAccessSlot(const Vdp: TVDP; AfterTime: Int64): Int64;
+begin
+  // Preserve the public helper's signed-time behavior outside emulation.
+  if AfterTime < 0 then Exit(CalculateNextAccessSlot(Vdp, AfterTime));
+  var Line := AfterTime div 3420;
+  var Base := Line * 3420;
+  var Position := Integer(AfterTime - Base);
+  var Mode := 2;
+  if Vdp.State.DisplayEnabled <> 0 then
+  begin
+    var Lines := 262 + 51 * Integer(Vdp.Configuration.PAL);
+    Mode := Ord(Line mod Lines >= 224 + 16 * Integer(Vdp.State.V30Enabled));
+  end;
+  Result := Base + AccessSlotLookup[Ord(Vdp.State.H40Enabled <> 0), Mode, Position];
 end;
 
 function VDPReadHV(const Vdp: TVDP): Word;
@@ -1598,6 +1636,9 @@ begin
   CachedSprite.Height := Cardinal((SpriteBytes[3] and 3) + 1);
   Result := CachedSprite;
 end;
+
+initialization
+  InitialiseAccessSlotLookup;
 
 end.
 

@@ -462,10 +462,15 @@ begin
   begin
     A := Cardinal(FBanks[Address shr 19]) * $80000 + (Address and $7FFFF);
     Result := FCartridge.ReadWord(A);
-    if SRAMIndex(Address, Index) then
-      Result := (Result and $FF) or (Word(FSRAM[Index]) shl 8);
-    if SRAMIndex(Address + 1, Index) then
-      Result := (Result and $FF00) or FSRAM[Index];
+    // Most instruction fetches have no SRAM overlay. Avoid two mapping
+    // calls in that case; retain the independent byte-lane checks when enabled.
+    if FSRAMEnabled then
+    begin
+      if SRAMIndex(Address, Index) then
+        Result := (Result and $FF) or (Word(FSRAM[Index]) shl 8);
+      if SRAMIndex(Address + 1, Index) then
+        Result := (Result and $FF00) or FSRAM[Index];
+    end;
   end
   else if Address >= $E00000 then
     Result := (Word(FRAM[Address and $FFFF]) shl 8) or FRAM[(Address + 1) and $FFFF]
