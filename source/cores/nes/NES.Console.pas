@@ -31,7 +31,7 @@ type
     FConfiguredFourScore: Boolean;
     FPortsConfigured: Boolean;
     FDmcDmaCycles: Integer;
-    procedure SerializeState(Stream: TStream; Loading: Boolean; Version: Integer = 20);
+    procedure SerializeState(Stream: TStream; Loading: Boolean; Version: Integer = 21);
     function GetRomIdentity: string;
     function GetUsesMiraclePiano: Boolean;
     function GetUsesPowerPad: Boolean;
@@ -80,7 +80,7 @@ uses
   System.Hash, System.IOUtils, NES.Mapper, Core.Snapshots;
 
 const
-  SNAPSHOT_VERSION = 20;
+  SNAPSHOT_VERSION = 21;
   SNAPSHOT_MAGIC: array[0..7] of AnsiChar = ('R', 'E', 'T', 'R', 'O', 'M', 'U', 'L');
 
 type
@@ -181,6 +181,7 @@ procedure TNesConsole.SaveSnapshot(const FileName: string);
 begin
   if not HasCartridge then
     raise ENesException.Create('No game loaded');
+
   var Payload := TMemoryStream.Create;
   var Output := TMemoryStream.Create;
   try
@@ -229,6 +230,7 @@ procedure TNesConsole.LoadSnapshot(const FileName: string);
 begin
   if not HasCartridge then
     raise ENesException.Create('No game loaded');
+
   var Input := FStorage.OpenRead(FileName);
   var Payload := TMemoryStream.Create;
   var Backup := TMemoryStream.Create;

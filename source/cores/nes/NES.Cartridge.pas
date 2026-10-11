@@ -59,7 +59,8 @@ implementation
 
 uses
   Core.RomHashes, NES.RomMetadata, NES.Mapper.Factory, Core.SavePaths,
-  NES.Mapper.ExtendedMemory, Core.RomFormat, System.Hash,
+  NES.Mapper.ExtendedMemory, NES.Mapper.Mmc3, NES.Mapper.Mmc5, Core.RomFormat,
+  System.Hash,
   {$IFDEF MSWINDOWS}
   Winapi.Windows,
   {$ENDIF}
@@ -355,15 +356,42 @@ begin
   end;
   FMapper := CreateMapper(FMapperId, PrgRom, ChrRom, ChrRam, Mirror,
     FMetadata.Format = TRomFormat.INes, FMetadata.Submapper, FMetadata.HasBattery);
+
   if FMapper = nil then
     raise ENesException.CreateFmt('Unsupported mapper: %d', [FMapperId]);
 
+  // This exact translation stops its PCM introduction with $5010=$FF.
+  // Hardware read mode would instead play CPU opcodes as sample data.
+  if (FMapperId = MAPPER_MMC5) and (FRomIdentity = ROM_NES_SAINT_SEIYA_T_CHI_V2_SHA1) then
+    TMapperMmc5(FMapper).ConfigureWriteOnlyPcm;
+
+  if FMetadata.Format = TRomFormat.Nes20 then
+  begin
+    if FMapperId = MAPPER_MMC5 then
+    begin
+      if (FMetadata.PrgRamSize > $10000) or (FMetadata.PrgNvRamSize > $10000) or
+        (FMetadata.PrgRamSize + FMetadata.PrgNvRamSize > $10000) then
+        raise ENesException.Create('Unsupported MMC5 RAM layout');
+
+      // Battery data is the first RAM block; volatile RAM stays in snapshots.
+      TMapperMmc5(FMapper).ConfigureSaveRam(Integer(FMetadata.PrgNvRamSize));
+    end;
+    if (FMapperId = MAPPER_MMC3) and (FMetadata.Submapper = 0) and
+      (FMetadata.PrgNvRamSize > $2000) and (FMetadata.PrgRamSize = 0) then
+    begin
+      if FMetadata.PrgNvRamSize > $10000 then
+        raise ENesException.Create('Unsupported MMC3 RAM layout');
+
+      TMapperMmc3(FMapper).ConfigurePrgRam(Integer(FMetadata.PrgNvRamSize));
+    end;
+  end;
+
   // Mapper 164 saves to a serial 93C66, independently of its volatile CPU RAM.
-  if (FMapperId = MAPPER_WAIXING164) and (FMetadata.Format = TRomFormat.Nes20) and
-    (FMetadata.PrgNvRamSize = 512) then
+  if (FMapperId = MAPPER_WAIXING164) and (FMetadata.Format = TRomFormat.Nes20) and (FMetadata.PrgNvRamSize = 512) then
   begin
     if (FMetadata.PrgRamSize > $2000) or (FMetadata.ChrNvRamSize <> 0) then
       raise ENesException.Create('Unsupported mapper 164 RAM layout');
+
     TMapperExtendedMemory(FMapper).Configure93C66(Integer(FMetadata.PrgRamSize));
     FMetadata.HasBattery := True;
   end;
@@ -397,6 +425,7 @@ begin
   if (FMetadata.Format = TRomFormat.Nes20) and (FMapperId = MAPPER_WAIXING164) and
     (FSaveSize = 512) and (FMetadata.PrgNvRamSize <> 512) then
     raise ENesException.Create('Unsupported mapper 164 EEPROM size');
+
   if (FMetadata.Format = TRomFormat.Nes20) and (FMapperId <> MAPPER_NAMCO_163) and (FMapperId <> MAPPER_UNROM512) and
     (FMapperId <> MAPPER_GTROM) and (FMapperId <> MAPPER_BANDAI_DATACH) and (FMapperId <> MAPPER_RACERMATE) and (FMapperId <> MAPPER_FK23C) and
     (FMapperId <> MAPPER_SACHEN_9602) and (FMapperId <> MAPPER_RAINBOW) and
@@ -405,13 +434,15 @@ begin
     if (FMetadata.ChrNvRamSize <> 0) or
       ((FMetadata.PrgRamSize <> 0) and (FMetadata.PrgNvRamSize <> 0) and
       not ((FMapperId = MAPPER_WAIXING164) and (FMetadata.PrgNvRamSize = 512) and (FSaveSize = 512)) and
+      not ((FMapperId = MAPPER_MMC5) and (FMetadata.PrgNvRamSize = UInt64(FSaveSize))) and
       not ((FMapperId = MAPPER_MMC3_CHR_RAM_195) and (FMetadata.PrgRamSize = $1000) and
-        (FMetadata.PrgNvRamSize = $2000) and (FSaveSize = $2000))) or
+      (FMetadata.PrgNvRamSize = $2000) and (FSaveSize = $2000))) or
       (FMetadata.PrgNvRamSize > UInt64(FSaveSize)) then
       raise ENesException.Create('Unsupported NES 2.0 persistent memory layout');
 
     FSaveSize := Integer(FMetadata.PrgNvRamSize);
   end;
+
   // Some legacy headers set the battery bit on boards with no writable memory.
   if FSaveSize = 0 then
     Exit;

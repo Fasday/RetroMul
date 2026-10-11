@@ -16,6 +16,10 @@ type
     FMultiplyA, FMultiplyB, FIrqTarget, FSplitControl, FSplitScroll, FSplitBank: Byte;
     FIrqEnabled, FPending, FInFrame, FSpriteFetch, FLargeSprites, FLastChrB: Boolean;
     FPixelX, FPixelY, FExTile: Integer;
+    FPcmControl, FPcmOutput: Byte;
+    FWriteOnlyPcm: Boolean;
+    FSaveRamSize: Integer;
+    function SpriteFetch: Boolean;
     function CpuBank(Address: UInt16; out IsRam: Boolean): Integer;
     function PatternOffset(Address: UInt16): Integer;
     function SplitActive: Boolean;
@@ -24,6 +28,11 @@ type
     procedure SerializeState(State: TNesStateArchive); override;
     constructor Create(const Prg, Chr: TByteArray; HasChrRam: Boolean; MirrorMode: TMirrorMode);
     procedure Reset; override;
+    procedure ConfigureSaveRam(Size: Integer);
+    procedure ConfigureWriteOnlyPcm;
+    function GetSaveMemory: TByteArray; override;
+    procedure SetSaveMemory(const Data: TByteArray); override;
+    function ExpansionAudio: Double; override;
     procedure ClockScanline(Line: Integer; Rendering: Boolean); override;
     procedure SetPpuFetchKind(Sprite: Boolean; X, Y: Integer); override;
     procedure SetPpuControl(Value: UInt8); override;
@@ -67,12 +76,23 @@ begin
   State.Field(FPixelX, SizeOf(FPixelX));
   State.Field(FPixelY, SizeOf(FPixelY));
   State.Field(FExTile, SizeOf(FExTile));
+  if State.Version >= 21 then
+  begin
+    State.Field(FPcmControl, SizeOf(FPcmControl));
+    State.Field(FPcmOutput, SizeOf(FPcmOutput));
+  end
+  else if State.Loading then
+  begin
+    FPcmControl := 0;
+    FPcmOutput := 0;
+  end;
 end;
 
 constructor TMapperMmc5.Create(const Prg, Chr: TByteArray; HasChrRam: Boolean; MirrorMode: TMirrorMode);
 begin
   inherited;
   SetLength(FPrgRam, $10000);
+  FSaveRamSize := Length(FPrgRam);
   Reset;
 end;
 
@@ -106,6 +126,8 @@ begin
   FPixelX := 0;
   FPixelY := 0;
   FExTile := 0;
+  FPcmControl := 0;
+  FPcmOutput := 0;
 end;
 
 function TMapperMmc5.CpuBank(Address: UInt16; out IsRam: Boolean): Integer;
@@ -115,6 +137,7 @@ begin
     IsRam := True;
     Exit(FPrgRegisters[0] and 7);
   end;
+
   var Slot := (Address - $8000) shr 13;
   var RegisterIndex := Slot + 1;
   var Span := 1;
@@ -152,6 +175,10 @@ begin
       Value := FPrgRam[(Bank * $2000 + (Address and $1FFF)) mod Length(FPrgRam)]
     else
       Value := FPrgRom[(Bank * $2000 + (Address and $1FFF)) mod Length(FPrgRom)];
+    // In read mode the PCM DAC observes CPU reads in $8000..$BFFF.
+    if not FWriteOnlyPcm and ((FPcmControl and 1) <> 0) and (Address >= $8000) and (Address < $C000) then
+      if Value <> 0 then
+        FPcmOutput := Value;
     Exit;
   end;
 
@@ -206,7 +233,15 @@ begin
   end;
 
   case Address of
-    $5000..$5015:
+    $5010:
+      begin
+        // PCM IRQ and the two pulse channels remain unimplemented.
+        FPcmControl := Value and 1;
+      end;
+    $5011:
+      if ((FPcmControl and 1) = 0) and (Value <> 0) then
+        FPcmOutput := Value;
+    $5000..$500F, $5012..$5015:
       ;
     $5100:
       FPrgMode := Value and 3;
@@ -255,8 +290,9 @@ end;
 function TMapperMmc5.SplitActive: Boolean;
 begin
   Result := False;
-  if FSpriteFetch or not FInFrame or (FExMode > 1) or ((FSplitControl and $80) = 0) then
+  if SpriteFetch or not FInFrame or (FExMode > 1) or ((FSplitControl and $80) = 0) then
     Exit;
+
   var Right := (FPixelX div 8) >= (FSplitControl and $1F);
   Result := Right = ((FSplitControl and $40) <> 0);
 end;
@@ -266,10 +302,10 @@ begin
   if SplitActive then
     Exit(((Integer(FSplitBank) shl 12) + ((Address and $0FF8) or ((FPixelY + FSplitScroll) mod 240 and 7))) mod Length(FChrMemory));
 
-  if (FExMode = 1) and FInFrame and not FSpriteFetch then
+  if (FExMode = 1) and FInFrame and not SpriteFetch then
     Exit(((((FExRam[FExTile] and $3F) or (Integer(FChrUpper) shl 6)) shl 12) + (Address and $0FFF)) mod Length(FChrMemory));
 
-  var UseB := FLargeSprites and ((FInFrame and not FSpriteFetch) or (not FInFrame and FLastChrB));
+  var UseB := FLargeSprites and ((FInFrame and not SpriteFetch) or (not FInFrame and FLastChrB));
   var Slot := Address shr 10;
   var Span := 1 shl (3 - FChrMode);
   var Index := (Slot div Span) * Span + Span - 1;
@@ -307,7 +343,7 @@ begin
     Exit;
   end;
 
-  if (FExMode = 1) and FInFrame and not FSpriteFetch then
+  if (FExMode = 1) and FInFrame and not SpriteFetch then
     if Offset < $3C0 then
       FExTile := Offset
     else
@@ -377,6 +413,54 @@ end;
 function TMapperMmc5.IrqPending: Boolean;
 begin
   Result := FPending and FIrqEnabled;
+end;
+
+function TMapperMmc5.SpriteFetch: Boolean;
+begin
+  // The live PPU pipeline supplies the kind for each individual memory read.
+  // SetPpuFetchKind remains available for direct mapper/debug rendering calls.
+  if FPpuRenderingRead then
+    Result := FPpuSpriteFetch
+  else
+    Result := FSpriteFetch;
+end;
+
+procedure TMapperMmc5.ConfigureSaveRam(Size: Integer);
+begin
+  if (Size < 0) or (Size > Length(FPrgRam)) then
+    raise ENesException.Create('Unsupported MMC5 save RAM size');
+
+  FSaveRamSize := Size;
+end;
+
+procedure TMapperMmc5.ConfigureWriteOnlyPcm;
+begin
+  // Immutable ROM compatibility setting, like the configured battery size.
+  // This translation uses read mode to stop its write-only PCM introduction.
+  FWriteOnlyPcm := True;
+end;
+
+function TMapperMmc5.GetSaveMemory: TByteArray;
+begin
+  Result := Copy(FPrgRam, 0, FSaveRamSize);
+end;
+
+procedure TMapperMmc5.SetSaveMemory(const Data: TByteArray);
+begin
+  if Length(Data) <> FSaveRamSize then
+    raise ENesException.Create('Invalid cartridge save size');
+
+  if Length(Data) > 0 then
+    Move(Data[0], FPrgRam[0], Length(Data));
+end;
+
+function TMapperMmc5.ExpansionAudio: Double;
+begin
+  if FWriteOnlyPcm and ((FPcmControl and 1) <> 0) then
+    Exit(0);
+
+  // MMC5 audio has opposite polarity to the native APU channels.
+  Result := -FPcmOutput * (14.0 / 5000.0);
 end;
 
 end.

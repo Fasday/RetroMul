@@ -11,6 +11,7 @@ type
   protected
     FPrgRom, FChrMemory: TByteArray;
     FLegacySave: TByteArray;
+    FExtraPrgRam: TByteArray;
     FPrgRam: array[0..$1FFF] of UInt8;
     FHasChrRam, FFourScreenMirroring: Boolean;
     FInitialMirrorMode, FMirrorMode: TMirrorMode;
@@ -25,6 +26,7 @@ type
     function GetChrOffset(Address: UInt16): Integer;
   public
     procedure SerializeState(State: TNesStateArchive); override;
+    procedure ConfigurePrgRam(Size: Integer);
     function GetSaveMemory: TByteArray; override;
     procedure SetSaveMemory(const Data: TByteArray); override;
     constructor Create(const APrgRom, AChrData: TByteArray; AHasChrRam: Boolean; AMirrorMode: TMirrorMode; AMmc6: Boolean = False);
@@ -45,6 +47,7 @@ procedure TMapperMmc3.UpdateBankOffsets;
 begin
   if not FUseBankCache then
     Exit;
+
   var Count := Length(FPrgRom) div $2000;
   FPrgOffsets[0] := ((FBankRegisters[6] and $3F) mod Count) * $2000;
   FPrgOffsets[1] := ((FBankRegisters[7] and $3F) mod Count) * $2000;
@@ -91,6 +94,11 @@ begin
   State.Field(FIrqPending, SizeOf(FIrqPending));
   State.Field(FA12High, SizeOf(FA12High));
   State.Field(FA12LowSince, SizeOf(FA12LowSince));
+  if Length(FExtraPrgRam) > 0 then
+    if State.Version >= 21 then
+      State.Field(FExtraPrgRam[0], Length(FExtraPrgRam))
+    else if State.Loading then
+      FillChar(FExtraPrgRam[0], Length(FExtraPrgRam), 0);
   if State.Loading then
     UpdateBankOffsets;
 end;
@@ -104,17 +112,25 @@ begin
       Move(FPrgRam[0], Result[$1000 + Offset * $400], $400);
     Exit;
   end;
+
   if FIsMmc6 then
     SetLength(Result, $400)
   else
-    SetLength(Result, SizeOf(FPrgRam));
-  Move(FPrgRam[0], Result[0], Length(Result));
+    SetLength(Result, SizeOf(FPrgRam) + Length(FExtraPrgRam));
+  if FIsMmc6 then
+    Move(FPrgRam[0], Result[0], Length(Result))
+  else
+  begin
+    Move(FPrgRam[0], Result[0], SizeOf(FPrgRam));
+    if Length(FExtraPrgRam) > 0 then
+      Move(FExtraPrgRam[0], Result[SizeOf(FPrgRam)], Length(FExtraPrgRam));
+  end;
 end;
 
 procedure TMapperMmc3.SetSaveMemory(const Data: TByteArray);
 begin
   // Accept legacy 8 KiB saves produced before HKROM was recognized.
-  if (Length(Data) <> SizeOf(FPrgRam)) and not (FIsMmc6 and (Length(Data) = $400)) then
+  if (Length(Data) <> SizeOf(FPrgRam) + Length(FExtraPrgRam)) and not (FIsMmc6 and (Length(Data) = $400)) then
     raise ENesException.Create('Invalid cartridge save size');
 
   if FIsMmc6 and (Length(Data) = $2000) then
@@ -124,7 +140,22 @@ begin
     Exit;
   end;
 
-  Move(Data[0], FPrgRam[0], Length(Data));
+  var MappedSize := Length(Data);
+  if MappedSize > SizeOf(FPrgRam) then
+    MappedSize := SizeOf(FPrgRam);
+  Move(Data[0], FPrgRam[0], MappedSize);
+  if Length(FExtraPrgRam) > 0 then
+    Move(Data[SizeOf(FPrgRam)], FExtraPrgRam[0], Length(FExtraPrgRam));
+end;
+
+procedure TMapperMmc3.ConfigurePrgRam(Size: Integer);
+begin
+  if FIsMmc6 or (ClassType <> TMapperMmc3) or (Size < SizeOf(FPrgRam)) or (Size > $10000) then
+    raise ENesException.Create('Unsupported MMC3 RAM size');
+
+  // MMC3 exposes the first 8 KiB at $6000. Preserve all RAM declared by
+  // NES 2.0 in battery files and snapshots without inventing a bank register.
+  SetLength(FExtraPrgRam, Size - SizeOf(FPrgRam));
 end;
 
 constructor TMapperMmc3.Create(const APrgRom, AChrData: TByteArray; AHasChrRam: Boolean; AMirrorMode: TMirrorMode; AMmc6: Boolean);
@@ -201,6 +232,7 @@ begin
       Value := FPrgRom[FPrgOffsets[(Address - $8000) shr 13] + (Address and $1FFF)];
       Exit(True);
     end;
+
     Count := Length(FPrgRom) div $2000;
     case (Address - $8000) shr 13 of
       0:
