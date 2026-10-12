@@ -32,6 +32,7 @@ type
     procedure MiraclePianoChanged(Sender: TObject);
     procedure FamicomKeyboardChanged(Sender: TObject);
     procedure SuborKeyboardChanged(Sender: TObject);
+    procedure SGKeyboardChanged(Sender: TObject);
     procedure SuborKeyboardPower(Sender: TObject);
     procedure PowerPadChanged(Sender: TObject);
     procedure ImageCanvasMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Single);
@@ -49,7 +50,7 @@ uses
   System.SysUtils, System.Types, System.IOUtils, System.Math, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.Dialogs, FMX.Platform, FMX.Edit, FMX.OpenDialog,
   FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console, Core.InputConfig,
-  Core.RomFormat, NES.Controller, RM.Gamepad, NES.SuborKeyboard,
+  Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard, NES.Controller, RM.Gamepad, NES.SuborKeyboard,
   NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
   {$IFDEF MSWINDOWS}
     , Winapi.Windows
@@ -157,6 +158,13 @@ begin
   FState.Input.Gamepad.Enabled := False;
   FState.Input.Gamepad.Visible := False;
   FState.Input.Gamepad.Margins.Bottom := 100;
+
+  FState.Input.SGKeyboard := TSGKeyboard.Create(FView);
+  FState.Input.SGKeyboard.Parent := FView.LayoutClient;
+  FState.Input.SGKeyboard.Align := TAlignLayout.Bottom;
+  FState.Input.SGKeyboard.OnChange := SGKeyboardChanged;
+  FState.Input.SGKeyboard.Enabled := False;
+  FState.Input.SGKeyboard.Visible := False;
 
   FState.Input.SuborKeyboard := TNesSuborKeyboard.Create(FView);
   FState.Input.SuborKeyboard.Name := 'ScreenSuborKeyboard';
@@ -547,7 +555,8 @@ begin
   var SuborKeyboardActive := (FState.Session.Emulation <> nil) and FState.Session.Emulation.UsesSuborKeyboard;
   var Peripheral: INesPeripheralCore;
   var Piano: INesMiraclePianoCore;
-  var KeyboardActive := SuborKeyboardActive or
+  var SGKeyboard: ISGKeyboardCore;
+  var KeyboardActive := (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard) or SuborKeyboardActive or
     (Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) and Peripheral.UsesFamicomKeyboard) or
     (Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano);
 
@@ -632,7 +641,7 @@ begin
   end;
 
   if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift)) then
-    if (FState.Session.Emulation <> nil) and (FState.Input.Manager = nil) then
+    if (FState.Session.Emulation <> nil) and ((FState.Input.Manager = nil) or ((SGKeyboard <> nil) and SGKeyboard.HasKeyboard)) then
       FView.ForwardKeyState(Code, True);
 
   Key := 0;
@@ -696,7 +705,9 @@ begin
   if Code <= High(FState.Input.KeysDown) then
     FState.Input.KeysDown[Code] := False;
 
-  if (FState.Help.View = nil) and (FState.Session.Emulation <> nil) and (FState.Input.Manager = nil) then
+  var SGKeyboard: ISGKeyboardCore;
+  if (FState.Help.View = nil) and (FState.Session.Emulation <> nil) and
+    ((FState.Input.Manager = nil) or (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard)) then
     FView.ForwardKeyState(Code, False);
 
   Key := 0;
@@ -774,6 +785,7 @@ end;
 
 procedure TInputController.UpdatePeripheralInput;
 begin
+  SGKeyboardChanged(nil);
   var Peripheral: INesPeripheralCore;
   if Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) then
   begin
@@ -840,6 +852,13 @@ end;
 procedure TInputController.FamicomKeyboardChanged(Sender: TObject);
 begin
   FView.UpdatePeripheralInput;
+end;
+
+procedure TInputController.SGKeyboardChanged(Sender: TObject);
+begin
+  var Keyboard: ISGKeyboardCore;
+  if (FState.Input.SGKeyboard <> nil) and Supports(FState.Session.Emulation, ISGKeyboardCore, Keyboard) and Keyboard.HasKeyboard then
+    Keyboard.SetScreenKeys(FState.Input.SGKeyboard.Keys);
 end;
 
 procedure TInputController.SuborKeyboardChanged(Sender: TObject);

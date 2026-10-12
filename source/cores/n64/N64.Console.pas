@@ -1877,7 +1877,12 @@ end;
 procedure TN64Console.RunRSP;
 begin
   // RSP owns persistent scalar/vector state; scheduled in bounded slices.
-  FRSP.ExecuteCycles(FSPPC, FReg[0, 4], FReg[2, 2], 1);
+  // BREAK reports its IRQ through the output argument. MTC0 can also change
+  // MI bits through the bus, so do not write an unchanged local value back.
+  var BeforeIRQ := FReg[2, 2];
+  var IRQ := BeforeIRQ;
+  FRSP.ExecuteCycles(FSPPC, FReg[0, 4], IRQ, 1);
+  if IRQ <> BeforeIRQ then SetInterrupts(IRQ);
 end;
 
 end.

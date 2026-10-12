@@ -6,7 +6,7 @@ uses
   System.SysUtils, System.Types, System.UITypes, FMX.Forms, FMX.StdCtrls,
   FMX.Menus, Core.Emulation, Core.Storage, Core.InputConfig, FMX.OpenDialog,
   RM.LibraryView, RM.Settings, RM.ControlsHelp, RM.Input, FMXInput, RM.Rumble,
-  RM.Gamepad, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano,
+  RM.Gamepad, SG1000.Keyboard, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano,
   NES.PowerPad, NES.DataRecorder
   {$IFDEF MSWINDOWS}
     , Winapi.Windows
@@ -80,6 +80,7 @@ type
     DispatchingInput, SuppressInputUntilRelease: Boolean;
     Gamepad: TScreenGamepad;
     SuborKeyboard: TNesSuborKeyboard;
+    SGKeyboard: TSGKeyboard;
     FamicomKeyboard: TNesFamicomKeyboard;
     MiraclePiano: TNesMiraclePiano;
     PowerPad: TNesPowerPad;
@@ -113,6 +114,7 @@ type
     Transfer: TAndroidDocumentTransfer;
     ChoosingTape: Boolean;
     SuborKeyboardTouchAttached: Boolean;
+    SGKeyboardTouchAttached: Boolean;
     FamicomKeyboardTouchAttached: Boolean;
     MiraclePianoTouchAttached: Boolean;
     PowerPadTouchAttached: Boolean;

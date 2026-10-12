@@ -202,7 +202,8 @@ end;
 
 function TNeoGeoSound.IRQ: Boolean;
 begin
-  Result := ((FFM.State.Status and 1) <> 0) and ((FRegisters[$27] and 4) <> 0) or
+  Result :=
+    ((FFM.State.Status and 1) <> 0) and ((FRegisters[$27] and 4) <> 0) or
     ((FFM.State.Status and 2) <> 0) and ((FRegisters[$27] and 8) <> 0);
 end;
 
@@ -388,7 +389,9 @@ begin
 
   FBusy := Max(0, FBusy - MasterClocks);
   var MasterClock := 24000000;
-  if FCart.Disc <> nil then MasterClock := NGCD_MASTER_CLOCK;
+  if FCart.Disc <> nil then
+    MasterClock := NGCD_MASTER_CLOCK;
+
   // Synthesis and sampling share the machine's master-clock timeline.
   // No state changes between native ticks and output samples. Jump to the
   // next boundary, preserving native-before-sample order when they coincide.

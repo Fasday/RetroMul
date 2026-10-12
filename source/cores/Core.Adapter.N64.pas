@@ -389,6 +389,7 @@ begin
           Deadline := TStopwatch.GetTimeStamp;
           Rate.Reset(Console.FrameNumber, TStopwatch.GetTimeStamp)
         end;
+
         if Paused then
         begin
           if not WasPaused then
@@ -403,9 +404,11 @@ begin
           Deadline := TStopwatch.GetTimeStamp;
           Continue;
         end;
+
         WasPaused := False;
         Console.SetInputs(Inputs);
         var StartFrame := Console.FrameNumber;
+
         // Stop/pause latency is bounded even when the ROM busy-waits forever.
         while not Terminated and (Console.FrameNumber = StartFrame) do
         begin
@@ -418,8 +421,10 @@ begin
             FLock.Release
           end;
         end;
+
         if Terminated then
           Break;
+
         var Frame := Console.GetFrame;
         Frame.FramesPerSecond := Rate.Update(Console.FrameNumber, TStopwatch.GetTimeStamp, TStopwatch.Frequency);
         FLock.Acquire;
@@ -441,9 +446,10 @@ begin
             Format.BlockCount := 4;
             Audio := TPCMAudio.Create(Format);
           end;
-          for var I := 0 to High(Samples) do
-            Samples[I] := Round(Samples[I] * Volume);
+          for var i := 0 to High(Samples) do
+            Samples[i] := Round(Samples[i] * Volume);
           Audio.Submit(Samples, Length(Samples) div 2);
+
           if Audio.Error <> '' then
             raise EInOutError.Create(Audio.Error);
         except
@@ -534,6 +540,7 @@ const
 begin
   if FWorker = nil then
     Exit;
+
   var Pads := Default(TN64Pads);
   for var P := 0 to 3 do
   begin
@@ -560,6 +567,7 @@ procedure TN64CoreAdapter.Start;
 begin
   if FWorker <> nil then
     Exit;
+
   if Length(FPendingSaveData) > 0 then
   begin
     FStorage.WriteBytes(FSavePath, FPendingSaveData);
@@ -584,6 +592,7 @@ begin
     end;
     Exit;
   end;
+
   try
     FWorker.StopAndSave
   except
@@ -619,12 +628,12 @@ end;
 
 procedure TN64CoreAdapter.ClearInput;
 begin
-  for var I := 0 to 3 do
+  for var i := 0 to 3 do
   begin
-    FKeyboard[I] := [];
-    FGamepad[I] := [];
-    FLPressed[I] := False;
-    FAnalog[I] := Default(TN64Pad)
+    FKeyboard[i] := [];
+    FGamepad[i] := [];
+    FLPressed[i] := False;
+    FAnalog[i] := Default(TN64Pad)
   end;
   Configure
 end;
@@ -633,6 +642,7 @@ procedure TN64CoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 begin
   if Code = 0 then
     Exit;
+
   for var P := 0 to 3 do
     if (FConfig as TN64Config).LKey(P) = Code then
       FLPressed[P] := Pressed;
@@ -650,6 +660,7 @@ procedure TN64CoreAdapter.SetN64Controller(Port: Integer; const Pad: TN64Pad);
 begin
   if (Port < 0) or (Port > 3) then
     raise EArgumentOutOfRangeException.Create('N64 controller port');
+
   FAnalog[Port] := Pad;
   Configure;
 end;
@@ -675,9 +686,9 @@ end;
 function TN64CoreAdapter.GetName: string;
 begin
   Result := '';
-  for var I := $20 to $33 do
-    if FData[I] in [32..126] then
-      Result := Result + Char(FData[I]);
+  for var i := $20 to $33 do
+    if FData[i] in [32..126] then
+      Result := Result + Char(FData[i]);
   Result := Result.Trim;
   if Result = '' then
     Result := 'Nintendo 64';

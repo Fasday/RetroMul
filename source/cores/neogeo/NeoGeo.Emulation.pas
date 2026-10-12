@@ -74,7 +74,8 @@ begin
   FCartridge := Cartridge;
   FData := Cartridge.Identity;
   FCoreId := ROM_CORE_ID_NEOGEO;
-  if Cartridge.Disc <> nil then FCoreId := ROM_CORE_ID_NEOGEOCD;
+  if Cartridge.Disc <> nil then
+    FCoreId := ROM_CORE_ID_NEOGEOCD;
   FSavePath := SavePath;
 end;
 

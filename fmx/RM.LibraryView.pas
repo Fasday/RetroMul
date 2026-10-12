@@ -43,6 +43,9 @@ type
     ButtonSidebarNeoGeo: TButton;
     PathSidebarNeoGeoIcon: TPath;
     ButtonSidebarNeoGeoCD: TButton;
+    ButtonSidebarN64: TButton;
+    ButtonSidebarSG1000, ButtonSidebarSC3000: TButton;
+    PathSidebarSG1000Icon, PathSidebarSC3000Icon: TPath;
     PathSidebarNeoGeoCDIcon: TPath;
     ButtonSidebarNES: TButton;
     PathSidebarNESIcon: TPath;
@@ -52,6 +55,7 @@ type
     PathSidebarGBCIcon: TPath;
     ButtonSidebarGB: TButton;
     PathSidebarGBIcon: TPath;
+    Path1: TPath;
   private
     FStorage: IStorage;
     FGames: TObjectList<TLibraryGame>;
@@ -67,8 +71,8 @@ type
     ButtonPlay, ButtonFavorite, ButtonMore, FGridButton, FListButton, FResume: TButton;
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
-    FPlatformButtons: array[0..9] of TButton;
-    FSidebarPlatformBorders: array[1..9] of TRectangle;
+    FPlatformButtons: TList<TButton>;
+    FSidebarPlatformBorders: TList<TRectangle>;
     FNavButtons: array[0..2] of TButton;
     FNavIcons: array[0..2] of TPath;
     FGridIcon, FListIcon: TPath;
@@ -192,16 +196,32 @@ begin
 end;
 {$ENDIF}
 
+type
+  TLibraryPlatformInfo = record
+    Id, Name, FilterButton, SidebarButton: string;
+  end;
+
 const
-  SystemIds: array[0..9] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_NEOGEOCD, ROM_SYSTEM_N64);
-  SystemNames: array[0..9] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo', 'GBA', 'Neo Geo CD', 'Nintendo 64');
+  LibraryPlatforms: array[0..11] of TLibraryPlatformInfo = (
+    (Id: ''; Name: 'All'; FilterButton: 'ButtonFilter0'; SidebarButton: ''),
+    (Id: ROM_SYSTEM_NES; Name: 'NES'; FilterButton: 'ButtonFilter1'; SidebarButton: 'ButtonSidebarNES'),
+    (Id: ROM_SYSTEM_SNES; Name: 'SNES'; FilterButton: 'ButtonFilter2'; SidebarButton: 'ButtonSidebarSNES'),
+    (Id: ROM_SYSTEM_GB; Name: 'GB'; FilterButton: 'ButtonFilter3'; SidebarButton: 'ButtonSidebarGB'),
+    (Id: ROM_SYSTEM_GBC; Name: 'GBC'; FilterButton: 'ButtonFilter4'; SidebarButton: 'ButtonSidebarGBC'),
+    (Id: ROM_SYSTEM_MD; Name: 'Mega Drive'; FilterButton: 'ButtonFilter5'; SidebarButton: 'ButtonSidebarMD'),
+    (Id: ROM_SYSTEM_NEOGEO; Name: 'Neo Geo'; FilterButton: 'ButtonFilter6'; SidebarButton: 'ButtonSidebarNeoGeo'),
+    (Id: ROM_SYSTEM_GBA; Name: 'GBA'; FilterButton: 'ButtonFilter7'; SidebarButton: 'ButtonSidebarGBA'),
+    (Id: ROM_SYSTEM_NEOGEOCD; Name: 'Neo Geo CD'; FilterButton: 'ButtonFilter8'; SidebarButton: 'ButtonSidebarNeoGeoCD'),
+    (Id: ROM_SYSTEM_N64; Name: 'Nintendo 64'; FilterButton: 'ButtonFilter9'; SidebarButton: 'ButtonSidebarN64'),
+    (Id: ROM_SYSTEM_SG1000; Name: 'SG-1000'; FilterButton: 'ButtonFilterSG1000'; SidebarButton: 'ButtonSidebarSG1000'),
+    (Id: ROM_SYSTEM_SC3000; Name: 'SC-3000'; FilterButton: 'ButtonFilterSC3000'; SidebarButton: 'ButtonSidebarSC3000'));
 
 function LibrarySystemName(const Id: string): string;
 begin
   Result := Id;
-  for var i := 0 to High(SystemIds) do
-    if Id = SystemIds[i] then
-      Exit(Translate(SystemNames[i]));
+  for var platform in LibraryPlatforms do
+    if Id = platform.Id then
+      Exit(Translate(platform.Name));
 end;
 
 function LibraryDate(const Value: TDateTime): string;
@@ -261,6 +281,8 @@ begin
   FGames := TObjectList<TLibraryGame>.Create;
   FCards := TList<TLibraryCard>.Create;
   FLetterButtons := TList<TButton>.Create;
+  FPlatformButtons := TList<TButton>.Create;
+  FSidebarPlatformBorders := TList<TRectangle>.Create;
   FState := FStorage.ReadConfig(FStorage.ConfigFile('library'));
   FLimit := 48;
   PanelSidebar := FindComponent('PanelSidebar') as TPanel;
@@ -338,41 +360,29 @@ begin
     FSaveButtons[i].OnClick := SaveClick;
   end;
 
-  var N64Filter := TButton.Create(Self);
-  N64Filter.Name := 'ButtonFilter9';
-  N64Filter.Parent := (FindComponent('ButtonFilter8') as TButton).Parent;
-  N64Filter.Align := (FindComponent('ButtonFilter8') as TButton).Align;
-  N64Filter.Width := 90;
-  N64Filter.Height := 32;
-  N64Filter.Position.X := (FindComponent('ButtonFilter8') as TButton).Position.X + 95;
-  N64Filter.Text := 'N64';
-  N64Filter.Tag := 9;
-  for var i := 0 to High(FPlatformButtons) do
-  begin
-    FPlatformButtons[i] := FindComponent('ButtonFilter' + IntToStr(i)) as TButton;
-    FPlatformButtons[i].OnClick := FilterClick;
-  end;
-
-  var Platforms := FindComponent('VertScrollBoxPlatforms') as TVertScrollBox;
-  var N64Button := TButton.Create(Self);
-  N64Button.Name := 'ButtonSidebarN64';
-  N64Button.Parent := Platforms;
-  N64Button.Align := TAlignLayout.Top;
-  N64Button.Position.Y := ButtonSidebarNeoGeoCD.Position.Y + ButtonSidebarNeoGeoCD.Height;
-  N64Button.Height := 42;
-  N64Button.StyleLookup := 'buttonstyle_subtle';
-  N64Button.Text := 'Nintendo 64';
-  N64Button.Tag := 9;
-  for var Child in Platforms.Content.Children do
-    if Child is TButton then
+  // Bind existing frame components by name and system ID, never by an array index or numeric Tag.
+  for var platform in LibraryPlatforms do
+    if FindComponent(platform.FilterButton) is TButton then
     begin
-      TButton(Child).OnClick := FilterClick;
-      TButton(Child).TextSettings.HorzAlign := TTextAlign.Leading;
-      TButton(Child).StylesData['text.Margins.Left'] := 48;
+      var Button := FindComponent(platform.FilterButton) as TButton;
+      Button.TagString := platform.Id;
+      Button.OnClick := FilterClick;
+      FPlatformButtons.Add(Button);
+    end;
 
-      var Border := TRectangle.Create(Child);
-      FSidebarPlatformBorders[TButton(Child).Tag] := Border;
-      Border.Parent := Child;
+  for var platform in LibraryPlatforms do
+    if FindComponent(platform.SidebarButton) is TButton then
+    begin
+      var Button := FindComponent(platform.SidebarButton) as TButton;
+      Button.TagString := platform.Id;
+      Button.OnClick := FilterClick;
+      Button.TextSettings.HorzAlign := TTextAlign.Leading;
+      Button.StylesData['text.Margins.Left'] := 48;
+
+      var Border := TRectangle.Create(Button);
+      Border.TagString := platform.Id;
+      FSidebarPlatformBorders.Add(Border);
+      Border.Parent := Button;
       Border.Align := TAlignLayout.Contents;
       Border.Fill.Kind := TBrushKind.None;
       Border.Stroke.Color := $FFFFB344;
@@ -425,6 +435,8 @@ begin
   FBuilding := True;
   FCards.Free;
   FLetterButtons.Free;
+  FPlatformButtons.Free;
+  FSidebarPlatformBorders.Free;
   FGames.Free;
   FState.Free;
   inherited;
@@ -441,9 +453,14 @@ begin
   FCards.Clear;
   FGames.Clear;
   try
-    for var i := 1 to High(SystemIds) do
+    for var platform in LibraryPlatforms do
     begin
-      var Folder := TPath.Combine(FStorage.RomFolder, RomSystemFolder(RomSystemFromId(SystemIds[i])));
+      if platform.Id = '' then
+        Continue;
+      var Folder := TPath.Combine(FStorage.RomFolder, RomSystemFolder(RomSystemFromId(platform.Id)));
+      if (platform.Id = ROM_SYSTEM_SC3000) and not FStorage.RomFolder.StartsWith('content://', True) and
+        not FStorage.FolderExists(Folder) then
+        Folder := TPath.Combine(FStorage.RomFolder, ROM_SYSTEM_SG1000);
       var Metadata := TGameList.Create;
       var Lookup := TDictionary<string, TGame>.Create;
       try
@@ -463,12 +480,12 @@ begin
           for var Game in Metadata.Games do
             Lookup.AddOrSetValue(LowerCase(ExpandFileName(Game.GetPhysicalPath(Folder, Game.Path))), Game);
         end;
-        for var FileInfo in FStorage.Roms(SystemIds[i]) do
+        for var FileInfo in FStorage.Roms(platform.Id) do
         begin
           var Item := TLibraryGame.Create;
           FGames.Add(Item);
           Item.FileInfo := FileInfo;
-          Item.SystemId := SystemIds[i];
+          Item.SystemId := platform.Id;
           Item.Title := TPath.GetFileNameWithoutExtension(FileInfo.Name);
           var Entry: TGame;
           if Lookup.TryGetValue(LowerCase(ExpandFileName(FileInfo.Location)), Entry) then
@@ -752,14 +769,14 @@ begin
       FNavIcons[i].Stroke.Color := $FFB9C2CC;
   end;
 
-  for var i := 0 to High(SystemIds) do
-    if FSystemFilter = SystemIds[i] then
-      FPlatformButtons[i].StyleLookup := 'buttonstyle_accent'
+  for var Button in FPlatformButtons do
+    if FSystemFilter = Button.TagString then
+      Button.StyleLookup := 'buttonstyle_accent'
     else
-      FPlatformButtons[i].StyleLookup := 'buttonstyle';
+      Button.StyleLookup := 'buttonstyle';
 
-  for var i := Low(FSidebarPlatformBorders) to High(FSidebarPlatformBorders) do
-    FSidebarPlatformBorders[i].Visible := FSystemFilter = SystemIds[i];
+  for var Border in FSidebarPlatformBorders do
+    Border.Visible := FSystemFilter = Border.TagString;
 
   Resize;
   UpdateInspector;
@@ -1187,7 +1204,7 @@ end;
 
 procedure TLibraryView.FilterClick(Sender: TObject);
 begin
-  FSystemFilter := SystemIds[TButton(Sender).Tag];
+  FSystemFilter := TButton(Sender).TagString;
   FLetterFilter := '';
   FLimit := 48;
   BuildCards;

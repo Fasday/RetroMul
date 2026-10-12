@@ -12,27 +12,21 @@ function ArithmeticShiftRight(Value: Integer; Bits: Cardinal): Integer; inline;
 
 implementation
 
-// These three operations deliberately wrap modulo 2^32. Keep native-width
-// arithmetic even in checked builds; restore this unit's original setting below.
-{$IFOPT Q+}{$DEFINE MD_RESTORE_OVERFLOW_CHECKS}{$ENDIF}
-{$Q-}
-
+// Explicit modulo arithmetic with wide intermediates; no disabled checks.
 function Add32(A, B: Cardinal): Cardinal;
 begin
-  Result := A + B;
+  Result := Cardinal((UInt64(A) + UInt64(B)) and $FFFFFFFF);
 end;
 
 function Sub32(A, B: Cardinal): Cardinal;
 begin
-  Result := A - B;
+  Result := Cardinal((UInt64(A) + UInt64($100000000) - UInt64(B)) and $FFFFFFFF);
 end;
 
 function Mul32(A, B: Cardinal): Cardinal;
 begin
-  Result := A * B;
+  Result := Cardinal((UInt64(A) * UInt64(B)) and $FFFFFFFF);
 end;
-
-{$IFDEF MD_RESTORE_OVERFLOW_CHECKS}{$Q+}{$UNDEF MD_RESTORE_OVERFLOW_CHECKS}{$ENDIF}
 
 function ArithmeticShiftRight(Value: Integer; Bits: Cardinal): Integer;
 begin

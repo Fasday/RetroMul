@@ -231,7 +231,8 @@ begin
   if Visible then
   begin
     var Background := Color($FFF);
-    if not DisplayEnabled then Background := $FF000000;
+    if not DisplayEnabled then
+      Background := $FF000000;
     for var X := 0 to NG_WIDTH - 1 do
       Pixels[Row + X] := Background;
   end;
@@ -249,91 +250,92 @@ begin
   // Render these releases permissively while keeping the hardware sprite list bounded.
   var Permissive := (FCart.SetName = 'neopong') or (FCart.SetName = 'neopong10');
   if SpritesEnabled then
-  for var Sprite := 0 to 380 do
-  begin
-    var Control := VRAM[$8200 + Sprite];
-    var Zoom := VRAM[$8000 + Sprite];
-    if (Control and $40) <> 0 then
+    for var Sprite := 0 to 380 do
     begin
-      X := (X + ZX + 1) and $1FF;
-      ZX := (Zoom shr 8) and 15;
-    end
-    else
-    begin
-      Y := $200 - (Control shr 7);
-      X := VRAM[$8400 + Sprite] shr 7;
-      Rows := Control and $3F;
-      ZX := (Zoom shr 8) and 15;
-      ZY := Zoom and $FF;
-    end;
-    var SpriteLine := (Line + $200 - Y) and $1FF;
-    if (Rows = 0) or ((Rows < 32) and (SpriteLine >= Rows * 16)) then
-      Continue;
+      var Control := VRAM[$8200 + Sprite];
+      var Zoom := VRAM[$8000 + Sprite];
+      if (Control and $40) <> 0 then
+      begin
+        X := (X + ZX + 1) and $1FF;
+        ZX := (Zoom shr 8) and 15;
+      end
+      else
+      begin
+        Y := $200 - (Control shr 7);
+        X := VRAM[$8400 + Sprite] shr 7;
+        Rows := Control and $3F;
+        ZX := (Zoom shr 8) and 15;
+        ZY := Zoom and $FF;
+      end;
+      var SpriteLine := (Line + $200 - Y) and $1FF;
+      if (Rows = 0) or ((Rows < 32) and (SpriteLine >= Rows * 16)) then
+        Continue;
 
-    if Active < 96 then
-    begin
-      VRAM[List + Active] := Sprite;
-      Inc(Active);
-    end;
-    if Visible and ((X < NG_WIDTH) or (X > $1F0)) then
-    begin
-      var ZoomLine := SpriteLine and $FF;
-      var Invert := (SpriteLine and $100) <> 0;
-      if Invert then
-        ZoomLine := ZoomLine xor $FF;
-      if Rows > 32 then
+      if Active < 96 then
       begin
-        ZoomLine := ZoomLine mod ((ZY + 1) * 2);
-        if ZoomLine > ZY then
+        VRAM[List + Active] := Sprite;
+        Inc(Active);
+      end;
+      if Visible and ((X < NG_WIDTH) or (X > $1F0)) then
+      begin
+        var ZoomLine := SpriteLine and $FF;
+        var Invert := (SpriteLine and $100) <> 0;
+        if Invert then
+          ZoomLine := ZoomLine xor $FF;
+        if Rows > 32 then
         begin
-          ZoomLine := (ZY + 1) * 2 - 1 - ZoomLine;
-          Invert := not Invert;
+          ZoomLine := ZoomLine mod ((ZY + 1) * 2);
+          if ZoomLine > ZY then
+          begin
+            ZoomLine := (ZY + 1) * 2 - 1 - ZoomLine;
+            Invert := not Invert;
+          end;
         end;
-      end;
-      var Encoded := FCart.ZoomROM[ZY * 256 + ZoomLine];
-      var Tile := Encoded shr 4;
-      var TY := Encoded and 15;
-      if Invert then
-      begin
-        Tile := Tile xor 31;
-        TY := TY xor 15;
-      end;
-      var Offset := Sprite * 64 + Tile * 2;
-      var Attr := VRAM[Offset + 1];
-      var Code := Integer(VRAM[Offset]) or ((Attr and $F0) shl 12);
-      if not FAnimationDisabled then
-      begin
-        if (Attr and 8) <> 0 then
-          Code := (Code and $FFFF8) or (FAnimation and 7)
-        else if (Attr and 4) <> 0 then
-          Code := (Code and $FFFFC) or (FAnimation and 3);
-      end;
-      if (Attr and 2) <> 0 then
-        TY := TY xor 15;
-      var Base := (Code and FSpriteMask) * 128 + TY * 4;
-      var LeftHalf := SpriteHalf(Base + 64);
-      var RightHalf := SpriteHalf(Base);
-      var DX := X;
-      for var SX := 0 to 15 do
-        if (ZoomX[ZX] and (1 shl (15 - SX))) <> 0 then
+        var Encoded := FCart.ZoomROM[ZY * 256 + ZoomLine];
+        var Tile := Encoded shr 4;
+        var TY := Encoded and 15;
+        if Invert then
         begin
-          var TX := SX;
-          if (Attr and 1) <> 0 then
-            TX := 15 - TX;
-          var PackedPixels := LeftHalf;
-          if TX >= 8 then PackedPixels := RightHalf;
-          var Pen := (PackedPixels shr ((TX and 7) * 4)) and 15;
-          var ScreenX := DX;
-          if X > $1F0 then
-            ScreenX := DX - $200;
-          if (Pen <> 0) and (ScreenX >= 0) and (ScreenX < NG_WIDTH) then
-            Pixels[Row + ScreenX] := Color((Attr shr 8) * 16 + Pen);
-          Inc(DX);
+          Tile := Tile xor 31;
+          TY := TY xor 15;
         end;
+        var Offset := Sprite * 64 + Tile * 2;
+        var Attr := VRAM[Offset + 1];
+        var Code := Integer(VRAM[Offset]) or ((Attr and $F0) shl 12);
+        if not FAnimationDisabled then
+        begin
+          if (Attr and 8) <> 0 then
+            Code := (Code and $FFFF8) or (FAnimation and 7)
+          else if (Attr and 4) <> 0 then
+            Code := (Code and $FFFFC) or (FAnimation and 3);
+        end;
+        if (Attr and 2) <> 0 then
+          TY := TY xor 15;
+        var Base := (Code and FSpriteMask) * 128 + TY * 4;
+        var LeftHalf := SpriteHalf(Base + 64);
+        var RightHalf := SpriteHalf(Base);
+        var DX := X;
+        for var SX := 0 to 15 do
+          if (ZoomX[ZX] and (1 shl (15 - SX))) <> 0 then
+          begin
+            var TX := SX;
+            if (Attr and 1) <> 0 then
+              TX := 15 - TX;
+            var PackedPixels := LeftHalf;
+            if TX >= 8 then
+              PackedPixels := RightHalf;
+            var Pen := (PackedPixels shr ((TX and 7) * 4)) and 15;
+            var ScreenX := DX;
+            if X > $1F0 then
+              ScreenX := DX - $200;
+            if (Pen <> 0) and (ScreenX >= 0) and (ScreenX < NG_WIDTH) then
+              Pixels[Row + ScreenX] := Color((Attr shr 8) * 16 + Pen);
+            Inc(DX);
+          end;
+      end;
+      if (Active = 96) and not Permissive then
+        Break;
     end;
-    if (Active = 96) and not Permissive then
-      Break;
-  end;
 
   for var i := Active to 96 do
     VRAM[List + i] := 0;

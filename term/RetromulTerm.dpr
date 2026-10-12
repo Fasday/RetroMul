@@ -10,7 +10,7 @@ uses
   Winapi.Windows,
   FMX.Graphics,
   Core.Emulation,
-  Core.EmulatorFactory,
+  Core.EmulatorFactory, Core.Adapter.SG1000,
   Core.Storage,
   Core.RomFormat,
   Core.RomHashes in '..\source\cores\Core.RomHashes.pas',
@@ -120,16 +120,32 @@ begin
         raise;
       end;
 
-      FEmulation.SetKeyState(VK_LEFT, TRetromulTerminal.IsKeyDown(VK_LEFT));
-      FEmulation.SetKeyState(VK_RIGHT, TRetromulTerminal.IsKeyDown(VK_RIGHT));
-      FEmulation.SetKeyState(VK_UP, TRetromulTerminal.IsKeyDown(VK_UP));
-      FEmulation.SetKeyState(VK_DOWN, TRetromulTerminal.IsKeyDown(VK_DOWN));
-      FEmulation.SetKeyState(vkZ, TRetromulTerminal.IsKeyDown(vkZ));
-      FEmulation.SetKeyState(vkX, TRetromulTerminal.IsKeyDown(vkX));
-      FEmulation.SetKeyState(VK_RETURN, TRetromulTerminal.IsKeyDown(VK_RETURN));
-      FEmulation.SetKeyState(VK_SPACE, TRetromulTerminal.IsKeyDown(VK_SPACE));
+      var Keyboard: ISGKeyboardCore;
+      var SCKeyboard := Supports(FEmulation, ISGKeyboardCore, Keyboard) and Keyboard.HasKeyboard;
+      if SCKeyboard then
+      begin
+        for var Code := 1 to 255 do
+        begin
+          var Down := TRetromulTerminal.IsKeyDown(Code);
+          if Down <> FKeysDown[Code] then FEmulation.SetKeyState(Code, Down);
+          FKeysDown[Code] := Down;
+        end;
+      end
+      else
+      begin
+        FEmulation.SetKeyState(VK_LEFT, TRetromulTerminal.IsKeyDown(VK_LEFT));
+        FEmulation.SetKeyState(VK_RIGHT, TRetromulTerminal.IsKeyDown(VK_RIGHT));
+        FEmulation.SetKeyState(VK_UP, TRetromulTerminal.IsKeyDown(VK_UP));
+        FEmulation.SetKeyState(VK_DOWN, TRetromulTerminal.IsKeyDown(VK_DOWN));
+        FEmulation.SetKeyState(vkZ, TRetromulTerminal.IsKeyDown(vkZ));
+        FEmulation.SetKeyState(vkX, TRetromulTerminal.IsKeyDown(vkX));
+        FEmulation.SetKeyState(VK_RETURN, TRetromulTerminal.IsKeyDown(VK_RETURN));
+        FEmulation.SetKeyState(VK_SPACE, TRetromulTerminal.IsKeyDown(VK_SPACE));
+      end;
 
-      if TRetromulTerminal.IsKeyDown(VK_ESCAPE) then
+      // Escape is the SC-3000 BREAK key; F12 exits that keyboard session.
+      if ((not SCKeyboard) and TRetromulTerminal.IsKeyDown(VK_ESCAPE)) or
+        (SCKeyboard and TRetromulTerminal.IsKeyDown(VK_F12)) then
         Running := False;
 
       Sleep(16);

@@ -43,7 +43,7 @@ implementation
 uses
   System.Classes, System.UITypes, System.Math, RM.Input, System.IOUtils,
   FMX.Forms, FMX.Objects, FMX.Graphics, FMX.OpenDialog, Core.Storage,
-  Core.EmulatorFactory, Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
+  Core.EmulatorFactory, Core.Adapter.SG1000, Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
   Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
   Core.InputConfig, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
   RM.Dialogs, RM.Styles, RM.Icons;
@@ -67,6 +67,8 @@ begin
     FState.Input.MiraclePiano.AttachToForm(FView)
   else if FState.Mobile.PowerPadTouchAttached then
     FState.Input.PowerPad.AttachToForm(FView)
+  else if FState.Mobile.SGKeyboardTouchAttached then
+    FState.Input.SGKeyboard.AttachToForm(FView)
   else if FState.Mobile.SuborKeyboardTouchAttached then
     FState.Input.SuborKeyboard.AttachToForm(FView)
   else if FState.Mobile.FamicomKeyboardTouchAttached then
@@ -103,6 +105,7 @@ begin
     FState.Input.Gamepad.ReleaseAll;
   if FState.Input.SuborKeyboard <> nil then
     FState.Input.SuborKeyboard.ReleaseAll;
+  if FState.Input.SGKeyboard <> nil then FState.Input.SGKeyboard.ReleaseAll;
   if FState.Input.FamicomKeyboard <> nil then
     FState.Input.FamicomKeyboard.ReleaseAll;
   if FState.Input.MiraclePiano <> nil then
@@ -212,6 +215,14 @@ begin
     if FState.Input.DataRecorder.Visible then
       FState.Input.DataRecorder.Progress := Tape.GetTapeProgress;
   end;
+  var SGKeyboard: ISGKeyboardCore;
+  var SGKeyboardActive := Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard;
+  if FState.Input.SGKeyboard <> nil then
+  begin
+    FState.Input.SGKeyboard.Visible := SGKeyboardActive;
+    FState.Input.SGKeyboard.Enabled := SGKeyboardActive and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom
+      and not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and (FState.Help.View = nil) and not RetroDialogVisible(FView);
+  end;
   var SuborKeyboardActive := (FState.Session.Emulation <> nil) and FState.Session.Emulation.UsesSuborKeyboard;
   var Peripheral: INesPeripheralCore;
   var FamicomKeyboardActive := Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) and Peripheral.UsesFamicomKeyboard;
@@ -223,7 +234,7 @@ begin
     FState.Input.MiraclePiano.Enabled := PianoActive and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
   end;
   {$IF Defined(ANDROID) or Defined(IOS)}
-  var KeyboardActive := SuborKeyboardActive or FamicomKeyboardActive or PianoActive;
+  var KeyboardActive := SGKeyboardActive or SuborKeyboardActive or FamicomKeyboardActive or PianoActive;
   var PowerPadActive := Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral);
   if PowerPadActive then
     PowerPadActive := Peripheral.UsesPowerPad and not KeyboardActive;
@@ -253,7 +264,8 @@ begin
   {$IFDEF ANDROID}
   // The Android view accepts one native touch listener.
   // The controls are mutually exclusive, so hand it to the currently visible control.
-  if (FState.Mobile.SuborKeyboardTouchAttached <> SuborKeyboardActive) or
+  if (FState.Mobile.SGKeyboardTouchAttached <> SGKeyboardActive) or
+    (FState.Mobile.SuborKeyboardTouchAttached <> SuborKeyboardActive) or
     (FState.Mobile.FamicomKeyboardTouchAttached <> FamicomKeyboardActive) or
     (FState.Mobile.PowerPadTouchAttached <> PowerPadActive) or
     (FState.Mobile.MiraclePianoTouchAttached <> PianoActive) then
@@ -262,6 +274,8 @@ begin
       FState.Input.MiraclePiano.AttachToForm(nil)
     else if FState.Mobile.PowerPadTouchAttached then
       FState.Input.PowerPad.AttachToForm(nil)
+    else if FState.Mobile.SGKeyboardTouchAttached then
+      FState.Input.SGKeyboard.AttachToForm(nil)
     else if FState.Mobile.SuborKeyboardTouchAttached then
       FState.Input.SuborKeyboard.AttachToForm(nil)
     else if FState.Mobile.FamicomKeyboardTouchAttached then
@@ -272,12 +286,15 @@ begin
       FState.Input.MiraclePiano.AttachToForm(FView)
     else if PowerPadActive then
       FState.Input.PowerPad.AttachToForm(FView)
+    else if SGKeyboardActive then
+      FState.Input.SGKeyboard.AttachToForm(FView)
     else if SuborKeyboardActive then
       FState.Input.SuborKeyboard.AttachToForm(FView)
     else if FamicomKeyboardActive then
       FState.Input.FamicomKeyboard.AttachToForm(FView)
     else
       FState.Input.Gamepad.AttachToForm(FView);
+    FState.Mobile.SGKeyboardTouchAttached := SGKeyboardActive;
     FState.Mobile.SuborKeyboardTouchAttached := SuborKeyboardActive;
     FState.Mobile.FamicomKeyboardTouchAttached := FamicomKeyboardActive;
     FState.Mobile.PowerPadTouchAttached := PowerPadActive;
@@ -290,6 +307,8 @@ begin
     (FState.Settings.View <> nil) or (FState.Help.View <> nil) or RetroDialogVisible(FView);
   if FState.Input.PowerPad <> nil then
     FState.Input.PowerPad.Enabled := FState.Input.PowerPad.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
+  if FState.Input.SGKeyboard <> nil then
+    FState.Input.SGKeyboard.Enabled := FState.Input.SGKeyboard.Enabled and not FState.Mobile.InBackground;
   if FState.Input.Gamepad <> nil then
     FState.Input.Gamepad.Enabled := FState.Input.Gamepad.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
   if FState.Input.SuborKeyboard <> nil then
@@ -586,6 +605,7 @@ begin
     FState.Input.Gamepad.ReleaseAll;
   if FState.Input.SuborKeyboard <> nil then
     FState.Input.SuborKeyboard.ReleaseAll;
+  if FState.Input.SGKeyboard <> nil then FState.Input.SGKeyboard.ReleaseAll;
   if FState.Input.FamicomKeyboard <> nil then
     FState.Input.FamicomKeyboard.ReleaseAll;
   if FState.Input.MiraclePiano <> nil then
@@ -600,7 +620,9 @@ begin
   FState.Session.Emulation := NewEmulation;
 
   var InputSystem := ROM_SYSTEM_NES;
-  if FState.Session.Emulation.Config is TMDConfig then
+  if FState.Session.Emulation.Config is TSGConfig then
+    InputSystem := TSGConfig(FState.Session.Emulation.Config).SystemId
+  else if FState.Session.Emulation.Config is TMDConfig then
     InputSystem := ROM_SYSTEM_MD
   else if FState.Session.Emulation.Config is TNeoGeoConfig then
     InputSystem := ROM_SYSTEM_NEOGEO

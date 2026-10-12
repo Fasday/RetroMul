@@ -26,7 +26,7 @@ implementation
 uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.StdCtrls, RM.Toolbar, RM.Gamepad,
-  NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad,
+  SG1000.Keyboard, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad,
   NES.DataRecorder, RM.Styles, RM.Icons
   {$IFDEF MSWINDOWS}
     , Winapi.Windows, Winapi.MultiMon, FMX.Platform.Win, FMX.Helpers.Win
@@ -160,6 +160,10 @@ begin
       FView.ClientWidth - FView.Padding.Left - FView.Padding.Right,
       FView.ClientHeight - FView.Padding.Top - FView.Padding.Bottom - FView.LayoutHead.Height);
   end;
+  if FState.Input.SGKeyboard <> nil then
+    FState.Input.SGKeyboard.Height := TSGKeyboard.PreferredHeight(
+      FView.ClientWidth - FView.Padding.Left - FView.Padding.Right,
+      FView.ClientHeight - FView.Padding.Top - FView.Padding.Bottom - FView.LayoutHead.Height);
   if FState.Input.SuborKeyboard <> nil then
   begin
     FState.Input.SuborKeyboard.Height := TNesSuborKeyboard.PreferredHeight(
@@ -180,6 +184,7 @@ begin
     FState.Input.PowerPad.Margins.Bottom := FState.Input.BottomInset;
   if FState.Input.SuborKeyboard <> nil then
     FState.Input.SuborKeyboard.Margins.Bottom := FState.Input.BottomInset;
+  if FState.Input.SGKeyboard <> nil then FState.Input.SGKeyboard.Margins.Bottom := FState.Input.BottomInset;
   if FState.Input.FamicomKeyboard <> nil then
     FState.Input.FamicomKeyboard.Margins.Bottom := FState.Input.BottomInset;
   if FState.Input.MiraclePiano <> nil then

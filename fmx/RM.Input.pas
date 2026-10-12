@@ -146,6 +146,7 @@ begin
       TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start];
   if (SystemId = ROM_SYSTEM_NES) and (Device = 'paddendy') then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
+  if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) then Exit;
   if SystemId = ROM_SYSTEM_N64 then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
   if SystemId = ROM_SYSTEM_MD then
@@ -342,6 +343,23 @@ begin
     CopyNES(2, C.GetKeys3);
     CopyNES(3, C.GetKeys4);
   end
+  else if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) then
+  begin
+    Keys[0,TEmulatorButton.Up] := vkUp;
+    Keys[0,TEmulatorButton.Down] := vkDown;
+    Keys[0,TEmulatorButton.Left] := vkLeft;
+    Keys[0,TEmulatorButton.Right] := vkRight;
+    Keys[0,TEmulatorButton.A] := vkZ;
+    Keys[0,TEmulatorButton.B] := vkX;
+    Keys[0,TEmulatorButton.Start] := vkReturn;
+    Keys[1,TEmulatorButton.Up] := vkNumpad8;
+    Keys[1,TEmulatorButton.Down] := vkNumpad5;
+    Keys[1,TEmulatorButton.Left] := vkNumpad4;
+    Keys[1,TEmulatorButton.Right] := vkNumpad6;
+    Keys[1,TEmulatorButton.A] := vkNumpad1;
+    Keys[1,TEmulatorButton.B] := vkNumpad2;
+    Keys[1,TEmulatorButton.Start] := vkNumpad0;
+  end
   else if SystemId = ROM_SYSTEM_MD then
   begin
     var C := TMDConfig.Create('');
@@ -415,10 +433,10 @@ begin
     Count := 1;
   for var Port := 0 to Count - 1 do
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
-      if B in CoreButtons(SystemId, 'auto') then
+      if (SystemId <> ROM_SYSTEM_SC3000) and (B in CoreButtons(SystemId, 'auto')) then
       begin
         var Section := 'Controls';
-        if (SystemId = ROM_SYSTEM_N64) or (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_GBA) then
+        if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_N64) or (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_GBA) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);

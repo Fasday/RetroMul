@@ -14,7 +14,7 @@ function CreateEmulationCore(Stream: TStream; const Storage: IStorage; const Rom
 implementation
 
 uses
-  Core.RomFormat, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
+  Core.RomFormat, Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES, Core.Adapter.NeoGeo, NeoGeo.Cartridge;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
@@ -40,16 +40,34 @@ begin
     Exit(TNeoGeoCoreAdapter.Create(Stream, Storage, RomName, True));
   var Data := ReadNeoGeoData(Stream);
   var Format := DetectRom(Data);
+  // These cartridges have no mandatory signature. A supplied extension is the
+  // explicit platform hint; arbitrary unrecognized .bin files stay rejected.
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SG) or
+    ((Format.System = TRomSystem.Unknown) and (Length(Data) <= $C000) and
+      SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SMS) and
+      (SourceName.Contains('(SG-1000)') or
+        SameText(ExtractFileName(ExcludeTrailingPathDelimiter(ExtractFilePath(SourceName))), ROM_SYSTEM_SG1000))) then
+  begin
+    Format.System := TRomSystem.SG1000;
+    Format.Encoding := TRomEncoding.Native;
+  end
+  else if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SC) then
+  begin
+    Format.System := TRomSystem.SC3000;
+    Format.Encoding := TRomEncoding.Native;
+  end;
   if (Format.System=TRomSystem.Unknown) and SameText(ExtractFileExt(RomName),ROM_EXTENSION_GBA) then Format.System:=TRomSystem.GBA;
   if (Format.System <> TRomSystem.NeoGeo) and (Length(Data) > ROM_MAX_SIZE) then
     raise EReadError.Create('ROM exceeds 64 MiB');
   if Format.System = TRomSystem.Unknown then
-    raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64 or Neo Geo expected)');
+    raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64 or Neo Geo expected; use .sg/.sc for SG-1000/SC-3000)');
 
   Data := NormalizeRom(Data, Format);
   var Input := TBytesStream.Create(Data);
   try
     case Format.System of
+      TRomSystem.SG1000, TRomSystem.SC3000:
+        Result := TSGCoreAdapter.Create(Input, Storage, RomName, Format.System = TRomSystem.SC3000);
       TRomSystem.N64:
         Result := TN64CoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NeoGeo:

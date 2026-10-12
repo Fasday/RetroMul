@@ -2257,9 +2257,10 @@ begin
         FReg[T] := (Op and $FFFF) shl 16;
       16:
         begin
-          var IOAddress := $04040000 + D * 4;
-          if D >= 8 then
-            IOAddress := $04100000 + (D - 8) * 4;
+          var IOIndex := D and 15;
+          var IOAddress := $04040000 + IOIndex * 4;
+          if IOIndex >= 8 then
+            IOAddress := $04100000 + (IOIndex - 8) * 4;
           if S = 0 then
           begin
             FReg[T] := FBus.Read32(IOAddress);

@@ -61,8 +61,12 @@ begin
       var Files := Storage.Files(Folder);
       var Found := False;
       for var Candidate in Files do
-        if {$IFDEF ANDROID}TAndroidStorage.SameDocument(Candidate, Location){$ELSE}Candidate = Location{$ENDIF} then
-          Found := True;
+        {$IFDEF ANDROID}
+        if TAndroidStorage.SameDocument(Candidate, Location) then
+        {$ELSE}
+          if Candidate = Location then
+        {$ENDIF}
+            Found := True;
       if not Found then
         Continue;
 
@@ -263,6 +267,7 @@ begin
       FTracks[Current].SourceName := FileName;
       FTracks[Current].Stream := Storage.OpenRead(CDSibling(Storage, Location, FileName));
       FTracks[Current].ByteSize := FTracks[Current].Stream.Size;
+
       // CUE BINARY audio, like PCM WAV, stores little-endian samples.
       FTracks[Current].LittleEndian := True;
       if FTracks[Current].ByteSize > Int64(800) * 1024 * 1024 then
@@ -363,6 +368,7 @@ begin
       var N := Input.Read(Buffer, SizeOf(Buffer));
       if N = 0 then
         Break;
+
       Hash.Update(Buffer, N);
     until False;
 
@@ -468,15 +474,17 @@ begin
     Hash.Update(TEncoding.UTF8.GetBytes(Format('%d/%d/%d/%d/%d/%d/%d/%d',
           [Item.Number, Item.StartLBA, Item.EndLBA, Item.PregapLBA, Item.FileSector,
             Item.SectorSize, Ord(Item.Audio), Ord(Item.LittleEndian)])));
+
     // CHD's compressed hash already covers pregap content. CUE identities must
     // include the newly playable INDEX 00 bytes as well as INDEX 01.
     if (Item.StoredPregap > 0) and (Length(FCompressedHash) = 0) then
       Hash.Update(TEncoding.UTF8.GetBytes(Format('/pregap/%d/%d',
-        [Item.StoredPregap, Ord(Item.PregapAudio)])));
+            [Item.StoredPregap, Ord(Item.PregapAudio)])));
     var FirstSector := Item.FileSector - Item.StoredPregap;
     var Remaining := Int64(Item.EndLBA - Item.StartLBA + Item.StoredPregap) * Item.SectorSize;
     if (FirstSector < 0) or (Remaining > Item.ByteSize - Int64(FirstSector) * Item.SectorSize) then
       raise EReadError.Create('Truncated CUE track');
+
     Item.Stream.Position := Item.ByteOffset + Int64(FirstSector) * Item.SectorSize;
 
     if Length(FCompressedHash) > 0 then
@@ -549,9 +557,9 @@ begin
 
   var Item := FTracks[i];
   // PREGAP/POSTGAP silence precedes any stored INDEX 00 audio.
-  if (LBA < Item.StartLBA) and (not Item.PregapAudio or
-    (LBA < Item.StartLBA - Item.StoredPregap)) then
+  if (LBA < Item.StartLBA) and (not Item.PregapAudio or (LBA < Item.StartLBA - Item.StoredPregap)) then
     Exit;
+
   Item.Stream.Position := Item.ByteOffset + Int64(Item.FileSector + LBA - Item.StartLBA) * Item.SectorSize;
   Item.Stream.ReadBuffer(Sector[0], 2352);
   if not Item.LittleEndian then

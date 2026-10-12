@@ -1668,12 +1668,14 @@ begin
   Result := NeoGeoSet(Name);
   if Result = '' then
     Exit;
+
   var Best := -1;
   for var Item in Sets do
   begin
     var Parts := Item.Split(['|']);
     if not SameText(Parts[0], Name) then
       Continue;
+
     var Score := 0;
     for var Row in Parts[9].Split([';']) do
     begin
@@ -1687,9 +1689,11 @@ begin
       Result := Item;
     end;
   end;
+
   var Selected := Result.Split(['|']);
   if Selected[2] <> '1' then
     Exit;
+
   var Wiring := '';
   const Regions = 'PSMABC';
   for var R := 1 to Length(Regions) do
@@ -1701,6 +1705,7 @@ begin
       var Parts := Item.Split(['|']);
       if not SameText(Parts[0], Name) or (Parts[2] <> '1') then
         Continue;
+
       var Found := False;
       var Complete := True;
       for var Row in Parts[9].Split([';']) do
@@ -1708,6 +1713,7 @@ begin
         var Fields := Row.Split([',']);
         if (Length(Fields) <> 7) or (Fields[0] <> Region) then
           Continue;
+
         Found := True;
         if not ContainsCRC(Fields[6]) then
           Complete := False;
@@ -1728,6 +1734,7 @@ begin
       var Fields := Row.Split([',']);
       if (Length(Fields) <> 7) or (Fields[0] <> Region) then
         Continue;
+
       if Wiring <> '' then
         Wiring := Wiring + ';';
       Wiring := Wiring + Row;
@@ -1746,6 +1753,7 @@ begin
     var Parts := Item.Split(['|']);
     if Parts[2] <> '1' then
       Continue;
+
     var Score := 0;
     var HasProgram := False;
     for var Row in Parts[9].Split([';']) do
@@ -1753,6 +1761,7 @@ begin
       var Fields := Row.Split([',']);
       if Length(Fields) < 7 then
         Continue;
+
       for var FileName in Files do
         if SameText(ExtractFileName(FileName), Fields[1]) then
         begin

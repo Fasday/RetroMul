@@ -26,21 +26,29 @@ const
   SETTINGS_PAGE_NEOGEO = 6;
   SETTINGS_PAGE_GBA = 7;
   SETTINGS_PAGE_N64 = 8;
+  SETTINGS_PAGE_SG1000 = 9;
+  SETTINGS_PAGE_SC3000 = 10;
 
 const
   AUTOSAVE_DEFAULT_MINUTES = 10;
   AUTOSAVE_MAX_MINUTES = 1440;
 
 const
-  SettingsCategoryNames: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of string = ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
-  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_N64] of string = (
-    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_N64);
-  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_N64] of string = ('Main', 'Game Boy', 'Game Boy Color',
-    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo (CD)', 'Game Boy Advance', 'Nintendo 64');
+  SettingsCategoryNames: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of string =
+    ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
+
+const
+  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_SC3000] of string = (
+    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES,
+    ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_N64, ROM_SYSTEM_SG1000, ROM_SYSTEM_SC3000);
+  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_SC3000] of string = ('Main', 'Game Boy', 'Game Boy Color',
+    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo (CD)', 'Game Boy Advance', 'Nintendo 64', 'SG-1000', 'SC-3000');
+
+const
   // Presentation order is independent of the page IDs used by drafts and core selection.
-  SettingsCoreOrder: array[0..7] of Integer = (
+  SettingsCoreOrder: array[0..9] of Integer = (
     SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC, SETTINGS_PAGE_GBA, SETTINGS_PAGE_NES,
-    SETTINGS_PAGE_MD, SETTINGS_PAGE_SNES, SETTINGS_PAGE_NEOGEO, SETTINGS_PAGE_N64);
+    SETTINGS_PAGE_MD, SETTINGS_PAGE_SNES, SETTINGS_PAGE_NEOGEO, SETTINGS_PAGE_N64, SETTINGS_PAGE_SG1000, SETTINGS_PAGE_SC3000);
 
 type
   TDeviceCallouts = class;
@@ -115,7 +123,7 @@ type
     FPickingTranslation: Boolean;
     FInput: TInputManager; // Draft assignments owned by this view.
     FHostInput: TInputManager; // Shared device snapshots; owned by the form.
-    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_N64] of TMemIniFile;
+    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_SC3000] of TMemIniFile;
     FFields: TObjectList<TSettingsField>;
     FDevices: TObjectList<TSettingsDevice>;
     FDeviceIds: array[0..7] of string;
@@ -124,7 +132,7 @@ type
     FSearch: TEdit;
     FPagePicker: TComboBox;
     FCategory, FCorePage, FPlayer: Integer;
-    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_N64] of TButton;
+    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_SC3000] of TButton;
     FCategoryIcons: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of TControl;
     FPage: Integer;
     FGroup: TPanel;
@@ -1119,8 +1127,16 @@ begin
           CPUPercent.Min := 100;
           CPUPercent.Value := EnsureRange(CPUPercent.Value, 100, 400);
         end;
+        if FPage in [SETTINGS_PAGE_SG1000, SETTINGS_PAGE_SC3000] then
+        begin
+          Combo('RowNESregion', 'Video', 'Region', ['NTSC', 'PAL'], ['NTSC', 'PAL'], 'NTSC');
+          (FindComponent('LabelRowNESregionTitle') as TLabel).Text := 'NTSC / PAL';
+        end;
         if FPage = SETTINGS_PAGE_NES then
-          Combo('RowNESregion', 'Video', 'Region', [], ['Auto', 'NTSC', 'PAL'], 'Auto');
+        begin
+          Combo('RowNESregion', 'Video', 'Region', [Translate('Automatic'), 'NTSC', 'PAL'], ['Auto', 'NTSC', 'PAL'], 'Auto');
+          (FindComponent('LabelRowNESregionTitle') as TLabel).Text := Translate('NES region');
+        end;
         if FPage = SETTINGS_PAGE_SNES then
           Check('RowCropoverscan', 'Video', 'CropOverscan', False);
         if FPage in [SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC] then
@@ -1181,7 +1197,8 @@ begin
       begin
         Heading('GroupController');
         var Count := 2;
-        if FPage = SETTINGS_PAGE_N64 then Count := 4;
+        if FPage = SETTINGS_PAGE_N64 then
+          Count := 4;
         if (FPage <= SETTINGS_PAGE_GBC) or (FPage = SETTINGS_PAGE_GBA) then
           Count := 1;
         if (FPage = SETTINGS_PAGE_NES) and FDrafts[FPage].ReadBool('Input', 'FourScore', False) then
@@ -1431,6 +1448,13 @@ begin
   FArranging := True;
   try
     PanelSidebar.Visible := Width >= 900;
+    // Sidebar visibility changes can occur while FMX is aligning the frame.
+    // Derive the body bounds from the current frame so tab wrapping uses them.
+    var BodyLeft: Single := 0;
+    if PanelSidebar.Visible then
+      BodyLeft := PanelSidebar.Width;
+    LayoutBody.Align := TAlignLayout.None;
+    LayoutBody.SetBounds(BodyLeft, 0, Max(0, Width - BodyLeft), Height);
     ListBoxNavigation.Visible := PanelSidebar.Visible;
     FPagePicker.Visible := not PanelSidebar.Visible;
     LabelTitle.Text := Translate(SettingsCategoryNames[FCategory]);
@@ -1442,14 +1466,26 @@ begin
         TPath(FCategoryIcons[i]).Stroke.Color := $FFFFB344
       else
         TPath(FCategoryIcons[i]).Stroke.Color := $FFB9C2CC;
-    LayoutHeader.Height := 60 + IfThen(LayoutCoreTabs.Visible, 48, 0) + IfThen(FPagePicker.Visible, 44, 0);
+    // Keep every platform selectable on compact/mobile windows.
+    var CoreColumns := EnsureRange(Trunc((LayoutHeader.Width + 7) / 75), 1, Length(SettingsCoreOrder));
+    var CoreRows := (Length(SettingsCoreOrder) + CoreColumns - 1) div CoreColumns;
+    CoreColumns := (Length(SettingsCoreOrder) + CoreRows - 1) div CoreRows;
+    var CoreHeight := CoreRows * 43 + 5;
+    LayoutHeader.Height := 60 + IfThen(LayoutCoreTabs.Visible, CoreHeight, 0) + IfThen(FPagePicker.Visible, 44, 0);
+    // Parent alignment can still use the previous header height during Resize.
+    // Place the scroll area below every row of tabs explicitly.
+    VertScrollBoxScroll.Align := TAlignLayout.None;
+    var ContentTop := LayoutHeader.Position.Y + LayoutHeader.Height;
+    var ContentBottom := LayoutBody.Height - LayoutBody.Padding.Bottom - LayoutFooter.Height;
+    VertScrollBoxScroll.SetBounds(LayoutHeader.Position.X, ContentTop, LayoutHeader.Width,
+      Max(0, ContentBottom - ContentTop));
     FPagePicker.Align := TAlignLayout.None;
     FPagePicker.SetBounds(0, 48, LayoutHeader.Width, 32);
     LayoutCoreTabs.Align := TAlignLayout.None;
-    LayoutCoreTabs.SetBounds(0, LayoutHeader.Height - 48, LayoutHeader.Width, 40);
+    LayoutCoreTabs.SetBounds(0, LayoutHeader.Height - CoreHeight, LayoutHeader.Width, CoreHeight - 5);
     FSearch.Visible := LayoutHeader.Width >= 740;
     FSearch.SetBounds(Max(0, LayoutHeader.Width - 260), 0, 260, 32);
-    var X: Single := 0;
+    var CoreIndex := 0;
     for var i in SettingsCoreOrder do
     begin
       FCoreButtons[i].Text := SettingsPageNames[i];
@@ -1474,10 +1510,10 @@ begin
           SETTINGS_PAGE_NEOGEO:
             FCoreButtons[i].Text := 'NG';
         end;
-      var W := Max(32, Min(104, (LayoutCoreTabs.Width -
-          (Length(SettingsCoreIds) - 1) * 7) / Length(SettingsCoreIds)));
-      FCoreButtons[i].SetBounds(X, 0, W, 36);
-      X := X + W + 7;
+      var W := Max(0, Min(104, (LayoutCoreTabs.Width - (CoreColumns - 1) * 7) / CoreColumns));
+      FCoreButtons[i].SetBounds((CoreIndex mod CoreColumns) * (W + 7),
+          (CoreIndex div CoreColumns) * 43, W, 36);
+      Inc(CoreIndex);
       if i = FCorePage then
         FCoreButtons[i].StyleLookup := 'buttonstyle_accent'
       else

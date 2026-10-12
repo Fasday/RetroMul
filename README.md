@@ -1,8 +1,8 @@
-# RetroMul
+﻿# RetroMul
 
 ![RetroMul](https://github.com/HemulGM/RetroMul/blob/main/screen/screen0.png?raw=true)
 
-RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, Super Nintendo, Neo Geo MVS, and Neo Geo CD. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
+RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, SEGA SG-1000, SEGA SC-3000, Super Nintendo, Neo Geo MVS, and Neo Geo CD. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
 
 ## Supported systems and ROM formats
 
@@ -14,11 +14,13 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Game Boy Advance (experimental) | `.gba` |
 | Nintendo 64 (experimental) | `.z64`, `.n64`, `.v64` |
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
+| SEGA SG-1000 | `.sg` (legacy `.sms` images in `sg1000/`) |
+| SEGA SC-3000 | `.sc` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
 | Neo Geo CD / CDZ (experimental) | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
 
-Cartridge ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers. For Neo Geo CD, open the disc's `.cue`, `.iso`, or `.chd` file.
+Cartridge ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers. For Neo Geo CD, open the disc's `.cue`, `.iso`, or `.chd` file. SG-1000 and SC-3000 cartridges have no mandatory header and are selected by `.sg` and `.sc`; unknown raw `.bin` files are not guessed as these systems.
 
 Neo Geo runs in MVS arcade mode with embedded system firmware. Split ROM sets need their parent ZIPs in the same directory. The loader recognizes catalogued original, decrypted, bootleg, and PCB variants; a ZIP extension alone does not guarantee a supported set. See the [Neo Geo core notes](source/cores/neogeo/README.txt) for hardware coverage, controls, and limitations.
 
@@ -49,6 +51,8 @@ Compatibility depends on the game's cartridge hardware, protection, and peripher
 
 Nintendo 64 uses a native Delphi VR4300/RSP interpreter and software RDP with no external emulator, plugin or PIF BIOS. Cartridge settings select EEPROM 4/16 Kbit, SRAM or FlashRAM. It is experimental: advanced rendering, exact timing and full FPU/RSP conformance remain incomplete. Passing CPU/RSP tests does not establish commercial gameplay compatibility. Implementation and test details: `codex-work/n64/REPORT.md`.
 
+SG-1000 and SC-3000 use a Delphi Z80 interpreter, TMS9918A video, and a clocked TI SN76489A. They support NTSC/PAL timing, two controllers, snapshots, and known cartridge RAM layouts including BASIC II/III and Music Editor. SC-3000 accepts physical keyboard input and provides an on-screen keyboard; its Shift, Ctrl, Graph and Kana modifiers latch when tapped. The library also finds `.sc` files inside an existing `sg1000/` folder. BASIC startup RAM checks can take several seconds. RetromulTerm uses F12 to exit SC-3000 sessions so Escape remains available as BREAK. SF-7000 disks, cassette playback/recording, the printer and Terebi Oekaki tablet are not implemented. Verification and compatibility limits: `codex-work/sg1000/REPORT.md`.
+
 ## Getting started
 
 Open a ROM directly, or select the library root folder in Settings. The library uses these system subdirectories:
@@ -61,6 +65,8 @@ ROMS/
   gba/
   n64/
   megadrive/
+  sg1000/
+  sc3000/
   snes/
   neogeo/
   neogeocd/

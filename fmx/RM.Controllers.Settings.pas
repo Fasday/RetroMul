@@ -23,7 +23,7 @@ implementation
 
 uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
-  Core.Emulation, Core.Adapter.GB, Core.Adapter.NES, Core.SavePaths,
+  Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES, Core.SavePaths,
   Core.RomFormat, RM.Settings, RM.ControlsHelp, RM.Styles;
 
 procedure TSettingsController.Load;
@@ -136,6 +136,7 @@ begin
   FState.Input.Gamepad.AttachToForm(nil);
   FState.Input.PowerPad.AttachToForm(nil);
   FState.Input.SuborKeyboard.AttachToForm(nil);
+  FState.Input.SGKeyboard.AttachToForm(nil);
   FState.Input.FamicomKeyboard.AttachToForm(nil);
   FState.Input.MiraclePiano.AttachToForm(nil);
   {$ENDIF}
@@ -243,7 +244,8 @@ begin
   end;
   var Peripheral: INesPeripheralCore;
   var Piano: INesMiraclePianoCore;
-  var KeyboardPeripheral := FState.Session.Emulation.UsesSuborKeyboard or
+  var SGKeyboard: ISGKeyboardCore;
+  var KeyboardPeripheral := (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard) or FState.Session.Emulation.UsesSuborKeyboard or
     (Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) and Peripheral.UsesFamicomKeyboard) or
     (Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano);
   try

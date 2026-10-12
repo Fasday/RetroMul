@@ -575,16 +575,21 @@ begin
 
   var FolderName := RomSystemFolder(RomSystem);
   var Extensions := RomExtensions(RomSystem);
+  var FolderNames: TArray<string> := [FolderName];
+  // Legacy collections keep .sc cartridges beside .sg games; enumerate both
+  // locations without moving user files or reading ROM contents.
+  if RomSystem = TRomSystem.SC3000 then FolderNames := [FolderName, ROM_SYSTEM_SG1000];
   var Candidates: TArray<TStorageFile>;
   {$IFDEF ANDROID}
   if FRomFolder.StartsWith('content://') then
   begin
     // Query only root directories, then the selected system's direct children.
     for var Folder in TAndroidStorage.Enumerate(FRomFolder, False, True) do
-      if SameText(Folder.Name, FolderName) then
+      if MatchText(Folder.Name, FolderNames) then
       begin
-        Candidates := TAndroidStorage.Enumerate(Folder.Location, False);
-        Break;
+        var Items := TAndroidStorage.Enumerate(Folder.Location, False);
+        for var I := 0 to High(Items) do Items[I].RelativePath := Folder.Name + '/' + Items[I].Name;
+        Candidates := Candidates + Items;
       end;
   end
   else
@@ -592,7 +597,8 @@ begin
   begin
     var List := TList<TStorageFile>.Create;
     try
-      for var Path in Files(TPath.Combine(FRomFolder, FolderName)) do
+      for var CandidateFolder in FolderNames do
+      for var Path in Files(TPath.Combine(FRomFolder, CandidateFolder)) do
       begin
         if not MatchText(ExtractFileExt(Path), Extensions) then
           Continue;
@@ -631,7 +637,7 @@ begin
         Continue;
 
       var Match := Item;
-      Match.RelativePath := FolderName + '/' + Item.Name;
+      if Match.RelativePath = '' then Match.RelativePath := FolderName + '/' + Item.Name;
       Matches.Add(Match);
     end;
     Result := Matches.ToArray;

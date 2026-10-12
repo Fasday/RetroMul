@@ -4,7 +4,8 @@ interface
 
 uses
   System.SysUtils, System.Classes, MD.M68k, MD.Z80, Core.Emulation,
-  Core.InputConfig, NeoGeo.Cartridge, NeoGeo.Video, NeoGeo.Sound, Core.Snapshots, NeoGeoCD.Controller;
+  Core.InputConfig, NeoGeo.Cartridge, NeoGeo.Video, NeoGeo.Sound, Core.Snapshots,
+  NeoGeoCD.Controller;
 
 type
   TNeoGeoProtection = (ngpOther,
@@ -227,7 +228,8 @@ begin
     FProtection := ngpSvcsplus
   else if FCart.Protection = 'vliner' then
     FProtection := ngpVliner;
-  if FCart.Disc <> nil then FCD := TNeoGeoCDController.Create(FCart.Disc, FCart.CDZ);
+  if FCart.Disc <> nil then
+    FCD := TNeoGeoCDController.Create(FCart.Disc, FCart.CDZ);
   FInitialFixed := Copy(FCart.FixedROM);
   Video := TNeoGeoVideo.Create(FCart);
   Sound := TNeoGeoSound.Create(FCart);
@@ -386,9 +388,12 @@ begin
   if FCD <> nil then
   begin
     Level := 0;
-    if FIRQ1 then Level := 1;
-    if FCD.InterruptVector >= 0 then Level := 2;
-    if FIRQ2 then Level := 3;
+    if FIRQ1 then
+      Level := 1;
+    if FCD.InterruptVector >= 0 then
+      Level := 2;
+    if FIRQ2 then
+      Level := 3;
   end;
   Clown68000Interrupt(FCPU, Level);
 end;
@@ -433,7 +438,9 @@ end;
 
 function TNeoGeoConsole.ReadZMemory(Address: Word): Byte;
 begin
-  if FCD <> nil then Exit(FCart.AudioROM[Address]);
+  if FCD <> nil then
+    Exit(FCart.AudioROM[Address]);
+
   if Address >= $F800 then
     Exit(FZRAM[Address and $7FF]);
 
@@ -472,6 +479,7 @@ begin
     FCart.AudioROM[Address] := Value;
     Exit;
   end;
+
   if Address >= $F800 then
     FZRAM[Address and $7FF] := Value;
 end;
@@ -670,8 +678,7 @@ begin
     GAD := GBD;
     GBD := Temp;
   end;
-  Result := Word(((GBD and 3) shl 6) or ((GBD and 12) shl 2) or
-    ((GAD and 3) shl 2) or ((GAD and 12) shr 2));
+  Result := Word(((GBD and 3) shl 6) or ((GBD and 12) shl 2) or ((GAD and 3) shl 2) or ((GAD and 12) shr 2));
 end;
 
 procedure TNeoGeoConsole.FuryWrite(Address: Cardinal; Value: Word);
@@ -688,7 +695,8 @@ end;
 
 function TNeoGeoConsole.HasBootRAM: Boolean;
 begin
-  Result := (FProtection = ngpKf2k3bl) or (FProtection = ngpKf2k3pl) or
+  Result :=
+    (FProtection = ngpKf2k3bl) or (FProtection = ngpKf2k3pl) or
     (FProtection = ngpKf2k3upl) or (FProtection = ngpKof10th);
 end;
 
@@ -833,9 +841,10 @@ end;
 
 function TNeoGeoConsole.HasPVC: Boolean;
 begin
-  Result := (FProtection = ngpMslug5) or (FProtection = ngpSvc) or
-    (FProtection = ngpKof2003) or (FProtection = ngpKof2003h) or (FProtection = ngpSvcboot) or
-    (FProtection = ngpSvcsplus);
+  Result :=
+    (FProtection = ngpMslug5) or (FProtection = ngpSvc) or
+    (FProtection = ngpKof2003) or (FProtection = ngpKof2003h) or
+    (FProtection = ngpSvcboot) or (FProtection = ngpSvcsplus);
 end;
 
 procedure TNeoGeoConsole.PVCWrite(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean);
@@ -846,6 +855,7 @@ begin
     Mask := Mask or $FF00;
   if LowByte then
     Mask := Mask or $FF;
+
   FPvcRAM[Index] := Word((FPvcRAM[Index] and (Mask xor $FFFF)) or (Value and Mask));
   if Index = $FF0 then
   begin
@@ -886,7 +896,8 @@ begin
     Exit(True);
   end;
 
-  var RandomPort := ((Kind = ngpKof99) and ((Address = $2FFFF8) or (Address = $2FFFFA))) or
+  var RandomPort :=
+    ((Kind = ngpKof99) and ((Address = $2FFFF8) or (Address = $2FFFFA))) or
     (((Kind = ngpGarou) or (Kind = ngpGarouh)) and ((Address = $2FFFCC) or (Address = $2FFFF0))) or
     ((Kind = ngpKof2000) and ((Address = $2FFFD8) or (Address = $2FFFDA)));
 
@@ -931,15 +942,21 @@ begin
   begin
     var Offset := Integer(Address and $FFFFF);
     case FCD.State.Area of
-      0: if (FCD.State.BusRequest and 1) <> 0 then
+      0:
+        if (FCD.State.BusRequest and 1) <> 0 then
         begin
           Offset := Offset + Integer(FCD.State.SprBank) * $100000;
           Value := Word(Integer(FCart.SpriteROM[Offset]) * 256 + FCart.SpriteROM[Offset + 1]);
         end;
-      1: if (FCD.State.BusRequest and 2) <> 0 then
-        Value := $FF00 or FCart.SamplesA[(Offset shr 1) + Integer(FCD.State.PCMBank) * $80000];
-      4: if (FCD.State.BusRequest and 4) <> 0 then Value := $FF00 or FCart.AudioROM[(Offset shr 1) and $FFFF];
-      5: if (FCD.State.BusRequest and 8) <> 0 then Value := $FF00 or FCart.FixedROM[(Offset shr 1) and $1FFFF];
+      1:
+        if (FCD.State.BusRequest and 2) <> 0 then
+          Value := $FF00 or FCart.SamplesA[(Offset shr 1) + Integer(FCD.State.PCMBank) * $80000];
+      4:
+        if (FCD.State.BusRequest and 4) <> 0 then
+          Value := $FF00 or FCart.AudioROM[(Offset shr 1) and $FFFF];
+      5:
+        if (FCD.State.BusRequest and 8) <> 0 then
+          Value := $FF00 or FCart.FixedROM[(Offset shr 1) and $1FFFF];
     end;
   end
   else if (Address >= $320000) and (Address < $340000) then
@@ -950,10 +967,14 @@ begin
   else if (Address >= $380000) and (Address < $3A0000) then
   begin
     Value := $0FFF;
-    if TEmulatorButton.Start in FInputs.Buttons then Value := Value and $FEFF;
-    if TEmulatorButton.Select in FInputs.Buttons then Value := Value and $FDFF;
-    if TEmulatorButton.Start in FInputs.Buttons2 then Value := Value and $FBFF;
-    if TEmulatorButton.Select in FInputs.Buttons2 then Value := Value and $F7FF;
+    if TEmulatorButton.Start in FInputs.Buttons then
+      Value := Value and $FEFF;
+    if TEmulatorButton.Select in FInputs.Buttons then
+      Value := Value and $FDFF;
+    if TEmulatorButton.Start in FInputs.Buttons2 then
+      Value := Value and $FBFF;
+    if TEmulatorButton.Select in FInputs.Buttons2 then
+      Value := Value and $F7FF;
   end
   else if ((Address >= $300000) and (Address < $400000)) or
     ((Address >= $400000) and (Address < $500000)) or
@@ -966,9 +987,13 @@ begin
   Result := True;
   if Address < $200000 then
   begin
-    if (Address < $80) and not FCartVectors then Exit;
-    if HighByte then FCart.ProgramROM[Address] := Value shr 8;
-    if LowByte then FCart.ProgramROM[Address + 1] := Value and $FF;
+    if (Address < $80) and not FCartVectors then
+      Exit;
+
+    if HighByte then
+      FCart.ProgramROM[Address] := Value shr 8;
+    if LowByte then
+      FCart.ProgramROM[Address + 1] := Value and $FF;
   end
   else if (Address >= $800000) and (Address < $900000) then
   begin
@@ -982,7 +1007,8 @@ begin
   begin
     SyncZ80(FBusTime);
     SyncSound(FBusTime);
-    if FCD.WriteWord(Address, Value, HighByte, LowByte) then CDDMA;
+    if FCD.WriteWord(Address, Value, HighByte, LowByte) then
+      CDDMA;
     if (Address = $FF0182) and LowByte and (Value and $FF <> 0) then
     begin
       Z80StateInitialise(FZ80);
@@ -994,39 +1020,53 @@ begin
   begin
     var Offset := Integer(Address and $FFFFF);
     case FCD.State.Area of
-      0: if (FCD.State.BusRequest and 1) <> 0 then
+      0:
+        if (FCD.State.BusRequest and 1) <> 0 then
         begin
           Offset := Offset + Integer(FCD.State.SprBank) * $100000;
-          if HighByte then FCart.SpriteROM[Offset] := Value shr 8;
-          if LowByte then FCart.SpriteROM[Offset + 1] := Value and $FF;
+          if HighByte then
+            FCart.SpriteROM[Offset] := Value shr 8;
+          if LowByte then
+            FCart.SpriteROM[Offset + 1] := Value and $FF;
         end;
-      1: if LowByte and ((FCD.State.BusRequest and 2) <> 0) then
-        FCart.SamplesA[(Offset shr 1) + Integer(FCD.State.PCMBank) * $80000] := Value and $FF;
-      4: if LowByte and ((FCD.State.BusRequest and 4) <> 0) then
-        FCart.AudioROM[(Offset shr 1) and $FFFF] := Value and $FF;
-      5: if LowByte and ((FCD.State.BusRequest and 8) <> 0) then
-        FCart.FixedROM[(Offset shr 1) and $1FFFF] := Value and $FF;
+      1:
+        if LowByte and ((FCD.State.BusRequest and 2) <> 0) then
+          FCart.SamplesA[(Offset shr 1) + Integer(FCD.State.PCMBank) * $80000] := Value and $FF;
+      4:
+        if LowByte and ((FCD.State.BusRequest and 4) <> 0) then
+          FCart.AudioROM[(Offset shr 1) and $FFFF] := Value and $FF;
+      5:
+        if LowByte and ((FCD.State.BusRequest and 8) <> 0) then
+          FCart.FixedROM[(Offset shr 1) and $1FFFF] := Value and $FF;
     end;
   end
-  else if ((Address >= $300000) and (Address < $400000)) or
-    ((Address >= $400000) and (Address < $500000)) then
+  else if ((Address >= $300000) and (Address < $400000)) or ((Address >= $400000) and (Address < $500000)) then
     Result := False;
 end;
 
 procedure TNeoGeoConsole.CDDMA;
+
   procedure DMAWrite(Address: Cardinal; Value: Word);
   begin
     // A DMA descriptor cannot start another DMA by targeting CD registers.
-    if Address >= $FF0000 then raise EReadError.Create('Invalid Neo Geo CD DMA destination');
+    if Address >= $FF0000 then
+      raise EReadError.Create('Invalid Neo Geo CD DMA destination');
+
     WriteBus(Address, Value, True, True);
   end;
+
 begin
   var Mode := FCD.State.DMAConfig[0];
   var Count := FCD.State.DMALength;
+
   // Hardware transfer counts are bounded by available memory. Reject corrupt
   // descriptors instead of allowing a guest to freeze the worker for billions of writes.
-  if Count > $200000 then raise EReadError.Create('Invalid Neo Geo CD DMA length');
-  if Count = 0 then Exit;
+  if Count > $200000 then
+    raise EReadError.Create('Invalid Neo Geo CD DMA length');
+
+  if Count = 0 then
+    Exit;
+
   var Source := FCD.State.DMADestination and $FFFFFE;
   var Target := FCD.State.DMASource and $FFFFFE;
   var FromCD := (Mode = $FFC5) or (Mode = $FF89) or (Mode = $FC2D);
@@ -1040,13 +1080,16 @@ begin
     Target := Source
   else if (Mode <> $FE3D) and (Mode <> $FE6D) and not OddBytes then
     raise EReadError.CreateFmt('Unsupported Neo Geo CD DMA mode %.4x', [Mode]);
-  for var I := 0 to Integer(Count) - 1 do
+
+  for var i := 0 to Integer(Count) - 1 do
   begin
     var Data: Word;
     if FromCD then
-      Data := Word(Integer(FCD.State.Sector[I * 2]) * 256 + FCD.State.Sector[I * 2 + 1])
-    else if (Mode = $FFCD) or (Mode = $FFDD) then Data := FCD.State.DMAPattern
-    else if (Mode = $FEF5) or (Mode = $CFFD) then Data := 0
+      Data := Word(Integer(FCD.State.Sector[i * 2]) * 256 + FCD.State.Sector[i * 2 + 1])
+    else if (Mode = $FFCD) or (Mode = $FFDD) then
+      Data := FCD.State.DMAPattern
+    else if (Mode = $FEF5) or (Mode = $CFFD) then
+      Data := 0
     else
     begin
       Data := ReadBus(Source, True, True);
@@ -1072,7 +1115,8 @@ begin
       if OddBytes then
       begin
         var First := Word((Data shr 8) or ((Data and $FF) shl 8));
-        if FromCD then First := Data shr 8;
+        if FromCD then
+          First := Data shr 8;
         DMAWrite(Target, First);
         Target := (Target + 2) and $FFFFFE;
       end;
@@ -1080,12 +1124,15 @@ begin
       Target := (Target + 2) and $FFFFFE;
     end;
   end;
-  if FromCD then FCD.EndTransfer;
+  if FromCD then
+    FCD.EndTransfer;
 end;
 
 function TNeoGeoConsole.ReadBus(Address: Cardinal; HighByte, LowByte: Boolean): Word;
 begin
-  if (FCD <> nil) and CDRead(Address, HighByte, LowByte, Result) then Exit;
+  if (FCD <> nil) and CDRead(Address, HighByte, LowByte, Result) then
+    Exit;
+
   if ExtraRead(Address, Result) then
     Exit;
 
@@ -1220,7 +1267,9 @@ end;
 
 procedure TNeoGeoConsole.WriteBus(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean);
 begin
-  if (FCD <> nil) and CDWrite(Address, Value, HighByte, LowByte) then Exit;
+  if (FCD <> nil) and CDWrite(Address, Value, HighByte, LowByte) then
+    Exit;
+
   if ExtraWrite(Address, Value, HighByte, LowByte) then
     Exit;
 
@@ -1401,6 +1450,7 @@ begin
 
   var DisplayReady := Video.StartupVideoReady;
   Sound.BeginFrame;
+
   // MAME neogeo.h/neogeo.cpp: IRQ1 is latched 58 master clocks into
   // VBlank; the display counter reload follows at master clock 1146.
   var VBlankStart := FFrameTime + Int64(240) * NG_LINE_CLOCKS;
@@ -1445,7 +1495,8 @@ begin
             end;
           1:
             begin
-              if (FCD = nil) or ((FCD.State.IRQMask2 and $30) = $30) then FIRQ1 := True;
+              if (FCD = nil) or ((FCD.State.IRQMask2 and $30) = $30) then
+                FIRQ1 := True;
               VBlankIRQDone := True;
             end;
           2:
@@ -1456,15 +1507,19 @@ begin
             end;
         end;
       end;
-      if FCD <> nil then FCD.Advance(FCPUTime);
+      if FCD <> nil then
+        FCD.Advance(FCPUTime);
       UpdateIRQ;
       FCPUBase := FCPUTime;
       var Vector := -1;
       if FCD <> nil then
       begin
-        if FCPU.PendingInterrupt = 1 then Vector := $68 div 4
-        else if FCPU.PendingInterrupt = 3 then Vector := $64 div 4
-        else Vector := FCD.InterruptVector;
+        if FCPU.PendingInterrupt = 1 then
+          Vector := $68 div 4
+        else if FCPU.PendingInterrupt = 3 then
+          Vector := $64 div 4
+        else
+          Vector := FCD.InterruptVector;
       end;
       var Cycles := Clown68000DoCycles(FCPU, FCPUCallbacks, 1, Vector);
       Inc(FCPUTime, Int64(Max(1, Integer(Cycles))) * 2);
@@ -1510,6 +1565,7 @@ begin
     Move(FBackup[0], Result[0], $2000);
     Exit;
   end;
+
   SetLength(Result, SizeOf(FBackup));
   Move(FBackup[0], Result[0], SizeOf(FBackup));
   if (FProtection = ngpJockeygp) or (FProtection = ngpVliner) then
@@ -1527,11 +1583,14 @@ procedure TNeoGeoConsole.LoadBattery(const Data: TBytes);
 begin
   if FCD <> nil then
   begin
-    if Length(Data) <> $2000 then raise EReadError.Create('Invalid Neo Geo CD backup RAM size');
+    if Length(Data) <> $2000 then
+      raise EReadError.Create('Invalid Neo Geo CD backup RAM size');
+
     Move(Data[0], FBackup[0], $2000);
     FBatteryDirty := False;
     Exit;
   end;
+
   var HasCart := (FProtection = ngpJockeygp) or (FProtection = ngpVliner);
   if (Length(Data) <> SizeOf(FBackup)) and not (HasCart and (Length(Data) = SizeOf(FBackup) + $2000)) then
     raise EReadError.Create('Invalid Neo Geo backup RAM size');
@@ -1653,7 +1712,8 @@ end;
 function TNeoGeoConsole.GetFPS: Double;
 begin
   Result := NG_FPS;
-  if FCD <> nil then Result := NGCD_MASTER_CLOCK / NG_FRAME_CLOCKS;
+  if FCD <> nil then
+    Result := NGCD_MASTER_CLOCK / NG_FRAME_CLOCKS;
 end;
 
 function TNeoGeoConsole.GetSampleFrames: Integer;

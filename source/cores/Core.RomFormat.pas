@@ -11,6 +11,8 @@ const
   ROM_SYSTEM_GBC = 'gbc';
   ROM_SYSTEM_GBA = 'gba';
   ROM_SYSTEM_MD = 'md';
+  ROM_SYSTEM_SG1000 = 'sg1000';
+  ROM_SYSTEM_SC3000 = 'sc3000';
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_NEOGEO = 'neogeo';
@@ -23,6 +25,8 @@ const
   ROM_CORE_ID_GBC = 'GBC';
   ROM_CORE_ID_GBA = 'GBA';
   ROM_CORE_ID_MD = 'MD';
+  ROM_CORE_ID_SG1000 = 'SG1000';
+  ROM_CORE_ID_SC3000 = 'SC3000';
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
@@ -35,6 +39,9 @@ const
   ROM_EXTENSION_GBA = '.gba';
   ROM_EXTENSION_GBX = '.gbx';
   ROM_EXTENSION_MD = '.md';
+  ROM_EXTENSION_SG = '.sg';
+  ROM_EXTENSION_SMS = '.sms';
+  ROM_EXTENSION_SC = '.sc';
   ROM_EXTENSION_SMD = '.smd';
   ROM_EXTENSION_BIN = '.bin';
   ROM_EXTENSION_GEN = '.gen';
@@ -158,7 +165,7 @@ const
   NEOGEO_ROM_NAME_SIZE = 33;
 
 type
-  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64);
+  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000);
 
   TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier, WordSwapped);
 
@@ -230,6 +237,10 @@ begin
   case System of
     TRomSystem.N64:
       Result := [ROM_EXTENSION_Z64, ROM_EXTENSION_N64, ROM_EXTENSION_V64];
+    TRomSystem.SG1000:
+      Result := [ROM_EXTENSION_SG, ROM_EXTENSION_SMS];
+    TRomSystem.SC3000:
+      Result := [ROM_EXTENSION_SC];
     TRomSystem.NES:
       Result := [ROM_EXTENSION_NES];
     TRomSystem.GB:
@@ -256,6 +267,10 @@ begin
   case System of
     TRomSystem.N64:
       Result := ROM_SYSTEM_N64;
+    TRomSystem.SG1000:
+      Result := ROM_SYSTEM_SG1000;
+    TRomSystem.SC3000:
+      Result := ROM_SYSTEM_SC3000;
     TRomSystem.NES:
       Result := ROM_SYSTEM_NES;
     TRomSystem.GB:

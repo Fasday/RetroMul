@@ -325,6 +325,7 @@ begin
   {$ENDIF}
   FreeAndNil(State.Input.Manager);
   FreeAndNil(State.Input.SuborKeyboard);
+  FreeAndNil(State.Input.SGKeyboard);
   FreeAndNil(State.Input.FamicomKeyboard);
   FreeAndNil(State.Input.MiraclePiano);
   FreeAndNil(State.Input.PowerPad);

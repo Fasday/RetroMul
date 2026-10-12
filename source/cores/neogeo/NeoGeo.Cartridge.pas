@@ -111,6 +111,7 @@ begin
   inherited Create;
   Disc := TNeoGeoCDDisc.Create(Stream, Storage, Location);
   ZoomROM := ResourceBytes('NG_ZOOM');
+
   // The CD has writable graphics, sound and program memory, no cartridge ROM.
   SetLength(ProgramROM, $200000);
   SetLength(SpriteROM, $400000);
@@ -119,10 +120,12 @@ begin
   SetLength(SamplesA, $100000);
   SamplesB := SamplesA;
   var SourceName := Location;
-  if Location.StartsWith('content://', True) then SourceName := Storage.Describe(Location).Name;
+  if Location.StartsWith('content://', True) then
+    SourceName := Storage.Describe(Location).Name;
   SetName := ChangeFileExt(ExtractFileName(SourceName), '');
   var SourceFolder := ExtractFilePath(Location);
-  if Location.StartsWith('content://', True) then SourceFolder := Location;
+  if Location.StartsWith('content://', True) then
+    SourceFolder := Location;
   var Folders := TArray<string>.Create(SourceFolder,
     TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD),
     TPath.Combine(Storage.Root, 'bios'), Storage.Root);
@@ -132,27 +135,39 @@ begin
       var Path := '';
       if Folder.StartsWith('content://', True) then
       begin
-        try Path := CDSibling(Storage, Location, Name);
-        except on E: EReadError do Continue; end;
+        try
+          Path := CDSibling(Storage, Location, Name);
+        except
+          on E: EReadError do
+            Continue;
+        end;
       end
-      else Path := TPath.Combine(Folder, Name);
-      if not Storage.Exists(Path) then Continue;
+      else
+        Path := TPath.Combine(Folder, Name);
+
+      if not Storage.Exists(Path) then
+        Continue;
+
       var Input := Storage.OpenRead(Path);
       try
         if Input.Size <> $80000 then
           raise EReadError.Create('Neo Geo CD BIOS must be 512 KiB: ' + Name);
+
         SetLength(BIOS, $80000);
         Input.ReadBuffer(BIOS[0], Length(BIOS));
       finally
         Input.Free;
       end;
       // Accept chip byte order and normalized big-endian dumps.
-      if (BIOS[4] <> 0) or (BIOS[5] <> $C0) then SwapWords(BIOS);
+      if (BIOS[4] <> 0) or (BIOS[5] <> $C0) then
+        SwapWords(BIOS);
       if (BIOS[4] <> 0) or (BIOS[5] <> $C0) then
         raise EReadError.Create('Invalid Neo Geo CD BIOS reset vector');
+
       CDZ := (BIOS[$6D] = $C0) and (BIOS[$6E] = $A3) and (BIOS[$6F] = $E8);
       Exit;
     end;
+
   raise EReadError.Create('Neo Geo CD BIOS missing: place neocd.bin (512 KiB CD/CDZ) beside the image or in the neogeocd ROM folder');
 end;
 
@@ -692,6 +707,7 @@ begin
     Hash.Update(BIOS);
     Exit(Hash.HashAsBytes);
   end;
+
   var Hash := THashSHA2.Create;
   Hash.Update(ProgramROM);
   Hash.Update(FixedROM);
