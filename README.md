@@ -12,6 +12,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Game Boy | `.gb`, `.gbx` |
 | Game Boy Color | `.gbc`, `.gbx` |
 | Game Boy Advance (experimental) | `.gba` |
+| Nintendo 64 (experimental) | `.z64`, `.n64`, `.v64` |
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
@@ -46,6 +47,8 @@ Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmwar
 
 Compatibility depends on the game's cartridge hardware, protection, and peripherals. Mapper or ROM-set support does not imply complete hardware accuracy or full gameplay compatibility for every game. Save-state formats can change between builds.
 
+Nintendo 64 uses a native Delphi VR4300/RSP interpreter and software RDP with no external emulator, plugin or PIF BIOS. Cartridge settings select EEPROM 4/16 Kbit, SRAM or FlashRAM. It is experimental: advanced rendering, exact timing and full FPU/RSP conformance remain incomplete. Passing CPU/RSP tests does not establish commercial gameplay compatibility. Implementation and test details: `codex-work/n64/REPORT.md`.
+
 ## Getting started
 
 Open a ROM directly, or select the library root folder in Settings. The library uses these system subdirectories:
@@ -56,6 +59,7 @@ ROMS/
   gb/
   gbc/
   gba/
+  n64/
   megadrive/
   snes/
   neogeo/

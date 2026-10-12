@@ -96,7 +96,7 @@
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <SanitizedProjectName>RetromulTerm</SanitizedProjectName>
-        <DCC_UnitSearchPath>..\source\chd;..\source\cores\gba;..\source\cores\neogeo;..\source\cores\zx;..\source\cores;..\source\cores\gb;..\source\cores\gbc;..\source\cores\snes;..\source\cores\md;..\source\cores\nes;..\source\cores\nes\mappers;..\source;..\source\pcm;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\source\cores\n64;..\source\chd;..\source\cores\gba;..\source\cores\neogeo;..\source\cores\zx;..\source\cores;..\source\cores\gb;..\source\cores\gbc;..\source\cores\snes;..\source\cores\md;..\source\cores\nes;..\source\cores\nes\mappers;..\source;..\source\pcm;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>1049</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
     </PropertyGroup>
@@ -245,6 +245,15 @@
         <DCCReference Include="..\source\cores\neogeo\NeoGeo.Bootleg.pas"/>
         <DCCReference Include="..\source\cores\neogeo\NeoGeo.PCB.pas"/>
         <DCCReference Include="..\source\cores\Core.Storage.pas"/>
+        <DCCReference Include="..\source\cores\Core.Adapter.N64.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.Types.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.CPU.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.RSP.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.RDP.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.SoftFloat.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.Timing.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.VI.pas"/>
+        <DCCReference Include="..\source\cores\n64\N64.Console.pas"/>
         <DCCReference Include="..\source\cores\Core.RomFormat.pas"/>
         <DCCReference Include="..\source\cores\Core.RomHashes.pas"/>
         <BuildConfiguration Include="Base">

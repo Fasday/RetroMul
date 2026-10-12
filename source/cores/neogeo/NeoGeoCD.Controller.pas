@@ -530,11 +530,15 @@ procedure TNeoGeoCDController.Mix(var Left, Right: SmallInt);
 begin
   State.LastLeft := 0;
   State.LastRight := 0;
-  if not State.Playing or FDisc.IsData(State.LBA) or (State.LBA >= FDisc.LeadOut) then
+  if not State.Playing then
     Exit;
 
   if FAudioLBA <> State.LBA then
   begin
+    // The TOC is immutable: validate once per sector, not for all 588 samples.
+    // FAudioLBA is invalidated on reset and snapshot restore.
+    if FDisc.IsData(State.LBA) or (State.LBA >= FDisc.LeadOut) then
+      Exit;
     FDisc.ReadAudio(State.LBA, FAudio);
     FAudioLBA := State.LBA;
   end;

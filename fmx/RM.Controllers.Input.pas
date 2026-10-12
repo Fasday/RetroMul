@@ -44,10 +44,11 @@ type
 
 implementation
 
+
 uses
   System.SysUtils, System.Types, System.IOUtils, System.Math, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.Dialogs, FMX.Platform, FMX.Edit, FMX.OpenDialog,
-  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.InputConfig,
+  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console, Core.InputConfig,
   Core.RomFormat, NES.Controller, RM.Gamepad, NES.SuborKeyboard,
   NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
   {$IFDEF MSWINDOWS}
@@ -749,6 +750,15 @@ begin
 
   if FState.Input.Ports.Devices[0] = 'none' then
     Result.Buttons := [];
+
+  var N64Input: IN64ControllerInput;
+  if (FState.Input.Manager <> nil) and Supports(FState.Session.Emulation, IN64ControllerInput, N64Input) then
+    for var Port := 0 to 3 do
+    begin
+      var Pad := Default(TN64Pad);
+      if FState.Input.Manager.IsPressed(N64LAction + Port) then Pad.Buttons := $20;
+      N64Input.SetN64Controller(Port, Pad);
+    end;
 
   var Piano: INesMiraclePianoCore;
   if Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano then

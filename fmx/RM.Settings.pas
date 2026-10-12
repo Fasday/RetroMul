@@ -25,6 +25,7 @@ const
   SETTINGS_PAGE_SNES = 5;
   SETTINGS_PAGE_NEOGEO = 6;
   SETTINGS_PAGE_GBA = 7;
+  SETTINGS_PAGE_N64 = 8;
 
 const
   AUTOSAVE_DEFAULT_MINUTES = 10;
@@ -32,14 +33,14 @@ const
 
 const
   SettingsCategoryNames: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of string = ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
-  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_GBA] of string = (
-    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA);
-  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_GBA] of string = ('Main', 'Game Boy', 'Game Boy Color',
-    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo (CD)', 'Game Boy Advance');
+  SettingsCoreIds: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_N64] of string = (
+    ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_NES, ROM_SYSTEM_MD, ROM_SYSTEM_SNES, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_N64);
+  SettingsPageNames: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_N64] of string = ('Main', 'Game Boy', 'Game Boy Color',
+    'NES / Famicom', 'Mega Drive', 'Super Nintendo', 'Neo Geo (CD)', 'Game Boy Advance', 'Nintendo 64');
   // Presentation order is independent of the page IDs used by drafts and core selection.
-  SettingsCoreOrder: array[0..6] of Integer = (
+  SettingsCoreOrder: array[0..7] of Integer = (
     SETTINGS_PAGE_GB, SETTINGS_PAGE_GBC, SETTINGS_PAGE_GBA, SETTINGS_PAGE_NES,
-    SETTINGS_PAGE_MD, SETTINGS_PAGE_SNES, SETTINGS_PAGE_NEOGEO);
+    SETTINGS_PAGE_MD, SETTINGS_PAGE_SNES, SETTINGS_PAGE_NEOGEO, SETTINGS_PAGE_N64);
 
 type
   TDeviceCallouts = class;
@@ -114,7 +115,7 @@ type
     FPickingTranslation: Boolean;
     FInput: TInputManager; // Draft assignments owned by this view.
     FHostInput: TInputManager; // Shared device snapshots; owned by the form.
-    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_GBA] of TMemIniFile;
+    FDrafts: array[SETTINGS_PAGE_MAIN..SETTINGS_PAGE_N64] of TMemIniFile;
     FFields: TObjectList<TSettingsField>;
     FDevices: TObjectList<TSettingsDevice>;
     FDeviceIds: array[0..7] of string;
@@ -123,7 +124,7 @@ type
     FSearch: TEdit;
     FPagePicker: TComboBox;
     FCategory, FCorePage, FPlayer: Integer;
-    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_GBA] of TButton;
+    FCoreButtons: array[SETTINGS_PAGE_GB..SETTINGS_PAGE_N64] of TButton;
     FCategoryIcons: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of TControl;
     FPage: Integer;
     FGroup: TPanel;
@@ -675,6 +676,25 @@ begin
   ListBoxNavigation.OnChange := NavigationChange;
   FSearch.OnChangeTracking := SearchChange;
   FSearch.OnResize := EditorResize;
+  var N64CoreButton := TButton.Create(Self);
+  N64CoreButton.Name := 'ButtonCore8';
+  N64CoreButton.Parent := LayoutCoreTabs;
+  N64CoreButton.Text := 'N64';
+  N64CoreButton.Height := 36;
+  for var Port := 3 to 4 do
+  begin
+    var Group := TPanel.Create(Self);
+    Group.Name := 'PanelGroupPort' + IntToStr(Port);
+    Group.Parent := LayoutComponentStore;
+    Group.Height := 60;
+    Group.StyleLookup := 'retromul_card';
+    var Title := SettingsLabel(Self);
+    Title.Name := 'LabelGroupPort' + IntToStr(Port) + 'Title';
+    Title.Parent := Group;
+    Title.Align := TAlignLayout.Client;
+    Title.Margins.Left := 16;
+    Title.Text := 'Port ' + IntToStr(Port);
+  end;
   for var i := Low(FCoreButtons) to High(FCoreButtons) do
   begin
     FCoreButtons[i] := FindComponent('ButtonCore' + IntToStr(i)) as TButton;
@@ -796,6 +816,21 @@ begin
   var SolarValue := TSettingsSpinBox.Create(Self);
   SolarValue.Name := 'SettingsSpinBoxRowGBASolarLevelEditor';
   SolarValue.Parent := SolarRow;
+  Group := TPanel.Create(Self);
+  Group.Name := 'PanelGroupN64Cartridge';
+  Group.Parent := LayoutComponentStore;
+  Group.StyleLookup := 'retromul_card';
+  Group.SetBounds(0, 0, 900, 150);
+  Title := SettingsLabel(Self);
+  Title.Name := 'LabelGroupN64CartridgeTitle';
+  Title.Parent := Group;
+  Title.SetBounds(16, 14, 868, 36);
+  Title.Text := 'N64 cartridge';
+  var N64SaveRow := BootRow('RowN64SaveType', 'Save memory',
+    'Auto uses known cartridge IDs and probes FlashRAM commands. Override unknown save formats; reopen the ROM after changing this setting.');
+  var N64SaveChoice := TSettingsComboBox.Create(Self);
+  N64SaveChoice.Name := 'SettingsComboBoxRowN64SaveTypeEditor';
+  N64SaveChoice.Parent := N64SaveRow;
   Group := TPanel.Create(Self);
   Group.Name := 'PanelGroupRumble';
   Group.Parent := LayoutComponentStore;
@@ -1117,6 +1152,14 @@ begin
             ['-1', '0', '1', '2', '3', '4'], '-1');
           Number('RowGBASolarLevel', 'Cartridge', 'SolarLevel', 128, 255);
         end;
+        if FPage = SETTINGS_PAGE_N64 then
+        begin
+          Heading('GroupN64Cartridge');
+          Combo('RowN64SaveType', 'Cartridge', 'SaveType',
+            [Translate('Auto'), Translate('EEPROM 4 Kbit'), Translate('EEPROM 16 Kbit'),
+              Translate('SRAM 32 KiB'), Translate('FlashRAM 128 KiB'), Translate('None')],
+            ['0', '1', '2', '3', '4', '5'], '0');
+        end;
         Heading('GroupAudio');
         Check('RowAudio', 'Audio', 'Enabled', True);
         var VolumeRow := Row('RowVolume');
@@ -1138,6 +1181,7 @@ begin
       begin
         Heading('GroupController');
         var Count := 2;
+        if FPage = SETTINGS_PAGE_N64 then Count := 4;
         if (FPage <= SETTINGS_PAGE_GBC) or (FPage = SETTINGS_PAGE_GBA) then
           Count := 1;
         if (FPage = SETTINGS_PAGE_NES) and FDrafts[FPage].ReadBool('Input', 'FourScore', False) then
@@ -1185,6 +1229,11 @@ begin
         BuildPort(0, Translate('Port 1'));
         if (FPage > SETTINGS_PAGE_GBC) and (FPage <> SETTINGS_PAGE_GBA) then
           BuildPort(1, Translate('Port 2'));
+        if FPage = SETTINGS_PAGE_N64 then
+        begin
+          BuildPort(2, Translate('Port 3'));
+          BuildPort(3, Translate('Port 4'));
+        end;
         if FPage = SETTINGS_PAGE_NES then
         begin
           Heading('GroupFamicomexpansionport');
@@ -1415,6 +1464,8 @@ begin
           FCoreButtons[i].Text := 'NES';
         SETTINGS_PAGE_SNES:
           FCoreButtons[i].Text := 'SNES';
+        SETTINGS_PAGE_N64:
+          FCoreButtons[i].Text := 'N64';
       end;
       if LayoutCoreTabs.Width < 600 then
         case i of
@@ -1919,6 +1970,8 @@ begin
         Pad.Layout := TScreenGamepadLayout.Snes;
       SETTINGS_PAGE_NEOGEO:
         Pad.Layout := TScreenGamepadLayout.NeoGeo;
+      SETTINGS_PAGE_N64:
+        Pad.Layout := TScreenGamepadLayout.Nintendo64;
     end;
     Pad.ButtonMask := CoreButtons(SettingsCoreIds[FPage], Device);
     Pad.OnChange := VirtualDeviceChange;

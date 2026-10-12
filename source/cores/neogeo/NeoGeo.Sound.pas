@@ -390,15 +390,20 @@ begin
   var MasterClock := 24000000;
   if FCart.Disc <> nil then MasterClock := NGCD_MASTER_CLOCK;
   // Synthesis and sampling share the machine's master-clock timeline.
-  for var i := 1 to MasterClocks do
+  // No state changes between native ticks and output samples. Jump to the
+  // next boundary, preserving native-before-sample order when they coincide.
+  while MasterClocks > 0 do
   begin
-    Inc(FClockRemainder);
+    var Clocks := Min(MasterClocks, 432 - FClockRemainder);
+    Clocks := Min(Clocks, (MasterClock - FSamplePhase + NG_SAMPLE_RATE - 1) div NG_SAMPLE_RATE);
+    Dec(MasterClocks, Clocks);
+    Inc(FClockRemainder, Clocks);
     if FClockRemainder = 432 then
     begin
       FClockRemainder := 0;
       NativeTick;
     end;
-    Inc(FSamplePhase, NG_SAMPLE_RATE);
+    Inc(FSamplePhase, NG_SAMPLE_RATE * Clocks);
     if FSamplePhase >= MasterClock then
     begin
       Dec(FSamplePhase, MasterClock);

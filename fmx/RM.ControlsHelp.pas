@@ -186,6 +186,8 @@ begin
       Pad.Layout := TScreenGamepadLayout.Dendy
     else if FSystemId = ROM_SYSTEM_SNES then
       Pad.Layout := TScreenGamepadLayout.Snes
+    else if FSystemId = ROM_SYSTEM_N64 then
+      Pad.Layout := TScreenGamepadLayout.Nintendo64
     else if FSystemId = ROM_SYSTEM_MD then
       Pad.Layout := TScreenGamepadLayout.Sega
     else if FSystemId = ROM_SYSTEM_GB then

@@ -7,7 +7,7 @@ uses
   FMX.Types, FMX.Controls, FMX.Forms, NES.Controller, Core.Emulation;
 
 type
-  TScreenGamepadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance);
+  TScreenGamepadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64);
 
   // Coordinates passed to PointerDown/Move are local logical FMX coordinates.
   // OnChange runs on the UI thread. The consumer owns the emulator connection.
@@ -255,6 +255,8 @@ begin
         Half := 37;
         Arm := 12;
       end;
+    TScreenGamepadLayout.Nintendo64:
+      begin CX := 78; CY := 96; Half := 35; Arm := 12 end;
     TScreenGamepadLayout.Snes:
       begin
         CY := 102;
@@ -354,6 +356,18 @@ begin
         FBounds[TEmulatorButton.Select] := R(153, 99, 34, 24);
         FBounds[TEmulatorButton.Start] := R(198, 99, 34, 24);
       end;
+    TScreenGamepadLayout.Nintendo64:
+      begin
+        FBounds[TEmulatorButton.A] := R(237, 113, 36, 36);
+        FBounds[TEmulatorButton.B] := R(226, 66, 36, 36);
+        FBounds[TEmulatorButton.X] := R(292, 76, 28, 28);
+        FBounds[TEmulatorButton.Y] := R(326, 42, 28, 28);
+        FBounds[TEmulatorButton.Z] := R(360, 76, 28, 28);
+        FBounds[TEmulatorButton.C] := R(326, 110, 28, 28);
+        FBounds[TEmulatorButton.Mode] := R(288, 10, 90, 18);
+        FBounds[TEmulatorButton.Select] := R(163, 126, 40, 22);
+        FBounds[TEmulatorButton.Start] := R(168, 68, 32, 32);
+      end;
     TScreenGamepadLayout.NeoGeo:
       begin
         FBounds[TEmulatorButton.A] := R(276, 116, 36, 36);
@@ -393,6 +407,8 @@ end;
 
 function TScreenGamepad.ActiveButtons: TEmulatorButtons;
 begin
+  if FLayout = TScreenGamepadLayout.Nintendo64 then
+    Exit([Low(TEmulatorButton)..High(TEmulatorButton)] * FButtonMask);
   Result := [TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left,
       TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start];
   if FLayout = TScreenGamepadLayout.Sega then
@@ -1179,6 +1195,15 @@ begin
         Caption := 'MODE';
     end;
 
+    if FLayout = TScreenGamepadLayout.Nintendo64 then
+      case B of
+        TEmulatorButton.Select: Caption := 'Z';
+        TEmulatorButton.Mode: Caption := 'R';
+        TEmulatorButton.C: Caption := 'C↓';
+        TEmulatorButton.X: Caption := 'C←';
+        TEmulatorButton.Y: Caption := 'C↑';
+        TEmulatorButton.Z: Caption := 'C→';
+      end;
     var Shoulder := (FLayout = TScreenGamepadLayout.Snes) and (B in [TEmulatorButton.C, TEmulatorButton.Z]);
     if Shoulder then
     begin

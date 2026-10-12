@@ -15,7 +15,7 @@ implementation
 
 uses
   Core.RomFormat, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
-  Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES, Core.Adapter.NeoGeo, NeoGeo.Cartridge;
+  Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES, Core.Adapter.NeoGeo, NeoGeo.Cartridge;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -44,12 +44,14 @@ begin
   if (Format.System <> TRomSystem.NeoGeo) and (Length(Data) > ROM_MAX_SIZE) then
     raise EReadError.Create('ROM exceeds 64 MiB');
   if Format.System = TRomSystem.Unknown then
-    raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES or Neo Geo expected)');
+    raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64 or Neo Geo expected)');
 
   Data := NormalizeRom(Data, Format);
   var Input := TBytesStream.Create(Data);
   try
     case Format.System of
+      TRomSystem.N64:
+        Result := TN64CoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NeoGeo:
         Result := TNeoGeoCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NES:

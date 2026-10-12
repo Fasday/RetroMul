@@ -12,6 +12,7 @@ const
   ROM_SYSTEM_GBA = 'gba';
   ROM_SYSTEM_MD = 'md';
   ROM_SYSTEM_SNES = 'snes';
+  ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
   ROM_FOLDER_MD = 'megadrive';
@@ -23,6 +24,7 @@ const
   ROM_CORE_ID_GBA = 'GBA';
   ROM_CORE_ID_MD = 'MD';
   ROM_CORE_ID_SNES = 'SNES';
+  ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
   ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
 
@@ -36,6 +38,9 @@ const
   ROM_EXTENSION_SMD = '.smd';
   ROM_EXTENSION_BIN = '.bin';
   ROM_EXTENSION_GEN = '.gen';
+  ROM_EXTENSION_Z64 = '.z64';
+  ROM_EXTENSION_N64 = '.n64';
+  ROM_EXTENSION_V64 = '.v64';
   ROM_EXTENSION_SFC = '.sfc';
   ROM_EXTENSION_SMC = '.smc';
   ROM_EXTENSION_SWC = '.swc';
@@ -153,9 +158,9 @@ const
   NEOGEO_ROM_NAME_SIZE = 33;
 
 type
-  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD);
+  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64);
 
-  TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier);
+  TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier, WordSwapped);
 
   TRomFormatInfo = record
     System: TRomSystem;
@@ -223,6 +228,8 @@ end;
 function RomExtensions(System: TRomSystem): TArray<string>;
 begin
   case System of
+    TRomSystem.N64:
+      Result := [ROM_EXTENSION_Z64, ROM_EXTENSION_N64, ROM_EXTENSION_V64];
     TRomSystem.NES:
       Result := [ROM_EXTENSION_NES];
     TRomSystem.GB:
@@ -247,6 +254,8 @@ end;
 function RomSystemId(System: TRomSystem): string;
 begin
   case System of
+    TRomSystem.N64:
+      Result := ROM_SYSTEM_N64;
     TRomSystem.NES:
       Result := ROM_SYSTEM_NES;
     TRomSystem.GB:
@@ -330,6 +339,18 @@ function DetectRom(const Data: TBytes): TRomFormatInfo;
 
 begin
   Result := Default(TRomFormatInfo);
+  if Length(Data) >= 64 then
+  begin
+    var N64Signature := (Cardinal(Data[0]) shl 24) or (Cardinal(Data[1]) shl 16) or
+      (Cardinal(Data[2]) shl 8) or Data[3];
+    if (N64Signature = $80371240) or (N64Signature = $37804012) or (N64Signature = $40123780) then
+    begin
+      Result.System := TRomSystem.N64;
+      if N64Signature = $37804012 then Result.Encoding := TRomEncoding.ByteSwapped
+      else if N64Signature = $40123780 then Result.Encoding := TRomEncoding.WordSwapped;
+      Exit;
+    end;
+  end;
   var GBX := ReadGBXFooter(Data);
   if GBX.Present then
   begin
@@ -473,7 +494,16 @@ end;
 function NormalizeRom(const Data: TBytes; const Format: TRomFormatInfo): TBytes;
 begin
   Result := Copy(Data);
-  if Format.Encoding = TRomEncoding.SnesCopier then
+  if Format.System = TRomSystem.N64 then
+    if (Length(Data) < $1000) or (Length(Data) > ROM_MAX_SIZE) or ((Length(Data) and 3) <> 0) then
+      raise EReadError.Create('Invalid N64 ROM size');
+  if Format.Encoding = TRomEncoding.WordSwapped then
+  begin
+    if (Length(Data) and 3) <> 0 then raise EReadError.Create('Invalid word-swapped ROM size');
+    for var I := 0 to Length(Data) div 4 - 1 do
+      for var J := 0 to 3 do Result[I * 4 + J] := Data[I * 4 + 3 - J];
+  end
+  else if Format.Encoding = TRomEncoding.SnesCopier then
     Result := Copy(Data, ROM_COPIER_HEADER_SIZE, Length(Data) - ROM_COPIER_HEADER_SIZE)
   else if Format.Encoding = TRomEncoding.ByteSwapped then
   begin

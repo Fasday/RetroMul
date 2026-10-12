@@ -119,6 +119,10 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
+  if SameText(PlatformCore, 'N64') then
+    // N64 v4 preserves the clocked DMA/event queues, hidden RDRAM bits,
+    // 64-bit architectural CPU state and the software VI pipeline.
+    Result.Version := 4;
   // GB/GBC v5 extends the sprite FIFO selection and stores fractional CPU clocks.
   // Earlier layouts are rejected; host enhancement settings are not restored.
   if (PlatformCore = ROM_CORE_ID_GB) or (PlatformCore = ROM_CORE_ID_GBC) then
@@ -178,6 +182,12 @@ begin
     var Header: THeader;
     Input.ReadBuffer(Header, SizeOf(Header));
     var Expected := MakeHeader(platform, ROM);
+    if SameText(platform, 'N64') and
+      CompareMem(@Header.Magic, @Expected.Magic, 8) and
+      CompareMem(@Header.platform, @Expected.platform, 8) and
+      (Header.Version <> Expected.Version) then
+      raise EReadError.CreateFmt('N64 snapshot version %d is unsupported; expected version %d',
+        [Header.Version, Expected.Version]);
     if not CompareMem(@Header.Magic, @Expected.Magic, 8) or
       (Header.Version <> Expected.Version) or
       not CompareMem(@Header.platform, @Expected.platform, 8) or

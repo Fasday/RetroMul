@@ -22,7 +22,7 @@ type
     FAnimation, FAnimationDelay, FAnimationSpeed: Byte;
     FAnimationDisabled: Boolean;
     function Color(Index: Integer): TAlphaColor;
-    function SpritePixel(Code, Y, X: Integer): Byte;
+    function SpriteHalf(Base: Integer): Cardinal;
   public
     VRAM: array[0..$87FF] of Word;
     Palette: array[0..$1FFF] of Word;
@@ -45,6 +45,11 @@ type
   end;
 
 implementation
+
+var
+  // Derived solely from the DAC wiring and bitplane layout, never from ROM/RAM.
+  ColorTable: array[0..1, 0..65535] of TAlphaColor;
+  SpreadBits: array[0..255] of Cardinal;
 
 // Hardware behavior cross-checked with NeoGeo Development Wiki and MAME's
 // BSD-3-Clause neogeo_spr.cpp (Bryan McPhail, Ernesto Corvi, Andrew Prime,
@@ -158,7 +163,7 @@ begin
     Dec(FAnimationDelay);
 end;
 
-function TNeoGeoVideo.Color(Index: Integer): TAlphaColor;
+procedure InitializeVideoTables;
 const
   // 5-bit RGB DAC: 3900/2200/1000/470/220 ohms. The dark bit adds
   // an 8200-ohm pulldown; screen shadow adds 150 ohms. Values use
@@ -173,35 +178,43 @@ const
     (0, 4, 8, 12, 17, 21, 24, 29, 36, 40, 43, 48, 53, 57, 60, 65,
     76, 81, 84, 88, 93, 98, 101, 105, 112, 116, 120, 124, 129, 133, 137, 141));
 begin
-  var Value := Palette[PaletteBank * $1000 + (Index and $FFF)];
-  var Mode := Ord((Value and $8000) <> 0) + 2 * Ord(Shadow);
-  var R := RGB[Mode, ((Value shr 14) and 1) or ((Value shr 7) and $1E)];
-  var G := RGB[Mode, ((Value shr 13) and 1) or ((Value shr 3) and $1E)];
-  var B := RGB[Mode, ((Value shr 12) and 1) or ((Value shl 1) and $1E)];
-  Result := $FF000000 or (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
+  for var Shadow := 0 to 1 do
+    for var Value := 0 to 65535 do
+    begin
+      var Mode := (Value shr 15) + 2 * Shadow;
+      var R := RGB[Mode, ((Value shr 14) and 1) or ((Value shr 7) and $1E)];
+      var G := RGB[Mode, ((Value shr 13) and 1) or ((Value shr 3) and $1E)];
+      var B := RGB[Mode, ((Value shr 12) and 1) or ((Value shl 1) and $1E)];
+      ColorTable[Shadow, Value] := $FF000000 or (Cardinal(R) shl 16) or
+        (Cardinal(G) shl 8) or Cardinal(B);
+    end;
+  for var Value := 0 to 255 do
+    for var Bit := 0 to 7 do
+      SpreadBits[Value] := SpreadBits[Value] or (Cardinal((Value shr Bit) and 1) shl (Bit * 4));
 end;
 
-function TNeoGeoVideo.SpritePixel(Code, Y, X: Integer): Byte;
+function TNeoGeoVideo.Color(Index: Integer): TAlphaColor;
 begin
-  // Unwired tile address lines mirror the ROM; holes in partial regions stay blank.
-  var Base := (Code and FSpriteMask) * 128 + ((X and 8) xor 8) * 8 + Y * 4;
+  Result := ColorTable[Ord(Shadow), Palette[PaletteBank * $1000 + (Index and $FFF)]];
+end;
+
+function TNeoGeoVideo.SpriteHalf(Base: Integer): Cardinal;
+begin
   Result := 0;
   if Base + 3 >= Length(FCart.SpriteROM) then
     Exit;
-
-  var Bit := X and 7;
+  // Decode eight pixels at once. Read live RAM for CD uploads and bootlegs;
+  // keeping decoded tiles across scanlines would require write invalidation.
   if FCart.Disc <> nil then
-  begin
-    Result := ((FCart.SpriteROM[Base + 1] shr Bit) and 1) or
-      (((FCart.SpriteROM[Base] shr Bit) and 1) shl 1) or
-      (((FCart.SpriteROM[Base + 3] shr Bit) and 1) shl 2) or
-      (((FCart.SpriteROM[Base + 2] shr Bit) and 1) shl 3);
-    Exit;
-  end;
-  Result := ((FCart.SpriteROM[Base] shr Bit) and 1) or
-    (((FCart.SpriteROM[Base + 2] shr Bit) and 1) shl 1) or
-    (((FCart.SpriteROM[Base + 1] shr Bit) and 1) shl 2) or
-    (((FCart.SpriteROM[Base + 3] shr Bit) and 1) shl 3);
+    Result := SpreadBits[FCart.SpriteROM[Base + 1]] or
+      (SpreadBits[FCart.SpriteROM[Base]] shl 1) or
+      (SpreadBits[FCart.SpriteROM[Base + 3]] shl 2) or
+      (SpreadBits[FCart.SpriteROM[Base + 2]] shl 3)
+  else
+    Result := SpreadBits[FCart.SpriteROM[Base]] or
+      (SpreadBits[FCart.SpriteROM[Base + 2]] shl 1) or
+      (SpreadBits[FCart.SpriteROM[Base + 1]] shl 2) or
+      (SpreadBits[FCart.SpriteROM[Base + 3]] shl 3);
 end;
 
 procedure TNeoGeoVideo.RenderLine(Line: Integer);
@@ -216,14 +229,14 @@ begin
   var Visible := (Line >= 16) and (Line < 240);
   var Row := (Line - 16) * NG_WIDTH;
   if Visible then
-    for var X := 0 to NG_WIDTH - 1 do
-      Pixels[Row + X] := Color($FFF);
-  if not DisplayEnabled then
   begin
-    if Visible then
-      for var X := 0 to NG_WIDTH - 1 do Pixels[Row + X] := $FF000000;
-    Exit;
+    var Background := Color($FFF);
+    if not DisplayEnabled then Background := $FF000000;
+    for var X := 0 to NG_WIDTH - 1 do
+      Pixels[Row + X] := Background;
   end;
+  if not DisplayEnabled then
+    Exit;
   var X := 0;
   var Y := 0;
   var Rows := 0;
@@ -262,7 +275,7 @@ begin
       VRAM[List + Active] := Sprite;
       Inc(Active);
     end;
-    if Visible then
+    if Visible and ((X < NG_WIDTH) or (X > $1F0)) then
     begin
       var ZoomLine := SpriteLine and $FF;
       var Invert := (SpriteLine and $100) <> 0;
@@ -297,6 +310,9 @@ begin
       end;
       if (Attr and 2) <> 0 then
         TY := TY xor 15;
+      var Base := (Code and FSpriteMask) * 128 + TY * 4;
+      var LeftHalf := SpriteHalf(Base + 64);
+      var RightHalf := SpriteHalf(Base);
       var DX := X;
       for var SX := 0 to 15 do
         if (ZoomX[ZX] and (1 shl (15 - SX))) <> 0 then
@@ -304,7 +320,9 @@ begin
           var TX := SX;
           if (Attr and 1) <> 0 then
             TX := 15 - TX;
-          var Pen := SpritePixel(Code, TY, TX);
+          var PackedPixels := LeftHalf;
+          if TX >= 8 then PackedPixels := RightHalf;
+          var Pen := (PackedPixels shr ((TX and 7) * 4)) and 15;
           var ScreenX := DX;
           if X > $1F0 then
             ScreenX := DX - $200;
@@ -387,6 +405,9 @@ begin
   State.Field(FAnimationSpeed, SizeOf(FAnimationSpeed));
   State.Field(FAnimationDisabled, SizeOf(FAnimationDisabled));
 end;
+
+initialization
+  InitializeVideoTables;
 
 end.
 

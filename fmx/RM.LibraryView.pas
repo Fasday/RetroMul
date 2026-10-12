@@ -67,8 +67,8 @@ type
     ButtonPlay, ButtonFavorite, ButtonMore, FGridButton, FListButton, FResume: TButton;
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
-    FPlatformButtons: array[0..8] of TButton;
-    FSidebarPlatformBorders: array[1..8] of TRectangle;
+    FPlatformButtons: array[0..9] of TButton;
+    FSidebarPlatformBorders: array[1..9] of TRectangle;
     FNavButtons: array[0..2] of TButton;
     FNavIcons: array[0..2] of TPath;
     FGridIcon, FListIcon: TPath;
@@ -193,8 +193,8 @@ end;
 {$ENDIF}
 
 const
-  SystemIds: array[0..8] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_NEOGEOCD);
-  SystemNames: array[0..8] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo', 'GBA', 'Neo Geo CD');
+  SystemIds: array[0..9] of string = ('', ROM_SYSTEM_NES, ROM_SYSTEM_SNES, ROM_SYSTEM_GB, ROM_SYSTEM_GBC, ROM_SYSTEM_MD, ROM_SYSTEM_NEOGEO, ROM_SYSTEM_GBA, ROM_SYSTEM_NEOGEOCD, ROM_SYSTEM_N64);
+  SystemNames: array[0..9] of string = ('All', 'NES', 'SNES', 'GB', 'GBC', 'Mega Drive', 'Neo Geo', 'GBA', 'Neo Geo CD', 'Nintendo 64');
 
 function LibrarySystemName(const Id: string): string;
 begin
@@ -338,6 +338,15 @@ begin
     FSaveButtons[i].OnClick := SaveClick;
   end;
 
+  var N64Filter := TButton.Create(Self);
+  N64Filter.Name := 'ButtonFilter9';
+  N64Filter.Parent := (FindComponent('ButtonFilter8') as TButton).Parent;
+  N64Filter.Align := (FindComponent('ButtonFilter8') as TButton).Align;
+  N64Filter.Width := 90;
+  N64Filter.Height := 32;
+  N64Filter.Position.X := (FindComponent('ButtonFilter8') as TButton).Position.X + 95;
+  N64Filter.Text := 'N64';
+  N64Filter.Tag := 9;
   for var i := 0 to High(FPlatformButtons) do
   begin
     FPlatformButtons[i] := FindComponent('ButtonFilter' + IntToStr(i)) as TButton;
@@ -345,6 +354,15 @@ begin
   end;
 
   var Platforms := FindComponent('VertScrollBoxPlatforms') as TVertScrollBox;
+  var N64Button := TButton.Create(Self);
+  N64Button.Name := 'ButtonSidebarN64';
+  N64Button.Parent := Platforms;
+  N64Button.Align := TAlignLayout.Top;
+  N64Button.Position.Y := ButtonSidebarNeoGeoCD.Position.Y + ButtonSidebarNeoGeoCD.Height;
+  N64Button.Height := 42;
+  N64Button.StyleLookup := 'buttonstyle_subtle';
+  N64Button.Text := 'Nintendo 64';
+  N64Button.Tag := 9;
   for var Child in Platforms.Content.Children do
     if Child is TButton then
     begin

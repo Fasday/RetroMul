@@ -72,7 +72,7 @@ type
     procedure PVCWrite(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean);
     function FuryRead(Address: Cardinal): Word;
     procedure FuryWrite(Address: Cardinal; Value: Word);
-    function ROMByte(const Data: TBytes; Address: Integer): Byte;
+    function ROMByte(const Data: TBytes; Address: Integer): Byte; inline;
     function PadByte(const Buttons: TEmulatorButtons): Byte;
     procedure UpdateIRQ;
     procedure SyncSound(Target: Int64);
@@ -918,9 +918,10 @@ begin
   Value := $FFFF;
   if Address < $200000 then
   begin
-    var Data := FCart.ProgramROM;
-    if (Address < $80) and not FCartVectors then Data := FCart.BIOS;
-    Value := Word(Integer(Data[Address]) * 256 + Data[Address + 1]);
+    if (Address < $80) and not FCartVectors then
+      Value := Word(Integer(FCart.BIOS[Address]) * 256 + FCart.BIOS[Address + 1])
+    else
+      Value := Word(Integer(FCart.ProgramROM[Address]) * 256 + FCart.ProgramROM[Address + 1]);
   end
   else if (Address >= $800000) and (Address < $900000) then
     Value := $FF00 or FBackup[(Address shr 1) and $1FFF]
@@ -1112,11 +1113,11 @@ begin
           end;
         end;
 
-        var Data := FCart.ProgramROM;
-        if (Address < $80) and not FCartVectors then
-          Data := FCart.BIOS;
         var A := Integer(Address);
-        Result := Word(ROMByte(Data, A) * 256 + ROMByte(Data, A + 1));
+        if (Address < $80) and not FCartVectors then
+          Result := Word(ROMByte(FCart.BIOS, A) * 256 + ROMByte(FCart.BIOS, A + 1))
+        else
+          Result := Word(ROMByte(FCart.ProgramROM, A) * 256 + ROMByte(FCart.ProgramROM, A + 1));
       end;
     1:
       Result := Word(Integer(FRAM[Offset]) * 256 + FRAM[Offset + 1]);

@@ -42,6 +42,15 @@ type
     Current, Next: TSnesSpritePixels;
   end;
 
+  // Derived only for the current render span: never serialized or retained across
+  // register/VRAM writes, snapshot loads, or direct diagnostic state changes.
+  TSnesBackgroundContext = record
+    Layer, Mode, BPP, Mosaic, Y, HScroll, VScroll: Integer;
+    SizeShift, WidthShift, Base, PalBase, LowPriority, HighPriority: Integer;
+    OriginX, OriginY: Integer;
+    MosaicEnabled, Hires: Boolean;
+  end;
+
   TSnesPPU = class
   private
     FFrame: TArray<TAlphaColor>;
@@ -59,11 +68,12 @@ type
     procedure RenderSpan(Y, FirstX, LastX: Integer; Odd: Boolean);
     procedure UpdateOutputMode;
     procedure UpdateMosaic(V: Integer);
-    function TilePixel(Base, Tile, BPP, X, Y: Integer): Integer;
-    function MapEntry(Layer, Column, Row: Integer): Word;
+    function TilePixel(Base, Tile, BPP, X, Y: Integer): Integer; inline;
+    function MapEntry(Layer, Column, Row: Integer): Word; inline;
     function OffsetEntry(Column: Integer; Vertical: Boolean): Word;
-    function Palette(Index: Integer): Word;
-    function Background(Layer, X, Y: Integer; out Priority: Integer): Integer;
+    function Palette(Index: Integer): Word; inline;
+    procedure PrepareBackground(Layer, Y: Integer; out Context: TSnesBackgroundContext);
+    function Background(const Context: TSnesBackgroundContext; X: Integer; out Priority: Integer): Integer;
     function Window(Layer, X: Integer): Boolean;
     function Color(Value: Word): TAlphaColor;
   public
@@ -88,6 +98,16 @@ implementation
 
 uses
   System.Math;
+
+var
+  Brightness: array[0..15, 0..31] of Byte;
+
+procedure InitBrightness;
+begin
+  for var B := 0 to 15 do
+    for var C := 0 to 31 do
+      Brightness[B, C] := C * 255 * B div (31 * 15);
+end;
 
 constructor TSnesPPU.Create;
 begin
@@ -701,54 +721,90 @@ begin
     Result := not ((not Value) shr 8);
 end;
 
-function TSnesPPU.Background(Layer, X, Y: Integer; out Priority: Integer): Integer;
+procedure TSnesPPU.PrepareBackground(Layer, Y: Integer; out Context: TSnesBackgroundContext);
 const
   Depth: array[0..7, 0..3] of Integer = ((2, 2, 2, 2), (4, 4, 2, 0), (4, 4, 0, 0), (8, 4, 0, 0), (8, 2, 0, 0), (4, 2, 0, 0), (4, 0, 0, 0), (8, 0, 0, 0));
   LowPrio: array[0..7, 0..3] of Integer = ((8, 7, 2, 1), (6, 5, 1, 0), (3, 1, 0, 0), (3, 1, 0, 0), (3, 1, 0, 0), (3, 1, 0, 0), (1, 0, 0, 0), (3, 1, 0, 0));
   HighPrio: array[0..7, 0..3] of Integer = ((11, 10, 5, 4), (9, 8, 3, 0), (7, 5, 0, 0), (7, 5, 0, 0), (7, 5, 0, 0), (7, 5, 0, 0), (5, 0, 0, 0), (2, 0, 0, 0));
 begin
-  Result := -1;
-  Priority := 0;
-  var Mode := State.Regs[5] and 7;
-  var BPP := Depth[Mode, Layer];
+  Context := Default(TSnesBackgroundContext);
+  Context.Layer := Layer;
+  Context.Mode := State.Regs[5] and 7;
+  var Mode := Context.Mode;
+  Context.BPP := Depth[Mode, Layer];
   if (Mode = 7) and (Layer = 1) and ((State.Regs[$33] and $40) <> 0) then
-    BPP := 8;
-  if BPP = 0 then
+    Context.BPP := 8;
+  if Context.BPP = 0 then
     Exit;
-
-  var Mosaic := (State.Regs[6] shr 4) + 1;
-  if (State.Regs[6] and (1 shl Layer)) <> 0 then
-  begin
-    // Hires mosaic counts low-resolution dots and takes the even (subscreen)
-    // pixel for both screens, including when the mosaic size is one.
-    if Mode in [5, 6] then
-      X := (X div 2 div Mosaic) * Mosaic * 2
-    else
-      X := X - X mod Mosaic;
+  Context.Hires := Mode in [5, 6];
+  Context.Mosaic := (State.Regs[6] shr 4) + 1;
+  Context.MosaicEnabled := (State.Regs[6] and (1 shl Layer)) <> 0;
+  if Context.MosaicEnabled then
     if FRender.Timed then
-      Y := Y - (Mosaic - FRender.MosaicCounter)
+      Y := Y - (Context.Mosaic - FRender.MosaicCounter)
     else
-      Y := Y - (Y - 1) mod Mosaic;
-  end;
-  if (Mode in [5, 6]) and ((State.Regs[$33] and 1) <> 0) then
+      Y := Y - (Y - 1) mod Context.Mosaic;
+  if Context.Hires and ((State.Regs[$33] and 1) <> 0) then
     Y := Y * 2 + Ord(State.OddField);
+  Context.Y := Y;
   if Mode = 7 then
   begin
-    if (State.Regs[$1A] and 1) <> 0 then
-      X := 255 - X;
     if (State.Regs[$1A] and 2) <> 0 then
       Y := 255 - Y;
     var CenterX := Signed13(State.Matrix[4]);
     var CenterY := Signed13(State.Matrix[5]);
     var DX := Mode7Clip(Signed13(State.M7ScrollX) - CenterX);
     var DY := Mode7Clip(Signed13(State.M7ScrollY) - CenterY);
-    // The three products are truncated separately before the pixel step is added.
-    var PX := Shift8((Integer(State.Matrix[0]) * DX and not 63) +
-      (Integer(State.Matrix[1]) * Y and not 63) + (Integer(State.Matrix[1]) * DY and not 63) +
-      CenterX * 256 + Integer(State.Matrix[0]) * X);
-    var PY := Shift8((Integer(State.Matrix[2]) * DX and not 63) +
-      (Integer(State.Matrix[3]) * Y and not 63) + (Integer(State.Matrix[3]) * DY and not 63) +
-      CenterY * 256 + Integer(State.Matrix[2]) * X);
+    // Truncate each product separately, just as the per-pixel calculation does.
+    Context.OriginX := (Integer(State.Matrix[0]) * DX and not 63) +
+      (Integer(State.Matrix[1]) * Y and not 63) + (Integer(State.Matrix[1]) * DY and not 63) + CenterX * 256;
+    Context.OriginY := (Integer(State.Matrix[2]) * DX and not 63) +
+      (Integer(State.Matrix[3]) * Y and not 63) + (Integer(State.Matrix[3]) * DY and not 63) + CenterY * 256;
+    Exit;
+  end;
+  Context.SizeShift := 3;
+  if (State.Regs[5] and (16 shl Layer)) <> 0 then
+    Context.SizeShift := 4;
+  Context.WidthShift := Context.SizeShift;
+  if Context.Hires then
+    Context.WidthShift := 4;
+  Context.HScroll := State.ScrollX[Layer];
+  if Context.Hires then
+    Context.HScroll := Context.HScroll * 2;
+  Context.VScroll := State.ScrollY[Layer];
+  Context.Base := ((State.Regs[$0B + Layer div 2] shr ((Layer and 1) * 4)) and $F) shl 13;
+  Context.LowPriority := LowPrio[Mode, Layer];
+  Context.HighPriority := HighPrio[Mode, Layer];
+  if (Mode = 1) and (Layer = 2) and ((State.Regs[5] and 8) <> 0) then
+    Context.HighPriority := 11;
+  if Mode = 0 then
+    Context.PalBase := Layer * 32;
+end;
+
+function TSnesPPU.Background(const Context: TSnesBackgroundContext; X: Integer; out Priority: Integer): Integer;
+begin
+  Result := -1;
+  Priority := 0;
+  var BPP := Context.BPP;
+  if BPP = 0 then
+    Exit;
+  var Layer := Context.Layer;
+  var Mode := Context.Mode;
+  var Y := Context.Y;
+  if Context.MosaicEnabled then
+  begin
+    // Hires mosaic counts low-resolution dots and selects the even subpixel.
+    if Context.Hires then
+      X := (X div 2 div Context.Mosaic) * Context.Mosaic * 2
+    else
+      X := X - X mod Context.Mosaic;
+  end;
+  if Mode = 7 then
+  begin
+    if (State.Regs[$1A] and 1) <> 0 then
+      X := 255 - X;
+    var PX := Shift8(Context.OriginX + Integer(State.Matrix[0]) * X);
+    var PY := Shift8(Context.OriginY + Integer(State.Matrix[2]) * X);
     var Tile := 0;
     if ((PX < 0) or (PX >= 1024) or (PY < 0) or (PY >= 1024)) and ((State.Regs[$1A] and $80) <> 0) then
     begin
@@ -774,14 +830,10 @@ begin
       Result := ((Pixel and 7) shl 2) or ((Pixel and $38) shl 4) or ((Pixel and $C0) shl 7);
     Exit;
   end;
-  var Size := 8;
-  if (State.Regs[5] and (16 shl Layer)) <> 0 then
-    Size := 16;
-  var Hires := Mode in [5, 6];
-  var HScroll := Integer(State.ScrollX[Layer]);
-  if Hires then
-    HScroll := HScroll * 2;
-  var VScroll := Integer(State.ScrollY[Layer]);
+  var SizeShift := Context.SizeShift;
+  var Hires := Context.Hires;
+  var HScroll := Context.HScroll;
+  var VScroll := Context.VScroll;
   // BG3's offset fetch occurs after the current column's BG1/BG2 fetch.
   var Column := X div 8;
   if Hires then
@@ -812,31 +864,27 @@ begin
   else
     X := (X + HScroll) and $3FF;
   Y := (Y + VScroll) and $3FF;
-  var TY := Y div Size;
-  var TileWidth := Size;
-  if Hires then
-    TileWidth := 16;
-  var TX := X div TileWidth;
+  // X and Y have already been masked to nonnegative VRAM coordinates.
+  var TY := Y shr SizeShift;
+  var WidthShift := Context.WidthShift;
+  var TX := X shr WidthShift;
   var Entry := MapEntry(Layer, TX, TY);
-  var PX := X mod TileWidth;
-  var PY := Y mod Size;
+  var TileWidth := 1 shl WidthShift;
+  var Size := 1 shl SizeShift;
+  var PX := X and (TileWidth - 1);
+  var PY := Y and (Size - 1);
   if (Entry and $4000) <> 0 then
     PX := TileWidth - 1 - PX;
   if (Entry and $8000) <> 0 then
     PY := Size - 1 - PY;
   var Tile := (Entry and $3FF) + PX div 8 + PY div 8 * 16;
-  var Base := ((State.Regs[$0B + Layer div 2] shr ((Layer and 1) * 4)) and $F) shl 13;
-  var Pixel := TilePixel(Base, Tile and $3FF, BPP, PX and 7, PY and 7);
+  var Pixel := TilePixel(Context.Base, Tile and $3FF, BPP, PX and 7, PY and 7);
   if Pixel = 0 then
     Exit;
 
-  Priority := LowPrio[Mode, Layer];
+  Priority := Context.LowPriority;
   if (Entry and $2000) <> 0 then
-  begin
-    Priority := HighPrio[Mode, Layer];
-    if (Mode = 1) and (Layer = 2) and ((State.Regs[5] and 8) <> 0) then
-      Priority := 11;
-  end;
+    Priority := Context.HighPriority;
   var Pal := (Entry shr 10) and 7;
   if (BPP = 8) and ((State.Regs[$30] and 1) <> 0) then
   begin
@@ -847,10 +895,7 @@ begin
   end;
   if BPP = 8 then
     Pal := 0;
-  var PalBase := 0;
-  if Mode = 0 then
-    PalBase := Layer * 32;
-  Result := Palette(PalBase + (Pal shl BPP) + Pixel);
+  Result := Palette(Context.PalBase + (Pal shl BPP) + Pixel);
 end;
 
 function TSnesPPU.Window(Layer, X: Integer): Boolean;
@@ -887,9 +932,9 @@ end;
 function TSnesPPU.Color(Value: Word): TAlphaColor;
 begin
   var Bright := State.Regs[0] and 15;
-  var R := (Value and 31) * 255 * Bright div (31 * 15);
-  var G := (Value shr 5 and 31) * 255 * Bright div (31 * 15);
-  var B := (Value shr 10 and 31) * 255 * Bright div (31 * 15);
+  var R := Brightness[Bright, Value and 31];
+  var G := Brightness[Bright, Value shr 5 and 31];
+  var B := Brightness[Bright, Value shr 10 and 31];
   Result := $FF000000 or (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
 end;
 
@@ -900,6 +945,7 @@ const
   SpritePrio: array[0..7, 0..3] of Integer = ((3, 6, 9, 12), (2, 4, 7, 10),
     (2, 4, 6, 8), (2, 4, 6, 8), (2, 4, 6, 8), (2, 4, 6, 8), (2, 3, 4, 6), (2, 4, 6, 7));
 var
+  Backgrounds: array[0..3] of TSnesBackgroundContext;
   ObjColor, ObjPriority: array[0..255] of Integer;
   ObjAddress: array[0..255] of Integer;
   ObjMath: array[0..255] of Boolean;
@@ -911,7 +957,12 @@ begin
   var OutputY := Y;
   if OutputHeight > Height then
     OutputY := Y * 2 + Ord(Odd);
-  FillChar(ObjPriority, SizeOf(ObjPriority), 0);
+  // Only this span is consumed below. Palette fetches outside it have no
+  // surviving bus effect: each rendered dot finishes by selecting MainCG.
+  if FRender.Timed then
+    FillChar(ObjPriority[FirstX], (LastX - FirstX + 1) * SizeOf(Integer), 0)
+  else
+    FillChar(ObjPriority, SizeOf(ObjPriority), 0);
   var Count := 0;
   var Tiles := 0;
   var First := 0;
@@ -990,7 +1041,7 @@ begin
       end;
     end;
   if FRender.Timed then
-    for var X := 0 to 255 do
+    for var X := FirstX to LastX do
       if FRender.Current.Color[X] <> 0 then
       begin
         var Pal := FRender.Current.Palette[X];
@@ -1000,13 +1051,12 @@ begin
         ObjMath[X] := Pal >= 4;
       end;
   var W := Width;
-  var Scale := W div 256;
   var Hires := ((State.Regs[5] and 7) in [5, 6]) or ((State.Regs[$33] and 8) <> 0);
-  for var X := FirstX * Scale to (LastX + 1) * Scale - 1 do
+  for var L := 0 to 3 do
+    if ((State.Regs[$2C] or State.Regs[$2D]) and (1 shl L)) <> 0 then
+      PrepareBackground(L, Y + 1, Backgrounds[L]);
+  for var ScreenX := FirstX to LastX do
   begin
-    var ScreenX := X;
-    if W = 512 then
-      ScreenX := X div 2;
     var BGX := ScreenX;
     var SubX := ScreenX;
     if (State.Regs[5] and 7) in [5, 6] then
@@ -1017,7 +1067,6 @@ begin
     var Main := Integer(Palette(0));
     var Sub := Integer(Palette(0));
     var MainCG := 0;
-    var SubCG := 0;
     if (W = 256) and ((State.Regs[$30] and 2) = 0) then
       Sub := State.FixedColor;
     var MainPrio := 0;
@@ -1031,7 +1080,7 @@ begin
       // BG fetches use the physical scanline (1..224); OBJ was evaluated on the
       // preceding line and therefore keeps the zero-based output Y above.
       var Priority: Integer;
-      var Pixel := Background(L, BGX, Y + 1, Priority);
+      var Pixel := Background(Backgrounds[L], BGX, Priority);
       if (Pixel >= 0) and ((State.Regs[$2C] and (1 shl L)) <> 0) and (Priority > MainPrio) and
         not (((State.Regs[$2E] and (1 shl L)) <> 0) and Window(L, ScreenX)) then
       begin
@@ -1041,12 +1090,11 @@ begin
         MainLayer := L;
       end;
       if SubX <> BGX then
-        Pixel := Background(L, SubX, Y + 1, Priority);
+        Pixel := Background(Backgrounds[L], SubX, Priority);
       if (Pixel >= 0) and ((State.Regs[$2D] and (1 shl L)) <> 0) and (Priority > SubPrio) and
         not (((State.Regs[$2F] and (1 shl L)) <> 0) and Window(L, ScreenX)) then
       begin
         Sub := Pixel;
-        SubCG := State.InternalCGAddress;
         SubPrio := Priority;
       end;
     end;
@@ -1064,7 +1112,6 @@ begin
         not (((State.Regs[$2F] and 16) <> 0) and Window(4, ScreenX)) then
       begin
         Sub := ObjColor[ScreenX];
-        SubCG := ObjAddress[ScreenX];
         SubPrio := ObjPriority[ScreenX];
       end;
     end;
@@ -1096,17 +1143,27 @@ begin
       end;
       Main := Combined;
     end;
-    if Hires and ((X and 1) = 0) then
-    begin
-      Main := Sub;
-      State.InternalCGAddress := SubCG;
-    end
-    else
-      State.InternalCGAddress := MainCG;
+    // Both hires samples are produced atomically by RenderUntil. The final
+    // CGRAM bus address is the main sample's, as in the two-pass renderer.
+    State.InternalCGAddress := MainCG;
     var Output := Color(Word(Main));
     if (State.Regs[0] and $80) <> 0 then
       Output := $FF000000;
-    FFrame[OutputY * 512 + X] := Output;
+    var Dest := OutputY * 512;
+    if W = 512 then
+    begin
+      Inc(Dest, ScreenX * 2);
+      FFrame[Dest + 1] := Output;
+      if Hires then
+      begin
+        Output := Color(Word(Sub));
+        if (State.Regs[0] and $80) <> 0 then
+          Output := $FF000000;
+      end;
+      FFrame[Dest] := Output;
+    end
+    else
+      FFrame[Dest + ScreenX] := Output;
   end;
 end;
 
@@ -1127,5 +1184,7 @@ begin
     raise EReadError.Create('Invalid SNES PPU mosaic snapshot');
 end;
 
-end.
+initialization
+  InitBrightness;
 
+end.

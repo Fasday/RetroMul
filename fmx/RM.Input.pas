@@ -14,6 +14,7 @@ const
   FamicomAction = 384;
   PianoAction = 512;
   ExtraPadAction = 1024; // Preserve the existing NES peripheral action IDs.
+  N64LAction = 4096;
 
 type
   THostKeys = array[0..255] of Boolean;
@@ -52,7 +53,7 @@ function ReadPianoInput(Input: TInputManager): TMiracleKeys;
 implementation
 
 uses
-  Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
+  Core.Adapter.N64, Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, Core.Adapter.GBA, GB.Joypad, NES.Input, NES.Types, MD.Console, SNES.Console,
   System.Math, FMX.Types;
 
@@ -145,6 +146,8 @@ begin
       TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start];
   if (SystemId = ROM_SYSTEM_NES) and (Device = 'paddendy') then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
+  if SystemId = ROM_SYSTEM_N64 then
+    Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
   if SystemId = ROM_SYSTEM_MD then
   begin
     Include(Result, TEmulatorButton.C);
@@ -171,6 +174,18 @@ const
     ('↑', '↓', '←', '→', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
 begin
   Result := Names[Button];
+  if SystemId = ROM_SYSTEM_N64 then
+  begin
+    case Button of
+      TEmulatorButton.Select: Result := 'Z';
+      TEmulatorButton.C: Result := 'CDown';
+      TEmulatorButton.X: Result := 'CLeft';
+      TEmulatorButton.Y: Result := 'CUp';
+      TEmulatorButton.Z: Result := 'CRight';
+      TEmulatorButton.Mode: Result := 'R';
+    end;
+    Exit;
+  end;
   if SystemId = ROM_SYSTEM_NES then
     case Button of
       TEmulatorButton.X:
@@ -347,6 +362,14 @@ begin
       Keys[1, B] := C.Keys2[B];
     end;
   end
+  else if SystemId = ROM_SYSTEM_N64 then
+  begin
+    var C := TN64Config.Create('', nil);
+    Config := C;
+    var Map := C.Keys;
+    for var Port := 0 to 3 do
+      for var B := Low(TEmulatorButton) to High(TEmulatorButton) do Keys[Port, B] := Map[Port, B];
+  end
   else if SystemId = ROM_SYSTEM_GBA then
   begin
     var C := TGBAConfig.Create('');
@@ -374,7 +397,17 @@ begin
     CopyGB(C.GetKeys);
   end;
   var Count := 2;
-  if SystemId = ROM_SYSTEM_NES then
+  if SystemId = ROM_SYSTEM_N64 then
+  begin
+    var C := TN64Config.Create('', nil);
+    Config := C;
+    for var Port := 0 to 3 do
+    begin
+      var Section := 'Keys'; if Port > 0 then Section := Section + IntToStr(Port + 1);
+      AddKey(N64LAction + Port, ReadEmulatorKey(Ini, Section, 'L', C.LKey(Port)));
+    end;
+  end;
+  if (SystemId = ROM_SYSTEM_NES) or (SystemId = ROM_SYSTEM_N64) then
     Count := 4;
   if SystemId = ROM_SYSTEM_SNES then
     Count := 8;
@@ -385,7 +418,7 @@ begin
       if B in CoreButtons(SystemId, 'auto') then
       begin
         var Section := 'Controls';
-        if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_GBA) then
+        if (SystemId = ROM_SYSTEM_N64) or (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_GBA) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);

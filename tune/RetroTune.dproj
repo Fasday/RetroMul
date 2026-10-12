@@ -119,7 +119,7 @@
     <PropertyGroup Condition="'$(Base)'!=''">
         <DCC_DcuOutput>$(Platform)\$(Config)_DCU</DCC_DcuOutput>
         <DCC_ExeOutput>$(Platform)\$(Config)</DCC_ExeOutput>
-        <DCC_UnitSearchPath>..\source\cores\gba;common;decoders;trackers;chips;playback;export;ui;..\source\cores\atari;..\source\cores\c64;..\source\cores\zx;..\source\cores\pc;..\source\cores;..\source\cores\nes;..\source\cores\nes\mappers;..\source\cores\gb;..\source\cores\gbc;..\source\cores\md;..\source\cores\snes;..\source\pcm;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\source\cores\n64;..\source\cores\gba;common;decoders;trackers;chips;playback;export;ui;..\source\cores\atari;..\source\cores\c64;..\source\cores\zx;..\source\cores\pc;..\source\cores;..\source\cores\nes;..\source\cores\nes\mappers;..\source\cores\gb;..\source\cores\gbc;..\source\cores\md;..\source\cores\snes;..\source\pcm;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <DCC_E>false</DCC_E>
         <DCC_N>false</DCC_N>
         <DCC_S>false</DCC_S>
