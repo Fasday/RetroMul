@@ -14,8 +14,10 @@ function CreateEmulationCore(Stream: TStream; const Storage: IStorage; const Rom
 implementation
 
 uses
-  Core.RomFormat, Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
-  Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES, Core.Adapter.NeoGeo, NeoGeo.Cartridge;
+  System.Zip, System.IOUtils, SG1000.Console, Core.RomFormat,
+  Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
+  Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
+  Core.Adapter.NeoGeo, NeoGeo.Cartridge;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -39,14 +41,52 @@ begin
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) then
     Exit(TNeoGeoCoreAdapter.Create(Stream, Storage, RomName, True));
   var Data := ReadNeoGeoData(Stream);
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ZIP) then
+  begin
+    var ArchiveStream := TBytesStream.Create(Data);
+    var Archive := TZipFile.Create;
+    try
+      Archive.Open(ArchiveStream, TZipMode.zmRead);
+      var Candidate := -1;
+      for var I := 0 to Archive.FileCount - 1 do
+      begin
+        var Name := Archive.FileNames[I];
+        if Name.Contains('__MACOSX/') or ExtractFileName(Name).StartsWith('._') then
+          Continue;
+        var Ext := ExtractFileExt(Name).ToLower;
+        if (Ext = ROM_EXTENSION_SG) or (Ext = ROM_EXTENSION_SC) or (Ext = ROM_EXTENSION_SF7) or
+          (Ext = ROM_EXTENSION_SF) or (Ext = ROM_EXTENSION_DSK) or (Ext = ROM_EXTENSION_MV) or
+          (Ext = ROM_EXTENSION_SMS) or
+          ((Ext = '.bin') and (Archive.FileInfo[I].UncompressedSize = $2000) and
+          Name.ToLower.Contains('initial program loader')) then
+        begin
+          if Candidate >= 0 then
+            raise EReadError.Create('Sega ZIP must contain one cartridge or disk image');
+          Candidate := I;
+        end;
+      end;
+      if Candidate >= 0 then
+      begin
+        if Archive.FileInfo[Candidate].UncompressedSize > ROM_MAX_SIZE then
+          raise EReadError.Create('Sega ZIP image exceeds 64 MiB');
+        SourceName := Archive.FileNames[Candidate];
+        if SourceName.ToLower.Contains('initial program loader') then
+          SourceName := ChangeFileExt(SourceName, '.sf7');
+        Archive.Read(Candidate, Data);
+      end;
+    finally
+      Archive.Free;
+      ArchiveStream.Free;
+    end;
+  end;
   var Format := DetectRom(Data);
   // These cartridges have no mandatory signature. A supplied extension is the
   // explicit platform hint; arbitrary unrecognized .bin files stay rejected.
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SG) or
     ((Format.System = TRomSystem.Unknown) and (Length(Data) <= $C000) and
-      SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SMS) and
-      (SourceName.Contains('(SG-1000)') or
-        SameText(ExtractFileName(ExcludeTrailingPathDelimiter(ExtractFilePath(SourceName))), ROM_SYSTEM_SG1000))) then
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SMS) and
+    (SourceName.Contains('(SG-1000)') or
+    SameText(ExtractFileName(ExcludeTrailingPathDelimiter(ExtractFilePath(SourceName))), ROM_SYSTEM_SG1000))) then
   begin
     Format.System := TRomSystem.SG1000;
     Format.Encoding := TRomEncoding.Native;
@@ -55,8 +95,16 @@ begin
   begin
     Format.System := TRomSystem.SC3000;
     Format.Encoding := TRomEncoding.Native;
-  end;
-  if (Format.System=TRomSystem.Unknown) and SameText(ExtractFileExt(RomName),ROM_EXTENSION_GBA) then Format.System:=TRomSystem.GBA;
+  end
+  else if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SF7) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SF) or SameText(ExtractFileExt(SourceName), ROM_EXTENSION_DSK) then
+    Format.System := TRomSystem.SF7000
+  else if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_MV) then
+    Format.System := TRomSystem.Multivision
+  else if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SMS) then
+    Format.System := TRomSystem.SMS;
+  if (Format.System = TRomSystem.Unknown) and SameText(ExtractFileExt(RomName), ROM_EXTENSION_GBA) then
+    Format.System := TRomSystem.GBA;
   if (Format.System <> TRomSystem.NeoGeo) and (Length(Data) > ROM_MAX_SIZE) then
     raise EReadError.Create('ROM exceeds 64 MiB');
   if Format.System = TRomSystem.Unknown then
@@ -68,6 +116,12 @@ begin
     case Format.System of
       TRomSystem.SG1000, TRomSystem.SC3000:
         Result := TSGCoreAdapter.Create(Input, Storage, RomName, Format.System = TRomSystem.SC3000);
+      TRomSystem.SF7000:
+        Result := TSGCoreAdapter.Create(Input, Storage, RomName, True, Ord(TSGModel.SF7000));
+      TRomSystem.Multivision:
+        Result := TSGCoreAdapter.Create(Input, Storage, RomName, False, Ord(TSGModel.Multivision));
+      TRomSystem.SMS:
+        Result := TSGCoreAdapter.Create(Input, Storage, RomName, False, Ord(TSGModel.MasterSystem));
       TRomSystem.N64:
         Result := TN64CoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NeoGeo:

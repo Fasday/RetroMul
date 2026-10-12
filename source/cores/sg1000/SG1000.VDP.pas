@@ -8,7 +8,8 @@ uses
 type
   // TMS9918A: 16 KiB VRAM, buffered reads and a two-byte control latch.
   TSGVDP = class
-  private
+  protected
+    FShowBackground, FShowSprites, FRemoveSpriteLimit: Boolean;
     FVRAM: array[0..$3FFF] of Byte;
     FRegisters: array[0..7] of Byte;
     FAddress: Integer;
@@ -20,25 +21,46 @@ type
     procedure RenderSprites(Y: Integer);
   public
     constructor Create;
-    procedure Reset;
-    function ReadData: Byte;
-    function ReadStatus: Byte;
-    procedure WriteData(Value: Byte);
-    procedure WriteControl(Value: Byte);
-    function Interrupt: Boolean;
-    procedure RenderLine(Y: Integer);
-    procedure VBlank;
-    procedure SerializeState(State: TStateArchive);
+    procedure Reset; virtual;
+    procedure ConfigureDisplay(Background, Sprites, RemoveLimit: Boolean);
+    function ReadData: Byte; virtual;
+    function ReadStatus: Byte; virtual;
+    procedure WriteData(Value: Byte); virtual;
+    procedure WriteControl(Value: Byte); virtual;
+    function Interrupt: Boolean; virtual;
+    procedure RenderLine(Y: Integer); virtual;
+    procedure VBlank; virtual;
+    procedure EndLine(Line, TotalLines: Integer); virtual;
+    function ScreenHeight: Integer; virtual;
+    procedure SerializeState(State: TStateArchive); virtual;
     property Pixels: TArray<TAlphaColor> read FPixels;
   end;
 
 implementation
 
+procedure TSGVDP.EndLine(Line, TotalLines: Integer);
+begin
+end;
+
+function TSGVDP.ScreenHeight: Integer;
+begin
+  Result := 192;
+end;
+
 constructor TSGVDP.Create;
 begin
   inherited;
+  FShowBackground := True;
+  FShowSprites := True;
   SetLength(FPixels, 256 * 192);
   Reset;
+end;
+
+procedure TSGVDP.ConfigureDisplay(Background, Sprites, RemoveLimit: Boolean);
+begin
+  FShowBackground := Background;
+  FShowSprites := Sprites;
+  FRemoveSpriteLimit := RemoveLimit;
 end;
 
 procedure TSGVDP.Reset;
@@ -163,42 +185,43 @@ begin
     Left := 6;
     Column := 40;
   end;
-  for var Tile := 0 to Column - 1 do
-  begin
-    Code := VRAM(Base + (Y div 8) * Column + Tile);
-    Colors := FRegisters[7];
-    case Mode of
-      0:
-        begin
+  if FShowBackground then
+    for var Tile := 0 to Column - 1 do
+    begin
+      Code := VRAM(Base + (Y div 8) * Column + Tile);
+      Colors := FRegisters[7];
+      case Mode of
+        0:
+          begin
+            Pattern := VRAM(PatternBase + Code * 8 + (Y and 7));
+            Colors := VRAM(ColorBase + Code div 8);
+          end;
+        1:
           Pattern := VRAM(PatternBase + Code * 8 + (Y and 7));
-          Colors := VRAM(ColorBase + Code div 8);
-        end;
-      1:
-        Pattern := VRAM(PatternBase + Code * 8 + (Y and 7));
-      2, 3:
-        begin
-          Code := Code + (Y div 64) * 256;
-          Pattern := VRAM(PatternBase + (Code and PatternMask) * 8 + (Y and 7));
-          if Mode = 2 then
-            Colors := VRAM(ColorBase + (Code and ColorMask) * 8 + (Y and 7));
-        end;
-      4, 6:
-        begin
-          if Mode = 6 then
-            Colors := VRAM(PatternBase + ((Code + (Y div 64) * 256 + ((Y div 4) and 7)) and PatternMask) * 8)
-          else
-            Colors := VRAM(PatternBase + Code * 8 + ((Y div 4) and 7));
-          Pattern := $F0;
-        end;
-    else
-      Pattern := $F0;
-    end;
-    for var Bit := 0 to Width - 1 do
-      if Pattern and ($80 shr Bit) <> 0 then
-        FPixels[Y * 256 + Left + Tile * Width + Bit] := Color(Colors shr 4)
+        2, 3:
+          begin
+            Code := Code + (Y div 64) * 256;
+            Pattern := VRAM(PatternBase + (Code and PatternMask) * 8 + (Y and 7));
+            if Mode = 2 then
+              Colors := VRAM(ColorBase + (Code and ColorMask) * 8 + (Y and 7));
+          end;
+        4, 6:
+          begin
+            if Mode = 6 then
+              Colors := VRAM(PatternBase + ((Code + (Y div 64) * 256 + ((Y div 4) and 7)) and PatternMask) * 8)
+            else
+              Colors := VRAM(PatternBase + Code * 8 + ((Y div 4) and 7));
+            Pattern := $F0;
+          end;
       else
-        FPixels[Y * 256 + Left + Tile * Width + Bit] := Color(Colors and 15);
-  end;
+        Pattern := $F0;
+      end;
+      for var Bit := 0 to Width - 1 do
+        if Pattern and ($80 shr Bit) <> 0 then
+          FPixels[Y * 256 + Left + Tile * Width + Bit] := Color(Colors shr 4)
+        else
+          FPixels[Y * 256 + Left + Tile * Width + Bit] := Color(Colors and 15);
+    end;
   if Mode and 1 = 0 then
     RenderSprites(Y);
 end;
@@ -222,7 +245,8 @@ begin
   Patterns := FRegisters[6] * 2048;
   for var i := 0 to 31 do
   begin
-    FSpriteIndex := i;
+    if Count <= 4 then
+      FSpriteIndex := i;
     SY := VRAM(Table + i * 4);
     if SY = $D0 then
       Break;
@@ -238,7 +262,8 @@ begin
     begin
       if FStatus and $40 = 0 then
         FStatus := (FStatus and $A0) or $40 or i;
-      Break;
+      if not FRemoveSpriteLimit then
+        Break;
     end;
 
     SX := VRAM(Table + i * 4 + 1);
@@ -262,10 +287,13 @@ begin
           Continue;
 
         // Color-zero sprites collide but do not obscure lower priority pixels.
-        if Occupied[X] then
-          FStatus := FStatus or $20;
-        Occupied[X] := True;
-        if (Attr and 15 <> 0) and not Drawn[X] then
+        if Count <= 4 then
+        begin
+          if Occupied[X] then
+            FStatus := FStatus or $20;
+          Occupied[X] := True;
+        end;
+        if FShowSprites and (Attr and 15 <> 0) and not Drawn[X] then
         begin
           FPixels[Y * 256 + X] := Color(Attr and 15);
           Drawn[X] := True;
@@ -281,6 +309,8 @@ procedure TSGVDP.SerializeState(State: TStateArchive);
 begin
   State.Field(FVRAM, SizeOf(FVRAM));
   State.Field(FRegisters, SizeOf(FRegisters));
+  if State.Loading then
+    SetLength(FPixels, ScreenHeight * 256);
   State.Field(FAddress, SizeOf(FAddress));
   State.Field(FReadBuffer, SizeOf(FReadBuffer));
   State.Field(FStatus, SizeOf(FStatus));

@@ -14,22 +14,28 @@ type
     FOutput: array[0..3] of Boolean;
     FVolume: array[0..3] of Integer;
     FLatch, FNoise, FLFSR, FDivider: Integer;
+    FSega: Boolean;
+    FChannelVolume: array[0..3] of Integer;
     procedure Clock;
     function TonePeriod(Channel: Integer): Integer;
   public
-    constructor Create;
+    constructor Create(Sega: Boolean = False);
     procedure Reset;
     procedure Write(Value: Byte);
     procedure Advance(Cycles: Integer);
     function Sample: SmallInt;
+    procedure SetVolumes(const Values: array of Integer);
     procedure SerializeState(State: TStateArchive);
   end;
 
 implementation
 
-constructor TSGSound.Create;
+constructor TSGSound.Create(Sega: Boolean);
 begin
-  inherited;
+  inherited Create;
+  FSega := Sega;
+  for var I := 0 to 3 do
+    FChannelVolume[I] := 100;
   Reset;
 end;
 
@@ -42,6 +48,8 @@ begin
   FLatch := 0;
   FNoise := 0;
   FLFSR := $10000;
+  if FSega then
+    FLFSR := $8000;
   FDivider := 0;
 end;
 
@@ -49,7 +57,10 @@ function TSGSound.TonePeriod(Channel: Integer): Integer;
 begin
   Result := FPeriod[Channel];
   if Result = 0 then
-    Result := $400;
+    if FSega then
+      Result := 1
+    else
+      Result := $400;
 end;
 
 procedure TSGSound.Write(Value: Byte);
@@ -70,6 +81,8 @@ begin
   begin
     FNoise := Value and 7;
     FLFSR := $10000;
+    if FSega then
+      FLFSR := $8000;
     FOutput[3] := False;
   end;
 end;
@@ -82,8 +95,35 @@ begin
     if FCounter[Channel] <= 0 then
     begin
       FCounter[Channel] := TonePeriod(Channel);
-      FOutput[Channel] := not FOutput[Channel];
+      if FSega and (FPeriod[Channel] <= 1) then
+        FOutput[Channel] := True
+      else
+        FOutput[Channel] := not FOutput[Channel];
     end;
+  end;
+  if FSega then
+  begin
+    var Tick := False;
+    if FNoise and 3 = 3 then
+      Tick := (FCounter[2] = TonePeriod(2)) and FOutput[2]
+    else
+    begin
+      Dec(FCounter[3]);
+      if FCounter[3] <= 0 then
+      begin
+        FCounter[3] := 16 shl (FNoise and 3);
+        FOutput[3] := not FOutput[3];
+        Tick := FOutput[3];
+      end;
+    end;
+    if Tick then
+    begin
+      var Feedback := FLFSR and 1;
+      if FNoise and 4 <> 0 then
+        Feedback := Feedback xor ((FLFSR shr 3) and 1);
+      FLFSR := (FLFSR shr 1) or (Feedback shl 15);
+    end;
+    Exit;
   end;
   Dec(FCounter[3]);
   if FCounter[3] <= 0 then
@@ -115,6 +155,19 @@ begin
   end;
 end;
 
+procedure TSGSound.SetVolumes(const Values: array of Integer);
+begin
+  if Length(Values) <> 4 then
+    raise EArgumentException.Create('PSG needs four channel volumes');
+  for var I := 0 to 3 do
+    if Values[I] < 0 then
+      FChannelVolume[I] := 0
+    else if Values[I] > 100 then
+      FChannelVolume[I] := 100
+    else
+      FChannelVolume[I] := Values[I];
+end;
+
 function TSGSound.Sample: SmallInt;
 const
   Amplitudes: array[0..15] of Integer =
@@ -123,10 +176,15 @@ const
 begin
   var Value := 0;
   for var Channel := 0 to 3 do
-    if FOutput[Channel] then
-      Inc(Value, Amplitudes[FVolume[Channel]])
+  begin
+    var High := FOutput[Channel];
+    if FSega and (Channel = 3) then
+      High := FLFSR and 1 <> 0;
+    if High then
+      Inc(Value, Amplitudes[FVolume[Channel]] * FChannelVolume[Channel] div 100)
     else
-      Dec(Value, Amplitudes[FVolume[Channel]]);
+      Dec(Value, Amplitudes[FVolume[Channel]] * FChannelVolume[Channel] div 100);
+  end;
   Result := SmallInt(Value);
 end;
 

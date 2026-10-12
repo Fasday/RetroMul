@@ -119,6 +119,8 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
+  if (PlatformCore = ROM_CORE_ID_SG1000) or (PlatformCore = ROM_CORE_ID_SC3000) then
+    Result.Version := 2;
   if SameText(PlatformCore, 'N64') then
     // N64 v4 preserves the clocked DMA/event queues, hidden RDRAM bits,
     // 64-bit architectural CPU state and the software VI pipeline.

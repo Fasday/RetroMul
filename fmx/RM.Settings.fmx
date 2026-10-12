@@ -321,6 +321,61 @@ object SettingsView: TSettingsView
       end
     end
   end
+  object PanelPlatforms: TPanel
+    Padding.Left = 12.000000000000000000
+    Padding.Top = 20.000000000000000000
+    Padding.Right = 12.000000000000000000
+    Padding.Bottom = 12.000000000000000000
+    Position.X = 224.000000000000000000
+    Size.Width = 216.000000000000000000
+    Size.Height = 796.000000000000000000
+    Size.PlatformDefault = False
+    StyleLookup = 'retromul_sidebar'
+    Visible = False
+    object LabelPlatformsTitle: TLabel
+      Align = Top
+      StyledSettings = [Family, Style, FontColor]
+      Position.X = 12.000000000000000000
+      Position.Y = 20.000000000000000000
+      Size.Width = 192.000000000000000000
+      Size.Height = 36.000000000000000000
+      Size.PlatformDefault = False
+      TextSettings.Font.Size = 20.000000000000000000
+      TextSettings.WordWrap = False
+      Text = 'Platforms'
+    end
+    object LayoutPlatformSearchSlot: TLayout
+      Align = Top
+      Margins.Bottom = 12.000000000000000000
+      Position.X = 12.000000000000000000
+      Position.Y = 56.000000000000000000
+      Size.Width = 192.000000000000000000
+      Size.Height = 36.000000000000000000
+      Size.PlatformDefault = False
+    end
+    object LabelNoPlatforms: TLabel
+      Align = Top
+      Size.Width = 192.000000000000000000
+      Size.Height = 48.000000000000000000
+      Size.PlatformDefault = False
+      Text = 'No platforms found'
+      Visible = False
+    end
+    object ListBoxPlatforms: TListBox
+      Align = Client
+      Size.Width = 192.000000000000000000
+      Size.Height = 680.000000000000000000
+      Size.PlatformDefault = False
+      ScrollAnimation = True
+      DisableFocusEffect = True
+      ItemHeight = 44.000000000000000000
+      DefaultItemStyles.ItemStyle = ''
+      DefaultItemStyles.GroupHeaderStyle = ''
+      DefaultItemStyles.GroupFooterStyle = ''
+      Viewport.Width = 192.000000000000000000
+      Viewport.Height = 668.000000000000000000
+    end
+  end
   object LayoutBody: TLayout
     Align = Client
     Padding.Left = 24.000000000000000000
@@ -354,101 +409,12 @@ object SettingsView: TSettingsView
         Size.Height = 32.000000000000000000
         Size.PlatformDefault = False
       end
-      object LayoutCoreTabs: TLayout
-        Position.Y = 12.000000000000000000
+      object LayoutPlatformPickerSlot: TLayout
+        Position.Y = 92.000000000000000000
         Size.Width = 916.000000000000000000
-        Size.Height = 40.000000000000000000
+        Size.Height = 32.000000000000000000
         Size.PlatformDefault = False
         Visible = False
-        object ButtonCore1: TButton
-          Tag = 1
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'Game Boy'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore2: TButton
-          Tag = 2
-          Position.X = 111.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'Game Boy Color'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore7: TButton
-          Tag = 7
-          Position.X = 222.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'Game Boy Advance'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore9: TButton
-          Tag = 9
-          Position.X = 222.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'SG-1000'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore10: TButton
-          Tag = 10
-          Position.X = 222.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'SC-3000'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore3: TButton
-          Tag = 3
-          Position.X = 333.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'NES / Famicom'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore4: TButton
-          Tag = 4
-          Position.X = 444.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'Mega Drive'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore5: TButton
-          Tag = 5
-          Position.X = 555.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'Super Nintendo'
-          TextSettings.Trimming = Character
-        end
-        object ButtonCore6: TButton
-          Tag = 6
-          Position.X = 666.000000000000000000
-          Size.Width = 104.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'buttonstyle'
-          Text = 'Neo Geo (CD)'
-          TextSettings.Trimming = Character
-        end
       end
       object LayoutSettingsPagePickerSlot: TLayout
         Position.Y = 48.000000000000000000

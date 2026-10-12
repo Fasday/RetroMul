@@ -3,17 +3,39 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.UITypes, Core.Emulation,
-  Core.Snapshots, MD.Z80, SG1000.Cartridge, SG1000.VDP, SG1000.Sound;
+  System.SysUtils, System.Classes, System.UITypes, System.Math, Core.Emulation,
+  Core.Snapshots, MD.Z80, SG1000.Cartridge, SG1000.VDP, SG1000.Sound,
+  SG1000.SF7000, SG1000.Cassette, SMS.Cartridge, SMS.VDP, MSX.Sound.OPLL;
 
 type
   TSGHostKeys = array[0..255] of Boolean;
 
+  TSGModel = (SG1000, SG1000II, SC3000, SC3000H, Multivision, SF7000, MasterSystem, MarkIII);
+
+  // Host preferences are deliberately separate from the emulated snapshot.
+  TSGOptions = record
+    ShowBackground, ShowSprites, RemoveSpriteLimit: Boolean;
+    FMEnabled, DiskWriteProtected: Boolean;
+    ChannelVolume: array[0..3] of Integer;
+    FMVolume: Integer;
+    class function Defaults: TSGOptions; static;
+  end;
+
   TSGConsole = class
   private
+    FOptions: TSGOptions;
+    FWarmBoot: Boolean;
     FCPU: TZ80State;
     FCallbacks: TZ80ReadAndWriteCallbacks;
     FCartridge: TSGCartridge;
+    FModel: TSGModel;
+    FSF7000: TSF7000;
+    FCassette: TSGCassette;
+    FSMSCartridge: TSMSCartridge;
+    FFM: TYM2413;
+    FWorkRAM: array[0..$1FFF] of Byte;
+    FBios: TBytes;
+    FMemoryControl, FIOControl, FFMControl, FHCounter: Byte;
     FVDP: TSGVDP;
     FSound: TSGSound;
     FRAM: array[0..$7FF] of Byte;
@@ -32,9 +54,14 @@ type
     function GetFPS: Double;
   public
     constructor Create(const Data: TBytes; SC3000: Boolean; PAL: Boolean = False);
+    constructor CreateSF7000(const IPL, Disk: TBytes; PAL: Boolean = False; WarmBoot: Boolean = True);
+    constructor CreateModel(const Data: TBytes; Model: TSGModel; PAL: Boolean = False; MapperHint: Integer = -1);
     destructor Destroy; override;
     procedure Reset;
     procedure SetInput(const Input: TEmulatorInput; const Keys: TSGHostKeys);
+    procedure SetTablet(X, Y: Integer; Pressed: Boolean);
+    procedure SetBIOS(const Data: TBytes);
+    procedure ApplyOptions(const Options: TSGOptions);
     function ReadMemory(Address: Word): Byte;
     procedure WriteMemory(Address: Word; Value: Byte);
     function ReadPort(Address: Word): Byte;
@@ -43,6 +70,11 @@ type
     procedure RunFrame;
     procedure SerializeState(State: TStateArchive);
     property VDP: TSGVDP read FVDP;
+    property SF7000: TSF7000 read FSF7000;
+    property Model: TSGModel read FModel;
+    property Cassette: TSGCassette read FCassette;
+    property Cartridge: TSGCartridge read FCartridge;
+    property SMSCartridge: TSMSCartridge read FSMSCartridge;
     property CPU: TZ80State read FCPU;
     property FrameNumber: UInt64 read FFrameNumber;
     property FramesPerSecond: Double read GetFPS;
@@ -72,14 +104,41 @@ begin
   TSGConsole(UserData).WritePort(Word(Address and $FFFF), Byte(Value and $FF));
 end;
 
+class function TSGOptions.Defaults: TSGOptions;
+begin
+  Result := Default(TSGOptions);
+  Result.ShowBackground := True;
+  Result.ShowSprites := True;
+  Result.FMEnabled := True;
+  Result.FMVolume := 100;
+  for var I := 0 to 3 do
+    Result.ChannelVolume[I] := 100;
+end;
+
+procedure TSGConsole.ApplyOptions(const Options: TSGOptions);
+begin
+  FOptions := Options;
+  FOptions.FMVolume := EnsureRange(FOptions.FMVolume, 0, 100);
+  FVDP.ConfigureDisplay(Options.ShowBackground, Options.ShowSprites, Options.RemoveSpriteLimit);
+  FSound.SetVolumes(Options.ChannelVolume);
+  if (FSF7000 <> nil) and (FSF7000.Disk <> nil) then
+    FSF7000.Disk.WriteProtected := Options.DiskWriteProtected;
+end;
+
 constructor TSGConsole.Create(const Data: TBytes; SC3000, PAL: Boolean);
 begin
   inherited Create;
   FSC3000 := SC3000;
+  if SC3000 then
+    FModel := TSGModel.SC3000
+  else
+    FModel := TSGModel.SG1000;
   FPAL := PAL;
   FCartridge := TSGCartridge.Create(Data);
   FVDP := TSGVDP.Create;
   FSound := TSGSound.Create;
+  FCassette := TSGCassette.Create;
+  ApplyOptions(TSGOptions.Defaults);
   SetLength(FSamples, 2048 * 2);
   FCallbacks.ReadCallback := ReadBus;
   FCallbacks.WriteCallback := WriteBus;
@@ -89,8 +148,40 @@ begin
   Reset;
 end;
 
+constructor TSGConsole.CreateSF7000(const IPL, Disk: TBytes; PAL, WarmBoot: Boolean);
+begin
+  Create(IPL, True, PAL);
+  FModel := TSGModel.SF7000;
+  FSF7000 := TSF7000.Create(IPL, Disk);
+  FWarmBoot := WarmBoot and (SGCRC32(IPL) = $D76810B8);
+  Reset;
+end;
+
+constructor TSGConsole.CreateModel(const Data: TBytes; Model: TSGModel; PAL: Boolean; MapperHint: Integer);
+begin
+  var Bytes := Data;
+  if (Model in [TSGModel.MasterSystem, TSGModel.MarkIII]) and (Length(Data) mod $4000 = 512) then
+    Bytes := Copy(Data, 512, Length(Data) - 512);
+  Create(Bytes, Model in [TSGModel.SG1000II, TSGModel.SC3000, TSGModel.SC3000H], PAL);
+  FModel := Model;
+  if Model in [TSGModel.MasterSystem, TSGModel.MarkIII] then
+  begin
+    FSMSCartridge := TSMSCartridge.Create(Bytes, MapperHint);
+    FVDP.Free;
+    FVDP := TSMSVDP.Create(Model = TSGModel.MarkIII);
+    FSound.Free;
+    FSound := TSGSound.Create(True);
+    FFM := TYM2413.Create(GetCPUClock);
+    Reset;
+  end;
+end;
+
 destructor TSGConsole.Destroy;
 begin
+  FSF7000.Free;
+  FCassette.Free;
+  FSMSCartridge.Free;
+  FFM.Free;
   FSound.Free;
   FVDP.Free;
   FCartridge.Free;
@@ -130,24 +221,79 @@ begin
   FSampleCount := 0;
   FFrameNumber := 0;
   FHold := False;
+  if FSF7000 <> nil then
+    FSF7000.Reset;
+  FillChar(FWorkRAM, SizeOf(FWorkRAM), 0);
+  if FSMSCartridge <> nil then
+    FSMSCartridge.Reset;
+  if FFM <> nil then
+    FFM.Reset;
+  FMemoryControl := $A8;
+  FIOControl := $FF;
+  FFMControl := 0;
+  FHCounter := 0;
+  if Length(FBios) > 0 then
+    FMemoryControl := $A0;
+  ApplyOptions(FOptions);
+  if (FSF7000 <> nil) and FWarmBoot then
+  begin
+    // Use the IPL's warm-boot entry after its normal PPI initialization.
+    WritePort($DF, $92);
+    WritePort($E7, $90);
+    WritePort($E6, 3);
+    FCPU.StackPointer := $FF00;
+    FCPU.ProgramCounter := $30;
+  end;
 end;
 
 procedure TSGConsole.SetInput(const Input: TEmulatorInput; const Keys: TSGHostKeys);
 begin
   FInput := Input;
   FKeys := Keys;
-  var Hold := TEmulatorButton.Start in Input.Buttons;
+  var Hold := (TEmulatorButton.Start in Input.Buttons) or (FSC3000 and Keys[vkF10]);
   if Hold and not FHold then
     Z80NonMaskableInterrupt(FCPU);
   FHold := Hold;
 end;
 
+procedure TSGConsole.SetTablet(X, Y: Integer; Pressed: Boolean);
+begin
+  FCartridge.SetTablet(X, Y, Pressed);
+end;
+
+procedure TSGConsole.SetBIOS(const Data: TBytes);
+begin
+  if (Length(Data) <> 0) and (Length(Data) <> $2000) and (Length(Data) <> $4000) and
+    (Length(Data) <> $8000) then
+    raise EReadError.Create('SMS BIOS must contain 8, 16 or 32 KiB');
+  FBios := Copy(Data);
+  Reset;
+end;
+
 function TSGConsole.ReadMemory(Address: Word): Byte;
 begin
+  if FSF7000 <> nil then
+    Exit(FSF7000.ReadMemory(Address));
+  if FSMSCartridge <> nil then
+  begin
+    if Address >= $C000 then
+    begin
+      if FSMSCartridge.ExpandedRAM then
+        Exit(FSMSCartridge.Read(Address));
+      if FMemoryControl and $10 <> 0 then
+        Exit($FF);
+      Exit(FWorkRAM[Address and $1FFF]);
+    end;
+    if (FMemoryControl and 8 = 0) and (Length(FBios) > 0) and (Address < Length(FBios)) then
+      Exit(FBios[Address]);
+    if FMemoryControl and $40 <> 0 then
+      Exit($FF);
+    Exit(FSMSCartridge.Read(Address));
+  end;
   if (Address < $C000) or FCartridge.OverridesSystemRAM then
     Exit(FCartridge.Read(Address));
 
-  if FSC3000 then
+  if (FModel in [TSGModel.SC3000, TSGModel.SC3000H, TSGModel.Multivision]) then
     Result := FRAM[Address and $7FF]
   else
     Result := FRAM[Address and $3FF];
@@ -155,10 +301,22 @@ end;
 
 procedure TSGConsole.WriteMemory(Address: Word; Value: Byte);
 begin
+  if FSF7000 <> nil then
+  begin
+    FSF7000.WriteMemory(Address, Value);
+    Exit;
+  end;
+  if FSMSCartridge <> nil then
+  begin
+    FSMSCartridge.Write(Address, Value);
+    if (Address >= $C000) and (FMemoryControl and $10 = 0) then
+      FWorkRAM[Address and $1FFF] := Value;
+    Exit;
+  end;
   FCartridge.Write(Address, Value);
   if (Address >= $C000) and not FCartridge.OverridesSystemRAM then
   begin
-    if FSC3000 then
+    if FModel in [TSGModel.SC3000, TSGModel.SC3000H, TSGModel.Multivision] then
       FRAM[Address and $7FF] := Value
     else
       FRAM[Address and $3FF] := Value;
@@ -217,6 +375,8 @@ begin
   begin
     // No cassette signal; printer is idle, /CONT and /FAULT are high.
     Result := $3F;
+    if FCassette.Input then
+      Result := Result or $80;
     for var i := 0 to 3 do
       if (PB[Row, i] <> $FF) and FKeys[PB[Row, i]] then
         Result := Result and ($FF xor (1 shl i));
@@ -226,6 +386,82 @@ end;
 function TSGConsole.ReadPort(Address: Word): Byte;
 begin
   var Port := Address and $FF;
+  if FSMSCartridge <> nil then
+  begin
+    if Port = $F2 then
+      if FOptions.FMEnabled then
+        Exit(FFMControl and 3)
+      else
+        Exit($FF);
+    case Port of
+      $40..$7F:
+        if Port and 1 = 0 then
+          Exit(TSMSVDP(FVDP).VCounter(FLine, FPAL))
+        else
+          Exit(FHCounter);
+      $C0..$FF:
+        begin
+          if FMemoryControl and 4 <> 0 then
+            Exit($FF);
+          var Value := JoystickPort(Port and 1);
+          if Port and 1 = 0 then
+          begin
+            if FIOControl and 1 = 0 then
+              Value := (Value and $DF) or ((FIOControl and $10) shl 1);
+          end
+          else
+          begin
+            if FIOControl and 4 = 0 then
+              Value := (Value and $F7) or ((FIOControl and $40) shr 3);
+            if FIOControl and 2 = 0 then
+              Value := (Value and $BF) or ((FIOControl and $20) shl 1);
+            if FIOControl and 8 = 0 then
+              Value := (Value and $7F) or (FIOControl and $80);
+            if FKeys[vkF10] then
+              Value := Value and $EF;
+          end;
+          Exit(Value);
+        end;
+    end;
+  end;
+  if (FSF7000 <> nil) and (Port >= $E0) then
+    Exit(FSF7000.ReadPort(Port));
+  if (FModel = TSGModel.Multivision) and (Port >= $C0) then
+  begin
+    Result := $FF;
+    case Port and 7 of
+      0, 1, 2, 3:
+        begin
+          var Base := Ord('1');
+          var Count := 6;
+          if Port and 7 = 1 then
+          begin
+            Base := Ord('7');
+            Count := 4;
+          end;
+          if Port and 7 = 2 then
+            Base := Ord('A');
+          if Port and 7 = 3 then
+          begin
+            Base := Ord('G');
+            Count := 2;
+          end;
+          for var I := 0 to Count - 1 do
+          begin
+            var Key := Base + I;
+            if Key = Ord(':') then
+              Key := Ord('0');
+            if FKeys[Key] then
+              Result := Result and ($FF xor (1 shl I));
+          end;
+        end;
+      4:
+        Result := JoystickPort(0);
+      5:
+        Result := JoystickPort(1);
+    end;
+    Exit;
+  end;
   Result := $FF;
   if (Port >= $80) and (Port <= $BF) then
   begin
@@ -272,6 +508,45 @@ end;
 procedure TSGConsole.WritePort(Address: Word; Value: Byte);
 begin
   var Port := Address and $FF;
+  if FSMSCartridge <> nil then
+  begin
+    case Port of
+      $00..$3F:
+        begin
+          if Port and 1 = 0 then
+            FMemoryControl := Value
+          else
+          begin
+            var OldA := (FIOControl and 2 <> 0) or (FIOControl and $20 <> 0);
+            var OldB := (FIOControl and 8 <> 0) or (FIOControl and $80 <> 0);
+            var NewA := (Value and 2 <> 0) or (Value and $20 <> 0);
+            var NewB := (Value and 8 <> 0) or (Value and $80 <> 0);
+            if (OldA and not NewA) or (OldB and not NewB) then
+              FHCounter := TSMSVDP(FVDP).HCounter(FLineCycles);
+            FIOControl := Value;
+          end;
+          Exit;
+        end;
+      $F0, $F1:
+        begin
+          if FOptions.FMEnabled then
+            FFM.WritePort(Port and 1, Value);
+          Exit;
+        end;
+      $F2:
+        begin
+          if FOptions.FMEnabled then
+            FFMControl := Value and 3;
+          Exit;
+        end;
+    end;
+  end;
+  if (FSF7000 <> nil) and (Port >= $E0) then
+  begin
+    FSF7000.WritePort(Port, Value);
+    Exit;
+  end;
+  FCartridge.WritePort(Port, Value);
   if (Port >= $40) and (Port <= $7F) then
     FSound.Write(Value)
   else if (Port >= $80) and (Port <= $BF) then
@@ -302,6 +577,8 @@ begin
             FPPI[2] := FPPI[2] and ($FF xor (1 shl Bit));
         end;
     end;
+  if FSC3000 then
+    FCassette.SetOutput(FPPI[2] and $10 <> 0);
 end;
 
 procedure TSGConsole.Advance(Cycles: Integer);
@@ -318,6 +595,9 @@ begin
       Chunk := ToSample;
     Dec(Cycles, Chunk);
     FSound.Advance(Chunk);
+    if FSF7000 <> nil then
+      FSF7000.Advance(Chunk);
+    FCassette.Advance(Chunk, GetCPUClock);
     Inc(FSamplePhase, Chunk * 44100);
     if FSamplePhase >= GetCPUClock then
     begin
@@ -326,6 +606,20 @@ begin
         raise EInvalidOpException.Create('SG-1000 audio frame buffer exhausted');
 
       var Sample := FSound.Sample;
+      if FFM <> nil then
+      begin
+        var Left, Right: SmallInt;
+        FFM.Sample(Left, Right);
+        var Mixed := Integer(Sample);
+        if FOptions.FMEnabled then
+        begin
+          if FFMControl and 2 <> 0 then
+            Mixed := 0;
+          if FFMControl and 1 <> 0 then
+            Inc(Mixed, Integer(Left) * FOptions.FMVolume div 100);
+        end;
+        Sample := System.Math.EnsureRange(Mixed, -32768, 32767);
+      end;
       FSamples[FSampleCount * 2] := Sample;
       FSamples[FSampleCount * 2 + 1] := Sample;
       Inc(FSampleCount);
@@ -334,10 +628,11 @@ begin
     if FLineCycles = 228 then
     begin
       FLineCycles := 0;
-      if FLine < 192 then
+      if FLine < FVDP.ScreenHeight then
         FVDP.RenderLine(FLine);
-      if FLine = 193 then
+      if FLine = FVDP.ScreenHeight + 1 then
         FVDP.VBlank;
+      FVDP.EndLine(FLine, 262 + Ord(FPAL) * 51);
       Inc(FLine);
       if ((not FPAL) and (FLine = 262)) or (FPAL and (FLine = 313)) then
       begin
@@ -375,6 +670,11 @@ begin
   if State.Loading and (Region <> FPAL) then
     raise EReadError.Create('Snapshot TV region differs from the current configuration');
 
+  var Model := FModel;
+  State.Field(Model, SizeOf(Model));
+  if State.Loading and (Model <> FModel) then
+    raise EReadError.Create('Snapshot machine model differs');
+
   State.Field(FCPU, SizeOf(FCPU));
   State.Field(FRAM, SizeOf(FRAM));
   State.Field(FPPI, SizeOf(FPPI));
@@ -387,6 +687,19 @@ begin
   FCartridge.SerializeState(State);
   FVDP.SerializeState(State);
   FSound.SerializeState(State);
+  if FSF7000 <> nil then
+    FSF7000.SerializeState(State);
+  FCassette.SerializeState(State);
+  if FSMSCartridge <> nil then
+  begin
+    FSMSCartridge.SerializeState(State);
+    FFM.SerializeState(State);
+    State.Field(FWorkRAM, SizeOf(FWorkRAM));
+    State.Field(FMemoryControl, SizeOf(FMemoryControl));
+    State.Field(FIOControl, SizeOf(FIOControl));
+    State.Field(FFMControl, SizeOf(FFMControl));
+    State.Field(FHCounter, SizeOf(FHCounter));
+  end;
 
   if State.Loading then
   begin

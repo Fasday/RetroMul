@@ -13,6 +13,9 @@ const
   ROM_SYSTEM_MD = 'md';
   ROM_SYSTEM_SG1000 = 'sg1000';
   ROM_SYSTEM_SC3000 = 'sc3000';
+  ROM_SYSTEM_SF7000 = 'sf7000';
+  ROM_SYSTEM_OMV = 'omv';
+  ROM_SYSTEM_SMS = 'sms';
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_NEOGEO = 'neogeo';
@@ -27,6 +30,9 @@ const
   ROM_CORE_ID_MD = 'MD';
   ROM_CORE_ID_SG1000 = 'SG1000';
   ROM_CORE_ID_SC3000 = 'SC3000';
+  ROM_CORE_ID_SF7000 = 'SF7000';
+  ROM_CORE_ID_OMV = 'OMV';
+  ROM_CORE_ID_SMS = 'SMS';
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
@@ -42,6 +48,10 @@ const
   ROM_EXTENSION_SG = '.sg';
   ROM_EXTENSION_SMS = '.sms';
   ROM_EXTENSION_SC = '.sc';
+  ROM_EXTENSION_SF7 = '.sf7';
+  ROM_EXTENSION_SF = '.sf';
+  ROM_EXTENSION_DSK = '.dsk';
+  ROM_EXTENSION_MV = '.mv';
   ROM_EXTENSION_SMD = '.smd';
   ROM_EXTENSION_BIN = '.bin';
   ROM_EXTENSION_GEN = '.gen';
@@ -165,7 +175,8 @@ const
   NEOGEO_ROM_NAME_SIZE = 33;
 
 type
-  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000);
+  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
+    SF7000, Multivision, SMS);
 
   TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier, WordSwapped);
 
@@ -241,6 +252,12 @@ begin
       Result := [ROM_EXTENSION_SG, ROM_EXTENSION_SMS];
     TRomSystem.SC3000:
       Result := [ROM_EXTENSION_SC];
+    TRomSystem.SF7000:
+      Result := [ROM_EXTENSION_SF7, ROM_EXTENSION_SF, ROM_EXTENSION_DSK];
+    TRomSystem.Multivision:
+      Result := [ROM_EXTENSION_MV];
+    TRomSystem.SMS:
+      Result := [ROM_EXTENSION_SMS];
     TRomSystem.NES:
       Result := [ROM_EXTENSION_NES];
     TRomSystem.GB:
@@ -271,6 +288,12 @@ begin
       Result := ROM_SYSTEM_SG1000;
     TRomSystem.SC3000:
       Result := ROM_SYSTEM_SC3000;
+    TRomSystem.SF7000:
+      Result := ROM_SYSTEM_SF7000;
+    TRomSystem.Multivision:
+      Result := ROM_SYSTEM_OMV;
+    TRomSystem.SMS:
+      Result := ROM_SYSTEM_SMS;
     TRomSystem.NES:
       Result := ROM_SYSTEM_NES;
     TRomSystem.GB:
@@ -354,6 +377,15 @@ function DetectRom(const Data: TBytes): TRomFormatInfo;
 
 begin
   Result := Default(TRomFormatInfo);
+  for var Offset in [$1FF0, $3FF0, $7FF0] do
+    for var Header in [0, ROM_COPIER_HEADER_SIZE] do
+      if Signature(Offset + Header, 'TMR SEGA') and
+        (Length(Data) > Offset + Header + 15) and
+        ((Data[Offset + Header + 15] shr 4) in [3, 4]) then
+      begin
+        Result.System := TRomSystem.SMS;
+        Exit;
+      end;
   if Length(Data) >= 64 then
   begin
     var N64Signature := (Cardinal(Data[0]) shl 24) or (Cardinal(Data[1]) shl 16) or
@@ -361,8 +393,10 @@ begin
     if (N64Signature = $80371240) or (N64Signature = $37804012) or (N64Signature = $40123780) then
     begin
       Result.System := TRomSystem.N64;
-      if N64Signature = $37804012 then Result.Encoding := TRomEncoding.ByteSwapped
-      else if N64Signature = $40123780 then Result.Encoding := TRomEncoding.WordSwapped;
+      if N64Signature = $37804012 then
+        Result.Encoding := TRomEncoding.ByteSwapped
+      else if N64Signature = $40123780 then
+        Result.Encoding := TRomEncoding.WordSwapped;
       Exit;
     end;
   end;
@@ -514,9 +548,11 @@ begin
       raise EReadError.Create('Invalid N64 ROM size');
   if Format.Encoding = TRomEncoding.WordSwapped then
   begin
-    if (Length(Data) and 3) <> 0 then raise EReadError.Create('Invalid word-swapped ROM size');
+    if (Length(Data) and 3) <> 0 then
+      raise EReadError.Create('Invalid word-swapped ROM size');
     for var I := 0 to Length(Data) div 4 - 1 do
-      for var J := 0 to 3 do Result[I * 4 + J] := Data[I * 4 + 3 - J];
+      for var J := 0 to 3 do
+        Result[I * 4 + J] := Data[I * 4 + 3 - J];
   end
   else if Format.Encoding = TRomEncoding.SnesCopier then
     Result := Copy(Data, ROM_COPIER_HEADER_SIZE, Length(Data) - ROM_COPIER_HEADER_SIZE)

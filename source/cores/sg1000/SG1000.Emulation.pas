@@ -13,7 +13,9 @@ type
     FWake: TEvent;
     FSnapshots: TSnapshotQueue;
     FStorage: IStorage;
-    FData: TBytes;
+    FData, FBios: TBytes;
+    FModel: TSGModel;
+    FWarmBoot: Boolean;
     FSC3000, FPAL: Boolean;
     FInput: TEmulatorInput;
     FKeys: TSGHostKeys;
@@ -26,8 +28,13 @@ type
     procedure Execute; override;
   public
     SnapshotDirectory: string;
+    SaveFile: string;
+    Options: TSGOptions;
+    MapperHint: Integer;
+    TapeFile: string;
+    TapeAutoPlay: Boolean;
     InputPorts: TCoreInputPorts;
-    constructor Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage);
+    constructor Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage; Model: Integer = -1; const BIOS: TBytes = nil; WarmBoot: Boolean = True);
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; const Keys: TSGHostKeys; Paused, AudioEnabled: Boolean; Volume: Single);
     procedure RequestReset;
@@ -45,7 +52,7 @@ uses
   System.Diagnostics, System.Math, Core.SavePaths, Core.PerformanceHints,
   Core.RomFormat, PCM.Audio;
 
-constructor TSGWorker.Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage);
+constructor TSGWorker.Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage; Model: Integer; const BIOS: TBytes; WarmBoot: Boolean);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
@@ -56,6 +63,16 @@ begin
   FStorage := Storage;
   FSC3000 := SC3000;
   FPAL := PAL;
+  if SC3000 then
+    FModel := TSGModel.SC3000
+  else
+    FModel := TSGModel.SG1000;
+  if (Model >= 0) and (Model <= Ord(High(TSGModel))) then
+    FModel := TSGModel(Model);
+  FBios := Copy(BIOS);
+  FWarmBoot := WarmBoot;
+  Options := TSGOptions.Defaults;
+  MapperHint := -1;
 end;
 
 destructor TSGWorker.Destroy;
@@ -163,7 +180,7 @@ procedure TSGWorker.Publish(Console: TSGConsole);
 begin
   var Frame: TEmulatorFrame;
   Frame.Width := 256;
-  Frame.Height := 192;
+  Frame.Height := Console.VDP.ScreenHeight;
   Frame.FrameNumber := Console.FrameNumber;
   Frame.FramesPerSecond := Console.FramesPerSecond;
   Frame.Pixels := Copy(Console.VDP.Pixels);
@@ -192,13 +209,41 @@ begin
   Console := nil;
   Audio := nil;
   Hints := nil;
-  if FSC3000 then
-    CoreId := ROM_CORE_ID_SC3000
+  case FModel of
+    TSGModel.SC3000, TSGModel.SC3000H:
+      CoreId := ROM_CORE_ID_SC3000;
+    TSGModel.SF7000:
+      CoreId := ROM_CORE_ID_SF7000;
+    TSGModel.Multivision:
+      CoreId := ROM_CORE_ID_OMV;
+    TSGModel.MasterSystem, TSGModel.MarkIII:
+      CoreId := ROM_CORE_ID_SMS;
   else
     CoreId := ROM_CORE_ID_SG1000;
+  end;
   try
     try
-      Console := TSGConsole.Create(FData, FSC3000, FPAL);
+      if FModel = TSGModel.SF7000 then
+        Console := TSGConsole.CreateSF7000(FBios, FData, FPAL, FWarmBoot)
+      else
+        Console := TSGConsole.CreateModel(FData, FModel, FPAL, MapperHint);
+      if (Console.SMSCartridge <> nil) and (Length(FBios) > 0) then
+        Console.SetBIOS(FBios);
+      if (SaveFile <> '') and FStorage.Exists(SaveFile) then
+      begin
+        var Saved := FStorage.ReadBytes(SaveFile);
+        if Console.SMSCartridge <> nil then
+          Console.SMSCartridge.LoadRAM(Saved)
+        else if Console.SF7000 <> nil then
+          Console.SF7000.Mount(Saved, False);
+      end;
+      Console.ApplyOptions(Options);
+      if (TapeFile <> '') and (FModel in [TSGModel.SG1000II, TSGModel.SC3000, TSGModel.SC3000H, TSGModel.SF7000]) then
+      begin
+        Console.Cassette.LoadWAV(FStorage.ReadBytes(TapeFile));
+        if TapeAutoPlay then
+          Console.Cassette.Play;
+      end;
       Hints := TEmulationPerformanceHints.Create(Round(1000000000.0 / Console.FramesPerSecond), CoreId);
       var Format: TPCMAudioFormat;
       Format.SampleRate := 44100;
@@ -224,6 +269,7 @@ begin
             if Loading then
             begin
               LoadCoreSnapshot(Path, CoreId, FData, Transfer, FStorage);
+              Console.ApplyOptions(Options);
               if Audio <> nil then
                 Audio.Clear;
               Publish(Console);
@@ -231,7 +277,7 @@ begin
             else
             begin
               SaveCoreSnapshot(Path, CoreId, FData, Transfer, FStorage);
-              SaveSnapshotPreview(Path, 256, 192, 256, @Console.VDP.Pixels[0], FStorage);
+              SaveSnapshotPreview(Path, 256, Console.VDP.ScreenHeight, 256, @Console.VDP.Pixels[0], FStorage);
             end;
             Deadline := TStopwatch.GetTimeStamp;
           end);
@@ -328,6 +374,26 @@ begin
       end;
     end;
   finally
+    if (Console <> nil) and (SaveFile <> '') then
+    try
+      var Saved: TBytes;
+      if (Console.SMSCartridge <> nil) and Console.SMSCartridge.Dirty then
+        Saved := Console.SMSCartridge.SaveRAM
+      else if (Console.SF7000 <> nil) and (Console.SF7000.Disk <> nil) and Console.SF7000.Disk.Dirty then
+        Saved := Console.SF7000.Disk.Image;
+      if Length(Saved) > 0 then
+      begin
+        var Stream := TBytesStream.Create(Saved);
+        try
+          SaveStreamAtomically(Stream, SaveFile, FStorage);
+        finally
+          Stream.Free;
+        end;
+      end;
+    except
+      on E: Exception do
+        FError := CoreId + ' save: ' + E.Message;
+    end;
     Hints.Free;
     Audio.Free;
     Console.Free;

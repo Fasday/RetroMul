@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, Core.AudioFilter;
+  System.SysUtils, System.Classes, Core.AudioFilter, Core.Snapshots;
 
 type
   TOPLLPatch = record
@@ -45,12 +45,46 @@ type
     procedure WritePort(Port, Value: Byte);
     function GenerateNative: SmallInt;
     procedure Sample(out Left, Right: SmallInt);
+    procedure SerializeState(State: TStateArchive);
   end;
 
 implementation
 
 uses
   System.Math;
+
+procedure TYM2413.SerializeState(State: TStateArchive);
+begin
+  var Clock := FClock;
+  State.Field(Clock, SizeOf(Clock));
+  if State.Loading and (Clock <> FClock) then
+    raise EReadError.Create('OPLL snapshot clock differs');
+  State.Field(FRegisters, SizeOf(FRegisters));
+  State.Field(FAddress, SizeOf(FAddress));
+  State.Field(FSlots, SizeOf(FSlots));
+  State.Field(FPatches, SizeOf(FPatches));
+  State.Field(FPatchNumbers, SizeOf(FPatchNumbers));
+  State.Field(FCounter, SizeOf(FCounter));
+  State.Field(FPMPhase, SizeOf(FPMPhase));
+  State.Field(FAMPhase, SizeOf(FAMPhase));
+  State.Field(FAM, SizeOf(FAM));
+  State.Field(FNoise, SizeOf(FNoise));
+  State.Field(FShortNoise, SizeOf(FShortNoise));
+  State.Field(FRhythm, SizeOf(FRhythm));
+  State.Field(FPhase, SizeOf(FPhase));
+  State.Field(FFiltered, SizeOf(FFiltered));
+  State.Field(FFilter, SizeOf(FFilter));
+  State.Field(FDC, SizeOf(FDC));
+  if State.Loading then
+  begin
+    if (FAddress > 63) or (FPhase < 0) or (FPhase >= 1) then
+      raise EReadError.Create('Invalid OPLL snapshot');
+    for var Slot in FSlots do
+      if (Slot.Patch < 0) or (Slot.Patch > High(FPatches)) or (Slot.PhaseOut < 0) or
+        (Slot.PhaseOut > 1023) or (Slot.Block < 0) or (Slot.Block > 7) then
+        raise EReadError.Create('Invalid OPLL slot snapshot');
+  end;
+end;
 
 const
   egAttack = 0;

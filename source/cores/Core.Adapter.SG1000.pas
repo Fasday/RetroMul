@@ -25,6 +25,11 @@ type
     FKeys, FKeys2: TSGKeyMap;
     FSystemId: string;
     FPAL: Boolean;
+    FModelName, FBiosFile, FIPLFile: string;
+    FWarmBoot, FKeyboardEnabled, FBIOSenabled, FTapeAutoPlay: Boolean;
+    FTapeFile: string;
+    FMapperHint: Integer;
+    FOptions: TSGOptions;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
@@ -34,12 +39,24 @@ type
     property PAL: Boolean read FPAL;
     property Keys: TSGKeyMap read FKeys;
     property Keys2: TSGKeyMap read FKeys2;
+    property ModelName: string read FModelName;
+    property BIOSFile: string read FBiosFile;
+    property IPLFile: string read FIPLFile;
+    property WarmBoot: Boolean read FWarmBoot;
+    property BIOSenabled: Boolean read FBIOSenabled;
+    property KeyboardEnabled: Boolean read FKeyboardEnabled;
+    property TapeFile: string read FTapeFile;
+    property TapeAutoPlay: Boolean read FTapeAutoPlay;
+    property MapperHint: Integer read FMapperHint;
+    property Options: TSGOptions read FOptions;
   end;
 
   TSGCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, ISGKeyboardCore)
   private
     FThread: TSGWorker;
-    FData: TBytes;
+    FData, FBootROM: TBytes;
+    FModel: TSGModel;
+    FSaveFile: string;
     FSnapshotDirectory: string;
     FStorage: IStorage;
     FError: string;
@@ -52,7 +69,7 @@ type
     procedure ApplySettings;
   public
     constructor Create(const FileName: string); overload;
-    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; SC3000: Boolean = False); overload;
+    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; SC3000: Boolean = False; ModelHint: Integer = -1); overload;
     destructor Destroy; override;
     procedure SetScreenKeys(const Keys: TSGHostKeys);
     function GetHasKeyboard: Boolean;
@@ -85,7 +102,8 @@ type
 implementation
 
 uses
-  System.IOUtils, System.UITypes, System.Hash, SG1000.Cartridge, Core.RomFormat;
+  System.IOUtils, System.UITypes, System.Hash, SG1000.Cartridge, SG1000.Disk,
+  SMS.Cartridge, Core.RomFormat, System.Math;
 
 const
   KeyNames: array[TSGButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Start');
@@ -102,11 +120,36 @@ begin
   FSystemId := SystemId;
   FKeys := Defaults;
   FKeys2 := Defaults2;
+  FOptions := TSGOptions.Defaults;
+  FModelName := 'auto';
+  FKeyboardEnabled := True;
+  FBIOSenabled := True;
+  FWarmBoot := True;
+  FMapperHint := -1;
 end;
 
 procedure TSGConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
   FPAL := SameText(Ini.ReadString('Video', 'Region', 'NTSC'), 'PAL');
+  FModelName := Ini.ReadString('Hardware', 'Model', 'auto');
+  FBiosFile := Ini.ReadString('Hardware', 'BIOS', '');
+  FIPLFile := Ini.ReadString('Hardware', 'IPL', '');
+  FWarmBoot := Ini.ReadBool('Hardware', 'WarmBoot', True);
+  FBIOSenabled := Ini.ReadBool('Hardware', 'BIOSEnabled', True);
+  FKeyboardEnabled := Ini.ReadBool('Ports', 'KeyboardEnabled', True);
+  FTapeFile := Ini.ReadString('Ports', 'TapeFile', '');
+  FTapeAutoPlay := Ini.ReadBool('Ports', 'TapeAutoPlay', False);
+  FMapperHint := Ini.ReadInteger('Cartridge', 'Mapper', -1);
+  if (FMapperHint < -1) or (FMapperHint > Ord(High(TSMSMapper))) then
+    FMapperHint := -1;
+  FOptions.ShowBackground := Ini.ReadBool('Video', 'ShowBackground', True);
+  FOptions.ShowSprites := Ini.ReadBool('Video', 'ShowSprites', True);
+  FOptions.RemoveSpriteLimit := Ini.ReadBool('Video', 'RemoveSpriteLimit', False);
+  FOptions.FMEnabled := Ini.ReadBool('Audio', 'FMEnabled', True);
+  FOptions.FMVolume := EnsureRange(Ini.ReadInteger('Audio', 'FMVolume', 100), 0, 100);
+  FOptions.DiskWriteProtected := Ini.ReadBool('Disk', 'WriteProtected', False);
+  for var I := 0 to 3 do
+    FOptions.ChannelVolume[I] := EnsureRange(Ini.ReadInteger('Audio', 'Channel' + IntToStr(I + 1) + 'Volume', 100), 0, 100);
   for var Button := Low(TSGButton) to High(TSGButton) do
   begin
     FKeys[Button] := ReadEmulatorKey(Ini, 'Keys', KeyNames[Button], FKeys[Button]);
@@ -116,6 +159,23 @@ end;
 
 procedure TSGConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
+  Ini.WriteString('Hardware', 'Model', FModelName);
+  Ini.WriteString('Hardware', 'BIOS', FBiosFile);
+  Ini.WriteString('Hardware', 'IPL', FIPLFile);
+  Ini.WriteBool('Hardware', 'WarmBoot', FWarmBoot);
+  Ini.WriteBool('Hardware', 'BIOSEnabled', FBIOSenabled);
+  Ini.WriteBool('Ports', 'KeyboardEnabled', FKeyboardEnabled);
+  Ini.WriteString('Ports', 'TapeFile', FTapeFile);
+  Ini.WriteBool('Ports', 'TapeAutoPlay', FTapeAutoPlay);
+  Ini.WriteInteger('Cartridge', 'Mapper', FMapperHint);
+  Ini.WriteBool('Video', 'ShowBackground', FOptions.ShowBackground);
+  Ini.WriteBool('Video', 'ShowSprites', FOptions.ShowSprites);
+  Ini.WriteBool('Video', 'RemoveSpriteLimit', FOptions.RemoveSpriteLimit);
+  Ini.WriteBool('Audio', 'FMEnabled', FOptions.FMEnabled);
+  Ini.WriteInteger('Audio', 'FMVolume', FOptions.FMVolume);
+  Ini.WriteBool('Disk', 'WriteProtected', FOptions.DiskWriteProtected);
+  for var I := 0 to 3 do
+    Ini.WriteInteger('Audio', 'Channel' + IntToStr(I + 1) + 'Volume', FOptions.ChannelVolume[I]);
   if FPAL then
     Ini.WriteString('Video', 'Region', 'PAL')
   else
@@ -140,7 +200,7 @@ begin
   end;
 end;
 
-constructor TSGCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; SC3000: Boolean);
+constructor TSGCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; SC3000: Boolean; ModelHint: Integer);
 var
   Cart: TSGCartridge;
   Config: TSGConfig;
@@ -151,21 +211,93 @@ begin
   if FStorage = nil then
     FStorage := TStorage.Default;
   var Data := ReadRomData(Stream);
-  Cart := TSGCartridge.Create(Data);
-  Cart.Free;
   FData := Copy(Data);
   FSC3000 := SC3000;
+  if SC3000 then
+    FModel := TSGModel.SC3000
+  else
+    FModel := TSGModel.SG1000;
+  if (ModelHint >= 0) and (ModelHint <= Ord(High(TSGModel))) then
+    FModel := TSGModel(ModelHint);
+  if FModel in [TSGModel.MasterSystem, TSGModel.MarkIII] then
+  begin
+    var Cartridge := TSMSCartridge.Create(Data);
+    Cartridge.Free;
+  end
+  else if FModel <> TSGModel.SF7000 then
+  begin
+    Cart := TSGCartridge.Create(Data);
+    Cart.Free;
+  end;
   var SystemId := ROM_SYSTEM_SG1000;
   if FSC3000 then
     SystemId := ROM_SYSTEM_SC3000;
+  case FModel of
+    TSGModel.SF7000:
+      SystemId := ROM_SYSTEM_SF7000;
+    TSGModel.Multivision:
+      SystemId := ROM_SYSTEM_OMV;
+    TSGModel.MasterSystem, TSGModel.MarkIII:
+      SystemId := ROM_SYSTEM_SMS;
+  end;
   Config := TSGConfig.Create(FStorage.ConfigFile(SystemId), FStorage, SystemId);
   FConfig := Config;
   Config.Load;
+  if (SystemId = ROM_SYSTEM_SG1000) and SameText(Config.ModelName, 'sg1000ii') then
+    FModel := TSGModel.SG1000II;
+  if (SystemId = ROM_SYSTEM_SC3000) and SameText(Config.ModelName, 'sc3000h') then
+    FModel := TSGModel.SC3000H;
+  if (SystemId = ROM_SYSTEM_SMS) and SameText(Config.ModelName, 'markiii') then
+    FModel := TSGModel.MarkIII;
+  if (SystemId = ROM_SYSTEM_SMS) and Config.BIOSenabled and (Config.BIOSFile <> '') then
+    FBootROM := FStorage.ReadBytes(Config.BIOSFile);
+  if FModel = TSGModel.SF7000 then
+  begin
+    if (Length(FData) = $2000) and (SGCRC32(FData) = $D76810B8) then
+    begin
+      FBootROM := FData;
+      FData := nil;
+    end
+    else
+    begin
+      var IPL := Config.IPLFile;
+      if IPL = '' then
+      begin
+        var Folders: TArray<string> := [ExtractFilePath(RomName)];
+        if FStorage.RomFolder <> '' then
+          Folders := Folders + [TPath.Combine(FStorage.RomFolder, 'sf7000'),
+              TPath.Combine(FStorage.RomFolder, 'sg1000'), TPath.Combine(FStorage.RomFolder, 'Sega SF-7000')];
+        for var Folder in Folders do
+        begin
+          if not FStorage.FolderExists(Folder) then
+            Continue;
+          for var Path in FStorage.Files(Folder) do
+          begin
+            var FileInfo := FStorage.Describe(Path);
+            if (FileInfo.Size = $2000) and (SameText(FileInfo.Name, 'ipl.rom') or
+              FileInfo.Name.ToLower.Contains('initial program loader') or SameText(FileInfo.Name, 'sf7000.rom')) then
+            begin
+              IPL := Path;
+              Break;
+            end;
+          end;
+          if IPL <> '' then
+            Break;
+        end;
+      end;
+      if IPL = '' then
+        raise EReadError.Create('SF-7000 needs its 8 KiB IPL ROM. Select it in SF-7000 settings or place ipl.rom beside the disk.');
+      FBootROM := FStorage.ReadBytes(IPL);
+      var Disk := SG1000.Disk.TSGDisk.Create(FData);
+      Disk.Free;
+    end;
+  end;
   FKeys := Config.Keys;
   FKeys2 := Config.Keys2;
   Hash := THashSHA2.Create;
-  Hash.Update(FData);
+  Hash.Update(Data);
   FSnapshotDirectory := FStorage.GameSnapshots(SystemId, RomName, Hash.HashAsString);
+  FSaveFile := FStorage.GameSave(SystemId, RomName, Hash.HashAsString);
 end;
 
 destructor TSGCoreAdapter.Destroy;
@@ -191,7 +323,13 @@ begin
   if FThread <> nil then
     Exit;
 
-  FThread := TSGWorker.Create(FData, FSC3000, TSGConfig(FConfig).PAL, FStorage);
+  FThread := TSGWorker.Create(FData, FSC3000, TSGConfig(FConfig).PAL, FStorage,
+    Ord(FModel), FBootROM, TSGConfig(FConfig).WarmBoot);
+  FThread.Options := TSGConfig(FConfig).Options;
+  FThread.MapperHint := TSGConfig(FConfig).MapperHint;
+  FThread.TapeFile := TSGConfig(FConfig).TapeFile;
+  FThread.TapeAutoPlay := TSGConfig(FConfig).TapeAutoPlay;
+  FThread.SaveFile := FSaveFile;
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.InputPorts := LoadCoreInputPorts(FStorage, TSGConfig(FConfig).SystemId);
   ApplySettings;
@@ -243,8 +381,10 @@ procedure TSGCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 var
   Button: TSGButton;
 begin
-  if FSC3000 then
+  if GetHasKeyboard then
   begin
+    if not TSGConfig(FConfig).KeyboardEnabled then
+      Exit;
     if Code <= High(FHostKeys) then
       FHostKeys[Code] := Pressed;
 
@@ -256,7 +396,8 @@ begin
     if Code in [vkLMenu, vkRMenu] then
       FHostKeys[vkMenu] := FHostKeys[vkLMenu];
     ApplySettings;
-    Exit;
+    if FModel <> TSGModel.Multivision then
+      Exit;
   end;
 
   for Button := Low(TSGButton) to High(TSGButton) do
@@ -344,15 +485,29 @@ end;
 
 function TSGCoreAdapter.GetHasKeyboard: Boolean;
 begin
-  Result := FSC3000;
+  Result := FModel in [TSGModel.SG1000II, TSGModel.SC3000, TSGModel.SC3000H, TSGModel.SF7000, TSGModel.Multivision];
 end;
 
 function TSGCoreAdapter.GetName: string;
 begin
-  if FSC3000 then
-    Result := 'SEGA SC-3000'
-  else
-    Result := 'SEGA SG-1000';
+  case FModel of
+    TSGModel.SG1000:
+      Result := 'SEGA SG-1000';
+    TSGModel.SG1000II:
+      Result := 'SEGA SG-1000 II';
+    TSGModel.SC3000:
+      Result := 'SEGA SC-3000';
+    TSGModel.SC3000H:
+      Result := 'SEGA SC-3000H';
+    TSGModel.Multivision:
+      Result := 'Othello Multivision';
+    TSGModel.SF7000:
+      Result := 'SEGA SF-7000';
+    TSGModel.MasterSystem:
+      Result := 'SEGA Master System';
+    TSGModel.MarkIII:
+      Result := 'SEGA Mark III';
+  end;
 end;
 
 function TSGCoreAdapter.GetSupportsSnapshots: Boolean;
