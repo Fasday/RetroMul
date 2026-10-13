@@ -4,7 +4,7 @@ interface
 
 uses
   Core.InputConfig, Core.Storage, Core.RomFormat, Core.Snapshots,
-  System.SysUtils, System.Classes, System.SyncObjs, Core.Emulation,
+  System.SysUtils, System.Classes, System.SyncObjs, Core.Emulation.Types,
   NeoGeo.Console, NeoGeo.Cartridge, NeoGeo.Video;
 
 const

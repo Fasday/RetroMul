@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, MD.M68k, MD.Z80, Core.Emulation,
+  System.SysUtils, System.Classes, MD.M68k, MD.Z80, Core.Emulation.Types,
   Core.InputConfig, NeoGeo.Cartridge, NeoGeo.Video, NeoGeo.Sound, Core.Snapshots,
   NeoGeoCD.Controller;
 

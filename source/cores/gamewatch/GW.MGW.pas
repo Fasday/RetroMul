@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.UITypes, System.Generics.Collections, Core.Emulation,
+  System.SysUtils, System.UITypes, System.Generics.Collections, Core.Emulation.Types,
   GW.Script, GW.MGW.Package, Core.Snapshots;
 
 type

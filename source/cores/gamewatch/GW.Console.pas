@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, Core.Emulation, Core.Snapshots, GW.CPU, GW.Cartridge, GW.MGW;
+  System.SysUtils, Core.Emulation.Types, Core.Snapshots, GW.CPU, GW.Cartridge, GW.MGW;
 
 type
   TGWConsoleState = packed record

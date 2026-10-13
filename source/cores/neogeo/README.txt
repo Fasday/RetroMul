@@ -83,7 +83,7 @@ BIOS boot and deterministic snapshots were checked with NeoThunder, Neo3D,
 Neo-Geo CD Special, Rally Chase and Xeno Crisis. Metal Slug and Xeno Crisis
 reached playable scenes. These checks do not establish complete gameplay compatibility.
 
-CHD uses the native Delphi library in source/chd with a one-hunk cache
+CHD uses the native Delphi library in source/media/chd with a one-hunk cache
 and reads through IStorage,
 including Android SAF. Discs are hashed for state identity before startup;
 large BIN/CHD sets can take several seconds to open. Limits: 99 tracks,

@@ -4,7 +4,7 @@ interface
 
 uses
   Core.Storage, Core.RomFormat, Core.Snapshots, System.SysUtils, System.Classes,
-  System.SyncObjs, Core.InputConfig, Core.Emulation, SNES.Console;
+  System.SyncObjs, Core.InputConfig, Core.Emulation.Types, SNES.Console;
 
 const
   SNES_SAMPLE_RATE = 32000;

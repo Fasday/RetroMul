@@ -1,18 +1,18 @@
-﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{D1D610E6-27EB-415C-851B-6ACE1A335D30}</ProjectGuid>
     </PropertyGroup>
     <ItemGroup>
-        <Projects Include="fmx\RetroMul.dproj">
+        <Projects Include="apps\retromul\RetroMul.dproj">
             <Dependencies/>
         </Projects>
-        <Projects Include="term\RetromulTerm.dproj">
+        <Projects Include="apps\terminal\RetromulTerm.dproj">
             <Dependencies/>
         </Projects>
-        <Projects Include="source\input\examples\FMXDemo\FMXInputDemo.dproj">
+        <Projects Include="dependencies\FMXInput\examples\FMXDemo\FMXInputDemo.dproj">
             <Dependencies/>
         </Projects>
-        <Projects Include="tune\RetroTune.dproj">
+        <Projects Include="apps\retrotune\RetroTune.dproj">
             <Dependencies/>
         </Projects>
     </ItemGroup>
@@ -24,40 +24,40 @@
         </BorlandProject>
     </ProjectExtensions>
     <Target Name="RetroMul">
-        <MSBuild Projects="fmx\RetroMul.dproj"/>
+        <MSBuild Projects="apps\retromul\RetroMul.dproj"/>
     </Target>
     <Target Name="RetroMul:Clean">
-        <MSBuild Projects="fmx\RetroMul.dproj" Targets="Clean"/>
+        <MSBuild Projects="apps\retromul\RetroMul.dproj" Targets="Clean"/>
     </Target>
     <Target Name="RetroMul:Make">
-        <MSBuild Projects="fmx\RetroMul.dproj" Targets="Make"/>
+        <MSBuild Projects="apps\retromul\RetroMul.dproj" Targets="Make"/>
     </Target>
     <Target Name="RetromulTerm">
-        <MSBuild Projects="term\RetromulTerm.dproj"/>
+        <MSBuild Projects="apps\terminal\RetromulTerm.dproj"/>
     </Target>
     <Target Name="RetromulTerm:Clean">
-        <MSBuild Projects="term\RetromulTerm.dproj" Targets="Clean"/>
+        <MSBuild Projects="apps\terminal\RetromulTerm.dproj" Targets="Clean"/>
     </Target>
     <Target Name="RetromulTerm:Make">
-        <MSBuild Projects="term\RetromulTerm.dproj" Targets="Make"/>
+        <MSBuild Projects="apps\terminal\RetromulTerm.dproj" Targets="Make"/>
     </Target>
     <Target Name="FMXInputDemo">
-        <MSBuild Projects="source\input\examples\FMXDemo\FMXInputDemo.dproj"/>
+        <MSBuild Projects="dependencies\FMXInput\examples\FMXDemo\FMXInputDemo.dproj"/>
     </Target>
     <Target Name="FMXInputDemo:Clean">
-        <MSBuild Projects="source\input\examples\FMXDemo\FMXInputDemo.dproj" Targets="Clean"/>
+        <MSBuild Projects="dependencies\FMXInput\examples\FMXDemo\FMXInputDemo.dproj" Targets="Clean"/>
     </Target>
     <Target Name="FMXInputDemo:Make">
-        <MSBuild Projects="source\input\examples\FMXDemo\FMXInputDemo.dproj" Targets="Make"/>
+        <MSBuild Projects="dependencies\FMXInput\examples\FMXDemo\FMXInputDemo.dproj" Targets="Make"/>
     </Target>
     <Target Name="RetroTune">
-        <MSBuild Projects="tune\RetroTune.dproj"/>
+        <MSBuild Projects="apps\retrotune\RetroTune.dproj"/>
     </Target>
     <Target Name="RetroTune:Clean">
-        <MSBuild Projects="tune\RetroTune.dproj" Targets="Clean"/>
+        <MSBuild Projects="apps\retrotune\RetroTune.dproj" Targets="Clean"/>
     </Target>
     <Target Name="RetroTune:Make">
-        <MSBuild Projects="tune\RetroTune.dproj" Targets="Make"/>
+        <MSBuild Projects="apps\retrotune\RetroTune.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
         <CallTarget Targets="RetroMul;RetromulTerm;FMXInputDemo;RetroTune"/>

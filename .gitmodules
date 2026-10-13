@@ -1,12 +1,12 @@
 [submodule "fmx/DelphiWinUI3"]
-	path = fmx/DelphiWinUI3
+	path = dependencies/DelphiWinUI3
 	url = https://github.com/HemulGM/DelphiWinUI3
 [submodule "source/pcm"]
-	path = source/pcm
+	path = dependencies/PCMAudio
 	url = https://github.com/HemulGM/PCMAudio
 [submodule "source/input"]
-	path = source/input
+	path = dependencies/FMXInput
 	url = https://github.com/HemulGM/FMXInput.git
 [submodule "fmx/FMXVibration"]
-	path = fmx/FMXVibration
+	path = dependencies/FMXVibration
 	url = https://github.com/HemulGM/FMXVibration

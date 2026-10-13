@@ -2,7 +2,7 @@
 
 interface
 
-uses System.SysUtils, System.Classes, System.UITypes, Core.Emulation, Core.Snapshots, Core.InputConfig,
+uses System.SysUtils, System.Classes, System.UITypes, Core.Emulation.Types, Core.Snapshots, Core.InputConfig,
   PCE.Cartridge, PCE.CPU, PCE.Sound.HuC6280, PCE.Video, PCE.CDROM,
   PCE.ArcadeCard, Core.CD.Disc;
 

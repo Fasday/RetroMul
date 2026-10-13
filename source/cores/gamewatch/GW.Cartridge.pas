@@ -4,22 +4,15 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.UITypes, GW.CPU, GW.Catalog,
-  GW.MGW.Package;
+  GW.MGW.Package, GW.Artwork;
 
 type
-  TGWLayer = record
-    Index, X, Y, Width, Height: Integer;
-    Pixels: TArray<TAlphaColor>;
-  end;
-
-  TGWArtwork = record
-    Width, Height: Integer;
-    Background: TArray<TAlphaColor>;
-    Layers: TArray<TGWLayer>;
-  end;
+  TGWLayer = GW.Artwork.TGWLayer;
+  TGWArtwork = GW.Artwork.TGWArtwork;
 
   TGWCartridge = class
   private
+    FRenderer: IGWArtworkRenderer;
     procedure LoadGW(const Bytes: TBytes);
     procedure LoadMAME(const Bytes: TBytes; const Name: string);
   public
@@ -33,7 +26,7 @@ type
     Title: string;
     Artwork: TGWArtwork;
     destructor Destroy; override;
-    constructor Create(const Bytes: TBytes; const Name: string);
+    constructor Create(const Bytes: TBytes; const Name: string; const Renderer: IGWArtworkRenderer = nil);
     class function Recognizes(const Bytes: TBytes; const Name: string): Boolean; static;
   end;
 
@@ -42,7 +35,7 @@ function GWColor565(Value: Word): TAlphaColor;
 implementation
 
 uses
-  System.Zip, System.ZLib, System.Math, CHD.LZMA, GW.Artwork.FMX;
+  System.Zip, System.ZLib, System.Math, CHD.LZMA;
 
 const
   MaxData = 8 * 1024 * 1024;
@@ -220,9 +213,12 @@ begin
   end;
 end;
 
-constructor TGWCartridge.Create(const Bytes: TBytes; const Name: string);
+constructor TGWCartridge.Create(const Bytes: TBytes; const Name: string; const Renderer: IGWArtworkRenderer);
 begin
   inherited Create;
+  FRenderer := Renderer;
+  if FRenderer = nil then
+    FRenderer := DefaultGWArtworkRenderer;
   Require((Length(Bytes) > 0) and (Length(Bytes) <= MaxData), 'empty or oversized package');
   IdentityData := Copy(Bytes);
   FixedRow := -1;
@@ -352,7 +348,10 @@ begin
       Artwork.Background[i] := GWColor565(LE(Background, i * 2, 2));
   end
   else if ((Flags and $20) <> 0) and (Tail < Length(Bytes)) then
-    Artwork.Background := DecodeGWBitmap(Copy(Bytes, Tail, Length(Bytes) - Tail), 320, 240)
+  begin
+    Require(FRenderer <> nil, 'no bitmap renderer supplied by frontend');
+    Artwork.Background := FRenderer.DecodeBitmap(Copy(Bytes, Tail, Length(Bytes) - Tail), 320, 240);
+  end
   else
     for var i := 0 to High(Artwork.Background) do
       Artwork.Background[i] := $FFE0E3CE;
@@ -485,7 +484,8 @@ begin
     var Screens: TArray<string> := nil;
     for var Entry in Info.Screens.Split([';']) do
       Screens := Screens + [TEncoding.UTF8.GetString(ReadEntry(Entry, 4 * 1024 * 1024))];
-    Artwork := RenderGWArtwork(Screens, Info.Layout, Model in [TGWCPUModel.SM5A, TGWCPUModel.SM5L, TGWCPUModel.SM500]);
+    Require(FRenderer <> nil, 'no SVG renderer supplied by frontend');
+    Artwork := FRenderer.Render(Screens, Info.Layout, Model in [TGWCPUModel.SM5A, TGWCPUModel.SM5L, TGWCPUModel.SM500]);
     if Info.Id = 'gnw_tbridge' then
     begin
       DecayPivot := 25;

@@ -16,7 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$projectDirectory = Join-Path $PSScriptRoot 'fmx'
+$projectDirectory = Join-Path $PSScriptRoot 'apps/retromul'
 $projectFile = Join-Path $projectDirectory 'RetroMul.dproj'
 $projectName = [IO.Path]::GetFileNameWithoutExtension($projectFile)
 $releaseDirectory = Join-Path $PSScriptRoot 'releases'

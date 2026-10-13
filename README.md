@@ -36,7 +36,7 @@ Neo Geo CD / CDZ is experimental. It boots through an external 512 KiB CD/CDZ BI
 
 CD images support Mode 1 ISO data, CUE sheets with MODE1/2048 or MODE1/2352 data and BINARY or 44.1 kHz stereo 16-bit PCM WAV audio, and CHD images. Keep every file referenced by a CUE together; choose the CUE to retain CD music. The library hides a matching ISO when a CUE with the same base name exists. Extract CD ZIP archives first. Compressed audio CUE tracks and parent/differential CHDs are not supported by the CD frontend.
 
-CD games use the **Neo Geo (CD)** input settings for both players, with Select in place of Coin. CDDA music mixes with the emulated YM2610 audio. Backup saves and snapshots are kept separately from MVS games. Disc images load in the background with a loading indicator and Cancel button; large images can take several seconds to open. Android disc access uses the selected ROM folder through the system storage picker. CHD decoding uses the native cross-platform Delphi library in `source/chd`, with no external decoder binaries. See the [Neo Geo CD notes](source/cores/neogeo/README.txt) and [decoder documentation](source/chd/README.md) for compatibility and image limits.
+CD games use the **Neo Geo (CD)** input settings for both players, with Select in place of Coin. CDDA music mixes with the emulated YM2610 audio. Backup saves and snapshots are kept separately from MVS games. Disc images load in the background with a loading indicator and Cancel button; large images can take several seconds to open. Android disc access uses the selected ROM folder through the system storage picker. CHD decoding uses the native cross-platform Delphi library in `source/media/chd`, with no external decoder binaries. See the [Neo Geo CD notes](source/cores/neogeo/README.txt) and [decoder documentation](source/media/chd/README.md) for compatibility and image limits.
 
 Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmware, stereo audio, SRAM/Flash/EEPROM saves, RTC, tilt, gyroscope and solar-sensor cartridges, cartridge rumble, and save states. GBA settings allow automatic or manual save-memory selection and a Boktai sunlight level from 0 to 255. A replacement 16 KiB BIOS can be selected in GBA settings. Compatibility is still incomplete; see the [GBA firmware notes](source/cores/gba/firmware/README.md) for the bundled firmware, source and license.
 
@@ -125,9 +125,9 @@ Open `RetromulGroup.groupproj` for the project group, or open an individual proj
 
 | Project | Purpose |
 | --- | --- |
-| `fmx/RetroMul.dproj` | FireMonkey emulator |
-| `tune/RetroTune.dproj` | FireMonkey music player |
-| `term/RetromulTerm.dproj` | Windows console emulator with ASCII video output |
+| `apps/retromul/RetroMul.dproj` | FireMonkey emulator |
+| `apps/retrotune/RetroTune.dproj` | FireMonkey music player |
+| `apps/terminal/RetromulTerm.dproj` | Windows console emulator with ASCII video output |
 
 `BuildReleases.ps1` builds and packages RetroMul for Windows 32/64-bit, Linux 64-bit, and Android 32/64-bit. Install and configure the corresponding RAD Studio platform SDKs and toolchains. For example, build only the Windows packages from the repository root:
 
@@ -136,6 +136,30 @@ Open `RetromulGroup.groupproj` for the project group, or open an individual proj
 ```
 
 Packages are written to `releases/RetroMul-<platform>.zip`. Use `-BdsPath` if the script cannot locate RAD Studio. This script packages RetroMul; build RetroTune and RetromulTerm from their own projects. Development checks, reports, and helper tools are kept in `codex-work`.
+
+## Source layout
+
+| Directory | Responsibility |
+| --- | --- |
+| `apps/retromul` | Emulator frontend: forms, controllers, settings, virtual devices and platform UI |
+| `apps/retrotune` | Music player project and forms |
+| `apps/terminal` | Windows console frontend |
+| `source/contracts` | Emulation and storage interfaces and shared data types |
+| `source/runtime` | Emulator factory, adapters, worker timing and snapshot coordination |
+| `source/cores` | System-specific emulation, cartridges, audio machines and firmware |
+| `source/hardware` | Shared CPU, audio-chip and video implementations |
+| `source/media` | ROM identification, CD access and native CHD decoding |
+| `source/services` | Storage, configuration, system catalog and game-list metadata |
+| `source/platform` | Host storage integration and performance hints |
+| `source/music` | Reusable decoders, trackers, playback, synthesis and export |
+| `source/ui/fmx` | Shared FMX controls, SVG rendering and Game & Watch artwork backend |
+| `dependencies` | Git submodules: DelphiWinUI3, FMXVibration, FMXInput and PCMAudio |
+
+Existing unit names are retained. For example, the shared `MD.Z80` and `MD.M68k` implementations now live in `source/hardware/cpu`. `Core.Emulation` remains a compatibility facade; hardware that needs only input/frame contracts imports `Core.Emulation.Types`. Persistent configuration and worker-rate measurement live in separate service/runtime units.
+
+System IDs, settings keys and save formats remain stable. FMX page IDs, gamepad layouts and artwork are defined in `RM.Platforms.Presentation`, separately from the common platform registry. Game & Watch cartridge parsing accepts an `IGWArtworkRenderer`; the FMX and terminal projects explicitly include `GW.Artwork.FMX` to register their image backend.
+
+Initialize dependencies with `git submodule update --init --recursive`. Their repository URLs and pinned commits are unchanged; the logical submodule names in `.gitmodules` are retained so existing Git metadata continues to work. DelphiWinUI3's nested submodules remain part of that dependency. Do not add dependency contents to the parent repository as ordinary files.
 
 ## RetroTune
 
@@ -154,7 +178,7 @@ RetroTune is the companion player for retro game music, chiptunes, tracker modul
 - Export a selected track to WAV in the background, with progress and cancellation.
 - Use an English or Russian interface. The system language is selected automatically at startup; other languages use English.
 
-See [RetroTune format details](tune/FORMATS.md) for supported variants and limitations.
+See [RetroTune format details](apps/retrotune/FORMATS.md) for supported variants and limitations.
 
 ### Supported music formats
 
@@ -217,9 +241,9 @@ MiniDSF needs its referenced library files beside the source file. MD1 needs the
 
 ### Using the player in another Delphi application
 
-`TTunePlayer` in `tune/playback/RetroTune.Player.pas` owns the playback thread and PCM device; it does not depend on FireMonkey or `RetroTune.Main`. Add `tune/decoders`, `tune/common`, `tune/chips`, `tune/playback`, and `source/pcm` to your project's unit search path. Other decoders can additionally require `tune/trackers`, `source/cores`, and the relevant core subdirectories.
+`TTunePlayer` in `source/music/playback/RetroTune.Player.pas` owns the playback thread and PCM device; it does not depend on FireMonkey or `RetroTune.Main`. Add `source/music/decoders`, `source/music/common`, `source/music/chips`, `source/music/playback`, and `dependencies/PCMAudio` to your project's unit search path. Other decoders can additionally require `source/music/trackers` (including its `amiga` directory), `source/contracts`, `source/runtime`, the relevant `source/hardware` directories and system-specific core directories. The complete decoder set's paths are listed in `apps/retrotune/RetroTune.dproj`.
 
-Decoder units register their formats in their `initialization` sections. This standalone console example enables WAV and MIDI; add the other `RetroTune.Decoder.*` units used by [RetroTune.dpr](tune/RetroTune.dpr) to enable their formats. Keep dependent decoder units when using containers. For MIDI, prepare the `sf2` directory beside **your application's** EXE, or call `SetMidiSoundFont` with a custom SF2 path before opening the MIDI file.
+Decoder units register their formats in their `initialization` sections. This standalone console example enables WAV and MIDI; add the other `RetroTune.Decoder.*` units used by [RetroTune.dpr](apps/retrotune/RetroTune.dpr) to enable their formats. Keep dependent decoder units when using containers. For MIDI, prepare the `sf2` directory beside **your application's** EXE, or call `SetMidiSoundFont` with a custom SF2 path before opening the MIDI file.
 
 The example plays the default track for up to ten seconds, checks asynchronous playback errors, and releases the player even if playback fails:
 

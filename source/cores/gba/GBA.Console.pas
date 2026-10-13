@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.UITypes, System.Math, System.Hash,
-  Core.InputConfig, Core.Emulation, Core.Snapshots, GBA.CPU, GBA.Firmware,
+  Core.InputConfig, Core.Emulation.Types, Core.Snapshots, GBA.CPU, GBA.Firmware,
   GBA.Video, GBA.Sound, GBA.Cartridge;
 
 const

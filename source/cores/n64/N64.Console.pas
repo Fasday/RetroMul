@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Math, System.Classes, System.UITypes, N64.Types,
-  N64.CPU, N64.RSP, N64.RDP, N64.VI, N64.Timing, Core.Snapshots, Core.Emulation;
+  N64.CPU, N64.RSP, N64.RDP, N64.VI, N64.Timing, Core.Snapshots, Core.Emulation.Types;
 
 type
   TN64SaveType = (Auto, EEPROM4K, EEPROM16K, SRAM, FlashRAM, None);
