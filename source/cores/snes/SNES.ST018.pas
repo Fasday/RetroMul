@@ -450,6 +450,7 @@ begin
           Exit;
         end;
     end;
+
   if Amount = 0 then
     Exit;
 
@@ -645,6 +646,7 @@ begin
           begin
             if ToSPSR and ((CPU.CPSR and $1F) in [$10, $1F]) then
               Exit;
+
             var V := CPU.R[RM];
             if (Op and $2000000) <> 0 then
             begin

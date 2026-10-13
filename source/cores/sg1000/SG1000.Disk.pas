@@ -41,8 +41,9 @@ begin
   Result := (Offset >= 0) and (Offset + Length(Text) <= Length(Data));
   if not Result then
     Exit;
-  for var I := 1 to Length(Text) do
-    if Data[Offset + I - 1] <> Ord(Text[I]) then
+
+  for var i := 1 to Length(Text) do
+    if Data[Offset + i - 1] <> Ord(Text[i]) then
       Exit(False);
 end;
 
@@ -68,13 +69,16 @@ begin
     end;
     Exit;
   end;
+
   var Extended := Signature(Image, 0, 'EXTENDED CPC DSK File');
   if (Length(Image) < 256) or not (Extended or Signature(Image, 0, 'MV - CPCEMU Disk-File')) then
     raise EReadError.Create('SF-7000 disk must be a 160 KiB .sf7 or a CPC DSK image');
+
   var Cylinders := Integer(Image[$30]);
   var Heads := Integer(Image[$31]);
   if (Cylinders < 1) or (Cylinders > 84) or (Heads < 1) or (Heads > 2) then
     raise EReadError.Create('Invalid DSK geometry');
+
   SetLength(FTracks, Cylinders * Heads);
   var Offset := 256;
   for var T := 0 to High(FTracks) do
@@ -86,12 +90,14 @@ begin
       TrackSize := Image[$34 + T] * 256;
     if TrackSize = 0 then
       Continue;
-    if (TrackSize < 256) or (Offset + TrackSize > Length(Image)) or
-      not Signature(Image, Offset, 'Track-Info') then
+
+    if (TrackSize < 256) or (Offset + TrackSize > Length(Image)) or not Signature(Image, Offset, 'Track-Info') then
       raise EReadError.Create('Truncated DSK track');
     var Count := Integer(Image[Offset + $15]);
+
     if Count > 29 then
       raise EReadError.Create('Too many DSK sectors in one track');
+
     SetLength(FTracks[T].Sectors, Count);
     var DataOffset := Offset + 256;
     for var S := 0 to Count - 1 do
@@ -106,11 +112,13 @@ begin
       Sector.Status2 := Image[Header + 5];
       if Sector.SizeCode > 7 then
         raise EReadError.Create('Invalid DSK sector size');
+
       var Size := 128 shl Sector.SizeCode;
       if Extended then
         Size := Integer(Image[Header + 6]) or (Integer(Image[Header + 7]) shl 8);
       if (Size = 0) or (DataOffset + Size > Offset + TrackSize) then
         raise EReadError.Create('Truncated DSK sector');
+
       Sector.Data := Copy(Image, DataOffset, Size);
       FTracks[T].Sectors[S] := Sector;
       Inc(DataOffset, Size);
@@ -121,19 +129,20 @@ end;
 
 function TSGDisk.TrackIndex(Cylinder, Head: Integer): Integer;
 begin
-  for var I := 0 to High(FTracks) do
-    if (FTracks[I].Cylinder = Cylinder) and (FTracks[I].Head = Head) then
-      Exit(I);
+  for var i := 0 to High(FTracks) do
+    if (FTracks[i].Cylinder = Cylinder) and (FTracks[i].Head = Head) then
+      Exit(i);
+
   Result := -1;
 end;
 
 function TSGDisk.SectorIndex(Track, ID, SizeCode: Integer): Integer;
 begin
   if Track >= 0 then
-    for var I := 0 to High(FTracks[Track].Sectors) do
-      if (FTracks[Track].Sectors[I].ID = ID) and
-        (FTracks[Track].Sectors[I].SizeCode = SizeCode) then
-        Exit(I);
+    for var i := 0 to High(FTracks[Track].Sectors) do
+      if (FTracks[Track].Sectors[i].ID = ID) and (FTracks[Track].Sectors[i].SizeCode = SizeCode) then
+        Exit(i);
+
   Result := -1;
 end;
 
@@ -147,6 +156,7 @@ begin
   Result := S >= 0;
   if not Result then
     Exit;
+
   var Sector := FTracks[T].Sectors[S];
   Data := Copy(Sector.Data);
   Status1 := Sector.Status1;
@@ -160,6 +170,7 @@ begin
   Result := not FProtected and (S >= 0);
   if not Result then
     Exit;
+
   FTracks[T].Sectors[S].Data := Copy(Data);
   FTracks[T].Sectors[S].Status1 := 0;
   FTracks[T].Sectors[S].Status2 := Ord(Deleted) * $40;
@@ -179,11 +190,14 @@ procedure TSGDisk.Format(Cylinder, Head: Integer; const IDs: TBytes; Fill: Byte)
 begin
   if FProtected then
     raise EWriteError.Create('SF-7000 disk is write protected');
+
   if (Length(IDs) mod 4 <> 0) or (Length(IDs) > 29 * 4) then
     raise EWriteError.Create('Invalid SF-7000 format sector IDs');
+
   var T := TrackIndex(Cylinder, Head);
   if T < 0 then
     raise EWriteError.Create('Track outside SF-7000 disk');
+
   SetLength(FTracks[T].Sectors, Length(IDs) div 4);
   for var S := 0 to High(FTracks[T].Sectors) do
   begin
@@ -194,9 +208,10 @@ begin
     Sector.SizeCode := IDs[S * 4 + 3];
     if Sector.SizeCode > 7 then
       raise EWriteError.Create('Invalid format sector size');
+
     SetLength(Sector.Data, 128 shl Sector.SizeCode);
-    for var I := 0 to High(Sector.Data) do
-      Sector.Data[I] := Fill;
+    for var i := 0 to High(Sector.Data) do
+      Sector.Data[i] := Fill;
     FTracks[T].Sectors[S] := Sector;
   end;
   FDirty := True;
@@ -219,14 +234,15 @@ begin
     SetLength(Result, 163840);
     for var Track in FTracks do
       for var Sector in Track.Sectors do
-        for var I := 0 to 255 do
-          Result[(Integer(Track.Cylinder) * 16 + Sector.ID - 1) * 256 + I] := Sector.Data[I];
+        for var i := 0 to 255 do
+          Result[(Integer(Track.Cylinder) * 16 + Sector.ID - 1) * 256 + i] := Sector.Data[i];
     Exit;
   end;
+
   SetLength(Result, 256);
   var Signature := TEncoding.ASCII.GetBytes('EXTENDED CPC DSK File' + #13#10 + 'Disk-Info' + #13#10);
-  for var I := 0 to High(Signature) do
-    Result[I] := Signature[I];
+  for var i := 0 to High(Signature) do
+    Result[i] := Signature[i];
   var Heads := 1;
   var Cylinders := 1;
   for var Track in FTracks do
@@ -246,12 +262,13 @@ begin
     Size := ((Size + 255) div 256) * 256;
     if Size > $FF00 then
       raise EWriteError.Create('DSK track is too large');
+
     var Offset := Length(Result);
     SetLength(Result, Offset + Size);
     Result[$34 + T] := Size div 256;
     Signature := TEncoding.ASCII.GetBytes('Track-Info' + #13#10);
-    for var I := 0 to High(Signature) do
-      Result[Offset + I] := Signature[I];
+    for var i := 0 to High(Signature) do
+      Result[Offset + i] := Signature[i];
     Result[Offset + $10] := FTracks[T].Cylinder;
     Result[Offset + $11] := FTracks[T].Head;
     Result[Offset + $14] := 1;
@@ -271,8 +288,8 @@ begin
       Result[Header + 5] := Sector.Status2;
       Result[Header + 6] := Length(Sector.Data) and $FF;
       Result[Header + 7] := Length(Sector.Data) shr 8;
-      for var I := 0 to High(Sector.Data) do
-        Result[DataOffset + I] := Sector.Data[I];
+      for var i := 0 to High(Sector.Data) do
+        Result[DataOffset + i] := Sector.Data[i];
       Inc(DataOffset, Length(Sector.Data));
     end;
   end;
@@ -287,6 +304,7 @@ begin
   State.Field(Size, SizeOf(Size));
   if (Size < 256) or (Size > 4 * 1024 * 1024) then
     raise EReadError.Create('Invalid snapshot disk size');
+
   if State.Loading then
     SetLength(Bytes, Size);
   State.Field(Bytes[0], Size);

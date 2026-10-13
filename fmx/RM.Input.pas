@@ -53,6 +53,7 @@ function ReadPianoInput(Input: TInputManager): TMiracleKeys;
 implementation
 
 uses
+  Core.Adapter.PCE, Core.Adapter.GW,
   Core.Adapter.N64, Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, Core.Adapter.GBA, GB.Joypad, NES.Input, NES.Types, MD.Console, SNES.Console,
   System.Math, FMX.Types;
@@ -139,6 +140,15 @@ end;
 
 function CoreButtons(const SystemId, Device: string): TEmulatorButtons;
 begin
+  if (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then begin
+    if Device='none' then Exit([]);
+    Result:=[TEmulatorButton.Up,TEmulatorButton.Down,TEmulatorButton.Left,TEmulatorButton.Right,
+      TEmulatorButton.A,TEmulatorButton.B,TEmulatorButton.Select,TEmulatorButton.Start];
+    if Device='pad6' then
+      Result:=Result+[TEmulatorButton.X,TEmulatorButton.Y,TEmulatorButton.C,TEmulatorButton.Z];
+    Exit;
+  end;
+  if SystemId=ROM_SYSTEM_GW then Exit([TEmulatorButton.Up,TEmulatorButton.Down,TEmulatorButton.Left,TEmulatorButton.Right,TEmulatorButton.A,TEmulatorButton.B,TEmulatorButton.Select,TEmulatorButton.Start,TEmulatorButton.C,TEmulatorButton.X,TEmulatorButton.Y,TEmulatorButton.Z]);
   Result := [];
   if not (Device = 'auto') and not Device.StartsWith('pad') then
     Exit;
@@ -146,7 +156,7 @@ begin
       TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start];
   if (SystemId = ROM_SYSTEM_NES) and (Device = 'paddendy') then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
-  if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) then Exit;
+  if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) then Exit;
   if SystemId = ROM_SYSTEM_N64 then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
   if SystemId = ROM_SYSTEM_MD then
@@ -159,7 +169,7 @@ begin
   else
   begin
     Include(Result, TEmulatorButton.Select);
-    if SystemId = ROM_SYSTEM_NEOGEO then
+    if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) then
       Result := Result + [TEmulatorButton.C, TEmulatorButton.X];
     if SystemId = ROM_SYSTEM_GBA then
       Result := Result + [TEmulatorButton.C, TEmulatorButton.Z];
@@ -174,7 +184,24 @@ const
   Names: array[TEmulatorButton] of string =
     ('↑', '↓', '←', '→', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
 begin
+  if SystemId=ROM_SYSTEM_GW then case Button of
+    TEmulatorButton.Select: Exit('Time');
+    TEmulatorButton.Start: Exit('Game A');
+    TEmulatorButton.X: Exit('Game B');
+    TEmulatorButton.Y: Exit('Alarm / ACL');
+    TEmulatorButton.C: Exit('X');
+    TEmulatorButton.Z: Exit('Y');
+  end;
   Result := Names[Button];
+  if (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then begin
+    case Button of
+      TEmulatorButton.A: Result:='I'; TEmulatorButton.B: Result:='II';
+      TEmulatorButton.X: Result:='III'; TEmulatorButton.Y: Result:='IV';
+      TEmulatorButton.C: Result:='V'; TEmulatorButton.Z: Result:='VI';
+      TEmulatorButton.Start: Result:='Run';
+    end;
+    Exit;
+  end;
   if SystemId = ROM_SYSTEM_N64 then
   begin
     case Button of
@@ -194,7 +221,7 @@ begin
       TEmulatorButton.Y:
         Result := 'Turbo A';
     end;
-  if (SystemId = ROM_SYSTEM_NEOGEO) and (Button = TEmulatorButton.X) then
+  if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) and (Button = TEmulatorButton.X) then
     Result := 'D';
   if (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_GBA) then
     case Button of
@@ -334,7 +361,19 @@ begin
 
   FillChar(Keys, SizeOf(Keys), 0);
   // Import the existing core keyboard maps once; all later assignments use FMXInput.
-  if SystemId = ROM_SYSTEM_NES then
+  if (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then begin
+    var C:=TPCEConfig.Create(''); Config:=C;
+    for var B:=Low(TEmulatorButton) to High(TEmulatorButton) do begin
+      Keys[0,B]:=C.Keys[B]; Keys[1,B]:=C.Keys2[B];
+    end;
+  end
+  else if SystemId = ROM_SYSTEM_GW then begin
+    var C:=TGWConfig.Create(''); Config:=C;
+    for var B:=Low(TEmulatorButton) to High(TEmulatorButton) do begin
+      Keys[0,B]:=C.Keys[B]; Keys[1,B]:=C.Keys2[B];
+    end;
+  end
+  else if SystemId = ROM_SYSTEM_NES then
   begin
     var C := TNesEmulatorConfig.Create('');
     Config := C;
@@ -343,7 +382,7 @@ begin
     CopyNES(2, C.GetKeys3);
     CopyNES(3, C.GetKeys4);
   end
-  else if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) then
+  else if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) then
   begin
     Keys[0,TEmulatorButton.Up] := vkUp;
     Keys[0,TEmulatorButton.Down] := vkDown;
@@ -370,7 +409,7 @@ begin
       Keys[1, MDMapping[B]] := C.Keys2[B];
     end;
   end
-  else if SystemId = ROM_SYSTEM_NEOGEO then
+  else if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) then
   begin
     var C := TNeoGeoConfig.Create('');
     Config := C;
@@ -429,20 +468,36 @@ begin
     Count := 4;
   if SystemId = ROM_SYSTEM_SNES then
     Count := 8;
+  if (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then Count:=5;
   if (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
     Count := 1;
+  var BindingDevice := 'auto';
+  if (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then BindingDevice:='pad6';
   for var Port := 0 to Count - 1 do
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
-      if (SystemId <> ROM_SYSTEM_SC3000) and (B in CoreButtons(SystemId, 'auto')) then
+      if (SystemId <> ROM_SYSTEM_SC3000) and (B in CoreButtons(SystemId, BindingDevice)) then
       begin
         var Section := 'Controls';
-        if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_N64) or (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_GBA) then
+        if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_N64) or (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SNES) or ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) or (SystemId = ROM_SYSTEM_GBA) then
           Section := 'Keys';
+        if (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then Section:='Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);
-        AddKey(PadAction(Port, B), ReadEmulatorKey(Ini, Section,
-            CoreButtonName(SystemId, B).Replace('↑', 'Up').Replace('↓', 'Down')
-            .Replace('←', 'Left').Replace('→', 'Right'), Keys[Port, B]));
+        var KeyName := CoreButtonName(SystemId, B).Replace('↑', 'Up').Replace('↓', 'Down')
+            .Replace('←', 'Left').Replace('→', 'Right');
+        // Config keys are stable identifiers, not the displayed GW button labels.
+        if (SystemId = ROM_SYSTEM_GW) or (SystemId=ROM_SYSTEM_PCE) or (SystemId=ROM_SYSTEM_SGX) or (SystemId=ROM_SYSTEM_PCECD) then
+          case B of
+            TEmulatorButton.A: KeyName := 'A';
+            TEmulatorButton.B: KeyName := 'B';
+            TEmulatorButton.Select: KeyName := 'Select';
+            TEmulatorButton.Start: KeyName := 'Start';
+            TEmulatorButton.C: KeyName := 'C';
+            TEmulatorButton.X: KeyName := 'X';
+            TEmulatorButton.Y: KeyName := 'Y';
+            TEmulatorButton.Z: KeyName := 'Z';
+          end;
+        AddKey(PadAction(Port, B), ReadEmulatorKey(Ini, Section, KeyName, Keys[Port, B]));
       end;
   for var i := 0 to 11 do
     AddKey(PowerPadAction + i, PowerKeys[i]);

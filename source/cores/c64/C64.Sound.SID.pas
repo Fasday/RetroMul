@@ -199,6 +199,7 @@ begin
       FVoices[V].Noise := ((FVoices[V].Noise shl 1) or (((FVoices[V].Noise shr 22) xor (FVoices[V].Noise shr 17)) and 1)) and $7FFFFF;
     EnvelopeClock(V);
   end;
+
   for var V := 0 to 2 do
   begin
     var Source := (V + 2) mod 3;
@@ -206,6 +207,7 @@ begin
       not (Rising[(Source + 2) mod 3] and ((FRegisters[Source * 7 + 4] and 2) <> 0)) then
       FVoices[V].Phase := 0;
   end;
+
   // Integrate at the chip clock before resampling, including volume DAC writes.
   var Volume := (FRegisters[24] and 15) / 15.0;
   var Offset: Double := 0.02;
@@ -222,6 +224,7 @@ begin
       FDirectSum := FDirectSum + Value;
   end;
   Inc(FCount);
+
   // Keep the standalone kernel bounded even if a caller forgets to consume PCM.
   if FCount = 2000000 then
   begin
@@ -252,11 +255,13 @@ begin
       Triangle := Triangle xor $FFF;
     Result := Result and (Triangle and $FFE);
   end;
+
   if (Control and $20) <> 0 then
     Result := Result and (Phase shr 12);
   if (Control and $40) <> 0 then
     if ((Control and 8) = 0) and (Integer(Phase shr 12) < (Integer(FRegisters[Base + 2]) + (Integer(FRegisters[Base + 3] and 15) shl 8))) then
       Result := 0;
+
   if (Control and $80) <> 0 then
   begin
     var N := FVoices[Voice].Noise;
@@ -286,6 +291,7 @@ begin
     Cutoff := 30 + 12500 * Cutoff;
   var Coefficient := 2 * Sin(Pi * Min(Cutoff, FSampleRate * 0.4) / (FSampleRate * 2));
   var Damping := 1.45 - (FRegisters[23] shr 4) * 0.055;
+
   // Stable state-variable approximation; model-specific analog calibration is future work.
   var High: Double;
   for var Step := 1 to 2 do

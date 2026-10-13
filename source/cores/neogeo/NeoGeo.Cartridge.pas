@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.RomFormat, System.SysUtils, System.Classes, Core.Storage, NeoGeoCD.Disc;
+  Core.RomFormat, System.SysUtils, System.Classes, Core.Storage, Core.CD.Disc;
 
 const
   NG_MAX_CONTAINER = NEOGEO_ROM_MAX_CONTAINER_SIZE;
@@ -15,7 +15,7 @@ type
     procedure LoadZip(const Data: TBytes; const Storage: IStorage; const Location: string);
     procedure Validate;
   public
-    Disc: TNeoGeoCDDisc;
+    Disc: TCDDisc;
     CDZ: Boolean;
     ProgramROM, FixedROM, AudioROM, SamplesA, SamplesB, SpriteROM: TBytes;
     BIOS, FixedBIOS, AudioBIOS, ZoomROM: TBytes;
@@ -109,7 +109,10 @@ end;
 constructor TNeoGeoCartridge.CreateCD(Stream: TStream; const Storage: IStorage; const Location: string);
 begin
   inherited Create;
-  Disc := TNeoGeoCDDisc.Create(Stream, Storage, Location);
+  Disc := TCDDisc.Create(Stream, Storage, Location);
+  if Disc.Track(1).Audio then
+    raise EReadError.Create('Neo Geo CD requires its data track first');
+  Disc.RequireISO9660;
   ZoomROM := ResourceBytes('NG_ZOOM');
 
   // The CD has writable graphics, sound and program memory, no cartridge ROM.
@@ -481,6 +484,7 @@ begin
       if not KOFPCB then
         SetLength(ProgramROM, $800000);
     end;
+
     // FIX bank wiring from MAME's cmc/sma/pcm2/pvc/kof2k2 cartridge profiles.
     // PCB and Matrimelee bootleg boards use the column-based bank table.
     if PCB or (Machine = 'matrimbl') or (Machine = 'matrim') or

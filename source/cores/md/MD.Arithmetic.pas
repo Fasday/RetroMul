@@ -13,6 +13,7 @@ function ArithmeticShiftRight(Value: Integer; Bits: Cardinal): Integer; inline;
 implementation
 
 // Explicit modulo arithmetic with wide intermediates; no disabled checks.
+
 function Add32(A, B: Cardinal): Cardinal;
 begin
   Result := Cardinal((UInt64(A) + UInt64(B)) and $FFFFFFFF);

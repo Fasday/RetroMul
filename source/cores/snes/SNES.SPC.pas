@@ -1786,12 +1786,14 @@ begin
       (State.EchoHistoryPosition < 0) or (State.EchoHistoryPosition > 7) or
       (State.DSPCounter < 0) or (State.DSPCounter > $77FF) then
       raise EReadError.Create('Invalid SNES DSP phase snapshot');
+
     for var J := 0 to 7 do
       if (State.Voices[J].Position < 0) or (State.Voices[J].Position > 11) or
         (State.Voices[J].Fraction < 0) or (State.Voices[J].Fraction > $7FFF) or
         (State.Voices[J].KeyOnDelay < 0) or (State.Voices[J].KeyOnDelay > 5) or
         (State.Voices[J].BRROffset < 0) or (State.Voices[J].BRROffset > 8) then
         raise EReadError.Create('Invalid SNES DSP voice snapshot');
+
     FSampleFrames := 0;
   end;
 end;

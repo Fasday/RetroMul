@@ -127,8 +127,8 @@ begin
   FState.Phase := phResult;
   FState.ResultIndex := 0;
   FState.ResultCount := Length(Bytes);
-  for var I := 0 to High(Bytes) do
-    FState.Results[I] := Bytes[I];
+  for var i := 0 to High(Bytes) do
+    FState.Results[i] := Bytes[i];
   FState.IRQ := IRQ or (FState.Pending <> 0);
   FState.Delay := 0;
 end;
@@ -158,6 +158,7 @@ begin
     Complete;
     Exit;
   end;
+
   if FState.Cylinder[0] <> FState.C then
   begin
     FState.ST1 := 4;
@@ -165,11 +166,13 @@ begin
     Complete;
     Exit;
   end;
+
   if not FDisk.Read(FState.C, FState.H, FState.R, FState.N, FBuffer, FState.ST1, FState.ST2) then
   begin
     Complete;
     Exit;
   end;
+
   var Op := FState.Command[0] and $1F;
   if Op in [$05, $09] then
   begin
@@ -179,8 +182,10 @@ begin
       Complete;
       Exit;
     end;
+
     FState.ST1 := 0;
     FState.ST2 := 0;
+
     // Length N=0 uses DTL; ordinary transfers use the recorded size.
     if (FState.N = 0) and (FState.Command[8] <> 0) then
       SetLength(FBuffer, FState.Command[8]);
@@ -202,6 +207,7 @@ begin
         NextSector;
         Exit;
       end;
+
       FState.ST2 := FState.ST2 or $40;
     end
     else
@@ -224,6 +230,7 @@ begin
       Sector;
       Exit;
     end;
+
     FState.ST1 := FState.ST1 or $80;
     Complete;
   end
@@ -276,11 +283,11 @@ begin
         if FState.Pending = 0 then
           ResultBytes([$80])
         else
-          for var I := 0 to 3 do
-            if FState.Pending and (1 shl I) <> 0 then
+          for var i := 0 to 3 do
+            if FState.Pending and (1 shl i) <> 0 then
             begin
-              FState.Pending := FState.Pending and ($0F xor (1 shl I));
-              ResultBytes([FState.PendingST0[I], FState.Cylinder[I]]);
+              FState.Pending := FState.Pending and ($0F xor (1 shl i));
+              ResultBytes([FState.PendingST0[i], FState.Cylinder[i]]);
               Break;
             end;
       end;
@@ -318,18 +325,21 @@ begin
           Complete;
           Exit;
         end;
+
         if FDisk.WriteProtected then
         begin
           FState.ST1 := 2;
           Complete;
           Exit;
         end;
+
         if (FState.Command[3] = 0) or (FState.Command[3] > 29) then
         begin
           FState.ST1 := 4;
           Complete;
           Exit;
         end;
+
         SetLength(FBuffer, FState.Command[3] * 4);
         FState.Position := 0;
         FState.Phase := phFormat;
@@ -353,9 +363,11 @@ procedure TSGFDC.Advance(Cycles: Integer);
 begin
   if Cycles < 0 then
     raise EArgumentOutOfRangeException.Create('FDC clocks');
+
   FState.Rotation := (FState.Rotation + Cycles) mod 715909;
   if FState.ResetLine then
     Exit;
+
   if FState.Delay > 0 then
     FState.Delay := System.Math.Max(0, FState.Delay - Cycles);
   if (FState.Delay = 0) and FState.NextPending then
@@ -404,6 +416,7 @@ begin
   Result := $FF;
   if FState.ResetLine or (FState.Delay > 0) then
     Exit;
+
   if FState.Phase = phResult then
   begin
     Result := FState.Results[FState.ResultIndex];
@@ -431,6 +444,7 @@ procedure TSGFDC.WriteData(Value: Byte);
 begin
   if FState.ResetLine or (FState.Delay > 0) then
     Exit;
+
   if FState.Phase in [phIdle, phCommand] then
   begin
     if FState.Phase = phIdle then
@@ -464,6 +478,7 @@ begin
     FState.Delay := ByteCycles;
     if FState.Position < Length(FBuffer) then
       Exit;
+
     if FState.Phase = phFormat then
     begin
       FDisk.Format(FState.LastC, FState.LastH, FBuffer, FState.Command[5]);
@@ -491,8 +506,7 @@ begin
     end
     else
     begin
-      if not FDisk.Write(FState.C, FState.H, FState.R, FState.N, FBuffer,
-        FState.Command[0] and $1F = $09) then
+      if not FDisk.Write(FState.C, FState.H, FState.R, FState.N, FBuffer, FState.Command[0] and $1F = $09) then
       begin
         FState.ST1 := 2;
         Complete;
@@ -510,6 +524,7 @@ begin
   State.Field(Size, SizeOf(Size));
   if (Size < 0) or (Size > 65536) then
     raise EReadError.Create('Invalid FDC snapshot buffer');
+
   if State.Loading then
     SetLength(FBuffer, Size);
   if Size > 0 then

@@ -101,7 +101,7 @@ begin
       Runs[3] := 0;
       Runs[4] := 0;
       Bits.Init(Source, False, P, Size);
-      for var I := 0 to Samples - 1 do
+      for var i := 0 to Samples - 1 do
       begin
         if TreeSize = 0 then
           Delta := Bits.Read(16)
@@ -123,12 +123,12 @@ begin
   begin
     Bits.Init(Source, False, P);
     CHDRequire((Bits.Read(8) and $80) <> 0, 'Unsupported lossy AVHuff video', ceUnsupportedCodec);
-    for var I := 0 to 2 do
+    for var i := 0 to 2 do
     begin
-      Trees[I].ImportRLE(Bits, 272, 16);
+      Trees[i].ImportRLE(Bits, 272, 16);
       Bits.Align;
-      Prev[I] := 0;
-      Runs[I] := 0;
+      Prev[i] := 0;
+      Runs[i] := 0;
     end;
     for var Y := 0 to Height - 1 do
     begin

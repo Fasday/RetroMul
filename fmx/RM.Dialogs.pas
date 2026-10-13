@@ -295,19 +295,18 @@ begin
   var FixedHeight := Padding * 2 + 44 + 16 + 16 + 42;
   var BodyHeight := Min(TextHeight, Max(0, Height - 32 - FixedHeight));
   var H := FixedHeight + BodyHeight;
-  PanelCard.SetBounds((Width - W) / 2, Max(0, (Height - H) / 2), W, H);
-  CircleBadge.SetBounds(Padding, Padding + 4, 36, 36);
-  ButtonClose.SetBounds(W - Padding - 32, Padding + 6, 32, 32);
-  LabelTitle.SetBounds(Padding + 52, Padding + 4, Max(0, W - Padding * 2 - 92), 36);
-  VertScrollBoxMessage.SetBounds(Padding, Padding + 60, W - Padding * 2, BodyHeight);
-  LabelMessage.SetBounds(0, 0, TextWidth, TextHeight);
+  // Center alignment places the card; its rows own all child geometry.
+  PanelCard.Width := W;
+  PanelCard.Height := H;
+  PanelCard.Padding.Rect := TRectF.Create(Padding, Padding, Padding, Padding);
+  VertScrollBoxMessage.Height := BodyHeight;
+  LabelMessage.Height := TextHeight;
   var ButtonWidth := Min(148, W - Padding * 2);
   if FConfirmation then
     ButtonWidth := Min(ButtonWidth, (W - Padding * 2 - 12) / 2);
-  ButtonAccept.SetBounds(W - Padding - ButtonWidth, H - Padding - 42, ButtonWidth, 42);
-  ButtonCancel.SetBounds(ButtonAccept.Position.X - ButtonWidth - 12, H - Padding - 42, ButtonWidth, 42);
-  if FLoading then
-    ButtonCancel.Position.X := ButtonAccept.Position.X;
+  ButtonAccept.Width := ButtonWidth;
+  ButtonCancel.Width := ButtonWidth;
+  ButtonCancel.Margins.Right := IfThen(FLoading, 0, 12);
 end;
 
 constructor TRetroDialogHost.Create(AOwner: TComponent);

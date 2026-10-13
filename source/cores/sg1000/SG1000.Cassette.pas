@@ -53,14 +53,15 @@ procedure TSGCassette.LoadWAV(const Data: TBytes);
   begin
     Result := Offset + 4 <= Length(Data);
     if Result then
-      for var I := 0 to 3 do
-        if Data[Offset + I] <> Ord(Text[I + 1]) then
+      for var i := 0 to 3 do
+        if Data[Offset + i] <> Ord(Text[i + 1]) then
           Exit(False);
   end;
 
 begin
   if (Length(Data) < 44) or not Four(0, 'RIFF') or not Four(8, 'WAVE') then
     raise EReadError.Create('Cassette input must be a PCM WAV file');
+
   var Channels := 0;
   var Bits := 0;
   var Rate := 0;
@@ -72,10 +73,12 @@ begin
     var Size := UInt32(Offset + 4);
     if UInt64(Offset) + 8 + Size > UInt64(Length(Data)) then
       raise EReadError.Create('Truncated WAV chunk');
+
     if Four(Offset, 'fmt ') then
     begin
       if (Size < 16) or (UInt16(Offset + 8) <> 1) then
         raise EReadError.Create('WAV cassette must use integer PCM');
+
       Channels := UInt16(Offset + 10);
       Rate := Integer(UInt32(Offset + 12));
       Bits := UInt16(Offset + 22);
@@ -87,28 +90,29 @@ begin
     end;
     Offset := Offset + 8 + Integer(Size) + Integer(Size and 1);
   end;
-  if not (Channels in [1, 2]) or not (Bits in [8, 16]) or (Rate < 8000) or (Rate > 192000) or
-    (Audio < 0) then
+  if not (Channels in [1, 2]) or not (Bits in [8, 16]) or (Rate < 8000) or (Rate > 192000) or (Audio < 0) then
     raise EReadError.Create('Unsupported cassette WAV geometry');
+
   var Stride := Channels * Bits div 8;
   if AudioSize mod Stride <> 0 then
     raise EReadError.Create('Truncated WAV sample');
+
   var PCM: TArray<SmallInt>;
   SetLength(PCM, AudioSize div Stride);
-  for var I := 0 to High(PCM) do
+  for var i := 0 to High(PCM) do
   begin
     var Sum := 0;
     for var C := 0 to Channels - 1 do
       if Bits = 8 then
-        Inc(Sum, (Integer(Data[Audio + I * Stride + C]) - 128) * 256)
+        Inc(Sum, (Integer(Data[Audio + i * Stride + C]) - 128) * 256)
       else
       begin
-        var Value := UInt16(Audio + I * Stride + C * 2);
+        var Value := UInt16(Audio + i * Stride + C * 2);
         if Value >= $8000 then
           Dec(Value, $10000);
         Inc(Sum, Value);
       end;
-    PCM[I] := Sum div Channels;
+    PCM[i] := Sum div Channels;
   end;
   FPCM := PCM;
   FRate := Rate;
@@ -133,8 +137,8 @@ function TSGCassette.SaveWAV: TBytes;
 
   procedure Four(Offset: Integer; const Text: AnsiString);
   begin
-    for var I := 0 to 3 do
-      Result[Offset + I] := Ord(Text[I + 1]);
+    for var i := 0 to 3 do
+      Result[Offset + i] := Ord(Text[i + 1]);
   end;
 
 begin
@@ -152,8 +156,8 @@ begin
   Put16(34, 16);
   Four(36, 'data');
   Put32(40, Length(FPCM) * 2);
-  for var I := 0 to High(FPCM) do
-    Put16(44 + I * 2, Integer(FPCM[I]) and $FFFF);
+  for var i := 0 to High(FPCM) do
+    Put16(44 + i * 2, Integer(FPCM[i]) and $FFFF);
 end;
 
 procedure TSGCassette.Rewind;
@@ -197,8 +201,10 @@ procedure TSGCassette.Advance(Cycles, CPUClock: Integer);
 begin
   if not (FPlaying or FRecording) then
     Exit;
+
   if (Cycles < 0) or (Cycles > 65535) or (CPUClock < 1000000) then
     raise EArgumentOutOfRangeException.Create('Cassette clocks');
+
   var Phase := Int64(FPhase) + Int64(Cycles) * FRate;
   var Count := Integer(Phase div CPUClock);
   FPhase := Integer(Phase mod CPUClock);
@@ -207,12 +213,13 @@ begin
     var Offset := Length(FPCM);
     if Offset + Count > 44100 * 60 * 60 then
       raise EWriteError.Create('Cassette recording exceeds one hour');
+
     SetLength(FPCM, Offset + Count);
-    for var I := Offset to High(FPCM) do
+    for var i := Offset to High(FPCM) do
       if FOutput then
-        FPCM[I] := 24576
+        FPCM[i] := 24576
       else
-        FPCM[I] := -24576;
+        FPCM[i] := -24576;
     FPosition := Length(FPCM);
   end
   else
@@ -229,6 +236,7 @@ begin
   State.Field(Size, SizeOf(Size));
   if (Size < 0) or (Size > 44100 * 60 * 60) then
     raise EReadError.Create('Invalid cassette snapshot size');
+
   if State.Loading then
     SetLength(FPCM, Size);
   if Size > 0 then

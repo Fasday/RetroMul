@@ -41,7 +41,7 @@ begin
       NN := Bits.Read(16);
       CHDRequire((Len xor NN) = $FFFF, 'Deflate stored length');
       CHDRequire(Len <= OutputSize - N, 'Deflate output overflow');
-      for var I := 1 to Len do
+      for var i := 1 to Len do
       begin
         Result[N] := Byte(Bits.Read(8));
         Inc(N);
@@ -54,17 +54,17 @@ begin
     begin
       SetLength(L, 288);
       SetLength(D, 32);
-      for var I := 0 to 287 do
-        if I <= 143 then
-          L[I] := 8
-        else if I <= 255 then
-          L[I] := 9
-        else if I <= 279 then
-          L[I] := 7
+      for var i := 0 to 287 do
+        if i <= 143 then
+          L[i] := 8
+        else if i <= 255 then
+          L[i] := 9
+        else if i <= 279 then
+          L[i] := 7
         else
-          L[I] := 8;
-      for var I := 0 to 31 do
-        D[I] := 5;
+          L[i] := 8;
+      for var i := 0 to 31 do
+        D[i] := 5;
     end
     else
     begin
@@ -74,8 +74,8 @@ begin
       CHDRequire(NL <= 286, 'Deflate literal count');
       C := nil;
       SetLength(C, 19);
-      for var I := 0 to NC - 1 do
-        C[Order[I]] := Bits.Read(3);
+      for var i := 0 to NC - 1 do
+        C[Order[i]] := Bits.Read(3);
       Codes.Build(C, 7, False);
       SetLength(All, NL + ND);
       NN := 0;
@@ -103,7 +103,7 @@ begin
             end;
         end;
         CHDRequire(Run <= Length(All) - NN, 'Deflate length run');
-        for var I := 1 to Run do
+        for var i := 1 to Run do
         begin
           All[NN] := Value;
           Inc(NN);
@@ -137,7 +137,7 @@ begin
         CHDRequire(S < 30, 'Deflate distance symbol');
         Distance := DB[S] + Integer(Bits.Read(DE[S]));
         CHDRequire((Distance <= N) and (Len <= OutputSize - N), 'Deflate invalid match');
-        for var I := 1 to Len do
+        for var i := 1 to Len do
         begin
           Result[N] := Result[N - Distance];
           Inc(N);

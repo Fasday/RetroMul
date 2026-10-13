@@ -188,8 +188,7 @@ begin
       CompareMem(@Header.Magic, @Expected.Magic, 8) and
       CompareMem(@Header.platform, @Expected.platform, 8) and
       (Header.Version <> Expected.Version) then
-      raise EReadError.CreateFmt('N64 snapshot version %d is unsupported; expected version %d',
-        [Header.Version, Expected.Version]);
+      raise EReadError.CreateFmt('N64 snapshot version %d is unsupported; expected version %d', [Header.Version, Expected.Version]);
     if not CompareMem(@Header.Magic, @Expected.Magic, 8) or
       (Header.Version <> Expected.Version) or
       not CompareMem(@Header.platform, @Expected.platform, 8) or

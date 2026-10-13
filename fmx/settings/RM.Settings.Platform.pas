@@ -5,7 +5,7 @@ interface
 uses
   System.Classes, System.SysUtils, System.IniFiles, System.Generics.Collections,
   FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls, FMX.Edit, FMX.ListBox,
-  FMX.SpinBox, RM.Gamepad;
+  FMX.SpinBox, RM.Gamepad, Core.Platforms;
 
 const
   SETTINGS_CATEGORY_GENERAL = 0;
@@ -15,20 +15,26 @@ const
   SETTINGS_CATEGORY_PERIPHERALS = 4;
 
 const
-  SETTINGS_PAGE_MAIN = 0;
-  SETTINGS_PAGE_GB = 1;
-  SETTINGS_PAGE_GBC = 2;
-  SETTINGS_PAGE_NES = 3;
-  SETTINGS_PAGE_MD = 4;
-  SETTINGS_PAGE_SNES = 5;
-  SETTINGS_PAGE_NEOGEO = 6;
-  SETTINGS_PAGE_GBA = 7;
-  SETTINGS_PAGE_N64 = 8;
-  SETTINGS_PAGE_SG1000 = 9;
-  SETTINGS_PAGE_SC3000 = 10;
-  SETTINGS_PAGE_SF7000 = 11;
-  SETTINGS_PAGE_MULTIVISION = 12;
-  SETTINGS_PAGE_SMS = 13;
+  SETTINGS_PAGE_MAIN = Core.Platforms.SETTINGS_PAGE_MAIN;
+  SETTINGS_PAGE_GB = Core.Platforms.SETTINGS_PAGE_GB;
+  SETTINGS_PAGE_GBC = Core.Platforms.SETTINGS_PAGE_GBC;
+  SETTINGS_PAGE_NES = Core.Platforms.SETTINGS_PAGE_NES;
+  SETTINGS_PAGE_MD = Core.Platforms.SETTINGS_PAGE_MD;
+  SETTINGS_PAGE_SNES = Core.Platforms.SETTINGS_PAGE_SNES;
+  SETTINGS_PAGE_NEOGEO = Core.Platforms.SETTINGS_PAGE_NEOGEO;
+  SETTINGS_PAGE_GBA = Core.Platforms.SETTINGS_PAGE_GBA;
+  SETTINGS_PAGE_N64 = Core.Platforms.SETTINGS_PAGE_N64;
+  SETTINGS_PAGE_SG1000 = Core.Platforms.SETTINGS_PAGE_SG1000;
+  SETTINGS_PAGE_SC3000 = Core.Platforms.SETTINGS_PAGE_SC3000;
+  SETTINGS_PAGE_SF7000 = Core.Platforms.SETTINGS_PAGE_SF7000;
+  SETTINGS_PAGE_MULTIVISION = Core.Platforms.SETTINGS_PAGE_MULTIVISION;
+  SETTINGS_PAGE_SMS = Core.Platforms.SETTINGS_PAGE_SMS;
+  SETTINGS_PAGE_GG = Core.Platforms.SETTINGS_PAGE_GG;
+  SETTINGS_PAGE_GW = Core.Platforms.SETTINGS_PAGE_GW;
+  SETTINGS_PAGE_PCE = Core.Platforms.SETTINGS_PAGE_PCE;
+  SETTINGS_PAGE_SGX = Core.Platforms.SETTINGS_PAGE_SGX;
+  SETTINGS_PAGE_PCECD = Core.Platforms.SETTINGS_PAGE_PCECD;
+  SETTINGS_PAGE_NEOGEOCD = Core.Platforms.SETTINGS_PAGE_NEOGEOCD;
 
 type
   TSettingsEditorClass = class of TControl;
@@ -67,7 +73,7 @@ type
     CoreId, Name, Brand, SearchTerms: string;
     PadLayout: TScreenGamepadLayout;
     Ports: Integer;
-    constructor Create(Id: Integer; const Core, Caption, Manufacturer, Aliases: string; Layout: TScreenGamepadLayout; PortCount: Integer = 2);
+    constructor Create(const Info: TPlatformInfo);
     procedure Initialize(Context: TSettingsPageContext); virtual;
     procedure Video(Context: TSettingsPageContext); virtual;
     procedure Audio(Context: TSettingsPageContext); virtual;
@@ -112,11 +118,17 @@ begin
   Panel.Name := 'PanelGroup' + Name;
   Panel.Parent := Store;
   Panel.StyleLookup := 'retromul_card';
-  Panel.SetBounds(0, 0, 900, 230);
+  Panel.Align := TAlignLayout.Top;
+  Panel.Margins.Bottom := 16;
+  Panel.Width := 900;
+  Panel.Height := 230;
+  Panel.Padding.Rect := TRectF.Create(16, 14, 16, 12);
   var Title := NewLabel;
   Title.Name := 'LabelGroup' + Name + 'Title';
   Title.Parent := Panel;
-  Title.SetBounds(16, 14, 868, 36);
+  Title.Align := TAlignLayout.Top;
+  Title.Height := 36;
+  Title.Margins.Bottom := 6;
   Title.StyledSettings := Title.StyledSettings - [TStyledSetting.Size];
   Title.TextSettings.Font.Size := 20;
   Title.Text := Caption;
@@ -131,6 +143,9 @@ begin
       if Existing.Children[i] is TControl then
         if string(Existing.Children[i].Name).EndsWith('Editor') then
           Exit(TControl(Existing.Children[i]));
+    var Editors := Owner.FindComponent('Layout' + Name + 'EditorContainer') as TLayout;
+    if (Editors <> nil) and (Editors.ChildrenCount > 0) then
+      Exit(TControl(Editors.Children[0]));
     raise EInvalidOperation.Create('Settings row has no editor: ' + Name);
   end;
   var Panel := TPanel.Create(Owner);
@@ -138,11 +153,14 @@ begin
   Panel.Parent := Store;
   Panel.StyleLookup := 'retromul_row';
   Panel.Padding.Rect := TRectF.Create(16, 12, 16, 12);
-  Panel.SetBounds(16, 0, 868, 72);
+  Panel.Align := TAlignLayout.Top;
+  Panel.Height := 72;
+  Panel.Width := 868;
+  Panel.Margins.Bottom := 6;
   var Text := TLayout.Create(Owner);
   Text.Name := 'Layout' + Name + 'Text';
   Text.Parent := Panel;
-  Text.SetBounds(16, 12, 550, 48);
+  Text.Align := TAlignLayout.Client;
   var Title := NewLabel;
   Title.Name := 'Label' + Name + 'Title';
   Title.Parent := Text;
@@ -170,7 +188,15 @@ begin
     raise EArgumentOutOfRangeException.Create('Invalid settings editor kind');
   end;
   Result.Name := Copy(Result.ClassName, 2, MaxInt) + Name + 'Editor';
-  Result.Parent := Panel;
+  var Editors := TLayout.Create(Owner);
+  Editors.Name := 'Layout' + Name + 'EditorContainer';
+  Editors.Parent := Panel;
+  Editors.Align := TAlignLayout.Right;
+  Editors.Width := 220;
+  if Kind = sekSwitch then Editors.Width := 64;
+  Editors.Margins.Rect := TRectF.Create(16, 8, 0, 8);
+  Result.Parent := Editors;
+  Result.Align := TAlignLayout.Client;
   if Kind = sekPath then
   begin
     var Browse := TEditButton.Create(Owner);
@@ -189,16 +215,16 @@ begin
   end;
 end;
 
-constructor TSettingsPlatform.Create(Id: Integer; const Core, Caption, Manufacturer, Aliases: string; Layout: TScreenGamepadLayout; PortCount: Integer);
+constructor TSettingsPlatform.Create(const Info: TPlatformInfo);
 begin
   inherited Create;
-  PageId := Id;
-  CoreId := Core;
-  Name := Caption;
-  Brand := Manufacturer;
-  SearchTerms := Aliases;
-  PadLayout := Layout;
-  Ports := PortCount;
+  PageId := Info.SettingsPageId;
+  CoreId := Info.SettingsCoreId;
+  Name := Info.Name;
+  Brand := Info.Manufacturer;
+  SearchTerms := Info.SearchTerms;
+  PadLayout := Info.PadLayout;
+  Ports := Info.Ports;
 end;
 
 procedure TSettingsPlatform.Initialize(Context: TSettingsPageContext);

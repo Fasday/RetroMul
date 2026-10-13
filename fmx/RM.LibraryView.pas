@@ -6,7 +6,7 @@ uses
   System.SysUtils, System.Classes, System.Types, System.UITypes,
   System.Generics.Collections, System.IniFiles, FMX.Types, FMX.Controls,
   FMX.Forms, FMX.Layouts, FMX.StdCtrls, FMX.Edit, FMX.Objects, Core.Storage,
-  FMX.Controls.Presentation;
+  FMX.Controls.Presentation, FMX.ListBox;
 
 type
   TLibraryGame = class
@@ -22,11 +22,13 @@ type
     Cover: TImage;
     Title, platform: TLabel;
     Selection: TRectangle;
+    TextLayout: TLayout;
   end;
 
   TLibraryView = class(TFrame)
     PanelSidebar, PanelInspector: TPanel;
-    LayoutCompactActions: TLayout;
+    LayoutCompactActions, LayoutPlatformCombo: TLayout;
+    ComboBoxPlatform: TComboBox;
     VertScrollBoxScroll: TVertScrollBox;
     LayoutGrid: TLayout;
     LabelTitle, LabelCount, LabelDetails, LabelDescription, LabelGameInfo, LabelSavesEmpty, LabelEmpty, LabelContinueTitle: TLabel;
@@ -36,26 +38,6 @@ type
     LabelContinueCaption, LabelContinuePlatform, LabelContinueLastPlayed, LabelContinueSave: TLabel;
     PathPlayIcon: TPath;
     VertScrollBoxPlatforms: TVertScrollBox;
-    ButtonSidebarMD: TButton;
-    PathSidebarMDIcon: TPath;
-    ButtonSidebarSNES: TButton;
-    PathSidebarSNESIcon: TPath;
-    ButtonSidebarNeoGeo: TButton;
-    PathSidebarNeoGeoIcon: TPath;
-    ButtonSidebarNeoGeoCD: TButton;
-    ButtonSidebarN64: TButton;
-    ButtonSidebarSG1000, ButtonSidebarSC3000: TButton;
-    PathSidebarSG1000Icon, PathSidebarSC3000Icon: TPath;
-    PathSidebarNeoGeoCDIcon: TPath;
-    ButtonSidebarNES: TButton;
-    PathSidebarNESIcon: TPath;
-    ButtonSidebarGBA: TButton;
-    PathSidebarGBAIcon: TPath;
-    ButtonSidebarGBC: TButton;
-    PathSidebarGBCIcon: TPath;
-    ButtonSidebarGB: TButton;
-    PathSidebarGBIcon: TPath;
-    Path1: TPath;
   private
     FStorage: IStorage;
     FGames: TObjectList<TLibraryGame>;
@@ -106,6 +88,8 @@ type
     procedure OpenClick(Sender: TObject);
     procedure SettingsClick(Sender: TObject);
     procedure FilterClick(Sender: TObject);
+    procedure UpdatePlatformCombo;
+    procedure PlatformChange(Sender: TObject);
     procedure ModeClick(Sender: TObject);
     procedure SearchChange(Sender: TObject);
     procedure LetterClick(Sender: TObject);
@@ -147,7 +131,7 @@ implementation
 uses
   System.IOUtils, System.Math, System.Math.Vectors, System.Hash,
   System.Character, System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager,
-  SCRP.GameList, HGM.FMX.Image, Core.RomFormat, Core.SavePaths, RM.Icons,
+  SCRP.GameList, HGM.FMX.Image, Core.Platforms, Core.RomFormat, Core.SavePaths, RM.Icons,
   RM.SearchEdit, RM.Styles;
 
 {$IF Defined(ANDROID) or Defined(IOS)}
@@ -196,32 +180,14 @@ begin
 end;
 {$ENDIF}
 
-type
-  TLibraryPlatformInfo = record
-    Id, Name, FilterButton, SidebarButton: string;
-  end;
-
-const
-  LibraryPlatforms: array[0..11] of TLibraryPlatformInfo = (
-    (Id: ''; Name: 'All'; FilterButton: 'ButtonFilter0'; SidebarButton: ''),
-    (Id: ROM_SYSTEM_NES; Name: 'NES'; FilterButton: 'ButtonFilter1'; SidebarButton: 'ButtonSidebarNES'),
-    (Id: ROM_SYSTEM_SNES; Name: 'SNES'; FilterButton: 'ButtonFilter2'; SidebarButton: 'ButtonSidebarSNES'),
-    (Id: ROM_SYSTEM_GB; Name: 'GB'; FilterButton: 'ButtonFilter3'; SidebarButton: 'ButtonSidebarGB'),
-    (Id: ROM_SYSTEM_GBC; Name: 'GBC'; FilterButton: 'ButtonFilter4'; SidebarButton: 'ButtonSidebarGBC'),
-    (Id: ROM_SYSTEM_MD; Name: 'Mega Drive'; FilterButton: 'ButtonFilter5'; SidebarButton: 'ButtonSidebarMD'),
-    (Id: ROM_SYSTEM_NEOGEO; Name: 'Neo Geo'; FilterButton: 'ButtonFilter6'; SidebarButton: 'ButtonSidebarNeoGeo'),
-    (Id: ROM_SYSTEM_GBA; Name: 'GBA'; FilterButton: 'ButtonFilter7'; SidebarButton: 'ButtonSidebarGBA'),
-    (Id: ROM_SYSTEM_NEOGEOCD; Name: 'Neo Geo CD'; FilterButton: 'ButtonFilter8'; SidebarButton: 'ButtonSidebarNeoGeoCD'),
-    (Id: ROM_SYSTEM_N64; Name: 'Nintendo 64'; FilterButton: 'ButtonFilter9'; SidebarButton: 'ButtonSidebarN64'),
-    (Id: ROM_SYSTEM_SG1000; Name: 'SG-1000'; FilterButton: 'ButtonFilterSG1000'; SidebarButton: 'ButtonSidebarSG1000'),
-    (Id: ROM_SYSTEM_SC3000; Name: 'SC-3000'; FilterButton: 'ButtonFilterSC3000'; SidebarButton: 'ButtonSidebarSC3000'));
-
 function LibrarySystemName(const Id: string): string;
 begin
-  Result := Id;
-  for var platform in LibraryPlatforms do
-    if Id = platform.Id then
-      Exit(Translate(platform.Name));
+  if Id = '' then Exit(Translate('All'));
+  var Info: TPlatformInfo;
+  if TPlatformRegistry.Find(Id, Info) then
+    Result := Translate(Info.ShortName)
+  else
+    Result := Id;
 end;
 
 function LibraryDate(const Value: TDateTime): string;
@@ -265,7 +231,7 @@ function ActionButton(Owner: TComponent; Parent: TFmxObject; const Text: string;
 begin
   Result := TButton.Create(Owner);
   Result.Parent := Parent;
-  Result.Text := Translate(Text);
+  Result.Text := Translate(Text).Replace('&', '&&');
   Result.StyledSettings := Result.StyledSettings - [TStyledSetting.Other];
   Result.TextSettings.Trimming := TTextTrimming.Character;
   Result.TextSettings.WordWrap := False;
@@ -297,7 +263,9 @@ begin
 
   FLetterScroll := TVertScrollBox.Create(Self);
   FLetterScroll.Name := 'VertScrollBoxLetters';
-  FLetterScroll.Parent := LayoutBody;
+  var LetterSlot := FindComponent('LayoutLetterNavigationSlot') as TLayout;
+  FLetterScroll.Parent := LetterSlot;
+  FLetterScroll.Align := TAlignLayout.Client;
   FLetterScroll.ShowScrollBars := False;
   FLetterScroll.ScrollAnimation := TBehaviorBoolean.True;
 
@@ -310,7 +278,8 @@ begin
   {$IF Defined(ANDROID) or Defined(IOS)}
   // Retain the standard control in the designer; use stable gesture coordinates at runtime.
   var Scroll := TLibraryScrollBox.Create(Self);
-  Scroll.SetBounds(VertScrollBoxScroll.Position.X, VertScrollBoxScroll.Position.Y, VertScrollBoxScroll.Width, VertScrollBoxScroll.Height);
+  Scroll.Align := VertScrollBoxScroll.Align;
+  Scroll.Margins.Assign(VertScrollBoxScroll.Margins);
   Scroll.ScrollAnimation := VertScrollBoxScroll.ScrollAnimation;
   Scroll.StyleLookup := VertScrollBoxScroll.StyleLookup;
   Scroll.Parent := VertScrollBoxScroll.Parent;
@@ -360,38 +329,65 @@ begin
     FSaveButtons[i].OnClick := SaveClick;
   end;
 
-  // Bind existing frame components by name and system ID, never by an array index or numeric Tag.
-  for var platform in LibraryPlatforms do
-    if FindComponent(platform.FilterButton) is TButton then
-    begin
-      var Button := FindComponent(platform.FilterButton) as TButton;
-      Button.TagString := platform.Id;
-      Button.OnClick := FilterClick;
-      FPlatformButtons.Add(Button);
-    end;
+  var FirstRow := FindComponent('LayoutFilterRow0') as TLayout;
+  var AllButton := ActionButton(Self, FirstRow, 'All', FilterClick);
+  AllButton.Name := 'ButtonFilterAll';
+  AllButton.Height := 31;
+  FPlatformButtons.Add(AllButton);
+  var Brand := '';
+  var Group: TLayout := nil;
+  var Order := 0;
+  for var Platform in TPlatformRegistry.All do
+  begin
+    var Filter := ActionButton(Self, FirstRow, Platform.ShortName, FilterClick);
+    Filter.Name := 'ButtonFilter' + Platform.Id;
+    Filter.TagString := Platform.Id;
+    Filter.Height := 31;
+    FPlatformButtons.Add(Filter);
 
-  for var platform in LibraryPlatforms do
-    if FindComponent(platform.SidebarButton) is TButton then
+    if Brand <> Platform.Manufacturer then
     begin
-      var Button := FindComponent(platform.SidebarButton) as TButton;
-      Button.TagString := platform.Id;
-      Button.OnClick := FilterClick;
-      Button.TextSettings.HorzAlign := TTextAlign.Leading;
-      Button.StylesData['text.Margins.Left'] := 48;
-
-      var Border := TRectangle.Create(Button);
-      Border.TagString := platform.Id;
-      FSidebarPlatformBorders.Add(Border);
-      Border.Parent := Button;
-      Border.Align := TAlignLayout.Contents;
-      Border.Fill.Kind := TBrushKind.None;
-      Border.Stroke.Color := $FFFFB344;
-      Border.Stroke.Thickness := 2;
-      Border.XRadius := 6;
-      Border.YRadius := 6;
-      Border.HitTest := False;
-      Border.Visible := False;
+      Brand := Platform.Manufacturer;
+      Group := TLayout.Create(Self);
+      Group.Parent := VertScrollBoxPlatforms;
+      Group.Name := 'PlatformGroup' + IntToStr(Order);
+      Group.Position.Y := Order * 1000;
+      Group.Align := TAlignLayout.Top;
+      Group.Height := 46;
+      Group.Width := VertScrollBoxPlatforms.Width;
+      var Heading := TextLabel(Self, Group, Brand, 12);
+      Heading.Name := 'PlatformManufacturer' + IntToStr(Order);
+      Heading.Align := TAlignLayout.Top;
+      Heading.Height := 30;
+      Heading.Margins.Rect := RectF(12, 12, 0, 4);
+      Heading.Position.Y := 0;
+      Heading.TextSettings.FontColor := $FFB9C2CC;
+      Inc(Order);
     end;
+    var Button := ActionButton(Self, Group, Platform.Name, FilterClick);
+    Button.Name := 'ButtonSidebar' + Platform.Id;
+    Button.TagString := Platform.Id;
+    Button.Position.Y := Group.Height;
+    Button.Align := TAlignLayout.Top;
+    Group.Height := Group.Height + Button.Height;
+    Inc(Order);
+    Button.StyleLookup := 'buttonstyle_subtle';
+    Button.TextSettings.HorzAlign := TTextAlign.Leading;
+    Button.StylesData['text.Margins.Left'] := 48;
+    CreatePlatformIcon(Button, Platform.Id);
+    var Border := TRectangle.Create(Button);
+    Border.TagString := Platform.Id;
+    FSidebarPlatformBorders.Add(Border);
+    Border.Parent := Button;
+    Border.Align := TAlignLayout.Contents;
+    Border.Fill.Kind := TBrushKind.None;
+    Border.Stroke.Color := $FFFFB344;
+    Border.Stroke.Thickness := 2;
+    Border.XRadius := 6;
+    Border.YRadius := 6;
+    Border.HitTest := False;
+    Border.Visible := False;
+  end;
 
   for var Name in ['ButtonOpenRom', 'ButtonSettings'] do
   begin
@@ -453,14 +449,16 @@ begin
   FCards.Clear;
   FGames.Clear;
   try
-    for var platform in LibraryPlatforms do
+    for var platform in TPlatformRegistry.All do
     begin
-      if platform.Id = '' then
-        Continue;
-      var Folder := TPath.Combine(FStorage.RomFolder, RomSystemFolder(RomSystemFromId(platform.Id)));
-      if (platform.Id = ROM_SYSTEM_SC3000) and not FStorage.RomFolder.StartsWith('content://', True) and
-        not FStorage.FolderExists(Folder) then
-        Folder := TPath.Combine(FStorage.RomFolder, ROM_SYSTEM_SG1000);
+      var Folder := TPath.Combine(FStorage.RomFolder, platform.Folder);
+      if not FStorage.RomFolder.StartsWith('content://', True) then
+        for var Candidate in platform.ScanFolders do
+          if FStorage.FolderExists(TPath.Combine(FStorage.RomFolder, Candidate)) then
+          begin
+            Folder := TPath.Combine(FStorage.RomFolder, Candidate);
+            Break;
+          end;
       var Metadata := TGameList.Create;
       var Lookup := TDictionary<string, TGame>.Create;
       try
@@ -542,6 +540,10 @@ end;
 procedure TLibraryView.ApplyLanguage(const PreviousLanguage: string);
 begin
   FormStyles.RelocalizeUI(Self, PreviousLanguage);
+  for var Button in FPlatformButtons do
+    Button.Text := LibrarySystemName(Button.TagString).Replace('&', '&&');
+  for var Platform in TPlatformRegistry.All do
+    (FindComponent('ButtonSidebar' + Platform.Id) as TButton).Text := Translate(Platform.Name).Replace('&', '&&');
   // Rebuild data captions from the game records so titles and metadata stay intact.
   BuildCards;
   UpdateInspector;
@@ -716,10 +718,14 @@ begin
         Cover.HitTest := False;
         Cover.WrapMode := TImageWrapMode.Fit;
         LoadImage(Cover, Game.Cover);
-        var Title := TextLabel(Card, Card, Game.Title, 14);
+        Card.TextLayout := TLayout.Create(Card);
+        Card.TextLayout.Parent := Card;
+        Card.TextLayout.Align := TAlignLayout.Bottom;
+        Card.TextLayout.Height := 58;
+        var Title := TextLabel(Card, Card.TextLayout, Game.Title, 14);
         Card.Title := Title;
         Title.TextSettings.Font.Style := [TFontStyle.fsBold];
-        var platform := TextLabel(Card, Card, LibrarySystemName(Game.SystemId), 12);
+        var platform := TextLabel(Card, Card.TextLayout, LibrarySystemName(Game.SystemId), 12);
         Card.platform := platform;
         platform.Opacity := 0.6;
         platform.Visible := FShowPlatform;
@@ -774,6 +780,8 @@ begin
       Button.StyleLookup := 'buttonstyle_accent'
     else
       Button.StyleLookup := 'buttonstyle';
+
+  UpdatePlatformCombo;
 
   for var Border in FSidebarPlatformBorders do
     Border.Visible := FSystemFilter = Border.TagString;
@@ -841,66 +849,101 @@ end;
 
 procedure TLibraryView.ArrangeLetterNavigation;
 begin
+  var Slot := FindComponent('LayoutLetterNavigationSlot') as TLayout;
+  Slot.Visible := FLetterScroll.Visible;
   var Count := 0;
   for var Button in FLetterButtons do
     if Button.Visible then
       Inc(Count);
-
   var H := EnsureRange(Floor(FLetterScroll.Height / Max(1, Count)), 24, 36);
-  var Y: Single := 0;
-  for var Button in FLetterButtons do
-    if Button.Visible then
+  FLetterScroll.BeginUpdate;
+  try
+    for var i := 0 to FLetterButtons.Count - 1 do
     begin
-      Button.SetBounds(0, Y, FLetterScroll.Width, H - 2);
-      Y := Y + H;
+      var Button := FLetterButtons[i];
+      Button.Align := TAlignLayout.Top;
+      Button.Height := H - 2;
+      Button.Margins.Bottom := 2;
+      Button.Position.Y := i * H; // FMX Top-alignment ordering key.
     end;
+  finally
+    FLetterScroll.EndUpdate;
+  end;
 end;
 
 procedure TLibraryView.ArrangeCards;
 begin
   if FBuilding or FArranging or (LayoutGrid = nil) then
     Exit;
-
   FArranging := True;
   try
-    var Available := Max(140, VertScrollBoxScroll.Width - 16);
-    LayoutGrid.Width := Available;
+    var Available := Max(1, LayoutGrid.Width);
     var Columns := Max(1, Floor((Available + 14) / (FCardWidth + 14)));
     {$IF Defined(ANDROID) or Defined(IOS)}
-    // Mobile grid cards must fit at least two across, even at the largest setting.
     Columns := Max(2, Columns);
     {$ENDIF}
     if FListMode then
       Columns := 1;
-    var W := (Available - (Columns - 1) * 14) / Columns;
-    var H := W * 1.1 + 66;
-    if FListMode then
-      H := 92;
-
-    for var i := 0 to FCards.Count - 1 do
-    begin
-      var Card := FCards[i];
-      Card.SetBounds((i mod Columns) * (W + 14), (i div Columns) * (H + 14), W, H);
-      var Image := Card.Cover;
-      var Title := Card.Title;
-      var platform := Card.platform;
-      if FListMode then
+    var W := Max(1, (Available - (Columns - 1) * 14) / Columns);
+    var H := IfThen(FListMode, 92, W * 1.1 + 66);
+    var Rows := FindComponent('LayoutCardRows') as TLayout;
+    Rows.BeginUpdate;
+    try
+      var RowCount := Ceil(FCards.Count / Columns);
+      while Rows.ChildrenCount < RowCount do
       begin
-        Image.SetBounds(8, 8, 60, 76);
-        Title.SetBounds(84, 14, W - 104, 32);
-        platform.SetBounds(84, 49, W - 104, 24);
-      end
-      else
-      begin
-        Image.SetBounds(8, 8, W - 16, H - 74);
-        Title.SetBounds(12, H - 60, W - 24, 28);
-        platform.SetBounds(12, H - 32, W - 24, 22);
+        var Row := TLayout.Create(Rows);
+        Row.Parent := Rows;
+        Row.Align := TAlignLayout.Top;
       end;
+      for var i := 0 to Rows.ChildrenCount - 1 do
+      begin
+        var Row := TLayout(Rows.Children[i]);
+        Row.Visible := i < RowCount;
+        Row.Height := H;
+        Row.Margins.Bottom := 14;
+        Row.Position.Y := i * (H + 14); // Sort aligned rows, never place cards.
+      end;
+      for var i := 0 to FCards.Count - 1 do
+      begin
+        var Card := FCards[i];
+        Card.Parent := Rows.Children[i div Columns];
+        Card.Align := TAlignLayout.Left;
+        Card.Width := W;
+        Card.Margins.Right := IfThen(i mod Columns = Columns - 1, 0, 14);
+        Card.Position.X := (i mod Columns) * (W + 14); // Alignment order within this row.
+        Card.Padding.Rect := RectF(8, 8, 8, 8);
+        Card.Title.Align := TAlignLayout.Top;
+        Card.Title.Height := 28;
+        Card.platform.Align := TAlignLayout.Top;
+        Card.platform.Height := 22;
+        if FListMode then
+        begin
+          Card.Cover.Align := TAlignLayout.Left;
+          Card.Cover.Width := 60;
+          Card.Cover.Margins.Rect := RectF(0, 0, 16, 0);
+          Card.TextLayout.Align := TAlignLayout.Client;
+          Card.TextLayout.Padding.Rect := RectF(0, 6, 12, 0);
+          Card.Title.Height := 32;
+          Card.platform.Margins.Top := 3;
+        end
+        else
+        begin
+          Card.TextLayout.Align := TAlignLayout.Bottom;
+          Card.TextLayout.Height := IfThen(FShowPlatform, 58, 36);
+          Card.TextLayout.Padding.Rect := RectF(4, 6, 4, 0);
+          Card.Cover.Align := TAlignLayout.Client;
+          Card.Cover.Margins.Rect := TRectF.Empty;
+          Card.platform.Margins.Top := 0;
+        end;
+      end;
+      Rows.Height := RowCount * (H + 14);
+      var More := FindComponent('LayoutMoreActions') as TLayout;
+      More.Visible := ButtonMore.Visible;
+      LayoutGrid.Height := Max(180, Rows.Height + IfThen(More.Visible, 64, 0));
+    finally
+      Rows.EndUpdate;
     end;
-    var Y := Ceil(FCards.Count / Columns) * (H + 14);
-    ButtonMore.SetBounds(Max(0, (Available - 180) / 2), Y + 4, 180, 42);
-    LabelEmpty.SetBounds(16, 28, Available - 32, 132);
-    LayoutGrid.Height := Max(180, Y + IfThen(ButtonMore.Visible, 64, 0));
   finally
     FArranging := False;
   end;
@@ -910,94 +953,95 @@ procedure TLibraryView.Resize;
 begin
   if (csLoading in ComponentState) or FBuilding or FLayouting or (LayoutBody = nil) then
     Exit;
-
   FLayouting := True;
   try
     inherited;
     PanelSidebar.Visible := Width >= 900;
     LayoutCompactActions.Visible := not PanelSidebar.Visible;
     PanelInspector.Visible := Width >= 1120;
-    var ContentWidth := Max(140, LayoutBody.Width - 48);
-    var Y: Single := 22;
-    LayoutHeader.SetBounds(24, Y, ContentWidth, 92);
-    Y := Y + 96;
-    if LayoutCompactActions.Visible then
-    begin
-      LayoutCompactActions.SetBounds(24, Y, ContentWidth, 48);
-      Y := Y + 48;
-    end;
+    for var Child in VertScrollBoxPlatforms.Content.Children do
+      if Child is TLayout then
+        TLayout(Child).Width := VertScrollBoxPlatforms.Width;
+    var ContentWidth := Max(1, LayoutBody.Width - 48);
     LayoutContinuePreview.Visible := ContentWidth >= 720;
     FContinueCollapse := 0;
     FContinueExtent := 0;
     if FContinue.Visible then
     begin
       var Stacked := ContentWidth < 520;
-      var Height := IfThen(Stacked, 208, 154);
-      FContinueExtent := Height + 16;
+      var CardHeight := IfThen(Stacked, 208, 154);
+      FContinueExtent := CardHeight + 16;
       {$IF Defined(ANDROID) or Defined(IOS)}
-      // Reserve the wrapped filters, count, and a usable list viewport on short screens.
-      if LayoutBody.Height - Y - FContinueExtent < 88 + 28 + 18 + 92 then
+      if LayoutBody.Height - LayoutHeader.Height - FContinueExtent < 274 then
         FContinueExtent := 0;
       FContinueCollapse := EnsureRange(VertScrollBoxScroll.ViewportPosition.Y, 0, FContinueExtent);
-      if FContinueExtent = 0 then
-        FContinue.Opacity := 0
-      else
-        FContinue.Opacity := 1 - FContinueCollapse / FContinueExtent;
-      FContinue.Enabled := (FContinueExtent > 0) and (FContinueCollapse < Height);
+      FContinue.Opacity := IfThen(FContinueExtent > 0, 1 - FContinueCollapse / Max(1, FContinueExtent), 0);
+      FContinue.Enabled := (FContinueExtent > 0) and (FContinueCollapse < CardHeight);
       {$ENDIF}
-      FContinue.SetBounds(24, Y, ContentWidth, Max(0, Min(Height, FContinueExtent - FContinueCollapse)));
-      var TextX: Single := 20;
-      if LayoutContinuePreview.Visible then
+      FContinue.Height := Max(0, Min(CardHeight, FContinueExtent - FContinueCollapse));
+      FContinue.Margins.Bottom := Max(0, FContinueExtent - FContinueCollapse - FContinue.Height);
+      FResume.Width := Min(144, ContentWidth - 40);
+      if Stacked then
       begin
-        var PreviewWidth: Single := 176;
-        LayoutContinuePreview.SetBounds(12, 12, PreviewWidth, Height - 24);
-        ArrangeContinuePreview;
-        TextX := 12 + LayoutContinuePreview.Width + 24;
-      end;
-      var ButtonWidth := Min(144, ContentWidth - 40);
-      var TextWidth := ContentWidth - TextX - 20;
-      if not Stacked then
-        TextWidth := TextWidth - ButtonWidth - 20;
-      LabelContinueCaption.SetBounds(TextX, 16, TextWidth, 18);
-      LabelContinueTitle.SetBounds(TextX, 38, TextWidth, 32);
-      LabelContinuePlatform.SetBounds(TextX, 74, TextWidth, 18);
-      LabelContinueLastPlayed.SetBounds(TextX, 94, TextWidth, 18);
-      LabelContinueSave.SetBounds(TextX, 114, TextWidth, 18);
-      FResume.SetBounds(ContentWidth - ButtonWidth - 18, Height - 58, ButtonWidth, 40);
-      Y := Y + FContinueExtent - FContinueCollapse;
-    end;
-    LayoutFilters.SetBounds(24, Y, ContentWidth, 46);
-    var X: Single := 0;
-    var FilterY: Single := 4;
-    for var B in FPlatformButtons do
-    begin
-      var W: Single := 56;
-      if Length(B.Text) > 6 then
-        W := 102;
-      if X + W > ContentWidth then
+        FResume.Align := TAlignLayout.Bottom;
+        FResume.Height := 40;
+        FResume.Margins.Rect := RectF(0, 12, 0, 0);
+      end
+      else
       begin
-        X := 0;
-        FilterY := FilterY + 41;
+        FResume.Align := TAlignLayout.Right;
+        FResume.Margins.Rect := RectF(20, 80, 0, 2);
       end;
-      B.Visible := True;
-      B.SetBounds(X, FilterY, W, 34);
-      X := X + W + 7;
+      ArrangeContinuePreview;
     end;
-    LayoutFilters.Height := FilterY + 42;
-    Y := Y + LayoutFilters.Height;
-    LabelCount.SetBounds(24, Y, ContentWidth, 28);
-    Y := Y + 28;
-    // Add the consumed header distance to the content before growing its viewport.
-    // This keeps the scroll range and card motion continuous during the collapse.
-    var LetterWidth: Single := 0;
-    if FLetterScroll.Visible then
-      LetterWidth := 44;
-    VertScrollBoxScroll.Width := Max(96, ContentWidth - LetterWidth);
-    LayoutGrid.Position.Y := FContinueCollapse;
-    ArrangeCards;
-    VertScrollBoxScroll.SetBounds(24 + LetterWidth, Y, VertScrollBoxScroll.Width, Max(0, LayoutBody.Height - Y - 18));
-    FLetterScroll.SetBounds(24, Y, 36, VertScrollBoxScroll.Height);
+    // Filters wrap by moving their aligned controls between static FMX rows.
+    LayoutFilters.BeginUpdate;
+    try
+      for var i := 0 to 2 do
+        TLayout(FindComponent('LayoutFilterRow' + IntToStr(i))).Visible := False;
+      var RowIndex := 0;
+      var Used: Single := 0;
+      for var B in FPlatformButtons do
+      begin
+        var W: Single := Max(56, Length(LibrarySystemName(B.TagString)) * 8 + 24);
+        W := Min(W, ContentWidth);
+        if (Used > 0) and (Used + W > ContentWidth) then
+        begin
+          Inc(RowIndex);
+          Used := 0;
+        end;
+        if RowIndex >= 3 then
+          Break;
+        var Row := FindComponent('LayoutFilterRow' + IntToStr(RowIndex)) as TLayout;
+        Row.Visible := True;
+        Row.Position.Y := RowIndex * 41; // Top-alignment sort key.
+        var Item: TControl := B;
+        if B.Parent <> LayoutFilters then
+          if (B.Parent is TLayout) and not string(B.Parent.Name).StartsWith('LayoutFilterRow') then
+            Item := TControl(B.Parent);
+        Item.Parent := Row;
+        Item.Align := TAlignLayout.Left;
+        Item.Width := W;
+        Item.Margins.Rect := RectF(0, 4, 7, 3);
+        Item.Position.X := Used; // Left-alignment sort key.
+        B.Visible := True;
+        Used := Used + W + 7;
+      end;
+      LayoutPlatformCombo.Visible := RowIndex >= 3;
+      if LayoutPlatformCombo.Visible then
+      begin
+        for var i := 0 to 2 do
+          TLayout(FindComponent('LayoutFilterRow' + IntToStr(i))).Visible := False;
+        LayoutFilters.Height := 46;
+      end
+      else
+        LayoutFilters.Height := (RowIndex + 1) * 41 + 5;
+    finally
+      LayoutFilters.EndUpdate;
+    end;
+    LayoutGrid.Margins.Top := FContinueCollapse;
     ArrangeLetterNavigation;
+    ArrangeCards;
   finally
     FLayouting := False;
   end;
@@ -1016,7 +1060,7 @@ end;
 {$IF Defined(ANDROID) or Defined(IOS)}
 procedure TLibraryView.ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF; const ContentSizeChanged: Boolean);
 begin
-  if FBuilding or FLayouting or not FContinue.Visible then
+  if FBuilding or FLayouting or not FContinue.Visible or (FContinueExtent <= 0) then
     Exit;
   var Collapse := EnsureRange(NewPosition.Y, 0, FContinueExtent);
   if SameValue(Collapse, FContinueCollapse, 0.1) then
@@ -1024,22 +1068,18 @@ begin
   FLayouting := True;
   try
     FContinueCollapse := Collapse;
-    var Height := FContinueExtent - 16;
-    FContinue.Height := Max(0, Min(Height, FContinueExtent - Collapse));
+    var CardHeight := FContinueExtent - 16;
+    FContinue.Height := Max(0, Min(CardHeight, FContinueExtent - Collapse));
+    FContinue.Margins.Bottom := Max(0, FContinueExtent - Collapse - FContinue.Height);
     FContinue.Opacity := 1 - Collapse / FContinueExtent;
-    FContinue.Enabled := Collapse < Height;
-    LayoutFilters.Position.Y := FContinue.Position.Y + FContinueExtent - Collapse;
-    LabelCount.Position.Y := LayoutFilters.Position.Y + LayoutFilters.Height;
-    // Move the grid as one unit, keeping every card and its content size unchanged.
-    LayoutGrid.Position.Y := Collapse;
-    var Y := LabelCount.Position.Y + LabelCount.Height;
-    VertScrollBoxScroll.SetBounds(VertScrollBoxScroll.Position.X, Y, VertScrollBoxScroll.Width, Max(0, LayoutBody.Height - Y - 18));
-    FLetterScroll.SetBounds(24, Y, 36, VertScrollBoxScroll.Height);
+    FContinue.Enabled := Collapse < CardHeight;
+    LayoutGrid.Margins.Top := Collapse;
     ArrangeLetterNavigation;
   finally
     FLayouting := False;
   end;
 end;
+
 {$ENDIF}
 
 procedure TLibraryView.UpdateInspector;
@@ -1079,6 +1119,7 @@ begin
   for var i := 0 to 2 do
   begin
     FSaveButtons[i].Visible := i < Length(Saves);
+    TControl(FSaveButtons[i].Parent).Visible := FSaveButtons[i].Visible;
     FSaveImages[i].Visible := i < Length(Saves);
     if i < Length(Saves) then
     begin
@@ -1187,7 +1228,7 @@ begin
     LayoutContinuePreview.Width := LayoutContinuePreview.Height * Bitmap.Width / Bitmap.Height
   else
     LayoutContinuePreview.Width := 176;
-  FContinueCover.SetBounds(0, 0, LayoutContinuePreview.Width, LayoutContinuePreview.Height);
+  FContinueCover.Align := TAlignLayout.Contents;
 end;
 
 procedure TLibraryView.OpenClick(Sender: TObject);
@@ -1200,6 +1241,41 @@ procedure TLibraryView.SettingsClick(Sender: TObject);
 begin
   if Assigned(FOnSettings) then
     FOnSettings(Self);
+end;
+
+procedure TLibraryView.UpdatePlatformCombo;
+begin
+  // Share the button order and translated captions; selection changes here are silent.
+  ComboBoxPlatform.OnChange := nil;
+  ComboBoxPlatform.Items.BeginUpdate;
+  try
+    var SelectedIndex := -1;
+    for var i := 0 to FPlatformButtons.Count - 1 do
+    begin
+      var Button := FPlatformButtons[i];
+      var Caption := LibrarySystemName(Button.TagString);
+      if i >= ComboBoxPlatform.Items.Count then
+        ComboBoxPlatform.Items.Add(Caption)
+      else if ComboBoxPlatform.Items[i] <> Caption then
+        ComboBoxPlatform.Items[i] := Caption;
+      if Button.TagString = FSystemFilter then
+        SelectedIndex := i;
+    end;
+    ComboBoxPlatform.ItemIndex := SelectedIndex;
+  finally
+    ComboBoxPlatform.Items.EndUpdate;
+    ComboBoxPlatform.OnChange := PlatformChange;
+  end;
+end;
+
+procedure TLibraryView.PlatformChange(Sender: TObject);
+begin
+  var Index := ComboBoxPlatform.ItemIndex;
+  if FBuilding or (Index < 0) or (Index >= FPlatformButtons.Count) then
+    Exit;
+  if FPlatformButtons[Index].TagString = FSystemFilter then
+    Exit;
+  FilterClick(FPlatformButtons[Index]);
 end;
 
 procedure TLibraryView.FilterClick(Sender: TObject);

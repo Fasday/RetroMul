@@ -48,6 +48,7 @@ begin
   inherited Create;
   if Length(IPL) <> $2000 then
     raise EReadError.Create('SF-7000 IPL must contain 8192 bytes');
+
   FIPL := Copy(IPL);
   FFDC := TSGFDC.Create;
   Mount(Image, protected);
@@ -88,6 +89,7 @@ procedure TSF7000.Append(var Buffer: TBytes; Value: Byte);
 begin
   if Length(Buffer) >= 1024 * 1024 then
     raise EWriteError.Create('SF-7000 output queue exceeds 1 MiB');
+
   var Size := Length(Buffer);
   SetLength(Buffer, Size + 1);
   Buffer[Size] := Value;
@@ -255,6 +257,7 @@ procedure TSF7000.SerializeState(State: TStateArchive);
     State.Field(Size, SizeOf(Size));
     if (Size < 0) or (Size > 1024 * 1024) then
       raise EReadError.Create('Invalid SF-7000 queue snapshot');
+
     if State.Loading then
       SetLength(Buffer, Size);
     if Size > 0 then

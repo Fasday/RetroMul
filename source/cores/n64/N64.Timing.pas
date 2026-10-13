@@ -108,7 +108,7 @@ begin
     begin
       var KindValue: Cardinal := 0;
       Move(FEvents[I].Kind, KindValue, SizeOf(FEvents[I].Kind));
-      if (KindValue > Ord(High(TN64EventKind))) or
+      if (KindValue > Cardinal(Ord(High(TN64EventKind)))) or
         (FEvents[I].Due < FNow) or (FEvents[I].Due = High(UInt64)) or
         (FEvents[I].Sequence >= FSequence) then
         raise EReadError.Create('Invalid N64 event');

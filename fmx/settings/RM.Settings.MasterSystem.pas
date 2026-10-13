@@ -26,8 +26,8 @@ begin
   Context.PathEdit('RowSegaBIOS', 'Hardware', 'BIOS', '', False);
   Context.Combo('RowSegaMapper', 'Cartridge', 'Mapper',
     [Translate('Automatic'), 'Sega', 'Codemasters', 'Korean', 'Zemina', 'Nemesis',
-      'Janggun', 'HiCom', '4 Pak', 'Korean 188', 'Fixed 48 KiB', 'Seojin'],
-    ['-1', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], '-1');
+      'Janggun', 'HiCom', '4 Pak', 'Korean 188', 'Fixed 48 KiB', 'Seojin', '93C46 EEPROM'],
+    ['-1', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'], '-1');
 end;
 
 procedure TMasterSystemSettings.Audio(Context: TSettingsPageContext);

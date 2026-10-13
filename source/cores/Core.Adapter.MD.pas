@@ -21,7 +21,7 @@ type
     property Keys2: TMDKeyMap read FKeys2;
   end;
 
-  TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FThread: TMDWorker;
     FData: TBytes;
@@ -37,6 +37,7 @@ type
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string); overload;
     destructor Destroy; override;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -49,6 +50,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -199,6 +201,13 @@ begin
   ApplySettings;
 end;
 
+procedure TMDCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FThread <> nil then
+    FThread.InputPorts := Ports;
+end;
+
 procedure TMDCoreAdapter.ClearInput;
 begin
   FKeyboard := [];
@@ -291,6 +300,11 @@ end;
 function TMDCoreAdapter.GetConfig: IEmulatorConfig;
 begin
   Result := FConfig;
+end;
+
+function TMDCoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_MD;
 end;
 
 function TMDCoreAdapter.GetName: string;

@@ -47,12 +47,13 @@ begin
   inherited Create;
   if (Clock < 1000000) or (Clock > 16000000) or (SampleRate < 8000) or (SampleRate > 192000) then
     raise EArgumentOutOfRangeException.Create('SAA1099 clock/rate');
+
   FClock := Clock;
   FSampleRate := SampleRate;
-  for var I := 0 to 1 do
+  for var i := 0 to 1 do
   begin
-    FFilter[I].Configure(Clock / 128.0, Min(14000, SampleRate * 0.4));
-    FDC[I].Configure(SampleRate, 20);
+    FFilter[i].Configure(Clock / 128.0, Min(14000, SampleRate * 0.4));
+    FDC[i].Configure(SampleRate, 20);
   end;
   Reset;
 end;
@@ -65,17 +66,17 @@ begin
   FillChar(FNoiseCounter, SizeOf(FNoiseCounter), 0);
   FAddress := 0;
   FPhase := 0;
-  for var I := 0 to 1 do
+  for var i := 0 to 1 do
   begin
-    FNoise[I] := $3FFFF;
-    FEnvelope[I] := 0;
-    FEnvControl[I] := 0;
-    FEnvPending[I] := 0;
-    FEnvEnded[I] := True;
-    FEnvHasPending[I] := False;
-    FFiltered[I] := 0;
-    FFilter[I].Reset;
-    FDC[I].Reset;
+    FNoise[i] := $3FFFF;
+    FEnvelope[i] := 0;
+    FEnvControl[i] := 0;
+    FEnvPending[i] := 0;
+    FEnvEnded[i] := True;
+    FEnvHasPending[i] := False;
+    FFiltered[i] := 0;
+    FFilter[i].Reset;
+    FDC[i].Reset;
   end;
 end;
 
@@ -89,6 +90,7 @@ procedure TSAA1099.EnvelopeTick(Group: Integer);
 begin
   if (FRegisters[$18 + Group] and $80 = 0) or FEnvEnded[Group] then
     Exit;
+
   var Step := 1;
   if FEnvControl[Group] and $10 <> 0 then
     Step := 2;
@@ -118,6 +120,7 @@ begin
   var Control := FEnvControl[Group];
   if FRegisters[$18 + Group] and $80 = 0 then
     Exit(16);
+
   var Step := FEnvelope[Group];
   var Mode := (Control shr 1) and 7;
   Result := 0;
@@ -169,6 +172,7 @@ procedure TSAA1099.WriteRegister(Index, Value: Byte);
 begin
   if Index > 31 then
     raise EArgumentOutOfRangeException.Create('SAA1099 register');
+
   FRegisters[Index] := Value;
   if Index in [$18, $19] then
   begin
@@ -212,6 +216,7 @@ function TSAA1099.ReadRegister(Index: Byte): Byte;
 begin
   if Index > 31 then
     raise EArgumentOutOfRangeException.Create('SAA1099 register');
+
   Result := FRegisters[Index];
 end;
 
@@ -219,6 +224,7 @@ procedure TSAA1099.GetEnvelopeLevels(Group: Integer; out Left, Right: Integer);
 begin
   if (Group < 0) or (Group > 1) then
     raise EArgumentOutOfRangeException.Create('SAA1099 envelope group');
+
   Left := EnvelopeLevel(Group, False);
   Right := EnvelopeLevel(Group, True);
 end;

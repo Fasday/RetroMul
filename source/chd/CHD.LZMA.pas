@@ -7,14 +7,14 @@ interface
 uses
   System.SysUtils;
 
-function CHDLZMA(const Source: TBytes; OutputSize: Integer): TBytes;
+function CHDLZMA(const Source: TBytes; OutputSize: Integer; PrefixOnly: Boolean = False): TBytes;
 
 implementation
 
 uses
   CHD.Common, System.Math;
 
-function CHDLZMA(const Source: TBytes; OutputSize: Integer): TBytes;
+function CHDLZMA(const Source: TBytes; OutputSize: Integer; PrefixOnly: Boolean): TBytes;
 var
   RangeValue, CodeValue: Cardinal;
   Input, Output, State, PosState, Sym, MatchByte, MatchBit, B, Len, Slot, DirectBits: Integer;
@@ -237,6 +237,8 @@ begin
       end;
     end;
 
+    if PrefixOnly then
+      Len := Min(Len, OutputSize - Output);
     CHDRequire((Rep0 < Cardinal(Output)) and (Len <= OutputSize - Output), 'Invalid LZMA match');
     for var i := 1 to Len do
     begin

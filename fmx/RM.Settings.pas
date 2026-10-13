@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.RomFormat, System.IOUtils, System.SysUtils, System.Classes,
+  Core.Platforms, Core.RomFormat, System.IOUtils, System.SysUtils, System.Classes,
   System.IniFiles, System.Generics.Collections, System.Types, System.UITypes,
   FMX.Forms, FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls, FMX.Text,
   FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox, FMX.Controls.Presentation,
@@ -32,6 +32,8 @@ const
   SETTINGS_PAGE_SF7000 = RM.Settings.platform.SETTINGS_PAGE_SF7000;
   SETTINGS_PAGE_MULTIVISION = RM.Settings.platform.SETTINGS_PAGE_MULTIVISION;
   SETTINGS_PAGE_SMS = RM.Settings.platform.SETTINGS_PAGE_SMS;
+  SETTINGS_PAGE_GG = RM.Settings.platform.SETTINGS_PAGE_GG;
+  SETTINGS_PAGE_GW = RM.Settings.platform.SETTINGS_PAGE_GW;
 
 const
   AUTOSAVE_DEFAULT_MINUTES = 10;
@@ -93,7 +95,7 @@ type
     Diagram: TControl;
     Capture, Clear: TButton;
     Caption: TLabel;
-    Assignments: TVertScrollBox;
+    Assignments: TLayout;
     AssignmentList: TLayout;
     Port: Integer;
     Device: string;
@@ -110,10 +112,13 @@ type
     ButtonRefresh: TButton;
     ListBoxNavigation: TListBox;
     LayoutBody, LayoutContent, LayoutHeader, LayoutFooter: TLayout;
+    LayoutSettingsMainColumn, LayoutSettingsPreviewColumn: TLayout;
     VertScrollBoxScroll: TVertScrollBox;
     LabelTitle, LabelStatus: TLabel;
     ButtonApply, ButtonBack, ButtonCancelCapture: TButton;
     LayoutComponentStore: TLayout;
+    LabelBrand: TLabel;
+    PathBrandIcon: TPath;
   private
     FStorage: IStorage;
     FPicker: TSettingsLocationPicker;
@@ -140,7 +145,7 @@ type
     FPreview: TControl;
     FPreviewGroup: TPanel;
     FHeight: Single;
-    FBuilding, FRebuildPending, FArranging: Boolean;
+    FBuilding, FRebuildPending, FArranging, FDeviceArranging: Boolean;
     FVolumeValue: TLabel;
     FFolderEdit: TEdit;
     FAutosaveMinutes: TSpinBox;
@@ -656,7 +661,8 @@ end;
 procedure TBindingLines.Paint;
 begin
   inherited;
-  var D := TDeviceCallouts(Parent);
+  // PaintTo temporarily detaches Parent when rendering to a bitmap.
+  var D := TDeviceCallouts(Owner);
   Canvas.Stroke.Kind := TBrushKind.Solid;
   Canvas.Stroke.Color := TAlphaColors.Gray;
   Canvas.Stroke.Thickness := 1;
@@ -752,20 +758,6 @@ begin
   ListBoxNavigation.OnChange := NavigationChange;
   FSearch.OnChangeTracking := SearchChange;
   FSearch.OnResize := EditorResize;
-  for var Port := 3 to 4 do
-  begin
-    var Group := TPanel.Create(Self);
-    Group.Name := 'PanelGroupPort' + IntToStr(Port);
-    Group.Parent := LayoutComponentStore;
-    Group.Height := 60;
-    Group.StyleLookup := 'retromul_card';
-    var Title := SettingsLabel(Self);
-    Title.Name := 'LabelGroupPort' + IntToStr(Port) + 'Title';
-    Title.Parent := Group;
-    Title.Align := TAlignLayout.Client;
-    Title.Margins.Left := 16;
-    Title.Text := 'Port ' + IntToStr(Port);
-  end;
   FPlatformSearch := FindComponent('SearchEditPlatformSearch') as TEdit;
   FPlatformSearch.TextPrompt := Translate('Search platforms');
   FPlatformSearch.OnChangeTracking := PlatformSearchChange;
@@ -801,8 +793,7 @@ begin
   TLayout(TLabel(PreviewRow.TagObject).Parent).Visible := False;
   var Preview := FindComponent('SettingsPreviewPalettePreview') as TSettingsPreview;
           // Restore the original aspect ratio before the fit alignment recalculates.
-  Preview.Align := TAlignLayout.None;
-  Preview.SetBounds(0, 0, 320, 288);
+  Preview.Size.Size := TSizeF.Create(320, 288);
   Preview.Align := TAlignLayout.Fit;
   FPreview := Preview;
   Preview.PaletteIndex := Palette.ItemIndex;
@@ -824,7 +815,7 @@ type
     var Slot := FindComponent('Layout' + Name + 'Slot') as TLayout;
     var Control := Kind.Create(Self);
     Control.Name := Copy(Kind.ClassName, 2, MaxInt) + Name;
-    Control.SetBounds(Slot.Position.X, Slot.Position.Y, Slot.Width, Slot.Height);
+    Control.Size.Size := Slot.Size.Size;
     Control.Margins.Assign(Slot.Margins);
     Control.Align := Slot.Align;
     Control.Parent := Slot.Parent;
@@ -846,6 +837,10 @@ begin
     FContext.PageId := platform.PageId;
     platform.Initialize(FContext);
   end;
+  ReplaceRuntime('RowPCEModelEditor', TSettingsComboBox);
+  var PCEClear := FindComponent('EditButtonRowPCEBIOSClear') as TEditButton;
+  PCEClear.TagObject := FindComponent('EditRowPCEBIOSEditor');
+  PCEClear.OnClick := ClearPathClick;
   var ClearTranslation := FindComponent('EditButtonRowTranslationfileClear') as TEditButton;
   ClearTranslation.TagObject := FindComponent('EditRowTranslationfileEditor');
   ClearTranslation.OnClick := ClearPathClick;
@@ -899,7 +894,7 @@ begin
   CancelCapture;
   FContext.Free;
   FFields.Free;
-  FDevices.Free;
+  FreeAndNil(FDevices);
   for var Ini in FDrafts do
     Ini.Free;
   FInput.Free;
@@ -912,6 +907,7 @@ begin
   FBuilding := True;
   VertScrollBoxScroll.BeginUpdate;
   try
+    FPagePicker.ItemIndex := FCategory;
     CancelCapture;
     FFolderEdit := nil;
     FAutosaveMinutes := nil;
@@ -920,6 +916,8 @@ begin
     FPreviewGroup := nil;
     FDevices.Clear;
     FFields.Clear;
+    LayoutSettingsMainColumn.BeginUpdate;
+    LayoutSettingsPreviewColumn.BeginUpdate;
     // Keep resource cards; release only styles and data-dependent device views.
     for var i := 0 to ComponentCount - 1 do
       if (Components[i] is TPanel) and
@@ -932,7 +930,7 @@ begin
         Card.Visible := True;
         Card.OnResize := nil;
       end;
-    LayoutContent.Width := Min(1240, Max(0, VertScrollBoxScroll.Width - 16));
+    LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
     FGroup := nil;
     FHeight := 0;
     LabelStatus.Text := Translate('Click Apply to save changes.');
@@ -1015,8 +1013,7 @@ begin
         var Player := FindComponent('SettingsComboBoxRowPlayerEditor') as TSettingsComboBox;
         Player.OnChange := nil;
         Player.Items.Clear;
-        Player.Align := TAlignLayout.None;
-        Player.SetBounds(16, 20, 220, 32);
+        Player.Align := TAlignLayout.Client;
         for var i := 1 to Count do
           Player.Items.Add(Translate('Player ') + IntToStr(i));
         Player.ItemIndex := FPlayer;
@@ -1025,7 +1022,7 @@ begin
         ComboResize(Player);
         BuildPort(FPlayer, Translate('Bindings · player ') + IntToStr(FPlayer + 1));
       end
-      else
+      else if FPage <> SETTINGS_PAGE_GW then
       begin
         platform.Peripherals(FContext);
         for var Port := 0 to platform.Ports - 1 do
@@ -1036,8 +1033,10 @@ begin
     end;
   finally
     FBuilding := False;
-    VertScrollBoxScroll.EndUpdate;
     Resize;
+    LayoutSettingsMainColumn.EndUpdate;
+    LayoutSettingsPreviewColumn.EndUpdate;
+    VertScrollBoxScroll.EndUpdate;
     if PreserveScroll then
       VertScrollBoxScroll.ViewportPosition := TPointF.Create(0, EnsureRange(Position.Y, 0,
           Max(0, VertScrollBoxScroll.ContentBounds.Height - VertScrollBoxScroll.ClientHeight)))
@@ -1091,7 +1090,11 @@ end;
 procedure TSettingsView.Heading(const Name: string);
 begin
   FGroup := FindComponent('Panel' + Name) as TPanel;
-  FGroup.Parent := LayoutContent;
+  if Name = 'GroupPreview' then FGroup.Parent := LayoutSettingsPreviewColumn
+  else FGroup.Parent := LayoutSettingsMainColumn;
+  // Top alignment uses previous Y for sorting. Reset only the sort key while
+  // the column is updating, so page declaration order becomes alignment order.
+  FGroup.Position.Y := 0;
   FGroup.Visible := True;
   FGroup.Width := VertScrollBoxScroll.Width - 16;
   FGroup.TagString := (FindComponent('Label' + Name + 'Title') as TLabel).Text;
@@ -1121,9 +1124,14 @@ begin
   Result.Section := Section;
   Result.Key := Key;
   FFields.Add(Result);
-  Control.Align := TAlignLayout.None;
+  if string(Result.Row.Name).StartsWith('PanelRowPCE') then
+  begin
+    Control.Align := TAlignLayout.Client;
+    Control.OnResize := EditorResize;
+    Exit;
+  end;
+  Control.Align := TAlignLayout.Client;
   Control.OnResize := EditorResize;
-  Control.SetBounds(16, 20, 220, 32);
 end;
 
 function TSettingsView.Combo(const Name, Section, Key: string; const Labels, Values: array of string; const Default: string): TComboBox;
@@ -1216,15 +1224,10 @@ begin
     PanelSidebar.Visible := Width >= 1050;
     PanelSidebar.Width := 264;
     PanelPlatforms.Visible := (FCategory >= SETTINGS_CATEGORY_VIDEO_AUDIO) and (Width >= 760);
-    var BodyLeft: Single := 0;
-    if PanelSidebar.Visible then
-      BodyLeft := PanelSidebar.Width;
-    PanelPlatforms.Align := TAlignLayout.None;
-    PanelPlatforms.SetBounds(BodyLeft, 0, 216, Height);
-    if PanelPlatforms.Visible then
-      BodyLeft := BodyLeft + PanelPlatforms.Width;
-    LayoutBody.Align := TAlignLayout.None;
-    LayoutBody.SetBounds(BodyLeft, 0, Max(0, Width - BodyLeft), Height);
+    PanelPlatforms.Width := 216;
+    PanelSidebar.Align := TAlignLayout.MostLeft;
+    PanelPlatforms.Align := TAlignLayout.Left;
+    LayoutBody.Align := TAlignLayout.Client;
     ListBoxNavigation.Visible := PanelSidebar.Visible;
     FPagePicker.Visible := not PanelSidebar.Visible;
     FPlatformPicker.Visible := (FCategory >= SETTINGS_CATEGORY_VIDEO_AUDIO) and not PanelPlatforms.Visible;
@@ -1236,72 +1239,47 @@ begin
         TPath(FCategoryIcons[I]).Stroke.Color := $FFFFB344
       else
         TPath(FCategoryIcons[I]).Stroke.Color := $FFB9C2CC;
-    var PickerTop: Single := 48;
-    if FPagePicker.Visible then
-    begin
-      FPagePicker.SetBounds(0, PickerTop, LayoutHeader.Width, 32);
-      PickerTop := PickerTop + 44;
-    end;
-    if FPlatformPicker.Visible then
-    begin
-      FPlatformPicker.SetBounds(0, PickerTop, LayoutHeader.Width, 32);
-      PickerTop := PickerTop + 44;
-    end;
-    LayoutHeader.Height := PickerTop + 12;
-    VertScrollBoxScroll.Align := TAlignLayout.None;
-    var ContentTop := LayoutHeader.Position.Y + LayoutHeader.Height;
-    var ContentBottom := LayoutBody.Height - LayoutBody.Padding.Bottom - LayoutFooter.Height;
-    VertScrollBoxScroll.SetBounds(LayoutHeader.Position.X, ContentTop, LayoutHeader.Width, Max(0, ContentBottom - ContentTop));
+    LayoutHeader.Height := 60 + 44 * (Ord(FPagePicker.Visible) + Ord(FPlatformPicker.Visible));
+    VertScrollBoxScroll.Align := TAlignLayout.Client;
     FSearch.Visible := LayoutHeader.Width >= 740;
-    FSearch.SetBounds(Max(0, LayoutHeader.Width - 260), 0, 260, 32);
     if LayoutContent = nil then
       Exit;
 
-    LayoutContent.Width := Min(1240, Max(0, VertScrollBoxScroll.Width - 16));
-    var Y: Single := 0;
-    var LeftY: Single := 0;
+    LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
     var Columns := (FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
-    for var i := 0 to LayoutContent.ChildrenCount - 1 do
-      if LayoutContent.Children[i] is TPanel then
-      begin
-        var C := TPanel(LayoutContent.Children[i]);
-        if not C.Visible then
-          Continue;
-
-        C.Width := LayoutContent.Width;
-        if Columns then
-          if C = FPreviewGroup then
-            C.Width := LayoutContent.Width * 0.38 - 8
-          else
-            C.Width := LayoutContent.Width * 0.62 - 8;
-        ArrangeGroup(C);
-        C.Position.X := 0;
-        if Columns then
-          if C = FPreviewGroup then
-          begin
-            C.Position.Point := TPointF.Create(LayoutContent.Width * 0.62 + 8, 0);
-            Y := Max(Y, C.Height);
-          end
-          else
-          begin
-            C.Position.Y := LeftY;
-            LeftY := LeftY + C.Height + 16;
-            Y := Max(Y, LeftY);
-          end
-        else
-        begin
-          C.Position.Y := Y;
-          Y := Y + C.Height + 16;
+    LayoutSettingsPreviewColumn.Visible := (FPreviewGroup <> nil) and FPreviewGroup.Visible;
+    if Columns then begin
+      LayoutSettingsPreviewColumn.Align := TAlignLayout.Right;
+      LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Create(16,0,0,0);
+      LayoutSettingsPreviewColumn.Width := LayoutContent.Width * 0.38 - 8;
+      LayoutSettingsMainColumn.Align := TAlignLayout.Client;
+    end else begin
+      LayoutSettingsMainColumn.Align := TAlignLayout.Top;
+      LayoutSettingsPreviewColumn.Align := TAlignLayout.Bottom;
+      // The last main card already contributes the shared 16px bottom margin.
+      LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Empty;
+    end;
+    var MainHeight: Single := 0;
+    var PreviewHeight: Single := 0;
+    for var Column in [LayoutSettingsMainColumn,LayoutSettingsPreviewColumn] do
+      for var I := 0 to Column.ChildrenCount - 1 do
+        if Column.Children[I] is TPanel then begin
+          var Card := TPanel(Column.Children[I]);
+          if not Card.Visible then Continue;
+          Card.Width := Column.Width;
+          ArrangeGroup(Card);
+          if Column = LayoutSettingsMainColumn then
+            MainHeight := MainHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom
+          else PreviewHeight := PreviewHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom;
         end;
-      end;
-    LayoutContent.Height := Y;
-    ButtonApply.SetBounds(Max(0, LayoutFooter.Width - 140), 52, 140, 40);
-    ButtonBack.SetBounds(Max(0, LayoutFooter.Width - 260), 52, 108, 40);
-    ButtonReset.SetBounds(0, 52, 160, 40);
+    LayoutSettingsMainColumn.Height := MainHeight;
+    LayoutSettingsPreviewColumn.Height := PreviewHeight;
+    if Columns then LayoutContent.Height := Max(MainHeight,PreviewHeight)
+    else if LayoutSettingsPreviewColumn.Visible then
+      LayoutContent.Height := MainHeight + PreviewHeight + LayoutSettingsPreviewColumn.Margins.Top
+    else LayoutContent.Height := MainHeight;
     ButtonReset.Visible := LayoutFooter.Width >= 520;
-    ButtonRefresh.SetBounds(176, 52, 176, 40);
     ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
-    ButtonCancelCapture.SetBounds(Max(0, LayoutFooter.Width - 150), 52, 150, 40);
     ButtonApply.Visible := FCaptureButton = nil;
     ButtonBack.Visible := FCaptureButton = nil;
   finally
@@ -1311,77 +1289,24 @@ end;
 
 procedure TSettingsView.ArrangeGroup(Group: TPanel);
 begin
-  var Y: Single := 14;
-  if (FCategory = SETTINGS_CATEGORY_CONTROLS) and (Group.TagString = Translate('Controller')) and (Group.Width >= 850) then
-  begin
-    var Index := 0;
-    Y := 132;
-    for var i := 0 to Group.ChildrenCount - 1 do
-      if (Group.Children[i] is TControl) and (Group.Children[i].Owner = Self) then
-      begin
-        var C := TControl(Group.Children[i]);
-        if C is TPanel then
-        begin
-          var P := TPanel(C);
-          // Player, device and source occupy the first row. Special-device
-          // options stay below them, with room for their descriptions.
-          if Index < 3 then
-          begin
-            P.Tag := 2;
-            P.Padding.Rect := TRectF.Empty;
-            P.SetBounds(16 + Index * (Group.Width - 32) / 3, 56, (Group.Width - 56) / 3, 64);
-            var Text := TLayout(TLabel(P.TagObject).Parent);
-            Text.Align := TAlignLayout.None;
-            Text.Margins.Rect := TRectF.Empty;
-            Text.SetBounds(0, 0, P.Width, 24);
-            TControl(Text.Children[1]).Visible := False;
-            for var J := 0 to P.ChildrenCount - 1 do
-              if (P.Children[J] is TControl) and (P.Children[J].Owner = Self) and (P.Children[J] <> TLabel(P.TagObject).Parent) then
-              begin
-                var Editor := TControl(P.Children[J]);
-                Editor.Align := TAlignLayout.None;
-                Editor.Margins.Rect := TRectF.Empty;
-                var W := P.Width;
-                if Editor is TSwitch then
-                  W := 64;
-                Editor.SetBounds(P.Width - W, 32, W, 32);
-              end;
-          end
-          else
-          begin
-            P.Tag := 0;
-            P.Width := Max(0, Group.Width - 32);
-            RowResize(P);
-            P.SetBounds(16, Y, P.Width, P.Height);
-            if P.Visible then
-              Y := Y + P.Height + 6;
-          end;
-          Inc(Index);
-        end
-        else
-          C.SetBounds(16, 14, Group.Width - 32, 36);
-      end;
-    Group.Height := Y + 12;
-    Exit;
-  end;
-  for var i := 0 to Group.ChildrenCount - 1 do
-    if (Group.Children[i] is TControl) and (Group.Children[i].Owner = Self) then
+  // Group padding and Top-aligned rows are shared by every platform.
+  Group.Padding.Rect := TRectF.Create(16, 14, 16, 12);
+  var ContentHeight: Single := 0;
+  for var Child in Group.Children do
+    if (Child is TControl) and (Child.Owner = Self) then
     begin
-      var C := TControl(Group.Children[i]);
-      C.Width := Max(0, Group.Width - 32);
+      var C := TControl(Child);
+      C.Align := TAlignLayout.Top;
+      C.Margins.Rect := TRectF.Create(0, 0, 0, 6);
       if C is TPanel then
       begin
-        if C.Tag = 2 then
-          C.Tag := 0;
-        RowResize(C);
+        C.Width := Max(0, Group.Width - 32);
+        if C.Tag = 1 then DeviceResize(C) else RowResize(C);
       end;
-      if not C.Visible then
-        Continue;
-
-      C.SetBounds(16, Y, C.Width, C.Height);
-      Y := Y + C.Height + 6;
+      if C.Visible then
+        ContentHeight := ContentHeight + C.Height + C.Margins.Bottom;
     end;
-  Group.Height := Y + 12;
+  Group.Height := ContentHeight + Group.Padding.Top + Group.Padding.Bottom;
 end;
 
 procedure TSettingsView.ContentResize(Sender: TObject);
@@ -1410,53 +1335,92 @@ end;
 procedure TSettingsView.RowResize(Sender: TObject);
 begin
   var P := TPanel(Sender);
-  if P.Tag in [1, 2] then
-    Exit; // Device previews and the controller grid arrange themselves.
-
+  if (P.Tag = 1) or (P.TagObject = nil) then
+    Exit;
   P.Padding.Rect := TRectF.Create(16, 12, 16, 12);
   var Text := TLayout(TLabel(P.TagObject).Parent);
-  Text.Align := TAlignLayout.None;
+  var Editors := FindComponent('Layout' + string(P.Name).Substring(5) + 'EditorContainer') as TLayout;
+  if Editors = nil then
+    Exit;
+  Text.Align := TAlignLayout.Client;
   Text.Margins.Rect := TRectF.Empty;
   if Text.ChildrenCount > 1 then
     TControl(Text.Children[1]).Visible := True;
   var Narrow := P.Width < 600;
   P.Height := IfThen(Narrow, 134, 72);
-  var TextWidth := Max(0, P.Width - 32);
-  // Explicit bounds keep editors centered without stretching them vertically.
-  for var i := 0 to P.ChildrenCount - 1 do
-    if (P.Children[i] is TControl) and (P.Children[i].Owner = Self) and (P.Children[i] <> TLabel(P.TagObject).Parent) then
+  var W: Single := 220;
+  if Editors.ChildrenCount > 0 then
+  begin
+    var Editor := TControl(Editors.Children[0]);
+    if Editor is TSwitch then W := 64
+    else if Editor is TLayout then W := 268;
+    if Narrow and (Editor is TSwitch) then
     begin
-      var C := TControl(P.Children[i]);
-      var W: Single := 220;
-      if C is TSwitch then
-        W := 64
-      else if C is TLayout then
-        W := 268;
-      if Narrow and not (C is TSwitch) then
-        W := TextWidth;
-      W := Min(W, Max(0, P.Width - 32));
-      C.Align := TAlignLayout.None;
-      C.Margins.Rect := TRectF.Empty;
-      var Top := (P.Height - 32) / 2;
-      if Narrow then
-        Top := P.Height - 44;
-      C.SetBounds(Max(16, P.Width - 16 - W), Top, W, 32);
-      if not Narrow then
-        TextWidth := Max(0, P.Width - 48 - W);
-    end;
-  Text.SetBounds(16, 12, TextWidth, IfThen(Narrow, 70, 48));
+      Editor.Align := TAlignLayout.Right;
+      Editor.Width := 64;
+    end
+    else Editor.Align := TAlignLayout.Client;
+    Editor.Margins.Rect := TRectF.Empty;
+  end;
+  if Narrow then
+  begin
+    Editors.Align := TAlignLayout.Bottom;
+    Editors.Height := 32;
+    Editors.Margins.Rect := TRectF.Create(0, 8, 0, 0);
+  end
+  else
+  begin
+    Editors.Align := TAlignLayout.Right;
+    Editors.Width := Min(W, Max(0, P.Width - 32));
+    Editors.Margins.Rect := TRectF.Create(16, 8, 0, 8);
+  end;
 end;
 
 procedure TSettingsView.DeviceResize(Sender: TObject);
 begin
-  var P := TPanel(Sender);
-  for var D in FDevices do
-    if (D.Assignments <> nil) and (D.Assignments.Parent = P) then
-    begin
-      D.Assignments.Visible := P.Width >= 850;
-      if D.Diagram is TDeviceCallouts then
-        TDeviceCallouts(D.Diagram).ShowAnnotations(not D.Assignments.Visible);
-    end;
+  if FDeviceArranging or (FDevices = nil) or (csDestroying in ComponentState) then Exit;
+  FDeviceArranging := True;
+  try
+    var P := TPanel(Sender);
+    for var D in FDevices do
+      if (D.Control <> nil) and (D.Control.Owner = P) then
+      begin
+        var Slot := FindComponent('LayoutBindingPreview' + IntToStr(D.Port)) as TLayout;
+        Slot.Visible := (FPage <> SETTINGS_PAGE_GW) and ((D.Assignments = nil) or (P.Width >= 600));
+        Slot.Align := TAlignLayout.Client;
+        P.Height := 460;
+        if D.Assignments <> nil then
+        begin
+          D.Assignments.Visible := True;
+          D.Assignments.Align := TAlignLayout.Client;
+          D.Assignments.Margins.Rect := TRectF.Create(0, 8, 0, 8);
+          var BodyHeight := D.AssignmentList.Height + D.Assignments.Margins.Top + D.Assignments.Margins.Bottom;
+          if Slot.Visible then
+            if P.Width >= 850 then
+            begin
+              D.Assignments.Align := TAlignLayout.Right;
+              D.Assignments.Width := 248;
+              D.Assignments.Margins.Left := 12;
+              BodyHeight := Max(BodyHeight, 280 + Slot.Margins.Top + Slot.Margins.Bottom);
+            end
+            else
+            begin
+              Slot.Align := TAlignLayout.Top;
+              Slot.Height := 280;
+              BodyHeight := BodyHeight + Slot.Height + Slot.Margins.Top + Slot.Margins.Bottom;
+            end;
+          var Header := FindComponent('LayoutRowButtonbindings' + IntToStr(D.Port) + 'Text') as TLayout;
+          var Footer := FindComponent('LayoutBindingFooter' + IntToStr(D.Port)) as TLayout;
+          P.Height := P.Padding.Top + P.Padding.Bottom +
+            Header.Height + Header.Margins.Top + Header.Margins.Bottom +
+            BodyHeight + Footer.Height + Footer.Margins.Top + Footer.Margins.Bottom;
+        end;
+        if D.Diagram is TDeviceCallouts then
+          TDeviceCallouts(D.Diagram).ShowAnnotations(True);
+      end;
+  finally
+    FDeviceArranging := False;
+  end;
 end;
 
 procedure TSettingsView.BindingFooterResize(Sender: TObject);
@@ -1572,7 +1536,8 @@ begin
       Item.TextSettings.HorzAlign := TTextAlign.Leading;
       Item.TextSettings.Trimming := TTextTrimming.Character;
       Item.TextSettings.WordWrap := False;
-      Item.StylesData['text.Margins.Left'] := 12;
+      Item.StylesData['text.Margins.Left'] := 44;
+      CreatePlatformIcon(Item, platform.CoreId);
       Item.StyleLookup := 'listboxitemstyle';
       if platform.PageId = FCorePage then
         ListBoxPlatforms.ItemIndex := Item.Index;
@@ -1641,10 +1606,11 @@ begin
     Exit;
 
   var Query := FSearch.Text.Trim.ToLower;
-  for var i := 0 to LayoutContent.ChildrenCount - 1 do
-    if LayoutContent.Children[i] is TPanel then
+  for var Column in [LayoutSettingsMainColumn,LayoutSettingsPreviewColumn] do
+    for var I := 0 to Column.ChildrenCount - 1 do
+      if Column.Children[I] is TPanel then
     begin
-      var Group := TPanel(LayoutContent.Children[i]);
+      var Group := TPanel(Column.Children[I]);
       var ShowGroup := Query = '';
       for var J := 0 to Group.ChildrenCount - 1 do
         if Group.Children[J] is TPanel then
@@ -1673,6 +1639,13 @@ begin
   if FCategory <> SETTINGS_CATEGORY_CONTROLS then
     Heading('GroupPort' + IntToStr(Port + 1));
   var Key := 'Port' + IntToStr(Port + 1);
+  if FPage = SETTINGS_PAGE_GW then
+  begin
+    // The handheld's controls are built in; only host input bindings are configurable.
+    FDrafts[FPage].WriteString('Ports', Key, 'pad');
+    BuildBindings(Port, 'pad');
+    Exit;
+  end;
   var Device := FDrafts[FPage].ReadString('Ports', Key, 'auto');
   var Options := SettingsPlatforms.Find(FPage).PortOptions(Port);
   var C := Combo(Options.RowName, 'Ports', Key, Options.Labels, Options.Values, Options.Default);
@@ -1769,7 +1742,9 @@ begin
   Text.Align := TAlignLayout.Top;
   Text.Height := 34;
   TControl(Text.Children[1]).Visible := False;
-  if Device = 'powerpad' then
+  if FPage = SETTINGS_PAGE_GW then
+    D.Control := TLayout.Create(P)
+  else if Device = 'powerpad' then
   begin
     var Pad := TNesPowerPad.Create(P);
     Pad.OnChange := VirtualDeviceChange;
@@ -1814,18 +1789,22 @@ begin
   var Preview := D.Control;
   if D.Diagram <> nil then
     Preview := D.Diagram;
-  (FindComponent('VertScrollBoxPadAssignments' + IntToStr(Port)) as TControl).Visible := False;
-  if D.Control is TScreenGamepad then
+  (FindComponent('LayoutPadAssignments' + IntToStr(Port)) as TControl).Visible := False;
+  if (FPage = SETTINGS_PAGE_GW) or (D.Control is TScreenGamepad) then
   begin
-    D.Assignments := FindComponent('VertScrollBoxPadAssignments' + IntToStr(Port)) as TVertScrollBox;
+    D.Assignments := FindComponent('LayoutPadAssignments' + IntToStr(Port)) as TLayout;
     D.Assignments.Visible := True;
     D.AssignmentList := FindComponent('LayoutPadAssignmentList' + IntToStr(Port)) as TLayout;
     var Y: Single := 8;
-    for var B in TScreenGamepad(D.Control).ButtonMask do
+    for var B in CoreButtons(SettingsCoreIds[FPage], Device) do
     begin
       var Binding := SettingsButton(P);
       Binding.Parent := D.AssignmentList;
-      Binding.SetBounds(8, Y, D.AssignmentList.Width - 16, 32);
+      Binding.Align := TAlignLayout.Top;
+      Binding.Height := 32;
+      Binding.Margins.Rect := TRectF.Create(8, 4, 8, 4);
+      // Append at the bottom of the aligned list.
+      Binding.Index := D.AssignmentList.ChildrenCount - 1;
       Binding.Tag := PadAction(Port, B);
       Binding.TagObject := D;
       Binding.TagString := CoreButtonName(SettingsCoreIds[FPage], B);
@@ -1836,10 +1815,14 @@ begin
     end;
     D.AssignmentList.Height := Y;
   end;
-  Preview.Parent := P;
+  Preview.Parent := FindComponent('LayoutBindingPreview' + IntToStr(Port)) as TLayout;
   Preview.Align := TAlignLayout.Client;
-  Preview.Margins.Top := 8;
-  Preview.Margins.Bottom := 8;
+  Preview.Margins.Rect := TRectF.Empty;
+  if FPage = SETTINGS_PAGE_GW then
+  begin
+    Preview.Visible := False;
+    D.AssignmentList.Align := TAlignLayout.Top;
+  end;
   D.Control.Tag := Port;
   // Keep the editor inside this card. No button is selected until the user clicks.
   var Footer := FindComponent('LayoutBindingFooter' + IntToStr(Port)) as TLayout;
@@ -1907,7 +1890,7 @@ begin
 
   var LabelControl := TLabel(Sender);
   for var D in FDevices do
-    if D.Diagram = LabelControl.Parent then
+    if (D.Diagram = LabelControl.Parent) or ((LabelControl.Parent <> nil) and (D.Diagram = LabelControl.Parent.Parent)) then
     begin
       SelectBinding(D, LabelControl.Tag, LabelControl.TagString);
       Exit;
@@ -2193,14 +2176,15 @@ begin
   // Document provider URIs must be queried; combining them with a name is invalid.
   if Location.StartsWith('content://') then
     for var Folder in TAndroidStorage.Enumerate(Location, False, True) do
-      for var RomSystem := TRomSystem.NES to High(TRomSystem) do
-        if SameText(Folder.Name, RomSystemFolder(RomSystem)) then
+      for var Platform in TPlatformRegistry.All do
+        for var Name in Platform.ScanFolders do
+          if SameText(Folder.Name, Name) then
           Exit;
   {$ENDIF}
 
-  for var RomSystem := TRomSystem.NES to High(TRomSystem) do
+  for var Platform in TPlatformRegistry.All do
+    for var Name in Platform.ScanFolders do
   begin
-    var Name := RomSystemFolder(RomSystem);
     {$IFDEF ANDROID}
     if not Location.StartsWith('content://') then
     {$ENDIF}

@@ -113,6 +113,7 @@ begin
   var Size := Length(Data) - CopierSize;
   if (Size <> $8000) and (Size <> $20000) then
     Exit;
+
   var Hasher := THashSHA2.Create;
   Hasher.Update(Data[CopierSize], Size);
   var Hash := Hasher.HashAsString;
@@ -130,6 +131,7 @@ begin
   for var J := 0 to SNES_ROM_METADATA_SIZE - 1 do
     if Data[Offset + J] <> $FF then
       Exit(False);
+
   Result := True;
 end;
 
@@ -137,6 +139,7 @@ function UnusableSnesMetadata(const Data: TBytes; Offset: Integer): Boolean;
 begin
   if EmptySnesMetadata(Data, Offset) then
     Exit(True);
+
   // Early prototypes and PD programs can put executable code/graphics in
   // this area. Do not interpret those bytes as a coprocessor or RAM size.
   // A valid checksum pair or plausible mapping/ROM size keeps real headers.
@@ -154,8 +157,10 @@ begin
   var Header: TSnesHeader;
   if not DetectSnesHeader(Data, Header) then
     Exit;
+
   if UnusableSnesMetadata(Data, Header.Offset) then
     Exit;
+
   if IsActionReplayBIOS(Data, Header.CopierSize) then
     Exit;
 
@@ -220,9 +225,9 @@ begin
   begin
     // A 512-byte copier prefix leaves this residue even with DSP firmware
     // appended. Full KiB images must not select a header inside game code.
-    if ((Base and ROM_COPIER_HEADER_SIZE) <> 0) and
-      ((Length(Data) and ROM_COPIER_ALIGNMENT_MASK) <> ROM_COPIER_HEADER_SIZE) then
+    if ((Base and ROM_COPIER_HEADER_SIZE) <> 0) and ((Length(Data) and ROM_COPIER_ALIGNMENT_MASK) <> ROM_COPIER_HEADER_SIZE) then
       Continue;
+
     if Length(Data) < Base + SNES_ROM_BANK_SIZE then
       Continue;
 
@@ -258,6 +263,7 @@ begin
     // Reject accidental headers in arbitrary binary files.
     if Score < 8 then
       Continue;
+
     if Score < Header.Score then
       Continue;
 
@@ -304,6 +310,7 @@ begin
   var HasSPC := ((Kind and $F) >= 3) and ((Kind shr 4) = $F) and (FData[FHeader.Offset + SNES_ROM_COPROCESSOR_SUBTYPE_OFFSET] = 0);
   if HasCX4 then
     FHeader.Mapping := LoROM;
+
   // Types with low nibble 0-2 have no coprocessor, even with a nonzero family nibble.
   if not FST and not HasCX4 and not HasSA1 and not HasGSU and not HasSPC and (FirmwareName <> 'st018') and
     ((Kind and $F) >= 3) and not (Kind in [3, 5, $25, $43, $45]) then
@@ -422,6 +429,7 @@ begin
   if FCX4 <> nil then
   begin
     FCX4Target := UInt64((MasterClock div MasterRate) * 20000000 + (MasterClock mod MasterRate) * 20000000 div MasterRate);
+
     // CX4 can assert IRQ while the CPU is running, so synchronize at each instruction/access.
     FCX4.RunUntil(FCX4Target);
   end;
@@ -458,11 +466,13 @@ begin
   begin
     if (Offset >= $3000) and (Offset <= $3FFF) then
       Exit(1);
+
     if (Offset >= $6000) and (Offset <= $7FFF) and ((Bank and $7F) < $3F) then
     begin
       Offset := Offset and $1FFF;
       Exit(2);
     end;
+
     if Offset >= $8000 then
       Exit(3);
   end;
@@ -472,6 +482,7 @@ begin
     Offset := Address and $1FFFF;
     Exit(2);
   end;
+
   if (Bank in [$40..$5F, $C0..$DF]) then
     Exit(3);
 end;
@@ -484,8 +495,10 @@ begin
 
   if Offset >= $8000 then
     Exit(ROM);
+
   if ((Bank and $7F) < $40) and (Offset >= $6000) then
     Exit(Registers);
+
   if (Length(FSRAM) > 0) and ((Bank in [$70..$7D]) or (Bank >= $F0)) then
     Exit(SRAM);
 end;
@@ -634,6 +647,7 @@ begin
   // The 80-BF BIOS mirror remains visible during the 00-3F game-ROM peek.
   if FActionReplay and ((FReplayControl and $10) <> 0) and ((Address shr 16) < $40) and ((Address and $FFFF) >= $8000) then
     Exit($FF);
+
   if FSA1 <> nil then
     Exit(FSA1.Read(Address, OpenBus));
 
@@ -661,10 +675,13 @@ begin
     var Offset := Address and $FFFF;
     if (Bank in [$50, $58]) or (((Bank and $7F) < $40) and (Offset >= $4800) and (Offset <= $4842)) then
       Exit(FSPC7110.Read(Address, OpenBus));
+
     if ((Bank and $7F) < $40) and (Offset >= $6000) and (Offset < $8000) and (Length(FSRAM) > 0) then
       Exit(FSRAM[Offset and $1FFF and (Length(FSRAM) - 1)]);
+
     if (Bank >= $C0) or (((Bank and $7F) < $40) and (Offset >= $8000)) or ((Length(FData) >= $600000) and (Bank in [$40..$4F])) then
       Exit(ReadRawROM(FSPC7110.ROMAddress(Address)));
+
     Exit(OpenBus);
   end;
 
@@ -673,6 +690,7 @@ begin
     FCX4.RunUntil(FCX4Target);
     if CX4Map(Address) = Unmapped then
       Exit(OpenBus);
+
     Exit(CX4Read(Address));
   end;
 
@@ -682,6 +700,7 @@ begin
     FDSP.RunUntil(FDSPTarget);
     if FST and ((Address and $F0000) >= $80000) then
       Exit(FDSP.ReadRAMByte(Address));
+
     Exit(FDSP.Read(Status));
   end;
 
@@ -700,8 +719,10 @@ begin
   begin
     if ((Bank and $7F) < $40) and (Offset >= $4800) and (Offset <= $4807) then
       Exit(FSDD1.ReadRegister(Word(Offset), OpenBus));
+
     if (Bank >= $C0) or (((Bank and $7F) < $40) and (Offset >= $8000)) then
       Exit(FSDD1.Read(Address));
+
     Exit(OpenBus);
   end;
 
@@ -730,6 +751,7 @@ begin
     FReplayControl := Value;
     Exit;
   end;
+
   if FSA1 <> nil then
   begin
     FSA1.Write(Address, Value);
@@ -850,6 +872,7 @@ function TSnesCartridge.BatteryData: TBytes;
 begin
   if FSA1 <> nil then
     Exit(FSA1.Battery);
+
   if FGSU <> nil then
     Exit(Copy(FGSU.RAM));
 
@@ -902,5 +925,4 @@ begin
 end;
 
 end.
-
 

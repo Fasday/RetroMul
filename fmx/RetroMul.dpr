@@ -1,6 +1,23 @@
 ﻿program RetroMul;
 
 uses
+  GW.BZip2 in '..\source\cores\gamewatch\GW.BZip2.pas',
+  GW.MGW.Modules in '..\source\cores\gamewatch\GW.MGW.Modules.pas',
+  GW.MGW.Package in '..\source\cores\gamewatch\GW.MGW.Package.pas',
+  GW.MGW in '..\source\cores\gamewatch\GW.MGW.pas',
+  GW.Script.Builtins in '..\source\cores\gamewatch\GW.Script.Builtins.pas',
+  GW.Script in '..\source\cores\gamewatch\GW.Script.pas',
+  Core.Adapter.PCE in '..\source\cores\Core.Adapter.PCE.pas',
+  PCE.Firmware in '..\source\cores\pce\PCE.Firmware.pas',
+  Core.Adapter.GW in '..\source\cores\Core.Adapter.GW.pas',
+  GW.Artwork.FMX in '..\source\cores\gamewatch\GW.Artwork.FMX.pas',
+  GW.Cartridge in '..\source\cores\gamewatch\GW.Cartridge.pas',
+  GW.Catalog in '..\source\cores\gamewatch\GW.Catalog.pas',
+  GW.Console in '..\source\cores\gamewatch\GW.Console.pas',
+  GW.CPU in '..\source\cores\gamewatch\GW.CPU.pas',
+  GW.Emulation in '..\source\cores\gamewatch\GW.Emulation.pas',
+  FMX.SVG.Cache in 'svg\FMX.SVG.Cache.pas',
+  FMX.SVG in 'svg\FMX.SVG.pas',
   System.StartUpCopy,
   A2600.AudioMachine in '..\source\cores\a2600\A2600.AudioMachine.pas',
   A2600.Sound.TIA in '..\source\cores\a2600\A2600.Sound.TIA.pas',
@@ -39,6 +56,8 @@ uses
   FMX.Dialogs,
   FMX.OpenDialog in 'FMX.OpenDialog.pas',
   Core.Storage in '..\source\cores\Core.Storage.pas',
+  Core.Platforms.Icons in '..\source\cores\Core.Platforms.Icons.pas',
+  Core.Platforms in '..\source\cores\Core.Platforms.pas',
   Core.RomFormat in '..\source\cores\Core.RomFormat.pas',
   Core.RomHashes in '..\source\cores\Core.RomHashes.pas',
   RM.Storage.Dialogs in 'RM.Storage.Dialogs.pas',
@@ -76,6 +95,8 @@ uses
   RM.Settings.GameBoy in 'settings\RM.Settings.GameBoy.pas',
   RM.Settings.GameBoyColor in 'settings\RM.Settings.GameBoyColor.pas',
   RM.Settings.MasterSystem in 'settings\RM.Settings.MasterSystem.pas',
+  RM.Settings.GameGear in 'settings\RM.Settings.GameGear.pas',
+  RM.Settings.PCE in 'settings\RM.Settings.PCE.pas',
   RM.Settings.MegaDrive in 'settings\RM.Settings.MegaDrive.pas',
   RM.Settings.Multivision in 'settings\RM.Settings.Multivision.pas',
   RM.Settings.N64 in 'settings\RM.Settings.N64.pas',
@@ -276,9 +297,9 @@ uses
   NeoGeo.RomSets in '..\source\cores\neogeo\NeoGeo.RomSets.pas',
   NeoGeo.Sound in '..\source\cores\neogeo\NeoGeo.Sound.pas',
   NeoGeo.Video in '..\source\cores\neogeo\NeoGeo.Video.pas',
-  NeoGeoCD.CHD in '..\source\cores\neogeo\NeoGeoCD.CHD.pas',
+  Core.CD.CHD in '..\source\cores\Core.CD.CHD.pas',
   NeoGeoCD.Controller in '..\source\cores\neogeo\NeoGeoCD.Controller.pas',
-  NeoGeoCD.Disc in '..\source\cores\neogeo\NeoGeoCD.Disc.pas';
+  Core.CD.Disc in '..\source\cores\Core.CD.Disc.pas';
 
 {$R *.res}
 

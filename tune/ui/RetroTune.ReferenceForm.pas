@@ -80,7 +80,10 @@ begin
   Header.Margins.Bottom := 24;
   FTitleLabel := TLabel.Create(Self);
   FTitleLabel.Name := 'LabelReferenceTitle';
-  FTitleLabel.Parent := Header;
+  var Heading := TLayout.Create(Self);
+  Heading.Parent := Header;
+  Heading.Align := TAlignLayout.Client;
+  FTitleLabel.Parent := Heading;
   FTitleLabel.Align := TAlignLayout.Top;
   FTitleLabel.Height := 36;
   FTitleLabel.StyleLookup := 'labelstyle_title';
@@ -89,7 +92,7 @@ begin
   FTitleLabel.Text := 'RetroTune';
   FSubtitleLabel := TLabel.Create(Self);
   FSubtitleLabel.Name := 'LabelReferenceSubtitle';
-  FSubtitleLabel.Parent := Header;
+  FSubtitleLabel.Parent := FTitleLabel.Parent;
   FSubtitleLabel.Align := TAlignLayout.Bottom;
   FSubtitleLabel.Height := 20;
   FSubtitleLabel.StyleLookup := 'labelstyle_caption';
@@ -99,6 +102,9 @@ begin
   FCloseButton := TButton.Create(Self);
   FCloseButton.Name := 'ButtonCloseReference';
   FCloseButton.Parent := Header;
+  FCloseButton.Align := TAlignLayout.Right;
+  FCloseButton.Width := 44;
+  FCloseButton.Margins.Left := 8;
   FCloseButton.Text := '×';
   FCloseButton.Hint := Translate('Close');
   FCloseButton.OnClick := CloseClick;
@@ -146,22 +152,16 @@ begin
     FPage.Margins.Rect := RectF(Inset, Inset, Inset, Inset);
     FHeader.Height := 80;
     FHeader.Margins.Bottom := Inset;
-    FTitleLabel.Align := TAlignLayout.None;
-    FTitleLabel.SetBounds(0, 0, Max(0, FHeader.Width - 52), 48);
+    FTitleLabel.Align := TAlignLayout.Top;
+    FTitleLabel.Height := IfThen(Compact,72,48);
     FTitleLabel.TextSettings.WordWrap := Compact;
     if Compact then FTitleLabel.StyleLookup := 'labelstyle_subtitle'
     else FTitleLabel.StyleLookup := 'labelstyle_title';
-    FSubtitleLabel.Align := TAlignLayout.None;
-    FSubtitleLabel.SetBounds(0, 56, FHeader.Width, 24);
+    FSubtitleLabel.Align := TAlignLayout.Bottom;
+    FSubtitleLabel.Height := IfThen(Compact,40,24);
     FSubtitleLabel.TextSettings.WordWrap := Compact;
-    if Compact then
-    begin
-      FHeader.Height := 120;
-      FTitleLabel.Height := 72;
-      FSubtitleLabel.Position.Y := 80;
-      FSubtitleLabel.Height := 40;
-    end;
-    FCloseButton.SetBounds(Max(0, FHeader.Width - 44), 0, 44, 44);
+    FHeader.Height := IfThen(Compact,120,80);
+    FCloseButton.Margins.Bottom := FHeader.Height - 44;
     FContentHeight := 0;
     for var SectionIndex := 0 to FScroll.Content.ChildrenCount - 1 do
     begin
@@ -240,7 +240,7 @@ begin
   Heading.Text := Translate(Title);
   FCard := TPanel.Create(Self);
   FCard.Parent := FSection;
-  FCard.Position.Y := 32;
+  FCard.Margins.Top := 0;
   FCard.Align := TAlignLayout.Top;
   FCard.Height := 16;
   // Use the WinUI theme's neutral card surface, border and rounded corners.

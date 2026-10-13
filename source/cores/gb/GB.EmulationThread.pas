@@ -168,6 +168,7 @@ end;
 destructor TGBEmulationThread.Destroy;
 begin
   RequestStop;
+
   // TThread joins the worker (including an unstarted thread) before shared data is freed.
   // Execute never synchronizes with the UI, so joining cannot wait for a UI callback.
   inherited Destroy;
@@ -248,6 +249,7 @@ begin
       Result := (FRumbleWeightedLevel + FRumbleSamples div 2) div FRumbleSamples
     else
       Result := FRumbleLevel;
+
     // Accumulate all batches between frontend polls, including short pulses
     // that ended before the UI woke up. A static line keeps its last level.
     FRumbleSamples := 0;
@@ -518,6 +520,7 @@ begin
       finally
         Stream.Free;
       end;
+
       if Terminated then
         Exit;
 
@@ -574,8 +577,9 @@ begin
               LoadCoreSnapshot(Path, CoreID, FSnapshotIdentityData, Transfer, FStorage);
               if Sound.Audio <> nil then
                 Sound.Audio.Clear;
+
               // Host key state is authoritative after restoring the emulated JOYP.
-              FLock.Acquire;
+                  FLock.Acquire;
               try
                 for var Key := Low(TGBKey) to High(TGBKey) do
                   if Key in FPressedKeys then
@@ -623,6 +627,7 @@ begin
           begin
             SaveBattery(MBC);
             FrameHints.Pause;
+
             // The stop event also wakes this short sleep during shutdown.
             FLock.Release;
             try
@@ -651,6 +656,7 @@ begin
           SaveBattery(MBC);
           BatteryWatch := TStopwatch.StartNew;
         end;
+
         // Sum only active batches: limiter waits between them are excluded.
         var HintComplete := CPU.Cycles >= HintNextCycles;
         FrameHints.EndWork(HintComplete);

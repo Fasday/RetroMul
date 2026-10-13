@@ -4,6 +4,7 @@
 interface
 
 uses
+  Core.InputConfig,
   System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
   Core.Storage, Core.Emulation, Core.Snapshots, N64.Console;
 
@@ -60,7 +61,7 @@ type
     procedure Snapshot(const Name: string; Loading: Boolean);
   end;
 
-  TN64CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IN64ControllerInput)
+  TN64CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IN64ControllerInput)
   private
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
@@ -77,6 +78,7 @@ type
   public
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
     destructor Destroy; override;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -88,6 +90,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -626,6 +629,13 @@ begin
     FWorker.RequestReset
 end;
 
+procedure TN64CoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  for var P := 0 to 3 do
+    (FConfig as TN64Config).FConnected[P] := Ports.Devices[P] <> 'none';
+  ClearInput;
+end;
+
 procedure TN64CoreAdapter.ClearInput;
 begin
   for var i := 0 to 3 do
@@ -681,6 +691,11 @@ begin
   Result.Buttons2 := FKeyboard[1] + FGamepad[1];
   Result.Buttons3 := FKeyboard[2] + FGamepad[2];
   Result.Buttons4 := FKeyboard[3] + FGamepad[3];
+end;
+
+function TN64CoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_N64;
 end;
 
 function TN64CoreAdapter.GetName: string;

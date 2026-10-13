@@ -30,6 +30,7 @@ type
     FRegion: TNesRegion;
     FConfiguredFourScore: Boolean;
     FPortsConfigured: Boolean;
+    FInputPorts: TCoreInputPorts;
     FDmcDmaCycles: Integer;
     FMapperHasCpuClock, FMapperHasIrq, FMapperHasAudio: Boolean;
     procedure SerializeState(Stream: TStream; Loading: Boolean; Version: Integer = 21);
@@ -43,6 +44,7 @@ type
     procedure LoadRom(const FileName: string; RegionOverride: TRegionOverride = TRegionOverride.Auto); overload;
     procedure LoadRom(Stream: TStream; const RomName: string; RegionOverride: TRegionOverride = TRegionOverride.Auto); overload;
     procedure ConfigureInputPorts(const Ports: TCoreInputPorts);
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure LoadBattery(const DirectoryName: string);
     procedure SaveBattery;
     procedure SaveSnapshot(const FileName: string);
@@ -263,6 +265,10 @@ begin
       SerializeState(Payload, True, Header.Version);
       if Payload.Position <> Payload.Size then
         raise ENesException.Create('Unexpected snapshot data');
+      // Explicit host connections take priority over devices in older saves.
+      // Automatic ports still follow the restored state.
+      if FPortsConfigured then
+        ConfigureInputPorts(FInputPorts);
     except
       // A failed load must leave the running game completely unchanged.
       Backup.Position := 0;
@@ -331,6 +337,7 @@ end;
 
 procedure TNesConsole.ConfigureInputPorts(const Ports: TCoreInputPorts);
 begin
+  FInputPorts := Ports;
   FBus.DisconnectedPads := 0;
   for var I := 0 to 3 do
     if Ports.Devices[I] = 'none' then
@@ -357,6 +364,46 @@ begin
   FBus.FourScoreEnabled := FConfiguredFourScore and not FController2.PowerPadEnabled
     and not FMiraclePiano.Connected and not FZapper.Enabled;
   FPortsConfigured := True;
+end;
+
+procedure TNesConsole.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  // Finish a recording before changing any connections. A failed write leaves
+  // the old devices attached so the caller can retry without losing the tape.
+  var KeepRecorder := (Ports.Expansion = 'recorder') or (Ports.Expansion = 'famicom') or
+    ((Ports.Expansion = 'auto') and (FCartridge.Metadata.DefaultExpansionDevice in [$20, $23]));
+  if FDataRecorder.Connected and not KeepRecorder then
+    FDataRecorder.Stop;
+  // Resolve Automatic from this cartridge each time, not from the device
+  // that occupied the socket before the user selected Automatic.
+  FConfiguredFourScore := Ports.FourScore;
+  FMiraclePiano.Connected := FCartridge.Metadata.DefaultExpansionDevice = $19;
+  FController2.PowerPadEnabled := FCartridge.Metadata.DefaultExpansionDevice in [11, 12];
+  FZapper.Enabled := (Ports.Devices[1] = 'auto') and Ports.LegacyZapper;
+  FFamicomKeyboard.Connected := FCartridge.Metadata.DefaultExpansionDevice = $23;
+  FSuborKeyboard.Connected := (FCartridge.MapperId = MAPPER_SUBOR) and not FFamicomKeyboard.Connected;
+  FDataRecorder.Connected := FCartridge.Metadata.DefaultExpansionDevice in [$20, $23];
+  var Resolved := Ports;
+  if Resolved.Devices[0] = 'auto' then
+    if FMiraclePiano.Connected then Resolved.Devices[0] := 'piano'
+    else Resolved.Devices[0] := 'pad';
+  if Resolved.Devices[1] = 'auto' then
+    if FZapper.Enabled then Resolved.Devices[1] := 'zapper'
+    else if FController2.PowerPadEnabled then Resolved.Devices[1] := 'powerpad'
+    else Resolved.Devices[1] := 'pad';
+  if Resolved.Expansion = 'auto' then
+    if FFamicomKeyboard.Connected then Resolved.Expansion := 'famicom'
+    else if FSuborKeyboard.Connected then Resolved.Expansion := 'subor'
+    else if FDataRecorder.Connected then Resolved.Expansion := 'recorder'
+    else Resolved.Expansion := 'none';
+  ConfigureInputPorts(Resolved);
+  FZapper.TriggerPressed := False;
+  FSuborKeyboard.Clear;
+  FSuborKeyboard.Reset;
+  FFamicomKeyboard.Clear;
+  FFamicomKeyboard.Reset;
+  FMiraclePiano.ClearInput;
+  FMiraclePiano.Reset;
 end;
 
 procedure TNesConsole.LoadRom(const FileName: string; RegionOverride: TRegionOverride);

@@ -34,6 +34,9 @@ const
   //IconRestart = 'M1,10 C1,0 23,0 23,10 M23,10 L23,2 M23,10 L15,10 M23,16 C23,26 1,26 1,16';
   IconArrowUp = 'M0,-4 L3,3 L-3,3 Z';
 
+// Registry artwork can be reused by any FMX view without loading the library frame.
+function CreatePlatformIcon(Parent: TControl; const PlatformId: string; Size: Single = 22): TPath;
+
 function CreatePathIcon(Parent: TControl; const Data: string; X, Y, Size: Single; Color: TAlphaColor = $FFB9C2CC): TPath;
 
 function AddButtonIcon(Button: TCustomButton; const Data: string; Size: Single = 16; Color: TAlphaColor = $FFE8ECF1): TPath;
@@ -41,6 +44,24 @@ function AddButtonIcon(Button: TCustomButton; const Data: string; Size: Single =
 procedure GameplayButton(Button: TButton; const Text, Icon, Hint: string);
 
 implementation
+
+uses System.Math, Core.Platforms;
+
+function CreatePlatformIcon(Parent: TControl; const PlatformId: string; Size: Single): TPath;
+begin
+  var Platform := TPlatformRegistry.Require(PlatformId);
+  Result := TPath.Create(Parent);
+  Result.Parent := Parent;
+  Result.Data.Data := Platform.IconData;
+  Result.Fill.Color := $FFB9C2CC;
+  Result.Stroke.Kind := TBrushKind.None;
+  Result.WrapMode := TPathWrapMode.Fit;
+  Result.HitTest := False;
+  Result.Width := Size;
+  Result.Align := TAlignLayout.Left;
+  var Inset := Max(0, (Parent.Height - Size) / 2);
+  Result.Margins.Rect := TRectF.Create(12, Inset, 8, Inset);
+end;
 
 function CreatePathIcon(Parent: TControl; const Data: string; X, Y, Size: Single; Color: TAlphaColor): TPath;
 begin
@@ -52,7 +73,10 @@ begin
   Result.Stroke.Color := Color;
   Result.Stroke.Thickness := 1.6;
   Result.HitTest := False;
-  Result.SetBounds(X, Y, Size, Size);
+  Result.Width := Size;
+  Result.Height := Size;
+  Result.Align := TAlignLayout.Left;
+  Result.Margins.Rect := TRectF.Create(X,Y,0,Max(0,Parent.Height-Y-Size));
 end;
 
 function AddButtonIcon(Button: TCustomButton; const Data: string; Size: Single; Color: TAlphaColor): TPath;
@@ -60,6 +84,7 @@ begin
   Button.Text := '';
   Result := CreatePathIcon(Button, Data, 0, 0, Size, Color);
   Result.Name := 'ButtonIcon';
+  Result.Margins.Rect := TRectF.Empty;
   Result.Align := TAlignLayout.Center;
   Button.ShowHint := Button.Hint <> '';
 end;

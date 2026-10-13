@@ -292,14 +292,17 @@ begin
       for var Slot in H40 do
         if Slot > Position then
           Exit(Base + Slot);
+
       Exit(Base + 3420 + H40[0]);
     end;
 
     for var Slot in H32 do
       if Slot > Position then
         Exit(Base + Slot);
+
     Exit(Base + 3420 + H32[0]);
   end;
+
   // Blank display exposes every two-pixel VRAM slot except refresh.
   var Slots := 171;
   if Vdp.State.H40Enabled <> 0 then
@@ -320,7 +323,8 @@ begin
     begin
       Vdp.State.DisplayEnabled := Ord(Mode <> 2);
       var Base: Int64 := 0;
-      if Mode = 1 then Base := 224 * 3420;
+      if Mode = 1 then
+        Base := 224 * 3420;
       for var Position := 0 to 3419 do
         AccessSlotLookup[H40, Mode, Position] := CalculateNextAccessSlot(Vdp, Base + Position) - Base;
     end;
@@ -330,7 +334,9 @@ end;
 function VDPNextAccessSlot(const Vdp: TVDP; AfterTime: Int64): Int64;
 begin
   // Preserve the public helper's signed-time behavior outside emulation.
-  if AfterTime < 0 then Exit(CalculateNextAccessSlot(Vdp, AfterTime));
+  if AfterTime < 0 then
+    Exit(CalculateNextAccessSlot(Vdp, AfterTime));
+
   var Line := AfterTime div 3420;
   var Base := Line * 3420;
   var Position := Integer(AfterTime - Base);
@@ -482,6 +488,7 @@ const
   PIXELS_PER_TILE_PAIR = 16;
   MAX_PLANE_PIXELS = MAX_PLANE_COLUMNS * PIXELS_PER_TILE_PAIR;
   SPRITE_PADDING = 31;
+
   // 320 + 12 * 16 pixels, plus the fixed scanline padding.
   MAX_WIDESCREEN_TILES = 12;
 

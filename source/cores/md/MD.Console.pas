@@ -155,8 +155,10 @@ begin
     Exit;
   TMDConsole(User).RenderRasterTo(TMDConsole(User).FVDP.State.MasterTime);
   TMDConsole(User).FPalette[Index] := $FF000000 or
-    ((Colour and $F) * 17 shl 16) or (((Colour shr 4) and $F) * 17 shl 8) or
+    ((Colour and $F) * 17 shl 16) or
+    (((Colour shr 4) and $F) * 17 shl 8) or
     (((Colour shr 8) and $F) * 17);
+
   // A CRAM write temporarily drives the output DAC even when the palette
   // entry is not selected by the current background/sprite pixel.
   var C := TMDConsole(User);
@@ -381,6 +383,12 @@ end;
 
 procedure TMDConsole.ConfigureInputPorts(const Ports: TCoreInputPorts);
 begin
+  for var Port := 1 to 2 do
+    if FPadDevices[Port] <> Ports.Devices[Port - 1] then
+    begin
+      FStrobes[Port] := 0;
+      FPadTimeout[Port] := 0;
+    end;
   FPadDevices[1] := Ports.Devices[0];
   FPadDevices[2] := Ports.Devices[1];
 end;

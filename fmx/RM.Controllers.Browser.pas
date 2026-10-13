@@ -25,8 +25,8 @@ implementation
 
 uses
   System.SysUtils, System.Classes, System.UITypes, FMX.Types, FMX.Controls,
-  FMX.Objects, RM.Main.View, RM.Toolbar, RM.LibraryView, RM.Dialogs, RM.Styles,
-  RM.Icons;
+  FMX.Objects, FMX.Layouts, RM.Main.View, RM.Toolbar, RM.LibraryView, RM.Dialogs,
+  RM.Styles, RM.Icons;
 
 procedure TBrowserController.InitializeScreenshotTool;
 begin
@@ -41,7 +41,7 @@ begin
   {$IF not Defined(ANDROID) and not Defined(IOS)}
   ScreenshotButton.Name := 'ButtonScreenshot';
   {$ENDIF}
-  ScreenshotButton.Parent := FView.LayoutHead;
+  ScreenshotButton.Parent := FView.FindComponent('LayoutGameActions') as TLayout;
   ScreenshotButton.Align := TAlignLayout.Right;
   ScreenshotButton.Width := 60;
   ScreenshotButton.Text := '';
@@ -79,7 +79,7 @@ begin
   FState.Browser.Tools[4] := FView.GameSettings;
   for var i := 1 to 2 do
   begin
-    FState.Browser.Tools[i].Parent := FView.LayoutHead;
+    FState.Browser.Tools[i].Parent := FView.FindComponent('LayoutGameActions') as TLayout;
     FState.Browser.Tools[i].Width := 104;
   end;
   FState.Browser.Tools[0].OnClick := FView.PauseClick;
@@ -161,6 +161,12 @@ procedure TBrowserController.UpdateGameChrome;
 begin
   if csDestroying in FView.ComponentState then
     Exit;
+  if (FState.Session.Emulation = nil) or FState.Session.EmulationFaulted then
+    FView.StatusDot.Fill.Color := $FFFF6B6B
+  else if FState.Session.UserPaused or FState.Session.AutoPaused or FState.Session.Emulation.IsPaused then
+    FView.StatusDot.Fill.Color := $FFFFB43B
+  else
+    FView.StatusDot.Fill.Color := $FF7ED94C;
 
   if FState.Browser.GamePlatform <> nil then
   begin

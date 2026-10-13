@@ -14,6 +14,10 @@ const
 type
   TMDWorker = class(TThread)
   private
+    FInputPortsCommand: TInputPortsCommand;
+    function GetInputPorts: TCoreInputPorts;
+    procedure SetInputPorts(const Ports: TCoreInputPorts);
+  private
     FSnapshots: TSnapshotQueue;
     FSnapshotDirectory: string;
     FLock: TCriticalSection;
@@ -39,7 +43,8 @@ type
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
   public
-    InputPorts: TCoreInputPorts; // Set before starting the worker.
+    property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
+  public
     property SnapshotDirectory: string read FSnapshotDirectory write FSnapshotDirectory;
     procedure RequestReset;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -56,9 +61,20 @@ uses
 
 { TMDWorker }
 
+function TMDWorker.GetInputPorts: TCoreInputPorts;
+begin
+  Result := FInputPortsCommand.GetPorts;
+end;
+
+procedure TMDWorker.SetInputPorts(const Ports: TCoreInputPorts);
+begin
+  FInputPortsCommand.Apply(Self, Ports, FWake);
+end;
+
 constructor TMDWorker.Create(const Data: TBytes; const SavePath: string; const Storage: IStorage);
 begin
   inherited Create(True);
+  FInputPortsCommand := TInputPortsCommand.Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
@@ -76,6 +92,7 @@ begin
   if FWake <> nil then
     FWake.SetEvent;
   inherited Destroy;
+  FInputPortsCommand.Free;
   FSnapshots.Free;
   FWake.Free;
   FLock.Free;
@@ -169,6 +186,7 @@ begin
     on E: Exception do
       raise EInOutError.Create('Mega Drive SRAM: ' + E.Message);
   end;
+
   if FFinalSaveError <> '' then
     raise EInOutError.Create('Mega Drive SRAM: ' + FFinalSaveError);
 end;
@@ -258,6 +276,11 @@ begin
       WasEnabled := False;
       while not Terminated do
       begin
+        FInputPortsCommand.Process(
+          procedure(const Ports: TCoreInputPorts)
+          begin
+            Console.ConfigureInputPorts(Ports);
+          end);
         FSnapshots.Process(
           procedure(const Name: string; Loading: Boolean)
           begin
@@ -271,6 +294,7 @@ begin
             if Loading then
             begin
               LoadCoreSnapshot(Path, ROM_CORE_ID_MD, FData, Transfer, FStorage);
+              Console.ConfigureInputPorts(InputPorts);
               Console.MarkBatteryDirty;
               if Audio <> nil then
                 Audio.Clear;
@@ -334,13 +358,16 @@ begin
           Deadline := TStopwatch.GetTimeStamp;
           Continue;
         end;
+
         WasPaused := False;
         FrameHints.TargetDurationNanos := Round(1000000000.0 / Console.FramesPerSecond);
         FrameHints.BeginWork;
         Console.SetInput(Input, Input2);
         Console.RunFrame;
+
         if Terminated then
           Break;
+
         Frame.Width := Console.Width;
         Frame.Height := Console.Height;
         Frame.FrameNumber := Console.FrameNumber;

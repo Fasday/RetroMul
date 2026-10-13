@@ -207,6 +207,7 @@ begin
   for var i := 0 to Count - 1 do
   begin
     var Nibbles := (Integer(Data[16 + i]) - Integer(Data[i])) * 512;
+
     // Sampling pauses during the first eleven scanlines of each video frame.
     ASAPInfo_AddSong(M, Nibbles + Nibbles div 301 * 11);
   end;
@@ -336,6 +337,7 @@ begin
     end;
   Need(M.songs > 0, 'no playable song');
   ValidateSamples(Samples);
+
   // Move low-address modules above the player and relocate its address tables.
   var Music := M.music;
   if Music < $1000 then

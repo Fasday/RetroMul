@@ -420,11 +420,12 @@ begin
     Exit;
 
   // Assignments belong to the active game, independently of the settings page.
-  // Retain the hardware connections selected when this ROM was opened.
+  // Connection changes are applied separately on the owning emulation thread.
   var Ini := FState.Session.Storage.ReadConfig(FState.Session.Storage.ConfigFile(FState.Input.SystemId));
   try
     LoadInputBindings(FState.Input.Manager, Ini, FState.Input.SystemId);
     FilterInputBindings(FState.Input.Manager, Ini);
+    FState.Input.PollingFailed := False;
   finally
     Ini.Free;
   end;
@@ -436,6 +437,9 @@ end;
 
 procedure TInputController.PollHostInput;
 begin
+  if (FState.Input.Manager = nil) or FState.Input.PollingFailed then
+    Exit;
+
   FState.Input.Manager.Enabled := FView.InputHasFocus and not FState.Session.OpeningRom;
   if not FState.Input.Manager.Enabled then
     Exit;
@@ -630,9 +634,9 @@ begin
     begin
       try
         if Code = vkF5 then
-          FView.SaveSnapshot('quick')
+          FView.SaveSnapshot('Quick')
         else
-          FView.LoadSnapshot('quick');
+          FView.LoadSnapshot('Quick');
       except
         on E: Exception do
           ShowRetroMessage(FView, Translate('Snapshot: ') + E.Message);

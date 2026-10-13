@@ -110,6 +110,7 @@ begin
     if (WordCode and $80) <> 0 then
     begin
       State.LPS[Code] := True;
+
       // Naive's run_count table is the complemented bit reversal of this code.
       var Index := WordCode shr (Code xor 7);
       var Run := 0;
@@ -213,6 +214,7 @@ begin
       State.OutputMask := $FF;
       Exit(State.Output2);
     end;
+
     State.Output1 := 0;
     State.Output2 := 0;
     State.OutputMask := $80;

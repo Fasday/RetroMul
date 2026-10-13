@@ -1,4 +1,4 @@
-﻿unit NeoGeoCD.CHD;
+﻿unit Core.CD.CHD;
 
 interface
 
@@ -55,7 +55,7 @@ begin
     FImage := TCHDFile.Create(Stream, True);
   except
     on E: ECHDError do
-      raise EReadError.Create('Neo Geo CD CHD: ' + E.Message);
+      raise EReadError.Create('CD CHD: ' + E.Message);
   end;
 
   var Header := FImage.Header;
@@ -63,7 +63,7 @@ begin
     (Header.LogicalBytes > UInt64(2) * 1024 * 1024 * 1024) or
     (Header.HunkBytes = 0) or (Header.HunkBytes > 1024 * 1024) or
     (Header.UnitBytes <> 2448) then
-    raise EReadError.Create('Unsupported Neo Geo CD CHD geometry');
+    raise EReadError.Create('Unsupported CD CHD geometry');
 
   FSize := Int64(Header.LogicalBytes);
 end;
@@ -108,7 +108,7 @@ begin
     Result := FImage.ReadAt(UInt64(Position), Bytes, 0, Count);
   except
     on E: ECHDError do
-      raise EReadError.Create('Neo Geo CD CHD: ' + E.Message);
+      raise EReadError.Create('CD CHD: ' + E.Message);
   end;
 
   Move(Bytes[0], Buffer, Result);

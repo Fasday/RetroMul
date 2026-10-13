@@ -37,11 +37,14 @@ type
     SettingsScreen: TTabItem;
     ButtonLibrary: TButton;
     GamePause: TButton;
+    GamePauseIcon: TPath;
+    GameResumeIcon: TPath;
     GameFullscreen: TButton;
     GameSettings: TButton;
     GameInsertCoin: TButton;
     GameControlsHelp: TButton;
     GameStatus: TPanel;
+    StatusDot: TCircle;
     GamePlatform: TLabel;
     GameFPS: TLabel;
     GameAudio: TLabel;

@@ -4,7 +4,7 @@ interface
 
 uses
   System.Classes, System.Types, System.UITypes, FMX.Types, FMX.Controls,
-  FMX.StdCtrls, NES.FamicomDataRecorder;
+  FMX.StdCtrls, FMX.Layouts, NES.FamicomDataRecorder;
 
 type
   TTapeActionEvent = procedure(Sender: TObject; Action: TTapeAction; const FileName: string) of object;
@@ -13,6 +13,7 @@ type
   private
     FProgress: TTapeProgress;
     FButtons: array[TTapeAction] of TButton;
+    FTransportRow, FFileRow: TLayout;
     FOnAction: TTapeActionEvent;
     FOnChooseFile: TNotifyEvent;
     FOnSaveAs: TNotifyEvent;
@@ -114,12 +115,21 @@ begin
   inherited;
   SetSize(480, 212);
   HitTest := False;
+  FFileRow := TLayout.Create(Self);
+  FFileRow.Parent := Self;
+  FFileRow.Align := TAlignLayout.Bottom;
+  FTransportRow := TLayout.Create(Self);
+  FTransportRow.Parent := Self;
+  FTransportRow.Align := TAlignLayout.Bottom;
   for var Action := Low(TTapeAction) to High(TTapeAction) do
   begin
     FButtons[Action] := TRecorderButton.Create(Self);
     FButtons[Action].StyleLookup := 'buttonstyle';
     FButtons[Action].Name := 'Tape' + Names[Action];
-    FButtons[Action].Parent := Self;
+    if Action <= TapeForward then FButtons[Action].Parent := FTransportRow
+    else FButtons[Action].Parent := FFileRow;
+    FButtons[Action].Align := TAlignLayout.Left;
+    FButtons[Action].Margins.Right := 5;
     FButtons[Action].Tag := Ord(Action);
     FButtons[Action].Text := Translate(Captions[Action]);
     FButtons[Action].CanFocus := False;
@@ -237,16 +247,17 @@ end;
 
 procedure TNesDataRecorder.LayoutButtons;
 begin
-  if FButtons[TapePlay] = nil then
-    Exit;
-
-  var W := Max(1, (Width - 20 - 4 * 5) / 5);
-  for var Action := TapePlay to TapeForward do
-    FButtons[Action].SetBounds(10 + Ord(Action) * (W + 5), Height * 0.70, W, Height * 0.12);
-  W := Max(1, (Width - 30) / 3);
-  FButtons[TapeSelectFile].SetBounds(10, Height * 0.85, W, Height * 0.12);
-  FButtons[TapeDefaultFile].SetBounds(15 + W, Height * 0.85, W, Height * 0.12);
-  FButtons[TapeSaveAs].SetBounds(20 + W * 2, Height * 0.85, W, Height * 0.12);
+  if (FButtons[TapePlay] = nil) or (FFileRow = nil) then Exit;
+  FFileRow.Height := Height*0.12;
+  FFileRow.Margins.Rect := RectF(10,Height*0.03,10,Height*0.03);
+  FTransportRow.Height := Height*0.12;
+  FTransportRow.Margins.Rect := RectF(10,0,10,0);
+  var W := Max(1,(Width-40)/5);
+  for var Action := TapePlay to TapeForward do FButtons[Action].Width := W;
+  FButtons[TapeForward].Margins.Right := 0;
+  W := Max(1,(Width-30)/3);
+  for var Action := TapeSelectFile to TapeSaveAs do FButtons[Action].Width := W;
+  FButtons[TapeSaveAs].Margins.Right := 0;
 end;
 
 procedure TNesDataRecorder.Resize;

@@ -19,484 +19,580 @@
     Size.PlatformDefault = False
     StyleLookup = 'panelstyle_appbackground'
     TabOrder = 0
-    object LayoutContent: TLayout
+    object ScrollPlayer: TVertScrollBox
       Align = Client
-      Margins.Left = 24.000000000000000000
-      Margins.Top = 20.000000000000000000
-      Margins.Right = 24.000000000000000000
-      Margins.Bottom = 20.000000000000000000
-      Size.Width = 712.000000000000000000
-      Size.Height = 744.000000000000000000
+      Size.Width = 760
+      Size.Height = 784
       Size.PlatformDefault = False
-      object LayoutHeader: TLayout
-        Align = Top
+      object LayoutContent: TLayout
+        Margins.Left = 24.000000000000000000
+        Margins.Top = 20.000000000000000000
+        Margins.Right = 24.000000000000000000
         Margins.Bottom = 20.000000000000000000
         Size.Width = 712.000000000000000000
-        Size.Height = 56.000000000000000000
+        Size.Height = 744.000000000000000000
         Size.PlatformDefault = False
-        object LabelBrand: TLabel
-          Size.Width = 320.000000000000000000
-          Size.Height = 32.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'labelstyle_title'
-          Text = 'RetroTune'
-        end
-        object LabelTagline: TLabel
-          Position.Y = 36.000000000000000000
-          Size.Width = 312.000000000000000000
-          Size.Height = 20.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'labelstyle_caption'
-          Text = 'Music that started it all'
-        end
-        object ButtonExport: TButton
-          Anchors = [akTop, akRight]
-          Enabled = False
-          Position.X = 380.000000000000000000
-          Position.Y = 8.000000000000000000
-          Size.Width = 160.000000000000000000
-          Size.Height = 40.000000000000000000
-          Size.PlatformDefault = False
-          TabOrder = 1
-          Text = 'Export WAV'#8230
-          OnClick = ExportClick
-        end
-        object ButtonOpen: TButton
-          Anchors = [akTop, akRight]
-          Position.X = 552.000000000000000000
-          Position.Y = 8.000000000000000000
-          Size.Width = 160.000000000000000000
-          Size.Height = 40.000000000000000000
-          Size.PlatformDefault = False
-          TabOrder = 0
-          Text = 'Open file'#8230
-          OnClick = OpenClick
-        end
-      end
-      object PanelNowPlaying: TPanel
         Align = Top
-        Margins.Bottom = 12.000000000000000000
-        Position.Y = 76.000000000000000000
-        Size.Width = 712.000000000000000000
-        Size.Height = 144.000000000000000000
-        Size.PlatformDefault = False
-        StyleLookup = 'panelstyle_fill'
-        TabOrder = 1
-        object PanelArtwork: TPanel
-          Align = Left
-          Margins.Left = 16.000000000000000000
-          Margins.Top = 16.000000000000000000
-          Margins.Right = 20.000000000000000000
-          Margins.Bottom = 16.000000000000000000
-          Position.X = 16.000000000000000000
-          Position.Y = 16.000000000000000000
-          Size.Width = 112.000000000000000000
-          Size.Height = 112.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'panelstyle_fill_strong'
-          object LabelMusicIcon: TLabel
-            Align = Client
-            StyledSettings = [FontColor]
-            Size.Width = 112.000000000000000000
-            Size.Height = 112.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Family = 'Segoe UI Symbol'
-            TextSettings.Font.Size = 48.000000000000000000
-            TextSettings.HorzAlign = Center
-            Text = #9835
-          end
-        end
-        object LayoutMetadata: TLayout
-          Align = Client
-          Margins.Top = 16.000000000000000000
-          Margins.Right = 20.000000000000000000
-          Margins.Bottom = 16.000000000000000000
-          Size.Width = 544.000000000000000000
-          Size.Height = 112.000000000000000000
-          Size.PlatformDefault = False
-          object LabelTitle: TLabel
-            Anchors = [akLeft, akTop, akRight]
-            AutoTranslate = False
-            Size.Width = 504.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_subtitle'
-            Text = 'Choose music'
-          end
-          object LabelArtist: TLabel
-            Anchors = [akLeft, akTop, akRight]
-            AutoTranslate = False
-            Position.X = 4.000000000000000000
-            Position.Y = 40.000000000000000000
-            Size.Width = 544.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            Text = 'Open a file to start listening'
-          end
-          object LabelCopyright: TLabel
-            Anchors = [akLeft, akTop, akRight]
-            AutoTranslate = False
-            Position.Y = 65.000000000000000000
-            Size.Width = 544.000000000000000000
-            Size.Height = 20.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_caption'
-          end
-          object LabelDetails: TLabel
-            Anchors = [akLeft, akTop, akRight]
-            AutoTranslate = False
-            Position.Y = 91.000000000000000000
-            Size.Width = 544.000000000000000000
-            Size.Height = 20.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_caption'
-            Text = 'Game music '#183' RetroTune'
-          end
-          object ButtonInfo: TButton
-            Anchors = [akTop, akRight]
-            Enabled = False
-            Hint = 'File information'
-            Position.X = 512.000000000000000000
-            Size.Width = 32.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'detailstoolbuttonbordered'
-            TabOrder = 2
-            Text = 'i'
-            OnClick = InfoClick
-          end
-        end
-      end
-      object PanelTransport: TPanel
-        Align = Bottom
-        Margins.Top = 12.000000000000000000
-        Position.Y = 512.000000000000000000
-        Size.Width = 712.000000000000000000
-        Size.Height = 232.000000000000000000
-        Size.PlatformDefault = False
-        StyleLookup = 'panelstyle_fill'
-        TabOrder = 3
-        object LabelTrack: TLabel
-          Position.X = 20.000000000000000000
-          Position.Y = 16.000000000000000000
-          Size.Width = 300.000000000000000000
-          Size.Height = 20.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'labelstyle_bodystrong'
-          Text = 'Track'
-        end
-        object ComboTracks: TComboBox
-          Anchors = [akLeft, akTop, akRight]
-          Enabled = False
-          ItemHeight = 36.000000000000000000
-          Position.X = 20.000000000000000000
-          Position.Y = 44.000000000000000000
-          Size.Width = 672.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          TabOrder = 0
-          OnChange = TrackChange
-        end
-        object LayoutTimeline: TLayout
-          Anchors = [akLeft, akTop, akRight]
-          Position.X = 20.000000000000000000
-          Position.Y = 92.000000000000000000
-          Size.Width = 672.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object TrackBarPosition: TTrackBar
-            Align = Top
-            CanParentFocus = True
-            Enabled = False
-            Frequency = 1.000000000000000000
-            Max = 300.000000000000000000
-            Orientation = Horizontal
-            Size.Width = 672.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-            TabOrder = 0
-            Tracking = False
-            OnChange = PositionChange
-            OnTracking = PositionTracking
-          end
-          object LabelElapsed: TLabel
-            Position.Y = 28.000000000000000000
-            Size.Width = 100.000000000000000000
-            Size.Height = 20.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_caption'
-            Text = '00:00'
-          end
-          object LabelDuration: TLabel
-            Anchors = [akTop, akRight]
-            Position.X = 572.000000000000000000
-            Position.Y = 28.000000000000000000
-            Size.Width = 100.000000000000000000
-            Size.Height = 20.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_caption'
-            TextSettings.HorzAlign = Trailing
-            Text = '--:--'
-          end
-        end
-        object LayoutPlayback: TLayout
-          Anchors = [akLeft, akTop, akRight]
-          Position.X = 20.000000000000000000
-          Position.Y = 156.000000000000000000
-          Size.Width = 672.000000000000000000
+        object LayoutHeader: TLayout
+          Align = Top
+          Margins.Bottom = 20.000000000000000000
+          Size.Width = 712.000000000000000000
           Size.Height = 56.000000000000000000
           Size.PlatformDefault = False
-          object ButtonPrevious: TButton
-            Enabled = False
-            StyledSettings = [FontColor]
-            Hint = 'Previous track'
-            Position.Y = 4.000000000000000000
-            Size.Width = 44.000000000000000000
-            Size.Height = 44.000000000000000000
+          object LayoutTuneBrand: TLayout
+            Align = Client
+            Size.Width = 360
+            Size.Height = 56
             Size.PlatformDefault = False
-            StyleLookup = 'rewindtoolbuttonbordered'
-            TabOrder = 0
-            Text = #59538
-            TextSettings.Font.Family = 'Segoe MDL2 Assets'
-            TextSettings.Font.Size = 16.000000000000000000
-            ParentShowHint = False
-            ShowHint = True
-            OnClick = PreviousClick
-          end
-          object ButtonPlay: TButton
-            Enabled = False
-            Position.X = 56.000000000000000000
-            Position.Y = 4.000000000000000000
-            Size.Width = 168.000000000000000000
-            Size.Height = 44.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'buttonstyle_accent'
-            TabOrder = 1
-            Text = 'Play'
-            OnClick = PlayClick
-          end
-          object ButtonNext: TButton
-            Enabled = False
-            StyledSettings = [FontColor]
-            Hint = 'Next track'
-            Position.X = 236.000000000000000000
-            Position.Y = 4.000000000000000000
-            Size.Width = 44.000000000000000000
-            Size.Height = 44.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'forwardtoolbuttonbordered'
-            TabOrder = 2
-            Text = #59539
-            TextSettings.Font.Family = 'Segoe MDL2 Assets'
-            TextSettings.Font.Size = 16.000000000000000000
-            ParentShowHint = False
-            ShowHint = True
-            OnClick = NextClick
-          end
-          object ButtonStop: TButton
-            Enabled = False
-            StyledSettings = [FontColor]
-            Hint = 'Stop'
-            Position.X = 292.000000000000000000
-            Position.Y = 4.000000000000000000
-            Size.Width = 44.000000000000000000
-            Size.Height = 44.000000000000000000
-            Size.PlatformDefault = False
-            StyleLookup = 'stoptoolbuttonbordered'
-            TabOrder = 3
-            Text = #59162
-            TextSettings.Font.Family = 'Segoe MDL2 Assets'
-            TextSettings.Font.Size = 16.000000000000000000
-            ParentShowHint = False
-            ShowHint = True
-            OnClick = StopClick
-          end
-          object LayoutVolume: TLayout
-            Align = Right
-            Position.X = 376.000000000000000000
-            Size.Width = 296.000000000000000000
-            Size.Height = 56.000000000000000000
-            Size.PlatformDefault = False
-            object LabelVolume: TLabel
+            object LabelBrand: TLabel
+              Size.Width = 320.000000000000000000
+              Size.Height = 32.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_title'
+              Text = 'RetroTune'
               Align = Top
-              Size.Width = 296.000000000000000000
+            end
+            object LabelTagline: TLabel
+              Size.Width = 312.000000000000000000
               Size.Height = 20.000000000000000000
               Size.PlatformDefault = False
               StyleLookup = 'labelstyle_caption'
-              Text = 'Volume: 80%'
-            end
-            object TrackBarVolume: TTrackBar
+              Text = 'Music that started it all'
               Align = Bottom
-              CanParentFocus = True
-              Orientation = Horizontal
-              Position.Y = 24.000000000000000000
-              Size.Width = 296.000000000000000000
-              Size.Height = 32.000000000000000000
+            end
+          end
+          object LayoutTuneOpenActions: TLayout
+            Align = Right
+            Size.Width = 332
+            Size.Height = 44
+            Size.PlatformDefault = False
+            object ButtonExport: TButton
+              Enabled = False
+              Size.Width = 160.000000000000000000
+              Size.Height = 40.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 1
+              Text = 'Export WAV'#8230
+              OnClick = ExportClick
+              Align = Client
+              Margins.Left = 0
+              Margins.Top = 0
+              Margins.Right = 12
+              Margins.Bottom = 0
+            end
+            object ButtonOpen: TButton
+              Size.Width = 160.000000000000000000
+              Size.Height = 40.000000000000000000
               Size.PlatformDefault = False
               TabOrder = 0
-              Value = 80.000000000000000000
-              OnChange = VolumeChange
+              Text = 'Open file'#8230
+              OnClick = OpenClick
+              Align = Right
             end
           end
         end
-      end
-      object LayoutFooter: TLayout
-        Align = Bottom
-        Position.Y = 456.000000000000000000
-        Size.Width = 712.000000000000000000
-        Size.Height = 44.000000000000000000
-        Size.PlatformDefault = False
-        object ButtonFormats: TButton
-          Align = Right
-          Hint = 'Supported formats reference'
-          Margins.Left = 12.000000000000000000
-          Margins.Top = 6.000000000000000000
-          Margins.Bottom = 6.000000000000000000
-          Position.X = 576.000000000000000000
-          Position.Y = 6.000000000000000000
-          Size.Width = 136.000000000000000000
-          Size.Height = 32.000000000000000000
-          Size.PlatformDefault = False
-          TabOrder = 0
-          Text = 'Formats'
-          OnClick = FormatsClick
-        end
-        object LabelStatus: TLabel
-          Align = Client
-          Margins.Top = 10.000000000000000000
-          Size.Width = 564.000000000000000000
-          Size.Height = 34.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'labelstyle_caption'
-          Text = 'No file loaded'
-        end
-      end
-      object LayoutExport: TLayout
-        Align = Bottom
-        Size.Width = 712.000000000000000000
-        Size.Height = 48.000000000000000000
-        Size.PlatformDefault = False
-        Visible = False
-        object ButtonCloseExport: TButton
-          Anchors = [akTop, akRight]
-          Enabled = False
-          Hint = 'Hide export panel'
-          Position.X = 684.000000000000000000
-          Size.Width = 28.000000000000000000
-          Size.Height = 28.000000000000000000
-          Size.PlatformDefault = False
-          TabOrder = 0
-          Text = #215
-          OnClick = CloseExportClick
-        end
-        object LabelExport: TLabel
+        object PanelNowPlaying: TPanel
           Align = Top
-          Margins.Right = 40.000000000000000000
-          Size.Width = 672.000000000000000000
-          Size.Height = 28.000000000000000000
-          Size.PlatformDefault = False
-          StyleLookup = 'labelstyle_caption'
-          TextSettings.WordWrap = False
-          Text = 'Export WAV'
-        end
-        object ProgressExport: TProgressBar
-          Align = Bottom
-          Orientation = Horizontal
-          Margins.Bottom = 8.000000000000000000
-          Position.Y = 32.000000000000000000
+          Margins.Bottom = 12.000000000000000000
           Size.Width = 712.000000000000000000
-          Size.Height = 8.000000000000000000
+          Size.Height = 144.000000000000000000
           Size.PlatformDefault = False
-        end
-      end
-      object PanelSpectrum: TPanel
-        Align = Client
-        Size.Width = 712.000000000000000000
-        Size.Height = 224.000000000000000000
-        Size.PlatformDefault = False
-        StyleLookup = 'panelstyle_fill'
-        TabOrder = 2
-        object LayoutSpectrumHeader: TLayout
-          Align = Top
-          Margins.Left = 20.000000000000000000
-          Margins.Top = 16.000000000000000000
-          Margins.Right = 20.000000000000000000
-          Position.X = 20.000000000000000000
-          Position.Y = 16.000000000000000000
-          Size.Width = 672.000000000000000000
-          Size.Height = 36.000000000000000000
-          Size.PlatformDefault = False
-          object LabelSpectrum: TLabel
+          StyleLookup = 'panelstyle_fill'
+          TabOrder = 1
+          object PanelArtwork: TPanel
             Align = Left
-            Size.Width = 220.000000000000000000
-            Size.Height = 36.000000000000000000
+            Margins.Left = 16.000000000000000000
+            Margins.Top = 16.000000000000000000
+            Margins.Right = 20.000000000000000000
+            Margins.Bottom = 16.000000000000000000
+            Size.Width = 112.000000000000000000
+            Size.Height = 112.000000000000000000
+            Size.PlatformDefault = False
+            StyleLookup = 'panelstyle_fill_strong'
+            object LabelMusicIcon: TLabel
+              Align = Client
+              StyledSettings = [FontColor]
+              Size.Width = 112.000000000000000000
+              Size.Height = 112.000000000000000000
+              Size.PlatformDefault = False
+              TextSettings.Font.Family = 'Segoe UI Symbol'
+              TextSettings.Font.Size = 48.000000000000000000
+              TextSettings.HorzAlign = Center
+              Text = #9835
+            end
+          end
+          object LayoutMetadata: TLayout
+            Align = Client
+            Margins.Top = 16.000000000000000000
+            Margins.Right = 20.000000000000000000
+            Margins.Bottom = 16.000000000000000000
+            Size.Width = 544.000000000000000000
+            Size.Height = 112.000000000000000000
+            Size.PlatformDefault = False
+            object LayoutTuneTitle: TLayout
+              Align = Top
+              Size.Width = 544
+              Size.Height = 32
+              Size.PlatformDefault = False
+              object LabelTitle: TLabel
+                AutoTranslate = False
+                Size.Width = 504.000000000000000000
+                Size.Height = 32.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'labelstyle_subtitle'
+                Text = 'Choose music'
+                Align = Client
+              end
+              object ButtonInfo: TButton
+                Enabled = False
+                Hint = 'File information'
+                Size.Height = 32.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'detailstoolbuttonbordered'
+                TabOrder = 2
+                Text = 'i'
+                OnClick = InfoClick
+                Align = Right
+                Size.Width = 44
+                Margins.Left = 8
+                Margins.Top = 0
+                Margins.Right = 0
+                Margins.Bottom = 0
+              end
+            end
+            object LabelArtist: TLabel
+              AutoTranslate = False
+              Size.Width = 544.000000000000000000
+              Size.Height = 24.000000000000000000
+              Size.PlatformDefault = False
+              Text = 'Open a file to start listening'
+              Align = Top
+              Margins.Left = 0
+              Margins.Top = 8
+              Margins.Right = 0
+              Margins.Bottom = 0
+            end
+            object LabelCopyright: TLabel
+              AutoTranslate = False
+              Size.Width = 544.000000000000000000
+              Size.Height = 20.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_caption'
+              Align = Top
+              Margins.Left = 0
+              Margins.Top = 1
+              Margins.Right = 0
+              Margins.Bottom = 0
+            end
+            object LabelDetails: TLabel
+              AutoTranslate = False
+              Size.Width = 544.000000000000000000
+              Size.Height = 20.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_caption'
+              Text = 'Game music '#183' RetroTune'
+              Align = Top
+              Margins.Left = 0
+              Margins.Top = 6
+              Margins.Right = 0
+              Margins.Bottom = 0
+            end
+          end
+        end
+        object PanelTransport: TPanel
+          Size.Width = 712.000000000000000000
+          Size.PlatformDefault = False
+          StyleLookup = 'panelstyle_fill'
+          TabOrder = 3
+          Align = Top
+          Size.Height = 244
+          Margins.Left = 0
+          Margins.Top = 0
+          Margins.Right = 0
+          Margins.Bottom = 12
+          Padding.Left = 16
+          Padding.Top = 12
+          Padding.Right = 16
+          Padding.Bottom = 16
+          object LabelTrack: TLabel
+            Size.Width = 300.000000000000000000
+            Size.Height = 20.000000000000000000
             Size.PlatformDefault = False
             StyleLookup = 'labelstyle_bodystrong'
-            Text = 'Audio spectrum'
+            Text = 'Track'
+            Align = Top
           end
-          object ComboSpectrum: TComboBox
-            Align = Right
-            Items.Strings = (
-              'Bars'
-              'Curve'
-              'Spectrogram'
-              'Bars with peaks'
-              'Mirrored'
-              'Radial'
-              'LED analyzer'
-              'Stereo: L/R bars'
-              'Stereo: L/R curves'
-              'Stereo: phase'
-              'Stereo: RMS and peaks')
-            ItemIndex = 0
+          object ComboTracks: TComboBox
+            Enabled = False
             ItemHeight = 36.000000000000000000
-            Position.X = 452.000000000000000000
-            Size.Width = 220.000000000000000000
+            Size.Width = 672.000000000000000000
             Size.Height = 36.000000000000000000
             Size.PlatformDefault = False
             TabOrder = 0
-            OnChange = SpectrumChange
+            OnChange = TrackChange
+            Align = Top
+            Margins.Left = 0
+            Margins.Top = 8
+            Margins.Right = 0
+            Margins.Bottom = 0
+          end
+          object LayoutTimeline: TLayout
+            Size.Width = 672.000000000000000000
+            Size.Height = 48.000000000000000000
+            Size.PlatformDefault = False
+            Align = Top
+            Margins.Left = 0
+            Margins.Top = 12
+            Margins.Right = 0
+            Margins.Bottom = 0
+            object TrackBarPosition: TTrackBar
+              Align = Top
+              CanParentFocus = True
+              Enabled = False
+              Frequency = 1.000000000000000000
+              Max = 300.000000000000000000
+              Orientation = Horizontal
+              Size.Width = 672.000000000000000000
+              Size.Height = 32.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              Tracking = False
+              OnChange = PositionChange
+              OnTracking = PositionTracking
+            end
+            object LayoutTuneTimes: TLayout
+              Align = Bottom
+              Size.Width = 320
+              Size.Height = 20
+              Size.PlatformDefault = False
+              object LabelElapsed: TLabel
+                Size.Width = 100.000000000000000000
+                Size.Height = 20.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'labelstyle_caption'
+                Text = '00:00'
+                Align = Left
+              end
+              object LabelDuration: TLabel
+                Size.Width = 100.000000000000000000
+                Size.Height = 20.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'labelstyle_caption'
+                TextSettings.HorzAlign = Trailing
+                Text = '--:--'
+                Align = Right
+              end
+            end
+          end
+          object LayoutPlayback: TLayout
+            Size.Width = 672.000000000000000000
+            Size.Height = 56.000000000000000000
+            Size.PlatformDefault = False
+            Align = Top
+            Margins.Left = 0
+            Margins.Top = 12
+            Margins.Right = 0
+            Margins.Bottom = 0
+            object LayoutVolume: TLayout
+              Size.Width = 296.000000000000000000
+              Size.Height = 56.000000000000000000
+              Size.PlatformDefault = False
+              Align = Client
+              Margins.Left = 24
+              Margins.Top = 0
+              Margins.Right = 0
+              Margins.Bottom = 0
+              object LabelVolume: TLabel
+                Align = Top
+                Size.Width = 296.000000000000000000
+                Size.Height = 20.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'labelstyle_caption'
+                Text = 'Volume: 80%'
+              end
+              object TrackBarVolume: TTrackBar
+                CanParentFocus = True
+                Orientation = Horizontal
+                Size.Width = 296.000000000000000000
+                Size.Height = 32.000000000000000000
+                Size.PlatformDefault = False
+                TabOrder = 0
+                Value = 80.000000000000000000
+                OnChange = VolumeChange
+                Align = Client
+              end
+            end
+            object LayoutTuneTransportButtons: TLayout
+              Align = Left
+              Size.Width = 336
+              Size.Height = 44
+              Size.PlatformDefault = False
+              object ButtonPrevious: TButton
+                Enabled = False
+                StyledSettings = [FontColor]
+                Hint = 'Previous track'
+                Size.Width = 44.000000000000000000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'rewindtoolbuttonbordered'
+                TabOrder = 0
+                Text = #59538
+                TextSettings.Font.Family = 'Segoe MDL2 Assets'
+                TextSettings.Font.Size = 16.000000000000000000
+                ParentShowHint = False
+                ShowHint = True
+                OnClick = PreviousClick
+                Align = Left
+                Margins.Left = 0
+                Margins.Top = 0
+                Margins.Right = 8
+                Margins.Bottom = 0
+              end
+              object ButtonPlay: TButton
+                Enabled = False
+                Size.Width = 168.000000000000000000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'buttonstyle_accent'
+                TabOrder = 1
+                Text = 'Play'
+                OnClick = PlayClick
+                Align = Client
+              end
+              object ButtonNext: TButton
+                Enabled = False
+                StyledSettings = [FontColor]
+                Hint = 'Next track'
+                Size.Width = 44.000000000000000000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'forwardtoolbuttonbordered'
+                TabOrder = 2
+                Text = #59539
+                TextSettings.Font.Family = 'Segoe MDL2 Assets'
+                TextSettings.Font.Size = 16.000000000000000000
+                ParentShowHint = False
+                ShowHint = True
+                OnClick = NextClick
+                Align = Right
+                Margins.Left = 8
+                Margins.Top = 0
+                Margins.Right = 0
+                Margins.Bottom = 0
+              end
+              object ButtonStop: TButton
+                Enabled = False
+                StyledSettings = [FontColor]
+                Hint = 'Stop'
+                Size.Width = 44.000000000000000000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                StyleLookup = 'stoptoolbuttonbordered'
+                TabOrder = 3
+                Text = #59162
+                TextSettings.Font.Family = 'Segoe MDL2 Assets'
+                TextSettings.Font.Size = 16.000000000000000000
+                ParentShowHint = False
+                ShowHint = True
+                OnClick = StopClick
+                Align = Right
+                Margins.Left = 8
+                Margins.Top = 0
+                Margins.Right = 0
+                Margins.Bottom = 0
+              end
+            end
           end
         end
-        object LayoutFrequency: TLayout
-          Align = Bottom
-          Margins.Left = 20.000000000000000000
-          Margins.Right = 20.000000000000000000
-          Margins.Bottom = 12.000000000000000000
-          Position.X = 20.000000000000000000
-          Position.Y = 192.000000000000000000
-          Size.Width = 672.000000000000000000
-          Size.Height = 20.000000000000000000
+        object PanelSpectrum: TPanel
+          Size.Width = 712.000000000000000000
+          Size.Height = 224.000000000000000000
           Size.PlatformDefault = False
-          object LabelLowFrequency: TLabel
-            Align = Left
-            Size.Width = 80.000000000000000000
+          StyleLookup = 'panelstyle_fill'
+          TabOrder = 2
+          Align = Top
+          Margins.Left = 0
+          Margins.Top = 0
+          Margins.Right = 0
+          Margins.Bottom = 12
+          Padding.Left = 16
+          Padding.Top = 12
+          Padding.Right = 16
+          Padding.Bottom = 8
+          object LayoutSpectrumHeader: TLayout
+            Size.Width = 672.000000000000000000
+            Size.PlatformDefault = False
+            Align = Top
+            Size.Height = 44
+            Margins.Left = 0
+            Margins.Top = 0
+            Margins.Right = 0
+            Margins.Bottom = 12
+            object LabelSpectrum: TLabel
+              Size.Width = 220.000000000000000000
+              Size.Height = 36.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_bodystrong'
+              Text = 'Audio spectrum'
+              Align = Client
+            end
+            object ComboSpectrum: TComboBox
+              Items.Strings = (
+                'Bars'
+                'Curve'
+                'Spectrogram'
+                'Bars with peaks'
+                'Mirrored'
+                'Radial'
+                'LED analyzer'
+                'Stereo: L/R bars'
+                'Stereo: L/R curves'
+                'Stereo: phase'
+                'Stereo: RMS and peaks')
+              ItemIndex = 0
+              ItemHeight = 36.000000000000000000
+              Size.Width = 220.000000000000000000
+              Size.Height = 36.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              OnChange = SpectrumChange
+              Align = Right
+              Margins.Left = 12
+              Margins.Top = 0
+              Margins.Right = 0
+              Margins.Bottom = 0
+            end
+          end
+          object LayoutFrequency: TLayout
+            Size.Width = 672.000000000000000000
             Size.Height = 20.000000000000000000
             Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_caption'
-            Text = '30 Hz'
+            Align = Bottom
+            Margins.Left = 0
+            Margins.Top = 12
+            Margins.Right = 0
+            Margins.Bottom = 0
+            object LabelLowFrequency: TLabel
+              Size.Width = 80.000000000000000000
+              Size.Height = 20.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_caption'
+              Text = '30 Hz'
+              Align = Left
+            end
+            object LabelHighFrequency: TLabel
+              Size.Width = 100.000000000000000000
+              Size.Height = 20.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_caption'
+              TextSettings.HorzAlign = Trailing
+              Text = '20 kHz'
+              Align = Right
+            end
           end
-          object LabelHighFrequency: TLabel
+          object SpectrumPaintBox: TPaintBox
+            Margins.Left = 20.000000000000000000
+            Margins.Top = 12.000000000000000000
+            Margins.Right = 20.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 672.000000000000000000
+            Size.Height = 120.000000000000000000
+            Size.PlatformDefault = False
+            OnPaint = SpectrumPaint
+            Align = Client
+          end
+        end
+        object LayoutExport: TLayout
+          Size.Width = 712.000000000000000000
+          Size.PlatformDefault = False
+          Visible = False
+          Align = Top
+          Size.Height = 64
+          Margins.Left = 0
+          Margins.Top = 0
+          Margins.Right = 0
+          Margins.Bottom = 12
+          object ProgressExport: TProgressBar
+            Orientation = Horizontal
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 712.000000000000000000
+            Size.PlatformDefault = False
+            Align = Bottom
+            Size.Height = 8
+          end
+          object LayoutTuneExportHeading: TLayout
+            Align = Top
+            Size.Width = 320
+            Size.Height = 44
+            Size.PlatformDefault = False
+            object LabelExport: TLabel
+              Margins.Right = 40.000000000000000000
+              Size.Width = 672.000000000000000000
+              Size.Height = 28.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'labelstyle_caption'
+              TextSettings.WordWrap = False
+              Text = 'Export WAV'
+              Align = Client
+            end
+            object ButtonCloseExport: TButton
+              Enabled = False
+              Hint = 'Hide export panel'
+              Size.Height = 28.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              Text = #215
+              OnClick = CloseExportClick
+              Align = Right
+              Size.Width = 44
+            end
+          end
+        end
+        object LayoutFooter: TLayout
+          Size.Width = 712.000000000000000000
+          Size.Height = 44.000000000000000000
+          Size.PlatformDefault = False
+          Align = Top
+          object LabelStatus: TLabel
+            Align = Client
+            Size.Width = 564.000000000000000000
+            Size.Height = 34.000000000000000000
+            Size.PlatformDefault = False
+            StyleLookup = 'labelstyle_caption'
+            Text = 'No file loaded'
+            Margins.Left = 0
+            Margins.Top = 0
+            Margins.Right = 0
+            Margins.Bottom = 0
+          end
+          object LayoutTuneFooterActions: TLayout
             Align = Right
-            Position.X = 572.000000000000000000
-            Size.Width = 100.000000000000000000
-            Size.Height = 20.000000000000000000
+            Size.Width = 268
+            Size.Height = 44
             Size.PlatformDefault = False
-            StyleLookup = 'labelstyle_caption'
-            TextSettings.HorzAlign = Trailing
-            Text = '20 kHz'
+            object ButtonFormats: TButton
+              Hint = 'Supported formats reference'
+              Size.Width = 136.000000000000000000
+              Size.Height = 32.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              Text = 'Formats'
+              OnClick = FormatsClick
+              Align = Right
+              Margins.Left = 12
+              Margins.Top = 0
+              Margins.Right = 0
+              Margins.Bottom = 0
+            end
+            object ButtonSoundFont: TButton
+              Align = Client
+              Text = 'SoundFont'
+              Hint = 'MIDI SoundFont (.sf2)'
+              Size.Width = 120
+              Size.Height = 44
+              Size.PlatformDefault = False
+            end
           end
-        end
-        object SpectrumPaintBox: TPaintBox
-          Align = Client
-          Margins.Left = 20.000000000000000000
-          Margins.Top = 12.000000000000000000
-          Margins.Right = 20.000000000000000000
-          Margins.Bottom = 8.000000000000000000
-          Size.Width = 672.000000000000000000
-          Size.Height = 120.000000000000000000
-          Size.PlatformDefault = False
-          OnPaint = SpectrumPaint
         end
       end
     end

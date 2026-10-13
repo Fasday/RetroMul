@@ -27,6 +27,7 @@ begin
     inherited;
     Exit;
   end;
+
   Previous := A;
   AdjustLow := 0;
   AdjustHigh := 0;

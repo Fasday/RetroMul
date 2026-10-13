@@ -1021,10 +1021,10 @@ end;
 procedure InitialiseInstructionLookup;
 begin
   var Split := Default(TSplitOpcode);
-  for var Opcode := Low(InstructionLookup) to High(InstructionLookup) do
+  for var OpCode := Low(InstructionLookup) to High(InstructionLookup) do
   begin
-    DecodeOpcode(Split, Opcode);
-    InstructionLookup[Opcode] := GetInstruction(Split);
+    DecodeOpcode(Split, OpCode);
+    InstructionLookup[OpCode] := GetInstruction(Split);
   end;
 end;
 
@@ -4276,6 +4276,7 @@ begin
                 raise;
           end;
         end;
+
         if StateRef^.Halted <> 0 then
           Exit(CyclesToDo);
       end;

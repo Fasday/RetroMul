@@ -14,7 +14,7 @@ type
 implementation
 
 uses
-  System.SysUtils, FMX.OpenDialog, FMX.Types;
+  System.SysUtils, FMX.OpenDialog, FMX.Types, Core.Platforms;
 
 { TStoragePicker }
 
@@ -43,7 +43,7 @@ begin
     begin
       Dialog.Title := Translate('Open ROM');
       // Content detection allows renamed ROMs and provider-specific MIME types.
-      Dialog.Filter := Translate('All files|*');
+      Dialog.Filter := TPlatformRegistry.FileFilter + '|' + Translate('All files|*');
       Dialog.SelectFiles(Completion);
     end;
   finally

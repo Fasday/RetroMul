@@ -134,6 +134,7 @@ type
   IEmulationCore = interface
     ['{757D169F-CE44-4B9F-AE15-9D81C6948D0A}']
     function GetName: string;
+    function GetSystemId: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
     function GetHasCoinAcceptor: Boolean;
@@ -156,6 +157,7 @@ type
     function TakeError: string;
     function GetConfig: IEmulatorConfig;
     property Name: string read GetName;
+    property SystemId: string read GetSystemId;
     property SupportsSnapshots: Boolean read GetSupportsSnapshots;
     property UsesSuborKeyboard: Boolean read GetUsesSuborKeyboard;
     // Coin methods do nothing when the loaded ROM has no coin acceptor.

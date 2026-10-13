@@ -1,7 +1,5 @@
 ﻿unit GBA.Video;
 
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
-
 interface
 
 uses

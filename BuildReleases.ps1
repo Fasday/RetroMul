@@ -105,15 +105,6 @@ foreach ($prefix in ($Platforms | Select-Object -Unique)) {
                 # Unix regular file, mode 0755: preserve execute permission on unzip.
                 $entry.ExternalAttributes = -2115174400
             }
-            if (-not $isAndroid) {
-                foreach ($companion in @('NeoGeoCD-LICENSE.txt')) {
-                    $companionPath = Join-Path $outputDirectory $companion
-                    if (-not (Test-Path -LiteralPath $companionPath -PathType Leaf)) {
-                        throw "CHD license missing: $companionPath"
-                    }
-                    [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $companionPath, $companion, [IO.Compression.CompressionLevel]::Optimal)
-                }
-            }
         } finally { $zip.Dispose() }
         Move-Item -LiteralPath $temporaryArchive -Destination $archivePath -Force
     } finally {

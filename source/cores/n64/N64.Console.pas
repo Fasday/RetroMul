@@ -1,5 +1,4 @@
 ﻿unit N64.Console;
-{$Q+}{$R+}
 
 interface
 
@@ -20,8 +19,9 @@ type
 
   TN64SPTransfer = record
     Active, Writing: Boolean;
-    Local, RAM, Size, Blocks, Skip, Position, Control: Cardinal;
+    local, RAM, Size, Blocks, Skip, Position, Control: Cardinal;
   end;
+
   TN64PITransfer = record
     Active, Writing, Flash, FirstBlock: Boolean;
     RAM, Cart, Length, Position: Cardinal;
@@ -31,6 +31,7 @@ type
     MaxBlockSize, Stage, Latency, PulseWidth, PageSize, ReleaseDuration, ClockPhase: Cardinal;
     Buffer: array[0..127] of Byte;
   end;
+
   TN64SITransfer = record
     Active, Writing: Boolean;
     RAM, Position: Cardinal;
@@ -213,13 +214,21 @@ procedure TN64Console.Reset;
 begin
   for var I := 0 to High(FRAM) do
     FRAM[I] := 0;
-  for var I := 0 to High(FHiddenRAM) do FHiddenRAM[I] := 0;
+  for var I := 0 to High(FHiddenRAM) do
+    FHiddenRAM[I] := 0;
   FTimeline.Reset;
-  FSPTransfer := Default(TN64SPTransfer); FSPQueued := Default(TN64SPTransfer);
-  FPITransfer := Default(TN64PITransfer); FSITransfer := Default(TN64SITransfer);
-  FPendingSPAddress := 0; FPendingRAMAddress := 0;
-  FVIPhase := 0; FAIDACPhase := 0; FAIAnchorTick := 0; FRSPPhase := 0;
-  FLastLeft := 0; FLastRight := 0;
+  FSPTransfer := Default(TN64SPTransfer);
+  FSPQueued := Default(TN64SPTransfer);
+  FPITransfer := Default(TN64PITransfer);
+  FSITransfer := Default(TN64SITransfer);
+  FPendingSPAddress := 0;
+  FPendingRAMAddress := 0;
+  FVIPhase := 0;
+  FAIDACPhase := 0;
+  FAIAnchorTick := 0;
+  FRSPPhase := 0;
+  FLastLeft := 0;
+  FLastRight := 0;
   FCurrentFrame := Default(TEmulatorFrame);
   for var I := 0 to High(FSP) do
     FSP[I] := 0;
@@ -231,7 +240,8 @@ begin
   for var I := $40 to $FFF do
     FSP[I] := FData[I];
   FReg[0, 4] := 1;
-  FReg[5, 2] := $7F; FReg[5, 3] := $7F;
+  FReg[5, 2] := $7F;
+  FReg[5, 3] := $7F;
   FReg[2, 1] := $02020102;
   FReg[1, 3] := $80;
   FReg[3, 6] := 525;
@@ -265,10 +275,17 @@ begin
   FRDP.Reset;
   FVI.Reset;
   FReg[3, 7] := 3093;
-  if FramesPerSecond = 50 then begin FReg[3, 6] := 625; FReg[3, 7] := 3177 end;
-  FReg[5, 5] := FData[3]; FReg[5, 6] := FData[2];
-  FReg[5, 7] := FData[1] and 15; FReg[5, 8] := (FData[1] shr 4) and 3;
-  ScheduleVI; ScheduleOutput;
+  if FramesPerSecond = 50 then
+  begin
+    FReg[3, 6] := 625;
+    FReg[3, 7] := 3177
+  end;
+  FReg[5, 5] := FData[3];
+  FReg[5, 6] := FData[2];
+  FReg[5, 7] := FData[1] and 15;
+  FReg[5, 8] := (FData[1] shr 4) and 3;
+  ScheduleVI;
+  ScheduleOutput;
   // Post-PIF register seeds selected by the IPL3 word checksum used by Project64.
   var Sum: UInt64 := 0;
   for var I := $40 div 4 to $FFC div 4 do
@@ -572,30 +589,41 @@ begin
   begin
     var I := (Address - $04040000) div 4;
     case I of
-      0: FPendingSPAddress := Value and $1FFF;
-      1: FPendingRAMAddress := Value and $FFFFFF;
+      0:
+        FPendingSPAddress := Value and $1FFF;
+      1:
+        FPendingRAMAddress := Value and $FFFFFF;
       2, 3:
         SPDMA(I = 3, Value);
       4:
         begin
           var S := FReg[0, 4];
-          if (Value and 3) = 1 then S := S and not 1;
-          if (Value and 3) = 2 then S := S or 1;
+          if (Value and 3) = 1 then
+            S := S and not 1;
+          if (Value and 3) = 2 then
+            S := S or 1;
           if (Value and 4) <> 0 then
             S := S and not 2;
-          if (Value and $18) = 8 then SetInterrupts(FReg[2, 2] and not 1);
-          if (Value and $18) = 16 then SetInterrupts(FReg[2, 2] or 1);
+          if (Value and $18) = 8 then
+            SetInterrupts(FReg[2, 2] and not 1);
+          if (Value and $18) = 16 then
+            SetInterrupts(FReg[2, 2] or 1);
           for var J := 0 to 9 do
           begin
             var Flag := Cardinal(1) shl (J + 5);
             var Clear := Cardinal(1) shl (J * 2 + 5);
             if J < 2 then
               Flag := Cardinal(1) shl (J + 5);
-            if (Value and (Clear or (Clear shl 1))) = Clear then S := S and not Flag;
-            if (Value and (Clear or (Clear shl 1))) = (Clear shl 1) then S := S or Flag;
+            if (Value and (Clear or (Clear shl 1))) = Clear then
+              S := S and not Flag;
+            if (Value and (Clear or (Clear shl 1))) = (Clear shl 1) then
+              S := S or Flag;
           end;
           FReg[0, 4] := S;
-          if (S and 1) = 0 then ScheduleRSP else FTimeline.Cancel(TN64EventKind.RSPClock);
+          if (S and 1) = 0 then
+            ScheduleRSP
+          else
+            FTimeline.Cancel(TN64EventKind.RSPClock);
         end;
       7:
         FReg[0, 7] := 0;
@@ -698,15 +726,21 @@ begin
             SetInterrupts(FReg[2, 2] and not 4);
           2:
             begin
-              if (FReg[4, 2] and 1) = 0 then FAIAnchorTick := FTimeline.Now;
+              if (FReg[4, 2] and 1) = 0 then
+                FAIAnchorTick := FTimeline.Now;
               FReg[4, 2] := Value and 1;
-              if (Value and 1) = 0 then FTimeline.Cancel(TN64EventKind.AIConsume) else ScheduleAI;
+              if (Value and 1) = 0 then
+                FTimeline.Cancel(TN64EventKind.AIConsume)
+              else
+                ScheduleAI;
             end;
           4:
             begin
               FReg[4, 4] := Value and $3FFF;
-              FTimeline.Cancel(TN64EventKind.AIConsume); FAIDACPhase := 0;
-              FAIAnchorTick := FTimeline.Now; ScheduleAI;
+              FTimeline.Cancel(TN64EventKind.AIConsume);
+              FAIDACPhase := 0;
+              FAIAnchorTick := FTimeline.Now;
+              ScheduleAI;
             end;
         else
           FReg[4, I] := Value;
@@ -715,25 +749,37 @@ begin
         begin
           // Only PI_STATUS accepts writes while either DMA direction is busy.
           if (I <> 4) and FPITransfer.Active then
-          begin FReg[5, 4] := FReg[5, 4] or 4; Exit end;
+          begin
+            FReg[5, 4] := FReg[5, 4] or 4;
+            Exit
+          end;
           case I of
-          0: FReg[5, 0] := Value and $FFFFFE;
-          1: FReg[5, 1] := Value and $FFFFFFFE;
-          2, 3:
-            PIDMA(I = 2, Value);
-          4:
-            begin
-              if (Value and 2) <> 0 then
-              begin SetInterrupts(FReg[2, 2] and not $10); FReg[5, 4] := FReg[5, 4] and not 8 end;
-              if (Value and 1) <> 0 then
+            0:
+              FReg[5, 0] := Value and $FFFFFE;
+            1:
+              FReg[5, 1] := Value and $FFFFFFFE;
+            2, 3:
+              PIDMA(I = 2, Value);
+            4:
               begin
-                FPITransfer := Default(TN64PITransfer);
-                FTimeline.Cancel(TN64EventKind.PITransfer); FReg[5, 4] := FReg[5, 4] and not 5;
+                if (Value and 2) <> 0 then
+                begin
+                  SetInterrupts(FReg[2, 2] and not $10);
+                  FReg[5, 4] := FReg[5, 4] and not 8
+                end;
+                if (Value and 1) <> 0 then
+                begin
+                  FPITransfer := Default(TN64PITransfer);
+                  FTimeline.Cancel(TN64EventKind.PITransfer);
+                  FReg[5, 4] := FReg[5, 4] and not 5;
+                end;
               end;
-            end;
-          5, 6, 9, 10: FReg[5, I] := Value and $FF;
-          7, 11: FReg[5, I] := Value and 15;
-          8, 12: FReg[5, I] := Value and 3;
+            5, 6, 9, 10:
+              FReg[5, I] := Value and $FF;
+            7, 11:
+              FReg[5, I] := Value and 15;
+            8, 12:
+              FReg[5, I] := Value and 3;
           end;
         end;
       7:
@@ -756,60 +802,82 @@ end;
 
 procedure TN64Console.SetInterrupts(Value: Cardinal);
 begin
-  if FReg[2, 2] = Value then Exit;
+  if FReg[2, 2] = Value then
+    Exit;
   FReg[2, 2] := Value;
-  if TraceEnabled then Trace(TN64TraceKind.InterruptChange, FCPU.PC, $04300008, Value);
+  if TraceEnabled then
+    Trace(TN64TraceKind.InterruptChange, FCPU.PC, $04300008, Value);
 end;
 
 procedure TN64Console.SPDMA(Writing: Boolean; Value: Cardinal);
 begin
-  if FSPQueued.Active then Exit;
+  if FSPQueued.Active then
+    Exit;
   var Transfer := Default(TN64SPTransfer);
-  Transfer.Active := True; Transfer.Writing := Writing;
+  Transfer.Active := True;
+  Transfer.Writing := Writing;
   Transfer.Size := ((Value and $FFF) or 7) + 1;
   Transfer.Blocks := ((Value shr 12) and $FF) + 1;
-  Transfer.Skip := (Value shr 20) and $FF8; Transfer.Control := Value;
-  Transfer.Local := FPendingSPAddress and $1FF8;
+  Transfer.Skip := (Value shr 20) and $FF8;
+  Transfer.Control := Value;
+  Transfer.local := FPendingSPAddress and $1FF8;
   Transfer.RAM := FPendingRAMAddress and $FFFFF8;
   if FSPTransfer.Active then
-  begin FSPQueued := Transfer; FReg[0, 5] := 1; FReg[0, 4] := FReg[0, 4] or 8 end
+  begin
+    FSPQueued := Transfer;
+    FReg[0, 5] := 1;
+    FReg[0, 4] := FReg[0, 4] or 8
+  end
   else
   begin
-    FSPTransfer := Transfer; FReg[0, 6] := 1;
+    FSPTransfer := Transfer;
+    FReg[0, 6] := 1;
     FReg[0, 4] := FReg[0, 4] or 4;
-    FReg[0, 0] := Transfer.Local; FReg[0, 1] := Transfer.RAM;
+    FReg[0, 0] := Transfer.local;
+    FReg[0, 1] := Transfer.RAM;
     FReg[0, 2 + Ord(Writing)] := Value;
     // SGI RSP programmer's guide p96: 6-12 RCP clocks setup, then 8 B/clock.
     // Use the documented minimum setup in this functional arbitration model.
     FTimeline.Schedule(TN64EventKind.SPTransfer, 11);
   end;
-  if TraceEnabled then Trace(TN64TraceKind.DMAStart, FCPU.PC, $04040008 + Ord(Writing) * 4, Value);
+  if TraceEnabled then
+    Trace(TN64TraceKind.DMAStart, FCPU.PC, $04040008 + Ord(Writing) * 4, Value);
 end;
 
 procedure TN64Console.PIDMA(Writing: Boolean; Value: Cardinal);
 begin
-  if FPITransfer.Active then begin FReg[5, 4] := FReg[5, 4] or 4; Exit end;
+  if FPITransfer.Active then
+  begin
+    FReg[5, 4] := FReg[5, 4] or 4;
+    Exit
+  end;
   FPITransfer := Default(TN64PITransfer);
-  FPITransfer.Active := True; FPITransfer.Writing := Writing;
+  FPITransfer.Active := True;
+  FPITransfer.Writing := Writing;
   FPITransfer.RAM := FReg[5, 0] and $FFFFFE;
   FPITransfer.Cart := FReg[5, 1] and $FFFFFFFE;
   FPITransfer.Length := (Value and $FFFFFF) + 1;
   FPITransfer.Flash := HasFlash and (FPITransfer.Cart >= $08000000) and (FPITransfer.Cart < $08020000);
-  FPITransfer.FlashMode := FFlashMode; FPITransfer.FlashStatus := FFlashStatus;
+  FPITransfer.FlashMode := FFlashMode;
+  FPITransfer.FlashStatus := FFlashStatus;
   var Domain := 5;
-  if (FPITransfer.Cart >= $05000000) and (FPITransfer.Cart < $10000000) then Domain := 9;
+  if (FPITransfer.Cart >= $05000000) and (FPITransfer.Cart < $10000000) then
+    Domain := 9;
   FPITransfer.Latency := FReg[5, Domain] and $FF;
   FPITransfer.PulseWidth := FReg[5, Domain + 1] and $FF;
   FPITransfer.PageSize := FReg[5, Domain + 2] and 15;
   FPITransfer.ReleaseDuration := FReg[5, Domain + 3] and 3;
   FPITransfer.ClockPhase := 1; // ceil of cumulative RCP clocks * 3/2, without per-beat drift.
-  FPITransfer.FirstBlock := True; FPITransfer.MaxBlockSize := 128;
+  FPITransfer.FirstBlock := True;
+  FPITransfer.MaxBlockSize := 128;
   FPITransfer.BlockRAM := FPITransfer.RAM;
-  if not Writing and not FPITransfer.Flash then PreparePIBlock;
+  if not Writing and not FPITransfer.Flash then
+    PreparePIBlock;
   FReg[5, 2 + Ord(not Writing)] := Value and $FFFFFF;
   FReg[5, 4] := FReg[5, 4] or 1;
   FTimeline.Schedule(TN64EventKind.PITransfer, PIBeatCycles);
-  if TraceEnabled then Trace(TN64TraceKind.DMAStart, FCPU.PC, $04600008 + Ord(not Writing) * 4, Value);
+  if TraceEnabled then
+    Trace(TN64TraceKind.DMAStart, FCPU.PC, $04600008 + Ord(not Writing) * 4, Value);
 end;
 
 function TN64Console.HasFlash: Boolean;
@@ -1181,20 +1249,27 @@ end;
 
 procedure TN64Console.SIDMA(Writing: Boolean);
 begin
-  if FSITransfer.Active then begin FReg[7, 6] := FReg[7, 6] or 8; Exit end;
+  if FSITransfer.Active then
+  begin
+    FReg[7, 6] := FReg[7, 6] or 8;
+    Exit
+  end;
   FSITransfer := Default(TN64SITransfer);
-  FSITransfer.Active := True; FSITransfer.Writing := Writing;
+  FSITransfer.Active := True;
+  FSITransfer.Writing := Writing;
   FSITransfer.RAM := FReg[7, 0] and $FFFFF8;
   if not Writing then
   begin
     ReadPIFControllers;
-    for var I := 0 to 63 do FSITransfer.Data[I] := FPIF[I];
+    for var I := 0 to 63 do
+      FSITransfer.Data[I] := FPIF[I];
   end;
   FReg[7, 6] := FReg[7, 6] or 1;
   // Sixteen four-byte beats: timing model is explicit and deterministic.
   // PIF/joybus command execution is a separate action after the write DMA.
   FTimeline.Schedule(TN64EventKind.SITransfer, 256);
-  if TraceEnabled then Trace(TN64TraceKind.DMAStart, FCPU.PC, $04800000, FSITransfer.RAM);
+  if TraceEnabled then
+    Trace(TN64TraceKind.DMAStart, FCPU.PC, $04800000, FSITransfer.RAM);
 end;
 
 function TN64Console.InterruptPending: Boolean;
@@ -1204,24 +1279,33 @@ end;
 
 function TN64Console.ReadHidden(Address: Cardinal): Byte;
 begin
-  if Address < Cardinal(Length(FRAM)) then Result := FHiddenRAM[Address shr 1] and 3 else Result := 0;
+  if Address < Cardinal(Length(FRAM)) then
+    Result := FHiddenRAM[Address shr 1] and 3
+  else
+    Result := 0;
 end;
 
 procedure TN64Console.WriteHidden(Address: Cardinal; Value: Byte);
 begin
-  if Address < Cardinal(Length(FRAM)) then FHiddenRAM[Address shr 1] := Value and 3;
+  if Address < Cardinal(Length(FRAM)) then
+    FHiddenRAM[Address shr 1] := Value and 3;
 end;
 
 function TN64Console.GuestTick: UInt64;
 begin
-  if FTimeline = nil then Result := 0 else Result := FTimeline.Now;
+  if FTimeline = nil then
+    Result := 0
+  else
+    Result := FTimeline.Now;
 end;
 
 function TN64Console.VideoClock: Cardinal;
 begin
   Result := 48681812;
-  if FData[$3E] = $42 then Result := 48628316
-  else if FramesPerSecond = 50 then Result := 49656530;
+  if FData[$3E] = $42 then
+    Result := 48628316
+  else if FramesPerSecond = 50 then
+    Result := 49656530;
 end;
 
 procedure TN64Console.ScheduleVI;
@@ -1231,7 +1315,8 @@ begin
   var Denominator := UInt64(VideoClock) * 2;
   var Delay := Numerator div Denominator;
   FVIPhase := Numerator mod Denominator;
-  if Delay = 0 then Delay := 1;
+  if Delay = 0 then
+    Delay := 1;
   FTimeline.Schedule(TN64EventKind.VIHalfLine, Delay);
 end;
 
@@ -1244,24 +1329,35 @@ begin
 end;
 
 procedure TN64Console.ScheduleAI;
+
   function AddMod(A, B, Modulus: UInt64): UInt64;
   begin
-    if A >= Modulus - B then Result := A - (Modulus - B) else Result := A + B;
+    if A >= Modulus - B then
+      Result := A - (Modulus - B)
+    else
+      Result := A + B;
   end;
+
   function MultiplyMod(A: UInt64; B: Cardinal; Modulus: UInt64): UInt64;
   begin
-    Result := 0; A := A mod Modulus;
+    Result := 0;
+    A := A mod Modulus;
     while B <> 0 do
     begin
-      if (B and 1) <> 0 then Result := AddMod(Result, A, Modulus);
-      A := AddMod(A, A, Modulus); B := B shr 1;
+      if (B and 1) <> 0 then
+        Result := AddMod(Result, A, Modulus);
+      A := AddMod(A, A, Modulus);
+      B := B shr 1;
     end;
   end;
+
 begin
-  if ((FReg[4, 2] and 1) = 0) or FTimeline.Pending(TN64EventKind.AIConsume) then Exit;
+  if ((FReg[4, 2] and 1) = 0) or FTimeline.Pending(TN64EventKind.AIConsume) then
+    Exit;
   // An empty, silent FIFO has no observable completion event. Preserve the DAC
   // oscillator through its anchor instead of scheduling millions of empty ticks.
-  if (FAILength = 0) and (FLastLeft = 0) and (FLastRight = 0) then Exit;
+  if (FAILength = 0) and (FLastLeft = 0) and (FLastRight = 0) then
+    Exit;
   var Period := UInt64(93750000) * ((FReg[4, 4] and $3FFF) + 1);
   var Phase := MultiplyMod(FTimeline.Now - FAIAnchorTick, VideoClock, Period);
   var Numerator := Period - Phase;
@@ -1271,18 +1367,25 @@ end;
 
 procedure TN64Console.ScheduleRSP;
 begin
-  if ((FReg[0, 4] and 1) <> 0) or FTimeline.Pending(TN64EventKind.RSPClock) then Exit;
+  if ((FReg[0, 4] and 1) <> 0) or FTimeline.Pending(TN64EventKind.RSPClock) then
+    Exit;
   FRSPPhase := FRSPPhase xor 1;
   // 62.5 MHz RCP versus 93.75 MHz CPU: alternate two and one CPU clocks.
   var Delay: Cardinal := 1;
-  if FTimeline.Now mod 3 = 0 then Delay := 2;
+  if FTimeline.Now mod 3 = 0 then
+    Delay := 2;
   FTimeline.Schedule(TN64EventKind.RSPClock, Delay);
 end;
 
 procedure TN64Console.ConsumeAI;
 begin
-  if (FReg[4, 2] and 1) = 0 then Exit;
-  if FAILength = 0 then begin FLastLeft := 0; FLastRight := 0 end
+  if (FReg[4, 2] and 1) = 0 then
+    Exit;
+  if FAILength = 0 then
+  begin
+    FLastLeft := 0;
+    FLastRight := 0
+  end
   else
   begin
     var Address := (FAIAddress + FAIProgress) and $FFFFFF;
@@ -1292,9 +1395,12 @@ begin
     if FAIProgress = FAILength then
     begin
       SetInterrupts(FReg[2, 2] or 4);
-      FAIAddress := FAINextAddress; FAILength := FAINextLength;
-      FAINextLength := 0; FAIProgress := 0;
-      if TraceEnabled then Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04500004, FAILength);
+      FAIAddress := FAINextAddress;
+      FAILength := FAINextLength;
+      FAINextLength := 0;
+      FAIProgress := 0;
+      if TraceEnabled then
+        Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04500004, FAILength);
     end;
   end;
   ScheduleAI;
@@ -1302,38 +1408,53 @@ end;
 
 procedure TN64Console.SPTransferBeat;
 begin
-  if not FSPTransfer.Active then Exit;
+  if not FSPTransfer.Active then
+    Exit;
   for var I := 0 to 7 do
   begin
-    var Local := (FSPTransfer.Local and $1000) or ((FSPTransfer.Local + FSPTransfer.Position + Cardinal(I)) and $FFF);
+    var local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Position + Cardinal(I)) and $FFF);
     var RAM := (FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF;
-    if FSPTransfer.Writing then Write8(RAM, FSP[Local]) else FSP[Local] := Read8(RAM);
+    if FSPTransfer.Writing then
+      Write8(RAM, FSP[local])
+    else
+      FSP[local] := Read8(RAM);
   end;
   Inc(FSPTransfer.Position, 8);
   if FSPTransfer.Position = FSPTransfer.Size then
   begin
-    FSPTransfer.Local := (FSPTransfer.Local and $1000) or ((FSPTransfer.Local + FSPTransfer.Size) and $FFF);
+    FSPTransfer.local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Size) and $FFF);
     FSPTransfer.RAM := (FSPTransfer.RAM + FSPTransfer.Size) and $FFFFFF;
-    Dec(FSPTransfer.Blocks); FSPTransfer.Position := 0;
-    if FSPTransfer.Blocks > 0 then FSPTransfer.RAM := (FSPTransfer.RAM + FSPTransfer.Skip) and $FFFFFF;
+    Dec(FSPTransfer.Blocks);
+    FSPTransfer.Position := 0;
+    if FSPTransfer.Blocks > 0 then
+      FSPTransfer.RAM := (FSPTransfer.RAM + FSPTransfer.Skip) and $FFFFFF;
   end;
-  FReg[0, 0] := FSPTransfer.Local;
+  FReg[0, 0] := FSPTransfer.local;
   FReg[0, 1] := FSPTransfer.RAM;
   if FSPTransfer.Blocks = 0 then
   begin
     FReg[0, 2] := (FSPTransfer.Control and $FF800000) or $FF8;
     FReg[0, 3] := FReg[0, 2];
-    if TraceEnabled then Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04040000, FSPTransfer.RAM);
-    FSPTransfer := FSPQueued; FSPQueued := Default(TN64SPTransfer);
-    FReg[0, 5] := 0; FReg[0, 4] := FReg[0, 4] and not 8;
+    if TraceEnabled then
+      Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04040000, FSPTransfer.RAM);
+    FSPTransfer := FSPQueued;
+    FSPQueued := Default(TN64SPTransfer);
+    FReg[0, 5] := 0;
+    FReg[0, 4] := FReg[0, 4] and not 8;
     if not FSPTransfer.Active then
-    begin FReg[0, 6] := 0; FReg[0, 4] := FReg[0, 4] and not 4; Exit end;
-    FReg[0, 0] := FSPTransfer.Local; FReg[0, 1] := FSPTransfer.RAM;
+    begin
+      FReg[0, 6] := 0;
+      FReg[0, 4] := FReg[0, 4] and not 4;
+      Exit
+    end;
+    FReg[0, 0] := FSPTransfer.local;
+    FReg[0, 1] := FSPTransfer.RAM;
     FReg[0, 2 + Ord(FSPTransfer.Writing)] := FSPTransfer.Control;
   end;
   // Indexed eight-byte DMA beats; bus arbitration remains a functional model.
   var Delay: Cardinal := 1;
-  if FTimeline.Now mod 3 = 0 then Delay := 2;
+  if FTimeline.Now mod 3 = 0 then
+    Delay := 2;
   FTimeline.Schedule(TN64EventKind.SPTransfer, Delay);
 end;
 
@@ -1347,17 +1468,21 @@ begin
   FPITransfer.BlockLength := Min(FPITransfer.Length - FPITransfer.Position,
     Min(FPITransfer.MaxBlockSize - Misalignment, RowRemaining));
   var Written := Integer(FPITransfer.BlockLength) - Integer(Misalignment);
-  if Written < 0 then Written := 0;
+  if Written < 0 then
+    Written := 0;
   if not (FPITransfer.FirstBlock and (FPITransfer.BlockLength < 127 - Misalignment)) then
     Written := (Written + 1) and not 1;
   FPITransfer.BlockWriteSize := Cardinal(Written);
-  FPITransfer.BlockRead := 0; FPITransfer.BlockWritten := 0; FPITransfer.Stage := 0;
+  FPITransfer.BlockRead := 0;
+  FPITransfer.BlockWritten := 0;
+  FPITransfer.Stage := 0;
 end;
 
 function TN64Console.PIBeatCycles: Cardinal;
 begin
   var RCPCycles: Cardinal;
-  if FPITransfer.Stage = 1 then RCPCycles := 1 // peak RDRAM write burst: 8 bytes/RCP clock
+  if FPITransfer.Stage = 1 then
+    RCPCycles := 1 // peak RDRAM write burst: 8 bytes/RCP clock
   else
   begin
     var Bytes := Min(Cardinal(8), FPITransfer.Length - FPITransfer.Position);
@@ -1373,17 +1498,21 @@ begin
     end;
   end;
   var Numerator := RCPCycles * 3 + FPITransfer.ClockPhase;
-  Result := Numerator div 2; FPITransfer.ClockPhase := Numerator and 1;
-  if Result = 0 then Result := 1;
+  Result := Numerator div 2;
+  FPITransfer.ClockPhase := Numerator and 1;
+  if Result = 0 then
+    Result := 1;
 end;
 
 procedure TN64Console.CompletePI;
 begin
   if FPITransfer.Flash and FPITransfer.Writing and (FPITransfer.FlashMode = 2) then
     FFlashReady := FPITransfer.Length >= 128;
-  FPITransfer.Active := False; FReg[5, 4] := (FReg[5, 4] and not 1) or 8;
+  FPITransfer.Active := False;
+  FReg[5, 4] := (FReg[5, 4] and not 1) or 8;
   SetInterrupts(FReg[2, 2] or $10);
-  if TraceEnabled then Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04600000, FPITransfer.Length);
+  if TraceEnabled then
+    Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04600000, FPITransfer.Length);
 end;
 
 procedure TN64Console.FinishPIBlock;
@@ -1392,15 +1521,25 @@ begin
   var RowRemaining := $800 - (FPITransfer.BlockRAM and $7FF);
   FPITransfer.BlockRAM := (FPITransfer.BlockRAM + FPITransfer.BlockWriteSize + 7) and $FFFFF8;
   FReg[5, 0] := FPITransfer.BlockRAM;
-  if FPITransfer.BlockLength <= 8 then FReg[5, 3] := 127 - Misalignment else FReg[5, 3] := 127;
+  if FPITransfer.BlockLength <= 8 then
+    FReg[5, 3] := 127 - Misalignment
+  else
+    FReg[5, 3] := 127;
   FPITransfer.FirstBlock := False;
-  if RowRemaining < 8 then FPITransfer.MaxBlockSize := 128 - Misalignment else FPITransfer.MaxBlockSize := 128;
-  if FPITransfer.Position >= FPITransfer.Length then CompletePI else PreparePIBlock;
+  if RowRemaining < 8 then
+    FPITransfer.MaxBlockSize := 128 - Misalignment
+  else
+    FPITransfer.MaxBlockSize := 128;
+  if FPITransfer.Position >= FPITransfer.Length then
+    CompletePI
+  else
+    PreparePIBlock;
 end;
 
 procedure TN64Console.PITransferBeat;
 begin
-  if not FPITransfer.Active then Exit;
+  if not FPITransfer.Active then
+    Exit;
   if not FPITransfer.Writing and not FPITransfer.Flash then
   begin
     if FPITransfer.Stage = 0 then
@@ -1408,10 +1547,14 @@ begin
       var Bytes := Min(Cardinal(8), ((FPITransfer.BlockLength + 1) and not Cardinal(1)) - FPITransfer.BlockRead);
       for var I := 0 to Integer(Bytes) - 1 do
         FPITransfer.Buffer[FPITransfer.BlockRead + Cardinal(I)] := Read8(Add32(FPITransfer.Cart, FPITransfer.Position + Cardinal(I)));
-      Inc(FPITransfer.Position, Bytes); Inc(FPITransfer.BlockRead, Bytes);
+      Inc(FPITransfer.Position, Bytes);
+      Inc(FPITransfer.BlockRead, Bytes);
       FReg[5, 1] := Add32(FPITransfer.Cart, FPITransfer.Position);
       if FPITransfer.BlockRead = ((FPITransfer.BlockLength + 1) and not Cardinal(1)) then
-        if FPITransfer.BlockWriteSize = 0 then FinishPIBlock else FPITransfer.Stage := 1;
+        if FPITransfer.BlockWriteSize = 0 then
+          FinishPIBlock
+        else
+          FPITransfer.Stage := 1;
     end
     else
     begin
@@ -1421,9 +1564,11 @@ begin
           FPITransfer.Buffer[FPITransfer.BlockWritten + Cardinal(I)]);
       Inc(FPITransfer.BlockWritten, Bytes);
       FReg[5, 0] := (FPITransfer.BlockRAM + FPITransfer.BlockWritten) and $FFFFFF;
-      if FPITransfer.BlockWritten = FPITransfer.BlockWriteSize then FinishPIBlock;
+      if FPITransfer.BlockWritten = FPITransfer.BlockWriteSize then
+        FinishPIBlock;
     end;
-    if FPITransfer.Active then FTimeline.Schedule(TN64EventKind.PITransfer, PIBeatCycles);
+    if FPITransfer.Active then
+      FTimeline.Schedule(TN64EventKind.PITransfer, PIBeatCycles);
     Exit;
   end;
   // Cartridge writes and Flash's status/data protocol retain their own path.
@@ -1437,49 +1582,67 @@ begin
     begin
       if FPITransfer.Writing then
       begin
-        if (FPITransfer.FlashMode = 2) and (Offset < 128) then FFlashBuffer[Offset] := Read8(RAM);
+        if (FPITransfer.FlashMode = 2) and (Offset < 128) then
+          FFlashBuffer[Offset] := Read8(RAM);
       end
       else
       begin
         var Value: Byte := 0;
-        if FPITransfer.FlashMode = 4 then Value := Byte((FPITransfer.FlashStatus shr ((7 - (Offset and 7)) * 8)) and $FF)
+        if FPITransfer.FlashMode = 4 then
+          Value := Byte((FPITransfer.FlashStatus shr ((7 - (Offset and 7)) * 8)) and $FF)
         else if FPITransfer.FlashMode = 3 then
         begin
           var Address := UInt64(FPITransfer.Cart - $08000000) * 2 + Offset;
-          if Address < Cardinal(Length(FFlashData)) then Value := FFlashData[Address] else Value := $FF;
+          if Address < Cardinal(Length(FFlashData)) then
+            Value := FFlashData[Address]
+          else
+            Value := $FF;
         end;
         Write8(RAM, Value);
       end;
     end
-    else Write8(Cart, Read8(RAM));
+    else
+      Write8(Cart, Read8(RAM));
   end;
   Inc(FPITransfer.Position, Bytes);
   FReg[5, 0] := (FPITransfer.RAM + FPITransfer.Position) and $FFFFFF;
   FReg[5, 1] := Add32(FPITransfer.Cart, FPITransfer.Position);
-  if FPITransfer.Position = FPITransfer.Length then CompletePI
-  else FTimeline.Schedule(TN64EventKind.PITransfer, PIBeatCycles);
+  if FPITransfer.Position = FPITransfer.Length then
+    CompletePI
+  else
+    FTimeline.Schedule(TN64EventKind.PITransfer, PIBeatCycles);
 end;
 
 procedure TN64Console.SITransferBeat;
 begin
-  if not FSITransfer.Active then Exit;
+  if not FSITransfer.Active then
+    Exit;
   for var I := 0 to 3 do
   begin
     var Offset := FSITransfer.Position + Cardinal(I);
     var RAM := (FSITransfer.RAM + Offset) and $FFFFFF;
-    if FSITransfer.Writing then FSITransfer.Data[Offset] := Read8(RAM) else Write8(RAM, FSITransfer.Data[Offset]);
+    if FSITransfer.Writing then
+      FSITransfer.Data[Offset] := Read8(RAM)
+    else
+      Write8(RAM, FSITransfer.Data[Offset]);
   end;
   Inc(FSITransfer.Position, 4);
   if FSITransfer.Position = 64 then
   begin
     if FSITransfer.Writing then
-    begin for var I := 0 to 63 do FPIF[I] := FSITransfer.Data[I]; PIFCommand end;
+    begin
+      for var I := 0 to 63 do
+        FPIF[I] := FSITransfer.Data[I];
+      PIFCommand
+    end;
     FSITransfer.Active := False;
     FReg[7, 6] := (FReg[7, 6] and not 1) or $1000;
     SetInterrupts(FReg[2, 2] or 2);
-    if TraceEnabled then Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04800000, FSITransfer.RAM);
+    if TraceEnabled then
+      Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04800000, FSITransfer.RAM);
   end
-  else FTimeline.Schedule(TN64EventKind.SITransfer, 256);
+  else
+    FTimeline.Schedule(TN64EventKind.SITransfer, 256);
 end;
 
 procedure TN64Console.RenderFrame(ScanoutField: Integer);
@@ -1487,13 +1650,16 @@ begin
   var Registers: array[0..13] of Cardinal;
   var Pixels: TArray<Cardinal>;
   var Colours: TArray<TAlphaColor>;
-  for var I := 0 to 13 do Registers[I] := FReg[3, I];
+  for var I := 0 to 13 do
+    Registers[I] := FReg[3, I];
   Registers[4] := Cardinal((FLine and not 1) or ScanoutField);
   FVI.Render(Registers, FCurrentFrame.Width, FCurrentFrame.Height, Pixels);
   SetLength(Colours, Length(Pixels));
-  for var I := 0 to High(Pixels) do Colours[I] := TAlphaColor(Pixels[I]);
+  for var I := 0 to High(Pixels) do
+    Colours[I] := TAlphaColor(Pixels[I]);
   FCurrentFrame.Pixels := Colours;
-  FCurrentFrame.FrameNumber := FFrame; FCurrentFrame.FramesPerSecond := FramesPerSecond;
+  FCurrentFrame.FrameNumber := FFrame;
+  FCurrentFrame.FramesPerSecond := FramesPerSecond;
 end;
 
 procedure TN64Console.HandleEvent(Kind: TN64EventKind);
@@ -1509,38 +1675,57 @@ begin
           // the guest register advances immediately into the next field.
           var CompletedPhysicalField := FField;
           FLine := 0;
-          if (FReg[3, 0] and $40) <> 0 then FField := FField xor 1 else FField := 0;
+          if (FReg[3, 0] and $40) <> 0 then
+            FField := FField xor 1
+          else
+            FField := 0;
           FFrame := Add64(FFrame, 1);
-          if FVideoOutputEnabled then RenderFrame(CompletedPhysicalField);
+          if FVideoOutputEnabled then
+            RenderFrame(CompletedPhysicalField);
         end;
-        if FLine = Integer(FReg[3, 3] and $3FF) then SetInterrupts(FReg[2, 2] or 8);
+        if FLine = Integer(FReg[3, 3] and $3FF) then
+          SetInterrupts(FReg[2, 2] or 8);
         ScheduleVI;
       end;
-    TN64EventKind.OutputSample: begin AudioTick; ScheduleOutput end;
-    TN64EventKind.AIConsume: ConsumeAI;
-    TN64EventKind.SPTransfer: SPTransferBeat;
-    TN64EventKind.PITransfer: PITransferBeat;
-    TN64EventKind.SITransfer: SITransferBeat;
+    TN64EventKind.OutputSample:
+      begin
+        AudioTick;
+        ScheduleOutput
+      end;
+    TN64EventKind.AIConsume:
+      ConsumeAI;
+    TN64EventKind.SPTransfer:
+      SPTransferBeat;
+    TN64EventKind.PITransfer:
+      PITransferBeat;
+    TN64EventKind.SITransfer:
+      SITransferBeat;
     TN64EventKind.RSPClock:
       begin
         // IMEM transfers own the instruction bank until their beat completes.
-        if not (FSPTransfer.Active and not FSPTransfer.Writing and ((FSPTransfer.Local and $1000) <> 0)) then RunRSP;
+        if not (FSPTransfer.Active and not FSPTransfer.Writing and ((FSPTransfer.local and $1000) <> 0)) then
+          RunRSP;
         ScheduleRSP;
       end;
     TN64EventKind.DPInterrupt:
-      begin SetInterrupts(FReg[2, 2] or $20); FReg[1, 3] := FReg[1, 3] and not $20 end;
+      begin
+        SetInterrupts(FReg[2, 2] or $20);
+        FReg[1, 3] := FReg[1, 3] and not $20
+      end;
   end;
 end;
 
 procedure TN64Console.AdvanceTime(Cycles: Cardinal);
 begin
-  if UInt64(Cycles) > High(UInt64) - FTimeline.Now then raise ERangeError.Create('N64 guest clock overflow');
+  if UInt64(Cycles) > High(UInt64) - FTimeline.Now then
+    raise ERangeError.Create('N64 guest clock overflow');
   var Target := FTimeline.Now + Cycles;
   while (FTimeline.NextDue <> High(UInt64)) and (FTimeline.NextDue <= Target) do
   begin
     FTimeline.AdvanceTo(FTimeline.NextDue);
     var Event: TN64Event;
-    while FTimeline.Pop(Event) do HandleEvent(Event.Kind);
+    while FTimeline.Pop(Event) do
+      HandleEvent(Event.Kind);
   end;
   FTimeline.AdvanceTo(Target);
 end;
@@ -1550,12 +1735,17 @@ begin
   // Guest DAC consumption has its own clock; this is only the 48 kHz sink.
   var N := Length(FSample);
   if N < 16384 then
-  begin SetLength(FSample, N + 2); FSample[N] := FLastLeft; FSample[N + 1] := FLastRight end;
+  begin
+    SetLength(FSample, N + 2);
+    FSample[N] := FLastLeft;
+    FSample[N + 1] := FLastRight
+  end;
 end;
 
 procedure TN64Console.RunInstructions(Count: Integer);
 begin
-  if Count < 0 then raise EArgumentOutOfRangeException.Create('Negative N64 instruction budget');
+  if Count < 0 then
+    raise EArgumentOutOfRangeException.Create('Negative N64 instruction budget');
   var Remaining := Count;
   while Remaining > 0 do
   begin
@@ -1565,8 +1755,13 @@ begin
     // SkipIdle validates the branch/NOP pair again after every device event.
     var UntilEvent := FTimeline.NextDue - FTimeline.Now;
     var Limit := Integer(Min(UInt64(Remaining), Min(UntilEvent div FCPU.IdleInstructionClocks, UInt64(High(Integer)))));
-    if Limit > 0 then Executed := FCPU.SkipIdle(Limit);
-    if Executed = 0 then begin FCPU.Step; Executed := 1 end;
+    if Limit > 0 then
+      Executed := FCPU.SkipIdle(Limit);
+    if Executed = 0 then
+    begin
+      FCPU.Step;
+      Executed := 1
+    end;
     AdvanceTime(FCPU.CyclesConsumed);
     Dec(Remaining, Executed);
   end;
@@ -1574,9 +1769,11 @@ end;
 
 procedure TN64Console.RunCycles(Cycles: Cardinal);
 begin
-  if UInt64(Cycles) > High(UInt64) - FTimeline.Now then raise ERangeError.Create('N64 cycle budget overflow');
+  if UInt64(Cycles) > High(UInt64) - FTimeline.Now then
+    raise ERangeError.Create('N64 cycle budget overflow');
   var Finish := FTimeline.Now + Cycles;
-  while FTimeline.Now < Finish do RunInstructions(1);
+  while FTimeline.Now < Finish do
+    RunInstructions(1);
 end;
 
 procedure TN64Console.RunFrame;
@@ -1596,7 +1793,8 @@ end;
 
 function TN64Console.GetFrame: TEmulatorFrame;
 begin
-  if Length(FCurrentFrame.Pixels) = 0 then RenderFrame(FField);
+  if Length(FCurrentFrame.Pixels) = 0 then
+    RenderFrame(FField);
   Result := FCurrentFrame;
 end;
 
@@ -1657,16 +1855,23 @@ begin
   FCPU.SerializeState(State);
   FRSP.SerializeState(State);
   FRDP.SerializeState(State);
-  FVI.SerializeState(State); FTimeline.SerializeState(State);
+  FVI.SerializeState(State);
+  FTimeline.SerializeState(State);
   State.Field(FHiddenRAM[0], Length(FHiddenRAM));
-  State.Field(FSPTransfer, SizeOf(FSPTransfer)); State.Field(FSPQueued, SizeOf(FSPQueued));
-  State.Field(FPITransfer, SizeOf(FPITransfer)); State.Field(FSITransfer, SizeOf(FSITransfer));
-  State.Field(FPendingSPAddress, SizeOf(FPendingSPAddress)); State.Field(FPendingRAMAddress, SizeOf(FPendingRAMAddress));
-  State.Field(FVIPhase, SizeOf(FVIPhase)); State.Field(FAIDACPhase, SizeOf(FAIDACPhase));
+  State.Field(FSPTransfer, SizeOf(FSPTransfer));
+  State.Field(FSPQueued, SizeOf(FSPQueued));
+  State.Field(FPITransfer, SizeOf(FPITransfer));
+  State.Field(FSITransfer, SizeOf(FSITransfer));
+  State.Field(FPendingSPAddress, SizeOf(FPendingSPAddress));
+  State.Field(FPendingRAMAddress, SizeOf(FPendingRAMAddress));
+  State.Field(FVIPhase, SizeOf(FVIPhase));
+  State.Field(FAIDACPhase, SizeOf(FAIDACPhase));
   State.Field(FAIAnchorTick, SizeOf(FAIAnchorTick));
   State.Field(FRSPPhase, SizeOf(FRSPPhase));
-  State.Field(FLastLeft, SizeOf(FLastLeft)); State.Field(FLastRight, SizeOf(FLastRight));
-  State.Field(FCurrentFrame.Width, SizeOf(FCurrentFrame.Width)); State.Field(FCurrentFrame.Height, SizeOf(FCurrentFrame.Height));
+  State.Field(FLastLeft, SizeOf(FLastLeft));
+  State.Field(FLastRight, SizeOf(FLastRight));
+  State.Field(FCurrentFrame.Width, SizeOf(FCurrentFrame.Width));
+  State.Field(FCurrentFrame.Height, SizeOf(FCurrentFrame.Height));
   State.Field(FCurrentFrame.FrameNumber, SizeOf(FCurrentFrame.FrameNumber));
   State.Field(FCurrentFrame.FramesPerSecond, SizeOf(FCurrentFrame.FramesPerSecond));
   // Length returns NativeInt; the v4 on-disk count is always signed 32-bit.
@@ -1681,7 +1886,8 @@ begin
       raise EReadError.Create('Invalid N64 cached VI raster');
     SetLength(FCurrentFrame.Pixels, PixelCount);
   end;
-  if PixelCount > 0 then State.Field(FCurrentFrame.Pixels[0], PixelCount * SizeOf(Cardinal));
+  if PixelCount > 0 then
+    State.Field(FCurrentFrame.Pixels[0], PixelCount * SizeOf(Cardinal));
   State.Field(FRAM[0], Length(FRAM));
   State.Field(FSP[0], Length(FSP));
   State.Field(FPIF[0], Length(FPIF));
@@ -1725,7 +1931,7 @@ begin
       raise EReadError.Create('Invalid N64 console snapshot');
     var SaveTypeValue: Cardinal := 0;
     Move(FSaveType, SaveTypeValue, SizeOf(FSaveType));
-    if (SaveTypeValue > Ord(High(TN64SaveType))) or (FFlashMode < 0) or (FFlashMode > 4) or
+    if (SaveTypeValue > Cardinal(Ord(High(TN64SaveType)))) or (FFlashMode < 0) or (FFlashMode > 4) or
       (FFlashOffset > $FFFF * 128) or ((FFlashOffset and 127) <> 0) then
       raise EReadError.Create('Invalid N64 cartridge snapshot');
     ValidateState;
@@ -1733,14 +1939,16 @@ begin
 end;
 
 procedure TN64Console.ValidateState;
+
   procedure ValidateSP(const T: TN64SPTransfer);
   begin
     var Flags: array[0..1] of Byte;
     Move(T, Flags, SizeOf(Flags));
     if (Flags[0] > 1) or (Flags[1] > 1) then
       raise EReadError.Create('Invalid N64 SP DMA Boolean');
-    if not T.Active then Exit;
-    if (T.Local > $1FF8) or ((T.Local and 7) <> 0) or
+    if not T.Active then
+      Exit;
+    if (T.local > $1FF8) or ((T.local and 7) <> 0) or
       (T.RAM > $FFFFF8) or ((T.RAM and 7) <> 0) or
       (T.Size < 8) or (T.Size > 4096) or ((T.Size and 7) <> 0) or
       (T.Blocks = 0) or (T.Blocks > 256) or (T.Position >= T.Size) or
@@ -1750,19 +1958,25 @@ procedure TN64Console.ValidateState;
       (T.Skip <> ((T.Control shr 20) and $FF8)) then
       raise EReadError.Create('Invalid N64 SP DMA snapshot');
   end;
+
   procedure ExpectEvent(Kind: TN64EventKind; Expected: Boolean);
   begin
     if FTimeline.Count(Kind) <> Ord(Expected) then
       raise EReadError.Create('Inconsistent N64 device event snapshot');
   end;
+
 begin
-  ValidateSP(FSPTransfer); ValidateSP(FSPQueued);
+  ValidateSP(FSPTransfer);
+  ValidateSP(FSPQueued);
   // Inspect stored bytes: the compiler may assume a Boolean is already 0/1
   // and eliminate an Ord(Boolean) range check on malformed snapshot data.
-  var PIFlags: array[0..3] of Byte; var SIFlags: array[0..1] of Byte;
+  var PIFlags: array[0..3] of Byte;
+  var SIFlags: array[0..1] of Byte;
   var FlashUsed, FlashReady: Byte;
-  Move(FPITransfer, PIFlags, SizeOf(PIFlags)); Move(FSITransfer, SIFlags, SizeOf(SIFlags));
-  Move(FFlashUsed, FlashUsed, 1); Move(FFlashReady, FlashReady, 1);
+  Move(FPITransfer, PIFlags, SizeOf(PIFlags));
+  Move(FSITransfer, SIFlags, SizeOf(SIFlags));
+  Move(FFlashUsed, FlashUsed, 1);
+  Move(FFlashReady, FlashReady, 1);
   if (PIFlags[0] > 1) or (PIFlags[1] > 1) or (PIFlags[2] > 1) or (PIFlags[3] > 1) or
     (SIFlags[0] > 1) or (SIFlags[1] > 1) or (FlashUsed > 1) or (FlashReady > 1) then
     raise EReadError.Create('Invalid N64 DMA/cartridge Boolean');
@@ -1807,7 +2021,8 @@ begin
       raise EReadError.Create('Invalid N64 PI block extent');
     var Misalignment := FPITransfer.BlockRAM and 7;
     var ExpectedWrite := Integer(FPITransfer.BlockLength) - Integer(Misalignment);
-    if ExpectedWrite < 0 then ExpectedWrite := 0;
+    if ExpectedWrite < 0 then
+      ExpectedWrite := 0;
     if not (FPITransfer.FirstBlock and (FPITransfer.BlockLength < 127 - Misalignment)) then
       ExpectedWrite := (ExpectedWrite + 1) and not 1;
     if (FPITransfer.BlockWriteSize <> Cardinal(ExpectedWrite)) or
@@ -1818,7 +2033,7 @@ begin
       ((FPITransfer.BlockRead = ((FPITransfer.BlockLength + 1) and not Cardinal(1))) or (FPITransfer.BlockWritten <> 0))) or
       ((FPITransfer.Stage = 1) and
       ((FPITransfer.BlockRead <> ((FPITransfer.BlockLength + 1) and not Cardinal(1))) or
-       (FPITransfer.BlockWritten >= FPITransfer.BlockWriteSize))) then
+      (FPITransfer.BlockWritten >= FPITransfer.BlockWriteSize))) then
       raise EReadError.Create('Inconsistent N64 PI buffer phase');
   end;
   if (((FReg[5, 4] and 1) <> 0) <> FPITransfer.Active) then
@@ -1848,7 +2063,8 @@ begin
     (FCurrentFrame.FramesPerSecond <> FramesPerSecond))) then
     raise EReadError.Create('Invalid N64 cached VI frame metadata');
   for var B in FHiddenRAM do
-    if B > 3 then raise EReadError.Create('Invalid N64 RDRAM hidden bits');
+    if B > 3 then
+      raise EReadError.Create('Invalid N64 RDRAM hidden bits');
 end;
 
 procedure TN64Console.ProcessRDP;
@@ -1863,8 +2079,10 @@ begin
   begin
     FReg[1, 3] := FReg[1, 3] or $20;
     var Delay := (FRDP.WorkClocks * 3 + 1) div 2;
-    if Delay = 0 then Delay := 1;
-    if not FTimeline.Pending(TN64EventKind.DPInterrupt) then FTimeline.Schedule(TN64EventKind.DPInterrupt, Delay);
+    if Delay = 0 then
+      Delay := 1;
+    if not FTimeline.Pending(TN64EventKind.DPInterrupt) then
+      FTimeline.Schedule(TN64EventKind.DPInterrupt, Delay);
   end;
   FReg[1, 2] := Consumed;
 end;
@@ -1882,7 +2100,8 @@ begin
   var BeforeIRQ := FReg[2, 2];
   var IRQ := BeforeIRQ;
   FRSP.ExecuteCycles(FSPPC, FReg[0, 4], IRQ, 1);
-  if IRQ <> BeforeIRQ then SetInterrupts(IRQ);
+  if IRQ <> BeforeIRQ then
+    SetInterrupts(IRQ);
 end;
 
 end.

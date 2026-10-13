@@ -40,21 +40,22 @@ begin
   inherited Create;
   if (Clock < 500000) or (Clock > 2000000) or (Length(Bases) < 1) or (Length(Bases) > 3) or (Length(Bases) <> Length(Models)) then
     raise EArgumentException.Create('Invalid C64 audio configuration');
+
   FClock := Clock;
   FChipCount := Length(Bases);
   FCPU := TCPU6510.Create;
   FCPU.Connect(ReadMemory, WriteMemory);
-  for var I := 0 to FChipCount - 1 do
+  for var i := 0 to FChipCount - 1 do
   begin
-    FBases[I] := Bases[I];
-    FChips[I] := TSID.Create(Models[I], Clock);
+    FBases[i] := Bases[i];
+    FChips[i] := TSID.Create(Models[i], Clock);
   end;
 end;
 
 destructor TC64AudioMachine.Destroy;
 begin
-  for var I := 0 to 2 do
-    FChips[I].Free;
+  for var i := 0 to 2 do
+    FChips[i].Free;
   FCPU.Free;
   inherited;
 end;
@@ -81,15 +82,16 @@ begin
   begin
     if (Address >= $EA31) and (Address <= $EA36) then
       Exit(Epilogue[Address - $EA31]);
+
     if Address = $EA81 then
       Exit($40);
   end;
 
   if IOEnabled and (Address >= $D000) and (Address <= $DFFF) then
   begin
-    for var I := FChipCount - 1 downto 1 do
-      if (Address >= FBases[I]) and (Integer(Address) < Integer(FBases[I]) + 32) then
-        Exit(FChips[I].ReadRegister(Address - FBases[I]));
+    for var i := FChipCount - 1 downto 1 do
+      if (Address >= FBases[i]) and (Integer(Address) < Integer(FBases[i]) + 32) then
+        Exit(FChips[i].ReadRegister(Address - FBases[i]));
 
     if (Address >= $D400) and (Address < $D800) then
       Exit(FChips[0].ReadRegister(Address and 31));
@@ -118,10 +120,10 @@ procedure TC64AudioMachine.WriteMemory(Address: Word; Value: Byte);
 begin
   if IOEnabled and (Address >= $D000) and (Address <= $DFFF) then
   begin
-    for var I := FChipCount - 1 downto 1 do
-      if (Address >= FBases[I]) and (Integer(Address) < Integer(FBases[I]) + 32) then
+    for var i := FChipCount - 1 downto 1 do
+      if (Address >= FBases[i]) and (Integer(Address) < Integer(FBases[i]) + 32) then
       begin
-        FChips[I].WriteRegister(Address - FBases[I], Value);
+        FChips[i].WriteRegister(Address - FBases[i], Value);
         Exit;
       end;
 
@@ -192,8 +194,8 @@ begin
   FCycle := 0;
   FPhase := 0;
   FUntilPlay := FPeriod;
-  for var I := 0 to FChipCount - 1 do
-    FChips[I].Reset;
+  for var i := 0 to FChipCount - 1 do
+    FChips[i].Reset;
   FCPU.Reset;
   while FCPU.CyclesRemaining > 0 do
     FCPU.Clock;
@@ -212,8 +214,9 @@ begin
     if FPlay = 0 then
       raise ENotSupportedException.Create('SID IRQ player has no interrupt vector');
   end;
-  for var I := 0 to FChipCount - 1 do
-    FChips[I].Sample;
+
+  for var i := 0 to FChipCount - 1 do
+    FChips[i].Sample;
   FUntilPlay := FPeriod;
   FInitializing := False;
 end;
@@ -233,8 +236,8 @@ begin
     if (FCPU.Pc = $FFFF) and (FCPU.CyclesRemaining = 0) then
       FActive := False;
   end;
-  for var I := 0 to FChipCount - 1 do
-    FChips[I].Clock;
+  for var i := 0 to FChipCount - 1 do
+    FChips[i].Clock;
   Inc(FCycle);
   if FClock = 985248 then
     FCycle := FCycle mod (312 * 63)
@@ -270,7 +273,7 @@ begin
   FPhase := FPhase + FClock / 44100.0;
   var Count := Trunc(FPhase);
   FPhase := FPhase - Count;
-  for var I := 1 to Count do
+  for var i := 1 to Count do
     Tick;
   var L, R: Integer;
   L := FChips[0].Sample;

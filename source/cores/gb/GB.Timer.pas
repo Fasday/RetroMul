@@ -160,6 +160,7 @@ begin
       Dec(StepCount);
       Continue;
     end;
+
     // Reload/IRQ and write races remain single-clock events. Between falling
     // edges the divider can advance directly without invoking Tick per clock.
     if FOverflow or FReloadCycle then
@@ -172,6 +173,7 @@ begin
     var Mask := 1 shl FFrequencyBits[FControl and 3];
     var Enabled := (FControl and 4) <> 0;
     var CurrentBit := Enabled and ((FDivider and Mask) <> 0);
+
     // SetDivider and loaded states may leave a different remembered input.
     if CurrentBit <> FPreviousBit then
     begin
@@ -204,6 +206,7 @@ end;
 procedure TGBTimer.Tick;
 begin
   FReloadCycle := False;
+
   // Advance a pending overflow before the divider can start a new one.
   if FOverflow then
   begin
@@ -235,8 +238,7 @@ begin
     FrameMask := $2000;
   var PreviousDivider := FDivider;
   FDivider := NewDivider;
-  if ((PreviousDivider and FrameMask) <> 0) and
-    ((NewDivider and FrameMask) = 0) and Assigned(OnFrameSequencer) then
+  if ((PreviousDivider and FrameMask) <> 0) and ((NewDivider and FrameMask) = 0) and Assigned(OnFrameSequencer) then
     OnFrameSequencer;
   var BitPosition := FFrequencyBits[FControl and 3];
   var TimerBit := ((FDivider and (1 shl BitPosition)) <> 0) and ((FControl and (1 shl 2)) <> 0);

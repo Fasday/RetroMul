@@ -7,17 +7,28 @@ uses
   SG1000.VDP;
 
 type
+  TSMSPixelRow = array[0..7] of Byte;
+
   TSMSVDP = class(TSGVDP)
   private
     FExtra: array[0..7] of Byte;
     FCRAM: array[0..31] of Byte;
     FCode, FLineCounter, FYScroll: Byte;
-    FLineIRQ, FOriginal: Boolean;
+    FLineIRQ, FOriginal, FGameGear: Boolean;
+    FGGCRAM: array[0..63] of Byte;
+    FCRAMLatch: Byte;
+    FPaletteColors: array[0..31] of TAlphaColor;
+    FTileRows: array[0..4095] of TSMSPixelRow;
+    FTileDirty: array[0..4095] of Boolean;
+    procedure UpdatePalette(Index: Integer);
+    procedure RebuildPalette;
+    function DecodeRow(Tile, Row: Integer; Sprite: Boolean): TSMSPixelRow;
     function Reg(Index: Integer): Byte;
-    function Palette(Index: Integer): TAlphaColor;
-    function TilePixel(Tile, Row, Column: Integer; Sprite: Boolean): Integer;
+    function Palette(Index: Integer): TAlphaColor; inline;
+  protected
+    function Color(Index: Integer): TAlphaColor; override;
   public
-    constructor Create(OriginalVDP: Boolean = False);
+    constructor Create(OriginalVDP: Boolean = False; GameGear: Boolean = False);
     procedure Reset; override;
     function ReadStatus: Byte; override;
     procedure WriteData(Value: Byte); override;
@@ -26,6 +37,7 @@ type
     procedure RenderLine(Y: Integer); override;
     procedure EndLine(Line, TotalLines: Integer); override;
     function ScreenHeight: Integer; override;
+    function ViewportTop: Integer;
     function VCounter(Line: Integer; PAL: Boolean): Byte;
     function HCounter(Cycles: Integer): Byte;
     procedure SerializeState(State: TStateArchive); override;
@@ -33,10 +45,11 @@ type
 
 implementation
 
-constructor TSMSVDP.Create(OriginalVDP: Boolean);
+constructor TSMSVDP.Create(OriginalVDP, GameGear: Boolean);
 begin
   inherited Create;
   FOriginal := OriginalVDP;
+  FGameGear := GameGear;
 end;
 
 procedure TSMSVDP.Reset;
@@ -45,9 +58,13 @@ begin
   FillChar(FExtra, SizeOf(FExtra), 0);
   FillChar(FCRAM, SizeOf(FCRAM), 0);
   FCode := 0;
+  FillChar(FGGCRAM, SizeOf(FGGCRAM), 0);
+  FCRAMLatch := 0;
   FLineCounter := 0;
   FYScroll := 0;
   FLineIRQ := False;
+  FillChar(FTileDirty, SizeOf(FTileDirty), 1);
+  RebuildPalette;
 end;
 
 function TSMSVDP.Reg(Index: Integer): Byte;
@@ -63,17 +80,58 @@ begin
   Result := 192;
   if FOriginal or (FRegisters[0] and 6 <> 6) then
     Exit;
+
   if FRegisters[1] and $18 = $10 then
     Result := 224;
   if FRegisters[1] and $18 = 8 then
     Result := 240;
 end;
 
-function TSMSVDP.Palette(Index: Integer): TAlphaColor;
+function TSMSVDP.ViewportTop: Integer;
 begin
-  var Value := FCRAM[Index and 31];
+  Result := (ScreenHeight - 144) div 2;
+end;
+
+function TSMSVDP.Color(Index: Integer): TAlphaColor;
+const
+  Legacy: array[0..15] of Byte = ($00, $00, $08, $0C, $10, $30, $01, $3C, $02, $03, $05, $0F, $04, $33, $15, $3F);
+begin
+  Index := Index and 15;
+  if Index = 0 then
+    Index := FRegisters[7] and 15;
+  if FGameGear then
+    Exit(Palette(Index));
+
+  var Value := Legacy[Index];
   Result := $FF000000 or (Cardinal((Value and 3) * 85) shl 16) or
     (Cardinal(((Value shr 2) and 3) * 85) shl 8) or Cardinal(((Value shr 4) and 3) * 85);
+end;
+
+procedure TSMSVDP.UpdatePalette(Index: Integer);
+begin
+  if FGameGear then
+  begin
+    var Offset := (Index and 31) * 2;
+    var RGB := Integer(FGGCRAM[Offset]) or (Integer(FGGCRAM[Offset + 1]) shl 8);
+    FPaletteColors[Index] := $FF000000 or (Cardinal((RGB and 15) * 17) shl 16) or
+      (Cardinal(((RGB shr 4) and 15) * 17) shl 8) or Cardinal(((RGB shr 8) and 15) * 17);
+    Exit;
+  end;
+
+  var Value := FCRAM[Index and 31];
+  FPaletteColors[Index] := $FF000000 or (Cardinal((Value and 3) * 85) shl 16) or
+    (Cardinal(((Value shr 2) and 3) * 85) shl 8) or Cardinal(((Value shr 4) and 3) * 85);
+end;
+
+procedure TSMSVDP.RebuildPalette;
+begin
+  for var i := 0 to 31 do
+    UpdatePalette(i);
+end;
+
+function TSMSVDP.Palette(Index: Integer): TAlphaColor;
+begin
+  Result := FPaletteColors[Index and 31];
 end;
 
 procedure TSMSVDP.WriteData(Value: Byte);
@@ -81,12 +139,30 @@ begin
   if FCode = 3 then
   begin
     FControlPending := False;
-    FCRAM[FAddress and 31] := Value and $3F;
+    if FGameGear then
+    begin
+      if FAddress and 1 = 0 then
+        FCRAMLatch := Value
+      else
+      begin
+        FGGCRAM[(FAddress and 63) - 1] := FCRAMLatch;
+        FGGCRAM[FAddress and 63] := Value and 15;
+        UpdatePalette((FAddress and 63) shr 1);
+      end;
+    end
+    else
+    begin
+      FCRAM[FAddress and 31] := Value and $3F;
+      UpdatePalette(FAddress and 31);
+    end;
     FReadBuffer := Value;
     FAddress := (FAddress + 1) and $3FFF;
   end
   else
+  begin
+    FTileDirty[FAddress shr 2] := True;
     inherited;
+  end;
 end;
 
 procedure TSMSVDP.WriteControl(Value: Byte);
@@ -97,6 +173,7 @@ begin
     FControlPending := True;
     Exit;
   end;
+
   FCode := Value shr 6;
   FControlPending := False;
   FAddress := ((Integer(Value) shl 8) or (FAddress and $FF)) and $3FFF;
@@ -148,9 +225,16 @@ begin
     FYScroll := Reg(9);
 end;
 
-function TSMSVDP.TilePixel(Tile, Row, Column: Integer; Sprite: Boolean): Integer;
+function TSMSVDP.DecodeRow(Tile, Row: Integer; Sprite: Boolean): TSMSPixelRow;
 begin
-  Result := 0;
+  var Index := Tile * 8 + Row;
+
+  // SMS1's register masks can alias different planes of a row; decode those
+  // on demand. SMS2/GG rows map directly to four consecutive VRAM bytes.
+  if not FOriginal and not FTileDirty[Index] then
+    Exit(FTileRows[Index]);
+
+  FillChar(Result, SizeOf(Result), 0);
   for var Plane := 0 to 3 do
   begin
     var Address := Tile * 32 + Row * 4 + Plane;
@@ -161,8 +245,15 @@ begin
         Address := Address and ((Integer(FRegisters[3]) shl 6) or $3F)
       else
         Address := Address and ((Integer(FRegisters[4] and 7) shl 11) or $7FF);
-    if VRAM(Address) and ($80 shr Column) <> 0 then
-      Result := Result or (1 shl Plane);
+    var Bits := VRAM(Address);
+    for var Column := 0 to 7 do
+      if Bits and ($80 shr Column) <> 0 then
+        Result[Column] := Result[Column] or (1 shl Plane);
+  end;
+  if not FOriginal then
+  begin
+    FTileRows[Index] := Result;
+    FTileDirty[Index] := False;
   end;
 end;
 
@@ -173,9 +264,11 @@ begin
     inherited;
     Exit;
   end;
+
   var Height := ScreenHeight;
   if (Y < 0) or (Y >= Height) then
     Exit;
+
   var Priority, Drawn: array[0..255] of Boolean;
   FillChar(Priority, SizeOf(Priority), 0);
   FillChar(Drawn, SizeOf(Drawn), 0);
@@ -184,6 +277,7 @@ begin
     FPixels[Y * 256 + X] := Backdrop;
   if FRegisters[1] and $40 = 0 then
     Exit;
+
   var Base := (FRegisters[2] and $0E) * $400;
   var Wrap := 224;
   if Height > 192 then
@@ -195,10 +289,13 @@ begin
   if (FRegisters[0] and $40 <> 0) and (Y < 16) then
     ScrollX := 0;
   if FShowBackground then
-    for var X := 0 to 255 do
+  begin
+    var ScrolledY := (Y + FYScroll) mod Wrap;
+    var X := 0;
+    while X < 256 do
     begin
       var SX := (X - ScrollX) and 255;
-      var SY := (Y + FYScroll) mod Wrap;
+      var SY := ScrolledY;
       if (FRegisters[0] and $80 <> 0) and (X >= 192) then
         SY := Y;
       var Address := Base + ((SY div 8) * 32 + (SX div 8)) * 2;
@@ -209,12 +306,24 @@ begin
       var Column := SX and 7;
       if Attr and $400 <> 0 then
         Row := 7 - Row;
-      if Attr and $200 <> 0 then
-        Column := 7 - Column;
-      var Pixel := TilePixel(Attr and $1FF, Row, Column, False);
-      Priority[X] := (Attr and $1000 <> 0) and (Pixel <> 0);
-      FPixels[Y * 256 + X] := Palette(Pixel + ((Attr and $800) shr 7));
+      var Pixels := DecodeRow(Attr and $1FF, Row, False);
+      var Span := Min(8 - Column, 256 - X);
+      if (X < 192) and (X + Span > 192) then
+        Span := 192 - X;
+      var PaletteBase := (Attr and $800) shr 7;
+      var TilePriority := Attr and $1000 <> 0;
+      for var Offset := 0 to Span - 1 do
+      begin
+        var Source := Column + Offset;
+        if Attr and $200 <> 0 then
+          Source := 7 - Source;
+        var Pixel := Pixels[Source];
+        Priority[X + Offset] := TilePriority and (Pixel <> 0);
+        FPixels[Y * 256 + X + Offset] := FPaletteColors[Pixel + PaletteBase];
+      end;
+      Inc(X, Span);
     end;
+  end;
   var Table := (FRegisters[5] and $7E) * 128;
   var Tall := 8;
   var Zoom := 1;
@@ -224,33 +333,36 @@ begin
     Zoom := 2;
   var Count := 0;
   var Visible: array[0..63] of Integer;
-  for var I := 0 to 63 do
+  for var i := 0 to 63 do
   begin
-    var SY := Integer(VRAM(Table + I));
+    var SY := Integer(VRAM(Table + i));
     if (Height = 192) and (SY = $D0) then
       Break;
+
     if SY >= $F0 then
       Dec(SY, 256);
     Inc(SY);
     if (Y < SY) or (Y >= SY + Tall * Zoom) then
       Continue;
+
     if Count = 8 then
     begin
       FStatus := FStatus or $40;
       if not FRemoveSpriteLimit then
         Break;
     end;
-    Visible[Count] := I;
+
+    Visible[Count] := i;
     Inc(Count);
   end;
   for var V := 0 to Count - 1 do
   begin
-    var I := Visible[V];
-    var SY := Integer(VRAM(Table + I));
+    var i := Visible[V];
+    var SY := Integer(VRAM(Table + i));
     if SY >= $F0 then
       Dec(SY, 256);
     Inc(SY);
-    var AttrAddress := Table + $80 + I * 2;
+    var AttrAddress := Table + $80 + i * 2;
     if FOriginal and (FRegisters[5] and 1 = 0) then
       AttrAddress := AttrAddress and $3F7F;
     var SX := Integer(VRAM(AttrAddress));
@@ -265,16 +377,19 @@ begin
     var XZoom := Zoom;
     if FOriginal and (V >= Min(Count, 8) - 4) and (V < 8) then
       XZoom := 1;
+    var Pixels := DecodeRow(Tile, Row, True);
     for var Column := 0 to 7 do
     begin
-      var Pixel := TilePixel(Tile, Row, Column, True);
+      var Pixel := Pixels[Column];
       if Pixel = 0 then
         Continue;
+
       for var Z := 0 to XZoom - 1 do
       begin
         var X := SX + Column * XZoom + Z;
         if (X < 0) or (X >= 256) then
           Continue;
+
         if Drawn[X] and (V < 8) then
           FStatus := FStatus or $20
         else if FShowSprites and not Drawn[X] and not Priority[X] then
@@ -323,12 +438,22 @@ begin
   if State.Loading then
     SetLength(FPixels, ScreenHeight * 256);
   inherited;
+  if FGameGear then
+  begin
+    State.Field(FGGCRAM, SizeOf(FGGCRAM));
+    State.Field(FCRAMLatch, SizeOf(FCRAMLatch));
+  end;
   State.Field(FExtra, SizeOf(FExtra));
   State.Field(FCRAM, SizeOf(FCRAM));
   State.Field(FCode, SizeOf(FCode));
   State.Field(FLineCounter, SizeOf(FLineCounter));
   State.Field(FYScroll, SizeOf(FYScroll));
   State.Field(FLineIRQ, SizeOf(FLineIRQ));
+  if State.Loading then
+  begin
+    RebuildPalette;
+    FillChar(FTileDirty, SizeOf(FTileDirty), 1);
+  end;
 end;
 
 end.

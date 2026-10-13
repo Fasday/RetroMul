@@ -11,80 +11,29 @@ object RetroDialog: TRetroDialog
     Stroke.Kind = None
   end
   object PanelCard: TPanel
-    Position.X = 170.000000000000000000
-    Position.Y = 190.000000000000000000
+    Align = Center
+    Padding.Left = 24.000000000000000000
+    Padding.Top = 24.000000000000000000
+    Padding.Right = 24.000000000000000000
+    Padding.Bottom = 24.000000000000000000
     Size.Width = 560.000000000000000000
     Size.Height = 260.000000000000000000
     Size.PlatformDefault = False
     StyleLookup = 'retromul_card'
     TabOrder = 0
-    object RectangleAccent: TRectangle
-      Fill.Color = xFFFFB344
-      HitTest = False
-      Position.X = 24.000000000000000000
-      Size.Width = 64.000000000000000000
-      Size.Height = 3.000000000000000000
-      Size.PlatformDefault = False
-      Stroke.Kind = None
-    end
-    object CircleBadge: TCircle
-      Fill.Color = xFFFFB344
-      HitTest = False
-      Position.X = 24.000000000000000000
-      Position.Y = 28.000000000000000000
-      Size.Width = 36.000000000000000000
-      Size.Height = 36.000000000000000000
-      Size.PlatformDefault = False
-      Stroke.Kind = None
-      object LabelBadge: TLabel
-        Align = Contents
-        StyledSettings = []
-        Size.Width = 36.000000000000000000
-        Size.Height = 36.000000000000000000
-        Size.PlatformDefault = False
-        TextSettings.Font.Size = 22.000000000000000000
-        TextSettings.Font.StyleExt = {00070000000000000004000000}
-        TextSettings.FontColor = xFF1B2026
-        TextSettings.HorzAlign = Center
-        Text = '!'
-      end
-    end
-    object LabelTitle: TLabel
-      StyledSettings = []
-      Position.X = 76.000000000000000000
-      Position.Y = 28.000000000000000000
-      Size.Width = 420.000000000000000000
-      Size.Height = 36.000000000000000000
-      Size.PlatformDefault = False
-      TextSettings.Font.Size = 21.000000000000000000
-      TextSettings.Font.StyleExt = {00070000000000000004000000}
-      TextSettings.FontColor = xFFE8ECF1
-      TextSettings.WordWrap = False
-      Text = 'Warning'
-    end
-    object ButtonClose: TButton
-      Position.X = 504.000000000000000000
-      Position.Y = 30.000000000000000000
-      Size.Width = 32.000000000000000000
-      Size.Height = 32.000000000000000000
-      Size.PlatformDefault = False
-      StyleLookup = 'buttonstyle_subtle'
-      TabOrder = 2
-      ParentShowHint = False
-      ShowHint = True
-    end
     object VertScrollBoxMessage: TVertScrollBox
-      Position.X = 24.000000000000000000
-      Position.Y = 84.000000000000000000
+      Align = Client
       Size.Width = 512.000000000000000000
-      Size.Height = 80.000000000000000000
+      Size.Height = 94.000000000000000000
       Size.PlatformDefault = False
       TabOrder = 3
       TabStop = False
       Viewport.Width = 512.000000000000000000
-      Viewport.Height = 80.000000000000000000
+      Viewport.Height = 94.000000000000000000
       object LabelMessage: TLabel
+        Align = Top
         StyledSettings = []
+        Margins.Right = 16.000000000000000000
         Size.Width = 496.000000000000000000
         Size.Height = 80.000000000000000000
         Size.PlatformDefault = False
@@ -95,31 +44,118 @@ object RetroDialog: TRetroDialog
         TabOrder = 0
       end
     end
-    object ButtonCancel: TButton
-      StyledSettings = []
-      Position.X = 228.000000000000000000
-      Position.Y = 194.000000000000000000
-      Size.Width = 148.000000000000000000
-      Size.Height = 42.000000000000000000
+    object LayoutDialogHeader: TLayout
+      Align = Top
+      Margins.Bottom = 16.000000000000000000
+      Position.X = 24.000000000000000000
+      Position.Y = 24.000000000000000000
+      Size.Width = 512.000000000000000000
+      Size.Height = 44.000000000000000000
       Size.PlatformDefault = False
-      StyleLookup = 'buttonstyle'
-      TabOrder = 0
-      Text = 'Cancel'
-      TextSettings.Font.Size = 14.000000000000000000
-      TextSettings.FontColor = xFFE8ECF1
+      object CircleBadge: TCircle
+        Align = Left
+        Fill.Color = xFFFFB344
+        HitTest = False
+        Margins.Top = 4.000000000000000000
+        Margins.Right = 16.000000000000000000
+        Margins.Bottom = 4.000000000000000000
+        Position.Y = 4.000000000000000000
+        Size.Width = 36.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        Stroke.Kind = None
+        object LabelBadge: TLabel
+          Align = Contents
+          StyledSettings = []
+          Size.Width = 36.000000000000000000
+          Size.Height = 36.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 22.000000000000000000
+          TextSettings.Font.StyleExt = {00070000000000000004000000}
+          TextSettings.FontColor = xFF1B2026
+          TextSettings.HorzAlign = Center
+          Text = '!'
+        end
+      end
+      object LabelTitle: TLabel
+        Align = Client
+        StyledSettings = []
+        Size.Width = 420.000000000000000000
+        Size.Height = 44.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Font.Size = 21.000000000000000000
+        TextSettings.Font.StyleExt = {00070000000000000004000000}
+        TextSettings.FontColor = xFFE8ECF1
+        TextSettings.WordWrap = False
+        Text = 'Warning'
+      end
+      object ButtonClose: TButton
+        Align = Right
+        Margins.Left = 8.000000000000000000
+        Margins.Top = 6.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 480.000000000000000000
+        Position.Y = 6.000000000000000000
+        Size.Width = 32.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'buttonstyle_subtle'
+        TabOrder = 2
+        ParentShowHint = False
+        ShowHint = True
+      end
     end
-    object ButtonAccept: TButton
-      StyledSettings = []
-      Position.X = 388.000000000000000000
+    object LayoutDialogActions: TLayout
+      Align = Bottom
+      Margins.Top = 16.000000000000000000
+      Position.X = 24.000000000000000000
       Position.Y = 194.000000000000000000
-      Size.Width = 148.000000000000000000
+      Size.Width = 512.000000000000000000
       Size.Height = 42.000000000000000000
       Size.PlatformDefault = False
-      StyleLookup = 'buttonstyle_accent'
-      TabOrder = 1
-      Text = 'OK'
-      TextSettings.Font.Size = 14.000000000000000000
-      TextSettings.FontColor = xFF1B2026
+      object ButtonAccept: TButton
+        Align = Right
+        StyledSettings = []
+        Position.X = 204.000000000000000000
+        Size.Width = 148.000000000000000000
+        Size.Height = 42.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'buttonstyle_accent'
+        TabOrder = 1
+        Text = 'OK'
+        TextSettings.Font.Size = 14.000000000000000000
+        TextSettings.FontColor = xFF1B2026
+      end
+      object ButtonCancel: TButton
+        Align = Right
+        StyledSettings = []
+        Margins.Right = 12.000000000000000000
+        Position.X = 352.000000000000000000
+        Size.Width = 148.000000000000000000
+        Size.Height = 42.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'buttonstyle'
+        TabOrder = 0
+        Text = 'Cancel'
+        TextSettings.Font.Size = 14.000000000000000000
+        TextSettings.FontColor = xFFE8ECF1
+      end
+    end
+    object LayoutDialogAccent: TLayout
+      Align = Contents
+      Size.Width = 560.000000000000000000
+      Size.Height = 260.000000000000000000
+      Size.PlatformDefault = False
+      object RectangleAccent: TRectangle
+        Align = TopLeft
+        Fill.Color = xFFFFB344
+        HitTest = False
+        Margins.Right = 448.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 3.000000000000000000
+        Size.PlatformDefault = False
+        Stroke.Kind = None
+      end
     end
   end
 end

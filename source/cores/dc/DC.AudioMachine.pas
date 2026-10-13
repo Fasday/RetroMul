@@ -118,6 +118,7 @@ begin
         raise EArgumentException.CreateFmt('DSF ARM at %.8x: %s', [FCPU.R[15], E.Message]);
     end;
   end;
+
   FAICA.Sample(Left, Right);
 end;
 

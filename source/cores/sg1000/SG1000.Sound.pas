@@ -15,7 +15,11 @@ type
     FVolume: array[0..3] of Integer;
     FLatch, FNoise, FLFSR, FDivider: Integer;
     FSega: Boolean;
+    FStereo: Byte;
     FChannelVolume: array[0..3] of Integer;
+    FAmplitude: array[0..3] of Integer; // Derived from attenuation and host gain.
+    procedure UpdateAmplitude(Channel: Integer);
+    function ChannelSample(Channel: Integer): Integer; inline;
     procedure Clock;
     function TonePeriod(Channel: Integer): Integer;
   public
@@ -24,8 +28,10 @@ type
     procedure Write(Value: Byte);
     procedure Advance(Cycles: Integer);
     function Sample: SmallInt;
+    procedure SampleStereo(out Left, Right: SmallInt);
+    procedure SetStereo(Value: Byte);
     procedure SetVolumes(const Values: array of Integer);
-    procedure SerializeState(State: TStateArchive);
+    procedure SerializeState(State: TStateArchive; Stereo: Boolean = False);
   end;
 
 implementation
@@ -34,8 +40,8 @@ constructor TSGSound.Create(Sega: Boolean);
 begin
   inherited Create;
   FSega := Sega;
-  for var I := 0 to 3 do
-    FChannelVolume[I] := 100;
+  for var i := 0 to 3 do
+    FChannelVolume[i] := 100;
   Reset;
 end;
 
@@ -51,6 +57,9 @@ begin
   if FSega then
     FLFSR := $8000;
   FDivider := 0;
+  FStereo := $FF;
+  for var i := 0 to 3 do
+    UpdateAmplitude(i);
 end;
 
 function TSGSound.TonePeriod(Channel: Integer): Integer;
@@ -69,7 +78,10 @@ begin
     FLatch := (Value shr 4) and 7;
   var Channel := FLatch div 2;
   if FLatch and 1 <> 0 then
-    FVolume[Channel] := Value and 15
+  begin
+    FVolume[Channel] := Value and 15;
+    UpdateAmplitude(Channel);
+  end
   else if Channel < 3 then
   begin
     if Value and $80 <> 0 then
@@ -125,6 +137,7 @@ begin
     end;
     Exit;
   end;
+
   Dec(FCounter[3]);
   if FCounter[3] <= 0 then
   begin
@@ -159,37 +172,69 @@ procedure TSGSound.SetVolumes(const Values: array of Integer);
 begin
   if Length(Values) <> 4 then
     raise EArgumentException.Create('PSG needs four channel volumes');
-  for var I := 0 to 3 do
-    if Values[I] < 0 then
-      FChannelVolume[I] := 0
-    else if Values[I] > 100 then
-      FChannelVolume[I] := 100
+
+  for var i := 0 to 3 do
+  begin
+    if Values[i] < 0 then
+      FChannelVolume[i] := 0
+    else if Values[i] > 100 then
+      FChannelVolume[i] := 100
     else
-      FChannelVolume[I] := Values[I];
+      FChannelVolume[i] := Values[i];
+    UpdateAmplitude(i);
+  end;
+end;
+
+procedure TSGSound.UpdateAmplitude(Channel: Integer);
+const
+  Amplitudes: array[0..15] of Integer = (4096, 3254, 2584, 2053, 1631, 1295, 1029, 817, 649, 516, 410, 326, 259, 206, 164, 0);
+begin
+  FAmplitude[Channel] := Amplitudes[FVolume[Channel]] * FChannelVolume[Channel] div 100;
+end;
+
+function TSGSound.ChannelSample(Channel: Integer): Integer;
+begin
+  Result := FAmplitude[Channel];
+  var High := FOutput[Channel];
+  if FSega and (Channel = 3) then
+    High := FLFSR and 1 <> 0;
+  if not High then
+    Result := -Result;
 end;
 
 function TSGSound.Sample: SmallInt;
-const
-  Amplitudes: array[0..15] of Integer =
-    (4096, 3254, 2584, 2053, 1631, 1295, 1029, 817,
-    649, 516, 410, 326, 259, 206, 164, 0);
 begin
   var Value := 0;
   for var Channel := 0 to 3 do
-  begin
-    var High := FOutput[Channel];
-    if FSega and (Channel = 3) then
-      High := FLFSR and 1 <> 0;
-    if High then
-      Inc(Value, Amplitudes[FVolume[Channel]] * FChannelVolume[Channel] div 100)
-    else
-      Dec(Value, Amplitudes[FVolume[Channel]] * FChannelVolume[Channel] div 100);
-  end;
-  Result := SmallInt(Value);
+    Inc(Value, ChannelSample(Channel));
+  Result := Value;
 end;
 
-procedure TSGSound.SerializeState(State: TStateArchive);
+procedure TSGSound.SetStereo(Value: Byte);
 begin
+  FStereo := Value;
+end;
+
+procedure TSGSound.SampleStereo(out Left, Right: SmallInt);
+begin
+  var L := 0;
+  var R := 0;
+  for var Channel := 0 to 3 do
+  begin
+    var Value := ChannelSample(Channel);
+    if FStereo and (1 shl (Channel + 4)) <> 0 then
+      Inc(L, Value);
+    if FStereo and (1 shl Channel) <> 0 then
+      Inc(R, Value);
+  end;
+  Left := L;
+  Right := R;
+end;
+
+procedure TSGSound.SerializeState(State: TStateArchive; Stereo: Boolean);
+begin
+  if Stereo then
+    State.Field(FStereo, SizeOf(FStereo));
   State.Field(FPeriod, SizeOf(FPeriod));
   State.Field(FCounter, SizeOf(FCounter));
   State.Field(FOutput, SizeOf(FOutput));
@@ -214,6 +259,8 @@ begin
       if (Channel < 3) and ((FPeriod[Channel] < 0) or (FPeriod[Channel] > 1023)) then
         raise EReadError.Create('Invalid PSG tone snapshot');
     end;
+    for var Channel := 0 to 3 do
+      UpdateAmplitude(Channel);
   end;
 end;
 

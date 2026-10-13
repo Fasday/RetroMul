@@ -180,16 +180,7 @@ begin
   SaveDialog.Title := Translate('Export WAV');
   FHistory := TBitmap.Create(TuneSpectrumBands, 128);
   ResetSpectrum;
-  FSoundFontButton := TButton.Create(Self);
-  FSoundFontButton.Name := 'ButtonSoundFont';
-  FSoundFontButton.Parent := LayoutFooter;
-  FSoundFontButton.Align := TAlignLayout.Right;
-  FSoundFontButton.Width := 120;
-  FSoundFontButton.Margins.Left := 12;
-  FSoundFontButton.Margins.Top := 6;
-  FSoundFontButton.Margins.Bottom := 6;
-  FSoundFontButton.Text := 'SoundFont';
-  FSoundFontButton.Hint := 'MIDI SoundFont (.sf2)';
+  FSoundFontButton := FindComponent('ButtonSoundFont') as TButton;
   FSoundFontButton.OnClick := SoundFontClick;
   FSoundFontMenu := TPopupMenu.Create(Self);
   FSoundFontMenu.Parent := Self;
@@ -241,13 +232,8 @@ begin
     Settings.Free;
   end;
   UpdateSoundFontMenu;
-  FContentScroll := TVertScrollBox.Create(Self);
-  FContentScroll.Name := 'ScrollPlayer';
-  FContentScroll.Parent := PanelBackground;
-  FContentScroll.Align := TAlignLayout.Client;
+  FContentScroll := FindComponent('ScrollPlayer') as TVertScrollBox;
   FContentScroll.ScrollAnimation := TBehaviorBoolean.True;
-  LayoutContent.Parent := FContentScroll;
-  LayoutContent.Align := TAlignLayout.Top;
   LayoutContent.OnResize := UpdateLayout;
   FContentScroll.OnResize := UpdateLayout;
   OnResize := UpdateLayout;
@@ -280,177 +266,95 @@ begin
 end;
 
 procedure TFormMain.UpdateLayout(Sender: TObject);
-var
-  Compact: Boolean;
-  W, Inset, InnerWidth, Y, SpectrumHeight, PlaybackWidth, PlayWidth: Single;
-
-  procedure Place(Control: TControl; X, Y, Width, Height: Single);
-  begin
-    Control.Align := TAlignLayout.None;
-    Control.Anchors := [TAnchorKind.akLeft, TAnchorKind.akTop];
-    Control.Margins.Rect := TRectF.Empty;
-    Control.SetBounds(X, Y, Max(0, Width), Height);
-  end;
-
 begin
-  if FUpdatingLayout or (FContentScroll = nil) then
-    Exit;
+  if FUpdatingLayout or (FContentScroll = nil) then Exit;
   FUpdatingLayout := True;
   try
-    Compact := FContentScroll.Width < 700;
-    if Compact then Inset := 12 else Inset := 24;
+    var Compact := FContentScroll.Width < 700;
+    var Inset := IfThen(Compact, 12, 24);
     LayoutContent.Margins.Rect := RectF(Inset, Inset, Inset, Inset);
-    W := LayoutContent.Width;
+    var W := LayoutContent.Width;
     if W <= 0 then Exit;
+    var OpenActions := FindComponent('LayoutTuneOpenActions') as TLayout;
+    var FooterActions := FindComponent('LayoutTuneFooterActions') as TLayout;
+    var TransportButtons := FindComponent('LayoutTuneTransportButtons') as TLayout;
+    var TitleRow := FindComponent('LayoutTuneTitle') as TLayout;
+    LayoutHeader.Height := IfThen(Compact, 112, 56);
+    OpenActions.Margins.Top := IfThen(Compact, 12, 8);
+    OpenActions.Align := TAlignLayout.Right;
+    OpenActions.Width := 332;
     if Compact then
     begin
-      Place(LayoutHeader, 0, 0, W, 112);
-      Place(LabelBrand, 0, 0, W, 32);
-      Place(LabelTagline, 0, 36, W, 20);
-      Place(ButtonOpen, 0, 68, (W - 8) / 2, 44);
-      Place(ButtonExport, (W + 8) / 2, 68, (W - 8) / 2, 44);
-    end
-    else
-    begin
-      Place(LayoutHeader, 0, 0, W, 56);
-      Place(LabelBrand, 0, 0, W - 344, 32);
-      Place(LabelTagline, 0, 36, W - 344, 20);
-      Place(ButtonExport, W - 332, 8, 160, 44);
-      Place(ButtonOpen, W - 160, 8, 160, 44);
+      OpenActions.Align := TAlignLayout.Bottom;
+      OpenActions.Height := 44;
     end;
-    Y := LayoutHeader.Height + 16;
+    ButtonOpen.Width := IfThen(Compact, Max(44, (W - 8) / 2), 160);
+    ButtonExport.Margins.Right := IfThen(Compact, 8, 12);
     PanelArtwork.Visible := not Compact;
-    if Compact then
-    begin
-      Place(PanelNowPlaying, 0, Y, W, 184);
-      Place(LayoutMetadata, 12, 12, W - 24, 160);
-    end
-    else
-    begin
-      Place(PanelNowPlaying, 0, Y, W, 144);
-      Place(PanelArtwork, 16, 16, 112, 112);
-      Place(LayoutMetadata, 148, 16, W - 168, 112);
-    end;
-    InnerWidth := LayoutMetadata.Width;
+    PanelNowPlaying.Height := IfThen(Compact, 184, 144);
+    LayoutMetadata.Margins.Rect := RectF(IfThen(Compact,12,20),IfThen(Compact,12,16),IfThen(Compact,12,20),IfThen(Compact,12,16));
+    TitleRow.Height := IfThen(Compact, 56, 44);
     LabelTitle.TextSettings.WordWrap := Compact;
-    LabelTitle.TextSettings.Trimming := TTextTrimming.Character;
-    LabelArtist.TextSettings.Trimming := TTextTrimming.Character;
-    LabelCopyright.TextSettings.Trimming := TTextTrimming.Character;
-    LabelDetails.TextSettings.Trimming := TTextTrimming.Character;
-    if Compact then
-    begin
-      Place(LabelTitle, 0, 0, InnerWidth - 52, 56);
-      Place(LabelArtist, 0, 64, InnerWidth, 40);
-      Place(LabelCopyright, 0, 108, InnerWidth, 20);
-      Place(LabelDetails, 0, 136, InnerWidth, 24);
-    end
-    else
-    begin
-      Place(LabelTitle, 0, 0, InnerWidth - 52, 32);
-      Place(LabelArtist, 0, 40, InnerWidth, 24);
-      Place(LabelCopyright, 0, 65, InnerWidth, 20);
-      Place(LabelDetails, 0, 91, InnerWidth, 20);
-    end;
-    Place(ButtonInfo, InnerWidth - 44, 0, 44, 44);
-    Y := Y + PanelNowPlaying.Height + 12;
-
-    // Keep playback ahead of the visualizer on a phone.
-    if Compact then
-      Place(PanelTransport, 0, Y, W, 308)
-    else
-      Place(PanelTransport, 0, 0, W, 244);
-    InnerWidth := W - 32;
-    Place(LabelTrack, 16, 12, InnerWidth, 20);
-    Place(ComboTracks, 16, 40, InnerWidth, 44);
+    LabelArtist.Height := IfThen(Compact, 40, 24);
+    LabelCopyright.Height := 20;
+    LabelDetails.Height := 20;
+    LabelArtist.Margins.Top := IfThen(Compact,8,0);
+    LabelCopyright.Margins.Top := IfThen(Compact,4,1);
+    PanelTransport.Height := IfThen(Compact, 308, 244);
+    ComboTracks.Height := 44;
     ComboTracks.ItemHeight := 44;
-    Place(LayoutTimeline, 16, 96, InnerWidth, 64);
-    Place(TrackBarPosition, 0, 0, InnerWidth, 44);
-    Place(LabelElapsed, 0, 44, 100, 20);
-    Place(LabelDuration, InnerWidth - 100, 44, 100, 20);
-    if Compact then
-      Place(LayoutPlayback, 16, 172, InnerWidth, 120)
-    else
-      Place(LayoutPlayback, 16, 172, InnerWidth, 56);
-    if Compact then PlaybackWidth := InnerWidth
-    else PlaybackWidth := 336;
-    PlayWidth := PlaybackWidth - 3 * 44 - 3 * 8;
-    Place(ButtonPrevious, 0, 0, 44, 44);
-    Place(ButtonPlay, 52, 0, PlayWidth, 44);
-    Place(ButtonNext, 60 + PlayWidth, 0, 44, 44);
-    Place(ButtonStop, 112 + PlayWidth, 0, 44, 44);
-    if Compact then
-      Place(LayoutVolume, 0, 56, InnerWidth, 64)
-    else
-      Place(LayoutVolume, 360, 0, InnerWidth - 360, 56);
-    Place(LabelVolume, 0, 0, LayoutVolume.Width, 20);
-    Place(TrackBarVolume, 0, 20, LayoutVolume.Width, 44);
-    if Compact then Y := Y + PanelTransport.Height + 12;
-
-    if Compact then SpectrumHeight := 232
-    else
-    begin
-      SpectrumHeight := Max(196, FContentScroll.Height - 2 * Inset - Y - 244 - 44 - 24);
-      if LayoutExport.Visible then SpectrumHeight := Max(196, SpectrumHeight - 76);
-    end;
-    Place(PanelSpectrum, 0, Y, W, SpectrumHeight);
-    Place(LayoutSpectrumHeader, 16, 12, InnerWidth, 44);
+    LayoutTimeline.Height := 64;
+    TrackBarPosition.Height := 44;
+    LayoutPlayback.Height := IfThen(Compact, 120, 56);
+    TransportButtons.Align := TAlignLayout.Left;
+    TransportButtons.Width := 336;
     if Compact then
     begin
-      LayoutSpectrumHeader.Height := 76;
-      Place(LabelSpectrum, 0, 0, InnerWidth, 24);
-      Place(ComboSpectrum, 0, 32, InnerWidth, 44);
+      TransportButtons.Align := TAlignLayout.Top;
+      TransportButtons.Height := 44;
+      LayoutVolume.Align := TAlignLayout.Bottom;
+      LayoutVolume.Height := 64;
+      LayoutVolume.Margins.Rect := RectF(0,12,0,0);
     end
     else
     begin
-      Place(LabelSpectrum, 0, 0, InnerWidth - 232, 44);
-      Place(ComboSpectrum, InnerWidth - 220, 0, 220, 44);
+      LayoutVolume.Align := TAlignLayout.Client;
+      LayoutVolume.Margins.Rect := RectF(24,0,0,0);
+    end;
+    LayoutSpectrumHeader.Height := IfThen(Compact, 76, 44);
+    ComboSpectrum.Align := TAlignLayout.Right;
+    ComboSpectrum.Width := 220;
+    ComboSpectrum.Margins.Rect := RectF(12,0,0,0);
+    if Compact then
+    begin
+      ComboSpectrum.Align := TAlignLayout.Bottom;
+      ComboSpectrum.Height := 44;
+      ComboSpectrum.Margins.Rect := RectF(0,8,0,0);
     end;
     ComboSpectrum.ItemHeight := 44;
-    var SpectrumTop := 12 + LayoutSpectrumHeader.Height + 12;
-    Place(SpectrumPaintBox, 16, SpectrumTop, InnerWidth, SpectrumHeight - SpectrumTop - 40);
-    Place(LayoutFrequency, 16, SpectrumHeight - 28, InnerWidth, 20);
-    Place(LabelLowFrequency, 0, 0, 80, 20);
-    Place(LabelHighFrequency, InnerWidth - 100, 0, 100, 20);
-    Y := Y + SpectrumHeight + 12;
-    if not Compact then
-    begin
-      PanelTransport.Position.Y := Y;
-      Y := Y + PanelTransport.Height + 12;
-    end;
-    if LayoutExport.Visible then
-    begin
-      Place(LayoutExport, 0, Y, W, 64);
-      Place(LabelExport, 0, 0, W - 52, 44);
-      LabelExport.TextSettings.Trimming := TTextTrimming.Character;
-      Place(ButtonCloseExport, W - 44, 0, 44, 44);
-      Place(ProgressExport, 0, 52, W, 8);
-      Y := Y + 76;
-    end;
+    PanelSpectrum.Height := IfThen(Compact,232,Max(196,FContentScroll.Height - 2*Inset - LayoutHeader.Height - PanelNowPlaying.Height - PanelTransport.Height - 96 - IfThen(LayoutExport.Visible,76,0)));
+    FooterActions.Align := TAlignLayout.Right;
+    FooterActions.Width := 268;
+    LayoutFooter.Height := IfThen(Compact,84,44);
     if Compact then
     begin
-      Place(LayoutFooter, 0, Y, W, 84);
-      Place(LabelStatus, 0, 0, W, 32);
-      Place(ButtonFormats, 0, 40, (W - 8) / 2, 44);
-      Place(FSoundFontButton, (W + 8) / 2, 40, (W - 8) / 2, 44);
-    end
-    else
-    begin
-      Place(LayoutFooter, 0, Y, W, 44);
-      Place(LabelStatus, 0, 0, W - 280, 44);
-      Place(FSoundFontButton, W - 268, 0, 120, 44);
-      Place(ButtonFormats, W - 136, 0, 136, 44);
+      FooterActions.Align := TAlignLayout.Bottom;
+      FooterActions.Height := 44;
     end;
+    ButtonFormats.Width := IfThen(Compact,Max(44,(W-8)/2),136);
+    ButtonFormats.Margins.Rect := RectF(IfThen(Compact,8,12),0,0,0);
     LabelStatus.TextSettings.Trimming := TTextTrimming.Character;
-    LayoutContent.Height := Y + LayoutFooter.Height;
+    var ContentHeight: Single := 0;
+    for var Child in LayoutContent.Children do
+      if (Child is TControl) and TControl(Child).Visible then
+        ContentHeight := ContentHeight + TControl(Child).Height + TControl(Child).Margins.Top + TControl(Child).Margins.Bottom;
+    LayoutContent.Height := ContentHeight;
     UpdatePlayButton;
     FContentScroll.InvalidateContentSize;
     FContentScroll.RealignContent;
   finally
     FUpdatingLayout := False;
   end;
-  // Showing a scrollbar can reduce the viewport during the realignment.
-  if not SameValue(W, LayoutContent.Width, 0.5) then
-    UpdateLayout(nil);
 end;
 
 procedure TFormMain.UpdatePlayButton;

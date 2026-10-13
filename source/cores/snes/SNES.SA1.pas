@@ -123,6 +123,7 @@ begin
 
   if Bank >= $C0 then
     Exit(1);
+
   if (Length(BWRAM) > 0) and ((Bank in [$40..$4F]) or (SA and (Bank in [$50..$6F]))) then
     Exit(2);
 end;
@@ -283,11 +284,13 @@ begin
     begin
       if ((Offset = $FFEA) or (Offset = $FFEB)) and ((State.Registers[9] and $10) <> 0) then
         Exit(State.Registers[$C + (Offset and 1)]);
+
       if ((Offset = $FFEE) or (Offset = $FFEF)) and ((State.Registers[9] and $40) <> 0) then
         Exit(State.Registers[$E + (Offset and 1)]);
     end;
     Exit(FRead(RomAddress(Address)));
   end;
+
   Result := OpenBus;
 end;
 

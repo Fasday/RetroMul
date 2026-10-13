@@ -126,7 +126,7 @@ type
 implementation
 
 uses
-  System.IOUtils, System.StrUtils, System.Generics.Collections, Core.RomFormat,
+  System.IOUtils, System.StrUtils, System.Generics.Collections, Core.Platforms, Core.RomFormat,
   {$IFDEF ANDROID}
   Core.Storage.Android, {$ENDIF}
   {$IFDEF MSWINDOWS} Winapi.Windows, {$ELSE} Posix.Stdio, Posix.Unistd, {$ENDIF}
@@ -424,11 +424,19 @@ begin
   Result := TMemIniFile.Create('', TEncoding.UTF8);
   try
     Result.Rename(Location, False);
-    if Exists(Location) then
+    var ReadLocation := Location;
+    if not Exists(ReadLocation) then
+    begin
+      var Platform: TPlatformInfo;
+      if TPlatformRegistry.Find(TPath.GetFileNameWithoutExtension(Location), Platform) and
+        (Platform.LegacySettingsId <> '') and SameText(Location, ConfigFile(Platform.Id)) then
+        ReadLocation := ConfigFile(Platform.LegacySettingsId);
+    end;
+    if Exists(ReadLocation) then
     begin
       var Lines := TStringList.Create;
       try
-        Lines.Text := ReadText(Location);
+        Lines.Text := ReadText(ReadLocation);
         Result.SetStrings(Lines);
       finally
         Lines.Free;
@@ -573,12 +581,10 @@ begin
   if RomSystem = TRomSystem.Unknown then
     Exit(nil);
 
-  var FolderName := RomSystemFolder(RomSystem);
-  var Extensions := RomExtensions(RomSystem);
-  var FolderNames: TArray<string> := [FolderName];
-  // Legacy collections keep .sc cartridges beside .sg games; enumerate both
-  // locations without moving user files or reading ROM contents.
-  if RomSystem = TRomSystem.SC3000 then FolderNames := [FolderName, ROM_SYSTEM_SG1000];
+  var Platform := TPlatformRegistry.Require(SystemId);
+  var FolderName := Platform.Folder;
+  var Extensions := Platform.Extensions;
+  var FolderNames := Platform.ScanFolders;
   var Candidates: TArray<TStorageFile>;
   {$IFDEF ANDROID}
   if FRomFolder.StartsWith('content://') then
@@ -588,7 +594,8 @@ begin
       if MatchText(Folder.Name, FolderNames) then
       begin
         var Items := TAndroidStorage.Enumerate(Folder.Location, False);
-        for var I := 0 to High(Items) do Items[I].RelativePath := Folder.Name + '/' + Items[I].Name;
+        for var I := 0 to High(Items) do
+          Items[I].RelativePath := Folder.Name + '/' + Items[I].Name;
         Candidates := Candidates + Items;
       end;
   end
@@ -598,15 +605,15 @@ begin
     var List := TList<TStorageFile>.Create;
     try
       for var CandidateFolder in FolderNames do
-      for var Path in Files(TPath.Combine(FRomFolder, CandidateFolder)) do
-      begin
-        if not MatchText(ExtractFileExt(Path), Extensions) then
-          Continue;
+        for var Path in Files(TPath.Combine(FRomFolder, CandidateFolder)) do
+        begin
+          if not MatchText(ExtractFileExt(Path), Extensions) then
+            Continue;
 
-        var Item := Describe(Path);
-        Item.RelativePath := ExtractRelativePath(IncludeTrailingPathDelimiter(FRomFolder), Path);
-        List.Add(Item);
-      end;
+          var Item := Describe(Path);
+          Item.RelativePath := ExtractRelativePath(IncludeTrailingPathDelimiter(FRomFolder), Path);
+          List.Add(Item);
+        end;
       Candidates := List.ToArray;
     finally
       List.Free;
@@ -620,24 +627,40 @@ begin
         SameText(Item.Name, 'neocd.zip')) then
         Continue;
       // Prefer the CUE with its complete TOC/audio over the paired data ISO.
-      if (RomSystem = TRomSystem.NeoGeoCD) and SameText(ExtractFileExt(Item.Name), '.iso') then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD]) and SameText(ExtractFileExt(Item.Name), '.iso') then
       begin
         var HasCue := False;
         for var Candidate in Candidates do
-          if SameText(Candidate.Name, ChangeFileExt(Item.Name, '.cue')) then HasCue := True;
-        if HasCue then Continue;
+          if SameText(Candidate.Name, ChangeFileExt(Item.Name, '.cue')) then
+            HasCue := True;
+        if HasCue then
+          Continue;
       end;
       // Listing never opens ROM streams. Header validation belongs to loading.
       var MaxSize := FMaxRomFileSize;
-      if (RomSystem = TRomSystem.NeoGeoCD) and (MaxSize = ROM_MAX_SIZE) then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD]) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := Int64(800) * 1024 * 1024;
       if (RomSystem = TRomSystem.NeoGeo) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := 256 * 1024 * 1024;
       if (FCheckRomFileSize and (Item.Size > MaxSize)) or not MatchText(ExtractFileExt(Item.Name), Extensions) then
         Continue;
 
+      if (RomSystem = TRomSystem.SuperGrafx) and
+        not SameText(ExtractFileExt(Item.Name), '.sgx') and
+        not Item.Name.ToLower.Contains('(sgx)') and not Item.Name.ToLower.Contains('supergrafx') and
+        not Item.RelativePath.ToLower.StartsWith('sgx/') and not Item.RelativePath.ToLower.StartsWith('supergrafx/') and
+        not Item.RelativePath.ToLower.StartsWith('sgx\') and not Item.RelativePath.ToLower.StartsWith('supergrafx\') then
+        Continue;
+      if RomSystem = TRomSystem.PCE then
+      begin
+        if Item.Name.ToLower.Contains('(sgx)') or Item.Name.ToLower.Contains('supergrafx') then
+          Continue;
+        if Item.Name.ToLower.Contains('[bios]') or Item.Name.ToLower.StartsWith('syscard') then
+          Continue;
+      end;
       var Match := Item;
-      if Match.RelativePath = '' then Match.RelativePath := FolderName + '/' + Item.Name;
+      if Match.RelativePath = '' then
+        Match.RelativePath := FolderName + '/' + Item.Name;
       Matches.Add(Match);
     end;
     Result := Matches.ToArray;

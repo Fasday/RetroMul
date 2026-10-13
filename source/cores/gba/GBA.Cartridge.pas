@@ -1,7 +1,5 @@
 ﻿unit GBA.Cartridge;
 
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
-
 interface
 
 uses
@@ -78,6 +76,7 @@ begin
   var Code := AnsiString('    ');
   Move(Data[$AC], Code[1], 4);
   FHardware := TGBAHardware.Create(Code, Has('SIIRTC_V'));
+
   // Classic NES/Famicom mini cartridges decode mirrors up to 4 MiB.
   if (Code[1] = 'F') and (Length(FData) = $100000) then
   begin
@@ -85,6 +84,7 @@ begin
     for var i := 1 to 3 do
       Move(FData[0], FData[i * $100000], $100000);
   end;
+
   // Game-code exceptions override misleading or absent SDK save markers.
   if (Code = 'A2YE') or (Code = 'AI2E') then
     FKind := TGBASaveKind.None

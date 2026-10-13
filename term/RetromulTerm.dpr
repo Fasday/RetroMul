@@ -10,8 +10,10 @@ uses
   Winapi.Windows,
   FMX.Graphics,
   Core.Emulation,
-  Core.EmulatorFactory, Core.Adapter.SG1000,
+  Core.EmulatorFactory, Core.Adapter.PCE, Core.Adapter.SG1000,
   Core.Storage,
+  Core.Platforms.Icons in '..\source\cores\Core.Platforms.Icons.pas',
+  Core.Platforms in '..\source\cores\Core.Platforms.pas',
   Core.RomFormat,
   Core.RomHashes in '..\source\cores\Core.RomHashes.pas',
   Retromul.Terminal in 'Retromul.Terminal.pas';
@@ -122,7 +124,7 @@ begin
 
       var Keyboard: ISGKeyboardCore;
       var SCKeyboard := Supports(FEmulation, ISGKeyboardCore, Keyboard) and Keyboard.HasKeyboard;
-      if SCKeyboard then
+      if SCKeyboard or (FEmulation.Config is TPCEConfig) then
       begin
         for var Code := 1 to 255 do
         begin

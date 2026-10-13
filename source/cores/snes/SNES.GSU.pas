@@ -173,8 +173,10 @@ begin
   var Bank := Address shr 16;
   if Bank <= $3F then
     Exit(FRead(((Bank and $3F) shl 15) or (Address and $7FFF)));
+
   if Bank <= $5F then
     Exit(FRead(Address and $1FFFFF));
+
   if (Bank in [$70, $71]) and (Length(RAM) > 0) then
     Exit(RAM[(Address and $1FFFF) mod Cardinal(Length(RAM))]);
 
@@ -227,6 +229,7 @@ begin
       Tick(2);
     Exit(FCache[CacheAddress]);
   end;
+
   if State.ProgramBank <= $5F then
   begin
     WaitROM;
@@ -948,6 +951,7 @@ begin
       Exit(0);
     end;
   end;
+
   var Bank := Address shr 16 and $7F;
   if Bank < $40 then
     Result := FRead((Bank shl 15) or (Address and $7FFF))
@@ -959,6 +963,7 @@ function TSnesGSU.CPUReadRAM(Address: Cardinal; OpenBus: Byte): Byte;
 begin
   if State.SFR.Running and State.RamAccess then
     Exit(0);
+
   if Length(RAM) = 0 then
     Exit(OpenBus);
 

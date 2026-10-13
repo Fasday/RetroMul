@@ -33,13 +33,15 @@ begin
   // File dialogs supply absolute paths; portable slot names stay in the game folder.
   if TPath.IsPathRooted(Name) then
   begin
-    if not SameText(ExtractFileExt(Name), SNAPSHOT_EXTENSION) or
-      not SameText(TPath.GetFullPath(Name), Name) then
+    if not SameText(ExtractFileExt(Name), SNAPSHOT_EXTENSION) or not SameText(TPath.GetFullPath(Name), Name) then
       raise EArgumentException.Create('Invalid snapshot file path');
+
     Exit;
   end;
+
   if (Name = '') or (Length(Name) > 80) then
     raise EArgumentException.Create('Invalid snapshot name');
+
   for var C in Name do
     if not CharInSet(C, ['a'..'z', 'A'..'Z', '0'..'9', '-', '_']) then
       raise EArgumentException.Create('Snapshot names use letters, digits, - and _');
@@ -66,6 +68,7 @@ begin
   var Root := DocumentsPath;
   if (Root = '') or not TPath.IsPathRooted(Root) then
     Root := HomePath;
+
   if (Root = '') or not TPath.IsPathRooted(Root) then
     raise EInOutError.Create('Cannot determine an absolute save directory');
 

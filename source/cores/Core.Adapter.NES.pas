@@ -3,6 +3,7 @@
 interface
 
 uses
+  Core.InputConfig,
   System.Classes, System.IniFiles, Core.Storage, Core.Emulation, NES.Emulation,
   NES.Input, NES.Types, NES.Controller, NES.FamicomKeyboardDevice,
   NES.FamicomDataRecorder, NES.MiraclePianoDevice;
@@ -93,7 +94,7 @@ type
     procedure SetKeys4(const Value: TKeyMap);
   end;
 
-  TNesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, INesPeripheralCore, INesTapeCore, INesMiraclePianoCore)
+  TNesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, INesPeripheralCore, INesTapeCore, INesMiraclePianoCore)
   private
     FThread: TNesEmulationThread;
     FGamepadInput: TEmulatorInput;
@@ -102,6 +103,7 @@ type
     FFrameNumber: UInt64;
     FError, FAudioError: string;
     procedure ApplyGamepadInput;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -122,6 +124,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -152,7 +155,7 @@ type
 implementation
 
 uses
-  Core.RomFormat, Core.InputConfig, System.SysUtils, System.UITypes;
+  Core.RomFormat, System.SysUtils, System.UITypes;
 
 { TNesCoreAdapter }
 
@@ -317,10 +320,25 @@ begin
   end;
 end;
 
+procedure TNesCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FThread <> nil then
+    FThread.InputPorts := Ports;
+  for var P := 0 to 3 do
+    FDendyPads[P] := Ports.Devices[P] = 'paddendy';
+  FConfig.FourScore := Ports.FourScore;
+end;
+
 procedure TNesCoreAdapter.ClearInput;
 begin
   FGamepadInput := Default(TEmulatorInput);
   FThread.ClearInput;
+end;
+
+function TNesCoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_NES;
 end;
 
 function TNesCoreAdapter.GetName: string;

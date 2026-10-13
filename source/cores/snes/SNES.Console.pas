@@ -398,6 +398,7 @@ begin
     FState.IRQLevel := False;
     Exit;
   end;
+
   var H := FState.IO[7] or ((FState.IO[8] and 1) shl 8);
   var V := FState.IO[9] or ((FState.IO[10] and 1) shl 8);
   var Level := (((Mode and 1) = 0) or (H = FState.IRQHCounter)) and
@@ -452,11 +453,13 @@ procedure TSnesConsole.ProcessDMA;
 begin
   if FInDMA then
     Exit;
+
   if FState.DMAStartDelay then
   begin
     FState.DMAStartDelay := False;
     Exit;
   end;
+
   if FState.HDMAPending then
     RunHDMA
   else if FState.HDMAInitPending then
@@ -472,12 +475,13 @@ begin
     FState.DMAStartDelay := False;
     Exit;
   end;
+
   if not FState.HDMAPending and not FState.HDMAInitPending then
     Exit;
+
   var ActiveMask: Byte := 0;
   for var H := 0 to 7 do
-    if ((FState.HDMAEnable and (1 shl H)) <> 0) and
-      (FState.HDMAInitPending or FState.HDMAActive[H]) then
+    if ((FState.HDMAEnable and (1 shl H)) <> 0) and (FState.HDMAInitPending or FState.HDMAActive[H]) then
       ActiveMask := ActiveMask or (1 shl H);
   if FState.HDMAPending then
     RunHDMA
@@ -541,6 +545,7 @@ begin
           Break;
         end;
     end;
+
     if (FState.Line = 0) and (FState.HClock = FState.HDMAInitPosition) then
     begin
       FState.HDMAInitPending := True;
@@ -585,11 +590,13 @@ begin
   Address := Address and $FFFFFF;
   var Bank := Address shr 16;
   var A := Address and $FFFF;
+
   if FCartridge.ActionReplay and (Address >= $100000) and (Address <= $10003F) then
   begin
     FState.OpenBus := FCartridge.Read(Address, FState.OpenBus);
     Exit(FState.OpenBus);
   end;
+
   if Bank in [$7E, $7F] then
     Result := FState.RAM[Address and $1FFFF]
   else if (Bank and $7F) < $40 then
@@ -666,11 +673,13 @@ begin
   FCartridge.SyncDSP(FState.Clock, MasterRate);
   Address := Address and $FFFFFF;
   FState.OpenBus := Value;
+
   if FCartridge.ActionReplay and (Address >= $100000) and (Address <= $10003F) then
   begin
     FCartridge.Write(Address, Value);
     Exit;
   end;
+
   var Bank := Address shr 16;
   var A := Address and $FFFF;
   if Bank in [$7E, $7F] then
@@ -684,6 +693,7 @@ begin
         $2100..$2133:
           begin
             FPPU.RenderUntil(FState.HClock, FState.Line, (FState.FrameNumber and 1) <> 0);
+
             // An INIDISP write on the first vblank line resets OAM if blank was active.
             if (A = $2100) and (FState.Line = FPPU.Height + 1) and ((FPPU.State.Regs[0] and $80) <> 0) then
               FPPU.State.OAMAddress := FPPU.State.OAMReload;
@@ -835,6 +845,7 @@ begin
         ProcessHDMADuringDMA(Mask);
         if (Mask and (1 shl Channel)) = 0 then
           Continue;
+
         var Index := 0;
         var Count: Integer;
         repeat
@@ -872,6 +883,7 @@ begin
   end;
   if FState.HDMAEnable = 0 then
     Exit;
+
   var WasInDMA := FInDMA;
   FInDMA := True;
   if not WasInDMA then
@@ -919,6 +931,7 @@ begin
       Mask := Mask or (1 shl C);
   if Mask = 0 then
     Exit;
+
   var WasInDMA := FInDMA;
   FInDMA := True;
   if not WasInDMA then
@@ -927,6 +940,7 @@ begin
     if not WasInDMA then
       DMAClock(8 - Integer(FState.Clock and 7));
     DMAClock(8);
+
     // All channels transfer before any channel reads the next table entry.
     for var C := 0 to 7 do
       if ((Mask and (1 shl C)) <> 0) and FState.HDMATransfer[C] then
@@ -944,12 +958,14 @@ begin
           end;
           Inc(FDMAClocks, 8);
         end;
+
     for var C := 0 to 7 do
       if (Mask and (1 shl C)) <> 0 then
       begin
         FState.HDMALines[C] := Byte((Integer(FState.HDMALines[C]) - 1) and $FF);
         FState.HDMATransfer[C] := (FState.HDMALines[C] and $80) <> 0;
         var Bank := Cardinal(FState.DMA[C, 4]) shl 16;
+
         // This read occurs even when the counter is nonzero; its bus side effects matter.
         var Counter := ReadHDMA(Bank or FState.HDMAAddress[C]);
         if (FState.HDMALines[C] and $7F) = 0 then
@@ -1013,6 +1029,7 @@ begin
     LatchJoy;
   if FMultitap[Port] and Strobe then
     Exit(2); // Multitap identification: D1 high, D0 low.
+
   Result := 0;
   var First := 0;
   var Lanes := 1;
@@ -1039,10 +1056,10 @@ end;
 
 procedure TSnesConsole.ConfigureInputPorts(const Ports: TCoreInputPorts);
 begin
-  for var I := 0 to 7 do
-    FDisconnectedPads[I] := Ports.Devices[I] = 'none';
-  for var I := 0 to 1 do
-    FMultitap[I] := Ports.Multitap[I];
+  for var i := 0 to 7 do
+    FDisconnectedPads[i] := Ports.Devices[i] = 'none';
+  for var i := 0 to 1 do
+    FMultitap[i] := Ports.Multitap[i];
 end;
 
 procedure TSnesConsole.SetInput(const Buttons, Buttons2: TSnesButtons);
@@ -1127,6 +1144,7 @@ begin
   begin
     if (FState.Line < 0) or (FState.Line >= LineCount) or (FState.HClock < 0) or (FState.HClock >= 1364) then
       raise EReadError.Create('Invalid SNES snapshot timing');
+
     if (FState.IRQDelay > 3) or (FState.CPUSpeed <= 0) or (FState.CPUSpeed > 12) or
       (FState.HDMAInitPosition < 12) or (FState.HDMAInitPosition > 19) then
       raise EReadError.Create('Invalid SNES snapshot bus state');

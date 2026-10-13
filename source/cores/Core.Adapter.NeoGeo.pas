@@ -3,6 +3,7 @@
 interface
 
 uses
+  Core.InputConfig,
   System.SysUtils, System.Classes, System.IniFiles, Core.Storage, Core.Emulation,
   NeoGeo.Cartridge, NeoGeo.Emulation;
 
@@ -21,7 +22,7 @@ type
     property Keys2: TNeoGeoKeyMap read FKeys2;
   end;
 
-  TNeoGeoCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TNeoGeoCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FThread: TNeoGeoWorker;
     FCartridge: TNeoGeoCartridge;
@@ -35,6 +36,7 @@ type
   public
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False);
     destructor Destroy; override;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -46,6 +48,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -63,7 +66,7 @@ type
 implementation
 
 uses
-  System.UITypes, System.Hash, Core.RomFormat, Core.InputConfig;
+  System.UITypes, System.Hash, Core.RomFormat;
 
 const
   Buttons: TEmulatorButtons = [TEmulatorButton.Up, TEmulatorButton.Down,
@@ -117,7 +120,7 @@ begin
   var SystemId := ROM_SYSTEM_NEOGEO;
   if CD then
     SystemId := ROM_SYSTEM_NEOGEOCD;
-  var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_NEOGEO), FStorage);
+  var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(SystemId), FStorage);
   FConfig := Config;
   Config.Load;
   FKeys := Config.Keys;
@@ -152,7 +155,7 @@ begin
 
   FThread := TNeoGeoWorker.Create(FCartridge, FSavePath, FStorage);
   FThread.SnapshotDirectory := FSnapshotDirectory;
-  FThread.InputPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_NEOGEO);
+  FThread.InputPorts := LoadCoreInputPorts(FStorage, GetSystemId);
   ApplySettings;
   FThread.Start;
 end;
@@ -185,6 +188,13 @@ begin
   if FThread <> nil then
     FThread.RequestReset;
   ApplySettings;
+end;
+
+procedure TNeoGeoCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FThread <> nil then
+    FThread.InputPorts := Ports;
 end;
 
 procedure TNeoGeoCoreAdapter.ClearInput;
@@ -324,6 +334,12 @@ end;
 function TNeoGeoCoreAdapter.GetConfig: IEmulatorConfig;
 begin
   Result := FConfig;
+end;
+
+function TNeoGeoCoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_NEOGEO;
+  if FCartridge.Disc <> nil then Result := ROM_SYSTEM_NEOGEOCD;
 end;
 
 function TNeoGeoCoreAdapter.GetName: string;

@@ -25,9 +25,9 @@ implementation
 
 uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
-  FMX.Forms, FMX.Objects, FMX.StdCtrls, RM.Toolbar, RM.Gamepad,
+  FMX.Forms, FMX.Objects, FMX.StdCtrls, FMX.Layouts, RM.Toolbar, RM.Gamepad,
   SG1000.Keyboard, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad,
-  NES.DataRecorder, RM.Styles, RM.Icons
+  NES.DataRecorder, RM.Styles
   {$IFDEF MSWINDOWS}
     , Winapi.Windows, Winapi.MultiMon, FMX.Platform.Win, FMX.Helpers.Win
   {$ENDIF};
@@ -40,15 +40,17 @@ begin
   {$IF Defined(ANDROID) or Defined(IOS)}
   if FState.Browser.ScreenshotTool <> nil then
   begin
-    FState.Browser.ScreenshotTool.Align := TAlignLayout.None;
-    FView.GamePause.Align := TAlignLayout.None;
-    var ToolY := FView.LayoutHead.Padding.Top;
-    var ToolHeight := Max(0, FView.LayoutHead.Height - ToolY - FView.LayoutHead.Padding.Bottom);
-    var ToolX := FView.LayoutHead.Width - FView.LayoutHead.Padding.Right - FState.Browser.ScreenshotTool.Width;
-    FState.Browser.ScreenshotTool.SetBounds(ToolX, ToolY, 60, ToolHeight);
-    FView.GamePause.SetBounds(ToolX - 68, ToolY, 60, ToolHeight);
-    FView.LabelStatus.Align := TAlignLayout.None;
-    FView.LabelStatus.SetBounds(55, ToolY, Max(0, ToolX - 68 - 63), ToolHeight);
+    var Actions := FView.FindComponent('LayoutGameActions') as TLayout;
+    Actions.Width := 128;
+    FState.Browser.ScreenshotTool.Parent := Actions;
+    FState.Browser.ScreenshotTool.Align := TAlignLayout.Right;
+    FState.Browser.ScreenshotTool.Width := 60;
+    FState.Browser.ScreenshotTool.Margins.Rect := TRectF.Empty;
+    FView.GamePause.Parent := Actions;
+    FView.GamePause.Align := TAlignLayout.Right;
+    FView.GamePause.Width := 60;
+    FView.GamePause.Margins.Rect := TRectF.Create(0, 0, 8, 0);
+    FView.LabelStatus.Align := TAlignLayout.Client;
   end;
   {$ENDIF}
 
@@ -57,7 +59,9 @@ begin
     var HasCoin := (FState.Browser.CoinTool <> nil) and FState.Browser.CoinTool.Visible;
     var Narrow := FView.LayoutHead.Width < IfThen(HasCoin, 1482, 1282);
     var Compact := FView.LayoutHead.Width < IfThen(HasCoin, 740, 660);
-    var Y := IfThen(Narrow, 56, 8);
+    var ActionLayout := FView.FindComponent('LayoutGameActions') as TLayout;
+    var Identity := FView.FindComponent('LayoutGameIdentity') as TLayout;
+    ActionLayout.BeginUpdate;
     var Actions: TArray<TButton> := [
         FState.Browser.Tools[0], FState.Browser.Tools[1], FState.Browser.Tools[2],
         FState.Browser.ScreenshotTool,
@@ -90,16 +94,24 @@ begin
     var Total: Single := (Length(Actions) - 1) * 8;
     for var W in Widths do
       Total := Total + W;
-    var X := FView.LayoutHead.Width - Total - 12;
+    FView.LayoutHead.Padding.Rect := TRectF.Create(8,8,8,8);
+    FView.LayoutHead.Height := IfThen(Narrow,112,64);
+    ActionLayout.Align := TAlignLayout.Right;
+    ActionLayout.Width := Total;
+    ActionLayout.Margins.Rect := TRectF.Create(16,4,0,4);
     if Narrow then
-      X := 8;
-    FView.LayoutHead.Height := IfThen(Narrow, 104, 64);
-    FState.Browser.BackTool.Align := TAlignLayout.None;
-    FState.Browser.BackTool.SetBounds(8, 8, 156, 40);
-    var TitleWidth := Max(0, IfThen(Narrow, FView.LayoutHead.Width - 188, X - 192));
-    FView.LabelStatus.SetBounds(184, 5, TitleWidth, 30);
-    FState.Browser.GamePlatform.SetBounds(184, 33, TitleWidth, 22);
-    FState.Browser.ScreenshotTool.Align := TAlignLayout.None;
+    begin
+      ActionLayout.Align := TAlignLayout.Bottom;
+      ActionLayout.Height := 40;
+      ActionLayout.Margins.Rect := TRectF.Create(0,8,0,0);
+    end;
+    Identity.Align := TAlignLayout.Client;
+    FState.Browser.BackTool.Align := TAlignLayout.Left;
+    FState.Browser.BackTool.Width := 156;
+    FState.Browser.BackTool.Margins.Rect := TRectF.Create(0,0,20,8);
+    FView.LabelStatus.Align := TAlignLayout.Top;
+    FView.LabelStatus.Height := 26;
+    FState.Browser.GamePlatform.Align := TAlignLayout.Client;
     for var i := 0 to High(Actions) do
     begin
       var W := Widths[i];
@@ -111,9 +123,15 @@ begin
         else
           W := Max(32, W - 26 / (Length(Actions) - 1));
       end;
-      Actions[i].SetBounds(X, Y, W, 40);
-      X := X + W + IfThen(Narrow, 6, 8);
+      Actions[i].Parent := ActionLayout;
+      Actions[i].Align := TAlignLayout.Left;
+      Actions[i].Width := W;
+      Actions[i].Margins.Rect := TRectF.Create(0,0,IfThen(Narrow,6,8),0);
+      if I = High(Actions) then Actions[I].Margins.Right := 0;
+      Actions[i].Position.X := I * 200; // Left-alignment ordering key.
+
     end;
+    ActionLayout.EndUpdate;
     if (FState.Session.Emulation <> nil) and (FState.Session.UserPaused or FState.Session.AutoPaused) then
       FState.Browser.Tools[0].Text := Translate('Resume')
     else
@@ -125,23 +143,31 @@ begin
       FState.Browser.CoinTool.Text := Translate('Insert coin');
     FState.Browser.Tools[3].Text := '';
     FState.Browser.Tools[4].Text := '';
+    FState.Browser.HelpTool.Text := 'F1';
     for var i := 0 to High(Actions) do
     begin
-      if (Compact and (Actions[i] <> FState.Browser.HelpTool)) or ((Actions[i] = FState.Browser.CoinTool) and (Actions[i].Width < 180)) then
+      if Compact or ((Actions[i] = FState.Browser.CoinTool) and (Actions[i].Width < 180)) then
         Actions[i].Text := '';
       for var Child in Actions[i].Children do
         if Child is FMX.Objects.TPath then
         begin
           var Icon := FMX.Objects.TPath(Child);
-          if i = 0 then
-            if (FState.Session.Emulation <> nil) and (FState.Session.UserPaused or FState.Session.AutoPaused) then
-              Icon.Data.Data := IconPlay
+          Icon.BeginUpdate;
+          try
+            Icon.Margins.Rect := TRectF.Empty;
+            if Actions[i].Text = '' then
+              // Right-aligned menu arrows already reserve their own width.
+              Icon.Align := TAlignLayout.Center
             else
-              Icon.Data.Data := IconPause;
-          var IconWidth := Actions[i].Width;
-          if Actions[i] is TToolbarSplitButton then
-            IconWidth := IconWidth - 26;
-          Icon.Position.X := IfThen(Actions[i].Text = '', (IconWidth - 20) / 2, 12);
+            begin
+              Icon.Align := TAlignLayout.LeftCenter;
+              Icon.Margins.Left := 12;
+            end;
+            Icon.Width := 20;
+            Icon.Height := 20;
+          finally
+            Icon.EndUpdate;
+          end;
         end;
     end;
   end;

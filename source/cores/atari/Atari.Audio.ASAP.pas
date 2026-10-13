@@ -553,6 +553,7 @@ begin
   begin
     Exit(S32(0));
   end;
+
   instrument := S32(Int64(ASAPInfo_GetWord(module, instrument)) - addrToOffset);
   perFrame := S32(module[12]);
   playerCall := S32(Int64(volumeFrame) * perFrame);
@@ -564,6 +565,7 @@ begin
   begin
     Exit(S32(0));
   end;
+
   volumeSlideDepth := S32(module[S32(Int64(instrument) + 6)]);
   volumeMin := S32(module[S32(Int64(instrument) + 7)]);
   SetLength(RMT_VOLUME_SILENT, 16);
@@ -607,6 +609,7 @@ begin
         Break;
     end;
   end;
+
   if (volumeSlideDepth = 0) then
   begin
     Exit(S32((playerCalls div perFrame)));
@@ -732,6 +735,7 @@ begin
   else
     Exit(False);
   end;
+
   perFrame := S32(module[12]);
   if ((perFrame < 1) or (perFrame > 4)) then
     Exit(False);
@@ -916,12 +920,14 @@ begin
         CheckRmtWorkLimit(parseSteps);
         if not ((ch < S32((Int64(1) shl (posShift and 31))))) then
           Break;
+
         blankRows[ch] := S32(blankRows[ch] - 1);
         if (blankRows[ch] > 0) then
         begin
           Inc(ch);
           Continue;
         end;
+
         while True do
         begin
           CheckRmtWorkLimit(parseSteps);
@@ -942,6 +948,7 @@ begin
             volumeFrame[ch] := S32(frames);
             Break;
           end;
+
           if (i = 62) then
           begin
             patternByteOffset11 := patternOffset[ch];
@@ -949,11 +956,13 @@ begin
             blankRows[ch] := S32(module[patternByteOffset11]);
             Break;
           end;
+
           if ((i and 63) = 62) then
           begin
             blankRows[ch] := S32(Sar32(i, 6));
             Break;
           end;
+
           if ((i and 191) = 63) then
           begin
             patternByteOffset12 := patternOffset[ch];
@@ -961,18 +970,22 @@ begin
             tempo := S32(module[patternByteOffset12]);
             Continue;
           end;
+
           if (i = 191) then
           begin
             patternOffset[ch] := S32(Int64(patternBegin[ch]) + module[patternOffset[ch]]);
             Continue;
           end;
+
           patternRows := S32((-1));
           Break;
         end;
+
         if (patternRows < 0) then
         begin
           Break;
         end;
+
         ch := S32(ch + 1);
       end;
       if (patternRows >= 0) then
@@ -989,6 +1002,7 @@ begin
     CheckRmtWorkLimit(parseSteps);
     if not ((ch < S32((Int64(1) shl (posShift and 31))))) then
       Break;
+
     frame := S32(instrumentFrame[ch]);
     frame := S32(Int64(frame) + ASAPInfo_GetRmtInstrumentFrames(module, instrumentNo[ch], volumeValue[ch], S32(Int64(volumeFrame[ch]) - frame), (ch >= 4)));
     if (instrumentFrames < frame) then
@@ -1017,10 +1031,12 @@ begin
   begin
     Exit(False);
   end;
+
   if ((((module[6] <> 82) or (module[7] <> 77)) or (module[8] <> 84)) or (module[13] <> 1)) then
   begin
     Exit(False);
   end;
+
   Exit(True);
 end;
 
@@ -1176,8 +1192,10 @@ begin
     begin
       Break;
     end;
+
     i := S32(Sar32(i, 1));
   end;
+
   Exit(S32(cycles));
 end;
 
@@ -1201,8 +1219,10 @@ begin
     begin
       Exit(True);
     end;
+
     frame := S32(frame + 1);
   end;
+
   Exit(False);
 end;
 
@@ -1236,6 +1256,7 @@ begin
   begin
     Exit(S32(0));
   end;
+
   if (format = ASAPSampleFormat_U8) then
   begin
     conditionValue1 := 1;
@@ -1264,6 +1285,7 @@ begin
     begin
       Break;
     end;
+
     cycles := S32(ASAP_DoFrame(ctx));
     if (ctx.silenceCycles > 0) then
     begin
@@ -1281,6 +1303,7 @@ begin
       end;
     end;
   end;
+
   Exit(S32((Int64(block) shl (blockShift and 31))));
 end;
 
@@ -1404,9 +1427,7 @@ begin
         end;
       end;
   else
-    begin
-      Exit(S32(ctx.cpu.memory[addr]));
-    end;
+    Exit(S32(ctx.cpu.memory[addr]));
   end;
 end;
 
@@ -1419,6 +1440,7 @@ begin
   begin
     Exit(False);
   end;
+
   ctx.currentSong := S32(song);
   ctx.currentDuration := S32(duration);
   ctx.nextPlayerCycle := S32(8388608);
@@ -1819,6 +1841,7 @@ begin
         begin
           Exit(True);
         end;
+
         ctx.pc := S32(ctx.pc + 1);
         Exit(False);
       end;
@@ -1941,6 +1964,7 @@ begin
         begin
           Exit(True);
         end;
+
         ctx.pc := S32(ctx.pc + 1);
         Exit(False);
       end;
@@ -1993,6 +2017,7 @@ begin
         begin
           Exit(True);
         end;
+
         ctx.pc := S32(ctx.pc + 1);
         Exit(False);
       end;
@@ -2057,6 +2082,7 @@ begin
         begin
           Exit(True);
         end;
+
         ctx.pc := S32(ctx.pc + 1);
         Exit(False);
       end;
@@ -2092,6 +2118,7 @@ begin
         begin
           Exit(True);
         end;
+
         ctx.pc := S32(ctx.pc + 1);
         Exit(False);
       end;
@@ -2178,6 +2205,7 @@ begin
         begin
           Exit(True);
         end;
+
         ctx.pc := S32(ctx.pc + 1);
         Exit(False);
       end;
@@ -2482,9 +2510,7 @@ begin
         ctx.nz := S32(Cpu6502_Increment(ctx, addr));
       end;
   else
-    begin
-      abort();
-    end;
+    Abort;
   end;
 end;
 
@@ -2560,6 +2586,7 @@ begin
     ctx.cycle := S32(ctx.cycle + 1);
     Exit(S32(data));
   end;
+
   Exit(S32(ctx.memory[addr]));
 end;
 
@@ -2754,6 +2781,7 @@ begin
       begin
         Exit;
       end;
+
       if ((audc and 32) <> 0) then
       begin
         ctx.output := S32(Int64(ctx.output) xor 1);
@@ -2781,6 +2809,7 @@ begin
         begin
           Exit;
         end;
+
         ctx.output := S32(newOut);
       end;
     end;
@@ -2816,6 +2845,7 @@ begin
   begin
     Exit;
   end;
+
   Pokey_GenerateUntilCycle(pokey, pokeys, cycle);
   ctx.audc := S32(data);
   if ((data and 16) <> 0) then
@@ -3346,8 +3376,10 @@ begin
     begin
       Exit(False);
     end;
+
     c := S32(c + 1);
   end;
+
   Exit(True);
 end;
 
@@ -3381,6 +3413,7 @@ begin
         begin
           Exit(nextEventCycle);
         end;
+
         Pokey_GenerateUntilCycle(ctx, pokeys, cycle);
         ctx.channels[0].audf := S32(data);
         case (ctx.audctl and 80) of
@@ -3403,10 +3436,9 @@ begin
               ctx.reloadCycles1 := S32(Int64(data) + 4);
             end;
         else
-          begin
-            abort();
-          end;
+          Abort;
         end;
+
         Exit(nextEventCycle);
       end;
     1:
@@ -3420,6 +3452,7 @@ begin
         begin
           Exit(nextEventCycle);
         end;
+
         Pokey_GenerateUntilCycle(ctx, pokeys, cycle);
         ctx.channels[1].audf := S32(data);
         case (ctx.audctl and 80) of
@@ -3436,10 +3469,9 @@ begin
               ctx.channels[1].periodCycles := S32(Int64(S32(Int64(ctx.channels[0].audf) + S32((Int64(data) shl (8 and 31))))) + 7);
             end;
         else
-          begin
-            abort();
-          end;
+          Abort;
         end;
+
         Exit(nextEventCycle);
       end;
     3:
@@ -3453,6 +3485,7 @@ begin
         begin
           Exit(nextEventCycle);
         end;
+
         Pokey_GenerateUntilCycle(ctx, pokeys, cycle);
         ctx.channels[2].audf := S32(data);
         case (ctx.audctl and 40) of
@@ -3475,10 +3508,9 @@ begin
               ctx.reloadCycles3 := S32(Int64(data) + 4);
             end;
         else
-          begin
-            abort();
-          end;
+          Abort;
         end;
+
         Exit(nextEventCycle);
       end;
     5:
@@ -3492,6 +3524,7 @@ begin
         begin
           Exit(nextEventCycle);
         end;
+
         Pokey_GenerateUntilCycle(ctx, pokeys, cycle);
         ctx.channels[3].audf := S32(data);
         case (ctx.audctl and 40) of
@@ -3508,10 +3541,9 @@ begin
               ctx.channels[3].periodCycles := S32(Int64(S32(Int64(ctx.channels[2].audf) + S32((Int64(data) shl (8 and 31))))) + 7);
             end;
         else
-          begin
-            abort();
-          end;
+          Abort;
         end;
+
         Exit(nextEventCycle);
       end;
     7:
@@ -3525,6 +3557,7 @@ begin
         begin
           Exit(nextEventCycle);
         end;
+
         Pokey_GenerateUntilCycle(ctx, pokeys, cycle);
         ctx.audctl := S32(data);
         if ((data and 1) <> 0) then
@@ -3560,10 +3593,9 @@ begin
               ctx.reloadCycles1 := S32(Int64(ctx.channels[0].audf) + 4);
             end;
         else
-          begin
-            abort();
-          end;
+          Abort;
         end;
+
         case (data and 40) of
           0:
             begin
@@ -3588,10 +3620,9 @@ begin
               ctx.reloadCycles3 := S32(Int64(ctx.channels[2].audf) + 4);
             end;
         else
-          begin
-            abort();
-          end;
+          Abort;
         end;
+
         Pokey_InitMute(ctx, cycle);
         Exit(nextEventCycle);
       end;
@@ -3635,6 +3666,7 @@ begin
           begin
             Break;
           end;
+
           i := S32(Sar32(i, 1));
         end;
         Exit(nextEventCycle);
@@ -3645,6 +3677,7 @@ begin
         begin
           Exit(nextEventCycle);
         end;
+
         Pokey_GenerateUntilCycle(ctx, pokeys, cycle);
         ctx.skctl := S32(data);
         init := ((data and 3) = 0);
@@ -3667,9 +3700,7 @@ begin
         Exit(nextEventCycle);
       end;
   else
-    begin
-      Exit(nextEventCycle);
-    end;
+    Exit(nextEventCycle);
   end;
   Exit(S32(nextEventCycle));
 end;

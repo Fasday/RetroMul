@@ -121,6 +121,7 @@ begin
   Result := 0;
   if (Address >= $3000) and (Address < $4000) then
     Exit(FRegisters[Address - $3000]);
+
   var Value := 0;
   var Offset := Address and 7;
   if (Address >= $4000) and (Address < $4400) then

@@ -1,9 +1,5 @@
 ﻿unit GBA.Console;
 
-// The hardware hot path needs optimization even in a frontend Debug build.
-// Keep range/overflow checks; define GBA_DEBUG_UNOPTIMIZED for source stepping.
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
-
 interface
 
 uses
@@ -251,6 +247,7 @@ begin
   FFrameNumber := 0;
   FFrameTarget := 0;
   FFrameBoundaryActive := False;
+
   // Power-on starts in the last part of VBlank, as on the GBA LCD.
   FLine := 225;
   FLineCycle := 0;
@@ -769,6 +766,7 @@ begin
   end;
 
   var Base := Address and not Cardinal(Size - 1);
+
   // Aligned RAM/BIOS transactions cannot cross a mirror boundary.
   // Read them at bus width after charging the unchanged bus timing above.
   // Device reads retain their per-byte side effects in the fallback paths.
@@ -911,6 +909,7 @@ begin
     Size := 2;
   end;
   Address := Address and not Cardinal(Size - 1);
+
   // The bus transaction and byte-write replication have already completed.
   // Aligned memory writes cannot straddle a mirror or bitmap VRAM hole.
   var Target: PByte := nil;
@@ -926,6 +925,7 @@ begin
         var A := Address and $1FFFF;
         if (A >= $18000) and (A < $1C000) and (FVideo.Reg16(0) and 7 >= 3) then
           Exit;
+
         if A >= $18000 then
           Dec(A, $8000);
         Target := @FVideo.VRAM[A];
@@ -1123,6 +1123,7 @@ begin
     var WasActive := FSerialActive;
     FSerialActive := (FVideo.Reg16($134) and $8000 = 0) and (Control and $80 <> 0) and
       (Mode in [0, 1]) and (Control and 1 <> 0);
+
     // With no cable, multiplayer has no parent's clock/readiness handshake.
     // Leave it waiting instead of manufacturing a successful completion/IRQ.
     if (Mode = 2) and (Control and $80 <> 0) then
@@ -1130,6 +1131,7 @@ begin
         FVideo.IO[i] := $FF;
     if FSerialActive and not WasActive then
       FSerialStart := FMasterClock;
+
     // Both bytes of a halfword write share a bus cycle. Finish applying its
     // parameters then; later writes (including IRQ enable) retain the clock.
     if FSerialActive and (FSerialStart = FMasterClock) then
@@ -1493,8 +1495,8 @@ begin
       begin
         var P := Prescales[T.Control and 3];
 
-      // The free-running divider starts at phase -1 before the first bus
-      // cycle. Use a positive offset to preserve that phase at clock zero.
+        // The free-running divider starts at phase -1 before the first bus
+        // cycle. Use a positive offset to preserve that phase at clock zero.
         var Shift := PrescaleShifts[T.Control and 3];
         var Phase := Integer((OldClock + UInt64(P - 1)) and UInt64(P - 1)) + N;
         Clocks := Phase shr Shift;

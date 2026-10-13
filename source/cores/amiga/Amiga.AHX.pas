@@ -1018,6 +1018,7 @@ begin
       end;
     end;
   end;
+
   if Note <> 0 then
     V.OverrideTranspose := 1000;
   Phase1;

@@ -10,7 +10,7 @@ uses
 type
   TSGHostKeys = array[0..255] of Boolean;
 
-  TSGModel = (SG1000, SG1000II, SC3000, SC3000H, Multivision, SF7000, MasterSystem, MarkIII);
+  TSGModel = (SG1000, SG1000II, SC3000, SC3000H, Multivision, SF7000, MasterSystem, MarkIII, GameGear);
 
   // Host preferences are deliberately separate from the emulated snapshot.
   TSGOptions = record
@@ -18,6 +18,7 @@ type
     FMEnabled, DiskWriteProtected: Boolean;
     ChannelVolume: array[0..3] of Integer;
     FMVolume: Integer;
+    GGRegion: Integer; // 0 = cartridge header, 1 = export, 2 = Japan
     class function Defaults: TSGOptions; static;
   end;
 
@@ -36,6 +37,9 @@ type
     FWorkRAM: array[0..$1FFF] of Byte;
     FBios: TBytes;
     FMemoryControl, FIOControl, FFMControl, FHCounter: Byte;
+    FGGPorts: array[1..5] of Byte;
+    FGGSerialCycles: Integer;
+    FGGJapaneseHeader: Boolean;
     FVDP: TSGVDP;
     FSound: TSGSound;
     FRAM: array[0..$7FF] of Byte;
@@ -45,6 +49,7 @@ type
     FPPI: array[0..2] of Byte;
     FPPIControl: Byte;
     FLine, FLineCycles, FSamplePhase, FSampleCount: Integer;
+    FCPUClock, FSampleCountdown: Integer; // Derived timing, not snapshot fields.
     FFrameNumber: UInt64;
     FSamples: TArray<SmallInt>;
     function KeyboardPort(Port: Integer): Byte;
@@ -111,8 +116,8 @@ begin
   Result.ShowSprites := True;
   Result.FMEnabled := True;
   Result.FMVolume := 100;
-  for var I := 0 to 3 do
-    Result.ChannelVolume[I] := 100;
+  for var i := 0 to 3 do
+    Result.ChannelVolume[i] := 100;
 end;
 
 procedure TSGConsole.ApplyOptions(const Options: TSGOptions);
@@ -160,18 +165,24 @@ end;
 constructor TSGConsole.CreateModel(const Data: TBytes; Model: TSGModel; PAL: Boolean; MapperHint: Integer);
 begin
   var Bytes := Data;
-  if (Model in [TSGModel.MasterSystem, TSGModel.MarkIII]) and (Length(Data) mod $4000 = 512) then
+  if (Model in [TSGModel.MasterSystem, TSGModel.MarkIII, TSGModel.GameGear]) and (Length(Data) mod $4000 = 512) then
     Bytes := Copy(Data, 512, Length(Data) - 512);
   Create(Bytes, Model in [TSGModel.SG1000II, TSGModel.SC3000, TSGModel.SC3000H], PAL);
   FModel := Model;
-  if Model in [TSGModel.MasterSystem, TSGModel.MarkIII] then
+  if Model = TSGModel.GameGear then
+    FPAL := False;
+  if Model in [TSGModel.MasterSystem, TSGModel.MarkIII, TSGModel.GameGear] then
   begin
     FSMSCartridge := TSMSCartridge.Create(Bytes, MapperHint);
     FVDP.Free;
-    FVDP := TSMSVDP.Create(Model = TSGModel.MarkIII);
+    FVDP := TSMSVDP.Create(Model = TSGModel.MarkIII, Model = TSGModel.GameGear);
     FSound.Free;
     FSound := TSGSound.Create(True);
-    FFM := TYM2413.Create(GetCPUClock);
+    for var Offset in [$1FF0, $3FF0, $7FF0] do
+      if (Length(Bytes) > Offset + 15) and CompareMem(@Bytes[Offset], PAnsiChar(AnsiString('TMR SEGA')), 8) then
+        FGGJapaneseHeader := Bytes[Offset + 15] shr 4 = 5;
+    if Model <> TSGModel.GameGear then
+      FFM := TYM2413.Create(GetCPUClock);
     Reset;
   end;
 end;
@@ -190,10 +201,7 @@ end;
 
 function TSGConsole.GetCPUClock: Integer;
 begin
-  if FPAL then
-    Result := 3546893
-  else
-    Result := 3579545;
+  Result := FCPUClock;
 end;
 
 function TSGConsole.GetFPS: Double;
@@ -206,6 +214,9 @@ end;
 
 procedure TSGConsole.Reset;
 begin
+  FCPUClock := 3579545;
+  if FPAL then
+    FCPUClock := 3546893;
   FCPU := Default(TZ80State);
   Z80StateInitialise(FCPU);
   FCPU.StackPointer := $FFFF;
@@ -218,6 +229,7 @@ begin
   FLine := 0;
   FLineCycles := 0;
   FSamplePhase := 0;
+  FSampleCountdown := (FCPUClock + 44099) div 44100;
   FSampleCount := 0;
   FFrameNumber := 0;
   FHold := False;
@@ -232,6 +244,12 @@ begin
   FIOControl := $FF;
   FFMControl := 0;
   FHCounter := 0;
+  FGGPorts[1] := $7F;
+  FGGPorts[2] := $FF;
+  FGGPorts[3] := 0;
+  FGGPorts[4] := $FF;
+  FGGPorts[5] := 0;
+  FGGSerialCycles := 0;
   if Length(FBios) > 0 then
     FMemoryControl := $A0;
   ApplyOptions(FOptions);
@@ -251,7 +269,7 @@ begin
   FInput := Input;
   FKeys := Keys;
   var Hold := (TEmulatorButton.Start in Input.Buttons) or (FSC3000 and Keys[vkF10]);
-  if Hold and not FHold then
+  if (FModel <> TSGModel.GameGear) and Hold and not FHold then
     Z80NonMaskableInterrupt(FCPU);
   FHold := Hold;
 end;
@@ -263,9 +281,9 @@ end;
 
 procedure TSGConsole.SetBIOS(const Data: TBytes);
 begin
-  if (Length(Data) <> 0) and (Length(Data) <> $2000) and (Length(Data) <> $4000) and
-    (Length(Data) <> $8000) then
+  if (Length(Data) <> 0) and (Length(Data) <> $2000) and (Length(Data) <> $4000) and (Length(Data) <> $8000) then
     raise EReadError.Create('SMS BIOS must contain 8, 16 or 32 KiB');
+
   FBios := Copy(Data);
   Reset;
 end;
@@ -274,22 +292,28 @@ function TSGConsole.ReadMemory(Address: Word): Byte;
 begin
   if FSF7000 <> nil then
     Exit(FSF7000.ReadMemory(Address));
+
   if FSMSCartridge <> nil then
   begin
     if Address >= $C000 then
     begin
       if FSMSCartridge.ExpandedRAM then
         Exit(FSMSCartridge.Read(Address));
+
       if FMemoryControl and $10 <> 0 then
         Exit($FF);
+
       Exit(FWorkRAM[Address and $1FFF]);
     end;
     if (FMemoryControl and 8 = 0) and (Length(FBios) > 0) and (Address < Length(FBios)) then
       Exit(FBios[Address]);
+
     if FMemoryControl and $40 <> 0 then
       Exit($FF);
+
     Exit(FSMSCartridge.Read(Address));
   end;
+
   if (Address < $C000) or FCartridge.OverridesSystemRAM then
     Exit(FCartridge.Read(Address));
 
@@ -306,6 +330,7 @@ begin
     FSF7000.WriteMemory(Address, Value);
     Exit;
   end;
+
   if FSMSCartridge <> nil then
   begin
     FSMSCartridge.Write(Address, Value);
@@ -313,6 +338,7 @@ begin
       FWorkRAM[Address and $1FFF] := Value;
     Exit;
   end;
+
   FCartridge.Write(Address, Value);
   if (Address >= $C000) and not FCartridge.OverridesSystemRAM then
   begin
@@ -388,11 +414,42 @@ begin
   var Port := Address and $FF;
   if FSMSCartridge <> nil then
   begin
+    if FModel = TSGModel.GameGear then
+    begin
+      case Port of
+        0:
+          begin
+            var Japanese := (FOptions.GGRegion = 2) or ((FOptions.GGRegion = 0) and FGGJapaneseHeader);
+            Exit((Ord(not (TEmulatorButton.Start in FInput.Buttons)) shl 7) or (Ord(not Japanese) shl 6));
+          end;
+        1:
+          Exit((FGGPorts[1] and ($FF xor FGGPorts[2])) or (FGGPorts[2] and $7F));
+        2, 3, 4:
+          Exit(FGGPorts[Port]);
+        5:
+          Exit(FGGPorts[5] or 4); // No peer connected; receive buffer stays empty.
+          6:
+          Exit($FF); // Stereo register is write-only.
+      end;
+
+      if Port >= $C0 then
+      begin
+        if not (Port in [$C0, $C1, $DC, $DD]) then
+          Exit($FF);
+        if FMemoryControl and 4 <> 0 then
+          Exit($FF);
+        if Port and 1 <> 0 then
+          Exit($FF);
+        Exit(JoystickPort(0) or $C0);
+      end;
+    end;
+
     if Port = $F2 then
       if FOptions.FMEnabled then
         Exit(FFMControl and 3)
       else
         Exit($FF);
+
     case Port of
       $40..$7F:
         if Port and 1 = 0 then
@@ -424,8 +481,10 @@ begin
         end;
     end;
   end;
+
   if (FSF7000 <> nil) and (Port >= $E0) then
     Exit(FSF7000.ReadPort(Port));
+
   if (FModel = TSGModel.Multivision) and (Port >= $C0) then
   begin
     Result := $FF;
@@ -446,13 +505,13 @@ begin
             Base := Ord('G');
             Count := 2;
           end;
-          for var I := 0 to Count - 1 do
+          for var i := 0 to Count - 1 do
           begin
-            var Key := Base + I;
+            var Key := Base + i;
             if Key = Ord(':') then
               Key := Ord('0');
             if FKeys[Key] then
-              Result := Result and ($FF xor (1 shl I));
+              Result := Result and ($FF xor (1 shl i));
           end;
         end;
       4:
@@ -462,6 +521,7 @@ begin
     end;
     Exit;
   end;
+
   Result := $FF;
   if (Port >= $80) and (Port <= $BF) then
   begin
@@ -510,6 +570,51 @@ begin
   var Port := Address and $FF;
   if FSMSCartridge <> nil then
   begin
+    if FModel = TSGModel.GameGear then
+    begin
+      case Port of
+        0:
+          Exit;
+        1, 2:
+          begin
+            FGGPorts[Port] := Value;
+            Exit;
+          end;
+        3:
+          begin
+            FGGPorts[3] := Value;
+            if FGGPorts[5] and $30 = $30 then
+            begin
+              FGGPorts[5] := FGGPorts[5] or 1;
+              case FGGPorts[5] shr 6 of
+                0:
+                  FGGSerialCycles := GetCPUClock div 480;
+                1:
+                  FGGSerialCycles := GetCPUClock div 240;
+                2:
+                  FGGSerialCycles := GetCPUClock div 120;
+                3:
+                  FGGSerialCycles := GetCPUClock div 30;
+              end;
+            end;
+            Exit;
+          end;
+        4:
+          Exit;
+        5:
+          begin
+            FGGPorts[5] := (Value and $F8) or (FGGPorts[5] and 1);
+            Exit;
+          end;
+        6:
+          begin
+            FSound.SetStereo(Value);
+            Exit;
+          end;
+        $F0..$F2:
+          Exit;
+      end;
+    end;
     case Port of
       $00..$3F:
         begin
@@ -541,11 +646,13 @@ begin
         end;
     end;
   end;
+
   if (FSF7000 <> nil) and (Port >= $E0) then
   begin
     FSF7000.WritePort(Port, Value);
     Exit;
   end;
+
   FCartridge.WritePort(Port, Value);
   if (Port >= $40) and (Port <= $7F) then
     FSound.Write(Value)
@@ -590,22 +697,31 @@ begin
     var Chunk := Cycles;
     if Chunk > 228 - FLineCycles then
       Chunk := 228 - FLineCycles;
-    var ToSample := (GetCPUClock - FSamplePhase + 44099) div 44100;
-    if Chunk > ToSample then
-      Chunk := ToSample;
+    if Chunk > FSampleCountdown then
+      Chunk := FSampleCountdown;
     Dec(Cycles, Chunk);
     FSound.Advance(Chunk);
+    if FGGSerialCycles > 0 then
+    begin
+      FGGSerialCycles := Max(0, FGGSerialCycles - Chunk);
+      if FGGSerialCycles = 0 then
+        FGGPorts[5] := FGGPorts[5] and $FE;
+    end;
     if FSF7000 <> nil then
       FSF7000.Advance(Chunk);
     FCassette.Advance(Chunk, GetCPUClock);
+    Dec(FSampleCountdown, Chunk);
     Inc(FSamplePhase, Chunk * 44100);
-    if FSamplePhase >= GetCPUClock then
+    if FSampleCountdown = 0 then
     begin
-      Dec(FSamplePhase, GetCPUClock);
+      Dec(FSamplePhase, FCPUClock);
+      FSampleCountdown := (FCPUClock - FSamplePhase + 44099) div 44100;
       if FSampleCount >= Length(FSamples) div 2 then
         raise EInvalidOpException.Create('SG-1000 audio frame buffer exhausted');
 
-      var Sample := FSound.Sample;
+      var Sample: SmallInt := 0;
+      if FModel <> TSGModel.GameGear then
+        Sample := FSound.Sample;
       if FFM <> nil then
       begin
         var Left, Right: SmallInt;
@@ -622,6 +738,8 @@ begin
       end;
       FSamples[FSampleCount * 2] := Sample;
       FSamples[FSampleCount * 2 + 1] := Sample;
+      if FModel = TSGModel.GameGear then
+        FSound.SampleStereo(FSamples[FSampleCount * 2], FSamples[FSampleCount * 2 + 1]);
       Inc(FSampleCount);
     end;
     Inc(FLineCycles, Chunk);
@@ -637,6 +755,7 @@ begin
       if ((not FPAL) and (FLine = 262)) or (FPAL and (FLine = 313)) then
       begin
         FLine := 0;
+
         // Explicit modulo arithmetic also works with overflow checking enabled.
         if FFrameNumber = High(UInt64) then
           FFrameNumber := 0
@@ -686,14 +805,25 @@ begin
   State.Field(FFrameNumber, SizeOf(FFrameNumber));
   FCartridge.SerializeState(State);
   FVDP.SerializeState(State);
-  FSound.SerializeState(State);
+  FSound.SerializeState(State, FModel = TSGModel.GameGear);
   if FSF7000 <> nil then
     FSF7000.SerializeState(State);
   FCassette.SerializeState(State);
+
   if FSMSCartridge <> nil then
   begin
     FSMSCartridge.SerializeState(State);
-    FFM.SerializeState(State);
+    if FFM <> nil then
+      FFM.SerializeState(State);
+
+    if FModel = TSGModel.GameGear then
+    begin
+      State.Field(FGGPorts, SizeOf(FGGPorts));
+      State.Field(FGGSerialCycles, SizeOf(FGGSerialCycles));
+      if State.Loading and ((FGGSerialCycles < 0) or (FGGSerialCycles > GetCPUClock div 30)) then
+        raise EReadError.Create('Invalid Game Gear serial state');
+    end;
+
     State.Field(FWorkRAM, SizeOf(FWorkRAM));
     State.Field(FMemoryControl, SizeOf(FMemoryControl));
     State.Field(FIOControl, SizeOf(FIOControl));
@@ -709,6 +839,8 @@ begin
       (FSamplePhase < 0) or (FSamplePhase >= GetCPUClock) or
       (FCPU.RegisterMode > 2) or (FCPU.InterruptMode > 2) then
       raise EReadError.Create('Invalid SG-1000/SC-3000 snapshot state');
+
+    FSampleCountdown := (FCPUClock - FSamplePhase + 44099) div 44100;
   end;
 end;
 

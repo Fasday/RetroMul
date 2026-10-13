@@ -29,6 +29,8 @@ begin
   FArrow := TSpeedButton.Create(Self);
   FArrow.Parent := Self;
   FArrow.Name := 'MenuArrow';
+  FArrow.Align := TAlignLayout.Right;
+  FArrow.Width := 26;
   FArrow.StyleLookup := 'transparentbuttonstyle';
   FArrow.CanFocus := False;
   AddButtonIcon(FArrow, IconChevronDown, 12);
@@ -58,7 +60,7 @@ begin
   inherited;
   if FArrow <> nil then
   begin
-    FArrow.SetBounds(Max(0, Width - 26), 0, 26, Height);
+    FArrow.Width := 26;
     FArrow.Hint := Translate('More actions');
   end;
 end;

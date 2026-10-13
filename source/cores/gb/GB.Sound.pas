@@ -223,7 +223,7 @@ type
     procedure WriteHardware(Address: Integer; Value: Byte);
     function ReadHardware(Address: Integer): Byte;
     procedure Trigger(Index: Integer);
-    procedure ClockChannel(Index: Integer); {$IFNDEF CPUX86}inline;{$ENDIF}
+    procedure ClockChannel(Index: Integer); {$IFNDEF CPUX86} inline;{$ENDIF}
     procedure UpdateOutput(Index: Integer);
     procedure SyncChannels;
     function SweepFrequency: Integer;
@@ -267,6 +267,7 @@ type
 implementation
 
 {$IFNDEF CPUX86}
+
 var
   // The DAC numerator is an integer in [-1500, 1500]. Keep Extended here
   // to preserve the original expression precision on each target.
@@ -448,6 +449,7 @@ begin
 
   Remaining := Step;
   Area := 0;
+
   // Integrate every transition, including pulses shorter than an output sample.
   while Remaining > 1E-10 do
   begin
@@ -1289,6 +1291,7 @@ begin
   // Keep 6 dB of headroom for coincident channels and DC-removal transients.
   LeftAmp := FFilter[0].Process(LeftAmp * (32767.0 / 960.0));
   RightAmp := FFilter[1].Process(RightAmp * (32767.0 / 960.0));
+
   // Remove DAC bias without discarding musical bass. 20 Hz DC blocker.
   LeftAmp := FDCFilter[0].Process(LeftAmp) * FVolume;
   RightAmp := FDCFilter[1].Process(RightAmp) * FVolume;
@@ -1425,3 +1428,4 @@ initialization
 {$ENDIF}
 
 end.
+

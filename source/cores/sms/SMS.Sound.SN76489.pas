@@ -81,6 +81,7 @@ begin
         FOutput[C] := not FOutput[C];
     end;
   end;
+
   var ShiftNoise := False;
   if FNoise and 3 = 3 then
     ShiftNoise := (FCounter[2] = Max(1, FPeriod[2])) and FOutput[2]
@@ -94,6 +95,7 @@ begin
       ShiftNoise := FOutput[3];
     end;
   end;
+
   if ShiftNoise then
   begin
     var Feedback := FLFSR and 1;

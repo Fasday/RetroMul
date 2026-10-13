@@ -44,16 +44,16 @@ uses
   System.Classes, System.UITypes, System.Math, RM.Input, System.IOUtils,
   FMX.Forms, FMX.Objects, FMX.Graphics, FMX.OpenDialog, Core.Storage,
   Core.EmulatorFactory, Core.Adapter.SG1000, Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
-  Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
-  Core.InputConfig, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
-  RM.Dialogs, RM.Styles, RM.Icons;
+  Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
+  Core.InputConfig, Core.Platforms, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
+  RM.Dialogs, RM.Styles;
 
 procedure TSessionController.FormActivate(Sender: TObject);
 begin
   if FState.Session.OpeningRom then
     Exit;
 
-  if FState.Session.AutoPaused and not FState.Session.UserPaused and not FState.Browser.ViewingLibrary and
+  if FState.Session.AutoPaused and FView.InputHasFocus and not FState.Session.UserPaused and not FState.Browser.ViewingLibrary and
     not RetroDialogVisible(FView) and (FState.Settings.View = nil) and (FState.Help.View = nil) then
   begin
     FState.Session.AutoPaused := False;
@@ -150,7 +150,14 @@ begin
       not FState.Session.DialogWasPaused and not FState.Session.EmulationFaulted and not FState.Session.UserPaused and
       not FState.Session.AutoPaused and {$IF Defined(ANDROID) or Defined(IOS)}not FState.Mobile.InBackground and {$ENDIF} not FState.Session.OpeningRom and
       not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and (FState.Help.View = nil) then
-      FState.Session.Emulation.Resume;
+    begin
+      {$IF not Defined(ANDROID) and not Defined(IOS)}
+      if FState.Preferences.PauseOnFocusLoss and not FView.InputHasFocus then
+        FState.Session.AutoPaused := True
+      else
+      {$ENDIF}
+        FState.Session.Emulation.Resume;
+    end;
     FState.Session.DialogCore := nil;
   end;
   FView.SyncActivity;
@@ -165,42 +172,35 @@ begin
     FState.Session.DialogWasPaused := FState.Session.UserPaused;
     FState.Session.Emulation.Pause;
   end;
-  {$IF Defined(ANDROID) or Defined(IOS)}
   FView.GamePause.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
   var UserPaused := (FState.Session.Emulation <> nil) and (FState.Session.UserPaused or FState.Session.AutoPaused);
+  FView.GamePauseIcon.Visible := not UserPaused;
+  FView.GameResumeIcon.Visible := UserPaused;
   if UserPaused then
   begin
     FView.GamePause.Hint := Translate('Resume');
     FView.GamePause.StyleLookup := 'buttonstyle_accent';
+    FView.GamePause.TextSettings.FontColor := $FF1B2026;
   end
   else
   begin
     FView.GamePause.Hint := Translate('Pause');
     FView.GamePause.StyleLookup := 'buttonstyle';
+    FView.GamePause.TextSettings.FontColor := $FFE8ECF1;
   end;
-  for var Child in FView.GamePause.Children do
-    if Child is FMX.Objects.TPath then
-    begin
-      var Icon := FMX.Objects.TPath(Child);
-      if UserPaused then
-      begin
-        Icon.Data.Data := IconPlay;
-        Icon.Stroke.Color := $FF1B2026;
-      end
-      else
-      begin
-        Icon.Data.Data := IconPause;
-        Icon.Stroke.Color := $FFE8ECF1;
-      end;
-    end;
+  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  if FView.GamePauseIcon.Align = TAlignLayout.Center then
+    FView.GamePause.Text := ''
+  else
+    FView.GamePause.Text := FView.GamePause.Hint;
+  FView.GamePause.Hint := FView.GamePause.Hint + ' · P';
+  // Changing the style recreates its text resource, including its margins.
+  FView.GamePause.ApplyStyleLookup;
+  FView.GamePause.StylesData['text.Margins.Left'] := 36;
+  FView.GamePause.StylesData['text.Margins.Right'] := 10;
   {$ENDIF}
   if FState.Browser.Tools[0] <> nil then
   begin
-    FState.Browser.Tools[0].Enabled := (FState.Session.Emulation <> nil) and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
-    if (FState.Session.Emulation <> nil) and (FState.Session.UserPaused or FState.Session.AutoPaused) then
-      FState.Browser.Tools[0].Text := Translate('Resume')
-    else
-      FState.Browser.Tools[0].Text := Translate('Pause');
     FState.Browser.Tools[1].Enabled := (FState.Session.Emulation <> nil) and FState.Session.Emulation.SupportsSnapshots and not FState.Session.OpeningRom;
     FState.Browser.Tools[2].Enabled := FState.Browser.Tools[1].Enabled;
     FState.Browser.Tools[4].Enabled := not FState.Session.OpeningRom;
@@ -332,7 +332,7 @@ begin
 
   // Idle windows use native key events. Keep polling for gameplay and settings
   // capture; background rendering is only needed while a core is running.
-  var NeedsInput := (FState.Input.Manager <> nil) and FView.InputHasFocus and
+  var NeedsInput := (FState.Input.Manager <> nil) and not FState.Input.PollingFailed and FView.InputHasFocus and
     not FState.Session.OpeningRom and
     ((FState.Settings.View <> nil) or (FState.Session.Emulation <> nil));
   var NeedsFrames := (FState.Session.Emulation <> nil) and
@@ -435,33 +435,38 @@ begin
           FView.FinishFileSelection;
       end;
     end;
-  if FileName <> '' then
-  begin
-    var Selection := Default(TStorageSelection);
-    Selection.Location := FileName;
-    Completion(Selection);
-  end
-  else if ForCassette then
-  begin
-    FState.Session.FileDialog.InitialDirectory := '';
-    FState.Session.FileDialog.FileMustExist := False;
-    FState.Session.FileDialog.Title := Translate('Choose a cassette file');
-    FState.Session.FileDialog.Filter := Translate('Cassette (*.tape)|*.tape|All files|*.*');
-    FState.Session.FileDialog.SelectFiles(
-      procedure(const Selection: TFMXSelectionResult)
-      begin
-        var Result := Default(TStorageSelection);
-        Result.Cancelled := Selection.Status = TFMXSelectionStatus.Cancelled;
-        Result.Error := Selection.Error;
-        if Selection.Status = TFMXSelectionStatus.Selected then
-          Result.Location := Selection.Locations[0];
-        Completion(Result);
-      end);
-  end
-  else
-  begin
-    FView.ImageLogo.Visible := False;
-    FState.Session.Storage.SelectRom(Completion);
+  try
+    if FileName <> '' then
+    begin
+      var Selection := Default(TStorageSelection);
+      Selection.Location := FileName;
+      Completion(Selection);
+    end
+    else if ForCassette then
+    begin
+      FState.Session.FileDialog.InitialDirectory := '';
+      FState.Session.FileDialog.FileMustExist := False;
+      FState.Session.FileDialog.Title := Translate('Choose a cassette file');
+      FState.Session.FileDialog.Filter := Translate('Cassette (*.tape)|*.tape|All files|*.*');
+      FState.Session.FileDialog.SelectFiles(
+        procedure(const Selection: TFMXSelectionResult)
+        begin
+          var Result := Default(TStorageSelection);
+          Result.Cancelled := Selection.Status = TFMXSelectionStatus.Cancelled;
+          Result.Error := Selection.Error;
+          if Selection.Status = TFMXSelectionStatus.Selected then
+            Result.Location := Selection.Locations[0];
+          Completion(Result);
+        end);
+    end
+    else
+    begin
+      FView.ImageLogo.Visible := False;
+      FState.Session.Storage.SelectRom(Completion);
+    end;
+  except
+    FView.FinishFileSelection;
+    raise;
   end;
 end;
 
@@ -619,42 +624,12 @@ begin
   FView.SyncMotionSensor;
   FState.Session.Emulation := NewEmulation;
 
-  var InputSystem := ROM_SYSTEM_NES;
-  if FState.Session.Emulation.Config is TSGConfig then
-    InputSystem := TSGConfig(FState.Session.Emulation.Config).SystemId
-  else if FState.Session.Emulation.Config is TMDConfig then
-    InputSystem := ROM_SYSTEM_MD
-  else if FState.Session.Emulation.Config is TNeoGeoConfig then
-    InputSystem := ROM_SYSTEM_NEOGEO
-  else if FState.Session.Emulation.Config is TN64Config then
-    InputSystem := ROM_SYSTEM_N64
-  else if FState.Session.Emulation.Config is TSnesConfig then
-    InputSystem := ROM_SYSTEM_SNES
-  else if FState.Session.Emulation.Config is TGBAConfig then
-    InputSystem := ROM_SYSTEM_GBA
-  else if FState.Session.Emulation.Config is TGBCEmulatorConfig then
-    InputSystem := ROM_SYSTEM_GBC
-  else if FState.Session.Emulation.Config is TGBEmulatorConfig then
-    InputSystem := ROM_SYSTEM_GB;
+  var Platform := TPlatformRegistry.Require(FState.Session.Emulation.SystemId);
+  var InputSystem := Platform.Id;
   FView.LoadHostInput(InputSystem);
-  if FState.Session.Emulation.Config is TMDConfig then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Sega
-  else if FState.Session.Emulation.Config is TNeoGeoConfig then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.NeoGeo
-  else if FState.Session.Emulation.Config is TN64Config then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Nintendo64
-  else if FState.Session.Emulation.Config is TSnesConfig then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Snes
-  else if FState.Session.Emulation.Config is TGBAConfig then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.GameBoyAdvance
-  else if FState.Session.Emulation.Config is TGBCEmulatorConfig then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.GameBoyColor
-  else if FState.Session.Emulation.Config is TGBEmulatorConfig then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.GameBoy
-  else if FState.Input.Ports.Devices[0] = 'paddendy' then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Dendy
-  else
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Nes;
+  FState.Input.Gamepad.Layout := Platform.PadLayout;
+  if (Platform.System = TRomSystem.NES) and (FState.Input.Ports.Devices[0] = 'paddendy') then
+    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Dendy;
   FState.Input.Gamepad.ButtonMask := CoreButtons(InputSystem, FState.Input.Ports.Devices[0]);
 
   FView.ImageCanvas.HitTest := False;
@@ -728,17 +703,14 @@ end;
 procedure TSessionController.ButtonCloseRomClick(Sender: TObject);
 begin
   FView.Stop;
-  FView.SwitchFullScreen;
 end;
 
 procedure TSessionController.Stop;
 begin
   CancelCoreLoading;
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
   if FView.FullScreen then
     FView.SwitchFullScreen;
-  {$ENDIF}
 
   FView.FormDeactivate(FView);
   if FState.Session.Emulation <> nil then
@@ -768,18 +740,21 @@ end;
 
 procedure TSessionController.TimerUpdateTimer(Sender: TObject);
 begin
-  if FState.Input.Manager <> nil then
+  if (FState.Input.Manager <> nil) and not FState.Input.PollingFailed then
   try
     FView.PollHostInput;
   except
     on E: Exception do
     begin
+      FState.Input.PollingFailed := True;
       FState.Input.Manager.Enabled := False;
-      FView.TimerUpdate.Enabled := False;
-      if FState.Input.Rumble <> nil then
-        FState.Input.Rumble.Stop;
+      FView.FormDeactivate(FView);
       if FState.Session.Emulation <> nil then
-        FState.Session.Emulation.ClearInput;
+      begin
+        FState.Session.UserPaused := True;
+        FState.Session.Emulation.Pause;
+      end;
+      FView.SyncActivity;
       FView.SetStatus(Translate('Input error: ') + E.Message);
       ShowRetroMessage(FView, Translate('Input error: ') + E.Message);
       Exit;
@@ -845,9 +820,11 @@ begin
     if FState.Browser.GameFPS <> nil then
       FState.Browser.GameFPS.Text := Format('%.1f FPS   ·   %s   ·   %d × %d',
         [Frame.FramesPerSecond, UpperCase(FState.Input.SystemId), Frame.Width, Frame.Height]);
-    var NewCaption := Format('%s - %.1f FPS', [FState.Session.Emulation.Name, Frame.FramesPerSecond]);
-    if FView.Caption <> NewCaption then
-      FView.SetStatus(NewCaption);
+    {$IF Defined(ANDROID) or Defined(IOS)}
+    var FrameStatus := Format('%s - %.1f FPS', [FState.Session.Emulation.Name, Frame.FramesPerSecond]);
+    if FView.LabelStatus.Text <> FrameStatus then
+      FView.SetStatus(FrameStatus);
+    {$ENDIF}
   end;
   if not NewFrame then
     Exit;
@@ -877,8 +854,8 @@ begin
   if (FState.Session.Emulation = nil) or FState.Session.EmulationFaulted then
     Exit;
 
+  FState.Session.UserPaused := not (FState.Session.UserPaused or FState.Session.AutoPaused);
   FState.Session.AutoPaused := False;
-  FState.Session.UserPaused := not FState.Session.UserPaused;
   if FState.Session.UserPaused then
   begin
     FView.FormDeactivate(FView);

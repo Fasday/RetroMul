@@ -24,7 +24,8 @@ implementation
 uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
   Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES, Core.SavePaths,
-  Core.RomFormat, RM.Settings, RM.ControlsHelp, RM.Styles;
+  Core.Platforms, Core.RomFormat, Core.InputConfig, RM.Input, RM.Gamepad,
+  RM.Settings, RM.ControlsHelp, RM.Styles, RM.Dialogs;
 
 procedure TSettingsController.Load;
 begin
@@ -110,19 +111,15 @@ begin
     FState.Browser.View.Visible := False;
   FState.Settings.WasPaused := (FState.Session.Emulation <> nil) and FState.Session.Emulation.IsPaused;
   if FState.Browser.View <> nil then
-    FState.Settings.WasPaused := FState.Browser.ViewingLibrary or FState.Session.UserPaused or FState.Session.AutoPaused;
+    FState.Settings.WasPaused := FState.Settings.WasPaused or FState.Browser.ViewingLibrary or
+      FState.Session.UserPaused or FState.Session.AutoPaused;
   FView.FormDeactivate(FView);
   if FState.Session.Emulation <> nil then
     FState.Session.Emulation.Pause;
   FState.Settings.ClientVisible := FView.LayoutClient.Visible;
   FState.Settings.View := TSettingsView.CreateSettings(FView, FState.Session.Storage, FState.Input.Manager);
   if FState.Session.Emulation <> nil then
-    for var i := Low(SettingsCoreIds) to High(SettingsCoreIds) do
-      if SettingsCoreIds[i] = FState.Input.SystemId then
-      begin
-        FState.Settings.View.SelectCore(i, True);
-        Break;
-      end;
+    FState.Settings.View.SelectCore(TPlatformRegistry.Require(FState.Input.SystemId).SettingsPageId, True);
   FState.Settings.View.Parent := FView.SettingsScreen;
   FView.ScreenTabs.ActiveTab := FView.SettingsScreen;
   FState.Settings.View.Align := TAlignLayout.Client;
@@ -149,6 +146,28 @@ begin
     var Config := FState.Session.Emulation.Config;
     var Ini := FState.Session.Storage.ReadConfig(Config.FileName);
     try
+      var InputPorts: IEmulationInputPorts;
+      if Supports(FState.Session.Emulation, IEmulationInputPorts, InputPorts) then
+      begin
+        var Ports := ReadCoreInputPorts(Ini);
+        if not SameInputPorts(FState.Input.Ports, Ports) then
+        begin
+          FState.Input.Gamepad.ReleaseAll;
+          FState.Input.PowerPad.ReleaseAll;
+          FState.Input.SuborKeyboard.ReleaseAll;
+          FState.Input.FamicomKeyboard.ReleaseAll;
+          FState.Input.MiraclePiano.ReleaseAll;
+          FState.Input.SGKeyboard.ReleaseAll;
+          FState.Input.GamepadInput := Default(TEmulatorInput);
+          InputPorts.ApplyInputPorts(Ports);
+          FState.Input.Ports := Ports;
+          var Platform := TPlatformRegistry.Require(FState.Input.SystemId);
+          FState.Input.Gamepad.Layout := Platform.PadLayout;
+          if (FState.Input.SystemId = ROM_SYSTEM_NES) and (Ports.Devices[0] = 'paddendy') then
+            FState.Input.Gamepad.Layout := TScreenGamepadLayout.Dendy;
+          FState.Input.Gamepad.ButtonMask := CoreButtons(FState.Input.SystemId, Ports.Devices[0]);
+        end;
+      end;
       Config.Filter := Ini.ReadString('Video', 'Filter', Config.Filter);
       var GBConfig: IGBEmulatorConfig;
       if Supports(Config, IGBEmulatorConfig, GBConfig) then
@@ -167,6 +186,7 @@ begin
     FState.Browser.View.Reload;
   end;
   FView.ReloadHostInputBindings;
+  FView.SyncActivity;
 end;
 
 procedure TSettingsController.SettingsClose(Sender: TObject);
@@ -196,8 +216,24 @@ begin
       //LoadSystem(FSystemId);
       FView.ReloadHostInputBindings;
       FState.Input.SuppressInputUntilRelease := True;
-      if (FState.Session.Emulation <> nil) and not FState.Settings.WasPaused and not FState.Session.EmulationFaulted then
-        FState.Session.Emulation.Resume;
+      if (FState.Session.Emulation <> nil) and not FState.Settings.WasPaused and
+        not FState.Session.UserPaused and not FState.Session.AutoPaused and
+        not FState.Session.EmulationFaulted and not FState.Session.OpeningRom and
+        not FState.Browser.ViewingLibrary and (FState.Help.View = nil) then
+      begin
+        // A dialog opened by Apply inherited the settings pause. Transfer the
+        // running state to it so dismissal can resume the session later.
+        if RetroDialogVisible(FView) and (FState.Session.DialogCore = FState.Session.Emulation) then
+          FState.Session.DialogWasPaused := False;
+        {$IF not Defined(ANDROID) and not Defined(IOS)}
+        if FState.Preferences.PauseOnFocusLoss and not FView.InputHasFocus and not RetroDialogVisible(FView) then
+          FState.Session.AutoPaused := True
+        else
+        {$ENDIF}
+        if not RetroDialogVisible(FView)
+          {$IF Defined(ANDROID) or Defined(IOS)}and not FState.Mobile.InBackground{$ENDIF} then
+          FState.Session.Emulation.Resume;
+      end;
       FView.SyncActivity;
 
       {$IF Defined(ANDROID) or Defined(IOS)}
@@ -226,11 +262,11 @@ begin
     FView.SwitchFullScreen;
   FView.FormDeactivate(FView);
   FState.Session.Emulation.Pause;
-  var Players := 2;
-  if FState.Input.SystemId = ROM_SYSTEM_GB then
-    Players := 1;
-  if (FState.Input.SystemId = ROM_SYSTEM_GBC) or (FState.Input.SystemId = ROM_SYSTEM_GBA) then
-    Players := 1;
+  var Players := TPlatformRegistry.Require(FState.Input.SystemId).Ports;
+  if (FState.Input.SystemId=ROM_SYSTEM_PCE) or (FState.Input.SystemId=ROM_SYSTEM_SGX) or
+    (FState.Input.SystemId=ROM_SYSTEM_PCECD) then begin
+    Players:=1; if FState.Input.Ports.Multitap[0] then Players:=5;
+  end;
   if FState.Input.SystemId = ROM_SYSTEM_SNES then
     if FState.Input.Ports.Multitap[1] then
       Players := 8
@@ -307,9 +343,7 @@ begin
         FView.SettingsClick(FView);
         if FState.Settings.View <> nil then
         begin
-          for var i := Low(SettingsCoreIds) to High(SettingsCoreIds) do
-            if SettingsCoreIds[i] = FState.Input.SystemId then
-              FState.Settings.View.SelectCore(i);
+          FState.Settings.View.SelectCore(TPlatformRegistry.Require(FState.Input.SystemId).SettingsPageId);
           FState.Settings.View.SelectCategory(SETTINGS_CATEGORY_CONTROLS);
         end;
       end

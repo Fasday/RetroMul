@@ -2,7 +2,6 @@
 
 // Cartridge GPIO, S-3511A RTC and the documented Boktai/Yoshi/Wario sensors.
 // Hardware protocol: https://mgba-emu.github.io/gbatek/#gbacartioportgpio
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
 
 interface
 

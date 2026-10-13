@@ -1,7 +1,5 @@
 ﻿unit GBA.Multiply;
 
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
-
 interface
 
 procedure ARM7MultiplyCarry(Multiplicand, Multiplier: Cardinal; Accumulator: UInt64; LongResult, SignedResult: Boolean; out Carry: Cardinal; out Cycles: Integer);

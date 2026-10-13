@@ -688,6 +688,7 @@ begin
         Value.Data := Copy(M.Data);
         Exit(True);
       end;
+
       Dec(Index);
     end;
   Result := False;

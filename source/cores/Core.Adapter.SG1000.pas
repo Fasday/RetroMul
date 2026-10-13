@@ -51,7 +51,7 @@ type
     property Options: TSGOptions read FOptions;
   end;
 
-  TSGCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, ISGKeyboardCore)
+  TSGCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, ISGKeyboardCore)
   private
     FThread: TSGWorker;
     FData, FBootROM: TBytes;
@@ -73,6 +73,7 @@ type
     destructor Destroy; override;
     procedure SetScreenKeys(const Keys: TSGHostKeys);
     function GetHasKeyboard: Boolean;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -85,6 +86,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -145,6 +147,7 @@ begin
   FOptions.ShowBackground := Ini.ReadBool('Video', 'ShowBackground', True);
   FOptions.ShowSprites := Ini.ReadBool('Video', 'ShowSprites', True);
   FOptions.RemoveSpriteLimit := Ini.ReadBool('Video', 'RemoveSpriteLimit', False);
+  FOptions.GGRegion := EnsureRange(Ini.ReadInteger('Hardware', 'Territory', 0), 0, 2);
   FOptions.FMEnabled := Ini.ReadBool('Audio', 'FMEnabled', True);
   FOptions.FMVolume := EnsureRange(Ini.ReadInteger('Audio', 'FMVolume', 100), 0, 100);
   FOptions.DiskWriteProtected := Ini.ReadBool('Disk', 'WriteProtected', False);
@@ -171,6 +174,7 @@ begin
   Ini.WriteBool('Video', 'ShowBackground', FOptions.ShowBackground);
   Ini.WriteBool('Video', 'ShowSprites', FOptions.ShowSprites);
   Ini.WriteBool('Video', 'RemoveSpriteLimit', FOptions.RemoveSpriteLimit);
+  Ini.WriteInteger('Hardware', 'Territory', FOptions.GGRegion);
   Ini.WriteBool('Audio', 'FMEnabled', FOptions.FMEnabled);
   Ini.WriteInteger('Audio', 'FMVolume', FOptions.FMVolume);
   Ini.WriteBool('Disk', 'WriteProtected', FOptions.DiskWriteProtected);
@@ -219,7 +223,7 @@ begin
     FModel := TSGModel.SG1000;
   if (ModelHint >= 0) and (ModelHint <= Ord(High(TSGModel))) then
     FModel := TSGModel(ModelHint);
-  if FModel in [TSGModel.MasterSystem, TSGModel.MarkIII] then
+  if FModel in [TSGModel.MasterSystem, TSGModel.MarkIII, TSGModel.GameGear] then
   begin
     var Cartridge := TSMSCartridge.Create(Data);
     Cartridge.Free;
@@ -239,6 +243,8 @@ begin
       SystemId := ROM_SYSTEM_OMV;
     TSGModel.MasterSystem, TSGModel.MarkIII:
       SystemId := ROM_SYSTEM_SMS;
+    TSGModel.GameGear:
+      SystemId := ROM_SYSTEM_GG;
   end;
   Config := TSGConfig.Create(FStorage.ConfigFile(SystemId), FStorage, SystemId);
   FConfig := Config;
@@ -366,6 +372,14 @@ begin
   ApplySettings;
 end;
 
+procedure TSGCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FThread <> nil then
+    FThread.InputPorts := Ports;
+  (FConfig as TSGConfig).FKeyboardEnabled := Ports.KeyboardEnabled;
+end;
+
 procedure TSGCoreAdapter.ClearInput;
 begin
   FillChar(FHostKeys, SizeOf(FHostKeys), 0);
@@ -488,6 +502,11 @@ begin
   Result := FModel in [TSGModel.SG1000II, TSGModel.SC3000, TSGModel.SC3000H, TSGModel.SF7000, TSGModel.Multivision];
 end;
 
+function TSGCoreAdapter.GetSystemId: string;
+begin
+  Result := (FConfig as TSGConfig).SystemId;
+end;
+
 function TSGCoreAdapter.GetName: string;
 begin
   case FModel of
@@ -505,6 +524,8 @@ begin
       Result := 'SEGA SF-7000';
     TSGModel.MasterSystem:
       Result := 'SEGA Master System';
+    TSGModel.GameGear:
+      Result := 'SEGA Game Gear';
     TSGModel.MarkIII:
       Result := 'SEGA Mark III';
   end;

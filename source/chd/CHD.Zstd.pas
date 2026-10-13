@@ -99,6 +99,7 @@ begin
   begin
     NBits := MSB(Probs + 1);
     Mask := (1 shl (NBits + 1)) - 1;
+
     // The shorter representation may end exactly at the last byte.
     Small := LowBits(Data, P, NBits);
     SmallMax := Mask - Probs - 1;

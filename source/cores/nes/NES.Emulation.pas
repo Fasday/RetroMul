@@ -29,6 +29,7 @@ type
   TNesEmulationThread = class(TThread)
   private
     FConsole: TNesConsole;
+    FInputPortsCommand: TInputPortsCommand;
     FStorage: IStorage;
     FAudio: TPCMAudio;
     FAudioFormat: TPCMAudioFormat;
@@ -68,6 +69,8 @@ type
     procedure SnapshotCommand(const Name: string; Loading: Boolean);
     procedure WorkerCommand(const Name: string; Loading, Tape: Boolean; Action: TTapeAction);
     function ProcessSnapshot: Boolean;
+    function GetInputPorts: TCoreInputPorts;
+    procedure SetInputPorts(const Ports: TCoreInputPorts);
   protected
     procedure Execute; override;
     procedure TerminatedSet; override;
@@ -112,6 +115,7 @@ type
     property UsesFamicomKeyboard: Boolean read FUsesFamicomKeyboard;
     property IsPausd: Boolean read FPaused;
     property Console: TNesConsole read FConsole;
+    property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   end;
 
 implementation
@@ -135,6 +139,7 @@ end;
 constructor TNesEmulationThread.Create(Stream: TStream; const Storage: IStorage; const RomName: string; FourScoreEnabled: Boolean; RegionOverride: TRegionOverride; AudioEnabled: Boolean; AudioVolume: Single; const SaveDirectory, SnapshotRoot, InputConfigFile: string);
 begin
   inherited Create(True);
+  FInputPortsCommand := TInputPortsCommand.Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
@@ -164,6 +169,7 @@ begin
   // Preserve the legacy Zapper option when port 2 still follows automatic selection.
   var PortIni := FStorage.ReadConfig(ConfigPath);
   var Ports := ReadCoreInputPorts(PortIni);
+  Ports.FourScore := FourScoreEnabled;
   try
     if (Ports.Devices[1] = 'auto') and PortIni.ReadBool('Input', 'Zapper', False) then
       Ports.Devices[1] := 'zapper';
@@ -171,7 +177,8 @@ begin
     PortIni.Free;
   end;
 
-  FConsole.ConfigureInputPorts(Ports);
+  FConsole.ApplyInputPorts(Ports);
+  FInputPortsCommand.Apply(Self, Ports, FWake);
   FUsesSuborKeyboard := FConsole.SuborKeyboard.Connected;
   FUsesFamicomKeyboard := FConsole.FamicomKeyboard.Connected;
   FUsesMiraclePiano := FConsole.UsesMiraclePiano;
@@ -219,6 +226,7 @@ begin
   // Wake first, and join before freeing anything Execute can still access.
   Terminate;
   inherited;
+  FInputPortsCommand.Free;
   FConsole.Free;
   FDiagnostics.Free;
   FInput.Free;
@@ -226,6 +234,16 @@ begin
   FLock.Free;
   FSnapshotDone.Free;
   FSnapshotLock.Free;
+end;
+
+function TNesEmulationThread.GetInputPorts: TCoreInputPorts;
+begin
+  Result := FInputPortsCommand.GetPorts;
+end;
+
+procedure TNesEmulationThread.SetInputPorts(const Ports: TCoreInputPorts);
+begin
+  FInputPortsCommand.Apply(Self, Ports, FWake);
 end;
 
 procedure TNesEmulationThread.SaveSnapshot(const Name: string);
@@ -809,6 +827,20 @@ begin
     while not Terminated do
     begin
       try
+        FInputPortsCommand.Process(
+          procedure(const Ports: TCoreInputPorts)
+          begin
+            FLock.Enter;
+            try
+              FConsole.ApplyInputPorts(Ports);
+              FUsesSuborKeyboard := FConsole.SuborKeyboard.Connected;
+              FUsesFamicomKeyboard := FConsole.FamicomKeyboard.Connected;
+              FUsesMiraclePiano := FConsole.UsesMiraclePiano;
+              FUsesDataRecorder := FConsole.DataRecorder.Connected;
+              FStatus.TapeState := FConsole.DataRecorder.TransportState;
+              FStatus.TapeProgress := FConsole.DataRecorder.GetProgress;
+            finally FLock.Leave; end;
+          end);
         if ProcessSnapshot then
         begin
           FrameHints.Pause;

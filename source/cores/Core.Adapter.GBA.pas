@@ -30,7 +30,7 @@ type
     property Keys: TGBAKeyMap read FKeys;
   end;
 
-  TGBACoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMotionInput, IEmulationRotationInput, IEmulationRumbleOutput)
+  TGBACoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMotionInput, IEmulationRotationInput, IEmulationRumbleOutput)
   private
     FThread: TGBAWorker;
     FData: TBytes;
@@ -55,6 +55,7 @@ type
     procedure SetRotation(Value: Double);
     function GetHasRumble: Boolean;
     function GetRumbleLevel: Byte;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -67,6 +68,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -277,6 +279,13 @@ begin
   ApplySettings;
 end;
 
+procedure TGBACoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FThread <> nil then
+    FThread.InputPorts := Ports;
+end;
+
 procedure TGBACoreAdapter.ClearInput;
 begin
   FKeyboard := [];
@@ -333,6 +342,11 @@ end;
 function TGBACoreAdapter.GetConfig: IEmulatorConfig;
 begin
   Result := FConfig;
+end;
+
+function TGBACoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_GBA;
 end;
 
 function TGBACoreAdapter.GetName: string;

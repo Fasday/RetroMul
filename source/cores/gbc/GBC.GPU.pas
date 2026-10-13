@@ -210,6 +210,7 @@ begin
     VRAMBank1[Address] := Value
   else
     VRAM[Address] := Value;
+
   // $1800..$1FFF is the tile-map area, not tile data.  UpdateTile has 384
   // decoded tile slots ($0000..$17FF), so map writes must not enter it.
   if Address <= $17FF then
@@ -384,6 +385,7 @@ procedure TGBCGPU.UpdateTile(Address: Integer);
 begin
   // get base address for this tile row
   Address := Address and $1FFE;
+
   // work out which tile and row was updated
   var Tile: Integer := (Address shr 4) and 511;
   var Y: Integer := (Address shr 1) and 7;

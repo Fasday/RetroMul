@@ -123,6 +123,7 @@ begin
     raise EArgumentException.Create('Camera requires 54 capture registers');
   SetLength(Result, 16 * 14 * 16);
   FillChar(Result[0], Length(Result), 0);
+
   // Pan Docs: the sensor transfers 128x128; the cart discards 8 rows at each end.
   // https://gbdev.io/pandocs/Gameboy_Camera.html
   for var Y := 0 to GB_CAMERA_IMAGE_HEIGHT - 1 do
@@ -131,8 +132,8 @@ begin
       var Level := FCaptureFrame.Pixels[(Y + GB_CAMERA_SENSOR_MARGIN) * GB_CAMERA_SENSOR_WIDTH + X];
       var Threshold := 6 + ((Y and 3) * 4 + (X and 3)) * 3;
       var Color := 0;
-      for var I := 0 to 2 do
-        if Level < Registers[Threshold + I] then
+      for var i := 0 to 2 do
+        if Level < Registers[Threshold + i] then
           Inc(Color);
       var Offset := ((Y shr 3) * 16 + (X shr 3)) * 16 + (Y and 7) * 2;
       var Mask := 1 shl (7 - (X and 7));

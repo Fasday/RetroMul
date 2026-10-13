@@ -144,6 +144,7 @@ begin
     FPhase := FPhase - 1;
     Advance;
   end;
+
   // Hardware has a mono output. Keep both voices in the same electrical mix.
   var V := (FOutput[0] + FOutput[1]) * 0.5;
   Left := EnsureRange(Round(FDC[0].Process(V) * 32767), -32768, 32767);

@@ -2141,6 +2141,7 @@ begin
   if (State.NMIPending <> 0) and (State.RegisterMode = CLOWNZ80_REGISTER_MODE_HL) then
   begin
     State.NMIPending := 0;
+
     // IFF2 retains the maskable-interrupt state, including through nested NMIs.
     State.InterruptsEnabled := 0;
     State.Halted := False;
@@ -2153,6 +2154,7 @@ begin
     State.Cycles := 11;
     Exit(State.Cycles);
   end;
+
   // Interrupts are accepted at instruction boundaries, never between DD/FD and
   // the following opcode. EI defers acceptance until one full instruction ends.
   if (State.InterruptPending <> 0) and (State.InterruptsEnabled <> 0) and
@@ -2176,6 +2178,7 @@ begin
     end
     else
       State.ProgramCounter := $38;
+
     Exit(State.Cycles);
   end;
 

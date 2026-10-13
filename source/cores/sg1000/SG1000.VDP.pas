@@ -17,7 +17,7 @@ type
     FControlPending: Boolean;
     FPixels: TArray<TAlphaColor>;
     function VRAM(Address: Integer): Byte; inline;
-    function Color(Index: Integer): TAlphaColor;
+    function Color(Index: Integer): TAlphaColor; virtual;
     procedure RenderSprites(Y: Integer);
   public
     constructor Create;
@@ -158,8 +158,9 @@ begin
   if (Y < 0) or (Y >= 192) then
     Exit;
 
+  var Backdrop := Color(0);
   for var X := 0 to 255 do
-    FPixels[Y * 256 + X] := Color(0);
+    FPixels[Y * 256 + X] := Backdrop;
 
   if FRegisters[1] and $40 = 0 then
     Exit;
@@ -216,11 +217,13 @@ begin
       else
         Pattern := $F0;
       end;
+      var Foreground := Color(Colors shr 4);
+      var Background := Color(Colors and 15);
       for var Bit := 0 to Width - 1 do
         if Pattern and ($80 shr Bit) <> 0 then
-          FPixels[Y * 256 + Left + Tile * Width + Bit] := Color(Colors shr 4)
+          FPixels[Y * 256 + Left + Tile * Width + Bit] := Foreground
         else
-          FPixels[Y * 256 + Left + Tile * Width + Bit] := Color(Colors and 15);
+          FPixels[Y * 256 + Left + Tile * Width + Bit] := Background;
     end;
   if Mode and 1 = 0 then
     RenderSprites(Y);
@@ -274,9 +277,16 @@ begin
     if Size = 16 then
       Code := Code and $FC;
     Row := (Y - SY) div Zoom;
+    var SpriteColor := Color(Attr and 15);
+    var BitsLeft := VRAM(Patterns + Code * 8 + Row);
+    var BitsRight := 0;
+    if Size = 16 then
+      BitsRight := VRAM(Patterns + Code * 8 + Row + 16);
     for var Pixel := 0 to Size - 1 do
     begin
-      Bits := VRAM(Patterns + Code * 8 + Row + (Pixel div 8) * 16);
+      Bits := BitsLeft;
+      if Pixel >= 8 then
+        Bits := BitsRight;
       if Bits and ($80 shr (Pixel and 7)) = 0 then
         Continue;
 
@@ -295,7 +305,7 @@ begin
         end;
         if FShowSprites and (Attr and 15 <> 0) and not Drawn[X] then
         begin
-          FPixels[Y * 256 + X] := Color(Attr and 15);
+          FPixels[Y * 256 + X] := SpriteColor;
           Drawn[X] := True;
         end;
       end;

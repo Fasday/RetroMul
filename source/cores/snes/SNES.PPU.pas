@@ -313,6 +313,7 @@ function TSnesPPU.AccessOAM(H, V: Integer): Integer;
 begin
   if CanAccessVRAM(V) then
     Exit(OAMIndex);
+
   // Like Mesen, use the evaluation/fetch sprite index during active display.
   if H <= 1020 then
     Result := FRender.EvalIndex shl 2
@@ -343,6 +344,7 @@ begin
     State.Status := State.Status or $80;
     Exit;
   end;
+
   var Row := (V - FRender.SpriteY) and $FF;
   if (State.Regs[$33] and 2) <> 0 then
     Row := Row * 2 + Ord(Odd);
@@ -360,6 +362,7 @@ begin
     var X := FRender.SpriteX + FRender.FetchColumn * 8 + Col;
     if (X < 0) or (X > 255) then
       Continue;
+
     var PX := FRender.FetchColumn * 8 + Col;
     if (Flags and $40) <> 0 then
       PX := FRender.SpriteWidth - 1 - PX;
@@ -379,6 +382,7 @@ procedure TSnesPPU.UpdateSprites(H, V: Integer; Odd: Boolean);
 begin
   if V > Height then
     Exit;
+
   var Dot := H div 4;
   if H > 1310 then
     Dot := (H - 4) div 4
@@ -447,6 +451,7 @@ begin
         var X := FRender.SpriteX + FRender.FetchColumn * 8;
         if ((X >= -7) and (X <= 255)) or (FRender.SpriteX = -256) then
           Break;
+
         // Fully clipped tiles do not consume the CHR fetch budget.
         Dec(FRender.FetchColumn);
         if FRender.FetchColumn < 0 then
@@ -464,8 +469,8 @@ procedure TSnesPPU.UpdateOutputMode;
 begin
   if not FRender.Timed then
     Exit;
-  if not FRender.FrameHires and (((State.Regs[5] and 7) in [5, 6]) or
-    ((State.Regs[$33] and 8) <> 0)) then
+
+  if not FRender.FrameHires and (((State.Regs[5] and 7) in [5, 6]) or ((State.Regs[$33] and 8) <> 0)) then
   begin
     // Keep the frame stride consistent if a raster effect enables hires mid-frame.
     var LastY := FRender.Line - 1;
@@ -521,9 +526,11 @@ begin
   UpdateSprites(H, V, Odd);
   if (V <= 0) or (V > Height) or (H < 88) then
     Exit;
+
   var LastX := Min(H div 4 - 22, 255);
   if LastX < FRender.DrawX then
     Exit;
+
   RenderSpan(V - 1, FRender.DrawX, LastX, Odd);
   FRender.DrawX := LastX + 1;
 end;
@@ -736,6 +743,7 @@ begin
     Context.BPP := 8;
   if Context.BPP = 0 then
     Exit;
+
   Context.Hires := Mode in [5, 6];
   Context.Mosaic := (State.Regs[6] shr 4) + 1;
   Context.MosaicEnabled := (State.Regs[6] and (1 shl Layer)) <> 0;
@@ -762,6 +770,7 @@ begin
       (Integer(State.Matrix[3]) * Y and not 63) + (Integer(State.Matrix[3]) * DY and not 63) + CenterY * 256;
     Exit;
   end;
+
   Context.SizeShift := 3;
   if (State.Regs[5] and (16 shl Layer)) <> 0 then
     Context.SizeShift := 4;
@@ -788,6 +797,7 @@ begin
   var BPP := Context.BPP;
   if BPP = 0 then
     Exit;
+
   var Layer := Context.Layer;
   var Mode := Context.Mode;
   var Y := Context.Y;
@@ -834,6 +844,7 @@ begin
   var Hires := Context.Hires;
   var HScroll := Context.HScroll;
   var VScroll := Context.VScroll;
+
   // BG3's offset fetch occurs after the current column's BG1/BG2 fetch.
   var Column := X div 8;
   if Hires then
@@ -864,6 +875,7 @@ begin
   else
     X := (X + HScroll) and $3FF;
   Y := (Y + VScroll) and $3FF;
+
   // X and Y have already been masked to nonnegative VRAM coordinates.
   var TY := Y shr SizeShift;
   var WidthShift := Context.WidthShift;
@@ -893,6 +905,7 @@ begin
       ((Pixel and $C0) shl 7) or ((Pal and 4) shl 10);
     Exit;
   end;
+
   if BPP = 8 then
     Pal := 0;
   Result := Palette(Context.PalBase + (Pal shl BPP) + Pixel);
@@ -911,8 +924,10 @@ begin
 
   if (Settings and $A) = 2 then
     Exit(W1);
+
   if (Settings and $A) = 8 then
     Exit(W2);
+
   if (Settings and $A) <> $A then
     Exit;
 
@@ -1077,6 +1092,7 @@ begin
     begin
       if ((State.Regs[$2C] or State.Regs[$2D]) and (1 shl L)) = 0 then
         Continue;
+
       // BG fetches use the physical scanline (1..224); OBJ was evaluated on the
       // preceding line and therefore keeps the zero-based output Y above.
       var Priority: Integer;
@@ -1143,6 +1159,7 @@ begin
       end;
       Main := Combined;
     end;
+
     // Both hires samples are produced atomically by RenderUntil. The final
     // CGRAM bus address is the main sample's, as in the two-pass renderer.
     State.InternalCGAddress := MainCG;
@@ -1172,6 +1189,7 @@ begin
   Archive.Field(State, SizeOf(State));
   Archive.Field(FRender, SizeOf(FRender));
   Archive.Field(FFrame[0], Length(FFrame) * 4);
+
   if Archive.Loading and ((FRender.DrawX < 0) or (FRender.DrawX > 256) or
     (FRender.EvalDot < 0) or (FRender.EvalDot > 256) or
     (FRender.FetchDot < 0) or (FRender.FetchDot > 70) or
@@ -1179,6 +1197,7 @@ begin
     (FRender.EvalIndex < 0) or (FRender.EvalIndex > 127) or
     (FRender.TimeIndex < 0) or (FRender.TimeIndex > 127)) then
     raise EReadError.Create('Invalid SNES PPU pipeline snapshot');
+
   if Archive.Loading and ((FRender.MosaicCounter < 0) or (FRender.MosaicCounter > 17) or
     (FRender.MosaicLine < -1) or (FRender.MosaicLine > 312)) then
     raise EReadError.Create('Invalid SNES PPU mosaic snapshot');
@@ -1188,3 +1207,4 @@ initialization
   InitBrightness;
 
 end.
+

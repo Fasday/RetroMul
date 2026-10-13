@@ -9,6 +9,10 @@ uses
 type
   TSGWorker = class(TThread)
   private
+    FInputPortsCommand: TInputPortsCommand;
+    function GetInputPorts: TCoreInputPorts;
+    procedure SetInputPorts(const Ports: TCoreInputPorts);
+  private
     FLock: TCriticalSection;
     FWake: TEvent;
     FSnapshots: TSnapshotQueue;
@@ -33,7 +37,8 @@ type
     MapperHint: Integer;
     TapeFile: string;
     TapeAutoPlay: Boolean;
-    InputPorts: TCoreInputPorts;
+    property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
+  public
     constructor Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage; Model: Integer = -1; const BIOS: TBytes = nil; WarmBoot: Boolean = True);
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; const Keys: TSGHostKeys; Paused, AudioEnabled: Boolean; Volume: Single);
@@ -52,9 +57,20 @@ uses
   System.Diagnostics, System.Math, Core.SavePaths, Core.PerformanceHints,
   Core.RomFormat, PCM.Audio;
 
+function TSGWorker.GetInputPorts: TCoreInputPorts;
+begin
+  Result := FInputPortsCommand.GetPorts;
+end;
+
+procedure TSGWorker.SetInputPorts(const Ports: TCoreInputPorts);
+begin
+  FInputPortsCommand.Apply(Self, Ports, FWake);
+end;
+
 constructor TSGWorker.Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage; Model: Integer; const BIOS: TBytes; WarmBoot: Boolean);
 begin
   inherited Create(True);
+  FInputPortsCommand := TInputPortsCommand.Create;
   FreeOnTerminate := False;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil, False, False, '');
@@ -83,6 +99,7 @@ begin
 
   // Join before freeing synchronization objects used by Execute.
   inherited;
+  FInputPortsCommand.Free;
   FSnapshots.Free;
   FWake.Free;
   FLock.Free;
@@ -183,7 +200,17 @@ begin
   Frame.Height := Console.VDP.ScreenHeight;
   Frame.FrameNumber := Console.FrameNumber;
   Frame.FramesPerSecond := Console.FramesPerSecond;
-  Frame.Pixels := Copy(Console.VDP.Pixels);
+  if Console.Model = TSGModel.GameGear then
+  begin
+    Frame.Width := 160;
+    Frame.Height := 144;
+    SetLength(Frame.Pixels, 160 * 144);
+    var Top := (Console.VDP.ScreenHeight - 144) div 2;
+    for var Y := 0 to 143 do
+      Move(Console.VDP.Pixels[(Y + Top) * 256 + 48], Frame.Pixels[Y * 160], 160 * SizeOf(Cardinal));
+  end
+  else
+    Frame.Pixels := Copy(Console.VDP.Pixels);
   FLock.Acquire;
   try
     FFrame := Frame;
@@ -218,6 +245,8 @@ begin
       CoreId := ROM_CORE_ID_OMV;
     TSGModel.MasterSystem, TSGModel.MarkIII:
       CoreId := ROM_CORE_ID_SMS;
+    TSGModel.GameGear:
+      CoreId := ROM_CORE_ID_GG;
   else
     CoreId := ROM_CORE_ID_SG1000;
   end;
@@ -256,6 +285,7 @@ begin
       AudioFailed := False;
       while not Terminated do
       begin
+        FInputPortsCommand.Process(nil);
         FSnapshots.Process(
           procedure(const Name: string; Loading: Boolean)
           begin
@@ -277,7 +307,10 @@ begin
             else
             begin
               SaveCoreSnapshot(Path, CoreId, FData, Transfer, FStorage);
-              SaveSnapshotPreview(Path, 256, Console.VDP.ScreenHeight, 256, @Console.VDP.Pixels[0], FStorage);
+              if Console.Model = TSGModel.GameGear then
+                SaveSnapshotPreview(Path, 160, 144, 256, @Console.VDP.Pixels[((Console.VDP.ScreenHeight - 144) div 2) * 256 + 48], FStorage)
+              else
+                SaveSnapshotPreview(Path, 256, Console.VDP.ScreenHeight, 256, @Console.VDP.Pixels[0], FStorage);
             end;
             Deadline := TStopwatch.GetTimeStamp;
           end);
@@ -330,8 +363,8 @@ begin
           if Audio = nil then
             Audio := TPCMAudio.Create(Format);
           SetLength(Samples, Console.SampleFrames * 2);
-          for var I := 0 to High(Samples) do
-            Samples[I] := Round(Console.Samples[I] * Volume);
+          for var i := 0 to High(Samples) do
+            Samples[i] := Round(Console.Samples[i] * Volume);
           Audio.Submit(Samples, Console.SampleFrames);
 
           if Audio.Error <> '' then

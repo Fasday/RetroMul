@@ -77,7 +77,7 @@ type
     Ports: TCoreInputPorts;
     SystemId: string;
     BottomInset: Integer;
-    DispatchingInput, SuppressInputUntilRelease: Boolean;
+    DispatchingInput, SuppressInputUntilRelease, PollingFailed: Boolean;
     Gamepad: TScreenGamepad;
     SuborKeyboard: TNesSuborKeyboard;
     SGKeyboard: TSGKeyboard;

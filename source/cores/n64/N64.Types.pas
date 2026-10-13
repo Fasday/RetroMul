@@ -1,5 +1,4 @@
 ﻿unit N64.Types;
-{$Q+}{$R+}
 
 interface
 
@@ -30,10 +29,12 @@ type
 
   TN64TraceKind = (Instruction, GuestException, MMIORead, MMIOWrite,
     DMAStart, DMAComplete, InterruptChange);
+
   TN64TraceRecord = record
     Tick, PC, Address, Value: UInt64;
     Kind: TN64TraceKind;
   end;
+
   TN64TraceSink = reference to procedure(const Event: TN64TraceRecord);
 
   TN64Bus = class abstract
@@ -219,10 +220,14 @@ end;
 
 procedure TN64Bus.Trace(Kind: TN64TraceKind; PC, Address, Value: UInt64);
 begin
-  if not Assigned(FTraceSink) then Exit;
+  if not Assigned(FTraceSink) then
+    Exit;
   var Event := Default(TN64TraceRecord);
-  Event.Tick := GuestTick; Event.Kind := Kind; Event.PC := PC;
-  Event.Address := Address; Event.Value := Value;
+  Event.Tick := GuestTick;
+  Event.Kind := Kind;
+  Event.PC := PC;
+  Event.Address := Address;
+  Event.Value := Value;
   FTraceSink(Event);
 end;
 

@@ -359,6 +359,7 @@ begin
     Stop;
     Exit;
   end;
+
   State.Cache.Page := 1;
   if State.Cache.Lock[1] then
   begin
@@ -386,6 +387,7 @@ begin
       State.Dma.Enabled := False;
       Exit;
     end;
+
     Tick(AccessDelay(Src));
     var Value := FRead(Src);
     Tick(AccessDelay(Dest));
@@ -564,6 +566,7 @@ procedure TSnesCX4.Branch(Take: Boolean; FarBank, Dest: Byte; Call: Boolean);
 begin
   if not Take then
     Exit;
+
   if Call then
   begin
     State.Stack[State.SP] := (Cardinal(State.PB) shl 8) or State.PC;
@@ -721,7 +724,8 @@ begin
         else
           V := Q;
         var SignedV := Integer(V shl 8) div 256;
-      // ASR, unlike div, rounds negative values down; shifting left makes this division exact.
+
+        // ASR, unlike div, rounds negative values down; shifting left makes this division exact.
         State.Mult := UInt64(Int64(SignedV) * Int64(Integer(State.A shl 8) div 256)) and $FFFFFFFFFFFF;
       end;
     $A0..$BC:

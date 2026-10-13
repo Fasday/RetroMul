@@ -29,15 +29,17 @@ type
     FPhase, FFiltered: Double;
     FFilter: TPCMLowPass;
     FDC: TPCMDCBlocker;
+    FResetSilent: Boolean; // Derived fast path for an untouched zero-register chip.
+    procedure RebuildResetSilence;
     procedure DecodePatch(Index: Integer; const Bytes: array of Byte);
     procedure SetPatch(Channel, Index: Integer);
     procedure UpdateRhythm;
     procedure UpdateKeys;
-    procedure UpdateSlot(I: Integer);
-    procedure Envelope(I: Integer);
+    procedure UpdateSlot(i: Integer);
+    procedure Envelope(i: Integer);
     procedure Noise(Cycles: Integer);
-    function Linear(I, Phase, AM: Integer): Integer;
-    function OperatorOutput(I, Modulation: Integer): Integer;
+    function Linear(i, Phase, AM: Integer): Integer;
+    function OperatorOutput(i, Modulation: Integer): Integer;
   public
     constructor Create(Clock: Integer = 3579545);
     procedure Reset;
@@ -59,6 +61,7 @@ begin
   State.Field(Clock, SizeOf(Clock));
   if State.Loading and (Clock <> FClock) then
     raise EReadError.Create('OPLL snapshot clock differs');
+
   State.Field(FRegisters, SizeOf(FRegisters));
   State.Field(FAddress, SizeOf(FAddress));
   State.Field(FSlots, SizeOf(FSlots));
@@ -79,10 +82,13 @@ begin
   begin
     if (FAddress > 63) or (FPhase < 0) or (FPhase >= 1) then
       raise EReadError.Create('Invalid OPLL snapshot');
+
     for var Slot in FSlots do
       if (Slot.Patch < 0) or (Slot.Patch > High(FPatches)) or (Slot.PhaseOut < 0) or
         (Slot.PhaseOut > 1023) or (Slot.Block < 0) or (Slot.Block > 7) then
         raise EReadError.Create('Invalid OPLL slot snapshot');
+
+    RebuildResetSilence;
   end;
 end;
 
@@ -176,19 +182,20 @@ begin
   inherited Create;
   if (Clock < 1000000) or (Clock > 16000000) then
     raise EArgumentOutOfRangeException.Create('OPLL clock');
+
   FClock := Clock;
   FFilter.Configure(Clock / 72.0, 14000);
   FDC.Configure(44100, 20);
-  for var I := 0 to 255 do
+  for var i := 0 to 255 do
   begin
-    FWave[0, I] := QuarterSine[I];
-    FWave[0, 511 - I] := QuarterSine[I];
+    FWave[0, i] := QuarterSine[i];
+    FWave[0, 511 - i] := QuarterSine[i];
   end;
-  for var I := 0 to 511 do
+  for var i := 0 to 511 do
   begin
-    FWave[0, 512 + I] := $8000 or FWave[0, I];
-    FWave[1, I] := FWave[0, I];
-    FWave[1, 512 + I] := $FFF;
+    FWave[0, 512 + i] := $8000 or FWave[0, i];
+    FWave[1, i] := FWave[0, i];
+    FWave[1, 512 + i] := $FFF;
   end;
   Reset;
 end;
@@ -232,21 +239,21 @@ begin
   FillChar(FRegisters, SizeOf(FRegisters), 0);
   FillChar(FSlots, SizeOf(FSlots), 0);
   var Bytes: array[0..7] of Byte;
-  for var I := 0 to 18 do
+  for var i := 0 to 18 do
   begin
     for var J := 0 to 7 do
-      Bytes[J] := Preset[I * 8 + J];
-    DecodePatch(I, Bytes);
+      Bytes[J] := Preset[i * 8 + J];
+    DecodePatch(i, Bytes);
   end;
-  for var I := 0 to 17 do
+  for var i := 0 to 17 do
   begin
-    FSlots[I].Kind := I mod 2;
-    FSlots[I].State := egRelease;
-    FSlots[I].Envelope := 127;
-    FSlots[I].Dirty := True;
+    FSlots[i].Kind := i mod 2;
+    FSlots[i].State := egRelease;
+    FSlots[i].Envelope := 127;
+    FSlots[i].Dirty := True;
   end;
-  for var I := 0 to 8 do
-    SetPatch(I, 0);
+  for var i := 0 to 8 do
+    SetPatch(i, 0);
   FCounter := 0;
   FPMPhase := 0;
   FAMPhase := 0;
@@ -259,6 +266,49 @@ begin
   FFiltered := 0;
   FFilter.Reset;
   FDC.Reset;
+  FResetSilent := True;
+end;
+
+procedure TYM2413.RebuildResetSilence;
+begin
+  FResetSilent := False;
+  if (FAMPhase < 0) or (FAMPhase >= 210 * 64) then
+    Exit;
+
+  for var Value in FRegisters do
+    if Value <> 0 then
+      Exit;
+
+  var EmptyPatch := Default(TOPLLPatch);
+  if not CompareMem(@FPatches[0], @EmptyPatch, SizeOf(EmptyPatch)) or
+    not CompareMem(@FPatches[1], @EmptyPatch, SizeOf(EmptyPatch)) then
+    Exit;
+
+  for var i := 0 to 17 do
+  begin
+    var S := FSlots[i];
+    if (S.Kind <> i mod 2) or (S.Patch <> i mod 2) or (S.Phase <> 0) or
+      (S.PhaseOut <> 0) or (S.Output <> 0) or (S.Previous <> 0) or
+      (S.State <> egRelease) or (S.Envelope <> 127) or (S.Key <> 0) or
+      (S.Sustain <> 0) or (S.Volume <> 0) or (S.FNumber <> 0) or
+      (S.Block <> 0) or S.KeepPhase then
+      Exit;
+
+    if not S.Dirty then
+    begin
+      if (S.TLL <> 0) or (S.RKS <> 0) or (S.RateLow <> 0) then
+        Exit;
+
+      if Odd(i) then
+      begin
+        if (S.RateHigh <> 7) or (S.Shift <> 6) then
+          Exit;
+      end
+      else if (S.RateHigh <> 0) or (S.Shift <> 0) then
+        Exit;
+    end;
+  end;
+  FResetSilent := not FRhythm;
 end;
 
 procedure TYM2413.UpdateRhythm;
@@ -266,14 +316,15 @@ begin
   var R := FRegisters[$0E] and 32 <> 0;
   if R = FRhythm then
     Exit;
+
   FRhythm := R;
   if R then
   begin
     SetPatch(6, 16);
     SetPatch(7, 17);
     SetPatch(8, 18);
-    for var I := 14 to 17 do
-      FSlots[I].Kind := 3;
+    for var i := 14 to 17 do
+      FSlots[i].Kind := 3;
     FSlots[14].KeepPhase := True;
     FSlots[17].KeepPhase := True;
     FSlots[14].Volume := (FRegisters[$37] shr 4) * 4;
@@ -281,16 +332,16 @@ begin
   end
   else
   begin
-    for var I := 14 to 17 do
+    for var i := 14 to 17 do
     begin
-      FSlots[I].Kind := I mod 2;
-      FSlots[I].KeepPhase := False;
+      FSlots[i].Kind := i mod 2;
+      FSlots[i].KeepPhase := False;
     end;
     for var C := 6 to 8 do
       SetPatch(C, FRegisters[$30 + C] shr 4);
   end;
-  for var I := 12 to 17 do
-    FSlots[I].Dirty := True;
+  for var i := 12 to 17 do
+    FSlots[i].Dirty := True;
 end;
 
 procedure TYM2413.UpdateKeys;
@@ -313,17 +364,18 @@ begin
     if R and 2 <> 0 then
       Keys := Keys or (1 shl 17);
   end;
-  for var I := 0 to 17 do
+  for var i := 0 to 17 do
   begin
-    var Key := (Keys shr I) and 1;
-    if Key = FSlots[I].Key then
+    var Key := (Keys shr i) and 1;
+    if Key = FSlots[i].Key then
       Continue;
-    FSlots[I].Key := Key;
+
+    FSlots[i].Key := Key;
     if Key <> 0 then
-      FSlots[I].State := egDamp
-    else if Odd(FSlots[I].Kind) then
-      FSlots[I].State := egRelease;
-    FSlots[I].Dirty := True;
+      FSlots[i].State := egDamp
+    else if Odd(FSlots[i].Kind) then
+      FSlots[i].State := egRelease;
+    FSlots[i].Dirty := True;
   end;
 end;
 
@@ -331,6 +383,9 @@ procedure TYM2413.WriteRegister(Index, Value: Byte);
 begin
   if Index >= 64 then
     Exit;
+
+  var WasResetSilent := FResetSilent;
+  FResetSilent := False;
   if ((Index >= $19) and (Index <= $1F)) or ((Index >= $29) and (Index <= $2F)) or ((Index >= $39) and (Index <= $3F)) then
     Dec(Index, 9);
   FRegisters[Index] := Value;
@@ -338,9 +393,9 @@ begin
     0..7:
       begin
         DecodePatch(0, [FRegisters[0], FRegisters[1], FRegisters[2], FRegisters[3], FRegisters[4], FRegisters[5], FRegisters[6], FRegisters[7]]);
-        for var I := 0 to 17 do
-          if FSlots[I].Patch < 2 then
-            FSlots[I].Dirty := True;
+        for var i := 0 to 17 do
+          if FSlots[i].Patch < 2 then
+            FSlots[i].Dirty := True;
       end;
     $0E:
       begin
@@ -352,12 +407,12 @@ begin
         var C := Index and 15;
         for var Op := 0 to 1 do
         begin
-          var I := C * 2 + Op;
-          FSlots[I].FNumber := FRegisters[$10 + C] + (FRegisters[$20 + C] and 1) * 256;
-          FSlots[I].Block := (FRegisters[$20 + C] shr 1) and 7;
-          if Odd(FSlots[I].Kind) then
-            FSlots[I].Sustain := (FRegisters[$20 + C] shr 5) and 1;
-          FSlots[I].Dirty := True;
+          var i := C * 2 + Op;
+          FSlots[i].FNumber := FRegisters[$10 + C] + (FRegisters[$20 + C] and 1) * 256;
+          FSlots[i].Block := (FRegisters[$20 + C] shr 1) and 7;
+          if Odd(FSlots[i].Kind) then
+            FSlots[i].Sustain := (FRegisters[$20 + C] shr 5) and 1;
+          FSlots[i].Dirty := True;
         end;
         UpdateKeys;
       end;
@@ -375,6 +430,8 @@ begin
         FSlots[C * 2 + 1].Dirty := True;
       end;
   end;
+  if WasResetSilent and (Value = 0) then
+    RebuildResetSilence;
 end;
 
 procedure TYM2413.WritePort(Port, Value: Byte);
@@ -385,9 +442,9 @@ begin
     WriteRegister(FAddress, Value);
 end;
 
-procedure TYM2413.UpdateSlot(I: Integer);
+procedure TYM2413.UpdateSlot(i: Integer);
 begin
-  var S := FSlots[I];
+  var S := FSlots[i];
   var P := FPatches[S.Patch];
   S.RKS := S.Block shr 1;
   if P.KR <> 0 then
@@ -436,12 +493,12 @@ begin
       S.Shift := 13 - S.RateHigh;
   end;
   S.Dirty := False;
-  FSlots[I] := S;
+  FSlots[i] := S;
 end;
 
-procedure TYM2413.Envelope(I: Integer);
+procedure TYM2413.Envelope(i: Integer);
 begin
-  var S := FSlots[I];
+  var S := FSlots[i];
   var P := FPatches[S.Patch];
   var Mask := (1 shl S.Shift) - 1;
   var EStep := 0;
@@ -496,8 +553,8 @@ begin
           if not S.KeepPhase then
             S.Phase := 0;
           if S.Kind = 1 then
-            if not FSlots[I - 1].KeepPhase then
-              FSlots[I - 1].Phase := 0;
+            if not FSlots[i - 1].KeepPhase then
+              FSlots[i - 1].Phase := 0;
         end;
       end;
     egAttack:
@@ -515,12 +572,12 @@ begin
   end;
   if FRegisters[$0F] and 1 <> 0 then
     S.Envelope := 0;
-  FSlots[I] := S;
+  FSlots[i] := S;
 end;
 
 procedure TYM2413.Noise(Cycles: Integer);
 begin
-  for var I := 1 to Cycles do
+  for var i := 1 to Cycles do
   begin
     if FNoise and 1 <> 0 then
       FNoise := FNoise xor $800200;
@@ -528,11 +585,12 @@ begin
   end;
 end;
 
-function TYM2413.Linear(I, Phase, AM: Integer): Integer;
+function TYM2413.Linear(i, Phase, AM: Integer): Integer;
 begin
-  var S := FSlots[I];
+  var S := FSlots[i];
   if S.Envelope > 123 then
     Exit(0);
+
   var H := Integer(FWave[FPatches[S.Patch].WS, Phase and 1023]) + Min(127, S.Envelope + S.TLL + AM) * 16;
   var V := (ExpTable[(H and 255) xor 255] + 1024) shr ((H and $7F00) shr 8);
   if H and $8000 <> 0 then
@@ -540,28 +598,46 @@ begin
   Result := V * 2;
 end;
 
-function TYM2413.OperatorOutput(I, Modulation: Integer): Integer;
+function TYM2413.OperatorOutput(i, Modulation: Integer): Integer;
 begin
-  var S := FSlots[I];
+  var S := FSlots[i];
   var P := FPatches[S.Patch];
   var AM := 0;
   if P.AM <> 0 then
     AM := FAM;
   var Phase := S.PhaseOut;
-  if not Odd(I) then
+  if not Odd(i) then
   begin
     if P.FB > 0 then
       Inc(Phase, Sar(S.Previous + S.Output, 9 - P.FB));
   end
   else
     Inc(Phase, Sar(Modulation, 1) * 2);
-  FSlots[I].Previous := S.Output;
-  FSlots[I].Output := Linear(I, Phase, AM);
-  Result := FSlots[I].Output;
+  FSlots[i].Previous := S.Output;
+  FSlots[i].Output := Linear(i, Phase, AM);
+  Result := FSlots[i].Output;
 end;
 
 function TYM2413.GenerateNative: SmallInt;
 begin
+  if FResetSilent then
+  begin
+    // The zero patch has no phase increment; released envelopes are saturated.
+    // Keep every observable oscillator/noise/rate field identical to the full path.
+    FPMPhase := (FPMPhase + 1) and 8191;
+    Inc(FAMPhase);
+    if FAMPhase = 210 * 64 then
+      FAMPhase := 0;
+    FAM := AMTable[FAMPhase shr 6];
+    FShortNoise := 0;
+    FCounter := (FCounter + 1) and $FFFF;
+    for var i := 0 to 17 do
+      if FSlots[i].Dirty then
+        UpdateSlot(i);
+    Noise(18);
+    Exit(0);
+  end;
+
   var Test := FRegisters[$0F];
   if Test and 2 <> 0 then
   begin
@@ -585,12 +661,12 @@ begin
   var CY := FSlots[17].PhaseOut;
   FShortNoise := (((HH shr 2) xor (HH shr 7)) or ((HH shr 3) xor (CY shr 5)) or ((CY shr 3) xor (CY shr 5))) and 1;
   FCounter := (FCounter + 1) and $FFFF;
-  for var I := 0 to 17 do
+  for var i := 0 to 17 do
   begin
-    if FSlots[I].Dirty then
-      UpdateSlot(I);
-    Envelope(I);
-    var S := FSlots[I];
+    if FSlots[i].Dirty then
+      UpdateSlot(i);
+    Envelope(i);
+    var S := FSlots[i];
     var P := FPatches[S.Patch];
     var PM := 0;
     if P.PM <> 0 then
@@ -599,7 +675,7 @@ begin
       S.Phase := 0;
     S.Phase := (S.Phase + ((((S.FNumber * 2 + PM) * Multipliers[P.ML]) shl S.Block) shr 2)) and $7FFFF;
     S.PhaseOut := S.Phase shr 9;
-    FSlots[I] := S;
+    FSlots[i] := S;
   end;
   var Sum := 0;
   for var C := 0 to 6 do

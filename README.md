@@ -2,7 +2,7 @@
 
 ![RetroMul](https://github.com/HemulGM/RetroMul/blob/main/screen/screen0.png?raw=true)
 
-RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, SEGA SG-1000, SEGA SC-3000, Super Nintendo, Neo Geo MVS, and Neo Geo CD. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
+RetroMul is a multi-system retro game emulator written in Delphi with a FireMonkey interface. It runs games for NES / Famicom, Game Boy, Game Boy Color, Game Boy Advance, SEGA Mega Drive / Genesis, SEGA SG-1000 / SC-3000 / SF-7000, Othello Multivision, SEGA Master System / Mark III, SEGA Game Gear, Super Nintendo, Neo Geo MVS, Neo Geo CD, and the PC Engine / TurboGrafx / SuperGrafx family. The repository also includes RetroTune, a companion music player, and RetromulTerm, a Windows console frontend.
 
 ## Supported systems and ROM formats
 
@@ -11,14 +11,22 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | NES / Famicom | `.nes` |
 | Game Boy | `.gb`, `.gbx` |
 | Game Boy Color | `.gbc`, `.gbx` |
+| Game & Watch | `.gw`, `.mgw`, catalogued MAME `.zip` sets with SVG screens |
 | Game Boy Advance (experimental) | `.gba` |
 | Nintendo 64 (experimental) | `.z64`, `.n64`, `.v64` |
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
 | SEGA SG-1000 | `.sg` (legacy `.sms` images in `sg1000/`) |
 | SEGA SC-3000 | `.sc` |
+| SEGA SF-7000 | `.sf7`, `.sf`, `.dsk` (external IPL required) |
+| Othello Multivision | `.mv` |
+| SEGA Master System / Mark III | `.sms` |
+| SEGA Game Gear | `.gg` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
 | Neo Geo CD / CDZ (experimental) | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
+| PC Engine / TurboGrafx-16 (experimental) | `.pce`, single-HuCard `.zip` |
+| SuperGrafx (experimental) | `.sgx`, `.pce`, single-HuCard `.zip` |
+| PC Engine CD / Duo / Arcade Card (experimental) | `.cue`, `.iso`, `.chd` (built-in System Cards 1/2/3) |
 
 Cartridge ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers. For Neo Geo CD, open the disc's `.cue`, `.iso`, or `.chd` file. SG-1000 and SC-3000 cartridges have no mandatory header and are selected by `.sg` and `.sc`; unknown raw `.bin` files are not guessed as these systems.
 
@@ -33,6 +41,8 @@ CD games use the **Neo Geo (CD)** input settings for both players, with Select i
 Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmware, stereo audio, SRAM/Flash/EEPROM saves, RTC, tilt, gyroscope and solar-sensor cartridges, cartridge rumble, and save states. GBA settings allow automatic or manual save-memory selection and a Boktai sunlight level from 0 to 255. A replacement 16 KiB BIOS can be selected in GBA settings. Compatibility is still incomplete; see the [GBA firmware notes](source/cores/gba/firmware/README.md) for the bundled firmware, source and license.
 
 ## Features
+
+Game & Watch uses a native Delphi SM5xx core for firmware packages and a native script runtime for MGW simulations. SVG LCD segments are rendered with the project's FMX SVG implementation. Games appear under the Game & Watch library filter and have configurable controls, audio, snapshots and MGW high-score/settings persistence. See the [Game & Watch notes](source/cores/gamewatch/README.md) for archive contents, controls and verified coverage.
 
 - Browse a game library in grid or list view with cover art and information from `gamelist.xml`, search by title, filter by system or initial letter, and keep favorites and recently played games. ROM files can also be opened directly or dropped onto the desktop application.
 - Assign keyboard keys, controller buttons, axes, and D-pad directions for each system and controller port. View the active bindings in the in-game controls help.
@@ -51,7 +61,13 @@ Compatibility depends on the game's cartridge hardware, protection, and peripher
 
 Nintendo 64 uses a native Delphi VR4300/RSP interpreter and software RDP with no external emulator, plugin or PIF BIOS. Cartridge settings select EEPROM 4/16 Kbit, SRAM or FlashRAM. It is experimental: advanced rendering, exact timing and full FPU/RSP conformance remain incomplete. Passing CPU/RSP tests does not establish commercial gameplay compatibility. Implementation and test details: `codex-work/n64/REPORT.md`.
 
-SG-1000 and SC-3000 use a Delphi Z80 interpreter, TMS9918A video, and a clocked TI SN76489A. They support NTSC/PAL timing, two controllers, snapshots, and known cartridge RAM layouts including BASIC II/III and Music Editor. SC-3000 accepts physical keyboard input and provides an on-screen keyboard; its Shift, Ctrl, Graph and Kana modifiers latch when tapped. The library also finds `.sc` files inside an existing `sg1000/` folder. BASIC startup RAM checks can take several seconds. RetromulTerm uses F12 to exit SC-3000 sessions so Escape remains available as BREAK. SF-7000 disks, cassette playback/recording, the printer and Terebi Oekaki tablet are not implemented. Verification and compatibility limits: `codex-work/sg1000/REPORT.md`.
+The SEGA 8-bit family shares RetroMul's Delphi Z80, TMS9918A / Sega Mode 4 video, and clocked PSG. SG-1000 / SC-3000 support NTSC/PAL, two controllers, snapshots and known cartridge RAM layouts including BASIC II/III and Music Editor. SC-3000 accepts physical and on-screen keyboard input; Shift, Ctrl, Graph and Kana latch when tapped. BASIC RAM checks can take several seconds. RetromulTerm uses F12 to exit computer sessions so Escape remains available as BREAK.
+
+Master System / Mark III support cartridge banking, SRAM, optional 8/16/32 KiB BIOS and YM2413 FM. Game Gear uses a 160×144 viewport, 12-bit palette, stereo PSG, separate Start input, automatic or manual Japanese/export hardware region, Sega / Codemasters cartridges, SRAM and 93C46 EEPROM saves. Game Gear timing is always NTSC. Each platform has its own settings, library filter, saves and snapshots.
+
+SF-7000 supports 160 KiB raw disks and CPC DSK images through its native floppy controller; select the external 8 KiB IPL in settings or put it beside the disk. SC/SF computer models also provide PCM WAV cassette support. The library checks both dedicated `sc3000/`, `sf7000/`, `omv/` folders and legacy matching extensions in `sg1000/`. Game Gear link-cable multiplayer, SMS light gun/paddle peripherals and complete hardware timing conformance remain outside the verified coverage. Verification and current limitations: `codex-work/sega8/REPORT.md`.
+
+PC Engine reuses RetroMul's HuC6280 and PSG with native VDC/VCE video, SuperGrafx's second VDC and priority controller, HuCard banking, timer/IRQs, TurboTap and Avenue Pad 6. CD-ROM², Super CD-ROM², Duo and Arcade Card configurations add native CD commands, CDDA, ADPCM, BRAM and expansion RAM. CD media parsing and CHD access are shared through `Core.CD.Disc` and `Core.CD.CHD`. System Cards 1/2/3 are embedded, with automatic hardware/region selection and an optional external replacement. All five BIOS menus, state continuation and diagnostic CD boot are tested; commercial CD gameplay remains unverified. Bounded HuCard checks do not imply full gameplay or hardware accuracy. See the [PC Engine notes](source/cores/pce/README.md).
 
 ## Getting started
 
@@ -62,14 +78,22 @@ ROMS/
   nes/
   gb/
   gbc/
+  gw/
   gba/
   n64/
   megadrive/
   sg1000/
   sc3000/
+  sf7000/
+  omv/
+  sms/
+  gg/
   snes/
   neogeo/
   neogeocd/
+  pcengine/
+  sgx/
+  pcecd/
 ```
 
 Place ROMs in the corresponding folders. On desktop, an optional `gamelist.xml` in each system folder supplies titles, descriptions, cover paths, and other metadata; games without metadata use their filenames. On Android, choose the ROM folder through the system folder picker.

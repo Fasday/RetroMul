@@ -14,6 +14,10 @@ const
 type
   TSnesWorker = class(TThread)
   private
+    FInputPortsCommand: TInputPortsCommand;
+    function GetInputPorts: TCoreInputPorts;
+    procedure SetInputPorts(const Ports: TCoreInputPorts);
+  private
     FSnapshots: TSnapshotQueue;
     FSnapshotDirectory: string;
     FLock: TCriticalSection;
@@ -40,7 +44,8 @@ type
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
   public
-    InputPorts: TCoreInputPorts; // Set before starting the worker.
+    property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
+  public
     property SnapshotDirectory: string read FSnapshotDirectory write FSnapshotDirectory;
     procedure RequestReset;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -57,9 +62,20 @@ uses
 
 { TSnesWorker }
 
+function TSnesWorker.GetInputPorts: TCoreInputPorts;
+begin
+  Result := FInputPortsCommand.GetPorts;
+end;
+
+procedure TSnesWorker.SetInputPorts(const Ports: TCoreInputPorts);
+begin
+  FInputPortsCommand.Apply(Self, Ports, FWake);
+end;
+
 constructor TSnesWorker.Create(const Data: TBytes; const SavePath: string; const Storage: IStorage; const Firmware: TBytes);
 begin
   inherited Create(True);
+  FInputPortsCommand := TInputPortsCommand.Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
@@ -78,6 +94,7 @@ begin
   if FWake <> nil then
     FWake.SetEvent;
   inherited Destroy;
+  FInputPortsCommand.Free;
   FSnapshots.Free;
   FWake.Free;
   FLock.Free;
@@ -168,6 +185,7 @@ begin
   if Suspended then
     Start;
   WaitFor;
+
   // Preserve failed SRAM until an explicit retry succeeds. No worker can mutate it now.
   if Length(FPendingBattery) > 0 then
   try
@@ -178,6 +196,7 @@ begin
     on E: Exception do
       raise EInOutError.Create('SNES SRAM: ' + E.Message);
   end;
+
   if FFinalSaveError <> '' then
     raise EInOutError.Create('SNES SRAM: ' + FFinalSaveError);
 end;
@@ -221,6 +240,7 @@ procedure TSnesWorker.Execute;
           Unchanged := False;
           Break;
         end;
+
     if Unchanged then
       Exit;
 
@@ -267,6 +287,11 @@ begin
       WasEnabled := False;
       while not Terminated do
       begin
+        FInputPortsCommand.Process(
+          procedure(const Ports: TCoreInputPorts)
+          begin
+            Console.ConfigureInputPorts(Ports);
+          end);
         FSnapshots.Process(
           procedure(const Name: string; Loading: Boolean)
           begin
@@ -280,6 +305,7 @@ begin
             if Loading then
             begin
               LoadCoreSnapshot(Path, ROM_CORE_ID_SNES, SnapshotData, Transfer, FStorage);
+              Console.ConfigureInputPorts(InputPorts);
               Console.MarkBatteryDirty;
               if Audio <> nil then
                 Audio.Clear;

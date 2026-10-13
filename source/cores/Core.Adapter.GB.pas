@@ -66,7 +66,7 @@ type
     procedure SetScreenPalette(const Value: Integer);
   end;
 
-  TGBCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IGBCameraInput, IEmulationMotionInput, IEmulationRumbleOutput)
+  TGBCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IGBCameraInput, IEmulationMotionInput, IEmulationRumbleOutput)
   protected
     FThread: TGBEmulationThread;
     FColorHardware: Boolean;
@@ -89,6 +89,7 @@ type
     function CreateConfig(const FileName: string): IGBEmulatorConfig; virtual;
     function CreateWorker: TGBEmulationThread; virtual;
     procedure CopyFrame(const Screen: TScreenArray; var Frame: TEmulatorFrame); virtual;
+    function GetSystemId: string;
     function GetName: string; virtual;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -105,6 +106,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -308,11 +310,22 @@ begin
       FControllerEnabled and ((Button in FGamepadInput.Buttons) or (Button in FKeyboardInput.Buttons)));
 end;
 
+procedure TGBCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  FControllerEnabled := Ports.Devices[0] <> 'none';
+  ClearInput;
+end;
+
 procedure TGBCoreAdapter.ClearInput;
 begin
   FGamepadInput := Default(TEmulatorInput);
   FKeyboardInput := Default(TEmulatorInput);
   FThread.ReleaseKeys;
+end;
+
+function TGBCoreAdapter.GetSystemId: string;
+begin
+  Result := ConfigPrefix;
 end;
 
 function TGBCoreAdapter.GetName: string;

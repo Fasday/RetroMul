@@ -1,0 +1,5 @@
+PCE_SYSCARD1 RCDATA "firmware\\syscard1.pce"
+PCE_SYSCARD2 RCDATA "firmware\\syscard2.pce"
+PCE_SYSCARD2U RCDATA "firmware\\syscard2u.pce"
+PCE_SYSCARD3 RCDATA "firmware\\syscard3.pce"
+PCE_SYSCARD3U RCDATA "firmware\\syscard3u.pce"

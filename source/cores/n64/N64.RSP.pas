@@ -1,5 +1,4 @@
 ﻿unit N64.RSP;
-{$Q+}{$R+}
 
 interface
 
@@ -10,6 +9,7 @@ type
   TRSPTimingInfo = record
     Flags, RRead, RWrite, VRead, VWrite, VCRead, VCWrite, VFake: Cardinal;
   end;
+
   TN64RSP = class
   private
     FBus: TN64Bus;
@@ -87,8 +87,14 @@ procedure TN64RSP.ResetPipeline;
 begin
   FNextPC := 0;
   FBranch := False;
-  for var I := 0 to 31 do begin FScalarReady[I] := 0; FVectorReady[I] := 0 end;
-  FSingleIssue := 0; FStalledSecondOpcode := 0; FHasStalledSecondOpcode := False;
+  for var I := 0 to 31 do
+  begin
+    FScalarReady[I] := 0;
+    FVectorReady[I] := 0
+  end;
+  FSingleIssue := 0;
+  FStalledSecondOpcode := 0;
+  FHasStalledSecondOpcode := False;
   FLoadHistory := 0;
   FBranchBubble := 0;
   FStalledOpcode := 0;
@@ -388,8 +394,8 @@ begin
       36..38:
         begin
           var SignDifferent := (A < 0) <> (B < 0);
-          var LowFlag := False;
-          var HighFlag := False;
+          var LowFlag: Boolean;
+          var HighFlag: Boolean;
           R := Word(UA);
           if Fn = 36 then
           begin
@@ -507,7 +513,7 @@ begin
   var Kind := (Op shr 11) and 31;
   var E := Integer((Op shr 7) and 15);
   var Offset := Integer(SignedValue(SX(Op and 127, 7)));
-  var Size := 1;
+  var Size: Integer;
   case Kind of
     0..3:
       Size := 1 shl Kind;
@@ -528,11 +534,11 @@ begin
     for var I := 0 to 7 do
       for var J := 0 to 1 do
       begin
-        var R := (V and 24) + ((E div 2 + I) and 7);
+        var R := Integer(V and 24) + ((E div 2 + I) and 7);
         var Element := I * 2 + J;
         if Writing then
         begin
-          R := (V and 24) + I;
+          R := Integer(V and 24) + I;
           Element := (16 - (E and 14) + I * 2 + J) and 15
         end;
         var A := $04000000 + ((Start + Cardinal(Position)) and $FFF);
@@ -656,1474 +662,1763 @@ end;
 
 procedure TN64RSP.AgePipeline;
 begin
-  for var I := 0 to 31 do begin
-    if FScalarReady[I] > 0 then Dec(FScalarReady[I]);
-    if FVectorReady[I] > 0 then Dec(FVectorReady[I]);
+  for var I := 0 to 31 do
+  begin
+    if FScalarReady[I] > 0 then
+      Dec(FScalarReady[I]);
+    if FVectorReady[I] > 0 then
+      Dec(FVectorReady[I]);
   end;
   FLoadHistory := (FLoadHistory shl 1) and 3;
 end;
 
 function TN64RSP.InfoEXECUTE(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var S := Integer((Op shr 21) and 31);
+  var T := Integer((Op shr 16) and 31);
   Result := Default(TRSPTimingInfo);
   case Op shr 26 of
-    $00: begin
-      Exit(InfoSPECIAL(Op));
-    end;
-    $01: begin
-      Exit(InfoREGIMM(Op));
-    end;
-    $02: begin
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $03: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl 31);
-      Result.Flags := Result.Flags or 32;
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $04: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $05: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $06: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $07: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $08: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $09: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $0a: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $0b: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $0c: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $0d: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $0e: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $0f: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 32;
-      Exit;
-    end;
-    $10: begin
-      Exit(InfoSCC(Op));
-    end;
-    $11: begin
-      Exit;
-    end;
-    $12: begin
-      Exit(InfoVU(Op));
-    end;
-    $13: begin
-      Exit;
-    end;
-    $14: begin
-      Exit;
-    end;
-    $15: begin
-      Exit;
-    end;
-    $16: begin
-      Exit;
-    end;
-    $17: begin
-      Exit;
-    end;
-    $18: begin
-      Exit;
-    end;
-    $19: begin
-      Exit;
-    end;
-    $1a: begin
-      Exit;
-    end;
-    $1b: begin
-      Exit;
-    end;
-    $1c: begin
-      Exit;
-    end;
-    $1d: begin
-      Exit;
-    end;
-    $1e: begin
-      Exit;
-    end;
-    $1f: begin
-      Exit;
-    end;
-    $20: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $21: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $22: begin
-      Exit;
-    end;
-    $23: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $24: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $25: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $26: begin
-      Exit;
-    end;
-    $27: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $28: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $29: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $2a: begin
-      Exit;
-    end;
-    $2b: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $2c: begin
-      Exit;
-    end;
-    $2d: begin
-      Exit;
-    end;
-    $2e: begin
-      Exit;
-    end;
-    $2f: begin
-      Exit;
-    end;
-    $30: begin
-      Exit;
-    end;
-    $31: begin
-      Exit;
-    end;
-    $32: begin
-      Exit(InfoLWC2(Op));
-    end;
-    $33: begin
-      Exit;
-    end;
-    $34: begin
-      Exit;
-    end;
-    $35: begin
-      Exit;
-    end;
-    $36: begin
-      Exit;
-    end;
-    $37: begin
-      Exit;
-    end;
-    $38: begin
-      Exit;
-    end;
-    $39: begin
-      Exit;
-    end;
-    $3a: begin
-      Exit(InfoSWC2(Op));
-    end;
-    $3b: begin
-      Exit;
-    end;
-    $3c: begin
-      Exit;
-    end;
-    $3d: begin
-      Exit;
-    end;
-    $3e: begin
-      Exit;
-    end;
-    $3f: begin
-      Exit;
-    end;
+    $00:
+      begin
+        Exit(InfoSPECIAL(Op));
+      end;
+    $01:
+      begin
+        Exit(InfoREGIMM(Op));
+      end;
+    $02:
+      begin
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $03:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl 31);
+        Result.Flags := Result.Flags or 32;
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $04:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $05:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $06:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $07:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $08:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $09:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $0a:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $0b:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $0c:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $0d:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $0e:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $0f:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 32;
+        Exit;
+      end;
+    $10:
+      begin
+        Exit(InfoSCC(Op));
+      end;
+    $11:
+      begin
+        Exit;
+      end;
+    $12:
+      begin
+        Exit(InfoVU(Op));
+      end;
+    $13:
+      begin
+        Exit;
+      end;
+    $14:
+      begin
+        Exit;
+      end;
+    $15:
+      begin
+        Exit;
+      end;
+    $16:
+      begin
+        Exit;
+      end;
+    $17:
+      begin
+        Exit;
+      end;
+    $18:
+      begin
+        Exit;
+      end;
+    $19:
+      begin
+        Exit;
+      end;
+    $1a:
+      begin
+        Exit;
+      end;
+    $1b:
+      begin
+        Exit;
+      end;
+    $1c:
+      begin
+        Exit;
+      end;
+    $1d:
+      begin
+        Exit;
+      end;
+    $1e:
+      begin
+        Exit;
+      end;
+    $1f:
+      begin
+        Exit;
+      end;
+    $20:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $21:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $22:
+      begin
+        Exit;
+      end;
+    $23:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $24:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $25:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $26:
+      begin
+        Exit;
+      end;
+    $27:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $28:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $29:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $2a:
+      begin
+        Exit;
+      end;
+    $2b:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $2c:
+      begin
+        Exit;
+      end;
+    $2d:
+      begin
+        Exit;
+      end;
+    $2e:
+      begin
+        Exit;
+      end;
+    $2f:
+      begin
+        Exit;
+      end;
+    $30:
+      begin
+        Exit;
+      end;
+    $31:
+      begin
+        Exit;
+      end;
+    $32:
+      begin
+        Exit(InfoLWC2(Op));
+      end;
+    $33:
+      begin
+        Exit;
+      end;
+    $34:
+      begin
+        Exit;
+      end;
+    $35:
+      begin
+        Exit;
+      end;
+    $36:
+      begin
+        Exit;
+      end;
+    $37:
+      begin
+        Exit;
+      end;
+    $38:
+      begin
+        Exit;
+      end;
+    $39:
+      begin
+        Exit;
+      end;
+    $3a:
+      begin
+        Exit(InfoSWC2(Op));
+      end;
+    $3b:
+      begin
+        Exit;
+      end;
+    $3c:
+      begin
+        Exit;
+      end;
+    $3d:
+      begin
+        Exit;
+      end;
+    $3e:
+      begin
+        Exit;
+      end;
+    $3f:
+      begin
+        Exit;
+      end;
   end;
 end;
 
 function TN64RSP.InfoSPECIAL(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var S := Integer((Op shr 21) and 31);
+  var T := Integer((Op shr 16) and 31);
+  var D := Integer((Op shr 11) and 31);
   Result := Default(TRSPTimingInfo);
-  case Op and  $3f of
-    $00: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $01: begin
-      Exit;
-    end;
-    $02: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $03: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $04: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $05: begin
-      Exit;
-    end;
-    $06: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $07: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Exit;
-    end;
-    $08: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $09: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $0a: begin
-      Exit;
-    end;
-    $0b: begin
-      Exit;
-    end;
-    $0c: begin
-      Exit;
-    end;
-    $0d: begin
-      Result.Flags := Result.Flags or 4;
-      Result.Flags := Result.Flags or 128;
-      Exit;
-    end;
-    $0e: begin
-      Exit;
-    end;
-    $0f: begin
-      Exit;
-    end;
-    $10: begin
-      Exit;
-    end;
-    $11: begin
-      Exit;
-    end;
-    $12: begin
-      Exit;
-    end;
-    $13: begin
-      Exit;
-    end;
-    $14: begin
-      Exit;
-    end;
-    $15: begin
-      Exit;
-    end;
-    $16: begin
-      Exit;
-    end;
-    $17: begin
-      Exit;
-    end;
-    $18: begin
-      Exit;
-    end;
-    $19: begin
-      Exit;
-    end;
-    $1a: begin
-      Exit;
-    end;
-    $1b: begin
-      Exit;
-    end;
-    $1c: begin
-      Exit;
-    end;
-    $1d: begin
-      Exit;
-    end;
-    $1e: begin
-      Exit;
-    end;
-    $1f: begin
-      Exit;
-    end;
-    $20: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $21: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $22: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $23: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $24: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $25: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $26: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $27: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $28: begin
-      Exit;
-    end;
-    $29: begin
-      Exit;
-    end;
-    $2a: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $2b: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Exit;
-    end;
-    $2c: begin
-      Exit;
-    end;
-    $2d: begin
-      Exit;
-    end;
-    $2e: begin
-      Exit;
-    end;
-    $2f: begin
-      Exit;
-    end;
-    $30: begin
-      Exit;
-    end;
-    $31: begin
-      Exit;
-    end;
-    $32: begin
-      Exit;
-    end;
-    $33: begin
-      Exit;
-    end;
-    $34: begin
-      Exit;
-    end;
-    $35: begin
-      Exit;
-    end;
-    $36: begin
-      Exit;
-    end;
-    $37: begin
-      Exit;
-    end;
-    $38: begin
-      Exit;
-    end;
-    $39: begin
-      Exit;
-    end;
-    $3a: begin
-      Exit;
-    end;
-    $3b: begin
-      Exit;
-    end;
-    $3c: begin
-      Exit;
-    end;
-    $3d: begin
-      Exit;
-    end;
-    $3e: begin
-      Exit;
-    end;
-    $3f: begin
-      Exit;
-    end;
+  case Op and $3f of
+    $00:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $01:
+      begin
+        Exit;
+      end;
+    $02:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $03:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $04:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $05:
+      begin
+        Exit;
+      end;
+    $06:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $07:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Exit;
+      end;
+    $08:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $09:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $0a:
+      begin
+        Exit;
+      end;
+    $0b:
+      begin
+        Exit;
+      end;
+    $0c:
+      begin
+        Exit;
+      end;
+    $0d:
+      begin
+        Result.Flags := Result.Flags or 4;
+        Result.Flags := Result.Flags or 128;
+        Exit;
+      end;
+    $0e:
+      begin
+        Exit;
+      end;
+    $0f:
+      begin
+        Exit;
+      end;
+    $10:
+      begin
+        Exit;
+      end;
+    $11:
+      begin
+        Exit;
+      end;
+    $12:
+      begin
+        Exit;
+      end;
+    $13:
+      begin
+        Exit;
+      end;
+    $14:
+      begin
+        Exit;
+      end;
+    $15:
+      begin
+        Exit;
+      end;
+    $16:
+      begin
+        Exit;
+      end;
+    $17:
+      begin
+        Exit;
+      end;
+    $18:
+      begin
+        Exit;
+      end;
+    $19:
+      begin
+        Exit;
+      end;
+    $1a:
+      begin
+        Exit;
+      end;
+    $1b:
+      begin
+        Exit;
+      end;
+    $1c:
+      begin
+        Exit;
+      end;
+    $1d:
+      begin
+        Exit;
+      end;
+    $1e:
+      begin
+        Exit;
+      end;
+    $1f:
+      begin
+        Exit;
+      end;
+    $20:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $21:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $22:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $23:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $24:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $25:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $26:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $27:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $28:
+      begin
+        Exit;
+      end;
+    $29:
+      begin
+        Exit;
+      end;
+    $2a:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $2b:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Exit;
+      end;
+    $2c:
+      begin
+        Exit;
+      end;
+    $2d:
+      begin
+        Exit;
+      end;
+    $2e:
+      begin
+        Exit;
+      end;
+    $2f:
+      begin
+        Exit;
+      end;
+    $30:
+      begin
+        Exit;
+      end;
+    $31:
+      begin
+        Exit;
+      end;
+    $32:
+      begin
+        Exit;
+      end;
+    $33:
+      begin
+        Exit;
+      end;
+    $34:
+      begin
+        Exit;
+      end;
+    $35:
+      begin
+        Exit;
+      end;
+    $36:
+      begin
+        Exit;
+      end;
+    $37:
+      begin
+        Exit;
+      end;
+    $38:
+      begin
+        Exit;
+      end;
+    $39:
+      begin
+        Exit;
+      end;
+    $3a:
+      begin
+        Exit;
+      end;
+    $3b:
+      begin
+        Exit;
+      end;
+    $3c:
+      begin
+        Exit;
+      end;
+    $3d:
+      begin
+        Exit;
+      end;
+    $3e:
+      begin
+        Exit;
+      end;
+    $3f:
+      begin
+        Exit;
+      end;
   end;
 end;
 
 function TN64RSP.InfoREGIMM(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var S := Integer((Op shr 21) and 31);
   Result := Default(TRSPTimingInfo);
-  case Op shr 16 and  $1f of
-    $00: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $01: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $02: begin
-      Exit;
-    end;
-    $03: begin
-      Exit;
-    end;
-    $04: begin
-      Exit;
-    end;
-    $05: begin
-      Exit;
-    end;
-    $06: begin
-      Exit;
-    end;
-    $07: begin
-      Exit;
-    end;
-    $08: begin
-      Exit;
-    end;
-    $09: begin
-      Exit;
-    end;
-    $0a: begin
-      Exit;
-    end;
-    $0b: begin
-      Exit;
-    end;
-    $0c: begin
-      Exit;
-    end;
-    $0d: begin
-      Exit;
-    end;
-    $0e: begin
-      Exit;
-    end;
-    $0f: begin
-      Exit;
-    end;
-    $10: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl 31);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $11: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl 31);
-      Result.Flags := Result.Flags or 32;
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 4;
-      Exit;
-    end;
-    $12: begin
-      Exit;
-    end;
-    $13: begin
-      Exit;
-    end;
-    $14: begin
-      Exit;
-    end;
-    $15: begin
-      Exit;
-    end;
-    $16: begin
-      Exit;
-    end;
-    $17: begin
-      Exit;
-    end;
-    $18: begin
-      Exit;
-    end;
-    $19: begin
-      Exit;
-    end;
-    $1a: begin
-      Exit;
-    end;
-    $1b: begin
-      Exit;
-    end;
-    $1c: begin
-      Exit;
-    end;
-    $1d: begin
-      Exit;
-    end;
-    $1e: begin
-      Exit;
-    end;
-    $1f: begin
-      Exit;
-    end;
+  case Op shr 16 and $1f of
+    $00:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $01:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $02:
+      begin
+        Exit;
+      end;
+    $03:
+      begin
+        Exit;
+      end;
+    $04:
+      begin
+        Exit;
+      end;
+    $05:
+      begin
+        Exit;
+      end;
+    $06:
+      begin
+        Exit;
+      end;
+    $07:
+      begin
+        Exit;
+      end;
+    $08:
+      begin
+        Exit;
+      end;
+    $09:
+      begin
+        Exit;
+      end;
+    $0a:
+      begin
+        Exit;
+      end;
+    $0b:
+      begin
+        Exit;
+      end;
+    $0c:
+      begin
+        Exit;
+      end;
+    $0d:
+      begin
+        Exit;
+      end;
+    $0e:
+      begin
+        Exit;
+      end;
+    $0f:
+      begin
+        Exit;
+      end;
+    $10:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl 31);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $11:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl 31);
+        Result.Flags := Result.Flags or 32;
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 4;
+        Exit;
+      end;
+    $12:
+      begin
+        Exit;
+      end;
+    $13:
+      begin
+        Exit;
+      end;
+    $14:
+      begin
+        Exit;
+      end;
+    $15:
+      begin
+        Exit;
+      end;
+    $16:
+      begin
+        Exit;
+      end;
+    $17:
+      begin
+        Exit;
+      end;
+    $18:
+      begin
+        Exit;
+      end;
+    $19:
+      begin
+        Exit;
+      end;
+    $1a:
+      begin
+        Exit;
+      end;
+    $1b:
+      begin
+        Exit;
+      end;
+    $1c:
+      begin
+        Exit;
+      end;
+    $1d:
+      begin
+        Exit;
+      end;
+    $1e:
+      begin
+        Exit;
+      end;
+    $1f:
+      begin
+        Exit;
+      end;
   end;
 end;
 
 function TN64RSP.InfoSCC(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var T := Integer((Op shr 16) and 31);
+  var D := Integer((Op shr 11) and 31);
+  var XT := Integer((Op shr 15) and 31);
+  var XD := Integer((Op shr 20) and 31);
   Result := Default(TRSPTimingInfo);
-  case Op shr 21 and  $1f of
-    $00: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 2;
-      Exit;
-    end;
-    $01: begin
-      Exit;
-    end;
-    $02: begin
-      Exit;
-    end;
-    $03: begin
-      Exit;
-    end;
-    $04: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 2;
-      if ((D and 8) = 0) and ((D and 7) = 4) then Result.Flags := Result.Flags or 128;
-      Exit;
-    end;
-    $05: begin
-      Exit;
-    end;
-    $06: begin
-      Exit;
-    end;
-    $07: begin
-      Exit;
-    end;
-    $08: begin
-      Exit;
-    end;
-    $09: begin
-      Exit;
-    end;
-    $0a: begin
-      Exit;
-    end;
-    $0b: begin
-      Exit;
-    end;
-    $0c: begin
-      Exit;
-    end;
-    $0d: begin
-      Exit;
-    end;
-    $0e: begin
-      Exit;
-    end;
-    $0f: begin
-      Exit;
-    end;
+  case Op shr 21 and $1f of
+    $00:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 2;
+        Exit;
+      end;
+    $01:
+      begin
+        Exit;
+      end;
+    $02:
+      begin
+        Exit;
+      end;
+    $03:
+      begin
+        Exit;
+      end;
+    $04:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 2;
+        if ((D and 8) = 0) and ((D and 7) = 4) then
+          Result.Flags := Result.Flags or 128;
+        Exit;
+      end;
+    $05:
+      begin
+        Exit;
+      end;
+    $06:
+      begin
+        Exit;
+      end;
+    $07:
+      begin
+        Exit;
+      end;
+    $08:
+      begin
+        Exit;
+      end;
+    $09:
+      begin
+        Exit;
+      end;
+    $0a:
+      begin
+        Exit;
+      end;
+    $0b:
+      begin
+        Exit;
+      end;
+    $0c:
+      begin
+        Exit;
+      end;
+    $0d:
+      begin
+        Exit;
+      end;
+    $0e:
+      begin
+        Exit;
+      end;
+    $0f:
+      begin
+        Exit;
+      end;
   end;
-  case Op and  $3f of
-    $20: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl XD);
-      Result.Flags := Result.Flags or 32;
-      Exit;
-    end;
-    $23: begin
-      Result.Flags := Result.Flags or 256;
-      Exit;
-    end;
-    $24: begin
-      Result.Flags := Result.Flags or 256;
-      Exit;
-    end;
-    $25: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl XD);
-      Result.RRead := Result.RRead or (Cardinal(1) shl XT);
-      Exit;
-    end;
-    $26: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl XD);
-      Exit;
-    end;
-    $27: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl XD);
-      Result.RRead := Result.RRead or (Cardinal(1) shl XT);
-      Exit;
-    end;
-    $28: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl XD);
-      Exit;
-    end;
-    $29: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl XD);
-      Result.RRead := Result.RRead or (Cardinal(1) shl XT);
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl XT);
-      Result.Flags := Result.Flags or 32;
-      Exit;
-    end;
-    $2a: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl XT);
-      Exit;
-    end;
-    $2c: begin
-      Exit;
-    end;
+  case Op and $3f of
+    $20:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl XD);
+        Result.Flags := Result.Flags or 32;
+        Exit;
+      end;
+    $23:
+      begin
+        Result.Flags := Result.Flags or 256;
+        Exit;
+      end;
+    $24:
+      begin
+        Result.Flags := Result.Flags or 256;
+        Exit;
+      end;
+    $25:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl XD);
+        Result.RRead := Result.RRead or (Cardinal(1) shl XT);
+        Exit;
+      end;
+    $26:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl XD);
+        Exit;
+      end;
+    $27:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl XD);
+        Result.RRead := Result.RRead or (Cardinal(1) shl XT);
+        Exit;
+      end;
+    $28:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl XD);
+        Exit;
+      end;
+    $29:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl XD);
+        Result.RRead := Result.RRead or (Cardinal(1) shl XT);
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl XT);
+        Result.Flags := Result.Flags or 32;
+        Exit;
+      end;
+    $2a:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl XT);
+        Exit;
+      end;
+    $2c:
+      begin
+        Exit;
+      end;
   end;
 end;
 
 function TN64RSP.InfoVU(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var T := Integer((Op shr 16) and 31);
+  var D := Integer((Op shr 11) and 31);
+  var V := Integer((Op shr 6) and 31);
   Result := Default(TRSPTimingInfo);
-  case Op shr 21 and  $1f of
-    $00: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 2;
-      Exit;
-    end;
-    $01: begin
-      Exit;
-    end;
-    $02: begin
-      Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 2;
-      Exit;
-    end;
-    $03: begin
-      Exit;
-    end;
-    $04: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 16;
-      Exit;
-    end;
-    $05: begin
-      Exit;
-    end;
-    $06: begin
-      Result.RRead := Result.RRead or (Cardinal(1) shl T);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl D);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 2;
-      Exit;
-    end;
-    $07: begin
-      Exit;
-    end;
-    $08: begin
-      Exit;
-    end;
-    $09: begin
-      Exit;
-    end;
-    $0a: begin
-      Exit;
-    end;
-    $0b: begin
-      Exit;
-    end;
-    $0c: begin
-      Exit;
-    end;
-    $0d: begin
-      Exit;
-    end;
-    $0e: begin
-      Exit;
-    end;
-    $0f: begin
-      Exit;
-    end;
+  case Op shr 21 and $1f of
+    $00:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 2;
+        Exit;
+      end;
+    $01:
+      begin
+        Exit;
+      end;
+    $02:
+      begin
+        Result.RWrite := Result.RWrite or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 2;
+        Exit;
+      end;
+    $03:
+      begin
+        Exit;
+      end;
+    $04:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 16;
+        Exit;
+      end;
+    $05:
+      begin
+        Exit;
+      end;
+    $06:
+      begin
+        Result.RRead := Result.RRead or (Cardinal(1) shl T);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl D);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 2;
+        Exit;
+      end;
+    $07:
+      begin
+        Exit;
+      end;
+    $08:
+      begin
+        Exit;
+      end;
+    $09:
+      begin
+        Exit;
+      end;
+    $0a:
+      begin
+        Exit;
+      end;
+    $0b:
+      begin
+        Exit;
+      end;
+    $0c:
+      begin
+        Exit;
+      end;
+    $0d:
+      begin
+        Exit;
+      end;
+    $0e:
+      begin
+        Exit;
+      end;
+    $0f:
+      begin
+        Exit;
+      end;
   end;
-  case Op and  $3f of
-    $00: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $01: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $02: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $03: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $04: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $05: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $06: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $07: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $08: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $09: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $0a: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $0b: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $0c: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $0d: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $0e: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $0f: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $10: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $11: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $12: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $13: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $14: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $15: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $16: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $17: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $18: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $19: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $1a: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $1b: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $1c: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $1d: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $1e: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $1f: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $20: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $21: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $22: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $23: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $24: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 2);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 2);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $25: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 2);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 2);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $26: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 2);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 2);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $27: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
-      Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
-      Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $28: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $29: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $2a: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $2b: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $2c: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $2d: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VRead := Result.VRead or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $2e: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $2f: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $30: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $31: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $32: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $33: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $34: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $35: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $36: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
-      Result.VFake := Result.VFake or (Cardinal(1) shl D);
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $37: begin
-      Result.VFake := Result.VFake or (Cardinal(1) shl V);
-      Result.Flags := Result.Flags or 8;
-      Result.Flags := Result.Flags or 16;
-      Exit;
-    end;
-    $38: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $39: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $3a: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $3b: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $3c: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $3d: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $3e: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
-    $3f: begin
-      Result.Flags := Result.Flags or 8;
-      Exit;
-    end;
+  case Op and $3f of
+    $00:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $01:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $02:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $03:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $04:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $05:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $06:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $07:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $08:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $09:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $0a:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $0b:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $0c:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $0d:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $0e:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $0f:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $10:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $11:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $12:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $13:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $14:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $15:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $16:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $17:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $18:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $19:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $1a:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $1b:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $1c:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $1d:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $1e:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $1f:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $20:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $21:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $22:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $23:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $24:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 2);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 2);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $25:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 2);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 2);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $26:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 2);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 2);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $27:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 0);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 0);
+        Result.VCRead := Result.VCRead or (Cardinal(1) shl 1);
+        Result.VCWrite := Result.VCWrite or (Cardinal(1) shl 1);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $28:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $29:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $2a:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $2b:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $2c:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $2d:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VRead := Result.VRead or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $2e:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $2f:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $30:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $31:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $32:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $33:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $34:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $35:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $36:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl V);
+        Result.VFake := Result.VFake or (Cardinal(1) shl D);
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $37:
+      begin
+        Result.VFake := Result.VFake or (Cardinal(1) shl V);
+        Result.Flags := Result.Flags or 8;
+        Result.Flags := Result.Flags or 16;
+        Exit;
+      end;
+    $38:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $39:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $3a:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $3b:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $3c:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $3d:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $3e:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
+    $3f:
+      begin
+        Result.Flags := Result.Flags or 8;
+        Exit;
+      end;
   end;
 end;
 
 function TN64RSP.InfoLWC2(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var S := Integer((Op shr 21) and 31);
+  var T := Integer((Op shr 16) and 31);
   Result := Default(TRSPTimingInfo);
-  case Op shr 11 and  $1f of
-    $00: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $01: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $02: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $03: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $04: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $05: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $06: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $07: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $08: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $09: begin
-      Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $0b: begin
-      Result.VWrite := Result.VWrite or (Cardinal($FF) shl (T and not 7));
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 1;
-      Result.Flags := Result.Flags or 16;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
+  case Op shr 11 and $1f of
+    $00:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $01:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $02:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $03:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $04:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $05:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $06:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $07:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $08:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $09:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $0b:
+      begin
+        Result.VWrite := Result.VWrite or (Cardinal($FF) shl (T and not 7));
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 1;
+        Result.Flags := Result.Flags or 16;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
   end;
 end;
 
 function TN64RSP.InfoSWC2(Op: Cardinal): TRSPTimingInfo;
 begin
-  var S := Integer((Op shr 21) and 31); var T := Integer((Op shr 16) and 31);
-  var D := Integer((Op shr 11) and 31); var V := Integer((Op shr 6) and 31);
-  var XT := Integer((Op shr 15) and 31); var XD := Integer((Op shr 20) and 31);
+  var S := Integer((Op shr 21) and 31);
+  var T := Integer((Op shr 16) and 31);
   Result := Default(TRSPTimingInfo);
-  case Op shr 11 and  $1f of
-    $00: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $01: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $02: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $03: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $04: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $05: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $06: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $07: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $08: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $09: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $0a: begin
-      Result.VRead := Result.VRead or (Cardinal(1) shl T);
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
-    $0b: begin
-      Result.VRead := Result.VRead or (Cardinal($FF) shl (T and not 7));
-      Result.RRead := Result.RRead or (Cardinal(1) shl S);
-      Result.Flags := Result.Flags or 2;
-      Result.Flags := Result.Flags or 64;
-      Exit;
-    end;
+  case Op shr 11 and $1f of
+    $00:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $01:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $02:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $03:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $04:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $05:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $06:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $07:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $08:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $09:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $0a:
+      begin
+        Result.VRead := Result.VRead or (Cardinal(1) shl T);
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
+    $0b:
+      begin
+        Result.VRead := Result.VRead or (Cardinal($FF) shl (T and not 7));
+        Result.RRead := Result.RRead or (Cardinal(1) shl S);
+        Result.Flags := Result.Flags or 2;
+        Result.Flags := Result.Flags or 64;
+        Exit;
+      end;
   end;
 end;
 
@@ -2137,275 +2432,320 @@ end;
 
 procedure TN64RSP.IssueInstruction(Op: Cardinal; var PC, Status, Interrupt: Cardinal);
 begin
-    if FBus.TraceEnabled then
-      FBus.Trace(TN64TraceKind.Instruction, $04001000 + (PC and $FFC),
-        $04001000 + (PC and $FFC), Op);
-    var Current := PC;
-    if FBranch then
-    begin
-      PC := FNextPC;
-      FBranch := False
-    end
-    else
-      PC := (PC + 4) and $FFC;
-    var Code := Op shr 26;
-    var S := (Op shr 21) and 31;
-    var T := (Op shr 16) and 31;
-    var D := (Op shr 11) and 31;
-    var N := (Op shr 6) and 31;
-    var A := FReg[S];
-    var B := FReg[T];
-    var Imm := SX(Op and $FFFF, 16);
-    var Address := Cardinal(Add64(A, Imm) and $FFF);
-    var Target := Cardinal(Add64(Current + 4, Imm shl 2) and $FFC);
-    var Taken := False;
-    case Code of
-      0:
-        case Op and 63 of
-          0:
-            FReg[D] := B shl N;
-          2:
-            FReg[D] := B shr N;
-          3:
-            FReg[D] := Cardinal(SAR(B, N, 32) and $FFFFFFFF);
-          4:
-            FReg[D] := B shl (A and 31);
-          6:
-            FReg[D] := B shr (A and 31);
-          7:
-            FReg[D] := Cardinal(SAR(B, A and 31, 32) and $FFFFFFFF);
-          8, 9:
-            begin
-              if (Op and 63) = 9 then
-                FReg[D] := (Current + 8) and $FFF;
-              FNextPC := A and $FFC;
-              FBranch := True
-            end;
-          13:
-            begin
-              Status := Status or 3;
-              if (Status and $40) <> 0 then
-                Interrupt := Interrupt or 1
-            end;
-          32, 33:
-            FReg[D] := Add32(A, B);
-          34, 35:
-            FReg[D] := Cardinal(Sub64(A, B) and $FFFFFFFF);
-          36:
-            FReg[D] := A and B;
-          37:
-            FReg[D] := A or B;
-          38:
-            FReg[D] := A xor B;
-          39:
-            FReg[D] := not (A or B);
-          42:
-            FReg[D] := Ord(SignedLess(SX(A, 32), SX(B, 32)));
-          43:
-            FReg[D] := Ord(A < B);
-        else
-          raise EN64Unsupported.CreateFmt('RSP scalar opcode %8.8x', [Op]);
-        end;
-      1, 4..7:
-        begin
-          case Code of
-            1:
-              begin
-                if not (T in [0, 1, 16, 17]) then
-                  raise EN64Unsupported.CreateFmt('RSP REGIMM opcode %8.8x', [Op]);
-                Taken := SignedLess(SX(A, 32), 0);
-                if (T and 1) <> 0 then
-                  Taken := not Taken;
-                if (T and 16) <> 0 then
-                  FReg[31] := (Current + 8) and $FFF
-              end;
-            4:
-              Taken := A = B;
-            5:
-              Taken := A <> B;
-            6:
-              Taken := not SignedLess(0, SX(A, 32));
-            7:
-              Taken := SignedLess(0, SX(A, 32));
-          end;
-          if Taken then
+  if FBus.TraceEnabled then
+    FBus.Trace(TN64TraceKind.Instruction, $04001000 + (PC and $FFC),
+      $04001000 + (PC and $FFC), Op);
+  var Current := PC;
+  if FBranch then
+  begin
+    PC := FNextPC;
+    FBranch := False
+  end
+  else
+    PC := (PC + 4) and $FFC;
+  var Code := Op shr 26;
+  var S := (Op shr 21) and 31;
+  var T := (Op shr 16) and 31;
+  var D := (Op shr 11) and 31;
+  var N := (Op shr 6) and 31;
+  var A := FReg[S];
+  var B := FReg[T];
+  var Imm := SX(Op and $FFFF, 16);
+  var Address := Cardinal(Add64(A, Imm) and $FFF);
+  var Target := Cardinal(Add64(Current + 4, Imm shl 2) and $FFC);
+  var Taken := False;
+  case Code of
+    0:
+      case Op and 63 of
+        0:
+          FReg[D] := B shl N;
+        2:
+          FReg[D] := B shr N;
+        3:
+          FReg[D] := Cardinal(SAR(B, N, 32) and $FFFFFFFF);
+        4:
+          FReg[D] := B shl (A and 31);
+        6:
+          FReg[D] := B shr (A and 31);
+        7:
+          FReg[D] := Cardinal(SAR(B, A and 31, 32) and $FFFFFFFF);
+        8, 9:
           begin
-            FNextPC := Target;
+            if (Op and 63) = 9 then
+              FReg[D] := (Current + 8) and $FFF;
+            FNextPC := A and $FFC;
             FBranch := True
           end;
+        13:
+          begin
+            Status := Status or 3;
+            if (Status and $40) <> 0 then
+              Interrupt := Interrupt or 1
+          end;
+        32, 33:
+          FReg[D] := Add32(A, B);
+        34, 35:
+          FReg[D] := Cardinal(Sub64(A, B) and $FFFFFFFF);
+        36:
+          FReg[D] := A and B;
+        37:
+          FReg[D] := A or B;
+        38:
+          FReg[D] := A xor B;
+        39:
+          FReg[D] := not (A or B);
+        42:
+          FReg[D] := Ord(SignedLess(SX(A, 32), SX(B, 32)));
+        43:
+          FReg[D] := Ord(A < B);
+      else
+        raise EN64Unsupported.CreateFmt('RSP scalar opcode %8.8x', [Op]);
+      end;
+    1, 4..7:
+      begin
+        case Code of
+          1:
+            begin
+              if not (T in [0, 1, 16, 17]) then
+                raise EN64Unsupported.CreateFmt('RSP REGIMM opcode %8.8x', [Op]);
+              Taken := SignedLess(SX(A, 32), 0);
+              if (T and 1) <> 0 then
+                Taken := not Taken;
+              if (T and 16) <> 0 then
+                FReg[31] := (Current + 8) and $FFF
+            end;
+          4:
+            Taken := A = B;
+          5:
+            Taken := A <> B;
+          6:
+            Taken := not SignedLess(0, SX(A, 32));
+          7:
+            Taken := SignedLess(0, SX(A, 32));
         end;
-      2, 3:
+        if Taken then
         begin
-          if Code = 3 then
-            FReg[31] := (Current + 8) and $FFF;
-          FNextPC := (Op shl 2) and $FFC;
+          FNextPC := Target;
           FBranch := True
         end;
-      8, 9:
-        FReg[T] := Cardinal(Add64(A, Imm) and $FFFFFFFF);
-      10:
-        FReg[T] := Ord(SignedLess(SX(A, 32), Imm));
-      11:
-        FReg[T] := Ord(UInt64(A) < (Imm and $FFFFFFFF));
-      12:
-        FReg[T] := A and (Op and $FFFF);
-      13:
-        FReg[T] := A or (Op and $FFFF);
-      14:
-        FReg[T] := A xor (Op and $FFFF);
-      15:
-        FReg[T] := (Op and $FFFF) shl 16;
-      16:
+      end;
+    2, 3:
+      begin
+        if Code = 3 then
+          FReg[31] := (Current + 8) and $FFF;
+        FNextPC := (Op shl 2) and $FFC;
+        FBranch := True
+      end;
+    8, 9:
+      FReg[T] := Cardinal(Add64(A, Imm) and $FFFFFFFF);
+    10:
+      FReg[T] := Ord(SignedLess(SX(A, 32), Imm));
+    11:
+      FReg[T] := Ord(UInt64(A) < (Imm and $FFFFFFFF));
+    12:
+      FReg[T] := A and (Op and $FFFF);
+    13:
+      FReg[T] := A or (Op and $FFFF);
+    14:
+      FReg[T] := A xor (Op and $FFFF);
+    15:
+      FReg[T] := (Op and $FFFF) shl 16;
+    16:
+      begin
+        var IOIndex := D and 15;
+        var IOAddress := $04040000 + IOIndex * 4;
+        if IOIndex >= 8 then
+          IOAddress := $04100000 + (IOIndex - 8) * 4;
+        if S = 0 then
         begin
-          var IOIndex := D and 15;
-          var IOAddress := $04040000 + IOIndex * 4;
-          if IOIndex >= 8 then
-            IOAddress := $04100000 + (IOIndex - 8) * 4;
-          if S = 0 then
-          begin
-            FReg[T] := FBus.Read32(IOAddress);
-            if FBus.TraceEnabled then FBus.Trace(TN64TraceKind.MMIORead,
+          FReg[T] := FBus.Read32(IOAddress);
+          if FBus.TraceEnabled then
+            FBus.Trace(TN64TraceKind.MMIORead,
               $04001000 + Current, IOAddress, FReg[T]);
-          end
-          else if S = 4 then
-          begin
-            if FBus.TraceEnabled then FBus.Trace(TN64TraceKind.MMIOWrite,
+        end
+        else if S = 4 then
+        begin
+          if FBus.TraceEnabled then
+            FBus.Trace(TN64TraceKind.MMIOWrite,
               $04001000 + Current, IOAddress, B);
-            FBus.Write32(IOAddress, B);
-          end
-          else
-            raise EN64Unsupported.CreateFmt('RSP COP0 opcode %8.8x', [Op]);
-        end;
-      18:
-        if S >= 16 then
-          VectorOp(Op)
+          FBus.Write32(IOAddress, B);
+        end
         else
-        begin
-          var E := Integer((Op shr 7) and 15);
-          case S of
-            0:
-              FReg[T] := Cardinal(SX((Word(GetByte(D, E)) shl 8) or GetByte(D, E + 1), 16) and $FFFFFFFF);
-            2:
-              case D and 3 of
-                0:
-                  FReg[T] := Cardinal(SX(FVCO, 16) and $FFFFFFFF);
-                1:
-                  FReg[T] := Cardinal(SX(FVCC, 16) and $FFFFFFFF);
-              else
-                FReg[T] := FVCE
-              end;
-            4:
-              begin
-                SetByte(D, E, Byte((B shr 8) and $FF));
-                if E < 15 then
-                  SetByte(D, E + 1, Byte(B and $FF))
-              end;
-            6:
-              case D and 3 of
-                0:
-                  FVCO := Word(B and $FFFF);
-                1:
-                  FVCC := Word(B and $FFFF);
-              else
-                FVCE := Word(B and $FF)
-              end;
-          else
-            raise EN64Unsupported.CreateFmt('RSP COP2 opcode %8.8x', [Op]);
-          end;
+          raise EN64Unsupported.CreateFmt('RSP COP0 opcode %8.8x', [Op]);
+      end;
+    18:
+      if S >= 16 then
+        VectorOp(Op)
+      else
+      begin
+        var E := Integer((Op shr 7) and 15);
+        case S of
+          0:
+            FReg[T] := Cardinal(SX((Word(GetByte(D, E)) shl 8) or GetByte(D, E + 1), 16) and $FFFFFFFF);
+          2:
+            case D and 3 of
+              0:
+                FReg[T] := Cardinal(SX(FVCO, 16) and $FFFFFFFF);
+              1:
+                FReg[T] := Cardinal(SX(FVCC, 16) and $FFFFFFFF);
+            else
+              FReg[T] := FVCE
+            end;
+          4:
+            begin
+              SetByte(D, E, Byte((B shr 8) and $FF));
+              if E < 15 then
+                SetByte(D, E + 1, Byte(B and $FF))
+            end;
+          6:
+            case D and 3 of
+              0:
+                FVCO := Word(B and $FFFF);
+              1:
+                FVCC := Word(B and $FFFF);
+            else
+              FVCE := Word(B and $FF)
+            end;
+        else
+          raise EN64Unsupported.CreateFmt('RSP COP2 opcode %8.8x', [Op]);
         end;
-      32, 33, 35..37, 39:
-        begin
-          var Size := 1;
-          if Code in [33, 37] then
-            Size := 2
-          else if Code in [35, 39] then
-            Size := 4;
-          var V: Cardinal := 0;
-          for var I := 0 to Size - 1 do
-            V := (V shl 8) or FBus.Read8($04000000 + ((Address + Cardinal(I)) and $FFF));
-          if Code in [32, 33] then
-            V := Cardinal(SX(V, Size * 8) and $FFFFFFFF);
-          FReg[T] := V;
-        end;
-      40, 41, 43:
-        begin
-          var Size := 1;
-          if Code = 41 then
-            Size := 2
-          else if Code = 43 then
-            Size := 4;
-          for var I := 0 to Size - 1 do
-            FBus.Write8($04000000 + ((Address + Cardinal(I)) and $FFF), Byte((B shr ((Size - 1 - I) * 8)) and $FF));
-        end;
-      50:
-        VectorMemory(Op, False);
-      58:
-        VectorMemory(Op, True);
-    else
-      raise EN64Unsupported.CreateFmt('RSP opcode %8.8x', [Op]);
-    end;
-    FReg[0] := 0;
+      end;
+    32, 33, 35..37, 39:
+      begin
+        var Size := 1;
+        if Code in [33, 37] then
+          Size := 2
+        else if Code in [35, 39] then
+          Size := 4;
+        var V: Cardinal := 0;
+        for var I := 0 to Size - 1 do
+          V := (V shl 8) or FBus.Read8($04000000 + ((Address + Cardinal(I)) and $FFF));
+        if Code in [32, 33] then
+          V := Cardinal(SX(V, Size * 8) and $FFFFFFFF);
+        FReg[T] := V;
+      end;
+    40, 41, 43:
+      begin
+        var Size := 1;
+        if Code = 41 then
+          Size := 2
+        else if Code = 43 then
+          Size := 4;
+        for var I := 0 to Size - 1 do
+          FBus.Write8($04000000 + ((Address + Cardinal(I)) and $FFF), Byte((B shr ((Size - 1 - I) * 8)) and $FF));
+      end;
+    50:
+      VectorMemory(Op, False);
+    58:
+      VectorMemory(Op, True);
+  else
+    raise EN64Unsupported.CreateFmt('RSP opcode %8.8x', [Op]);
+  end;
+  FReg[0] := 0;
 end;
 
 function TN64RSP.ExecuteCycles(var PC, Status, Interrupt: Cardinal; Cycles: Integer): Integer;
 begin
   Result := 0;
-  for var Iteration := 1 to Cycles do begin
-    if (Status and 1) <> 0 then Break;
-    if FBranchBubble > 0 then begin Dec(FBranchBubble); AgePipeline; Inc(Result); Continue end;
-    if FHasStalledOpcode and (FStalledPC <> PC) then begin
-      FHasStalledOpcode := False; FHasStalledSecondOpcode := False;
+  for var Iteration := 1 to Cycles do
+  begin
+    if (Status and 1) <> 0 then
+      Break;
+    if FBranchBubble > 0 then
+    begin
+      Dec(FBranchBubble);
+      AgePipeline;
+      Inc(Result);
+      Continue
     end;
-    var Op, Second: Cardinal; var Pair: Boolean;
-    if FHasStalledOpcode then begin
-      Op := FStalledOpcode; Second := FStalledSecondOpcode; Pair := FHasStalledSecondOpcode;
-    end else begin
-      Op := FBus.Read32($04001000 + (PC and $FFC)); Second := 0; Pair := False;
+    if FHasStalledOpcode and (FStalledPC <> PC) then
+    begin
+      FHasStalledOpcode := False;
+      FHasStalledSecondOpcode := False;
+    end;
+    var Op, Second: Cardinal;
+    var Pair: Boolean;
+    if FHasStalledOpcode then
+    begin
+      Op := FStalledOpcode;
+      Second := FStalledSecondOpcode;
+      Pair := FHasStalledSecondOpcode;
+    end
+    else
+    begin
+      Op := FBus.Read32($04001000 + (PC and $FFC));
+      Second := 0;
+      Pair := False;
       var FirstInfo := InfoEXECUTE(Op);
-      if (FSingleIssue = 0) and ((Status and $20) = 0) and ((FirstInfo.Flags and 4) = 0) then begin
+      if (FSingleIssue = 0) and ((Status and $20) = 0) and ((FirstInfo.Flags and 4) = 0) then
+      begin
         Second := FBus.Read32($04001000 + ((PC + 4) and $FFC));
         Pair := CanPair(FirstInfo, InfoEXECUTE(Second));
       end;
     end;
-    var Info := InfoEXECUTE(Op); var Other := Default(TRSPTimingInfo);
-    if Pair then Other := InfoEXECUTE(Second);
+    var Info := InfoEXECUTE(Op);
+    var Other := Default(TRSPTimingInfo);
+    if Pair then
+      Other := InfoEXECUTE(Second);
     var Sources := Info.RRead or Other.RRead;
     var Vectors := Info.VRead or Other.VRead;
     var Loading := ((Info.Flags or Other.Flags) and 1) <> 0;
     var Storing := ((Info.Flags or Other.Flags) and 2) <> 0;
     var Hazard := Storing and ((FLoadHistory and 2) <> 0);
-    for var I := 0 to 31 do begin
-      if ((Sources and (Cardinal(1) shl I)) <> 0) and (FScalarReady[I] > 0) then Hazard := True;
-      if ((Vectors and (Cardinal(1) shl I)) <> 0) and (FVectorReady[I] > 0) then Hazard := True;
+    for var I := 0 to 31 do
+    begin
+      if ((Sources and (Cardinal(1) shl I)) <> 0) and (FScalarReady[I] > 0) then
+        Hazard := True;
+      if ((Vectors and (Cardinal(1) shl I)) <> 0) and (FVectorReady[I] > 0) then
+        Hazard := True;
     end;
-    if Hazard then begin
-      FStalledOpcode := Op; FStalledPC := PC; FHasStalledOpcode := True;
-      FStalledSecondOpcode := Second; FHasStalledSecondOpcode := Pair;
-      AgePipeline; Inc(Result); Continue;
+    if Hazard then
+    begin
+      FStalledOpcode := Op;
+      FStalledPC := PC;
+      FHasStalledOpcode := True;
+      FStalledSecondOpcode := Second;
+      FHasStalledSecondOpcode := Pair;
+      AgePipeline;
+      Inc(Result);
+      Continue;
     end;
-    FHasStalledOpcode := False; FHasStalledSecondOpcode := False;
+    FHasStalledOpcode := False;
+    FHasStalledSecondOpcode := False;
     var DelaySlot := FBranch;
     IssueInstruction(Op, PC, Status, Interrupt);
-    if Pair and ((Status and 1) = 0) then IssueInstruction(Second, PC, Status, Interrupt);
+    if Pair and ((Status and 1) = 0) then
+      IssueInstruction(Second, PC, Status, Interrupt);
     AgePipeline;
     var Writes: Cardinal := 0;
-    if (Info.Flags and 32) = 0 then Writes := Info.RWrite;
-    if Pair and ((Other.Flags and 32) = 0) then Writes := Writes or Other.RWrite;
-    for var I := 1 to 31 do if (Writes and (Cardinal(1) shl I)) <> 0 then FScalarReady[I] := 2;
+    if (Info.Flags and 32) = 0 then
+      Writes := Info.RWrite;
+    if Pair and ((Other.Flags and 32) = 0) then
+      Writes := Writes or Other.RWrite;
+    for var I := 1 to 31 do
+      if (Writes and (Cardinal(1) shl I)) <> 0 then
+        FScalarReady[I] := 2;
     Writes := Info.VWrite or Other.VWrite;
-    for var I := 0 to 31 do if (Writes and (Cardinal(1) shl I)) <> 0 then FVectorReady[I] := 3;
-    if Loading then FLoadHistory := FLoadHistory or 1;
+    for var I := 0 to 31 do
+      if (Writes and (Cardinal(1) shl I)) <> 0 then
+        FVectorReady[I] := 3;
+    if Loading then
+      FLoadHistory := FLoadHistory or 1;
     FSingleIssue := Byte(Ord(((Info.Flags or Other.Flags) and 4) <> 0));
-    if DelaySlot then begin
+    if DelaySlot then
+    begin
       FBranchBubble := 1;
-      if (PC and 4) <> 0 then FSingleIssue := 1;
+      if (PC and 4) <> 0 then
+        FSingleIssue := 1;
     end;
     Inc(Result);
-    if (Status and $20) <> 0 then Status := Status or 1;
+    if (Status and $20) <> 0 then
+      Status := Status or 1;
   end;
 end;
 
 procedure TN64RSP.SerializeState(State: TStateArchive);
+
   function CanonicalBoolean(const Value: Boolean): Boolean;
   begin
     // Delphi may eliminate Ord(Boolean)>1 as impossible: inspect storage.
@@ -2413,6 +2753,7 @@ procedure TN64RSP.SerializeState(State: TStateArchive);
     Move(Value, Stored, SizeOf(Stored));
     Result := Stored <= 1;
   end;
+
 begin
   State.Field(FReg, SizeOf(FReg));
   State.Field(FVec, SizeOf(FVec));
@@ -2445,11 +2786,14 @@ begin
       not CanonicalBoolean(FDivisionHigh) or (FScalarReady[0] <> 0) then
       raise EReadError.Create('Invalid RSP pipeline snapshot');
     for var I := 1 to 31 do
-      if FScalarReady[I] > 2 then raise EReadError.Create('Invalid RSP scalar readiness');
+      if FScalarReady[I] > 2 then
+        raise EReadError.Create('Invalid RSP scalar readiness');
     if (FSingleIssue > 1) or not CanonicalBoolean(FHasStalledSecondOpcode) or
-      (FHasStalledSecondOpcode and not FHasStalledOpcode) then raise EReadError.Create('Invalid RSP pairing snapshot');
+      (FHasStalledSecondOpcode and not FHasStalledOpcode) then
+      raise EReadError.Create('Invalid RSP pairing snapshot');
     for var I := 0 to 31 do
-      if FVectorReady[I] > 3 then raise EReadError.Create('Invalid RSP vector readiness');
+      if FVectorReady[I] > 3 then
+        raise EReadError.Create('Invalid RSP vector readiness');
     for var I := 0 to 7 do
       if (FAcc[I] < -140737488355328) or (FAcc[I] > 140737488355327) then
         raise EReadError.Create('Invalid RSP accumulator');

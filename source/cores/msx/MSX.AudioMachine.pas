@@ -67,6 +67,7 @@ function TKSSAudio.WordAt(P: Integer): Integer;
 begin
   if (P < 0) or (P > Length(FData) - 2) then
     raise EArgumentException.Create('KSS header');
+
   Result := Integer(FData[P]) + Integer(FData[P + 1]) * 256;
 end;
 
@@ -76,11 +77,13 @@ begin
   FData := Copy(Data);
   if (Length(Data) < 16) or not ((TEncoding.ASCII.GetString(Data, 0, 4) = 'KSCC') or (TEncoding.ASCII.GetString(Data, 0, 4) = 'KSSX')) then
     raise EArgumentException.Create('Invalid KSS signature');
+
   FDataStart := 16;
   if Data[3] = Ord('X') then
   begin
     if not (Data[14] in [0, 16]) then
       raise EArgumentException.Create('KSSX extended header');
+
     Inc(FDataStart, Data[14]);
   end;
   FLoadAddress := WordAt(4);
@@ -94,14 +97,17 @@ begin
   FRate := 60;
   if FFlags and $40 <> 0 then
     FRate := 50;
+
   if (FDataStart > Length(Data)) or (FLoadSize > Length(Data) - FDataStart) or (FLoadSize > 65536 - FLoadAddress) or (FBankCount * FBankSize > Length(Data) - FDataStart - FLoadSize) then
     raise EArgumentException.Create('Truncated KSS memory/banks');
+
   if (FDataStart = 32) and (LastTrack < FirstTrack) then
     raise EArgumentException.Create('Invalid KSSX track range');
+
   FAY := TYM2149F.Create(1789772);
   FAY.AYModel := True;
-  for var I := 0 to 2 do
-    FAY.SetPan(I, 1, 1);
+  for var i := 0 to 2 do
+    FAY.SetPan(i, 1, 1);
   FSCC := TSCC.Create;
   FOPLL := TYM2413.Create;
   FAudio := TOPL1.Create;
@@ -112,8 +118,8 @@ begin
   FBus.WriteCallback := MemWrite;
   FBus.PortReadCallback := PortRead;
   FBus.PortWriteCallback := PortWrite;
-  for var I := 0 to 1 do
-    FDC[I].Configure(44100, 20);
+  for var i := 0 to 1 do
+    FDC[i].Configure(44100, 20);
   Reset(FirstTrack);
 end;
 
@@ -159,20 +165,21 @@ const
 begin
   if (Track < FirstTrack) or (Track > LastTrack) then
     raise EArgumentOutOfRangeException.Create('KSS track');
-  for var I := 0 to $3FFF do
-    FMemory[I] := $C9;
-  for var I := $4000 to $FFFF do
-    FMemory[I] := 0;
-  for var I := 0 to High(BIOS) do
-    FMemory[1 + I] := BIOS[I];
+
+  for var i := 0 to $3FFF do
+    FMemory[i] := $C9;
+  for var i := $4000 to $FFFF do
+    FMemory[i] := 0;
+  for var i := 0 to High(BIOS) do
+    FMemory[1 + i] := BIOS[i];
   FMemory[$93] := $C3;
   FMemory[$94] := 1;
   FMemory[$95] := 0;
   FMemory[$96] := $C3;
   FMemory[$97] := 9;
   FMemory[$98] := 0;
-  for var I := 0 to FLoadSize - 1 do
-    FMemory[FLoadAddress + I] := FData[FDataStart + I];
+  for var i := 0 to FLoadSize - 1 do
+    FMemory[FLoadAddress + i] := FData[FDataStart + i];
   FCPU := Default(TZ80State);
   Z80Reset(FCPU);
   FCPU.A := Track;
@@ -187,8 +194,8 @@ begin
   FGG := $FF;
   FDebt := 0;
   FTimer := 0;
-  for var I := 0 to 1 do
-    FDC[I].Reset;
+  for var i := 0 to 1 do
+    FDC[i].Reset;
   Call(FInit);
 end;
 
@@ -285,6 +292,7 @@ begin
       FDebt := 0;
       Break;
     end;
+
     var Cycles := Z80DoInstruction(FCPU, FBus);
     if Cycles = 0 then
       Cycles := 4;

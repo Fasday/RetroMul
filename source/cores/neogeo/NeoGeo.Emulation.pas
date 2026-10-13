@@ -15,6 +15,10 @@ const
 type
   TNeoGeoWorker = class(TThread)
   private
+    FInputPortsCommand: TInputPortsCommand;
+    function GetInputPorts: TCoreInputPorts;
+    procedure SetInputPorts(const Ports: TCoreInputPorts);
+  private
     FSnapshots: TSnapshotQueue;
     FSnapshotDirectory: string;
     FLock: TCriticalSection;
@@ -43,7 +47,8 @@ type
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
   public
-    InputPorts: TCoreInputPorts; // Set before starting the worker.
+    property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
+  public
     property SnapshotDirectory: string read FSnapshotDirectory write FSnapshotDirectory;
     procedure InsertCoin(Player: Integer);
     procedure RequestReset;
@@ -61,9 +66,20 @@ uses
 
 { TNeoGeoWorker }
 
+function TNeoGeoWorker.GetInputPorts: TCoreInputPorts;
+begin
+  Result := FInputPortsCommand.GetPorts;
+end;
+
+procedure TNeoGeoWorker.SetInputPorts(const Ports: TCoreInputPorts);
+begin
+  FInputPortsCommand.Apply(Self, Ports, FWake);
+end;
+
 constructor TNeoGeoWorker.Create(Cartridge: TNeoGeoCartridge; const SavePath: string; const Storage: IStorage);
 begin
   inherited Create(True);
+  FInputPortsCommand := TInputPortsCommand.Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
@@ -85,6 +101,7 @@ begin
   if FWake <> nil then
     FWake.SetEvent;
   inherited Destroy;
+  FInputPortsCommand.Free;
   FSnapshots.Free;
   FWake.Free;
   FLock.Free;
@@ -270,6 +287,11 @@ begin
 
       while not Terminated do
       begin
+        FInputPortsCommand.Process(
+          procedure(const Ports: TCoreInputPorts)
+          begin
+            Console.ConfigureInputPorts(Ports);
+          end);
         FSnapshots.Process(
           procedure(const Name: string; Loading: Boolean)
           begin
@@ -283,6 +305,7 @@ begin
             if Loading then
             begin
               LoadCoreSnapshot(Path, FCoreId, FData, Transfer, FStorage);
+              Console.ConfigureInputPorts(InputPorts);
               Console.MarkBatteryDirty;
               if Audio <> nil then
                 Audio.Clear;

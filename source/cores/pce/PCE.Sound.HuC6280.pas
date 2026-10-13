@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.AudioFilter;
+  Core.AudioFilter, Core.Snapshots;
 
 type
   TPCESoundVoice = record
@@ -23,6 +23,7 @@ type
     procedure Reset;
     procedure WriteRegister(Index, Value: Byte);
     procedure Sample(out Left, Right: SmallInt);
+    procedure SerializeState(State: TStateArchive);
   end;
 
 implementation
@@ -33,8 +34,8 @@ uses
 constructor THuC6280PSG.Create;
 begin
   inherited;
-  for var I := 0 to 1 do
-    FDC[I].Configure(44100, 20);
+  for var i := 0 to 1 do
+    FDC[i].Configure(44100, 20);
   Reset;
 end;
 
@@ -45,14 +46,14 @@ begin
   FBalance := $FF;
   FLFOFrequency := 0;
   FLFOControl := 0;
-  for var I := 0 to 5 do
+  for var i := 0 to 5 do
   begin
-    FVoices[I].Control := $40;
-    FVoices[I].Balance := $FF;
-    FVoices[I].LFSR := $200C3;
+    FVoices[i].Control := $40;
+    FVoices[i].Balance := $FF;
+    FVoices[i].LFSR := $200C3;
   end;
-  for var I := 0 to 1 do
-    FDC[I].Reset;
+  for var i := 0 to 1 do
+    FDC[i].Reset;
 end;
 
 procedure THuC6280PSG.WriteRegister(Index, Value: Byte);
@@ -74,8 +75,10 @@ begin
         end;
       end;
   end;
+
   if FLatch >= 6 then
     Exit;
+
   case Index of
     2:
       FVoices[FLatch].Period := (FVoices[FLatch].Period and $F00) or Value;
@@ -144,6 +147,7 @@ begin
     end;
     if (FVoices[C].Control and $80 = 0) or ((C = 1) and LFO) then
       Continue;
+
     var V := FVoices[C].Control and 31;
     var VL := Max(0, V + ((FVoices[C].Balance shr 4) and 15) * 2 + ((FBalance shr 4) and 15) * 2 - 60);
     var VR := Max(0, V + (FVoices[C].Balance and 15) * 2 + (FBalance and 15) * 2 - 60);
@@ -154,6 +158,16 @@ begin
   end;
   Left := EnsureRange(Round(FDC[0].Process(SumL)), -32768, 32767);
   Right := EnsureRange(Round(FDC[1].Process(SumR)), -32768, 32767);
+end;
+
+procedure THuC6280PSG.SerializeState(State: TStateArchive);
+begin
+  State.Field(FVoices, SizeOf(FVoices));
+  State.Field(FLatch, SizeOf(FLatch));
+  State.Field(FBalance, SizeOf(FBalance));
+  State.Field(FLFOFrequency, SizeOf(FLFOFrequency));
+  State.Field(FLFOControl, SizeOf(FLFOControl));
+  State.Field(FDC, SizeOf(FDC));
 end;
 
 end.

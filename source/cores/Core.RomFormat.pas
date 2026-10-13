@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.Classes, System.SysUtils;
+  System.Classes, System.SysUtils, Core.Platforms;
 
 const
   ROM_SYSTEM_NES = 'nes';
@@ -16,6 +16,11 @@ const
   ROM_SYSTEM_SF7000 = 'sf7000';
   ROM_SYSTEM_OMV = 'omv';
   ROM_SYSTEM_SMS = 'sms';
+  ROM_SYSTEM_GG = 'gg';
+  ROM_SYSTEM_GW = 'gw';
+  ROM_SYSTEM_PCE = 'pce';
+  ROM_SYSTEM_SGX = 'sgx';
+  ROM_SYSTEM_PCECD = 'pcecd';
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_NEOGEO = 'neogeo';
@@ -33,6 +38,11 @@ const
   ROM_CORE_ID_SF7000 = 'SF7000';
   ROM_CORE_ID_OMV = 'OMV';
   ROM_CORE_ID_SMS = 'SMS';
+  ROM_CORE_ID_GG = 'GG';
+  ROM_CORE_ID_GW = 'GW';
+  ROM_CORE_ID_PCE = 'PCE';
+  ROM_CORE_ID_SGX = 'SGX';
+  ROM_CORE_ID_PCECD = 'PCECD';
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
@@ -47,6 +57,11 @@ const
   ROM_EXTENSION_MD = '.md';
   ROM_EXTENSION_SG = '.sg';
   ROM_EXTENSION_SMS = '.sms';
+  ROM_EXTENSION_GG = '.gg';
+  ROM_EXTENSION_GW = '.gw';
+  ROM_EXTENSION_PCE = '.pce';
+  ROM_EXTENSION_SGX = '.sgx';
+  ROM_EXTENSION_MGW = '.mgw';
   ROM_EXTENSION_SC = '.sc';
   ROM_EXTENSION_SF7 = '.sf7';
   ROM_EXTENSION_SF = '.sf';
@@ -175,8 +190,7 @@ const
   NEOGEO_ROM_NAME_SIZE = 33;
 
 type
-  TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
-    SF7000, Multivision, SMS);
+  TRomSystem = Core.Platforms.TRomSystem;
 
   TRomEncoding = (Native, SMD, ByteSwapped, SnesCopier, WordSwapped);
 
@@ -228,91 +242,32 @@ end;
 
 function RomSystemFromId(const SystemId: string): TRomSystem;
 begin
-  for var System := TRomSystem.NES to High(TRomSystem) do
-    if SameText(SystemId, RomSystemId(System)) or SameText(SystemId, RomSystemFolder(System)) then
-      Exit(System);
-
-  Result := TRomSystem.Unknown;
+  var Info: TPlatformInfo;
+  if TPlatformRegistry.Find(SystemId, Info) then
+    Result := Info.System
+  else
+    Result := TRomSystem.Unknown;
 end;
 
 function RomSystemFolder(System: TRomSystem): string;
 begin
-  if System = TRomSystem.MD then
-    Result := ROM_FOLDER_MD
-  else
-    Result := RomSystemId(System);
+  var Info: TPlatformInfo;
+  TPlatformRegistry.Find(System, Info);
+  Result := Info.Folder;
 end;
 
 function RomExtensions(System: TRomSystem): TArray<string>;
 begin
-  case System of
-    TRomSystem.N64:
-      Result := [ROM_EXTENSION_Z64, ROM_EXTENSION_N64, ROM_EXTENSION_V64];
-    TRomSystem.SG1000:
-      Result := [ROM_EXTENSION_SG, ROM_EXTENSION_SMS];
-    TRomSystem.SC3000:
-      Result := [ROM_EXTENSION_SC];
-    TRomSystem.SF7000:
-      Result := [ROM_EXTENSION_SF7, ROM_EXTENSION_SF, ROM_EXTENSION_DSK];
-    TRomSystem.Multivision:
-      Result := [ROM_EXTENSION_MV];
-    TRomSystem.SMS:
-      Result := [ROM_EXTENSION_SMS];
-    TRomSystem.NES:
-      Result := [ROM_EXTENSION_NES];
-    TRomSystem.GB:
-      Result := [ROM_EXTENSION_GB, ROM_EXTENSION_GBX];
-    TRomSystem.GBC:
-      Result := [ROM_EXTENSION_GBC, ROM_EXTENSION_GBX];
-    TRomSystem.GBA:
-      Result := [ROM_EXTENSION_GBA];
-    TRomSystem.MD:
-      Result := [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD];
-    TRomSystem.SNES:
-      Result := [ROM_EXTENSION_SFC, ROM_EXTENSION_SMC, ROM_EXTENSION_SWC, ROM_EXTENSION_FIG];
-    TRomSystem.NeoGeo:
-      Result := [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO];
-    TRomSystem.NeoGeoCD:
-      Result := [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD];
-  else
-    Result := nil;
-  end;
+  var Info: TPlatformInfo;
+  TPlatformRegistry.Find(System, Info);
+  Result := Copy(Info.Extensions);
 end;
 
 function RomSystemId(System: TRomSystem): string;
 begin
-  case System of
-    TRomSystem.N64:
-      Result := ROM_SYSTEM_N64;
-    TRomSystem.SG1000:
-      Result := ROM_SYSTEM_SG1000;
-    TRomSystem.SC3000:
-      Result := ROM_SYSTEM_SC3000;
-    TRomSystem.SF7000:
-      Result := ROM_SYSTEM_SF7000;
-    TRomSystem.Multivision:
-      Result := ROM_SYSTEM_OMV;
-    TRomSystem.SMS:
-      Result := ROM_SYSTEM_SMS;
-    TRomSystem.NES:
-      Result := ROM_SYSTEM_NES;
-    TRomSystem.GB:
-      Result := ROM_SYSTEM_GB;
-    TRomSystem.GBC:
-      Result := ROM_SYSTEM_GBC;
-    TRomSystem.GBA:
-      Result := ROM_SYSTEM_GBA;
-    TRomSystem.MD:
-      Result := ROM_SYSTEM_MD;
-    TRomSystem.SNES:
-      Result := ROM_SYSTEM_SNES;
-    TRomSystem.NeoGeo:
-      Result := ROM_SYSTEM_NEOGEO;
-    TRomSystem.NeoGeoCD:
-      Result := ROM_SYSTEM_NEOGEOCD;
-  else
-    Result := '';
-  end;
+  var Info: TPlatformInfo;
+  TPlatformRegistry.Find(System, Info);
+  Result := Info.Id;
 end;
 
 function ReadGBXFooter(const Data: TBytes): TGBXFooter;
@@ -381,9 +336,11 @@ begin
     for var Header in [0, ROM_COPIER_HEADER_SIZE] do
       if Signature(Offset + Header, 'TMR SEGA') and
         (Length(Data) > Offset + Header + 15) and
-        ((Data[Offset + Header + 15] shr 4) in [3, 4]) then
+        ((Data[Offset + Header + 15] shr 4) in [3, 4, 5, 6, 7]) then
       begin
         Result.System := TRomSystem.SMS;
+        if Data[Offset + Header + 15] shr 4 >= 5 then
+          Result.System := TRomSystem.GameGear;
         Exit;
       end;
   if Length(Data) >= 64 then

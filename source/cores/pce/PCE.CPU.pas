@@ -3,20 +3,22 @@
 interface
 
 uses
-  System.SysUtils;
+  System.SysUtils, System.Classes, Core.Snapshots;
 
 type
   THuCRead = function(Address: Word): Byte of object;
 
   THuCWrite = procedure(Address: Word; Value: Byte) of object;
- // HuC6280 logical addresses; the bus maps the eight MPR banks.
 
+  // HuC6280 logical addresses; the bus maps the eight MPR banks.
   THuC6280 = class
   private
     FRead: THuCRead;
     FWrite: THuCWrite;
     FVDCWrite: THuCWrite;
     FSource, FDestination, FRemaining, FTransfer, FToggle: Integer;
+    FIRQDelay: Integer;
+    FMPRBuffer: Byte;
     function Fetch: Integer;
     function FetchWord: Integer;
     function ZWord(Address: Integer): Integer;
@@ -34,6 +36,7 @@ type
     procedure Reset(Address, Track: Integer);
     function Interrupt(Vector: Word): Integer;
     function Step: Integer;
+    procedure SerializeState(State: TStateArchive);
   end;
 
 implementation
@@ -59,6 +62,8 @@ begin
   PC := Address and $FFFF;
   LowSpeed := False;
   FRemaining := 0;
+  FIRQDelay := 0;
+  FMPRBuffer := 0;
 end;
 
 function THuC6280.Fetch: Integer;
@@ -160,8 +165,9 @@ end;
 function THuC6280.Interrupt(Vector: Word): Integer;
 begin
   Result := 0;
-  if (P and 4 <> 0) or (FRemaining <> 0) then
+  if (P and 4 <> 0) or (FRemaining <> 0) or (FIRQDelay <> 0) then
     Exit;
+
   Push(PC shr 8);
   Push(PC);
   Push(P and $EF);
@@ -175,6 +181,8 @@ var
   Op, Group, Mode, Address, Value, Temp, Mask, OldA: Integer;
   Transfer: Boolean;
 begin
+  if FIRQDelay > 0 then
+    Dec(FIRQDelay);
   if FRemaining > 0 then
   begin
     FWrite(FDestination, FRead(FSource));
@@ -205,8 +213,15 @@ begin
         end;
     end;
     Dec(FRemaining);
+    if FRemaining = 0 then
+    begin
+      X := Pop;
+      A := Pop;
+      Y := Pop;
+    end;
     Exit(6);
   end;
+
   Op := Fetch;
   Transfer := P and $20 <> 0;
   P := P and $DF;
@@ -233,6 +248,7 @@ begin
     end;
     Exit(Branch(Transfer));
   end;
+
   if Op and $0F = 7 then
   begin
     Address := $2000 or Fetch;
@@ -245,6 +261,7 @@ begin
     FWrite(Address, Value);
     Exit(7);
   end;
+
   if Op and $0F = $0F then
   begin
     Address := $2000 or Fetch;
@@ -252,6 +269,7 @@ begin
     Mask := 1 shl ((Op shr 4) and 7);
     Exit(Branch((Value and Mask <> 0) = (Op >= $80)) + 4);
   end;
+
   if ((Op and 3 = 1) and (Op <> $89)) or (Op and $1F = $12) then
   begin
     Group := Op shr 5;
@@ -305,11 +323,13 @@ begin
           Result := 5;
         end;
       end;
+
     if Group = 4 then
     begin
       FWrite(Address, A);
       Exit;
     end;
+
     Value := FRead(Address);
     OldA := A;
     if Transfer and (Group <= 3) then
@@ -360,6 +380,7 @@ begin
     end;
     Exit;
   end;
+
   if (Op and 3 = 2) and ((Op and $1F) in [2, 6, $0A, $0E, $16, $1E]) and ((Op and $1F <> $0A) or (Op < $80)) and not (Op in [$02, $22, $42, $62, $82, $9E, $C2, $E2]) then
   begin
     Group := Op shr 5;
@@ -395,16 +416,20 @@ begin
       7:
         begin
           Temp := X;
+          if Group = 5 then
+            Temp := Y;
           Address := (FetchWord + Temp) and $FFFF;
           Result := ifthen(Group = 5, 5, 7);
         end;
     else
       raise EArgumentException.CreateFmt('Invalid HuC6280 opcode %.2x', [Op]);
     end;
+
     if Address < 0 then
       Value := A
     else
       Value := FRead(Address);
+
     case Group of
       0:
         begin
@@ -458,6 +483,7 @@ begin
       FWrite(Address, Value);
     Exit;
   end;
+
   case Op of
     $00:
       begin
@@ -511,13 +537,13 @@ begin
         else
           Address := FetchWord;
         Value := FRead(Address);
-        P := P and $FD;
-        if A and Value = 0 then
-          P := P or 2;
+        P := (P and $3D) or (Value and $C0);
         if Op and $10 = 0 then
           Value := Value or A
         else
           Value := Value and (A xor 255);
+        if Value = 0 then
+          P := P or 2;
         FWrite(Address, Value);
         Result := 6 + Ord(Op and 8 <> 0);
       end;
@@ -528,7 +554,10 @@ begin
       end;
     $28:
       begin
-        P := Pop;
+        Temp := Pop;
+        if (P and 4 <> 0) and (Temp and 4 = 0) then
+          FIRQDelay := 1;
+        P := Temp;
         Result := 4;
       end;
     $18:
@@ -536,7 +565,11 @@ begin
     $38:
       P := P or 1;
     $58:
-      P := P and $FB;
+      begin
+        if P and 4 <> 0 then
+          FIRQDelay := 1;
+        P := P and $FB;
+      end;
     $78:
       P := P or 4;
     $B8:
@@ -576,12 +609,18 @@ begin
     $43, $53:
       begin
         Mask := Fetch;
+        if (Op = $43) and (Mask <> 0) then
+          FMPRBuffer := 0;
         for var I := 0 to 7 do
           if Mask and (1 shl I) <> 0 then
             if Op = $43 then
-              A := MPR[I]
+              FMPRBuffer := FMPRBuffer or MPR[I]
             else
               MPR[I] := A;
+        if Op = $43 then
+          A := FMPRBuffer
+        else if Mask <> 0 then
+          FMPRBuffer := A;
         Result := 4 + Ord(Op = $53);
       end;
     $44:
@@ -620,9 +659,15 @@ begin
         Result := 7;
       end;
     $54:
-      LowSpeed := True;
+      begin
+        LowSpeed := True;
+        Result := 3;
+      end;
     $D4:
-      LowSpeed := False;
+      begin
+        LowSpeed := False;
+        Result := 3;
+      end;
     $60:
       begin
         Temp := Pop;
@@ -692,6 +737,9 @@ begin
       end;
     $73, $C3, $D3, $E3, $F3:
       begin
+        Push(Y);
+        Push(A);
+        Push(X);
         FSource := FetchWord;
         FDestination := FetchWord;
         FRemaining := FetchWord;
@@ -848,11 +896,35 @@ begin
             Compare(X, Value);
         end;
       end;
-    $EA:
+    $0B, $1B, $2B, $33, $3B, $4B, $5B, $5C, $63, $6B, $7B, $8B, $9B, $AB, $BB, $CB, $DB, $DC, $E2, $EA, $EB, $FB, $FC:
       Result := 2;
   else
     raise EArgumentException.CreateFmt('Unknown HuC6280 opcode %.2x at %.4x', [Op, (PC - 1) and $FFFF]);
   end;
+end;
+
+procedure THuC6280.SerializeState(State: TStateArchive);
+begin
+  State.Field(A, SizeOf(A));
+  State.Field(X, SizeOf(X));
+  State.Field(Y, SizeOf(Y));
+  State.Field(SP, SizeOf(SP));
+  State.Field(P, SizeOf(P));
+  State.Field(PC, SizeOf(PC));
+  State.Field(MPR, SizeOf(MPR));
+  State.Field(LowSpeed, SizeOf(LowSpeed));
+  State.Field(FSource, SizeOf(FSource));
+  State.Field(FDestination, SizeOf(FDestination));
+  State.Field(FRemaining, SizeOf(FRemaining));
+  State.Field(FTransfer, SizeOf(FTransfer));
+  State.Field(FToggle, SizeOf(FToggle));
+  State.Field(FIRQDelay, SizeOf(FIRQDelay));
+  State.Field(FMPRBuffer, SizeOf(FMPRBuffer));
+
+  if State.Loading and ((A < 0) or (A > 255) or (X < 0) or (X > 255) or
+    (Y < 0) or (Y > 255) or (SP < 0) or (SP > 255) or (P < 0) or (P > 255) or
+    (PC < 0) or (PC > $FFFF) or (FRemaining < 0) or (FRemaining > 65536)) then
+    raise EReadError.Create('Invalid HuC6280 state');
 end;
 
 end.

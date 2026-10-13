@@ -52,7 +52,10 @@ begin
   FView.GamePause.Width := 60;
   for var Child in FView.GamePause.Children do
     if Child is FMX.Objects.TPath then
+    begin
+      FMX.Objects.TPath(Child).Margins.Rect := TRectF.Empty;
       FMX.Objects.TPath(Child).Align := TAlignLayout.Center;
+    end;
   FView.GameStatus.Visible := False;
   FView.GamePlatform.Visible := False;
   (FView.FindComponent('ToolbarBackground') as TControl).Visible := False;

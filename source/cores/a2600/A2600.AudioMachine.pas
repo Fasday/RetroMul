@@ -81,6 +81,7 @@ begin
 
     Exit(FROM[FBank * 4096 + (A and $FFF)]);
   end;
+
   if A and $80 = 0 then
     Exit(0);
 

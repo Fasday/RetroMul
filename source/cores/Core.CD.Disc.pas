@@ -1,4 +1,4 @@
-﻿unit NeoGeoCD.Disc;
+﻿unit Core.CD.Disc;
 
 interface
 
@@ -16,7 +16,7 @@ type
   end;
 
   // Immutable TOC; streams are owned here and accessed by the emulation worker.
-  TNeoGeoCDDisc = class
+  TCDDisc = class
   private
     FTracks: TArray<TCDTrack>;
     FLeadOut: Integer;
@@ -26,7 +26,10 @@ type
     procedure LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
     procedure ValidateAndHash;
   public
+    // Generic CD media: TOC, companion streams and sectors. Filesystem/boot
+    // requirements are selected by the caller after construction.
     constructor Create(Stream: TStream; const Storage: IStorage; const Location: string);
+    procedure RequireISO9660;
     destructor Destroy; override;
     function TrackAt(LBA: Integer): Integer;
     function Track(Number: Integer): TCDTrack;
@@ -43,14 +46,14 @@ function CDSibling(const Storage: IStorage; const Location, Name: string): strin
 implementation
 
 uses
-  System.Hash, System.IOUtils, System.Math, System.StrUtils, NeoGeoCD.CHD
+  System.Hash, System.IOUtils, System.Math, System.StrUtils, Core.CD.CHD
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
 begin
   // A CUE references files beside itself, never absolute paths or parent traversal.
   if (Name = '') or Name.Contains(':') or Name.Contains('/') or Name.Contains('\') or (Name = '.') or (Name = '..') then
-    raise EReadError.Create('Invalid Neo Geo CD companion filename: ' + Name);
+    raise EReadError.Create('Invalid CD companion filename: ' + Name);
 
   if Location.StartsWith('content://', True) then
   begin
@@ -76,7 +79,7 @@ begin
 
       Break;
     end;
-    raise EReadError.Create('Missing Neo Geo CD companion in the selected ROM folder: ' + Name);
+    raise EReadError.Create('Missing CD companion in the selected ROM folder: ' + Name);
   end;
 
   Result := TPath.Combine(ExtractFilePath(Location.Replace('/', PathDelim)), Name);
@@ -87,7 +90,7 @@ begin
       if SameText(ExtractFileName(Candidate), Name) then
         Exit(Candidate);
 
-    raise EReadError.Create('Missing Neo Geo CD file: ' + Name);
+    raise EReadError.Create('Missing CD file: ' + Name);
   end;
 end;
 
@@ -152,11 +155,11 @@ begin
     raise EReadError.Create('CD audio WAV requires 44100 Hz, stereo, 16-bit PCM');
 end;
 
-constructor TNeoGeoCDDisc.Create(Stream: TStream; const Storage: IStorage; const Location: string);
+constructor TCDDisc.Create(Stream: TStream; const Storage: IStorage; const Location: string);
 begin
   inherited Create;
   if (Stream = nil) or (Storage = nil) or (Location = '') then
-    raise EArgumentException.Create('Neo Geo CD needs a source location and storage');
+    raise EArgumentException.Create('CD needs a source location and storage');
 
   var SourceName := Location;
   if Location.StartsWith('content://', True) then
@@ -170,29 +173,29 @@ begin
     FTracks[0].SectorSize := 2048;
     FTracks[0].Stream := Storage.OpenRead(Location);
     FTracks[0].ByteSize := FTracks[0].Stream.Size;
-    if (FTracks[0].ByteSize < 17 * 2048) or (FTracks[0].ByteSize > Int64(800) * 1024 * 1024) or (FTracks[0].ByteSize mod 2048 <> 0) then
-      raise EReadError.Create('Invalid Neo Geo CD ISO size');
+    if (FTracks[0].ByteSize < 2048) or (FTracks[0].ByteSize > Int64(800) * 1024 * 1024) or (FTracks[0].ByteSize mod 2048 <> 0) then
+      raise EReadError.Create('Invalid CD ISO size');
 
     FTracks[0].EndLBA := FTracks[0].ByteSize div 2048;
   end
   else if SameText(ExtractFileExt(SourceName), '.chd') then
     LoadCHD(Storage, Location)
   else
-    raise EReadError.Create('Neo Geo CD expects ISO, CUE or CHD');
+    raise EReadError.Create('CD expects ISO, CUE or CHD');
 
   if (FLeadOut = 0) and (Length(FTracks) > 0) then
     FLeadOut := FTracks[High(FTracks)].EndLBA;
   ValidateAndHash;
 end;
 
-destructor TNeoGeoCDDisc.Destroy;
+destructor TCDDisc.Destroy;
 begin
   for var Item in FTracks do
     Item.Stream.Free;
   inherited;
 end;
 
-procedure TNeoGeoCDDisc.LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
+procedure TCDDisc.LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
 var
   Index0, Index1, Gaps, PostGaps: array[0..98] of Integer;
 begin
@@ -271,7 +274,7 @@ begin
       // CUE BINARY audio, like PCM WAV, stores little-endian samples.
       FTracks[Current].LittleEndian := True;
       if FTracks[Current].ByteSize > Int64(800) * 1024 * 1024 then
-        raise EReadError.Create('Neo Geo CD track exceeds 800 MiB');
+        raise EReadError.Create('CD track exceeds 800 MiB');
 
       if FileType = 'WAVE' then
       begin
@@ -355,7 +358,7 @@ begin
     FLeadOut := Cursor + PostGaps[High(FTracks)];
 end;
 
-procedure TNeoGeoCDDisc.LoadCHD(const Storage: IStorage; const Location: string);
+procedure TCDDisc.LoadCHD(const Storage: IStorage; const Location: string);
 begin
   var Input := Storage.OpenRead(Location);
   try
@@ -457,15 +460,10 @@ begin
   FLeadOut := Cursor;
 end;
 
-procedure TNeoGeoCDDisc.ValidateAndHash;
+procedure TCDDisc.ValidateAndHash;
 begin
-  if (Length(FTracks) = 0) or FTracks[0].Audio or (LeadOut > 100 * 60 * 75) then
-    raise EReadError.Create('Neo Geo CD requires a data track followed by optional audio');
-
-  var Sector: TBytes;
-  ReadData(16, Sector);
-  if (Sector[0] <> 1) or not CompareMem(@Sector[1], PAnsiChar(AnsiString('CD001')), 5) then
-    raise EReadError.Create('Neo Geo CD data track requires ISO 9660');
+  if (Length(FTracks) = 0) or (LeadOut > 100 * 60 * 75) then
+    raise EReadError.Create('CD requires a valid track table shorter than 100 minutes');
 
   var Hash := THashSHA2.Create;
   var Buffer: array[0..65535] of Byte;
@@ -502,7 +500,24 @@ begin
   FIdentity := Hash.HashAsBytes;
 end;
 
-function TNeoGeoCDDisc.TrackAt(LBA: Integer): Integer;
+procedure TCDDisc.RequireISO9660;
+begin
+  for var Track in FTracks do
+  begin
+    if Track.Audio then
+      Continue;
+    if Track.EndLBA - Track.StartLBA < 17 then
+      Break;
+    var Sector: TBytes;
+    ReadData(Track.StartLBA + 16, Sector);
+    if (Sector[0] = 1) and CompareMem(@Sector[1], PAnsiChar(AnsiString('CD001')), 5) then
+      Exit;
+    Break;
+  end;
+  raise EReadError.Create('CD data track requires ISO 9660');
+end;
+
+function TCDDisc.TrackAt(LBA: Integer): Integer;
 begin
   Result := -1;
   for var i := 0 to High(FTracks) do
@@ -510,7 +525,7 @@ begin
       Exit(i);
 end;
 
-function TNeoGeoCDDisc.Track(Number: Integer): TCDTrack;
+function TCDDisc.Track(Number: Integer): TCDTrack;
 begin
   if (Number < 1) or (Number > Length(FTracks)) then
     raise EReadError.Create('Invalid CD track number');
@@ -518,23 +533,23 @@ begin
   Result := FTracks[Number - 1];
 end;
 
-function TNeoGeoCDDisc.TrackCount: Integer;
+function TCDDisc.TrackCount: Integer;
 begin
   Result := Length(FTracks);
 end;
 
-function TNeoGeoCDDisc.LeadOut: Integer;
+function TCDDisc.LeadOut: Integer;
 begin
   Result := FLeadOut;
 end;
 
-function TNeoGeoCDDisc.IsData(LBA: Integer): Boolean;
+function TCDDisc.IsData(LBA: Integer): Boolean;
 begin
   var i := TrackAt(LBA);
   Result := (i >= 0) and not FTracks[i].Audio and (LBA >= FTracks[i].StartLBA);
 end;
 
-procedure TNeoGeoCDDisc.ReadData(LBA: Integer; var Sector: TBytes);
+procedure TCDDisc.ReadData(LBA: Integer; var Sector: TBytes);
 begin
   var i := TrackAt(LBA);
   if (i < 0) or FTracks[i].Audio or (LBA < FTracks[i].StartLBA) then
@@ -547,7 +562,7 @@ begin
   Item.Stream.ReadBuffer(Sector[0], 2048);
 end;
 
-procedure TNeoGeoCDDisc.ReadAudio(LBA: Integer; var Sector: TBytes);
+procedure TCDDisc.ReadAudio(LBA: Integer; var Sector: TBytes);
 begin
   SetLength(Sector, 2352);
   FillChar(Sector[0], 2352, 0);
@@ -571,7 +586,7 @@ begin
     end;
 end;
 
-function TNeoGeoCDDisc.Identity: TBytes;
+function TCDDisc.Identity: TBytes;
 begin
   Result := Copy(FIdentity);
 end;

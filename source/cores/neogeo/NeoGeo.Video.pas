@@ -203,6 +203,7 @@ begin
   Result := 0;
   if Base + 3 >= Length(FCart.SpriteROM) then
     Exit;
+
   // Decode eight pixels at once. Read live RAM for CD uploads and bootlegs;
   // keeping decoded tiles across scanlines would require write invalidation.
   if FCart.Disc <> nil then
@@ -236,8 +237,10 @@ begin
     for var X := 0 to NG_WIDTH - 1 do
       Pixels[Row + X] := Background;
   end;
+
   if not DisplayEnabled then
     Exit;
+
   var X := 0;
   var Y := 0;
   var Rows := 0;

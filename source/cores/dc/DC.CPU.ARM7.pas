@@ -109,19 +109,19 @@ begin
     var Start := 13;
     if (Old = 1) or (New = 1) then
       Start := 8;
-    for var I := Start to 14 do
+    for var i := Start to 14 do
     begin
       var OldBank := Old;
       var NewBank := New;
-      if I < 13 then
+      if i < 13 then
       begin
         if Old <> 1 then
           OldBank := 0;
         if New <> 1 then
           NewBank := 0;
       end;
-      FBanked[OldBank, I - 8] := R[I];
-      R[I] := FBanked[NewBank, I - 8];
+      FBanked[OldBank, i - 8] := R[i];
+      R[i] := FBanked[NewBank, i - 8];
     end;
     FSaved[Old] := SPSR;
     SPSR := FSaved[New];
@@ -315,8 +315,8 @@ begin
   begin
     var List := Op and $FFFF;
     var Count := 0;
-    for var I := 0 to 15 do
-      if List and (1 shl I) <> 0 then
+    for var i := 0 to 15 do
+      if List and (1 shl i) <> 0 then
         Inc(Count);
     if Count = 0 then
       raise EArgumentException.Create('ARM empty register list');
@@ -341,21 +341,22 @@ begin
       Writeback := ARMAdd(Base, Count * 4)
     else
       Writeback := ARMSub(Base, Count * 4);
-    for var I := 0 to 15 do
-      if List and (1 shl I) <> 0 then
+
+    for var i := 0 to 15 do
+      if List and (1 shl i) <> 0 then
       begin
         if Load then
         begin
           var V := FRead(Address, 4);
-          if I = 15 then
+          if i = 15 then
             Next := V and $FFFFFFFC
           else
-            R[I] := V;
+            R[i] := V;
         end
         else
         begin
-          var V := Reg(I);
-          if I = 15 then
+          var V := Reg(i);
+          if i = 15 then
             V := ARMAdd(V, 4);
           FWrite(Address, V, 4);
         end;
@@ -414,9 +415,9 @@ begin
   begin
     var V := Operand(Op, Carry);
     var Mask: Cardinal := 0;
-    for var I := 0 to 3 do
-      if Op and (1 shl (16 + I)) <> 0 then
-        Mask := Mask or ($FF shl (I * 8));
+    for var i := 0 to 3 do
+      if Op and (1 shl (16 + i)) <> 0 then
+        Mask := Mask or ($FF shl (i * 8));
     if Op and $00400000 <> 0 then
       SPSR := (SPSR and not Mask) or (V and Mask)
     else

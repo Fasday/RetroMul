@@ -1,10 +1,5 @@
 ﻿unit GBA.CPU;
 
-// ARM7TDMI (ARMv4T). R[15] is the address of the next instruction.
-// PC operands observe the ARM/Thumb pipeline; all bus addresses are integers.
-
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
-
 interface
 
 uses

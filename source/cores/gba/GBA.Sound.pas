@@ -1,7 +1,5 @@
 ﻿unit GBA.Sound;
 
-{$IFNDEF GBA_DEBUG_UNOPTIMIZED}{$O+}{$ENDIF}
-
 interface
 
 uses

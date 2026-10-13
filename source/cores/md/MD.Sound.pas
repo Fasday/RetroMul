@@ -513,7 +513,8 @@ begin
   var Fraction: Cardinal := Value and $FF;
   // A Word shifted by two is always non-negative. Preserve the explicit
   // >=32 case instead of relying on the host's masked shift count.
-  if Whole >= 32 then Exit(0);
+  if Whole >= 32 then
+    Exit(0);
   Result := (Cardinal(POWER_TABLE[Fraction]) shl 2) shr Whole;
 end;
 
@@ -667,6 +668,7 @@ begin
             State.EnvelopeMode := FM_OPERATOR_ENVELOPE_MODE_DECAY;
             Break;
           end;
+
           if Delta <> 0 then
           begin
             State.Attenuation := Word(State.Attenuation + (((not Cardinal(State.Attenuation)) shl (Sub32(Delta, 1))) shr 4));
@@ -682,6 +684,7 @@ begin
             State.EnvelopeMode := FM_OPERATOR_ENVELOPE_MODE_SUSTAIN;
             Break;
           end;
+
           if Ord((Delta <> 0) and ((EndEnvelope = 0))) <> 0 then
           begin
             var Temp2: Integer;
@@ -994,6 +997,7 @@ begin
   var Threshold: Byte := THRESHOLDS[State.Frequency];
   var Temp93: Byte := State.SubCounter;
   Inc(State.SubCounter);
+
   if (Temp93 and Threshold) = Threshold then
   begin
     State.SubCounter := 0;
@@ -1011,6 +1015,7 @@ begin
       Exit(Ord(Cardinal(State.Counter mod PhaseModulationDivisor) = 0));
     end;
   end;
+
   Result := 0;
 end;
 

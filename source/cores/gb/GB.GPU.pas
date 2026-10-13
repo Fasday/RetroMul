@@ -401,6 +401,7 @@ begin
     FPipeline.Discard := 0;
     if WindowX < 7 then
       FPipeline.Discard := 7 - WindowX;
+
     // Window restart takes six dots; fetch and push the first tile in them.
     ClockTileFetcher;
     Exit;
@@ -558,6 +559,7 @@ begin
       end;
     end;
     ProcessLCDStatus;
+
     // The LCDC.4 bus glitch lasts one PPU clock, not an entire tile fetch.
     FPipeline.TileGlitch := False;
   end;

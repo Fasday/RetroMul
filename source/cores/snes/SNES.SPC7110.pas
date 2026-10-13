@@ -571,6 +571,7 @@ begin
       begin
         if FRTC <> nil then
           Exit(FRTC.Read(Address));
+
         Exit(0);
       end;
   end;

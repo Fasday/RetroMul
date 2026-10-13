@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, Core.Snapshots, NeoGeoCD.Disc;
+  System.SysUtils, System.Classes, Core.Snapshots, Core.CD.Disc;
 
 const
   NGCD_MASTER_CLOCK = 24168000;
@@ -31,7 +31,7 @@ type
 
   TNeoGeoCDController = class
   private
-    FDisc: TNeoGeoCDDisc;
+    FDisc: TCDDisc;
     FCDZ: Boolean;
     FAudio: TBytes;
     FAudioLBA: Integer;
@@ -43,7 +43,7 @@ type
     procedure WriteRegister(Value: Byte);
   public
     State: TCDControllerState;
-    constructor Create(Disc: TNeoGeoCDDisc; CDZ: Boolean = False);
+    constructor Create(Disc: TCDDisc; CDZ: Boolean = False);
     procedure Reset;
     procedure Advance(Time: Int64);
     function ReadWord(Address: Cardinal; HighByte, LowByte: Boolean): Word;
@@ -72,7 +72,7 @@ begin
     Result := (Result shl 1) or ((Value shr I) and 1);
 end;
 
-constructor TNeoGeoCDController.Create(Disc: TNeoGeoCDDisc; CDZ: Boolean);
+constructor TNeoGeoCDController.Create(Disc: TCDDisc; CDZ: Boolean);
 begin
   inherited Create;
   FDisc := Disc;
@@ -539,6 +539,7 @@ begin
     // FAudioLBA is invalidated on reset and snapshot restore.
     if FDisc.IsData(State.LBA) or (State.LBA >= FDisc.LeadOut) then
       Exit;
+
     FDisc.ReadAudio(State.LBA, FAudio);
     FAudioLBA := State.LBA;
   end;

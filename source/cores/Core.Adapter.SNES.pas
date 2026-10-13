@@ -26,7 +26,7 @@ type
     property Keys2: TSnesKeyMap read FKeys2;
   end;
 
-  TSnesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TSnesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FThread: TSnesWorker;
     FData, FFirmware: TBytes;
@@ -42,6 +42,7 @@ type
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string); overload;
     destructor Destroy; override;
+    function GetSystemId: string;
     function GetName: string;
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
@@ -54,6 +55,7 @@ type
     procedure Pause;
     procedure Resume;
     procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
     procedure ClearInput;
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
@@ -250,6 +252,13 @@ begin
   ApplySettings;
 end;
 
+procedure TSnesCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FThread <> nil then
+    FThread.InputPorts := Ports;
+end;
+
 procedure TSnesCoreAdapter.ClearInput;
 begin
   FKeyboards := Default(TSnesPads);
@@ -350,6 +359,11 @@ end;
 function TSnesCoreAdapter.GetConfig: IEmulatorConfig;
 begin
   Result := FConfig;
+end;
+
+function TSnesCoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_SNES;
 end;
 
 function TSnesCoreAdapter.GetName: string;

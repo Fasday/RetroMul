@@ -158,6 +158,7 @@ begin
     if Instruments = 31 then
       Header := 1084;
   end;
+
   if (FChannels < 1) or (FChannels > 32) then
     raise EArgumentException.Create('Invalid MOD channel count');
 

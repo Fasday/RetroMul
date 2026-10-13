@@ -67,6 +67,7 @@ begin
   Result := False;
   if Input = nil then
     Exit;
+
   for var Device in Input.Devices do
     if (Device.Id = DeviceId) and Device.Available and Device.RumbleSupported then
       Exit(True);
@@ -155,10 +156,12 @@ begin
     Stop;
     Exit;
   end;
+
   var Rising := FLevel = 0;
   FLevel := Level;
   if FFailed then
     Exit;
+
   if not FChecked then
   begin
     FChecked := True;
@@ -166,18 +169,23 @@ begin
     if FFailed then
       Exit;
   end;
+
   var Repeatable := FDevice.CanCancel;
   var Interval: UInt64 := 40;
   if not Repeatable then
     Interval := 250;
+
   // AudioServices cannot cancel/renew a motor: one system pulse per rising
   // burst, with a cooldown for games that PWM the rumble line rapidly.
   if not Repeatable and not Rising then
     Exit;
+
   if FHasPulse and (Tick >= FLastPulse) and (Tick - FLastPulse < Interval) then
     Exit;
+
   FLastPulse := Tick;
   FHasPulse := True;
+
   // Never leave an indefinite effect behind if rendering stalls or exits.
   FActive := FDevice.Pulse(40, Level);
   FFailed := not FActive;

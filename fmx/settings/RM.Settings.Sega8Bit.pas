@@ -28,6 +28,7 @@ begin
   Context.CreateGroup('SegaSound', 'Sound chips');
   Context.CreateGroup('SegaKeyboard', 'Keyboard and cassette');
   Context.CreateGroup('SegaDisk', 'Floppy drive');
+  Context.CreateOption('RowSegaGGRegion', 'Console region', 'Automatic follows the cartridge header. Some games require Japanese hardware.', sekCombo);
   Context.CreateOption('RowSegaModel', 'Console model', 'Select the hardware used when opening a ROM.', sekCombo);
   Context.CreateOption('RowSegaBIOS', 'BIOS file', 'Optional 8, 16 or 32 KiB Master System BIOS.', sekPath);
   Context.CreateOption('RowSegaBIOSEnabled', 'Use BIOS', 'Run the selected BIOS before the cartridge.', sekSwitch);

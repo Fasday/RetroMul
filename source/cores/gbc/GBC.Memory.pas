@@ -259,6 +259,7 @@ begin
   State.Field(FHDMARemainingBlocks, SizeOf(FHDMARemainingBlocks));
   State.Field(FDMACyclePenalty, SizeOf(FDMACyclePenalty));
   State.Field(FWRAMBanks, SizeOf(FWRAMBanks));
+
   // CGB extension precedes common state in existing snapshots.
   inherited SerializeState(State);
 end;
