@@ -49,9 +49,6 @@ type
     FMemoryPorts: Byte;
     FDisplayLatch: array[0..2] of Word;
     FFetch: array[0..3] of TGBATileFetch;
-    FBackgroundRow: array[0..3, 0..247] of Integer;
-    FBackgroundFIFO: array[0..3, 0..7] of Integer;
-    FObjectRows: array[0..1, 0..239] of TGBAObjectPixel;
     FObjectFetch: TGBAObjectFetch;
     FObjectDraw: TGBAObjectFetch;
     FObjectDrawing, FObjectDrawStarted: Boolean;
@@ -62,6 +59,15 @@ type
     FMergeSemi: Boolean;
     FMergeMainColor, FMergeSubColor: Integer;
     FObjectMosaic: TGBAObjectPixel;
+  public
+    // Frequently read ports follow the small timing state, before large rows.
+    IO: array[0..$3FF] of Byte;
+    Palette: array[0..$3FF] of Byte;
+    OAM: array[0..$3FF] of Byte;
+  private
+    FBackgroundRow: array[0..3, 0..247] of Integer;
+    FBackgroundFIFO: array[0..3, 0..7] of Integer;
+    FObjectRows: array[0..1, 0..239] of TGBAObjectPixel;
     procedure ResetTiming;
     procedure ClockTextBackground(BG, Cycle: Integer);
     procedure ClockAffineBackground(BG, Cycle, Display: Integer);
@@ -79,10 +85,7 @@ type
     procedure Sprites(Y: Integer; var Colors, Priorities: array of Integer; var Semi, ObjWindow: array of Boolean);
     function WindowMask(X, Y: Integer; ObjWindow: Boolean): Integer;
   public
-    IO: array[0..$3FF] of Byte;
     VRAM: array[0..$17FFF] of Byte;
-    Palette: array[0..$3FF] of Byte;
-    OAM: array[0..$3FF] of Byte;
     constructor Create;
     procedure Reset;
     function Reg16(Offset: Integer): Word; inline;
@@ -1016,7 +1019,7 @@ begin
     for var i := 0 to Count - 1 do
     begin
       var DataX := (local - 4) div 4 - 7 + i;
-      if not (DataX in [0..247]) then
+      if (DataX < 0) or (DataX > 247) then
         Continue;
 
       var Shift := i * (4 shl Ord(BPP8));
@@ -1465,6 +1468,27 @@ begin
     Exit;
   end;
 
+  // Beyond the last merger clock, only unfinished OBJ evaluation can use
+  // a video port. Advance an idle HBlank without visiting each clock.
+  if (FirstCycle >= 1007) and
+    ((D and $1080 <> $1000) or ((FObjectFetch.Index >= 128) and not FObjectDrawing)) then
+  begin
+    FClockCycle := LastCycle;
+    FMemoryPorts := 0;
+    var WindowEnd := Min(255, LastCycle div 4);
+    if (WindowEnd >= FWindowCursor) or ((D and $6000 = 0) and (FWindowX[0] or FWindowX[1])) then
+      AdvanceWindows(WindowEnd);
+    Exit;
+  end;
+
+  // Text map reads have a fixed eight-pixel phase while registers remain
+  // unchanged in this slice. Other text clocks can only fetch pending data.
+  // Avoid entering the full fetch routine on clocks with no transaction.
+  var TextMapPhases := ((7 - (IO[$10] and 7)) and 7) or
+    (((7 - (IO[$14] and 7)) and 7) shl 3) or
+    (((7 - (IO[$18] and 7)) and 7) shl 6) or
+    (((7 - (IO[$1C] and 7)) and 7) shl 9);
+
   for var Cycle := FirstCycle to LastCycle do
   begin
     FClockCycle := Cycle;
@@ -1500,19 +1524,21 @@ begin
     var BG := Cycle and 3;
     if Cycle <= 1006 then
       case Mode of
-        0:
-          if Enable and (1 shl (8 + BG)) <> 0 then
-            ClockTextBackground(BG, Cycle);
-        1:
+        0, 1:
+          if (Mode = 0) or (BG < 2) then
           begin
-            if BG < 2 then
+            if Enable and (1 shl (8 + BG)) <> 0 then
             begin
-              if Enable and (1 shl (8 + BG)) <> 0 then
+              var Local := Cycle - 4 - BG;
+              var Fetch: PGBATileFetch := @FFetch[BG];
+              if (Local >= 0) and
+                (((Local < 988) and ((Local shr 2 and 7) = (TextMapPhases shr (BG * 3) and 7))) or
+                 ((Fetch.Remaining > 0) and (Local = Fetch.NextCycle))) then
                 ClockTextBackground(BG, Cycle);
-            end
-            else if Enable and $400 <> 0 then
-              ClockAffineBackground(2, Cycle, D);
-          end;
+            end;
+          end
+          else if Enable and $400 <> 0 then
+            ClockAffineBackground(2, Cycle, D);
         2:
           begin
             BG := 3 - BG div 2;

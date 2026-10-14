@@ -1,0 +1,58 @@
+[
+  {
+    "file": "32x-g.bin",
+    "description": "32X 68000",
+    "size": 256,
+    "sha1": "dbebd76a448447cb6e524ac3cb0fd19fc065d944",
+    "sha256": "a2d6b6e1544467e27d404634de6e6b0a54ed4b3babb6b71739a260e1be04ebfc",
+    "source": "https://www.emu-land.net/consoles/32x/bios?act=getfile&id=5012"
+  },
+  {
+    "file": "32x-m.bin",
+    "description": "32X master SH-2",
+    "size": 2048,
+    "sha1": "1e5b0b2441a4979b6966d942b20cc76c413b8c5e",
+    "sha256": "4c6128229bd24dae5f11d3f569ca592665f141bef26cef937e2ce4d9b548cc3b",
+    "source": "https://www.emu-land.net/consoles/32x/bios?act=getfile&id=5013"
+  },
+  {
+    "file": "32x-s.bin",
+    "description": "32X slave SH-2",
+    "size": 1024,
+    "sha1": "4103668c1bbd66c5e24558e73d4f3f92061a109a",
+    "sha256": "7bde4245ce00c51a23a1ce73a881752e7b14dc12416e175352a3807338e04745",
+    "source": "https://www.emu-land.net/consoles/32x/bios?act=getfile&id=5014"
+  },
+  {
+    "file": "cd-e.bin",
+    "description": "Mega CD 1, Europe v1.00",
+    "size": 131072,
+    "sha1": "f891e0ea651e2232af0c5c4cb46a0cae2ee8f356",
+    "sha256": "16735df92fcc1d0fc6a1eced244867e95281c5006340926082b74e363e073dc4",
+    "source": "https://www.emu-land.net/consoles/segacd/bios?act=getfile&id=4969"
+  },
+  {
+    "file": "cd-j.bin",
+    "description": "Mega CD 1, Japan v1.01",
+    "size": 131072,
+    "sha1": "4846f448160059a7da0215a5df12ca160f26dd69",
+    "sha256": "923eb9da740f98ab1572085e3d351e2c0982df0906b0b99efb68a9997c94cf8f",
+    "source": "https://www.emu-land.net/consoles/segacd/bios?act=getfile&id=4971"
+  },
+  {
+    "file": "cd-u.bin",
+    "description": "Sega CD 1, USA v1.10",
+    "size": 131072,
+    "sha1": "f4f315adcef9b8feb0364c21ab7f0eaf5457f3ed",
+    "sha256": "807384678ef259494d943eddb6954dfc7069693d0dde0c424e2028488d88e81a",
+    "source": "https://www.emu-land.net/consoles/segacd/bios?act=getfile&id=4977"
+  },
+  {
+    "file": "cd-u2.bin",
+    "description": "Sega CD 2, USA v2.11",
+    "size": 131072,
+    "sha1": "328a3228c29fba244b9db2055adc1ec4f7a87e6b",
+    "sha256": "4acda6ced2951f4fc34b42cc08c7510b8edc1f716b17ce4f84920751a98b9204",
+    "source": "https://www.emu-land.net/consoles/segacd/bios?act=getfile&id=4980"
+  }
+]

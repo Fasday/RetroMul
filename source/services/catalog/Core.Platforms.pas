@@ -74,8 +74,9 @@ begin
     'Nintendo', 'N64', 'n64', ['n64'], [ROM_EXTENSION_Z64, ROM_EXTENSION_N64, ROM_EXTENSION_V64],
     'N64', 'n64', 4);
   RegisterPlatform(TRomSystem.MD, ROM_SYSTEM_MD, 'Mega Drive', 'Mega Drive',
-    'Sega', 'MD Genesis', 'megadrive', ['megadrive'], [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD],
-    'MegaDrive', 'md', 2);
+    'Sega', 'MD Genesis 32X Mega CD', 'megadrive', ['megadrive', '32x', 'segacd', 'megacd'],
+    [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD, '.32x', ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'MegaDrive', 'md', 4);
   RegisterPlatform(TRomSystem.SG1000, ROM_SYSTEM_SG1000, 'SG-1000', 'SG-1000',
     'Sega', 'SG1000 SG-1000 II SK-1100', 'sg1000', ['sg1000'], [ROM_EXTENSION_SG, ROM_EXTENSION_SMS],
     'SG1000', 'sg1000', 2);

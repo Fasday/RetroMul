@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, MD.Sound, ZX.Sound.YM2149, NeoGeo.Cartridge, Core.Snapshots;
+  System.SysUtils, System.Classes, MD.Sound, ZX.Sound.YM2149, NeoGeo.Cartridge, Core.Snapshots;
 
 const
   NG_SAMPLE_RATE = 44100;
@@ -28,6 +28,10 @@ type
     FBusy, FClockRemainder, FSamplePhase: Integer;
     FAFraction, FBFraction: Integer;
     FNativeLeft, FNativeRight: Integer;
+    FTimerPhase: Integer;
+    FCSMKeyOff: Boolean;
+    FCSMManualMask: Byte;
+    procedure TimerTick;
     procedure NativeTick;
     procedure GenerateFM;
     procedure ClockADPCMA;
@@ -57,7 +61,7 @@ constructor TNeoGeoSound.Create(Cart: TNeoGeoCartridge);
 begin
   inherited Create;
   FCart := Cart;
-  FSSG := TYM2149F.Create(2000000, NG_SAMPLE_RATE);
+  FSSG := TYM2149F.Create(Cart.MasterClock div 12, NG_SAMPLE_RATE);
   FSSG.AYModel := True;
   for var i := 0 to 2 do
     FSSG.SetPan(i, 0.33, 0.33);
@@ -87,6 +91,7 @@ begin
   FBFraction := 0;
   FNativeLeft := 0;
   FNativeRight := 0;
+  FTimerPhase := 0; FCSMKeyOff := False; FCSMManualMask := 0;
   Samples := nil;
 end;
 
@@ -128,12 +133,18 @@ begin
   FRegisters[Bank * 256 + Index] := Value;
   if Bank = 0 then
   begin
-    if Index < 16 then
-      FSSG.WriteRegister(Index, Value)
+    if Index < 14 then
+    begin
+      if Index = 7 then Value := Value and $3F; // YM2610 has no SSG GPIO ports.
+      FSSG.WriteRegister(Index, Value);
+    end
     else if Index = $10 then
     begin
       if (Value and 1) <> 0 then
-        FVoices[6].Playing := False
+      begin
+        FVoices[6].Playing := False;
+        FVoices[6].Output := 0;
+      end
       else if (Value and $80) <> 0 then
       begin
         FBFraction := 0;
@@ -147,8 +158,11 @@ begin
     end
     else if (Index >= $22) and (Index <= $B6) and not (Index in [$2A, $2B, $2C]) then
     begin
+      if (Index = $28) and ((Value and 7) = 2) then FCSMManualMask := Value shr 4;
       FMDoAddress(FFM, 0, Index);
       FMDoData(FFM, Value);
+      if (Index = $28) and ((Value and 7) = 2) and FCSMKeyOff then
+        for var Op := 0 to 3 do FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
     end;
   end
   else if Index = 0 then
@@ -157,7 +171,10 @@ begin
       if (Value and (1 shl i)) <> 0 then
       begin
         if (Value and $80) <> 0 then
-          FVoices[i].Playing := False
+        begin
+          FVoices[i].Playing := False;
+          FVoices[i].Output := 0;
+        end
         else
           StartVoice(i);
       end;
@@ -193,8 +210,8 @@ begin
           Result := Result or $80;
       end;
     1:
-      if FAddress[0] < 16 then
-        Result := FRegisters[FAddress[0]];
+      if FAddress[0] < 14 then
+        Result := FSSG.ReadRegister(FAddress[0]);
     2:
       Result := FEndFlags and FEndMask;
   end;
@@ -346,18 +363,12 @@ begin
     for var C := 0 to 5 do
       FMChannelSetPhaseModulation(FFM.State.Channels[C].State, FFM.State.LFO.PhaseModulation);
   GenerateFM;
-  for var i := 0 to 1 do
-    if (FRegisters[$27] and (1 shl i)) <> 0 then
-    begin
-      if FFM.State.Timers[i].Counter > 1 then
-        Dec(FFM.State.Timers[i].Counter)
-      else
-      begin
-        FFM.State.Timers[i].Counter := FFM.State.Timers[i].Value;
-        if FFM.State.Timers[i].Enabled <> 0 then
-          FFM.State.Status := Byte(FFM.State.Status or (1 shl i));
-      end;
-    end;
+  if FCSMKeyOff then
+  begin
+    for var Op := 0 to 3 do
+      FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], Byte((FCSMManualMask shr Op) and 1));
+    FCSMKeyOff := False;
+  end;
   Inc(FAFraction);
   if FAFraction = 3 then
   begin
@@ -373,13 +384,33 @@ begin
   for var i := 0 to 6 do
   begin
     var Pan := FRegisters[$108 + i];
-    if i = 6 then
-      Pan := FRegisters[$11];
-    if (Pan and $80) <> 0 then
-      Inc(FNativeLeft, FVoices[i].Output);
-    if (Pan and $40) <> 0 then
-      Inc(FNativeRight, FVoices[i].Output);
+    if i = 6 then Pan := FRegisters[$11];
+    if (Pan and $80) <> 0 then Inc(FNativeLeft, FVoices[i].Output);
+    if (Pan and $40) <> 0 then Inc(FNativeRight, FVoices[i].Output);
   end;
+end;
+
+procedure TNeoGeoSound.TimerTick;
+begin
+  // Yamaha application manual: A = 72*(1024-NA)/8MHz,
+  // B = 1152*(256-NB)/8MHz. Timers run twice per FM native sample.
+  for var i := 0 to 1 do
+    if (FRegisters[$27] and (1 shl i)) <> 0 then
+    begin
+      if FFM.State.Timers[i].Counter > 1 then
+        Dec(FFM.State.Timers[i].Counter)
+      else
+      begin
+        FFM.State.Timers[i].Counter := FFM.State.Timers[i].Value;
+        if FFM.State.Timers[i].Enabled <> 0 then
+          FFM.State.Status := Byte(FFM.State.Status or (1 shl i));
+        if (i = 0) and (FFM.State.Channel3Metadata.CsmModeEnabled <> 0) then
+        begin
+          for var Op := 0 to 3 do FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
+          FCSMKeyOff := True;
+        end;
+      end;
+    end;
 end;
 
 procedure TNeoGeoSound.Advance(MasterClocks: Integer);
@@ -388,9 +419,7 @@ begin
     raise EArgumentOutOfRangeException.Create('YM2610 clock slice');
 
   FBusy := Max(0, FBusy - MasterClocks);
-  var MasterClock := 24000000;
-  if FCart.Disc <> nil then
-    MasterClock := NGCD_MASTER_CLOCK;
+  var MasterClock := FCart.MasterClock;
 
   // Synthesis and sampling share the machine's master-clock timeline.
   // No state changes between native ticks and output samples. Jump to the
@@ -398,9 +427,16 @@ begin
   while MasterClocks > 0 do
   begin
     var Clocks := Min(MasterClocks, 432 - FClockRemainder);
+    Clocks := Min(Clocks, 216 - FTimerPhase);
     Clocks := Min(Clocks, (MasterClock - FSamplePhase + NG_SAMPLE_RATE - 1) div NG_SAMPLE_RATE);
     Dec(MasterClocks, Clocks);
     Inc(FClockRemainder, Clocks);
+    Inc(FTimerPhase, Clocks);
+    if FTimerPhase = 216 then
+    begin
+      FTimerPhase := 0;
+      TimerTick;
+    end;
     if FClockRemainder = 432 then
     begin
       FClockRemainder := 0;
@@ -440,10 +476,25 @@ begin
   State.Field(FBFraction, SizeOf(FBFraction));
   State.Field(FNativeLeft, SizeOf(FNativeLeft));
   State.Field(FNativeRight, SizeOf(FNativeRight));
+  State.Field(FTimerPhase, SizeOf(FTimerPhase));
+  State.Field(FCSMKeyOff, SizeOf(FCSMKeyOff));
+  State.Field(FCSMManualMask, SizeOf(FCSMManualMask));
   FSSG.SerializeState(State.Field);
 
   if State.Loading then
+  begin
+    if (FClockRemainder < 0) or (FClockRemainder >= 432) or (FTimerPhase < 0) or (FTimerPhase >= 216) or
+      (FSamplePhase < 0) or (FSamplePhase >= FCart.MasterClock) or
+      (FAFraction < 0) or (FAFraction >= 3) or (FBFraction < 0) or (FBFraction >= $10000) or
+      (FCSMManualMask > 15) then raise EReadError.Create('Invalid YM2610 clock snapshot');
+    for var I := 0 to 6 do
+      if (FVoices[I].Position < 0) or (FVoices[I].Ending < 0) or
+        (FVoices[I].Position > $2000000) or (FVoices[I].Ending > $2000000) or
+        ((I < 6) and ((FVoices[I].Step < 0) or (FVoices[I].Step > 48))) or
+        ((I = 6) and FVoices[I].Playing and ((FVoices[I].Step < 127) or (FVoices[I].Step > 24576))) then
+        raise EReadError.Create('Invalid YM2610 voice snapshot');
     Samples := nil;
+  end;
 end;
 
 end.

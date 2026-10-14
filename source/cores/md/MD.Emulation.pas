@@ -24,8 +24,9 @@ type
     FWake: TEvent;
     FData: TBytes;
     FSavePath: string;
+    FDiscLocation: string;
     FStorage: IStorage;
-    FInput, FInput2: TMDButtons;
+    FInput, FInput2, FInput3, FInput4: TMDButtons;
     FPause, FReset, FAudioEnabled: Boolean;
     FVolume: Single;
     FFrame: TEmulatorFrame;
@@ -36,10 +37,12 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(const Data: TBytes; const SavePath: string; const Storage: IStorage = nil);
+    constructor Create(const Data: TBytes; const SavePath: string; const Storage: IStorage = nil;
+      const DiscLocation: string = '');
     destructor Destroy; override;
     procedure WakeSetEvent;
-    procedure Configure(const Input: TMDButtons; Paused, AudioEnabled: Boolean; Volume: Single; const Input2: TMDButtons = []);
+    procedure Configure(const Input: TMDButtons; Paused, AudioEnabled: Boolean; Volume: Single;
+      const Input2: TMDButtons = []; const Input3: TMDButtons = []; const Input4: TMDButtons = []);
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
   public
@@ -57,7 +60,7 @@ implementation
 
 uses
   Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.UITypes,
-  System.Diagnostics, System.Math, PCM.Audio;
+  System.Diagnostics, System.Math, PCM.Audio, Core.CD.Disc, MD.Firmware;
 
 { TMDWorker }
 
@@ -71,7 +74,7 @@ begin
   FInputPortsCommand.Apply(Self, Ports, FWake);
 end;
 
-constructor TMDWorker.Create(const Data: TBytes; const SavePath: string; const Storage: IStorage);
+constructor TMDWorker.Create(const Data: TBytes; const SavePath: string; const Storage: IStorage; const DiscLocation: string);
 begin
   inherited Create(True);
   FInputPortsCommand := TInputPortsCommand.Create;
@@ -84,6 +87,7 @@ begin
   FWake := TEvent.Create(nil, False, False, '');
   FData := Copy(Data);
   FSavePath := SavePath;
+  FDiscLocation := DiscLocation;
 end;
 
 destructor TMDWorker.Destroy;
@@ -98,12 +102,15 @@ begin
   FLock.Free;
 end;
 
-procedure TMDWorker.Configure(const Input: TMDButtons; Paused, AudioEnabled: Boolean; Volume: Single; const Input2: TMDButtons);
+procedure TMDWorker.Configure(const Input: TMDButtons; Paused, AudioEnabled: Boolean; Volume: Single;
+  const Input2, Input3, Input4: TMDButtons);
 begin
   FLock.Acquire;
   try
     FInput := Input;
     FInput2 := Input2;
+    FInput3 := Input3;
+    FInput4 := Input4;
     FPause := Paused;
     FAudioEnabled := AudioEnabled;
     FVolume := Volume;
@@ -176,7 +183,7 @@ begin
   if Suspended then
     Start;
   WaitFor;
-  // Preserve failed SRAM until an explicit retry succeeds. No worker can mutate it now.
+  // Preserve failed SRAM/EEPROM until an explicit retry succeeds. The worker is stopped.
   if Length(FPendingBattery) > 0 then
   try
     FStorage.WriteBytes(FSavePath, FPendingBattery);
@@ -184,11 +191,11 @@ begin
     FFinalSaveError := '';
   except
     on E: Exception do
-      raise EInOutError.Create('Mega Drive SRAM: ' + E.Message);
+      raise EInOutError.Create('Mega Drive save: ' + E.Message);
   end;
 
   if FFinalSaveError <> '' then
-    raise EInOutError.Create('Mega Drive SRAM: ' + FFinalSaveError);
+    raise EInOutError.Create('Mega Drive save: ' + FFinalSaveError);
 end;
 
 function TMDWorker.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -258,7 +265,29 @@ begin
   var FrameHints: TEmulationPerformanceHints := nil;
   try
     try
-      Console := TMDConsole.Create(FData, ROM_EXTENSION_MD);
+      if FDiscLocation <> '' then
+      begin
+        var Stream := FStorage.OpenRead(FDiscLocation);
+        var Disc: TCDDisc;
+        try Disc := TCDDisc.Create(Stream, FStorage, FDiscLocation); finally Stream.Free; end;
+        var BIOSName := 'cd_u';
+        var Sector: TBytes;
+        try
+          var Identity := Disc.Identity;
+          if (Length(Identity) <> Length(FData)) or not CompareMem(@Identity[0], @FData[0], Length(FData)) then
+            raise EReadError.Create('Sega CD disc identity changed');
+          Disc.ReadData(Disc.Track(1).StartLBA, Sector);
+          var Region := UpperCase(TEncoding.ASCII.GetString(Sector, $1F0, 16));
+          if Region.Contains('U') then BIOSName := 'cd_u'
+          else if Region.Contains('E') then BIOSName := 'cd_e'
+          else if Region.Contains('J') then BIOSName := 'cd_j';
+        except Disc.Free; raise; end;
+        var BIOS: TBytes;
+        try BIOS := LoadMDFirmware(BIOSName); except Disc.Free; raise; end;
+        Console := TMDConsole.Create(BIOS, ROM_EXTENSION_MD, Disc);
+      end
+      else
+        Console := TMDConsole.Create(FData, ROM_EXTENSION_MD);
       Console.ConfigureInputPorts(InputPorts);
       FrameHints := TEmulationPerformanceHints.Create(Round(1000000000.0 / Console.FramesPerSecond), ROM_CORE_ID_MD);
       if FStorage.Exists(FSavePath) then
@@ -322,11 +351,13 @@ begin
             end;
             Deadline := TStopwatch.GetTimeStamp;
           end);
-        var Input, Input2: TMDButtons;
+        var Input, Input2, Input3, Input4: TMDButtons;
         FLock.Acquire;
         try
           Input := FInput;
           Input2 := FInput2;
+          Input3 := FInput3;
+          Input4 := FInput4;
           Paused := FPause;
           Enabled := FAudioEnabled;
           Volume := FVolume;
@@ -362,7 +393,7 @@ begin
         WasPaused := False;
         FrameHints.TargetDurationNanos := Round(1000000000.0 / Console.FramesPerSecond);
         FrameHints.BeginWork;
-        Console.SetInput(Input, Input2);
+        Console.SetInput(Input, Input2, Input3, Input4);
         Console.RunFrame;
 
         if Terminated then

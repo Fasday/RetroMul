@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes;
+  System.SysUtils, System.Classes, MD.EEPROM;
 
 type
   EMDCartridge = class(Exception);
@@ -17,6 +17,9 @@ type
     FTitle: string;
     FRegion: TMDRegion;
     FHeaderOffset: Integer;
+    FEEPROMConfig: TMDEEPROMConfig;
+    FJCart: Boolean;
+    F32X: Boolean;
     function HeaderText(Offset, Count: Integer): string;
   public
     constructor Create(const Data: TBytes; const Extension: string); overload;
@@ -27,6 +30,9 @@ type
     property Data: TBytes read FData;
     property Title: string read FTitle;
     property Region: TMDRegion read FRegion;
+    property EEPROMConfig: TMDEEPROMConfig read FEEPROMConfig;
+    property JCart: Boolean read FJCart;
+    property Is32X: Boolean read F32X;
   end;
 
 implementation
@@ -88,7 +94,7 @@ begin
     (Length(FData) > MD_ROM_MAX_SIZE) or Odd(Length(FData)) then
     raise EMDCartridge.Create('Invalid Mega Drive ROM size');
 
-  if HeaderText(MD_ROM_HEADER_OFFSET, Length(MD_ROM_SIGNATURE)) <> string(MD_ROM_SIGNATURE) then
+  if (HeaderText(MD_ROM_HEADER_OFFSET, Length(MD_ROM_SIGNATURE)) <> string(MD_ROM_SIGNATURE)) and not IsMDRealtec(FData) then
   begin
     // Some early diagnostics retain the first 128 vector entries and
     // place the identification header at $200 (Charles MacDonald's itest).
@@ -99,6 +105,35 @@ begin
     FHeaderOffset := MD_ROM_ALTERNATE_HEADER_OFFSET;
   end;
 
+  FEEPROMConfig := DetectMDEEPROM(HeaderText($180, 14),
+    ReadWord($18E + Cardinal(FHeaderOffset - MD_ROM_HEADER_OFFSET)),
+    (Cardinal(ReadWord(0)) shl 16) or ReadWord(2));
+  var Product := UpperCase(HeaderText($180, 14));
+  F32X := Pos('32X', UpperCase(HeaderText($100, 16))) > 0;
+  var InitialSP := (Cardinal(ReadWord(0)) shl 16) or ReadWord(2);
+  FJCart := (Pos('T-120096', Product) > 0) or (Pos('T-120146', Product) > 0) or
+    (Pos('T-120106', Product) > 0) or (Pos('T-120066', Product) > 0) or
+    (Pos('T-123456', Product) > 0) or
+    ((Pos('00000000', Product) > 0) and
+      ((ReadWord($18E) = $168B) or (ReadWord($18E) = $165E) or
+       (ReadWord($18E) = $CEE0) or (ReadWord($18E) = $2C41)) and
+      ((InitialSP = $444E4C44) or (InitialSP = $FFFFFFFC)));
+  // SRAM-patched Mega Man / Wonder Boy dumps retain their product ID but
+  // advertise a parallel RAM range instead of the original serial port.
+  if (FEEPROMConfig.Mode = TMDEEPROMMode.Address7) and
+    (FEEPROMConfig.SDAInMask = 1) and
+    (ReadWord(Cardinal(FHeaderOffset + $B0)) = $5241) then
+  begin
+    var StartAddress := (Cardinal(ReadWord(Cardinal(FHeaderOffset + $B4))) shl 16) or
+      ReadWord(Cardinal(FHeaderOffset + $B6));
+    var EndAddress := (Cardinal(ReadWord(Cardinal(FHeaderOffset + $B8))) shl 16) or
+      ReadWord(Cardinal(FHeaderOffset + $BA));
+    if (StartAddress < EndAddress) and (EndAddress - StartAddress > 2) and
+      ((Pos('T-12046', HeaderText($180, 14)) > 0) or
+       (Pos('T-12053', HeaderText($180, 14)) > 0) or
+       (Pos('G-4060', HeaderText($180, 14)) > 0)) then
+      FEEPROMConfig := Default(TMDEEPROMConfig);
+  end;
   FTitle := HeaderText(MD_ROM_OVERSEAS_TITLE_OFFSET, MD_ROM_TITLE_SIZE);
   if FTitle = '' then
     FTitle := HeaderText(MD_ROM_DOMESTIC_TITLE_OFFSET, MD_ROM_TITLE_SIZE);

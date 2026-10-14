@@ -129,9 +129,9 @@ begin
   // Earlier layouts are rejected; host enhancement settings are not restored.
   if (PlatformCore = ROM_CORE_ID_GB) or (PlatformCore = ROM_CORE_ID_GBC) then
     Result.Version := 5;
-  // MD v5 adds Z80 IFF2 and the pending NMI latch.
+  // MD v8 adds expansion topology and timed expansion peripheral state.
   if PlatformCore = ROM_CORE_ID_MD then
-    Result.Version := 5;
+    Result.Version := 8;
   // SNES v10 adds the S-DSP phase latches, SPC MMIO latches and PPU mosaic counter.
   if PlatformCore = ROM_CORE_ID_SNES then
     Result.Version := 10;
@@ -140,6 +140,8 @@ begin
     Result.Version := 6;
   // Neo Geo v2 adds the LSPC VRAM read latch.
   if PlatformCore = ROM_CORE_ID_NEOGEO then
+    Result.Version := 3;
+  if PlatformCore = ROM_CORE_ID_NEOGEOCD then
     Result.Version := 2;
   var Core := AnsiString(PlatformCore);
   if (Length(Core) = 0) or (Length(Core) > 8) then

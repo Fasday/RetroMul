@@ -51,7 +51,15 @@ type
     FIRQDeadline: Int64;
     FCPUTime, FZTime, FSoundTime, FCPUBase, FBusTime, FFrameTime: Int64;
     FFrameNumber: UInt64;
+    FProgramStarted: Boolean;
+    FRenderingLine: Integer;
     FBatteryDirty: Boolean;
+    FCard: TBytes;
+    FCardInserted, FCardReadOnly, FCardLock1, FCardUnlock2, FCardAttribute, FCardDirty: Boolean;
+    FCardBank: Byte;
+    FDMASource, FDMATarget, FDMARemaining, FDMAIndex: Cardinal;
+    FDMAMode: Word;
+    FDMAPeriod: Integer;
     FWatchdog: Integer;
     FRTCControl, FRTCCommand, FRTCBits: Integer;
     FRTCShift: UInt64;
@@ -59,10 +67,12 @@ type
     FRTCMode, FRTCTPPeriod: Integer;
     FRTCEpoch, FRTCTestBase: Int64;
     FRTCCalendar: UInt64;
-    FRTCTesting: Boolean;
+    FRTCTesting, FRTCInitialized: Boolean;
     function CDRead(Address: Cardinal; HighByte, LowByte: Boolean; out Value: Word): Boolean;
     function CDWrite(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean): Boolean;
     procedure CDDMA;
+    procedure AdvanceDMA(Time: Int64);
+    procedure DMAStep;
     function ExtraRead(Address: Cardinal; out Value: Word): Boolean;
     function ExtraWrite(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean): Boolean;
     function HasBootRAM: Boolean;
@@ -77,6 +87,7 @@ type
     function PadByte(const Buttons: TEmulatorButtons): Byte;
     procedure UpdateIRQ;
     procedure SyncSound(Target: Int64);
+    procedure SyncRaster;
     procedure SyncZ80(Target: Int64);
     procedure RTCWrite(Value: Byte);
     function RTCData: Boolean;
@@ -98,8 +109,15 @@ type
     procedure ConfigureInputPorts(const Ports: TCoreInputPorts);
     procedure InsertCoin(Player: Integer);
     procedure LoadBattery(const Data: TBytes);
+    procedure SetMemoryCard(Inserted, ReadOnly: Boolean);
+    procedure LoadMemoryCard(const Data: TBytes);
+    function MemoryCardData: TBytes;
     function BatteryData: TBytes;
+    function RTCBatteryData: TBytes;
+    procedure LoadRTCBattery(const Data: TBytes);
     function ReadWord(Address: Cardinal): Word;
+    function ReadByte(Address: Cardinal): Byte;
+    procedure WriteByte(Address: Cardinal; Value: Byte);
     procedure WriteWord(Address: Cardinal; Value: Word);
     procedure SerializeState(State: TStateArchive);
     procedure MarkBatteryDirty;
@@ -115,6 +133,7 @@ type
     property SampleFrames: Integer read GetSampleFrames;
     property FrameNumber: UInt64 read FFrameNumber;
     property BatteryDirty: Boolean read FBatteryDirty;
+    property MemoryCardDirty: Boolean read FCardDirty;
     property CDController: TNeoGeoCDController read FCD;
     property CPUState: TM68kState read FCPU;
   end;
@@ -129,6 +148,7 @@ begin
   var C := TNeoGeoConsole(UserData);
   C.FBusTime := C.FCPUBase + Int64(CurrentCycle) * 2;
   Result := C.ReadBus((Address and $7FFFFF) shl 1, DoHighByte <> 0, DoLowByte <> 0);
+  if (C.FCD = nil) and (Address >= $400000) and (Address < $600000) then Inc(C.FCPUBase, 4);
 end;
 
 procedure CPUWrite(UserData: Pointer; Address: Cardinal; DoHighByte, DoLowByte: Byte; CurrentCycle: Cardinal; var TerminateEarly: Byte; Value: Cardinal);
@@ -136,6 +156,7 @@ begin
   var C := TNeoGeoConsole(UserData);
   C.FBusTime := C.FCPUBase + Int64(CurrentCycle) * 2;
   C.WriteBus((Address and $7FFFFF) shl 1, Word(Value and $FFFF), DoHighByte <> 0, DoLowByte <> 0);
+  if (C.FCD = nil) and (Address >= $400000) and (Address < $600000) then Inc(C.FCPUBase, 4);
 end;
 
 procedure CPUAcknowledge(UserData: Pointer);
@@ -229,7 +250,13 @@ begin
   else if FCart.Protection = 'vliner' then
     FProtection := ngpVliner;
   if FCart.Disc <> nil then
-    FCD := TNeoGeoCDController.Create(FCart.Disc, FCart.CDZ);
+    FCD := TNeoGeoCDController.Create(FCart.Disc, FCart.CDZ, FCart.Region);
+  if FCart.Disc = nil then
+  begin
+    SetLength(FCard, Max(2048, FCart.CardSize));
+    FillChar(FCard[0], Length(FCard), $FF);
+    SetMemoryCard(FCart.CardInserted, FCart.CardReadOnly);
+  end;
   FInitialFixed := Copy(FCart.FixedROM);
   Video := TNeoGeoVideo.Create(FCart);
   Sound := TNeoGeoSound.Create(FCart);
@@ -253,8 +280,14 @@ begin
   inherited;
 end;
 
+function NGDateCalendar(Date: TDateTime): UInt64; forward;
+
 procedure TNeoGeoConsole.Reset;
 begin
+  // The battery-powered RTC is independent of the 68000 reset line.
+  var Calendar := NGDateCalendar(Now);
+  if FRTCInitialized then Calendar := RTCCounter;
+  FRTCInitialized := True;
   FCPU := Default(TM68kState);
   FZ80 := Default(TZ80State);
   FillChar(FRAM, SizeOf(FRAM), 0);
@@ -284,8 +317,14 @@ begin
   FBanks[2] := $C000;
   FBanks[3] := $8000;
   FCartVectors := False;
-  FCartAudio := False;
+  FCartAudio := FCart.AES;
   FBackupUnlocked := False;
+  FCardLock1 := True;
+  FCardUnlock2 := False;
+  FCardAttribute := False;
+  FCardBank := 0;
+  FDMARemaining := 0;
+  FDMASource := 0; FDMATarget := 0; FDMAIndex := 0; FDMAMode := 0; FDMAPeriod := 0;
   FNMIEnabled := False;
   FCommandPending := False;
   FInZ80 := False;
@@ -304,8 +343,10 @@ begin
   FSoundTime := 0;
   FCPUBase := 0;
   FBusTime := 0;
+  FRenderingLine := -1;
   FFrameTime := 0;
   FFrameNumber := 0;
+  FProgramStarted := False;
   FWatchdog := 0;
   FRTCControl := 0;
   FRTCCommand := 0;
@@ -316,7 +357,7 @@ begin
   FRTCTPPeriod := 187500;
   FRTCEpoch := 0;
   FRTCTestBase := 0;
-  FRTCCalendar := UInt64($16) shl 32 or (UInt64(1) shl 24);
+  FRTCCalendar := Calendar;
   FRTCTesting := False;
   Video.Reset;
   Sound.Reset;
@@ -398,6 +439,20 @@ begin
   Clown68000Interrupt(FCPU, Level);
 end;
 
+procedure TNeoGeoConsole.SyncRaster;
+begin
+  if FRenderingLine < 0 then Exit;
+  if FCD <> nil then
+  begin
+    Video.DisplayEnabled := FCD.State.VideoEnabled;
+    Video.SpritesEnabled := not FCD.State.SprDisabled and ((FCD.State.BusRequest and 1) = 0);
+    Video.FixedEnabled := not FCD.State.FixDisabled;
+  end;
+  // 4 master clocks per pixel; sync and back porch occupy 224 clocks.
+  var Elapsed := FBusTime - FFrameTime - Int64(FRenderingLine) * NG_LINE_CLOCKS - 224;
+  Video.RenderUntil(FRenderingLine, Integer(EnsureRange(Elapsed div 4, Int64(0), Int64(NG_WIDTH))));
+end;
+
 procedure TNeoGeoConsole.SyncSound(Target: Int64);
 begin
   while FSoundTime < Target do
@@ -446,7 +501,7 @@ begin
 
   if Address < $8000 then
   begin
-    if FCartAudio then
+    if FCartAudio or FCart.AES then
       Exit(ROMByte(FCart.AudioROM, Address));
 
     Exit(ROMByte(FCart.AudioBIOS, Address));
@@ -593,6 +648,59 @@ begin
     FRTCBits := 0;
   end;
   FRTCControl := Value and 7;
+end;
+
+function NGCalendarDate(Calendar: UInt64; out Date: TDateTime): Boolean;
+  function DecimalAt(Shift: Integer): Word;
+  begin
+    var Value := (Calendar shr Shift) and $FF;
+    Result := Word(((Value shr 4) and 15) * 10 + (Value and 15));
+  end;
+begin
+  Result := TryEncodeDateTime(2000 + DecimalAt(40), Word((Calendar shr 36) and 15),
+    DecimalAt(24), DecimalAt(16), DecimalAt(8), DecimalAt(0), 0, Date);
+end;
+
+function NGDateCalendar(Date: TDateTime): UInt64;
+  function BCD(Value: Word): UInt64;
+  begin Result := UInt64(Value div 10 * 16 + Value mod 10); end;
+begin
+  var Year, Month, Day, Hour, Minute, Second, MS: Word;
+  DecodeDateTime(Date, Year, Month, Day, Hour, Minute, Second, MS);
+  Result := BCD(Second) or (BCD(Minute) shl 8) or (BCD(Hour) shl 16) or
+    (BCD(Day) shl 24) or (UInt64(Month * 16 + DayOfWeek(Date) - 1) shl 32) or
+    (BCD(Year mod 100) shl 40);
+end;
+
+function TNeoGeoConsole.RTCBatteryData: TBytes;
+begin
+  Result := nil;
+  if FCart.AES or (FCD <> nil) or FRTCTesting then Exit;
+  var Calendar := RTCCounter;
+  var Date: TDateTime;
+  if not NGCalendarDate(Calendar, Date) then Exit;
+  SetLength(Result, 18);
+  Result[0] := Ord('N'); Result[1] := Ord('G'); Result[2] := Ord('R'); Result[3] := 1;
+  for var I := 0 to 5 do Result[4 + I] := (Calendar shr (I*8)) and $FF;
+  var Timestamp := DateTimeToUnix(Now, False);
+  for var I := 0 to 7 do Result[10 + I] := (Timestamp shr (I*8)) and $FF;
+end;
+
+procedure TNeoGeoConsole.LoadRTCBattery(const Data: TBytes);
+begin
+  if FCart.AES or (FCD <> nil) then Exit;
+  if (Length(Data) <> 18) or (Data[0] <> Ord('N')) or (Data[1] <> Ord('G')) or
+    (Data[2] <> Ord('R')) or (Data[3] <> 1) then raise EReadError.Create('Invalid MVS RTC battery file');
+  var Calendar: UInt64 := 0;
+  var Timestamp: UInt64 := 0;
+  for var I := 0 to 5 do Calendar := Calendar or (UInt64(Data[4 + I]) shl (I*8));
+  for var I := 0 to 7 do Timestamp := Timestamp or (UInt64(Data[10 + I]) shl (I*8));
+  var Date: TDateTime;
+  if not NGCalendarDate(Calendar, Date) or (Timestamp > UInt64(High(Int64))) then
+    raise EReadError.Create('Invalid MVS RTC battery date');
+  var Elapsed := EnsureRange(DateTimeToUnix(Now, False) - Int64(Timestamp), Int64(0), Int64(3155760000));
+  FRTCCalendar := NGDateCalendar(IncSecond(Date, Elapsed));
+  FRTCTestBase := FBusTime;
 end;
 
 function TNeoGeoConsole.RTCCounter: UInt64;
@@ -937,7 +1045,11 @@ begin
   else if (Address >= $800000) and (Address < $900000) then
     Value := $FF00 or FBackup[(Address shr 1) and $1FFF]
   else if (Address >= $FF0000) and (Address <= $FF01FE) then
-    Value := FCD.ReadWord(Address, HighByte, LowByte)
+  begin
+    SyncZ80(FBusTime); SyncSound(FBusTime);
+    FCD.Advance(FBusTime); UpdateIRQ;
+    Value := FCD.ReadWord(Address, HighByte, LowByte);
+  end
   else if (Address >= $E00000) and (Address < $F00000) then
   begin
     var Offset := Integer(Address and $FFFFF);
@@ -1007,6 +1119,7 @@ begin
   begin
     SyncZ80(FBusTime);
     SyncSound(FBusTime);
+    FCD.Advance(FBusTime);
     if FCD.WriteWord(Address, Value, HighByte, LowByte) then
       CDDMA;
     if (Address = $FF0182) and LowByte and (Value and $FF <> 0) then
@@ -1046,6 +1159,53 @@ end;
 
 procedure TNeoGeoConsole.CDDMA;
 
+begin
+  var Mode := FCD.State.DMAConfig[0];
+  var Count := FCD.State.DMALength;
+  if FCD.State.DMABusy then Exit;
+  if Count > $200000 then raise EReadError.Create('Invalid Neo Geo CD DMA length');
+  if Count = 0 then Exit;
+  FDMASource := FCD.State.DMADestination and $FFFFFE;
+  FDMATarget := FCD.State.DMASource and $FFFFFE;
+  FDMAPeriod := 16; // 68000 bus: one read and one word write.
+  if (Mode = $FFC5) or (Mode = $FF89) or (Mode = $FC2D) then
+  begin
+    Count := Min(Count, Cardinal(1024));
+    FDMATarget := FDMASource;
+    FDMAPeriod := 8;
+    if Mode = $FC2D then FDMAPeriod := 16;
+  end
+  else if (Mode = $FFCD) or (Mode = $FFDD) or (Mode = $FEF5) or (Mode = $CFFD) then
+  begin
+    FDMATarget := FDMASource;
+    FDMAPeriod := 8;
+    if Mode = $FEF5 then FDMAPeriod := 16;
+    if Mode = $CFFD then FDMAPeriod := 32;
+  end
+  else if (Mode = $E2DD) or (Mode = $F2DD) then FDMAPeriod := 24
+  else if (Mode <> $FE3D) and (Mode <> $FE6D) then
+    raise EReadError.CreateFmt('Unsupported Neo Geo CD DMA mode %.4x', [Mode]);
+  if FDMATarget >= $FF0000 then raise EReadError.Create('Invalid Neo Geo CD DMA destination');
+  FDMAMode := Mode;
+  FDMARemaining := Count;
+  FDMAIndex := 0;
+  FCD.State.DMABusy := True;
+  FCD.State.NextDMA := Max(FBusTime, FCPUTime) + FDMAPeriod;
+  FCD.State.IFStat := FCD.State.IFStat and $F7;
+end;
+
+procedure TNeoGeoConsole.AdvanceDMA(Time: Int64);
+begin
+  while FCD.State.DMABusy and (FCD.State.NextDMA <= Time) do
+  begin
+    FBusTime := FCD.State.NextDMA;
+    DMAStep;
+    Inc(FCD.State.NextDMA, FDMAPeriod);
+  end;
+end;
+
+procedure TNeoGeoConsole.DMAStep;
+
   procedure DMAWrite(Address: Cardinal; Value: Word);
   begin
     // A DMA descriptor cannot start another DMA by targeting CD registers.
@@ -1056,8 +1216,8 @@ procedure TNeoGeoConsole.CDDMA;
   end;
 
 begin
-  var Mode := FCD.State.DMAConfig[0];
-  var Count := FCD.State.DMALength;
+  var Mode := FDMAMode;
+  var Count := FDMARemaining;
 
   // Hardware transfer counts are bounded by available memory. Reject corrupt
   // descriptors instead of allowing a guest to freeze the worker for billions of writes.
@@ -1067,21 +1227,20 @@ begin
   if Count = 0 then
     Exit;
 
-  var Source := FCD.State.DMADestination and $FFFFFE;
-  var Target := FCD.State.DMASource and $FFFFFE;
+  var Source := FDMASource;
+  var Target := FDMATarget;
   var FromCD := (Mode = $FFC5) or (Mode = $FF89) or (Mode = $FC2D);
   var OddBytes := (Mode = $E2DD) or (Mode = $F2DD) or (Mode = $FC2D);
   if FromCD then
   begin
-    Count := Min(Count, Cardinal(1024));
-    Target := Source;
+    if FDMAIndex >= 1024 then raise EReadError.Create('Invalid CD DMA sector offset');
   end
   else if (Mode = $FFCD) or (Mode = $FFDD) or (Mode = $FEF5) or (Mode = $CFFD) then
-    Target := Source
+    Target := FDMATarget
   else if (Mode <> $FE3D) and (Mode <> $FE6D) and not OddBytes then
     raise EReadError.CreateFmt('Unsupported Neo Geo CD DMA mode %.4x', [Mode]);
 
-  for var i := 0 to Integer(Count) - 1 do
+  for var i := Integer(FDMAIndex) to Integer(FDMAIndex) do
   begin
     var Data: Word;
     if FromCD then
@@ -1124,8 +1283,23 @@ begin
       Target := (Target + 2) and $FFFFFE;
     end;
   end;
-  if FromCD then
-    FCD.EndTransfer;
+  FDMASource := Source;
+  FDMATarget := Target;
+  Inc(FDMAIndex);
+  Dec(FDMARemaining);
+  FCD.State.DMALength := FDMARemaining;
+  if FDMARemaining = 0 then
+  begin
+    if FromCD or (Mode = $FFCD) or (Mode = $FFDD) or (Mode = $FEF5) or (Mode = $CFFD) then
+      FCD.State.DMADestination := FDMATarget
+    else
+    begin
+      FCD.State.DMADestination := FDMASource;
+      FCD.State.DMASource := FDMATarget;
+    end;
+    FCD.State.DMABusy := False;
+    if FromCD then FCD.EndTransfer else FCD.State.IFStat := FCD.State.IFStat or 8;
+  end;
 end;
 
 function TNeoGeoConsole.ReadBus(Address: Cardinal; HighByte, LowByte: Boolean): Word;
@@ -1204,10 +1378,11 @@ begin
     3:
       case (Address shr 16) and $FE of
         $30:
-          if (Address and $80) <> 0 then
-            Result := $FFFF
-          else
           begin
+            var Switches := $FF;
+            if not FCart.AES then
+              if (Address and $80) = 0 then Switches := FCart.CabinetDIPs
+              else if TEmulatorButton.Mode in FInputs.Buttons then Switches := $7F;
             var Pad := PadByte(FInputs.Buttons);
             if FProtection = ngpNeogeoMj then
               Pad := MahjongByte;
@@ -1216,15 +1391,17 @@ begin
                 Pad := FTrackY
               else
                 Pad := FTrackX;
-            Result := Word(Integer(Pad) * 256 + $FF);
+            Result := Word(Integer(Pad) * 256 + Switches);
           end;
         $32:
           begin
             SyncZ80(FBusTime);
             var Coins := $1F;
-            if (FCoin1 > 0) or (TEmulatorButton.Select in FInputs.Buttons) then
+            if FCart.AES then Coins := $FF
+            else if TEmulatorButton.Y in FInputs.Buttons then Coins := Coins and $FB;
+            if not FCart.AES and ((FCoin1 > 0) or (TEmulatorButton.Select in FInputs.Buttons)) then
               Coins := Coins and $FE;
-            if (FCoin2 > 0) or (TEmulatorButton.Select in FInputs.Buttons2) then
+            if not FCart.AES and ((FCoin2 > 0) or (TEmulatorButton.Select in FInputs.Buttons2)) then
               Coins := Coins and $FD;
             if (FRTCTPPeriod > 0) and Odd((FBusTime - FRTCEpoch) div Max(1, FRTCTPPeriod)) then
               Coins := Coins or $40;
@@ -1239,7 +1416,10 @@ begin
             Result := Word(Integer(PadByte(FInputs.Buttons2)) * 256 + $FF);
         $38:
           begin
-            Result := $FFFF; // MVS hardware, memory card absent, two joystick ports.
+            Result := $FFFF;
+            if FCart.AES then Result := Result and $7FFF;
+            if FCardInserted then Result := Result and $CFFF;
+            if FCardInserted and not FCardReadOnly then Result := Result and $BFFF;
             if (FProtection <> ngpJockeygp) and (TEmulatorButton.Start in FInputs.Buttons) then
               Result := Result and $FEFF;
             if TEmulatorButton.Select in FInputs.Buttons then
@@ -1251,22 +1431,28 @@ begin
           end;
         $3C:
           if HighByte then
-            Result := Video.ReadRegister((Address shr 1) and 3, Integer((FBusTime mod NG_FRAME_CLOCKS) div NG_LINE_CLOCKS));
+            Result := Video.ReadRegister((Address shr 1) and 3, Integer((FBusTime mod (FCart.FrameLines * NG_LINE_CLOCKS)) div NG_LINE_CLOCKS));
       end;
     4, 5, 6, 7:
       Result := Video.Palette[Video.PaletteBank * $1000 + Integer((Address shr 1) and $FFF)];
+    8, 9, $A, $B:
+      if HighByte and FCardInserted and not FCardAttribute then
+        Result := $FF00 or FCard[((Address and $3FFFFF) shr 1) mod Cardinal(Length(FCard))];
     $C:
       begin
         var A := Integer(Address) mod Length(FCart.BIOS);
         Result := Word(ROMByte(FCart.BIOS, A) * 256 + ROMByte(FCart.BIOS, A + 1));
       end;
     $D:
-      Result := Word(Integer(FBackup[Offset]) * 256 + FBackup[Offset + 1]);
+      if not FCart.AES then Result := Word(Integer(FBackup[Offset]) * 256 + FBackup[Offset + 1]);
   end;
 end;
 
 procedure TNeoGeoConsole.WriteBus(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean);
 begin
+  if ((Address >= $3A0000) and (Address < $800000)) or
+    ((FCD <> nil) and (((Address >= $E00000) and (Address < $F00000)) or
+    ((Address >= $FF0110) and (Address <= $FF0128)))) then SyncRaster;
   if (FCD <> nil) and CDWrite(Address, Value, HighByte, LowByte) then
     Exit;
 
@@ -1333,7 +1519,9 @@ begin
               Z80NonMaskableInterrupt(FZ80);
           end;
         $38:
-          if LowByte and ((Address and $70) = 0) then
+          if LowByte and ((Address and $70) = $10) then
+            FCardBank := Value and $FF
+          else if LowByte and ((Address and $70) = 0) then
             FInputSelect := Byte(Value and $FF)
           else if LowByte and ((Address and $FE) = $50) then
             RTCWrite(Byte(Value and $FF));
@@ -1346,11 +1534,14 @@ begin
                 Video.Shadow := SetBit;
               1:
                 FCartVectors := SetBit;
+              2: FCardLock1 := SetBit;
+              3: FCardUnlock2 := SetBit;
+              4: FCardAttribute := not SetBit;
               5:
                 if FCD = nil then
                 begin
-                  FCartAudio := SetBit;
-                  Video.CartFixed := SetBit;
+                  FCartAudio := SetBit or FCart.AES;
+                  Video.CartFixed := SetBit or FCart.AES;
                 end;
               6:
                 FBackupUnlocked := SetBit;
@@ -1406,8 +1597,15 @@ begin
           Previous := (Previous and $FF00) or (Value and $FF);
         Video.Palette[A] := Previous;
       end;
+    8, 9, $A, $B:
+      if HighByte and FCardInserted and not FCardReadOnly and not FCardLock1 and
+        FCardUnlock2 and not FCardAttribute then
+      begin
+        FCard[((Address and $3FFFFF) shr 1) mod Cardinal(Length(FCard))] := Value and $FF;
+        FCardDirty := True;
+      end;
     $D:
-      if FBackupUnlocked then
+      if FBackupUnlocked and not FCart.AES then
       begin
         if HighByte then
           FBackup[Offset] := Value shr 8;
@@ -1416,6 +1614,19 @@ begin
         FBatteryDirty := True;
       end;
   end;
+end;
+
+function TNeoGeoConsole.ReadByte(Address: Cardinal): Byte;
+begin
+  var Value := ReadBus(Address and $FFFFFE, not Odd(Address), Odd(Address));
+  if Odd(Address) then Result := Value and $FF else Result := Value shr 8;
+end;
+
+procedure TNeoGeoConsole.WriteByte(Address: Cardinal; Value: Byte);
+begin
+  var Data := Word(Value);
+  if not Odd(Address) then Data := Data shl 8;
+  WriteBus(Address and $FFFFFE, Data, not Odd(Address), Odd(Address));
 end;
 
 function TNeoGeoConsole.ReadWord(Address: Cardinal): Word;
@@ -1456,11 +1667,19 @@ begin
   var VBlankStart := FFrameTime + Int64(240) * NG_LINE_CLOCKS;
   var VBlankIRQDone := False;
   var VBlankReloadDone := False;
-  for var Line := 0 to NG_LINES - 1 do
+  for var Line := 0 to FCart.FrameLines - 1 do
   begin
+    FRenderingLine := Line;
     var Target := FFrameTime + Int64(Line + 1) * NG_LINE_CLOCKS;
     while FCPUTime < Target do
     begin
+      if (FCD <> nil) and FCD.State.DMABusy then
+      begin
+        FCPUTime := Max(FCPUTime, Min(Target, FCD.State.NextDMA));
+        FCD.Advance(FCPUTime);
+        AdvanceDMA(FCPUTime);
+        Continue;
+      end;
       // Process timer events in timestamp order before the next instruction.
       // A late CPU instruction can cross both an IRQ2 deadline and reload.
       while True do
@@ -1521,8 +1740,9 @@ begin
         else
           Vector := FCD.InterruptVector;
       end;
+      if (FCD = nil) and (FCPU.ProgramCounter < $300000) then FProgramStarted := True;
       var Cycles := Clown68000DoCycles(FCPU, FCPUCallbacks, 1, Vector);
-      Inc(FCPUTime, Int64(Max(1, Integer(Cycles))) * 2);
+      FCPUTime := FCPUBase + Int64(Max(1, Integer(Cycles))) * 2;
       if FCPU.Halted <> 0 then
         raise EInvalidOpException.Create('Neo Geo 68000 halted');
     end;
@@ -1537,12 +1757,13 @@ begin
     Video.RenderLine(Line);
   end;
 
+  FRenderingLine := -1;
   // Only mask the host framebuffer; the CPU, VRAM and timing run normally.
   // Require readiness at both ends so a mid-frame clear cannot leak test pixels.
-  if (FCD = nil) and (not DisplayReady or not Video.StartupVideoReady) then
+  if (FCD = nil) and not FProgramStarted and (not DisplayReady or not Video.StartupVideoReady) then
     Video.ClearFrame;
   Video.NextFrame;
-  Inc(FFrameTime, NG_FRAME_CLOCKS);
+  Inc(FFrameTime, FCart.FrameLines * NG_LINE_CLOCKS);
   if FFrameNumber = High(UInt64) then
     FFrameNumber := 0
   else
@@ -1577,6 +1798,25 @@ begin
       Result[SizeOf(FBackup) + i * 2 + 1] := FCartRAM[i] and $FF;
     end;
   end;
+end;
+
+procedure TNeoGeoConsole.SetMemoryCard(Inserted, ReadOnly: Boolean);
+begin
+  FCardInserted := Inserted and (FCD = nil);
+  FCardReadOnly := ReadOnly;
+end;
+
+procedure TNeoGeoConsole.LoadMemoryCard(const Data: TBytes);
+begin
+  if (Length(Data) < 2048) or (Length(Data) > 16384) or (Length(Data) mod 2048 <> 0) then
+    raise EReadError.Create('Invalid Neo Geo memory card size');
+  FCard := Copy(Data);
+  FCardDirty := False;
+end;
+
+function TNeoGeoConsole.MemoryCardData: TBytes;
+begin
+  Result := Copy(FCard);
 end;
 
 procedure TNeoGeoConsole.LoadBattery(const Data: TBytes);
@@ -1640,6 +1880,7 @@ begin
   State.Field(FBusTime, SizeOf(FBusTime));
   State.Field(FFrameTime, SizeOf(FFrameTime));
   State.Field(FFrameNumber, SizeOf(FFrameNumber));
+  State.Field(FProgramStarted, SizeOf(FProgramStarted));
   State.Field(FBatteryDirty, SizeOf(FBatteryDirty));
   State.Field(FWatchdog, SizeOf(FWatchdog));
   State.Field(FRTCControl, SizeOf(FRTCControl));
@@ -1653,9 +1894,35 @@ begin
   State.Field(FRTCTestBase, SizeOf(FRTCTestBase));
   State.Field(FRTCCalendar, SizeOf(FRTCCalendar));
   State.Field(FRTCTesting, SizeOf(FRTCTesting));
+  var CardSize := Length(FCard);
+  State.Field(CardSize, SizeOf(CardSize));
+  if (CardSize <> 0) and ((CardSize < 2048) or (CardSize > 16384) or (CardSize mod 2048 <> 0)) then
+    raise EReadError.Create('Invalid memory card snapshot');
+  if ((FCart.Disc = nil) and (CardSize = 0)) or ((FCart.Disc <> nil) and (CardSize <> 0)) then
+    raise EReadError.Create('Memory card snapshot does not match the machine');
+  if State.Loading then SetLength(FCard, CardSize);
+  if CardSize > 0 then State.Field(FCard[0], CardSize);
+  State.Field(FCardInserted, SizeOf(FCardInserted));
+  State.Field(FCardReadOnly, SizeOf(FCardReadOnly));
+  State.Field(FCardLock1, SizeOf(FCardLock1));
+  State.Field(FCardUnlock2, SizeOf(FCardUnlock2));
+  State.Field(FCardAttribute, SizeOf(FCardAttribute));
+  State.Field(FCardBank, SizeOf(FCardBank));
+  if State.Loading then FCardDirty := True;
   if FCD <> nil then
   begin
+    State.Field(FDMASource, SizeOf(FDMASource));
+    State.Field(FDMATarget, SizeOf(FDMATarget));
+    State.Field(FDMARemaining, SizeOf(FDMARemaining));
+    State.Field(FDMAIndex, SizeOf(FDMAIndex));
+    State.Field(FDMAMode, SizeOf(FDMAMode));
+    State.Field(FDMAPeriod, SizeOf(FDMAPeriod));
     FCD.SerializeState(State);
+    if State.Loading and FCD.State.DMABusy then
+      if (FDMARemaining = 0) or (FDMARemaining > $200000) or
+        not (FDMAPeriod in [8, 16, 24, 32]) or (FCD.State.NextDMA <= FCD.State.Clock) or
+        (FDMATarget >= $FF0000) or (FDMAIndex > $200000) then
+        raise EReadError.Create('Invalid Neo Geo CD DMA snapshot');
     State.Field(FCart.ProgramROM[0], Length(FCart.ProgramROM));
     State.Field(FCart.SpriteROM[0], Length(FCart.SpriteROM));
     State.Field(FCart.FixedROM[0], Length(FCart.FixedROM));
@@ -1706,14 +1973,12 @@ end;
 
 function TNeoGeoConsole.GetHeight: Integer;
 begin
-  Result := NG_HEIGHT;
+  Result := FCart.VideoHeight;
 end;
 
 function TNeoGeoConsole.GetFPS: Double;
 begin
-  Result := NG_FPS;
-  if FCD <> nil then
-    Result := NGCD_MASTER_CLOCK / NG_FRAME_CLOCKS;
+  Result := FCart.MasterClock / (FCart.FrameLines * NG_LINE_CLOCKS);
 end;
 
 function TNeoGeoConsole.GetSampleFrames: Integer;

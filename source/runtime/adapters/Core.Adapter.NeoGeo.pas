@@ -13,6 +13,11 @@ type
   TNeoGeoConfig = class(TEmulatorConfigBase)
   private
     FKeys, FKeys2: TNeoGeoKeyMap;
+    FModel, FCountry, FBIOS, FCardPath: string;
+    FCardInserted, FCardReadOnly, FPAL: Boolean;
+    FDIPSettings, FDIPFreePlay, FDIPFreeze, FDIPSingleCoin: Boolean;
+    FDiscPresent, FTrayOpen: Boolean;
+    FCardSize: Integer;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
@@ -28,6 +33,7 @@ type
     FCartridge: TNeoGeoCartridge;
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
+    FNeoConfig: TNeoGeoConfig;
     FKeys, FKeys2: TNeoGeoKeyMap;
     FKeyboard, FKeyboard2, FGamepad, FGamepad2: TEmulatorButtons;
     FPaused: Boolean;
@@ -89,6 +95,21 @@ end;
 
 procedure TNeoGeoConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
+  FModel := Ini.ReadString('Hardware', 'Model', 'auto');
+  FCountry := Ini.ReadString('Hardware', 'Region', 'auto');
+  FBIOS := Ini.ReadString('Hardware', 'BIOS', '');
+  FPAL := Ini.ReadBool('Hardware', 'PAL', False);
+  FDIPSettings := Ini.ReadBool('Cabinet', 'Settings', False);
+  FDIPFreePlay := Ini.ReadBool('Cabinet', 'FreePlay', False);
+  FDIPFreeze := Ini.ReadBool('Cabinet', 'Freeze', False);
+  FDIPSingleCoin := Ini.ReadBool('Cabinet', 'SingleCoin', False);
+  FCardInserted := Ini.ReadBool('MemoryCard', 'Inserted', False);
+  FCardReadOnly := Ini.ReadBool('MemoryCard', 'ReadOnly', False);
+  FCardPath := Ini.ReadString('MemoryCard', 'Path', '');
+  FCardSize := Ini.ReadInteger('MemoryCard', 'Size', 2048);
+  FDiscPresent := Ini.ReadBool('Drive', 'DiscPresent', True);
+  FTrayOpen := Ini.ReadBool('Drive', 'TrayOpen', False);
+  if (FCardSize < 2048) or (FCardSize > 16384) or (FCardSize mod 2048 <> 0) then FCardSize := 2048;
   for var B in Buttons do
   begin
     FKeys[B] := ReadEmulatorKey(Ini, 'Keys', KeyNames[B], FKeys[B]);
@@ -98,6 +119,20 @@ end;
 
 procedure TNeoGeoConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
+  Ini.WriteString('Hardware', 'Model', FModel);
+  Ini.WriteString('Hardware', 'Region', FCountry);
+  Ini.WriteString('Hardware', 'BIOS', FBIOS);
+  Ini.WriteBool('Hardware', 'PAL', FPAL);
+  Ini.WriteBool('Cabinet', 'Settings', FDIPSettings);
+  Ini.WriteBool('Cabinet', 'FreePlay', FDIPFreePlay);
+  Ini.WriteBool('Cabinet', 'Freeze', FDIPFreeze);
+  Ini.WriteBool('Cabinet', 'SingleCoin', FDIPSingleCoin);
+  Ini.WriteBool('MemoryCard', 'Inserted', FCardInserted);
+  Ini.WriteBool('MemoryCard', 'ReadOnly', FCardReadOnly);
+  Ini.WriteString('MemoryCard', 'Path', FCardPath);
+  Ini.WriteInteger('MemoryCard', 'Size', FCardSize);
+  Ini.WriteBool('Drive', 'DiscPresent', FDiscPresent);
+  Ini.WriteBool('Drive', 'TrayOpen', FTrayOpen);
   for var B in Buttons do
   begin
     Ini.WriteInteger('Keys', KeyNames[B], FKeys[B]);
@@ -112,17 +147,27 @@ begin
   if FStorage = nil then
     FStorage := TStorage.Default;
 
-  if CD then
-    FCartridge := TNeoGeoCartridge.CreateCD(Stream, FStorage, RomName)
-  else
-    FCartridge := TNeoGeoCartridge.Create(ReadNeoGeoData(Stream), FStorage, RomName);
-
   var SystemId := ROM_SYSTEM_NEOGEO;
   if CD then
     SystemId := ROM_SYSTEM_NEOGEOCD;
   var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(SystemId), FStorage);
   FConfig := Config;
+  FNeoConfig := Config;
   Config.Load;
+  if CD then
+    FCartridge := TNeoGeoCartridge.CreateCD(Stream, FStorage, RomName, Config.FBIOS, Config.FModel)
+  else
+    FCartridge := TNeoGeoCartridge.Create(ReadNeoGeoData(Stream), FStorage, RomName);
+
+  FCartridge.ConfigureHardware(FStorage, RomName, Config.FModel, Config.FCountry, Config.FBIOS);
+  FCartridge.PAL := Config.FPAL and FCartridge.AES;
+  FCartridge.CardInserted := Config.FCardInserted;
+  FCartridge.CardReadOnly := Config.FCardReadOnly;
+  FCartridge.CardSize := Config.FCardSize;
+  if Config.FDIPSettings then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $FE;
+  if Config.FDIPSingleCoin then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $FD;
+  if Config.FDIPFreePlay then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $BF;
+  if Config.FDIPFreeze then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $7F;
   FKeys := Config.Keys;
   FKeys2 := Config.Keys2;
 
@@ -144,8 +189,11 @@ end;
 procedure TNeoGeoCoreAdapter.ApplySettings;
 begin
   if FThread <> nil then
+  begin
     FThread.Configure(FKeyboard + FGamepad, FPaused, FConfig.AudioEnabled,
       FConfig.AudioVolume, FKeyboard2 + FGamepad2);
+    FThread.ConfigureMedia(FNeoConfig.FCardInserted, FNeoConfig.FCardReadOnly, FNeoConfig.FDiscPresent, FNeoConfig.FTrayOpen);
+  end;
 end;
 
 procedure TNeoGeoCoreAdapter.Start;
@@ -154,6 +202,12 @@ begin
     Exit;
 
   FThread := TNeoGeoWorker.Create(FCartridge, FSavePath, FStorage);
+  if FCartridge.Disc = nil then
+  begin
+    FThread.MemoryCardPath := FNeoConfig.FCardPath;
+    if FThread.MemoryCardPath = '' then
+      FThread.MemoryCardPath := FStorage.SaveRoot + PathDelim + 'neogeo-memorycard.bin';
+  end;
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.InputPorts := LoadCoreInputPorts(FStorage, GetSystemId);
   ApplySettings;
@@ -247,6 +301,15 @@ begin
         Exclude(FKeyboard, TEmulatorButton.Select);
     ApplySettings;
     Exit;
+  end;
+
+  if (FCartridge.Disc = nil) and not FCartridge.AES and
+    (FCartridge.Protection <> 'vliner') then
+  begin
+    if Code = vkF3 then
+      if Pressed then Include(FKeyboard, TEmulatorButton.Y) else Exclude(FKeyboard, TEmulatorButton.Y);
+    if Code = vkF2 then
+      if Pressed then Include(FKeyboard, TEmulatorButton.Mode) else Exclude(FKeyboard, TEmulatorButton.Mode);
   end;
 
   if FCartridge.Protection = 'vliner' then
@@ -346,6 +409,8 @@ function TNeoGeoCoreAdapter.GetName: string;
 begin
   if FCartridge.Disc <> nil then
     Result := 'SNK Neo Geo CD'
+  else if FCartridge.AES then
+    Result := 'SNK Neo Geo AES'
   else
     Result := 'SNK Neo Geo MVS';
 end;
@@ -367,7 +432,7 @@ end;
 
 function TNeoGeoCoreAdapter.GetHasCoinAcceptor: Boolean;
 begin
-  Result := FCartridge.Disc = nil;
+  Result := (FCartridge.Disc = nil) and not FCartridge.AES;
 end;
 
 procedure TNeoGeoCoreAdapter.InsertCoin1;

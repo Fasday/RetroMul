@@ -21,6 +21,7 @@ type
     FLatched: Boolean;
     FMotorClocks, FMotorLevelClocks: UInt64;
     FIRQPending: Boolean;
+    procedure AdvanceRTC(Cycles: Integer);
     procedure RTCCommand;
     procedure RTCWriteData;
     function RTCDate(IncludeDate: Boolean): UInt64;
@@ -28,7 +29,7 @@ type
   public
     constructor Create(const Code: AnsiString; HasRTC: Boolean);
     procedure Reset;
-    procedure Tick(Cycles: Integer);
+    procedure Tick(Cycles: Integer); inline;
     function ReadGPIO(Address: Cardinal; out Value: Byte): Boolean;
     procedure WriteGPIO(Address: Cardinal; Value: Byte);
     function ReadTilt(Address: Cardinal; out Value: Byte): Boolean;
@@ -105,9 +106,12 @@ begin
   Inc(FMotorClocks, Cycles);
   if FRumble then
     Inc(FMotorLevelClocks, UInt64(RumbleLevel) * UInt64(Cycles));
-  if not FRTC then
-    Exit;
+  if FRTC then
+    AdvanceRTC(Cycles);
+end;
 
+procedure TGBAHardware.AdvanceRTC(Cycles: Integer);
+begin
   Inc(FClocks, Cycles);
   while FClocks >= 16777216 do
   begin

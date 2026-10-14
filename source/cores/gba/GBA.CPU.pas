@@ -1413,7 +1413,24 @@ end;
 procedure TGBAProcessor.CaptureCached(var State: TARMCheckpoint; var Generation: UInt64);
 begin
   State.Reserved := 0;
-  Move(R, State.Registers, SizeOf(R));
+  // Fixed-size copies let the ARM compiler emit register-pair loads/stores
+  // instead of calling the general RTL Move for every CPU instruction.
+  State.Registers[0] := R[0];
+  State.Registers[1] := R[1];
+  State.Registers[2] := R[2];
+  State.Registers[3] := R[3];
+  State.Registers[4] := R[4];
+  State.Registers[5] := R[5];
+  State.Registers[6] := R[6];
+  State.Registers[7] := R[7];
+  State.Registers[8] := R[8];
+  State.Registers[9] := R[9];
+  State.Registers[10] := R[10];
+  State.Registers[11] := R[11];
+  State.Registers[12] := R[12];
+  State.Registers[13] := R[13];
+  State.Registers[14] := R[14];
+  State.Registers[15] := R[15];
   State.Status := PSR;
   State.SavedStatus := SPSR;
   // The caller retains this checkpoint between instructions. Banked registers

@@ -1,0 +1,8 @@
+MD_32X_G RCDATA "firmware/32x-g.bin"
+MD_32X_M RCDATA "firmware/32x-m.bin"
+MD_32X_S RCDATA "firmware/32x-s.bin"
+MD_CD_E RCDATA "firmware/cd-e.bin"
+MD_CD_J RCDATA "firmware/cd-j.bin"
+MD_CD_U RCDATA "firmware/cd-u.bin"
+
+MD_CD_U2 RCDATA "firmware/cd-u2.bin"

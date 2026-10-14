@@ -36,6 +36,13 @@ type
     FAvailable: Boolean;
     FError, FAudioError, FFinalSaveError: string;
     FPendingBattery: TBytes;
+    FMemoryCardPath: string;
+    FPendingCard: TBytes;
+    FLastCard: TBytes;
+    FCardSaveError: string;
+    FRTCPath, FRTCSaveError: string;
+    FPendingRTC: TBytes;
+    FCardInserted, FCardReadOnly, FDiscPresent, FTrayOpen, FDiscChanged, FCardChanged: Boolean;
     procedure SetError(const Value: string);
   protected
     procedure Execute; override;
@@ -44,12 +51,14 @@ type
     destructor Destroy; override;
     procedure WakeSetEvent;
     procedure Configure(const Input: TEmulatorButtons; Paused, AudioEnabled: Boolean; Volume: Single; const Input2: TEmulatorButtons = []);
+    procedure ConfigureMedia(CardInserted, CardReadOnly, DiscPresent, TrayOpen: Boolean);
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
   public
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   public
     property SnapshotDirectory: string read FSnapshotDirectory write FSnapshotDirectory;
+    property MemoryCardPath: string read FMemoryCardPath write FMemoryCardPath;
     procedure InsertCoin(Player: Integer);
     procedure RequestReset;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -88,11 +97,16 @@ begin
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil, False, False, '');
   FCartridge := Cartridge;
+  FCardInserted := Cartridge.CardInserted;
+  FCardReadOnly := Cartridge.CardReadOnly;
+  FDiscPresent := True;
   FData := Cartridge.Identity;
   FCoreId := ROM_CORE_ID_NEOGEO;
   if Cartridge.Disc <> nil then
     FCoreId := ROM_CORE_ID_NEOGEOCD;
   FSavePath := SavePath;
+  if (Cartridge.Disc = nil) and not Cartridge.AES then
+    FRTCPath := FStorage.SaveRoot + PathDelim + 'neogeo-rtc.bin';
 end;
 
 destructor TNeoGeoWorker.Destroy;
@@ -178,6 +192,20 @@ begin
   end;
 end;
 
+procedure TNeoGeoWorker.ConfigureMedia(CardInserted, CardReadOnly, DiscPresent, TrayOpen: Boolean);
+begin
+  FLock.Acquire;
+  try
+    if (FCardInserted <> CardInserted) or (FCardReadOnly <> CardReadOnly) then FCardChanged := True;
+    FCardInserted := CardInserted;
+    FCardReadOnly := CardReadOnly;
+    if (FDiscPresent <> DiscPresent) or (FTrayOpen <> TrayOpen) then FDiscChanged := True;
+    FDiscPresent := DiscPresent;
+    FTrayOpen := TrayOpen;
+  finally FLock.Release; end;
+  WakeSetEvent;
+end;
+
 procedure TNeoGeoWorker.StopAndSave;
 begin
   Terminate;
@@ -197,8 +225,21 @@ begin
       raise EInOutError.Create('Neo Geo SRAM: ' + E.Message);
   end;
 
-  if FFinalSaveError <> '' then
-    raise EInOutError.Create('Neo Geo SRAM: ' + FFinalSaveError);
+  if Length(FPendingCard) > 0 then
+  begin
+    var CardStream := TBytesStream.Create(FPendingCard);
+    try SaveStreamAtomically(CardStream, FMemoryCardPath, FStorage); finally CardStream.Free; end;
+    FPendingCard := nil;
+    FCardSaveError := '';
+  end;
+  if Length(FPendingRTC) > 0 then
+  begin
+    FStorage.WriteBytes(FRTCPath, FPendingRTC);
+    FPendingRTC := nil; FRTCSaveError := '';
+  end;
+  if FRTCSaveError <> '' then raise EInOutError.Create('Neo Geo RTC: ' + FRTCSaveError);
+  if FCardSaveError <> '' then raise EInOutError.Create('Neo Geo memory card: ' + FCardSaveError);
+  if FFinalSaveError <> '' then raise EInOutError.Create('Neo Geo SRAM: ' + FFinalSaveError);
 end;
 
 function TNeoGeoWorker.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -225,6 +266,36 @@ procedure TNeoGeoWorker.Execute;
 
   procedure SaveBattery(Console: TNeoGeoConsole; var LastBattery: TBytes);
   begin
+    if (Console <> nil) and (FRTCPath <> '') then
+    begin
+      var Clock := Console.RTCBatteryData;
+      if Length(Clock) > 0 then
+      begin
+        FPendingRTC := Clock;
+        try
+          FStorage.WriteBytes(FRTCPath, Clock);
+          FPendingRTC := nil; FRTCSaveError := '';
+        except on E: Exception do FRTCSaveError := E.Message; end;
+      end;
+    end;
+    if (Console <> nil) and Console.MemoryCardDirty and (FMemoryCardPath <> '') then
+    begin
+      var Card := Console.MemoryCardData;
+      if (Length(Card) > 0) and
+        ((Length(FPendingCard) > 0) or (Length(Card) <> Length(FLastCard)) or not CompareMem(@Card[0], @FLastCard[0], Length(Card))) then
+      begin
+        FPendingCard := Copy(Card);
+        var CardStream := TBytesStream.Create(Card);
+        try
+          try
+            SaveStreamAtomically(CardStream, FMemoryCardPath, FStorage);
+            FPendingCard := nil;
+            FLastCard := Card;
+            FCardSaveError := '';
+          except on E: Exception do FCardSaveError := E.Message; end;
+        finally CardStream.Free; end;
+      end;
+    end;
     if (Console = nil) or not Console.BatteryDirty then
       Exit;
 
@@ -270,6 +341,12 @@ begin
     try
       Console := TNeoGeoConsole.Create(FCartridge);
       Console.ConfigureInputPorts(InputPorts);
+      if (FRTCPath <> '') and FStorage.Exists(FRTCPath) then Console.LoadRTCBattery(FStorage.ReadBytes(FRTCPath));
+      if (FMemoryCardPath <> '') and FStorage.Exists(FMemoryCardPath) then
+      begin
+        FLastCard := FStorage.ReadBytes(FMemoryCardPath);
+        Console.LoadMemoryCard(FLastCard);
+      end;
       FrameHints := TEmulationPerformanceHints.Create(Round(1000000000.0 / Console.FramesPerSecond), FCoreId);
       if FStorage.Exists(FSavePath) then
       begin
@@ -344,6 +421,17 @@ begin
           Volume := FVolume;
           ResetRequested := FReset;
           FReset := False;
+          if FCardChanged then
+          begin
+            Console.SetMemoryCard(FCardInserted, FCardReadOnly);
+            FCardChanged := False;
+          end;
+          if FDiscChanged and (Console.CDController <> nil) then
+          begin
+            Console.CDController.SetDiscPresent(FDiscPresent);
+            Console.CDController.SetTrayOpen(FTrayOpen);
+            FDiscChanged := False;
+          end;
         finally
           FLock.Release;
         end;

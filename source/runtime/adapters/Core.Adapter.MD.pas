@@ -11,7 +11,7 @@ type
 
   TMDConfig = class(TEmulatorConfigBase)
   private
-    FKeys, FKeys2: TMDKeyMap;
+    FKeys, FKeys2, FKeys3, FKeys4: TMDKeyMap;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
@@ -19,23 +19,27 @@ type
     constructor Create(const FileName: string; const Storage: IStorage = nil);
     property Keys: TMDKeyMap read FKeys;
     property Keys2: TMDKeyMap read FKeys2;
+    property Keys3: TMDKeyMap read FKeys3;
+    property Keys4: TMDKeyMap read FKeys4;
   end;
 
   TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FThread: TMDWorker;
     FData: TBytes;
+    FDiscLocation, FDisplayName: string;
     FSnapshotDirectory: string;
     FStorage: IStorage;
     FSavePath, FError: string;
     FConfig: IEmulatorConfig;
-    FKeys, FKeys2: TMDKeyMap;
+    FKeys, FKeys2, FKeys3, FKeys4: TMDKeyMap;
     FKeyboard, FGamepad, FKeyboard2, FGamepad2: TMDButtons;
+    FKeyboard3, FGamepad3, FKeyboard4, FGamepad4: TMDButtons;
     FPaused: Boolean;
     procedure ApplySettings;
   public
     constructor Create(const FileName: string); overload;
-    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string); overload;
+    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; IsCD: Boolean = False); overload;
     destructor Destroy; override;
     function GetSystemId: string;
     function GetName: string;
@@ -68,7 +72,7 @@ type
 implementation
 
 uses
-  System.IOUtils, System.UITypes, System.Hash, MD.Cartridge, Core.RomFormat;
+  System.IOUtils, System.UITypes, System.Hash, MD.Cartridge, Core.RomFormat, Core.CD.Disc, MD.MegaCD;
 
 const
   KeyNames: array[TMDButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'C', 'Start', 'X', 'Y', 'Z', 'Mode');
@@ -93,6 +97,8 @@ begin
   begin
     FKeys[Button] := ReadEmulatorKey(Ini, 'Keys', KeyNames[Button], FKeys[Button]);
     FKeys2[Button] := ReadEmulatorKey(Ini, 'Keys2', KeyNames[Button], FKeys2[Button]);
+    FKeys3[Button] := ReadEmulatorKey(Ini, 'Keys3', KeyNames[Button], FKeys3[Button]);
+    FKeys4[Button] := ReadEmulatorKey(Ini, 'Keys4', KeyNames[Button], FKeys4[Button]);
   end;
 end;
 
@@ -102,6 +108,8 @@ begin
   begin
     Ini.WriteInteger('Keys', KeyNames[Button], FKeys[Button]);
     Ini.WriteInteger('Keys2', KeyNames[Button], FKeys2[Button]);
+    Ini.WriteInteger('Keys3', KeyNames[Button], FKeys3[Button]);
+    Ini.WriteInteger('Keys4', KeyNames[Button], FKeys4[Button]);
   end;
 end;
 
@@ -112,13 +120,14 @@ begin
   var Storage := TStorage.Default;
   var Stream := Storage.OpenRead(FileName);
   try
-    Create(Stream, Storage, FileName);
+    Create(Stream, Storage, FileName, SameText(ExtractFileExt(FileName), '.chd') or
+      SameText(ExtractFileExt(FileName), '.cue') or SameText(ExtractFileExt(FileName), '.iso'));
   finally
     Stream.Free;
   end;
 end;
 
-constructor TMDCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string);
+constructor TMDCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; IsCD: Boolean);
 var
   Cart: TMDCartridge;
   Config: TMDConfig;
@@ -128,19 +137,34 @@ begin
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
-  var Data := ReadRomData(Stream);
-  var Format := DetectRom(Data);
-  Cart := TMDCartridge.Create(NormalizeRom(Data, Format), '');
-  try
-    FData := Copy(Cart.Data);
-  finally
-    Cart.Free;
+  FDisplayName := 'SEGA Genesis / Mega Drive';
+  if IsCD then
+  begin
+    var Disc := TCDDisc.Create(Stream, FStorage, RomName);
+    FDisplayName := 'SEGA CD / Mega CD';
+    try
+      FData := Disc.Identity;
+      if TMDMegaCD.Requires32X(Disc) then FDisplayName := 'SEGA CD / 32X';
+    finally Disc.Free; end;
+    FDiscLocation := RomName;
+  end
+  else
+  begin
+    var Data := ReadRomData(Stream);
+    var Format := DetectRom(Data);
+    Cart := TMDCartridge.Create(NormalizeRom(Data, Format), '');
+    try
+      FData := Copy(Cart.Data);
+      if Cart.Is32X then FDisplayName := 'SEGA 32X';
+    finally Cart.Free; end;
   end;
   Config := TMDConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_MD), FStorage);
   FConfig := Config;
   Config.Load;
   FKeys := Config.Keys;
   FKeys2 := Config.Keys2;
+  FKeys3 := Config.Keys3;
+  FKeys4 := Config.Keys4;
   Hash := THashSHA2.Create;
   Hash.Update(FData);
   FSavePath := FStorage.GameSave(ROM_SYSTEM_MD, RomName, Hash.HashAsString);
@@ -158,14 +182,15 @@ procedure TMDCoreAdapter.ApplySettings;
 begin
   if FThread <> nil then
     FThread.Configure(FKeyboard + FGamepad, FPaused,
-      FConfig.AudioEnabled, FConfig.AudioVolume, FKeyboard2 + FGamepad2);
+      FConfig.AudioEnabled, FConfig.AudioVolume, FKeyboard2 + FGamepad2,
+      FKeyboard3 + FGamepad3, FKeyboard4 + FGamepad4);
 end;
 
 procedure TMDCoreAdapter.Start;
 begin
   if FThread <> nil then
     Exit;
-  FThread := TMDWorker.Create(FData, FSavePath, FStorage);
+  FThread := TMDWorker.Create(FData, FSavePath, FStorage, FDiscLocation);
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.InputPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_MD);
   ApplySettings;
@@ -214,6 +239,10 @@ begin
   FGamepad := [];
   FKeyboard2 := [];
   FGamepad2 := [];
+  FKeyboard3 := [];
+  FGamepad3 := [];
+  FKeyboard4 := [];
+  FGamepad4 := [];
   ApplySettings;
 end;
 
@@ -221,6 +250,8 @@ procedure TMDCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 var
   Button: TMDButton;
 begin
+  if Code = 0 then
+    Exit;
   for Button := Low(TMDButton) to High(TMDButton) do
   begin
     if Code = FKeys[Button] then
@@ -233,6 +264,10 @@ begin
         Include(FKeyboard2, Button)
       else
         Exclude(FKeyboard2, Button);
+    if Code = FKeys3[Button] then
+      if Pressed then Include(FKeyboard3, Button) else Exclude(FKeyboard3, Button);
+    if Code = FKeys4[Button] then
+      if Pressed then Include(FKeyboard4, Button) else Exclude(FKeyboard4, Button);
   end;
   ApplySettings;
 end;
@@ -252,6 +287,10 @@ begin
       Include(Result.Buttons, Mapping[Button]);
     if Button in (FKeyboard2 + FGamepad2) then
       Include(Result.Buttons2, Mapping[Button]);
+    if Button in (FKeyboard3 + FGamepad3) then
+      Include(Result.Buttons3, Mapping[Button]);
+    if Button in (FKeyboard4 + FGamepad4) then
+      Include(Result.Buttons4, Mapping[Button]);
   end;
 end;
 
@@ -266,12 +305,18 @@ var
 begin
   FGamepad := [];
   FGamepad2 := [];
+  FGamepad3 := [];
+  FGamepad4 := [];
   for Button := Low(TEmulatorButton) to High(TEmulatorButton) do
   begin
     if Button in Input.Buttons then
       Include(FGamepad, Mapping[Button]);
     if Button in Input.Buttons2 then
       Include(FGamepad2, Mapping[Button]);
+    if Button in Input.Buttons3 then
+      Include(FGamepad3, Mapping[Button]);
+    if Button in Input.Buttons4 then
+      Include(FGamepad4, Mapping[Button]);
   end;
   ApplySettings;
 end;
@@ -309,7 +354,7 @@ end;
 
 function TMDCoreAdapter.GetName: string;
 begin
-  Result := 'SEGA Genesis / Mega Drive';
+  Result := FDisplayName;
 end;
 
 function TMDCoreAdapter.GetSupportsSnapshots: Boolean;

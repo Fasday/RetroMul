@@ -619,7 +619,13 @@
         <DCCReference Include="..\..\source\cores\snes\SNES.Console.pas"/>
         <DCCReference Include="..\..\source\cores\snes\SNES.Emulation.pas"/>
         <DCCReference Include="..\..\source\cores\md\MD.Arithmetic.pas"/>
+        <DCCReference Include="..\..\source\cores\md\MD.Mapper.pas"/>
         <DCCReference Include="..\..\source\cores\md\MD.Cartridge.pas"/>
+        <DCCReference Include="..\..\source\cores\md\MD.EEPROM.pas"/>
+        <DCCReference Include="..\..\source\hardware\cpu\HW.SH2.pas"/>
+        <DCCReference Include="..\..\source\cores\md\MD.Firmware.pas"/>
+        <DCCReference Include="..\..\source\cores\md\MD.Mars.pas"/>
+        <DCCReference Include="..\..\source\cores\md\MD.MegaCD.pas"/>
         <DCCReference Include="..\..\source\cores\md\MD.Console.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\MD.M68k.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\MD.Z80.pas"/>

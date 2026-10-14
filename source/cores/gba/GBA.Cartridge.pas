@@ -129,8 +129,10 @@ end;
 procedure TGBACartridge.Tick(Cycles: Integer);
 begin
   FHardware.Tick(Cycles);
-  FFlashBusy := Max(0, FFlashBusy - Cycles);
-  FEEPROMBusy := Max(0, FEEPROMBusy - Cycles);
+  if FFlashBusy > 0 then
+    FFlashBusy := Max(0, FFlashBusy - Cycles);
+  if FEEPROMBusy > 0 then
+    FEEPROMBusy := Max(0, FEEPROMBusy - Cycles);
 end;
 
 procedure TGBACartridge.OverrideSaveKind(Kind: TGBASaveKind);

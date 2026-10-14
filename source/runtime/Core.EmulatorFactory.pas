@@ -49,6 +49,7 @@ begin
       DiscStorage := TStorage.Default;
     var Disc := TCDDisc.Create(Stream, DiscStorage, RomName);
     var IsPCE := False;
+    var IsSegaCD := False;
     try
       for var T := 1 to Disc.TrackCount do
       begin
@@ -65,6 +66,8 @@ begin
 
           var Sector: TBytes;
           Disc.ReadData(Track.StartLBA + Offset, Sector);
+          if Offset = 0 then
+            IsSegaCD := TEncoding.ASCII.GetString(Sector, 0, 14) = 'SEGADISCSYSTEM';
           IsPCE := TEncoding.ASCII.GetString(Sector).Contains('PC Engine CD-ROM SYSTEM');
           if IsPCE then
             Break;
@@ -73,6 +76,11 @@ begin
         Break;
       end;
       var Folder := ExtractFileName(ExcludeTrailingPathDelimiter(ExtractFilePath(SourceName)));
+      if IsSegaCD then
+      begin
+        Stream.Position := 0;
+        Exit(TMDCoreAdapter.Create(Stream, Storage, RomName, True));
+      end;
       if IsPCE or SameText(Folder, 'pcecd') or SameText(Folder, 'pcenginecd') then
       begin
         var OwnedDisc := Disc;

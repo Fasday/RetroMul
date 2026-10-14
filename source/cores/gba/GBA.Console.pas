@@ -38,6 +38,7 @@ type
     Size: Integer;
     Kind: Byte;
     IRQSample: Boolean;
+    Reserved: Word; // Explicit zero padding; the v6 snapshot layout stays unchanged.
   end;
 
   PGBACPUAccess = ^TGBACPUAccess;
@@ -48,9 +49,6 @@ type
     FVideo: TGBAVideo;
     FSound: TGBASound;
     FCartridge: TGBACartridge;
-    FEWRAM: array[0..$3FFFF] of Byte;
-    FIWRAM: array[0..$7FFF] of Byte;
-    FBIOS: array[0..$3FFF] of Byte;
     FTimers: array[0..3] of TGBATimer;
     FTimerPendingCycles: Integer;
     FTimerEventCycles: Integer; // Derived distance to the next timer edge/write.
@@ -81,14 +79,23 @@ type
     FActiveDMA: Integer;
     FSerialStart, FSerialEnd: UInt64;
     FSerialActive: Boolean;
+    FWaitControl: Cardinal; // Derived decode; checked against IO, never serialized.
+    FWaitFirst, FWaitSequential: array[0..2] of Integer;
+    FWaitSave: Integer;
     FPrefetchAddress, FPrefetchNext: Cardinal;
     FPrefetchCount, FPrefetchPhase: Integer;
     FPrefetchValid, FGamePakBusy: Boolean;
     FRenderedX, FStopFrameCycles: Integer;
     FLine, FLineCycle, FAccessCycles, FExtraCycles, FWaitMask: Integer;
+    FVideoPendingCycles: Integer; // Derived clocks; materialized before a PPU observation.
     FLastAddress, FOpenBus, FProtectedBIOS, FWaitPC: Cardinal;
     FInput: TEmulatorButtons;
     FPadEnabled, FHalted, FStopped, FInDMA, FRealBIOS, FFrameBoundaryActive, FExtraInDMA: Boolean;
+    // Keep bus/scheduler fields at short ARM64 offsets. Memory is serialized
+    // field by field, so moving these arrays does not change snapshot v6.
+    FEWRAM: array[0..$3FFFF] of Byte;
+    FIWRAM: array[0..$7FFF] of Byte;
+    FBIOS: array[0..$3FFF] of Byte;
     function ReadByteRaw(Address: Cardinal): Byte;
     function ReadBusInternal(Address: Cardinal; Size: Integer; RotateValue: Boolean): Cardinal;
     procedure WriteByteRaw(Address: Cardinal; Value: Byte);
@@ -112,7 +119,11 @@ type
     procedure UpdateDMADeadline;
     function ServiceDMA: Boolean;
     procedure RenderUntil;
+    procedure FlushVideo; inline;
+    procedure StepInternal;
     procedure TickSleep;
+    function WaitControl: Word; inline;
+    procedure DecodeWaitControl(Value: Word);
     procedure PrefetchTick(Cycles: Integer);
     procedure DMA(Timing: Integer; FIFO: Integer = -1);
     procedure UpdateTimerDeadline;
@@ -232,6 +243,8 @@ end;
 
 procedure TGBAConsole.Reset;
 begin
+  FWaitControl := $FFFFFFFF;
+  FVideoPendingCycles := 0;
   FillChar(FEWRAM, SizeOf(FEWRAM), 0);
   FillChar(FIWRAM, SizeOf(FIWRAM), 0);
   FillChar(FTimers, SizeOf(FTimers), 0);
@@ -418,7 +431,7 @@ begin
     raise EInvalidOp.Create('GBA CPU instruction exceeds bus transaction capacity');
 
   var A: PGBACPUAccess := @FCPUAccesses[FCPUAccessCount];
-  FillChar(A^, SizeOf(A^), 0);
+  A.Reserved := 0;
   A.Address := Address;
   A.Value := Value;
   A.Size := Size;
@@ -521,11 +534,32 @@ begin
   end;
 end;
 
-procedure TGBAConsole.PrefetchTick(Cycles: Integer);
+function TGBAConsole.WaitControl: Word;
+begin
+  Result := FVideo.Reg16($204);
+  if FWaitControl <> Result then
+    DecodeWaitControl(Result);
+end;
+
+procedure TGBAConsole.DecodeWaitControl(Value: Word);
 const
+  First: array[0..3] of Integer = (5, 4, 3, 9);
   Slow: array[0..2] of Integer = (3, 5, 9);
 begin
-  if not FPrefetchValid or FGamePakBusy or (FVideo.Reg16($204) and $4000 = 0) then
+  FWaitControl := Value;
+  FWaitSave := First[Value and 3];
+  for var Bank := 0 to 2 do
+  begin
+    FWaitFirst[Bank] := First[(Value shr (2 + Bank * 3)) and 3];
+    FWaitSequential[Bank] := Slow[Bank];
+    if Value and (1 shl (4 + Bank * 3)) <> 0 then
+      FWaitSequential[Bank] := 2;
+  end;
+end;
+
+procedure TGBAConsole.PrefetchTick(Cycles: Integer);
+begin
+  if not FPrefetchValid or FGamePakBusy or (WaitControl and $4000 = 0) then
     Exit;
 
   var Bank := Integer(((FPrefetchNext shr 24) - 8) div 2);
@@ -535,9 +569,7 @@ begin
     Exit;
   end;
 
-  var Period := Slow[Bank];
-  if FVideo.Reg16($204) and (1 shl (4 + Bank * 3)) <> 0 then
-    Period := 2;
+  var Period := FWaitSequential[Bank];
   Inc(FPrefetchPhase, Cycles);
   while (FPrefetchCount < 8) and (FPrefetchPhase >= Period) do
   begin
@@ -555,39 +587,33 @@ begin
 end;
 
 procedure TGBAConsole.Access(Address: Cardinal; Size: Integer);
-const
-  First: array[0..3] of Integer = (5, 4, 3, 9);
-const
-  Slow: array[0..2] of Integer = (3, 5, 9);
 begin
   var Region := Address shr 24;
+  var W: Word := 0;
+  if Region and $F8 = 8 then
+    W := WaitControl;
   var Prefetched := False;
   var Cost := 1;
   var CancelPenalty := 0;
-  if FPrefetchValid and (FPrefetchCount < 8) then
+  if (Region and $F8 = 8) and FPrefetchValid and (FPrefetchCount < 8) then
   begin
     var PrefetchBank := Integer(((FPrefetchNext shr 24) - 8) div 2);
-    if PrefetchBank in [0..2] then
+    if ((PrefetchBank >= 0) and (PrefetchBank <= 2)) then
     begin
-      var Period := Slow[PrefetchBank];
-      if FVideo.Reg16($204) and (1 shl (4 + PrefetchBank * 3)) <> 0 then
-        Period := 2;
+      var Period := FWaitSequential[PrefetchBank];
       if FPrefetchPhase = Period - 1 then
         CancelPenalty := 1;
     end;
   end;
   if Region = 2 then
     Cost := 3 * (1 + Ord(Size = 4));
-  if Region in [5, 6] then
+  if ((Region = 5) or (Region = 6)) then
     Cost := 1 + Ord(Size = 4);
-  if Region in [8..13] then
+  if ((Region >= 8) and (Region <= 13)) then
   begin
-    var W := FVideo.Reg16($204);
     var Bank := (Region - 8) div 2;
-    var N := First[(W shr (2 + Bank * 3)) and 3];
-    var SeqCost := Slow[Bank];
-    if W and (1 shl (4 + Bank * 3)) <> 0 then
-      SeqCost := 2;
+    var N := FWaitFirst[Bank];
+    var SeqCost := FWaitSequential[Bank];
     var Sequential := FBusSequential and (Address and $1FFFF <> 0);
     Cost := N;
     if Sequential then
@@ -633,32 +659,34 @@ begin
       FPrefetchPhase := 0;
     end;
   end;
-  if Region in [14, 15] then
+  if (Region shr 1 = 7) then
   begin
-    Cost := First[FVideo.Reg16($204) and 3] + CancelPenalty;
+    Cost := FWaitSave + CancelPenalty;
     FPrefetchValid := False;
   end;
   FLastAddress := ARMAdd(Address, Size);
   if FClockBus then
   begin
-    FGamePakBusy := (Region in [8..15]) and not Prefetched;
+    FGamePakBusy := ((Region and $F8 = 8)) and not Prefetched;
     try
       Tick(1);
       if not FInDMA then
         FIRQSample := FIRQLevel;
-      if FVideo.Clocked and (Region in [5..7]) then
+      if FVideo.Clocked and (((Region >= 5) and (Region <= 7))) then
       begin
         // Each halfword competes with the PPU for its own memory port.
         for var Beat := 1 to Cost do
         begin
           if Beat > 1 then
             Tick(1);
+          FlushVideo;
           while FVideo.MemoryBusy(Address) do
           begin
             if FFrameBoundaryActive and (FFrameNumber >= FFrameTarget) then
               Break;
 
             Tick(1);
+            FlushVideo;
           end;
         end;
       end
@@ -672,8 +700,20 @@ begin
     Inc(FAccessCycles, Cost);
 end;
 
+procedure TGBAConsole.FlushVideo;
+begin
+  if FVideoPendingCycles = 0 then
+    Exit;
+
+  // No PPU register or memory can change while these clocks are pending.
+  // Execute the same per-clock fetch/OBJ/merger path as a contiguous slice.
+  FVideo.RunCycles(FLine, FLineCycle - FVideoPendingCycles + 1, FLineCycle);
+  FVideoPendingCycles := 0;
+end;
+
 procedure TGBAConsole.RenderUntil;
 begin
+  FlushVideo;
   if FVideo.Clocked then
     Exit;
 
@@ -741,6 +781,8 @@ end;
 function TGBAConsole.ReadBusInternal(Address: Cardinal; Size: Integer; RotateValue: Boolean): Cardinal;
 begin
   Access(Address, Size);
+  if (Address and $FC000000 = $04000000) then
+    FlushVideo;
   if FInDMA and ((Address < $02000000) or (Address shr 24 >= $10)) then
   begin
     Result := FDMA[FActiveDMA].ReadLatch;
@@ -875,7 +917,7 @@ begin
     Exit;
   end;
 
-  if Address shr 24 in [4..7] then
+  if (Address and $FC000000 = $04000000) then
     RenderUntil;
 
   if (Address shr 24 = 4) and (Address and $FFFFFF >= $A0) and (Address and $FFFFFF < $A8) then
@@ -1574,27 +1616,28 @@ end;
 
 procedure TGBAConsole.Tick(Cycles: Integer);
 begin
-  // The usual one-clock bus beat cannot cross an event in this path.
+  // A bus slice that ends before every scheduler edge needs no event walk.
   // Keep the full scheduler for IRQ synchronization, timer edges and DMA replay.
-  if (Cycles = 1) and (FTimerEventCycles > 1) and
+  if (Cycles > 0) and (Cycles < FTimerEventCycles) and
     (FIRQDelay = 0) and (FHaltIRQDelay = 0) and (FIRQReadDelay = 0) and
     (FNextIRQDue = 0) and not FSerialActive and
     not FCartridge.Hardware.HasRTC and not FCartridge.Hardware.IRQPending and
-    (FLineCycle <> 1005) and (FLineCycle <> 1006) and (FLineCycle <> 1231) and
+    (Cycles < 1232 - FLineCycle) and
+    ((FLineCycle >= 1007) or (Cycles < 1006 - FLineCycle)) and
     not (FFrameBoundaryActive and (FFrameNumber >= FFrameTarget)) and
     not (FInDMA and FCPUResuming and FCPUYieldIdle and not FHalted) then
   begin
-    FSound.Tick(1);
-    FCartridge.Tick(1);
-    PrefetchTick(1);
-    Inc(FMasterClock);
+    FSound.Tick(Cycles);
+    FCartridge.Tick(Cycles);
+    PrefetchTick(Cycles);
+    Inc(FMasterClock, Cycles);
     if FTimerWorkMask <> 0 then
     begin
-      Dec(FTimerEventCycles);
-      Inc(FTimerPendingCycles);
+      Dec(FTimerEventCycles, Cycles);
+      Inc(FTimerPendingCycles, Cycles);
     end;
-    Inc(FLineCycle);
-    FVideo.RunCycles(FLine, FLineCycle, FLineCycle);
+    Inc(FLineCycle, Cycles);
+    Inc(FVideoPendingCycles, Cycles);
   end
   else
     TickEvents(Cycles);
@@ -1720,10 +1763,11 @@ begin
       else
         Inc(FTimerPendingCycles, N);
 
-    FVideo.RunCycles(FLine, FLineCycle + 1, FLineCycle + N);
     Inc(FLineCycle, N);
+    Inc(FVideoPendingCycles, N);
     if FLineCycle = 1006 then
     begin
+      FlushVideo;
       if FLine < 160 then
       begin
         if not FVideo.Clocked then
@@ -1739,6 +1783,7 @@ begin
 
     if FLineCycle >= 1232 then
     begin
+      FlushVideo;
       Dec(FLineCycle, 1232);
       if FLine < 160 then
         FVideo.EndLine;
@@ -1781,7 +1826,7 @@ begin
   end;
 end;
 
-procedure TGBAConsole.Step;
+procedure TGBAConsole.StepInternal;
 begin
   if FStopped then
   begin
@@ -1871,6 +1916,13 @@ begin
   end;
 end;
 
+procedure TGBAConsole.Step;
+begin
+  StepInternal;
+  // Public single-step callers can inspect the PPU immediately afterwards.
+  FlushVideo;
+end;
+
 procedure TGBAConsole.RunFrame;
 begin
   FSound.BeginFrame;
@@ -1878,7 +1930,7 @@ begin
   FFrameBoundaryActive := True;
   try
     while FFrameNumber < FFrameTarget do
-      Step;
+      StepInternal;
   finally
     FFrameBoundaryActive := False;
   end;
@@ -1966,6 +2018,13 @@ procedure TGBAConsole.SerializeState(State: TStateArchive);
 const
   TimerMasks: array[0..3] of Integer = (0, 63, 255, 1023);
 begin
+  if State.Loading then
+  begin
+    FWaitControl := $FFFFFFFF;
+    FVideoPendingCycles := 0;
+  end
+  else
+    FlushVideo;
   var Hash := THashSHA2.Create;
   Hash.Update(FBIOS, SizeOf(FBIOS));
   var BIOSHash := Hash.HashAsBytes;

@@ -17,15 +17,23 @@ type
   public
     Disc: TCDDisc;
     CDZ: Boolean;
+    AES, PAL, CardInserted, CardReadOnly: Boolean;
+    CardSize: Integer;
+    Region, CabinetDIPs: Byte;
     ProgramROM, FixedROM, AudioROM, SamplesA, SamplesB, SpriteROM: TBytes;
     BIOS, FixedBIOS, AudioBIOS, ZoomROM: TBytes;
     SetName: string;
     FixedBankType: Integer;
     Protection: string;
     constructor Create(const Data: TBytes; const Storage: IStorage = nil; const Location: string = '');
-    constructor CreateCD(Stream: TStream; const Storage: IStorage; const Location: string);
+    constructor CreateCD(Stream: TStream; const Storage: IStorage; const Location: string;
+      const BIOSName: string = ''; const Model: string = 'auto');
     destructor Destroy; override;
+    procedure ConfigureHardware(const Storage: IStorage; const Location, Model, Country, BIOSName: string);
     function Identity: TBytes;
+    function MasterClock: Integer;
+    function FrameLines: Integer;
+    function VideoHeight: Integer;
   end;
 
 function ReadNeoGeoData(Stream: TStream): TBytes;
@@ -93,6 +101,8 @@ end;
 constructor TNeoGeoCartridge.Create(const Data: TBytes; const Storage: IStorage; const Location: string);
 begin
   inherited Create;
+  Region := 2; CabinetDIPs := $FF;
+  CardSize := 2048;
   BIOS := ResourceBytes('NG_MVS_BIOS');
   SwapWords(BIOS);
   FixedBIOS := ResourceBytes('NG_FIX_BIOS');
@@ -106,9 +116,11 @@ begin
   Validate;
 end;
 
-constructor TNeoGeoCartridge.CreateCD(Stream: TStream; const Storage: IStorage; const Location: string);
+constructor TNeoGeoCartridge.CreateCD(Stream: TStream; const Storage: IStorage; const Location, BIOSName, Model: string);
 begin
   inherited Create;
+  Region := 2; CabinetDIPs := $FF;
+  CardSize := 2048;
   Disc := TCDDisc.Create(Stream, Storage, Location);
   if Disc.Track(1).Audio then
     raise EReadError.Create('Neo Geo CD requires its data track first');
@@ -132,11 +144,17 @@ begin
   var Folders := TArray<string>.Create(SourceFolder,
     TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD),
     TPath.Combine(Storage.Root, 'bios'), Storage.Root);
+  var Names := TArray<string>.Create('neocd.bin', 'neocd_z.rom', 'neocd_t.bin', 'neocd_f.bin', 'top-sp1.bin', 'neocd_t.rom', 'front-sp1.bin', 'neocd_f.rom');
+  if BIOSName <> '' then Names := TArray<string>.Create(BIOSName)
+  else if Model = 'cdz' then Names := TArray<string>.Create('neocd_z.rom', 'neocd.bin')
+  else if Model = 'front' then Names := TArray<string>.Create('front-sp1.bin', 'neocd_f.rom', 'neocd_f.bin')
+  else if Model = 'top' then Names := TArray<string>.Create('top-sp1.bin', 'neocd_t.rom', 'neocd_t.bin');
   for var Folder in Folders do
-    for var Name in ['neocd.bin', 'neocd_z.rom', 'neocd_t.bin', 'neocd_f.bin', 'top-sp1.bin', 'neocd_t.rom', 'front-sp1.bin', 'neocd_f.rom'] do
+    for var Name in Names do
     begin
       var Path := '';
-      if Folder.StartsWith('content://', True) then
+      if Name.Contains(':') then Path := Name
+      else if Folder.StartsWith('content://', True) then
       begin
         try
           Path := CDSibling(Storage, Location, Name);
@@ -172,6 +190,83 @@ begin
     end;
 
   raise EReadError.Create('Neo Geo CD BIOS missing: place neocd.bin (512 KiB CD/CDZ) beside the image or in the neogeocd ROM folder');
+end;
+
+procedure TNeoGeoCartridge.ConfigureHardware(const Storage: IStorage; const Location, Model, Country, BIOSName: string);
+  function ReadBIOS(const Name: string): TBytes;
+  begin
+    Result := nil;
+    if Name = '' then Exit;
+    if Storage.Exists(Name) then
+      Result := Storage.ReadBytes(Name)
+    else
+    begin
+      for var Folder in TArray<string>.Create(ExtractFilePath(Location),
+        TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEO),
+        TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD), TPath.Combine(Storage.Root, 'bios')) do
+      begin
+        if Storage.Exists(TPath.Combine(Folder, Name)) then
+          Exit(Storage.ReadBytes(TPath.Combine(Folder, Name)));
+        var ZipPath := TPath.Combine(Folder, 'neogeo.zip');
+        if not Storage.Exists(ZipPath) then Continue;
+        var Input := Storage.OpenRead(ZipPath);
+        var Zip := TZipFile.Create;
+        try
+          Zip.Open(Input, zmRead);
+          for var I := 0 to Zip.FileCount - 1 do
+            if SameText(ExtractFileName(Zip.FileNames[I]), Name) then
+            begin
+              Zip.Read(I, Result);
+              Exit;
+            end;
+        finally Zip.Free; Input.Free; end;
+      end;
+    end;
+  end;
+begin
+  if Storage = nil then raise EArgumentNilException.Create('Storage');
+  if SameText(Country, 'japan') then Region := 0
+  else if SameText(Country, 'usa') then Region := 1
+  else if SameText(Country, 'europe') then Region := 2;
+  AES := (Disc = nil) and SameText(Model, 'aes');
+  var Names: TArray<string>;
+  if BIOSName <> '' then Names := TArray<string>.Create(BIOSName)
+  else if AES then
+    if Region = 0 then Names := TArray<string>.Create('neo-po.bin', 'neo-po.sp1', 'uni-bios_2_3.rom')
+    else Names := TArray<string>.Create('neo-epo.sp1', 'neo-epo.bin', 'uni-bios_2_3.rom')
+  else if Disc <> nil then Names := nil
+  else if (Country <> '') and not SameText(Country, 'auto') then
+    case Region of
+      0: Names := TArray<string>.Create('vs-bios.rom', 'sp-j2.rom');
+      1: Names := TArray<string>.Create('usa_2slt.bin');
+      2: Names := TArray<string>.Create('sp-s2.sp1');
+    end;
+  if Length(Names) > 0 then
+  begin
+    var Bytes: TBytes;
+    for var Name in Names do
+    begin
+      Bytes := ReadBIOS(Name);
+      if Length(Bytes) > 0 then Break;
+    end;
+    if Length(Bytes) = 0 then raise EReadError.Create('Neo Geo BIOS not found: ' + string.Join(', ', Names));
+    if ((Disc = nil) and (Length(Bytes) <> $20000) and (Length(Bytes) <> $80000)) or
+      ((Disc <> nil) and (Length(Bytes) <> $80000)) then raise EReadError.Create('Invalid Neo Geo BIOS size');
+    if (Bytes[4] <> 0) or (Bytes[5] <> $C0) then SwapWords(Bytes);
+    if (Bytes[4] <> 0) or (Bytes[5] <> $C0) then raise EReadError.Create('Invalid Neo Geo BIOS vector');
+    BIOS := Bytes;
+    if Disc <> nil then CDZ := (BIOS[$6D] = $C0) and (BIOS[$6E] = $A3) and (BIOS[$6F] = $E8);
+  end;
+  if (Disc = nil) and (Length(BIOS) > $401) then
+  begin
+    if (Country = '') or SameText(Country, 'auto') or (BIOS[$400] <> 0) then Region := BIOS[$401] and 3
+    else if AES and (BIOS[$400] = 0) then
+      // The original AES firmware stores its nationality in this data byte.
+      // Configure the loaded copy; never modify the external image or code.
+      BIOS[$401] := Region;
+  end;
+  if (Disc <> nil) and not SameText(Model, 'auto') and (Model <> '') then
+    if SameText(Model, 'cdz') <> CDZ then raise EReadError.Create('Neo Geo CD model and BIOS do not match');
 end;
 
 destructor TNeoGeoCartridge.Destroy;
@@ -704,11 +799,14 @@ end;
 
 function TNeoGeoCartridge.Identity: TBytes;
 begin
+  var Hardware: array[0..2] of Byte;
+  Hardware[0] := Ord(AES); Hardware[1] := Ord(PAL); Hardware[2] := Region;
   if Disc <> nil then
   begin
     var Hash := THashSHA2.Create;
     Hash.Update(Disc.Identity);
     Hash.Update(BIOS);
+    if Region <> 2 then Hash.Update(Hardware, SizeOf(Hardware));
     Exit(Hash.HashAsBytes);
   end;
 
@@ -723,7 +821,26 @@ begin
   Hash.Update(FixedBIOS);
   Hash.Update(AudioBIOS);
   Hash.Update(ZoomROM);
+  if AES or PAL or (Region <> 2) then Hash.Update(Hardware, SizeOf(Hardware));
   Result := Hash.HashAsBytes;
+end;
+
+function TNeoGeoCartridge.MasterClock: Integer;
+begin
+  Result := 24000000;
+  if AES or (Disc <> nil) then Result := 24168000;
+end;
+
+function TNeoGeoCartridge.FrameLines: Integer;
+begin
+  Result := 264;
+  if AES and PAL then Result := 312;
+end;
+
+function TNeoGeoCartridge.VideoHeight: Integer;
+begin
+  Result := 224;
+  if AES and PAL then Result := 256;
 end;
 
 end.

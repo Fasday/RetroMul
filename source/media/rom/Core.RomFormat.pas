@@ -104,7 +104,7 @@ const
   NES_ROM_RAM_BANK_SIZE = $2000;
 
 const
-  MD_ROM_MAX_SIZE = 8 * 1024 * 1024;
+  MD_ROM_MAX_SIZE = 64 * 1024 * 1024;
   MD_ROM_SIGNATURE: AnsiString = 'SEGA';
   MD_SWAPPED_ROM_SIGNATURE: AnsiString = 'ESAG';
   MD_ROM_HEADER_OFFSET = $100;
@@ -228,12 +228,24 @@ function ReadRomData(Stream: TStream): TBytes;
 
 function NormalizeRom(const Data: TBytes; const Format: TRomFormatInfo): TBytes;
 
+function IsMDRealtec(const Data: TBytes): Boolean;
+
 implementation
 
 uses
   SNES.Cartridge, GBA.Cartridge;
 
-{ TRomFormatInfo }
+function IsMDRealtec(const Data: TBytes): Boolean;
+begin
+  Result := False;
+  if Length(Data) <> $80000 then Exit;
+  var Sum: Cardinal := 0;
+  for var I := $200 div 2 to Length(Data) div 2 - 1 do
+    Sum := (Sum + (Cardinal(Data[I * 2]) shl 8) + Data[I * 2 + 1]) and $FFFF;
+  var Signature := (Cardinal(Data[$18E]) shl 24) or (Cardinal(Data[$18F]) shl 16) or Sum;
+  Result := (Signature = $000006AB) or (Signature = $FFFFF863) or
+    (Signature = $FFFF44FB) or (Signature = $0000C0CD);
+end;
 
 function TRomFormatInfo.SystemId: string;
 begin
@@ -386,7 +398,7 @@ begin
     (Data[Length(Data) - $8000 + GB_ROM_CARTRIDGE_TYPE_OFFSET] in [$0B..$0D]) and
     CompareMem(@Data[Length(Data) - $8000 + GB_ROM_LOGO_OFFSET], @GB_ROM_LOGO[0], SizeOf(GB_ROM_LOGO)) then
     Result.System := TRomSystem.GB
-  else if Signature(MD_ROM_HEADER_OFFSET, MD_ROM_SIGNATURE) or Signature(MD_ROM_ALTERNATE_HEADER_OFFSET, MD_ROM_SIGNATURE) then
+  else if Signature(MD_ROM_HEADER_OFFSET, MD_ROM_SIGNATURE) or Signature(MD_ROM_ALTERNATE_HEADER_OFFSET, MD_ROM_SIGNATURE) or IsMDRealtec(Data) then
     Result.System := TRomSystem.MD
   else if Signature(MD_ROM_HEADER_OFFSET, MD_SWAPPED_ROM_SIGNATURE) or Signature(MD_ROM_ALTERNATE_HEADER_OFFSET, MD_SWAPPED_ROM_SIGNATURE) then
   begin

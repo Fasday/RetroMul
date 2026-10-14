@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.UITypes, NeoGeo.Cartridge, Core.Snapshots;
+  System.SysUtils, System.Classes, System.UITypes, System.Math, NeoGeo.Cartridge, Core.Snapshots;
 
 const
   NG_WIDTH = 320;
@@ -21,6 +21,8 @@ type
     FAddress, FModulo, FReadBuffer: Word;
     FAnimation, FAnimationDelay, FAnimationSpeed: Byte;
     FAnimationDisabled: Boolean;
+    FPartialLine, FPartialCount: Integer;
+    procedure RenderWholeLine(Line: Integer);
     function Color(Index: Integer): TAlphaColor;
     function SpriteHalf(Base: Integer): Cardinal;
   public
@@ -29,7 +31,7 @@ type
     PaletteBank: Integer;
     CartFixed, Shadow: Boolean;
     DisplayEnabled, SpritesEnabled, FixedEnabled: Boolean;
-    Pixels: array[0..NG_WIDTH * NG_HEIGHT - 1] of TAlphaColor;
+    Pixels: array[0..NG_WIDTH * 256 - 1] of TAlphaColor;
     constructor Create(Cart: TNeoGeoCartridge);
     procedure Reset;
     procedure ClearFrame;
@@ -39,6 +41,7 @@ type
     function ReadRegister(Index, Line: Integer): Word;
     procedure Control(Value: Word);
     procedure RenderLine(Line: Integer);
+    procedure RenderUntil(Line, Count: Integer);
     procedure NextFrame;
     procedure SerializeState(State: TStateArchive);
     property Modulo: Word read FModulo write FModulo;
@@ -79,7 +82,7 @@ begin
   FAnimationSpeed := 0;
   FAnimationDisabled := False;
   PaletteBank := 0;
-  CartFixed := False;
+  CartFixed := FCart.AES;
   DisplayEnabled := True;
   SpritesEnabled := True;
   FixedEnabled := True;
@@ -89,12 +92,15 @@ end;
 
 procedure TNeoGeoVideo.ClearFrame;
 begin
+  FPartialLine := -1; FPartialCount := 0;
   for var i := Low(Pixels) to High(Pixels) do
     Pixels[i] := $FF000000;
 end;
 
 function TNeoGeoVideo.StartupVideoReady: Boolean;
 begin
+  // AES startup menus and logos do not use the stock MVS RAM-test map.
+  if FCart.AES then Exit(True);
   // Cartridge graphics, including the animated BIOS logo, are ready to show.
   if CartFixed then
     Exit(True);
@@ -141,8 +147,8 @@ begin
   else
     var Counter := Line + $100;
     if Counter >= $200 then
-      Dec(Counter, NG_LINES);
-    Result := Word(((Counter shl 7) or (FAnimation and 7)) and $FFFF);
+      Dec(Counter, FCart.FrameLines);
+    Result := Word(((Counter shl 7) or (Ord(FCart.PAL) shl 3) or (FAnimation and 7)) and $FFFF);
   end;
 end;
 
@@ -218,17 +224,19 @@ begin
       (SpreadBits[FCart.SpriteROM[Base + 3]] shl 3);
 end;
 
-procedure TNeoGeoVideo.RenderLine(Line: Integer);
+procedure TNeoGeoVideo.RenderWholeLine(Line: Integer);
 const
   ZoomX: array[0..15] of Word = ($0080, $0880, $0888, $2888, $288A,
     $2A8A, $2AAA, $AAAA, $AAEA, $BAEA, $BAEB, $BBEB, $BBEF, $FBEF, $FBFF, $FFFF);
   FixOffsets: array[0..3] of Integer = ($10, $18, 0, 8);
 begin
-  if (Line < 0) or (Line >= NG_LINES) then
+  if (Line < 0) or (Line >= FCart.FrameLines) then
     Exit;
 
-  var Visible := (Line >= 16) and (Line < 240);
-  var Row := (Line - 16) * NG_WIDTH;
+  var Top := 16;
+  if FCart.AES and FCart.PAL then Top := 0;
+  var Visible := (Line >= Top) and (Line < Top + FCart.VideoHeight);
+  var Row := (Line - Top) * NG_WIDTH;
   if Visible then
   begin
     var Background := Color($FFF);
@@ -346,10 +354,10 @@ begin
     Exit;
 
   var FixedData := FCart.FixedBIOS;
-  if CartFixed then
+  if CartFixed or FCart.AES then
     FixedData := FCart.FixedROM;
   var FixedBank := 0;
-  if CartFixed and (Length(FixedData) > $20000) and (FCart.FixedBankType = 1) then
+  if (CartFixed or FCart.AES) and (Length(FixedData) > $20000) and (FCart.FixedBankType = 1) then
   begin
     var Banks: array[0..33] of Integer;
     var K := 0;
@@ -375,7 +383,7 @@ begin
     var Entry := VRAM[$7000 + Column * 32 + (Line shr 3)];
     var Code := Entry and $FFF;
     Inc(Code, FixedBank);
-    if CartFixed and (Length(FixedData) > $20000) and (FCart.FixedBankType = 2) then
+    if (CartFixed or FCart.AES) and (Length(FixedData) > $20000) and (FCart.FixedBankType = 2) then
       Inc(Code, $1000 * (((VRAM[$7500 + (((Line shr 3) - 1) and 31) +
           32 * (Column div 6)] shr ((5 - (Column mod 6)) * 2)) and 3) xor 3));
     var Base := Code * 32 + (Line and 7);
@@ -394,6 +402,30 @@ begin
   end;
 end;
 
+procedure TNeoGeoVideo.RenderUntil(Line, Count: Integer);
+var
+  Prefix: array[0..NG_WIDTH - 1] of TAlphaColor;
+begin
+  var Top := 16;
+  if FCart.AES and FCart.PAL then Top := 0;
+  if (Line < Top) or (Line >= Top + FCart.VideoHeight) then Exit;
+  Count := System.Math.EnsureRange(Count, 0, NG_WIDTH);
+  if FPartialLine <> Line then begin FPartialLine := Line; FPartialCount := 0; end;
+  if Count <= FPartialCount then Exit;
+  var Row := (Line - Top) * NG_WIDTH;
+  if FPartialCount > 0 then Move(Pixels[Row], Prefix[0], FPartialCount * SizeOf(TAlphaColor));
+  RenderWholeLine(Line);
+  if FPartialCount > 0 then Move(Prefix[0], Pixels[Row], FPartialCount * SizeOf(TAlphaColor));
+  FPartialCount := Count;
+end;
+
+procedure TNeoGeoVideo.RenderLine(Line: Integer);
+begin
+  if FPartialLine = Line then RenderUntil(Line, NG_WIDTH)
+  else RenderWholeLine(Line);
+  FPartialLine := -1; FPartialCount := 0;
+end;
+
 procedure TNeoGeoVideo.SerializeState(State: TStateArchive);
 begin
   State.Field(VRAM, SizeOf(VRAM));
@@ -409,6 +441,11 @@ begin
   State.Field(FAnimationDelay, SizeOf(FAnimationDelay));
   State.Field(FAnimationSpeed, SizeOf(FAnimationSpeed));
   State.Field(FAnimationDisabled, SizeOf(FAnimationDisabled));
+  State.Field(FPartialLine, SizeOf(FPartialLine));
+  State.Field(FPartialCount, SizeOf(FPartialCount));
+  if State.Loading and ((FPartialLine < -1) or (FPartialLine >= FCart.FrameLines) or
+    (FPartialCount < 0) or (FPartialCount > NG_WIDTH)) then
+    raise EReadError.Create('Invalid Neo Geo raster snapshot');
 end;
 
 initialization

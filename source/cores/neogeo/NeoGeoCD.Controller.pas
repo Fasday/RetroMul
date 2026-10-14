@@ -7,6 +7,10 @@ uses
 
 const
   NGCD_MASTER_CLOCK = 24168000;
+  // Rounded nominal 64.64 Hz period used by NeoCD's timer.h. The hardware
+  // protocol documentation says approximately 64 Hz; no calibrated capture
+  // or oscillator tolerance is available. This is not a measured servo delay.
+  NGCD_COMMUNICATION_PERIOD = 373886;
 
 type
   TCDControllerState = record
@@ -26,6 +30,12 @@ type
     LBA, SampleOffset: Integer;
     Playing: Boolean;
     NextTick: Int64;
+    Clock, NextCommunication, NextSector, PendingDeadline: Int64;
+    PendingAction: Byte;
+    TrayOpen, DiscPresent: Boolean;
+    ScanDirection: ShortInt;
+    DMABusy: Boolean;
+    NextDMA: Int64;
     LastLeft, LastRight: SmallInt;
   end;
 
@@ -33,6 +43,9 @@ type
   private
     FDisc: TCDDisc;
     FCDZ: Boolean;
+    FRecognitionMode: Byte;
+    FMediaInitialized: Boolean;
+    FRegion: Byte;
     FAudio: TBytes;
     FAudioLBA: Integer;
     procedure Command;
@@ -41,9 +54,14 @@ type
     procedure NextRegister;
     function ReadRegister: Byte;
     procedure WriteRegister(Value: Byte);
+    function SectorPeriod: Int64;
+    procedure UpdateDeadline;
+    procedure DecoderTick;
   public
     State: TCDControllerState;
-    constructor Create(Disc: TCDDisc; CDZ: Boolean = False);
+    constructor Create(Disc: TCDDisc; CDZ: Boolean = False; Region: Byte = 2);
+    procedure SetDiscPresent(Present: Boolean);
+    procedure SetTrayOpen(Open: Boolean);
     procedure Reset;
     procedure Advance(Time: Int64);
     function ReadWord(Address: Cardinal; HighByte, LowByte: Boolean): Word;
@@ -72,23 +90,53 @@ begin
     Result := (Result shl 1) or ((Value shr I) and 1);
 end;
 
-constructor TNeoGeoCDController.Create(Disc: TCDDisc; CDZ: Boolean);
+constructor TNeoGeoCDController.Create(Disc: TCDDisc; CDZ: Boolean; Region: Byte);
 begin
   inherited Create;
   FDisc := Disc;
   FCDZ := CDZ;
+  FRegion := Region and 3;
+  FRecognitionMode := 2;
+  if FCDZ then
+  begin
+    // Ordinary images omit the pressed disc's recognition information.
+    // CPY.TXT retains the mode that the CDZ BIOS compares to TOC subcommand
+    // 7 (BIOS $C0BD66 -> $10F786, comparison at $C0D27A). Export discs use
+    // 2; e.g. Ninja Master's and Twinkle Star Sprites require F. Derive it
+    // from the disc rather than modifying the BIOS or protection program.
+    var Protection := FDisc.ReadISOFile('CPY.TXT');
+    for var I := 2 to Length(Protection) - 10 do
+      if CompareMem(@Protection[I], PAnsiChar(AnsiString('NEO-GEO'#0)), 8) and
+        ((Protection[I + 8] and 1) <> 0) and
+        ((Protection[I + 8] and $F8) = 0) then
+      begin
+        var Mode := Protection[I + 9];
+        if (Mode = 2) or (Mode = 5) or (Mode = $E) or (Mode = $F) then
+          FRecognitionMode := Mode;
+        Break;
+      end;
+  end;
   Reset;
 end;
 
 procedure TNeoGeoCDController.Reset;
 begin
+  var Present := not FMediaInitialized or State.DiscPresent;
+  var Tray := FMediaInitialized and State.TrayOpen;
+  FMediaInitialized := True;
   State := Default(TCDControllerState);
   State.ResponsePointer := 9;
   State.Strobe := 1;
   State.IFStat := $FF;
   State.Registers[8] := $30;
   State.Registers[9] := $09;
-  State.NextTick := 373886; // Idle communication: approximately 64.64 Hz.
+  State.NextTick := NGCD_COMMUNICATION_PERIOD;
+  State.NextCommunication := State.NextTick;
+  State.NextSector := State.NextTick;
+  State.DiscPresent := Present;
+  State.TrayOpen := Tray;
+  if not Present then State.Status := 11;
+  if Tray then State.Status := 5;
   State.Header[1] := 2;
   State.Header[3] := 1;
   FAudioLBA := -1;
@@ -129,13 +177,27 @@ begin
   end;
 
   var Op := State.Command[0] * 16 + State.Command[1];
+  if (Op <> 0) and (Op <> $C0) and (Op <> $D0) and (Op <> $10) and
+    (State.TrayOpen or not State.DiscPresent) then
+  begin
+    FillChar(State.Response, SizeOf(State.Response), 0);
+    State.Status := 11;
+    if State.TrayOpen then State.Status := 5;
+    State.Response[0] := State.Status;
+    Checksum;
+    Exit;
+  end;
   var TrackIndex := FDisc.TrackAt(State.LBA);
   var TrackNumber := Max(1, TrackIndex + 1);
-  if State.LBA >= FDisc.LeadOut then
+  var Q: TBytes;
+  var StoredQ := FDisc.ReadSubQ(State.LBA, Q);
+  if StoredQ then TrackNumber := (Q[1] shr 4) * 10 + (Q[1] and 15);
+  if (TrackNumber < 1) or (TrackNumber > FDisc.TrackCount) or (State.LBA >= FDisc.LeadOut) then
     TrackNumber := FDisc.TrackCount;
   var DataFlag := 0;
   if FDisc.IsData(State.LBA) then
     DataFlag := 4;
+  if StoredQ then DataFlag := (Q[0] shr 4) and 4;
   if Op <> 0 then
     FillChar(State.Response, SizeOf(State.Response), 0);
 
@@ -145,7 +207,11 @@ begin
     $10:
       begin
         State.Playing := False;
+        State.ScanDirection := 0;
+        State.PendingAction := 0;
         State.Status := 0;
+        if not State.DiscPresent then State.Status := 11;
+        if State.TrayOpen then State.Status := 5;
       end;
     $20:
       begin
@@ -164,6 +230,11 @@ begin
                 if Position < 0 then
                   Position := -Position - 1;
               end;
+              if StoredQ then
+                if Sub = 0 then Position := ((Q[7] shr 4) * 10 + (Q[7] and 15)) * 4500 +
+                  ((Q[8] shr 4) * 10 + (Q[8] and 15)) * 75 + (Q[9] shr 4) * 10 + (Q[9] and 15)
+                else Position := ((Q[3] shr 4) * 10 + (Q[3] and 15)) * 4500 +
+                  ((Q[4] shr 4) * 10 + (Q[4] and 15)) * 75 + (Q[5] shr 4) * 10 + (Q[5] and 15);
               ResponseTime(Position);
               State.Response[8] := DataFlag;
             end;
@@ -171,12 +242,14 @@ begin
             begin
               State.Response[2] := TrackNumber div 10;
               State.Response[3] := TrackNumber mod 10;
-              var Index := Ord(State.LBA >= FDisc.Track(TrackNumber).StartLBA);
+              var Index := FDisc.IndexAt(State.LBA);
+              if StoredQ then Index := (Q[2] shr 4) * 10 + (Q[2] and 15);
 
               // Pressed discs expose protection indexes in the data track.
               // CDZ BIOS checks one new index every four MSF seconds; plain
               // ISO/CUE/CHD images usually retain only INDEX 01.
-              if (TrackNumber = 1) and FDisc.IsData(State.LBA) then
+              if not StoredQ and not FDisc.HasIndexes(State.LBA) and
+                (TrackNumber = 1) and FDisc.IsData(State.LBA) then
               begin
                 var MSF := State.LBA + 150;
                 Index := Min(99, Max(0, ((MSF div 4500) * 100 + (MSF div 75) mod 60 - 2)) div 4 + 1);
@@ -212,13 +285,13 @@ begin
               State.Response[8] := DataFlag;
             end;
           7:
-            State.Response[3] := 2;
+            State.Response[3] := FRecognitionMode;
         end;
       end;
-    $30, $B0:
+    $30, $40, $B0:
       begin
         var Position := 0;
-        if Op = $30 then
+        if Op <> $B0 then
           Position := ((State.Command[2] * 10 + State.Command[3]) * 60 +
             State.Command[4] * 10 + State.Command[5]) * 75 +
             State.Command[6] * 10 + State.Command[7] - 150
@@ -231,38 +304,75 @@ begin
         State.LBA := EnsureRange(Position, 0, 449849);
         State.SampleOffset := 0;
         FAudioLBA := -1;
-        State.Playing := True;
-        State.Status := 1;
-        State.Response[1] := 2;
-        State.Response[2] := (FDisc.TrackAt(State.LBA) + 1) div 10;
-        State.Response[3] := (FDisc.TrackAt(State.LBA) + 1) mod 10;
-      end;
-    $40:
-      begin
-        State.Playing := False;
-        State.Status := 4;
+        // SEEK uses the same absolute MSF as PLAY, but leaves the pickup
+        // paused at the new position. RESUME must start there, not at the
+        // previous audio sector. The response reports seeking once; the
+        // next STATUS observes the completed, paused seek. Completing at the
+        // next exchange is an HLE approximation, independent of seek distance;
+        // it does not model sled travel, focus, spindle lock or rotation phase.
+        // https://wiki.neogeodev.org/index.php/CD_drive_commands
+        State.Playing := Op <> $40;
+        State.ScanDirection := 0;
+        State.PendingAction := 0;
+        State.NextSector := State.Clock + SectorPeriod;
+        if Op = $40 then
+        begin
+          State.Status := 2;
+          State.PendingAction := 4;
+          State.PendingDeadline := State.NextCommunication;
+        end
+        else
+        begin
+          State.Status := 1;
+          State.Response[1] := 2;
+          State.Response[2] := (FDisc.TrackAt(State.LBA) + 1) div 10;
+          State.Response[3] := (FDisc.TrackAt(State.LBA) + 1) mod 10;
+        end;
       end;
     $60:
       begin
         State.Playing := False;
+        State.PendingAction := 0;
+        State.ScanDirection := 0;
         State.Status := 4;
       end;
     $70:
       begin
         State.Playing := True;
+        State.PendingAction := 0;
+        State.ScanDirection := 0;
+        State.NextSector := State.Clock + SectorPeriod;
         State.Status := 1;
       end;
     $80, $90:
       begin
-        var Delta := 30;
-        if Op = $90 then
-          Delta := -30;
-        State.LBA := EnsureRange(State.LBA + Delta, 0, FDisc.LeadOut - 1);
+        State.ScanDirection := 1;
+        if Op = $90 then State.ScanDirection := -1;
         State.SampleOffset := 0;
         FAudioLBA := -1;
         State.Playing := True;
-        State.Status := 1;
+        State.Status := 3;
+        State.NextSector := State.Clock + NGCD_MASTER_CLOCK div 75;
       end;
+    $A0, $C0, $D0:
+      begin
+        State.Playing := False;
+        State.ScanDirection := 0;
+        State.SampleOffset := 0;
+        FAudioLBA := -1;
+        State.PendingAction := Op shr 4;
+        // Logical completion only: physical TOC/tray latency is uncalibrated.
+        State.PendingDeadline := State.NextCommunication;
+        State.Status := 14;
+        if Op = $A0 then State.Status := 9;
+      end;
+    $50: ; // CDZ acknowledgement; no mechanical operation.
+  else
+    begin
+      State.Response[0] := 7;
+      Checksum;
+      Exit;
+    end;
   end;
 
   State.Response[0] := State.Status;
@@ -271,6 +381,7 @@ begin
   if (Op = $80) or (Op = $90) then
     State.Response[0] := 3;
   Checksum;
+  UpdateDeadline;
 end;
 
 procedure TNeoGeoCDController.NextRegister;
@@ -311,6 +422,15 @@ end;
 procedure TNeoGeoCDController.WriteRegister(Value: Byte);
 begin
   var N := State.RegisterPointer and 15;
+  if N = 15 then
+  begin
+    // Software reset of the sector decoder leaves the external drive and
+    // its sector RAM in place, and cancels decoder interrupt/transfer flags.
+    FillChar(State.Registers, SizeOf(State.Registers), 0);
+    State.Registers[8] := $30; State.Registers[9] := $09;
+    State.IFStat := $FF; State.DecoderStat0 := 0; State.DecoderIRQ := False;
+    NextRegister; Exit;
+  end;
   State.Registers[N] := Value;
   if (N = 6) and ((State.Registers[1] and 2) <> 0) then
     State.IFStat := State.IFStat and $F7;
@@ -319,12 +439,55 @@ begin
   NextRegister;
 end;
 
-procedure TNeoGeoCDController.Advance(Time: Int64);
+function TNeoGeoCDController.SectorPeriod: Int64;
 begin
-  while State.NextTick <= Time do
+  Result := NGCD_MASTER_CLOCK div 75;
+  if FCDZ and FDisc.IsData(State.LBA) and (State.ScanDirection = 0) then Result := Result div 2;
+end;
+
+procedure TNeoGeoCDController.UpdateDeadline;
+begin
+  State.NextTick := State.NextCommunication;
+  if State.Playing then State.NextTick := Min(State.NextTick, State.NextSector);
+  if State.PendingAction <> 0 then State.NextTick := Min(State.NextTick, State.PendingDeadline);
+end;
+
+procedure TNeoGeoCDController.SetDiscPresent(Present: Boolean);
+begin
+  State.DiscPresent := Present;
+  if not Present then
   begin
-    if State.Playing then
+    State.Playing := False;
+    State.PendingAction := 0;
+    State.Status := 11;
+    State.SampleOffset := 0;
+    FAudioLBA := -1;
+  end;
+  UpdateDeadline;
+end;
+
+procedure TNeoGeoCDController.SetTrayOpen(Open: Boolean);
+begin
+  State.Playing := False;
+  State.ScanDirection := 0;
+  State.SampleOffset := 0;
+  FAudioLBA := -1;
+  State.PendingAction := 12;
+  if Open then State.PendingAction := 13;
+  State.PendingDeadline := State.NextCommunication;
+  State.Status := 14;
+  UpdateDeadline;
+end;
+
+procedure TNeoGeoCDController.DecoderTick;
+begin
+    if State.ScanDirection <> 0 then
     begin
+      State.LBA := EnsureRange(State.LBA + 30 * State.ScanDirection, 0, FDisc.LeadOut);
+      if (State.LBA = 0) or (State.LBA = FDisc.LeadOut) then
+      begin State.Playing := False; State.Status := 12; end;
+      Exit;
+    end;
       // The decoder also reports headers while scanning audio / lead-out.
       // CDZ BIOS probes beyond lead-out during disc recognition.
       var DecoderPending := (State.IFStat and $20) = 0;
@@ -337,15 +500,18 @@ begin
         if FDisc.IsData(State.LBA) then
         begin
           var Sector: TBytes;
-          FDisc.ReadData(State.LBA, Sector);
-          Move(Sector[0], State.Sector[0], 2048);
+          FDisc.ReadRawData(State.LBA, Sector);
+          var ValidSector := CDCorrectMode1(Sector);
+          Move(Sector[12], State.Header[0], 4);
+          Move(Sector[16], State.Sector[0], 2048);
           var WA := (Integer(State.Registers[8]) + Integer(State.Registers[9]) * 256 + 2352) and $FFFF;
           var PT := (Integer(State.Registers[12]) + Integer(State.Registers[13]) * 256 + 2352) and $FFFF;
           State.Registers[8] := WA and $FF;
           State.Registers[9] := WA shr 8;
           State.Registers[12] := PT and $FF;
           State.Registers[13] := PT shr 8;
-          State.DecoderStat0 := $80;
+          State.DecoderStat0 := 0;
+          if ValidSector then State.DecoderStat0 := $80;
           State.IFStat := State.IFStat and $DF;
         end;
         if DecoderPending and ((State.Registers[1] and $20) <> 0) and ((State.IRQMask1 and $500) = $500) then
@@ -353,27 +519,48 @@ begin
       end;
       if FDisc.IsData(State.LBA) or (State.LBA >= FDisc.LeadOut) then
         Inc(State.LBA);
-    end;
-    if State.CommunicationEnabled and ((State.IRQMask1 and $50) = $50) then
-      State.CommunicationIRQ := True;
     if State.LBA > 449849 then
     begin
       State.Playing := False;
       State.Status := 12;
     end;
-    if State.Playing and FCDZ and FDisc.IsData(State.LBA) then
-      Inc(State.NextTick, NGCD_MASTER_CLOCK div 150)
-    else if State.Playing then
-      Inc(State.NextTick, NGCD_MASTER_CLOCK div 75)
-    else
-      Inc(State.NextTick, 373886);
+end;
+
+procedure TNeoGeoCDController.Advance(Time: Int64);
+begin
+  while State.NextTick <= Time do
+  begin
+    var EventTime := State.NextTick;
+    if (State.PendingAction <> 0) and (State.PendingDeadline <= EventTime) then
+    begin
+      case State.PendingAction of
+        4: State.Status := 4;
+        10: begin State.LBA := 0; State.Status := 0; end;
+        12: begin State.TrayOpen := False; State.Status := 0; if not State.DiscPresent then State.Status := 11; end;
+        13: begin State.TrayOpen := True; State.Status := 5; end;
+      end;
+      State.PendingAction := 0;
+    end;
+    if State.Playing and (State.NextSector <= EventTime) then
+    begin
+      DecoderTick;
+      Inc(State.NextSector, SectorPeriod);
+    end;
+    if State.NextCommunication <= EventTime then
+    begin
+      if State.CommunicationEnabled and ((State.IRQMask1 and $50) = $50) then State.CommunicationIRQ := True;
+      Inc(State.NextCommunication, NGCD_COMMUNICATION_PERIOD);
+    end;
+    UpdateDeadline;
   end;
+  State.Clock := Max(State.Clock, Time);
 end;
 
 function TNeoGeoCDController.ReadWord(Address: Cardinal; HighByte, LowByte: Boolean): Word;
 begin
   Result := 0;
   case Address and $FFFF of
+    $60: if State.DMABusy then Result := $40;
     4:
       Result := State.IRQMask2;
     $102:
@@ -383,10 +570,10 @@ begin
       if LowByte then
         Result := State.Response[State.ResponsePointer] or (State.Strobe shl 4);
     $11C:
-      if FCDZ then
-        Result := $0500
-      else
-        Result := $1500; // Europe, closed lid.
+      begin
+        Result := Word((FRegion xor 7) shl 8);
+        if FCDZ = State.TrayOpen then Result := Result or $1000;
+      end;
         $188:
       Result := ReverseBits(Word(State.LastLeft));
     $18A:
@@ -444,6 +631,7 @@ begin
         Result := B = $40;
         if B = 0 then
         begin
+          State.DMABusy := False;
           FillChar(State.DMAConfig, SizeOf(State.DMAConfig), 0);
           State.DMASource := 0;
           State.DMADestination := 0;
@@ -518,6 +706,8 @@ end;
 procedure TNeoGeoCDController.EndTransfer;
 begin
   State.IFStat := State.IFStat or 8;
+  State.IFStat := State.IFStat and $BF;
+  if (State.Registers[1] and $40 <> 0) and (State.IRQMask1 and $500 = $500) then State.DecoderIRQ := True;
   var DAC := (Integer(State.Registers[4]) + Integer(State.Registers[5]) * 256 +
     Integer(State.Registers[2]) + Integer(State.Registers[3]) * 256 + 1) and $FFFF;
   State.Registers[4] := DAC and $FF;
@@ -530,7 +720,7 @@ procedure TNeoGeoCDController.Mix(var Left, Right: SmallInt);
 begin
   State.LastLeft := 0;
   State.LastRight := 0;
-  if not State.Playing then
+  if not State.Playing or (State.ScanDirection <> 0) then
     Exit;
 
   if FAudioLBA <> State.LBA then
@@ -554,6 +744,12 @@ begin
   begin
     State.SampleOffset := 0;
     Inc(State.LBA);
+    if State.LBA >= FDisc.LeadOut then
+    begin
+      State.Playing := False;
+      State.Status := 12;
+      UpdateDeadline;
+    end;
   end;
 end;
 
@@ -574,9 +770,20 @@ begin
     if (State.LBA < 0) or (State.LBA > 449850) or (State.SampleOffset < 0) or
       (State.SampleOffset >= 588) or (State.CommandPointer > 9) or
       (State.ResponsePointer > 9) or (State.RegisterPointer > 15) or (State.Strobe > 1) or
+      (State.Clock < 0) or (State.NextCommunication <= State.Clock) or
+      (State.Playing and (State.NextSector <= State.Clock)) or
+      not (State.PendingAction in [0, 4, 10, 12, 13]) or
+      ((State.PendingAction <> 0) and (State.PendingDeadline <= State.Clock)) or
+      (State.Status > 15) or
+      (State.Playing and (State.TrayOpen or not State.DiscPresent)) or
+      (State.ScanDirection < -1) or (State.ScanDirection > 1) or
       (State.SprBank > 3) or (State.PCMBank > 1) or (State.NextTick < 0) or (State.DMALength > $200000) then
       raise EReadError.Create('Invalid Neo Geo CD controller snapshot');
 
+    var Deadline := State.NextCommunication;
+    if State.Playing then Deadline := Min(Deadline, State.NextSector);
+    if State.PendingAction <> 0 then Deadline := Min(Deadline, State.PendingDeadline);
+    if State.NextTick <> Deadline then raise EReadError.Create('Invalid CD event deadline');
     for var N in State.Command do
       if N > 15 then
         raise EReadError.Create('Invalid Neo Geo CD command snapshot');
