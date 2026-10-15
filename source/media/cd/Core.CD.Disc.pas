@@ -283,6 +283,8 @@ begin
         FTracks[Current].SectorSize := 2048
       else if Kind = 'MODE1/2352' then
         FTracks[Current].DataOffset := 16
+      else if Kind = 'MODE2/2352' then
+        FTracks[Current].DataOffset := 24
       else if Kind <> 'AUDIO' then
         raise EReadError.Create('Unsupported CUE TRACK type: ' + Kind);
 
@@ -470,7 +472,8 @@ begin
 
     var Audio := Kind = 'AUDIO';
     if not Audio and (Kind <> 'MODE1') and (Kind <> 'MODE1_RAW') and
-      (Kind <> 'MODE1/2048') and (Kind <> 'MODE1/2352') then
+      (Kind <> 'MODE1/2048') and (Kind <> 'MODE1/2352') and
+      (Kind <> 'MODE2_RAW') and (Kind <> 'MODE2/2352') then
       raise EReadError.Create('Unsupported CHD track type: ' + Kind);
 
     FileCursor := (FileCursor + 3) and not 3; // CHD pads each track to four sectors.
@@ -499,7 +502,9 @@ begin
     Inc(FileCursor, Frames);
     Item.SectorSize := 2448;
     if (Kind = 'MODE1_RAW') or (Kind = 'MODE1/2352') then
-      Item.DataOffset := 16;
+      Item.DataOffset := 16
+    else if (Kind = 'MODE2_RAW') or (Kind = 'MODE2/2352') then
+      Item.DataOffset := 24;
     Item.ByteSize := Source.Size;
     Item.Stream := TCHDStream.Create(Source);
 
@@ -887,7 +892,7 @@ begin
   if not IsData(LBA) then raise EReadError.Create('CD raw read outside data track');
   var Item := FTracks[N];
   SetLength(Sector, 2352);
-  if Item.DataOffset = 16 then
+  if Item.DataOffset in [16,24] then
   begin
     Item.Stream.Position := Item.ByteOffset + Int64(Item.FileSector + LBA - Item.StartLBA) * Item.SectorSize;
     Item.Stream.ReadBuffer(Sector[0], 2352);

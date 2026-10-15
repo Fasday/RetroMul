@@ -3,10 +3,9 @@
 interface
 
 uses
-  Core.InputConfig,
-  System.Classes, System.IniFiles, Core.Storage, Core.Emulation, NES.Emulation,
-  NES.Input, NES.Types, NES.Controller, NES.FamicomKeyboardDevice,
-  NES.FamicomDataRecorder, NES.MiraclePianoDevice;
+  Core.InputConfig, System.Classes, System.IniFiles, Core.Storage,
+  Core.Emulation, NES.Emulation, NES.Input, NES.Types, NES.Controller,
+  NES.FamicomKeyboardDevice, NES.FamicomDataRecorder, NES.MiraclePianoDevice;
 
 type
   TNesZapperMask = NES.Types.TNesZapperMask;

@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{9694002B-970C-45D5-822F-F74C75937619}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -360,10 +360,6 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="..\..\source\contracts\Core.Emulation.Types.pas"/>
-        <DCCReference Include="..\..\source\contracts\Core.Storage.Types.pas"/>
-        <DCCReference Include="..\..\source\runtime\Core.Emulation.Timing.pas"/>
-        <DCCReference Include="..\..\source\services\settings\Core.Emulation.Config.pas"/>
         <DCCReference Include="..\..\source\cores\a2600\A2600.AudioMachine.pas"/>
         <DCCReference Include="..\..\source\hardware\audio\A2600.Sound.TIA.pas"/>
         <DCCReference Include="..\..\source\music\trackers\amiga\Amiga.AHX.pas"/>

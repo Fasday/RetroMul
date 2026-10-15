@@ -1,12 +1,10 @@
 ﻿unit Core.Adapter.N64;
-{$Q+}{$R+}
 
 interface
 
 uses
-  Core.InputConfig,
-  System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, Core.Snapshots, N64.Console;
+  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles,
+  System.SyncObjs, Core.Storage, Core.Emulation, Core.Snapshots, N64.Console;
 
 type
   TN64KeyMap = array[0..3, TEmulatorButton] of UInt32;

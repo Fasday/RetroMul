@@ -21,6 +21,7 @@ type
     FMapper: TMDMapper;
     F32X: TMD32X;
     FCD: TMDMegaCD;
+    FCDAudioEnabled, F32XAudioEnabled: Boolean;
     FCPU: TM68kState;
     FCPUCallbacks: TM68kReadWriteCallbacks;
     FZ80: TZ80State;
@@ -80,6 +81,8 @@ type
   public
     constructor Create(const Data: TBytes; const Extension: string; Disc: TCDDisc = nil);
     destructor Destroy; override;
+    property CDAudioEnabled: Boolean read FCDAudioEnabled write FCDAudioEnabled;
+    property Audio32XEnabled: Boolean read F32XAudioEnabled write F32XAudioEnabled;
     procedure Reset;
     procedure RunFrame;
     procedure ConfigureInputPorts(const Ports: TCoreInputPorts);
@@ -263,6 +266,8 @@ constructor TMDConsole.Create(const Data: TBytes; const Extension: string; Disc:
 begin
   var StartAddress, EndAddress: Cardinal;
   inherited Create;
+  FCDAudioEnabled := True;
+  F32XAudioEnabled := True;
   FCartridge := TMDCartridge.Create(Data, Extension);
   FMapper := TMDMapper.Create(FCartridge);
   if FCartridge.EEPROMConfig.Mode <> TMDEEPROMMode.None then
@@ -892,6 +897,9 @@ begin
     CDLeft := 0; CDRight := 0;
     if FCD <> nil then
     begin FCD.Advance(Next); FCD.Sample(CDLeft, CDRight); end;
+    // Keep advancing expansion hardware even when its audio is muted.
+    if not FCDAudioEnabled then begin CDLeft := 0; CDRight := 0; end;
+    if not F32XAudioEnabled then begin PWMLeft := 0; PWMRight := 0; end;
     Delta := Next - FAudioTime;
     FAreaLeft := FAreaLeft + (FFilteredFM[0] + FFilteredPSG + PWMLeft + CDLeft) * Delta;
     FAreaRight := FAreaRight + (FFilteredFM[1] + FFilteredPSG + PWMRight + CDRight) * Delta;

@@ -3,12 +3,12 @@
 interface
 
 uses
-  Core.Platforms, Core.RomFormat, System.IOUtils, System.SysUtils, System.Classes,
-  System.IniFiles, System.Generics.Collections, System.Types, System.UITypes,
-  FMX.Forms, FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls, FMX.Text,
-  FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox, FMX.Controls.Presentation,
-  Core.Storage, Core.Emulation, FMXInput, FMX.Objects, RM.Settings.Platform,
-  RM.Settings.Catalog;
+  Core.Platforms, Core.RomFormat, System.IOUtils, System.SysUtils,
+  System.Classes, System.IniFiles, System.Generics.Collections, System.Types,
+  System.UITypes, FMX.Forms, FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls,
+  FMX.Text, FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox,
+  FMX.Controls.Presentation, Core.Storage, Core.Emulation, FMXInput, FMX.Objects,
+  RM.Settings.Platform, RM.Settings.Catalog;
 
 const
   SETTINGS_CATEGORY_GENERAL = RM.Settings.platform.SETTINGS_CATEGORY_GENERAL;
@@ -131,7 +131,7 @@ type
     FContext: TSettingsPageContext;
     FFields: TObjectList<TSettingsField>;
     FDevices: TObjectList<TSettingsDevice>;
-    FDeviceIds: array[0..7] of string;
+    FDeviceIds: array[0..11] of string;
     FAlive: TFunc<Boolean>;
     FInvalidate: TProc;
     FSearch: TEdit;
@@ -837,7 +837,27 @@ begin
     FContext.PageId := platform.PageId;
     platform.Initialize(FContext);
   end;
+  ReplaceRuntime('RowNGModelEditor', TSettingsComboBox);
+  ReplaceRuntime('RowNGRegionEditor', TSettingsComboBox);
+  ReplaceRuntime('RowNGCardSizeEditor', TSettingsComboBox);
+  var NeoGeoClear := FindComponent('EditButtonRowNGBIOSClear') as TEditButton;
+  NeoGeoClear.TagObject := FindComponent('EditRowNGBIOSEditor');
+  NeoGeoClear.OnClick := ClearPathClick;
+  NeoGeoClear := FindComponent('EditButtonRowNGCardPathClear') as TEditButton;
+  NeoGeoClear.TagObject := FindComponent('EditRowNGCardPathEditor');
+  NeoGeoClear.OnClick := ClearPathClick;
   ReplaceRuntime('RowPCEModelEditor', TSettingsComboBox);
+  ReplaceRuntime('RowSaturnRegionEditor', TSettingsComboBox);
+  ReplaceRuntime('RowSaturnRAMCartEditor', TSettingsComboBox);
+  ReplaceRuntime('RowSaturnCDBackendEditor', TSettingsComboBox);
+  for var SaturnPort := 1 to 12 do
+    ReplaceRuntime('RowSaturnControllerPort' + IntToStr(SaturnPort) + 'Editor', TSettingsComboBox);
+  var SaturnClear := FindComponent('EditButtonRowSaturnBIOSClear') as TEditButton;
+  SaturnClear.TagObject := FindComponent('EditRowSaturnBIOSEditor');
+  SaturnClear.OnClick := ClearPathClick;
+  SaturnClear := FindComponent('EditButtonRowSaturnCartROMClear') as TEditButton;
+  SaturnClear.TagObject := FindComponent('EditRowSaturnCartROMEditor');
+  SaturnClear.OnClick := ClearPathClick;
   var PCEClear := FindComponent('EditButtonRowPCEBIOSClear') as TEditButton;
   PCEClear.TagObject := FindComponent('EditRowPCEBIOSEditor');
   PCEClear.OnClick := ClearPathClick;
@@ -882,7 +902,7 @@ begin
     ReplaceCombo('RowConnecteddevice18Port' + IntToStr(Port) + 'Editor', ['Automatic', 'Gamepad', 'Dendy · Turbo', 'Zapper', 'Power Pad', 'None']);
   for var Port := 1 to 8 do
     ReplaceCombo('RowConnecteddevice26Port' + IntToStr(Port) + 'Editor', ['Gamepad', 'None']);
-  for var Port := 0 to 7 do
+  for var Port := 0 to 11 do
     ReplaceCombo('RowInputsource' + IntToStr(Port) + 'Editor', []);
 end;
 
@@ -1090,8 +1110,10 @@ end;
 procedure TSettingsView.Heading(const Name: string);
 begin
   FGroup := FindComponent('Panel' + Name) as TPanel;
-  if Name = 'GroupPreview' then FGroup.Parent := LayoutSettingsPreviewColumn
-  else FGroup.Parent := LayoutSettingsMainColumn;
+  if Name = 'GroupPreview' then
+    FGroup.Parent := LayoutSettingsPreviewColumn
+  else
+    FGroup.Parent := LayoutSettingsMainColumn;
   // Top alignment uses previous Y for sorting. Reset only the sort key while
   // the column is updating, so page declaration order becomes alignment order.
   FGroup.Position.Y := 0;
@@ -1143,7 +1165,7 @@ begin
   begin
     Result.Items.Clear;
     for var Caption in Labels do
-      Result.Items.Add(Caption);
+      Result.Items.Add(Translate(Caption));
   end;
   var F := Field(Result, Section, Key);
   F.DefaultValue := Default;
@@ -1248,12 +1270,15 @@ begin
     LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
     var Columns := (FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
     LayoutSettingsPreviewColumn.Visible := (FPreviewGroup <> nil) and FPreviewGroup.Visible;
-    if Columns then begin
+    if Columns then
+    begin
       LayoutSettingsPreviewColumn.Align := TAlignLayout.Right;
-      LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Create(16,0,0,0);
+      LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Create(16, 0, 0, 0);
       LayoutSettingsPreviewColumn.Width := LayoutContent.Width * 0.38 - 8;
       LayoutSettingsMainColumn.Align := TAlignLayout.Client;
-    end else begin
+    end
+    else
+    begin
       LayoutSettingsMainColumn.Align := TAlignLayout.Top;
       LayoutSettingsPreviewColumn.Align := TAlignLayout.Bottom;
       // The last main card already contributes the shared 16px bottom margin.
@@ -1261,23 +1286,28 @@ begin
     end;
     var MainHeight: Single := 0;
     var PreviewHeight: Single := 0;
-    for var Column in [LayoutSettingsMainColumn,LayoutSettingsPreviewColumn] do
+    for var Column in [LayoutSettingsMainColumn, LayoutSettingsPreviewColumn] do
       for var I := 0 to Column.ChildrenCount - 1 do
-        if Column.Children[I] is TPanel then begin
+        if Column.Children[I] is TPanel then
+        begin
           var Card := TPanel(Column.Children[I]);
-          if not Card.Visible then Continue;
+          if not Card.Visible then
+            Continue;
           Card.Width := Column.Width;
           ArrangeGroup(Card);
           if Column = LayoutSettingsMainColumn then
             MainHeight := MainHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom
-          else PreviewHeight := PreviewHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom;
+          else
+            PreviewHeight := PreviewHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom;
         end;
     LayoutSettingsMainColumn.Height := MainHeight;
     LayoutSettingsPreviewColumn.Height := PreviewHeight;
-    if Columns then LayoutContent.Height := Max(MainHeight,PreviewHeight)
+    if Columns then
+      LayoutContent.Height := Max(MainHeight, PreviewHeight)
     else if LayoutSettingsPreviewColumn.Visible then
       LayoutContent.Height := MainHeight + PreviewHeight + LayoutSettingsPreviewColumn.Margins.Top
-    else LayoutContent.Height := MainHeight;
+    else
+      LayoutContent.Height := MainHeight;
     ButtonReset.Visible := LayoutFooter.Width >= 520;
     ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
     ButtonApply.Visible := FCaptureButton = nil;
@@ -1301,7 +1331,10 @@ begin
       if C is TPanel then
       begin
         C.Width := Max(0, Group.Width - 32);
-        if C.Tag = 1 then DeviceResize(C) else RowResize(C);
+        if C.Tag = 1 then
+          DeviceResize(C)
+        else
+          RowResize(C);
       end;
       if C.Visible then
         ContentHeight := ContentHeight + C.Height + C.Margins.Bottom;
@@ -1352,14 +1385,17 @@ begin
   if Editors.ChildrenCount > 0 then
   begin
     var Editor := TControl(Editors.Children[0]);
-    if Editor is TSwitch then W := 64
-    else if Editor is TLayout then W := 268;
+    if Editor is TSwitch then
+      W := 64
+    else if Editor is TLayout then
+      W := 268;
     if Narrow and (Editor is TSwitch) then
     begin
       Editor.Align := TAlignLayout.Right;
       Editor.Width := 64;
     end
-    else Editor.Align := TAlignLayout.Client;
+    else
+      Editor.Align := TAlignLayout.Client;
     Editor.Margins.Rect := TRectF.Empty;
   end;
   if Narrow then
@@ -1378,7 +1414,8 @@ end;
 
 procedure TSettingsView.DeviceResize(Sender: TObject);
 begin
-  if FDeviceArranging or (FDevices = nil) or (csDestroying in ComponentState) then Exit;
+  if FDeviceArranging or (FDevices = nil) or (csDestroying in ComponentState) then
+    Exit;
   FDeviceArranging := True;
   try
     var P := TPanel(Sender);
@@ -1606,21 +1643,21 @@ begin
     Exit;
 
   var Query := FSearch.Text.Trim.ToLower;
-  for var Column in [LayoutSettingsMainColumn,LayoutSettingsPreviewColumn] do
+  for var Column in [LayoutSettingsMainColumn, LayoutSettingsPreviewColumn] do
     for var I := 0 to Column.ChildrenCount - 1 do
       if Column.Children[I] is TPanel then
-    begin
-      var Group := TPanel(Column.Children[I]);
-      var ShowGroup := Query = '';
-      for var J := 0 to Group.ChildrenCount - 1 do
-        if Group.Children[J] is TPanel then
-        begin
-          var Row := TPanel(Group.Children[J]);
-          Row.Visible := (Query = '') or Row.TagString.ToLower.Contains(Query) or Group.TagString.ToLower.Contains(Query);
-          ShowGroup := ShowGroup or Row.Visible;
-        end;
-      Group.Visible := ShowGroup;
-    end;
+      begin
+        var Group := TPanel(Column.Children[I]);
+        var ShowGroup := Query = '';
+        for var J := 0 to Group.ChildrenCount - 1 do
+          if Group.Children[J] is TPanel then
+          begin
+            var Row := TPanel(Group.Children[J]);
+            Row.Visible := (Query = '') or Row.TagString.ToLower.Contains(Query) or Group.TagString.ToLower.Contains(Query);
+            ShowGroup := ShowGroup or Row.Visible;
+          end;
+        Group.Visible := ShowGroup;
+      end;
   Resize;
 end;
 
@@ -2176,25 +2213,25 @@ begin
   // Document provider URIs must be queried; combining them with a name is invalid.
   if Location.StartsWith('content://') then
     for var Folder in TAndroidStorage.Enumerate(Location, False, True) do
-      for var Platform in TPlatformRegistry.All do
-        for var Name in Platform.ScanFolders do
+      for var platform in TPlatformRegistry.All do
+        for var Name in platform.ScanFolders do
           if SameText(Folder.Name, Name) then
-          Exit;
+            Exit;
   {$ENDIF}
 
-  for var Platform in TPlatformRegistry.All do
-    for var Name in Platform.ScanFolders do
-  begin
+  for var platform in TPlatformRegistry.All do
+    for var Name in platform.ScanFolders do
+    begin
     {$IFDEF ANDROID}
-    if not Location.StartsWith('content://') then
+      if not Location.StartsWith('content://') then
     {$ENDIF}
-      if FStorage.FolderExists(System.IOUtils.TPath.Combine(Location, Name)) then
-        Exit;
+        if FStorage.FolderExists(System.IOUtils.TPath.Combine(Location, Name)) then
+          Exit;
 
-    if SupportedFolders <> '' then
-      SupportedFolders := SupportedFolders + ', ';
-    SupportedFolders := SupportedFolders + Name;
-  end;
+      if SupportedFolders <> '' then
+        SupportedFolders := SupportedFolders + ', ';
+      SupportedFolders := SupportedFolders + Name;
+    end;
   var Warning := Format(Translate('The selected folder contains no supported platform subfolders. ROMs must be placed in these subfolders: %s.'),
     [SupportedFolders]);
   LabelStatus.Text := Warning;

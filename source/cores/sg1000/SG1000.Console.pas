@@ -3,9 +3,10 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.UITypes, System.Math, Core.Emulation.Types,
-  Core.Snapshots, MD.Z80, SG1000.Cartridge, SG1000.VDP, SG1000.Sound,
-  SG1000.SF7000, SG1000.Cassette, SMS.Cartridge, SMS.VDP, MSX.Sound.OPLL;
+  System.SysUtils, System.Classes, System.UITypes, System.Math,
+  Core.Emulation.Types, Core.Snapshots, MD.Z80, SG1000.Cartridge, SG1000.VDP,
+  SG1000.Sound, SG1000.SF7000, SG1000.Cassette, SMS.Cartridge, SMS.VDP,
+  MSX.Sound.OPLL;
 
 type
   TSGHostKeys = array[0..255] of Boolean;

@@ -2,7 +2,8 @@
 
 interface
 
-uses Core.Platforms;
+uses
+  Core.Platforms;
 
 {$SCOPEDENUMS ON}
 
@@ -30,6 +31,7 @@ const
   SETTINGS_PAGE_SGX = 17;
   SETTINGS_PAGE_PCECD = 18;
   SETTINGS_PAGE_NEOGEOCD = 19;
+  SETTINGS_PAGE_SATURN = 20;
 
 type
   TPlatformPresentation = record
@@ -39,11 +41,13 @@ type
   end;
 
 function PlatformPresentation(System: TRomSystem): TPlatformPresentation; overload;
+
 function PlatformPresentation(const Id: string): TPlatformPresentation; overload;
 
 implementation
 
-uses System.SysUtils, Core.Platforms.Icons;
+uses
+  System.SysUtils, Core.Platforms.Icons;
 
 function PlatformPresentation(System: TRomSystem): TPlatformPresentation;
 begin
@@ -85,13 +89,19 @@ begin
         Result.PadLayout := TPlatformPadLayout.Snes;
         Result.IconData := PlatformIconSNES;
       end;
+    TRomSystem.Saturn:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_SATURN;
+        Result.PadLayout := TPlatformPadLayout.Sega;
+        Result.IconData := PlatformIconSaturn;
+      end;
     TRomSystem.N64:
       begin
         Result.SettingsPageId := SETTINGS_PAGE_N64;
         Result.PadLayout := TPlatformPadLayout.Nintendo64;
         Result.IconData := PlatformIconN64;
       end;
-    TRomSystem.MD:
+    TRomSystem.MD, TRomSystem.SegaCD, TRomSystem.Sega32X:
       begin
         Result.SettingsPageId := SETTINGS_PAGE_MD;
         Result.PadLayout := TPlatformPadLayout.Sega;
@@ -174,3 +184,4 @@ begin
 end;
 
 end.
+

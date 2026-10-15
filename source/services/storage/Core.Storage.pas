@@ -355,7 +355,11 @@ end;
 
 function TStorage.ConfigFile(const SystemId: string): string;
 begin
-  Result := TPath.Combine(FRoot, SafeName(SystemId) + '.ini');
+  var SettingsId := SystemId;
+  var Platform: TPlatformInfo;
+  if TPlatformRegistry.Find(SystemId, Platform) then
+    SettingsId := Platform.SettingsCoreId;
+  Result := TPath.Combine(FRoot, SafeName(SettingsId) + '.ini');
 end;
 
 function TStorage.ReadConfig(const Location: string): TMemIniFile;
@@ -567,7 +571,7 @@ begin
         SameText(Item.Name, 'neocd.zip')) then
         Continue;
       // Prefer the CUE with its complete TOC/audio over the paired data ISO.
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD]) and SameText(ExtractFileExt(Item.Name), '.iso') then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and SameText(ExtractFileExt(Item.Name), '.iso') then
       begin
         var HasCue := False;
         for var Candidate in Candidates do
@@ -578,7 +582,7 @@ begin
       end;
       // Listing never opens ROM streams. Header validation belongs to loading.
       var MaxSize := FMaxRomFileSize;
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD]) and (MaxSize = ROM_MAX_SIZE) then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := Int64(800) * 1024 * 1024;
       if (RomSystem = TRomSystem.NeoGeo) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := 256 * 1024 * 1024;

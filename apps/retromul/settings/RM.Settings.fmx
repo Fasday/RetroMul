@@ -1,4 +1,4 @@
-﻿object SettingsView: TSettingsView
+object SettingsView: TSettingsView
   Size.Width = 1228.000000000000000000
   Size.Height = 796.000000000000000000
   Size.PlatformDefault = False
@@ -1654,7 +1654,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 474.000000000000000000
+      Position.Y = 3294.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 146.000000000000000000
       Size.PlatformDefault = False
@@ -1723,7 +1723,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 636.000000000000000000
+      Position.Y = 3456.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 458.000000000000000000
       Size.PlatformDefault = False
@@ -2039,7 +2039,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 1110.000000000000000000
+      Position.Y = 3930.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 424.000000000000000000
       Size.PlatformDefault = False
@@ -2120,7 +2120,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 1550.000000000000000000
+      Position.Y = 4370.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 224.000000000000000000
       Size.PlatformDefault = False
@@ -2280,7 +2280,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 1790.000000000000000000
+      Position.Y = 4610.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 146.000000000000000000
       Size.PlatformDefault = False
@@ -2364,7 +2364,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 1952.000000000000000000
+      Position.Y = 4772.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 302.000000000000000000
       Size.PlatformDefault = False
@@ -2567,7 +2567,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2270.000000000000000000
+      Position.Y = 5090.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 302.000000000000000000
       Size.PlatformDefault = False
@@ -2799,7 +2799,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2588.000000000000000000
+      Position.Y = 5408.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 68.000000000000000000
       Size.PlatformDefault = False
@@ -2826,7 +2826,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2672.000000000000000000
+      Position.Y = 5492.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 68.000000000000000000
       Size.PlatformDefault = False
@@ -2853,7 +2853,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2756.000000000000000000
+      Position.Y = 5576.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -2885,7 +2885,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2832.000000000000000000
+      Position.Y = 5652.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -2917,7 +2917,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2908.000000000000000000
+      Position.Y = 5728.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -2949,7 +2949,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2984.000000000000000000
+      Position.Y = 5804.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -2981,7 +2981,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3060.000000000000000000
+      Position.Y = 5880.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -3013,7 +3013,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3136.000000000000000000
+      Position.Y = 5956.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -3045,7 +3045,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3212.000000000000000000
+      Position.Y = 6032.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -3077,7 +3077,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3440.000000000000000000
+      Position.Y = 6792.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -3132,7 +3132,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3440.000000000000000000
+      Position.Y = 6870.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -3187,7 +3187,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3518.000000000000000000
+      Position.Y = 7104.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -3283,64 +3283,63 @@
         end
       end
     end
-      object PanelRowNGPAL: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+    object PanelRowNGPAL: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2046.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGPALText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGPALText: TLayout
-          Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGPALTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object LabelRowNGPALTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'PAL video'
-          end
-          object LabelRowNGPALDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = '50 Hz AES video. Applies when opening a game.'
-          end
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'PAL video'
         end
-        object LayoutRowNGPALEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
-          Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGPALDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGPALEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = '50 Hz AES video. Applies when opening a game.'
         end
       end
+      object LayoutRowNGPALEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowNGPALEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
     object PanelGroupNGCard: TPanel
       Align = Top
       Padding.Left = 16.000000000000000000
@@ -3348,7 +3347,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3212.000000000000000000
+      Position.Y = 6108.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -3373,122 +3372,120 @@
         end
       end
     end
-      object PanelRowNGCardInserted: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+    object PanelRowNGCardInserted: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2124.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGCardInsertedText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGCardInsertedText: TLayout
-          Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGCardInsertedTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object LabelRowNGCardInsertedTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Card inserted'
-          end
-          object LabelRowNGCardInsertedDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Enable the shared memory card for cartridge games.'
-          end
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Card inserted'
         end
-        object LayoutRowNGCardInsertedEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
-          Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGCardInsertedDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGCardInsertedEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Enable the shared memory card for cartridge games.'
         end
       end
-      object PanelRowNGCardReadOnly: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+      object LayoutRowNGCardInsertedEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGCardReadOnlyText: TLayout
+        object SwitchRowNGCardInsertedEditor: TSwitch
           Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object LabelRowNGCardReadOnlyTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Write protected'
-          end
-          object LabelRowNGCardReadOnlyDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Games can read the card but cannot change it.'
-          end
-        end
-        object LayoutRowNGCardReadOnlyEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
           Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+          Size.Height = 32.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGCardReadOnlyEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
         end
       end
+    end
+    object PanelRowNGCardReadOnly: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2202.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGCardReadOnlyText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowNGCardReadOnlyTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Write protected'
+        end
+        object LabelRowNGCardReadOnlyDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Games can read the card but cannot change it.'
+        end
+      end
+      object LayoutRowNGCardReadOnlyEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowNGCardReadOnlyEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
     object PanelRowNGCardPath: TPanel
       Align = Top
       Padding.Left = 16.000000000000000000
@@ -3496,7 +3493,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3518.000000000000000000
+      Position.Y = 7182.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -3599,7 +3596,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3440.000000000000000000
+      Position.Y = 6948.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -3654,7 +3651,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3212.000000000000000000
+      Position.Y = 6184.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -3679,122 +3676,120 @@
         end
       end
     end
-      object PanelRowNGDiscPresent: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+    object PanelRowNGDiscPresent: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2280.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGDiscPresentText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGDiscPresentText: TLayout
-          Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGDiscPresentTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object LabelRowNGDiscPresentTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Disc inserted'
-          end
-          object LabelRowNGDiscPresentDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Insert or remove the mounted image.'
-          end
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Disc inserted'
         end
-        object LayoutRowNGDiscPresentEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
-          Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGDiscPresentDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGDiscPresentEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Insert or remove the mounted image.'
         end
       end
-      object PanelRowNGTrayOpen: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+      object LayoutRowNGDiscPresentEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGTrayOpenText: TLayout
+        object SwitchRowNGDiscPresentEditor: TSwitch
           Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object LabelRowNGTrayOpenTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Open tray'
-          end
-          object LabelRowNGTrayOpenDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Open or close the drive while the game is running.'
-          end
-        end
-        object LayoutRowNGTrayOpenEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
           Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+          Size.Height = 32.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGTrayOpenEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
         end
       end
+    end
+    object PanelRowNGTrayOpen: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2358.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGTrayOpenText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowNGTrayOpenTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Open tray'
+        end
+        object LabelRowNGTrayOpenDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Open or close the drive while the game is running.'
+        end
+      end
+      object LayoutRowNGTrayOpenEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowNGTrayOpenEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
     object PanelGroupNGCabinet: TPanel
       Align = Top
       Padding.Left = 16.000000000000000000
@@ -3802,7 +3797,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3212.000000000000000000
+      Position.Y = 6260.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -3827,238 +3822,503 @@
         end
       end
     end
-      object PanelRowNGSettingsMode: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+    object PanelRowNGSettingsMode: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2436.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGSettingsModeText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGSettingsModeText: TLayout
-          Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGSettingsModeTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object LabelRowNGSettingsModeTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'System settings at startup'
-          end
-          object LabelRowNGSettingsModeDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'F3 adds a service credit; F2 opens the service menu.'
-          end
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'System settings at startup'
         end
-        object LayoutRowNGSettingsModeEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
-          Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGSettingsModeDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGSettingsModeEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'F3 adds a service credit; F2 opens the service menu.'
         end
       end
-      object PanelRowNGFreePlay: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+      object LayoutRowNGSettingsModeEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGFreePlayText: TLayout
+        object SwitchRowNGSettingsModeEditor: TSwitch
           Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object LabelRowNGFreePlayTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Free play'
-          end
-          object LabelRowNGFreePlayDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Starts games without coins. Applies when opening a game.'
-          end
-        end
-        object LayoutRowNGFreePlayEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
           Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+          Size.Height = 32.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGFreePlayEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
         end
       end
-      object PanelRowNGFreeze: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+    end
+    object PanelRowNGFreePlay: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2514.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGFreePlayText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGFreezeText: TLayout
-          Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGFreePlayTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object LabelRowNGFreezeTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Freeze switch'
-          end
-          object LabelRowNGFreezeDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Freezes gameplay through the BIOS. Applies when opening a game.'
-          end
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Free play'
         end
-        object LayoutRowNGFreezeEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
-          Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+        object LabelRowNGFreePlayDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGFreezeEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Starts games without coins. Applies when opening a game.'
         end
       end
-      object PanelRowNGSingleCoin: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 212.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
+      object LayoutRowNGFreePlayEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowNGSingleCoinText: TLayout
+        object SwitchRowNGFreePlayEditor: TSwitch
           Align = Client
-          Size.Width = 756.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object LabelRowNGSingleCoinTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'Shared coin chute'
-          end
-          object LabelRowNGSingleCoinDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 756.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Shares the first coin input. Applies when opening a game.'
-          end
-        end
-        object LayoutRowNGSingleCoinEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 788.000000000000000000
-          Position.Y = 12.000000000000000000
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
           Size.Width = 64.000000000000000000
-          Size.Height = 48.000000000000000000
+          Size.Height = 32.000000000000000000
           Size.PlatformDefault = False
-          object SwitchRowNGSingleCoinEditor: TSwitch
-            Align = Client
-            IsChecked = False
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 64.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-          end
         end
       end
+    end
+    object PanelRowNGFreeze: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2592.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGFreezeText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowNGFreezeTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Freeze switch'
+        end
+        object LabelRowNGFreezeDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Freezes gameplay through the BIOS. Applies when opening a game.'
+        end
+      end
+      object LayoutRowNGFreezeEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowNGFreezeEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowNGSingleCoin: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2670.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowNGSingleCoinText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowNGSingleCoinTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Shared coin chute'
+        end
+        object LabelRowNGSingleCoinDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Shares the first coin input. Applies when opening a game.'
+        end
+      end
+      object LayoutRowNGSingleCoinEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowNGSingleCoinEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelGroupMDCDAudio: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Position.Y = 6336.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 60.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LayoutGroupMDCDAudioTitle: TLayout
+        Align = Top
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 14.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        object LabelGroupMDCDAudioTitle: TLabel
+          Align = Client
+          StyledSettings = [Family, FontColor]
+          Size.Width = 868.000000000000000000
+          Size.Height = 36.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 20.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Sega CD'
+        end
+      end
+    end
+    object PanelGroupMD32XAudio: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Position.Y = 6412.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 60.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LayoutGroupMD32XAudioTitle: TLayout
+        Align = Top
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 14.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        object LabelGroupMD32XAudioTitle: TLabel
+          Align = Client
+          StyledSettings = [Family, FontColor]
+          Size.Width = 868.000000000000000000
+          Size.Height = 36.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 20.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Sega 32X'
+        end
+      end
+    end
+    object PanelGroupMDCDInput: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Position.Y = 6488.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 60.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LayoutGroupMDCDInputTitle: TLayout
+        Align = Top
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 14.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        object LabelGroupMDCDInputTitle: TLabel
+          Align = Client
+          StyledSettings = [Family, FontColor]
+          Size.Width = 868.000000000000000000
+          Size.Height = 36.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 20.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Sega CD'
+        end
+      end
+    end
+    object PanelRowMDCDAudio: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2748.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowMDCDAudioText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowMDCDAudioTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Sega CD audio'
+        end
+        object LabelRowMDCDAudioDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'CD audio tracks and the Sega CD sound chip.'
+        end
+      end
+      object LayoutRowMDCDAudioEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowMDCDAudioEditor: TSwitch
+          Align = Client
+          IsChecked = True
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowMD32XAudio: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2826.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowMD32XAudioText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowMD32XAudioTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = '32X PWM audio'
+        end
+        object LabelRowMD32XAudioDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Sound from the 32X expansion, including Sega CD + 32X games.'
+        end
+      end
+      object LayoutRowMD32XAudioEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowMD32XAudioEditor: TSwitch
+          Align = Client
+          IsChecked = True
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowMDMicrophone: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2904.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowMDMicrophoneText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowMDMicrophoneTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Microphone'
+        end
+        object LabelRowMDMicrophoneDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 
+            'Karaoke audio input. A microphone device source must be connecte' +
+            'd.'
+        end
+      end
+      object LayoutRowMDMicrophoneEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowMDMicrophoneEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
     object PanelGroupPCEHardware: TPanel
       Align = Top
       Padding.Left = 16.000000000000000000
@@ -4066,7 +4326,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3212.000000000000000000
+      Position.Y = 6564.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -4098,7 +4358,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3288.000000000000000000
+      Position.Y = 6640.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -4130,7 +4390,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3364.000000000000000000
+      Position.Y = 6716.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -4162,7 +4422,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3440.000000000000000000
+      Position.Y = 7026.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -4217,7 +4477,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3518.000000000000000000
+      Position.Y = 7260.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -4320,7 +4580,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3596.000000000000000000
+      Position.Y = 7494.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -4376,7 +4636,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3674.000000000000000000
+      Position.Y = 7572.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -4432,7 +4692,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3752.000000000000000000
+      Position.Y = 7650.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -4490,7 +4750,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3830.000000000000000000
+      Position.Y = 7728.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -4546,7 +4806,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 3908.000000000000000000
+      Position.Y = 7806.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -4982,13 +5242,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings0Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings0Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -5018,13 +5280,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption0: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -5036,12 +5299,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture0: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -5053,7 +5316,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -5082,16 +5345,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments0: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList0: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -5209,7 +5474,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 5082.000000000000000000
+      Position.Y = 8980.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -5645,13 +5910,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings1Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings1Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -5681,13 +5948,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption1: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -5699,12 +5967,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture1: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -5716,7 +5984,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -5745,16 +6013,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments1: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList1: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -5872,7 +6142,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 6256.000000000000000000
+      Position.Y = 10154.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -6308,13 +6578,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings2Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings2Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -6344,13 +6616,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption2: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -6362,12 +6635,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture2: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -6379,7 +6652,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -6408,16 +6681,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments2: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList2: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -6535,7 +6810,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 7430.000000000000000000
+      Position.Y = 11328.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -6971,13 +7246,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings3Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings3Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -7007,13 +7284,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption3: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -7025,12 +7303,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture3: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -7042,7 +7320,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -7071,16 +7349,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments3: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList3: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -7198,7 +7478,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8604.000000000000000000
+      Position.Y = 12502.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -7634,13 +7914,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings4Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings4Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -7670,13 +7952,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption4: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -7688,12 +7971,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture4: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -7705,7 +7988,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -7734,16 +8017,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments4: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList4: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -7861,7 +8146,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 9778.000000000000000000
+      Position.Y = 13676.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -8297,13 +8582,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings5Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings5Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -8333,13 +8620,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption5: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -8351,12 +8639,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture5: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -8368,7 +8656,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -8397,16 +8685,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments5: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList5: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -8524,7 +8814,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 10952.000000000000000000
+      Position.Y = 14850.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -8960,13 +9250,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings6Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings6Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -8996,13 +9288,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption6: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -9014,12 +9307,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture6: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -9031,7 +9324,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -9060,16 +9353,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments6: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList6: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -9187,7 +9482,7 @@
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 12126.000000000000000000
+      Position.Y = 16024.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -9623,13 +9918,15 @@
         StyleLookup = 'retromul_row'
         object LayoutRowButtonbindings7Text: TLayout
           Align = Top
-          Size.Width = 0.000000000000000000
+          Position.X = 16.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 836.000000000000000000
           Size.Height = 34.000000000000000000
           Size.PlatformDefault = False
           object LabelRowButtonbindings7Title: TLabel
             Align = Top
             StyledSettings = [Family, Style, FontColor]
-            Size.Width = 820.000000000000000000
+            Size.Width = 836.000000000000000000
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 15.000000000000000000
@@ -9659,13 +9956,14 @@
             Align = Bottom
             Margins.Top = 8.000000000000000000
             Margins.Bottom = 8.000000000000000000
+            Position.Y = 330.000000000000000000
             Size.Width = 836.000000000000000000
             Size.Height = 64.000000000000000000
             Size.PlatformDefault = False
             object LabelBindingCaption7: TLabel
               Align = Client
               Size.Width = 568.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 64.000000000000000000
               Size.PlatformDefault = False
               TextSettings.Font.Size = 13.000000000000000000
               TextSettings.WordWrap = False
@@ -9677,12 +9975,12 @@
               Position.X = 568.000000000000000000
               Position.Y = 14.000000000000000000
               Size.Width = 268.000000000000000000
-              Size.Height = 392.000000000000000000
+              Size.Height = 36.000000000000000000
               Size.PlatformDefault = False
               object ButtonPadEditorsCapture7: TButton
                 Align = Client
                 Size.Width = 224.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 Text = 'Assign'
@@ -9694,7 +9992,7 @@
                 Margins.Left = 8.000000000000000000
                 Position.X = 232.000000000000000000
                 Size.Width = 36.000000000000000000
-                Size.Height = 392.000000000000000000
+                Size.Height = 36.000000000000000000
                 Size.PlatformDefault = False
                 StyleLookup = 'buttonstyle'
                 TextSettings.Trimming = Character
@@ -9723,16 +10021,18 @@
             Size.Height = 322.000000000000000000
             Size.PlatformDefault = False
             object LayoutPadAssignments7: TLayout
-              Margins.Left = 12.000000000000000000
               Align = Right
+              Margins.Left = 12.000000000000000000
               Margins.Top = 8.000000000000000000
               Margins.Bottom = 8.000000000000000000
+              Position.X = 588.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 248.000000000000000000
-              Size.Height = 420.000000000000000000
+              Size.Height = 306.000000000000000000
               Size.PlatformDefault = False
               object LayoutPadAssignmentList7: TLayout
                 Align = Top
-                Size.Width = 284.000000000000000000
+                Size.Width = 248.000000000000000000
                 Size.Height = 342.000000000000000000
                 Size.PlatformDefault = False
                 TabOrder = 0
@@ -9840,6 +10140,1421 @@
               end
             end
           end
+        end
+      end
+    end
+    object PanelGroupSaturnSystem: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Position.Y = 474.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 230.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LabelGroupSaturnSystemTitle: TLabel
+        Align = Top
+        StyledSettings = [Family, Style, FontColor]
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 14.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Font.Size = 20.000000000000000000
+        Text = 'System'
+      end
+    end
+    object PanelRowSaturnRegion: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 720.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnRegionText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnRegionTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Region'
+        end
+        object LabelRowSaturnRegionDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Select the console region used by the BIOS.'
+        end
+      end
+      object LayoutRowSaturnRegionEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 20.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnRegionEditorSlot: TLayout
+          Align = Client
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnCDBackend: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 798.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnCDBackendText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnCDBackendTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'CD Block'
+        end
+        object LabelRowSaturnCDBackendDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 
+            'Command model or original SH-1 firmware. Firmware mode is experi' +
+            'mental.'
+        end
+      end
+      object LayoutRowSaturnCDBackendEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 20.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnCDBackendEditorSlot: TLayout
+          Align = Client
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnProtection: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 876.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnProtectionText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnProtectionTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Optical protection'
+        end
+        object LabelRowSaturnProtectionDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 
+            'Require the physical security ring. Sector images cannot provide' +
+            ' it.'
+        end
+      end
+      object LayoutRowSaturnProtectionEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 20.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowSaturnProtectionEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnCartROM: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 7338.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnCartROMText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnCartROMTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'ROM cartridge file'
+        end
+        object LabelRowSaturnCartROMDetail: TLabel
+          Align = Client
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.WordWrap = False
+          Text = 
+            'Game-specific ROM cartridge image, used when ROM cartridge is se' +
+            'lected.'
+        end
+      end
+      object LayoutRowSaturnCartROMEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object EditRowSaturnCartROMEditor: TEdit
+          Touch.InteractiveGestures = [LongTap, DoubleTap]
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+          object EditButtonRowSaturnCartROMBrowse: TEditButton
+            Touch.InteractiveGestures = [LongTap]
+            CanFocus = False
+            Cursor = crArrow
+            Size.Width = 32.000000000000000000
+            Size.Height = 50.000000000000000000
+            Size.PlatformDefault = False
+            TabOrder = 0
+            Text = #8230
+          end
+          object EditButtonRowSaturnCartROMClear: TEditButton
+            Touch.InteractiveGestures = [LongTap]
+            CanFocus = False
+            Cursor = crArrow
+            Position.X = 32.000000000000000000
+            Size.Width = 32.000000000000000000
+            Size.Height = 50.000000000000000000
+            Size.PlatformDefault = False
+            TabOrder = 1
+            object PathSaturnCartROMClear: TPath
+              Align = Center
+              Data.Path = {
+                280000000000000075AB2540DDCD2D4001000000705F2940705F294002000000
+                0B7B3440AA431E400200000063B94540C8071D40020000002332524075AB2540
+                0100000090A05640705F294001000000000000414260E94001000000A8574A41
+                705F2940020000009A774D4122E01C40020000006688524122E01C4002000000
+                58A85541705F294002000000E3C7584194DE354002000000E3C758416C214A40
+                0200000058A8554190A0564001000000DF4F0B41000000410100000058A85541
+                A8574A4102000000006F5841B81E4D41020000000EBE58412F6E514102000000
+                189556417E8C54410100000058A8554158A855410200000048E15241006F5841
+                02000000D1914E410EBE58410200000082734B411895564101000000A8574A41
+                58A855410100000000000041DF4F0B410100000090A0564058A8554102000000
+                6C214A40E3C758410200000094DE3540E3C7584102000000705F294058A85541
+                0200000022E01C40668852410200000022E01C409A774D4102000000705F2940
+                A8574A41010000004260E9400000004101000000705F294090A0564002000000
+                AA431E40F5844B4002000000C8071D409D463A400200000075AB2540DDCD2D40
+                01000000705F2940705F29400100000075AB2540DDCD2D400300000075AB2540
+                DDCD2D40}
+              Fill.Color = xFFE8ECF1
+              HitTest = False
+              Size.Width = 14.000000000000000000
+              Size.Height = 14.000000000000000000
+              Size.PlatformDefault = False
+              Stroke.Kind = None
+              WrapMode = Fit
+            end
+          end
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort1: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1110.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort1Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort1Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort1Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort1EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort1EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort2: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1188.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort2Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort2Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort2Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort2EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort2EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort3: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1266.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort3Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort3Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort3Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort3EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort3EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort4: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1344.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort4Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort4Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort4Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort4EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort4EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort5: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1422.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort5Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort5Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort5Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort5EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort5EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort6: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1500.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort6Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort6Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort6Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort6EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort6EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort7: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1578.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort7Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort7Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort7Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort7EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort7EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort8: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1656.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort8Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort8Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort8Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort8EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort8EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort9: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1734.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort9Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort9Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort9Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort9EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort9EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort10: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1812.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort10Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort10Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort10Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort10EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort10EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort11: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1890.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort11Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort11Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort11Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort11EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort11EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnControllerPort12: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1968.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnControllerPort12Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnControllerPort12Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowSaturnControllerPort12Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Digital pad, analog 3D pad, or disconnected.'
+        end
+      end
+      object LayoutRowSaturnControllerPort12EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnControllerPort12EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowInputsource8: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 2982.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowInputsource8Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowInputsource8Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Input source'
+        end
+        object LabelRowInputsource8Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Choose a device, then assign its buttons, axes or D-pad.'
+        end
+      end
+      object LayoutRowInputsource8EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowInputsource8EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowInputsource9: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 3060.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowInputsource9Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowInputsource9Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Input source'
+        end
+        object LabelRowInputsource9Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Choose a device, then assign its buttons, axes or D-pad.'
+        end
+      end
+      object LayoutRowInputsource9EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowInputsource9EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowInputsource10: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 3138.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowInputsource10Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowInputsource10Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Input source'
+        end
+        object LabelRowInputsource10Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Choose a device, then assign its buttons, axes or D-pad.'
+        end
+      end
+      object LayoutRowInputsource10EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowInputsource10EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowInputsource11: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 3216.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowInputsource11Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowInputsource11Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Input source'
+        end
+        object LabelRowInputsource11Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Choose a device, then assign its buttons, axes or D-pad.'
+        end
+      end
+      object LayoutRowInputsource11EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowInputsource11EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnRAMCart: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 954.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnRAMCartText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnRAMCartTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Cartridge'
+        end
+        object LabelRowSaturnRAMCartDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Expansion RAM, game ROM, or persistent backup memory.'
+        end
+      end
+      object LayoutRowSaturnRAMCartEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 20.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowSaturnRAMCartEditorSlot: TLayout
+          Align = Client
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowSaturnBIOS: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 7416.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnBIOSText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnBIOSTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'BIOS file'
+        end
+        object LabelRowSaturnBIOSDetail: TLabel
+          Align = Client
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.WordWrap = False
+          Text = 'Optional 512 KiB BIOS override. A regional BIOS is built in.'
+        end
+      end
+      object LayoutRowSaturnBIOSEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object EditRowSaturnBIOSEditor: TEdit
+          Touch.InteractiveGestures = [LongTap, DoubleTap]
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+          object EditButtonRowSaturnBIOSBrowse: TEditButton
+            Touch.InteractiveGestures = [LongTap]
+            CanFocus = False
+            Cursor = crArrow
+            Size.Width = 32.000000000000000000
+            Size.Height = 50.000000000000000000
+            Size.PlatformDefault = False
+            TabOrder = 0
+            Text = #8230
+          end
+          object EditButtonRowSaturnBIOSClear: TEditButton
+            Touch.InteractiveGestures = [LongTap]
+            CanFocus = False
+            Cursor = crArrow
+            Position.X = 32.000000000000000000
+            Size.Width = 32.000000000000000000
+            Size.Height = 50.000000000000000000
+            Size.PlatformDefault = False
+            TabOrder = 1
+            object PathSaturnBIOSClear: TPath
+              Align = Center
+              Data.Path = {
+                280000000000000075AB2540DDCD2D4001000000705F2940705F294002000000
+                0B7B3440AA431E400200000063B94540C8071D40020000002332524075AB2540
+                0100000090A05640705F294001000000000000414260E94001000000A8574A41
+                705F2940020000009A774D4122E01C40020000006688524122E01C4002000000
+                58A85541705F294002000000E3C7584194DE354002000000E3C758416C214A40
+                0200000058A8554190A0564001000000DF4F0B41000000410100000058A85541
+                A8574A4102000000006F5841B81E4D41020000000EBE58412F6E514102000000
+                189556417E8C54410100000058A8554158A855410200000048E15241006F5841
+                02000000D1914E410EBE58410200000082734B411895564101000000A8574A41
+                58A855410100000000000041DF4F0B410100000090A0564058A8554102000000
+                6C214A40E3C758410200000094DE3540E3C7584102000000705F294058A85541
+                0200000022E01C40668852410200000022E01C409A774D4102000000705F2940
+                A8574A41010000004260E9400000004101000000705F294090A0564002000000
+                AA431E40F5844B4002000000C8071D409D463A400200000075AB2540DDCD2D40
+                01000000705F2940705F29400100000075AB2540DDCD2D400300000075AB2540
+                DDCD2D40}
+              Fill.Color = xFFE8ECF1
+              HitTest = False
+              Size.Width = 14.000000000000000000
+              Size.Height = 14.000000000000000000
+              Size.PlatformDefault = False
+              Stroke.Kind = None
+              WrapMode = Fit
+            end
+          end
+        end
+      end
+    end
+    object PanelRowSaturnPAL: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 1032.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowSaturnPALText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowSaturnPALTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'PAL video'
+        end
+        object LabelRowSaturnPALDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Use PAL video timing.'
+        end
+      end
+      object LayoutRowSaturnPALEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 20.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowSaturnPALEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
         end
       end
     end

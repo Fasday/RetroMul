@@ -2,7 +2,7 @@
 
 interface
 
-uses System.SysUtils, System.Classes, System.UITypes, HW.SH2, Core.Snapshots;
+uses System.SysUtils, System.Classes, System.UITypes, HW.SH2, HW.SH7604, Core.Snapshots;
 
 type
   TMD32X = class
@@ -604,14 +604,7 @@ end;
 
 procedure TMD32X.TouchCache(CPU, Entry, Way: Integer);
 begin
-  var V := FState.CacheLRU[CPU,Entry];
-  case Way of
-    0: V := V and $07;
-    1: V := (V and $19) or $20;
-    2: V := (V and $2A) or $14;
-    3: V := (V and $34) or $0B;
-  end;
-  FState.CacheLRU[CPU,Entry] := V;
+  SH7604TouchLRU(FState.CacheLRU[CPU,Entry],Way);
 end;
 
 function TMD32X.ReadSH2(CPU: Integer; Address: Cardinal; Size: Integer; Instruction: Boolean): Cardinal;

@@ -11,6 +11,8 @@ const
   ROM_SYSTEM_GBC = 'gbc';
   ROM_SYSTEM_GBA = 'gba';
   ROM_SYSTEM_MD = 'md';
+  ROM_SYSTEM_SEGACD = 'segacd';
+  ROM_SYSTEM_SEGA32X = 'sega32x';
   ROM_SYSTEM_SG1000 = 'sg1000';
   ROM_SYSTEM_SC3000 = 'sc3000';
   ROM_SYSTEM_SF7000 = 'sf7000';
@@ -23,6 +25,7 @@ const
   ROM_SYSTEM_PCECD = 'pcecd';
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
+  ROM_SYSTEM_SATURN = 'saturn';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
   ROM_FOLDER_MD = 'megadrive';
@@ -45,6 +48,7 @@ const
   ROM_CORE_ID_PCECD = 'PCECD';
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
+  ROM_CORE_ID_SATURN = 'SATURN';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
   ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
 
@@ -344,6 +348,9 @@ function DetectRom(const Data: TBytes): TRomFormatInfo;
 
 begin
   Result := Default(TRomFormatInfo);
+  // Retail Saturn BIOS reset vectors. Identification is independent of filenames.
+  if (Length(Data)>=16) and Signature(0,AnsiString(#$20#$00#$02#$00#$06#$00#$20#$00#$20#$00#$02#$00#$06#$00#$20#$00)) then
+  begin Result.System:=TRomSystem.Saturn; Exit; end;
   for var Offset in [$1FF0, $3FF0, $7FF0] do
     for var Header in [0, ROM_COPIER_HEADER_SIZE] do
       if Signature(Offset + Header, 'TMR SEGA') and

@@ -3,11 +3,12 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.SyncObjs, System.IniFiles, Core.Storage;
+  System.SysUtils, System.Classes, System.SyncObjs, System.IniFiles,
+  Core.Storage;
 
 type
   TCoreInputPorts = record
-    Devices: array[0..7] of string;
+    Devices: array[0..11] of string;
     Multitap: array[0..1] of Boolean;
     Expansion: string;
     FourScore, LegacyZapper, KeyboardEnabled: Boolean;
@@ -49,10 +50,12 @@ implementation
 function SameInputPorts(const A, B: TCoreInputPorts): Boolean;
 begin
   Result := False;
-  for var I := 0 to High(A.Devices) do
-    if A.Devices[I] <> B.Devices[I] then Exit;
-  for var I := 0 to High(A.Multitap) do
-    if A.Multitap[I] <> B.Multitap[I] then Exit;
+  for var i := 0 to High(A.Devices) do
+    if A.Devices[i] <> B.Devices[i] then
+      Exit;
+  for var i := 0 to High(A.Multitap) do
+    if A.Multitap[i] <> B.Multitap[i] then
+      Exit;
   Result := (A.Expansion = B.Expansion) and (A.FourScore = B.FourScore) and
     (A.LegacyZapper = B.LegacyZapper) and (A.KeyboardEnabled = B.KeyboardEnabled);
 end;
@@ -76,7 +79,11 @@ end;
 function TInputPortsCommand.GetPorts: TCoreInputPorts;
 begin
   FLock.Enter;
-  try Result := FCurrent; finally FLock.Leave; end;
+  try
+    Result := FCurrent;
+  finally
+    FLock.Leave;
+  end;
 end;
 
 procedure TInputPortsCommand.Apply(Worker: TThread; const Ports: TCoreInputPorts; Wake: TEvent);
@@ -85,7 +92,8 @@ begin
   try
     FLock.Enter;
     try
-      if FInitialized and SameInputPorts(FCurrent, Ports) then Exit;
+      if FInitialized and SameInputPorts(FCurrent, Ports) then
+        Exit;
       if (Worker = nil) or Worker.Suspended then
       begin
         FCurrent := Ports;
@@ -98,16 +106,24 @@ begin
       FError := '';
       FDone.ResetEvent;
       FPending := True;
-    finally FLock.Leave; end;
-    if Wake <> nil then Wake.SetEvent;
+    finally
+      FLock.Leave;
+    end;
+    if Wake <> nil then
+      Wake.SetEvent;
     while FDone.WaitFor(50) <> wrSignaled do
       if Worker.Finished then
         raise EInvalidOpException.Create('Emulation stopped before connecting input devices');
     FLock.Enter;
     try
-      if FError <> '' then raise EInvalidOpException.Create(FError);
-    finally FLock.Leave; end;
-  finally FCommandLock.Leave; end;
+      if FError <> '' then
+        raise EInvalidOpException.Create(FError);
+    finally
+      FLock.Leave;
+    end;
+  finally
+    FCommandLock.Leave;
+  end;
 end;
 
 procedure TInputPortsCommand.Process(const Action: TInputPortsAction);
@@ -115,13 +131,20 @@ begin
   var Ports: TCoreInputPorts;
   FLock.Enter;
   try
-    if not FPending then Exit;
+    if not FPending then
+      Exit;
     Ports := FRequested;
-  finally FLock.Leave; end;
+  finally
+    FLock.Leave;
+  end;
   var ErrorText := '';
   try
-    if Assigned(Action) then Action(Ports);
-  except on E: Exception do ErrorText := E.Message; end;
+    if Assigned(Action) then
+      Action(Ports);
+  except
+    on E: Exception do
+      ErrorText := E.Message;
+  end;
   FLock.Enter;
   try
     FError := ErrorText;
@@ -132,15 +155,17 @@ begin
     end;
     FPending := False;
     FDone.SetEvent;
-  finally FLock.Leave; end;
+  finally
+    FLock.Leave;
+  end;
 end;
 
 function ReadCoreInputPorts(Ini: TCustomIniFile): TCoreInputPorts;
 begin
-  for var I := 0 to 7 do
-    Result.Devices[I] := Ini.ReadString('Ports', 'Port' + IntToStr(I + 1), 'auto').ToLower;
-  for var I := 0 to 1 do
-    Result.Multitap[I] := Ini.ReadBool('Input', 'Multitap' + IntToStr(I + 1), False);
+  for var i := 0 to High(Result.Devices) do
+    Result.Devices[i] := Ini.ReadString('Ports', 'Port' + IntToStr(i + 1), 'auto').ToLower;
+  for var i := 0 to 1 do
+    Result.Multitap[i] := Ini.ReadBool('Input', 'Multitap' + IntToStr(i + 1), False);
   Result.Expansion := Ini.ReadString('Ports', 'Expansion', 'auto').ToLower;
   Result.FourScore := Ini.ReadBool('Input', 'FourScore', False);
   Result.LegacyZapper := Ini.ReadBool('Input', 'Zapper', False);

@@ -196,6 +196,11 @@ procedure TNeoGeoWorker.ConfigureMedia(CardInserted, CardReadOnly, DiscPresent, 
 begin
   FLock.Acquire;
   try
+    // Input polling also reapplies media settings. Unchanged media must not
+    // interrupt the frame limiter on every frontend poll.
+    if (FCardInserted = CardInserted) and (FCardReadOnly = CardReadOnly) and
+      (FDiscPresent = DiscPresent) and (FTrayOpen = TrayOpen) then
+      Exit;
     if (FCardInserted <> CardInserted) or (FCardReadOnly <> CardReadOnly) then FCardChanged := True;
     FCardInserted := CardInserted;
     FCardReadOnly := CardReadOnly;
@@ -458,6 +463,15 @@ begin
           WasPaused := True;
           FWake.WaitFor(10);
           Deadline := TStopwatch.GetTimeStamp;
+          Continue;
+        end;
+
+        // A command may wake the end-of-frame wait early. Process it above,
+        // then wait for the same deadline before executing another frame.
+        // Re-enter the loop after waiting so input and pause state are current.
+        if TStopwatch.GetTimeStamp < Round(Deadline) then
+        begin
+          FrameHints.WaitUntil(FWake, Round(Deadline));
           Continue;
         end;
 

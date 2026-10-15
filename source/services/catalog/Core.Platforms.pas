@@ -2,13 +2,14 @@
 
 interface
 
-uses System.SysUtils, System.Generics.Collections;
+uses
+  System.SysUtils, System.Generics.Collections;
 
 {$SCOPEDENUMS ON}
 
 type
   TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
-    SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD);
+    SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn);
 
 type
   // Stable system IDs and settings keys preserve existing collections and INI files.
@@ -23,11 +24,9 @@ type
 
   TPlatformRegistry = class sealed
   strict private
-    class var FItems: TList<TPlatformInfo>;
-    class procedure RegisterPlatform(System: TRomSystem; const Id, Name, ShortName,
-      Manufacturer, SearchTerms, Folder: string; const ScanFolders, Extensions: array of string; const SettingsProfile, SettingsCoreId: string;
-      Ports: Integer;
-      const LegacySettingsId: string = ''); static;
+    class var
+      FItems: TList<TPlatformInfo>;
+    class procedure RegisterPlatform(System: TRomSystem; const Id, Name, ShortName, Manufacturer, SearchTerms, Folder: string; const ScanFolders, Extensions: array of string; const SettingsProfile, SettingsCoreId: string; Ports: Integer; const LegacySettingsId: string = ''); static;
   public
     class constructor Create;
     class destructor Destroy;
@@ -40,7 +39,8 @@ type
 
 implementation
 
-uses System.Generics.Defaults, Core.RomFormat;
+uses
+  System.Generics.Defaults, Core.RomFormat;
 
 function TPlatformInfo.CopyInfo: TPlatformInfo;
 begin
@@ -73,9 +73,14 @@ begin
   RegisterPlatform(TRomSystem.N64, ROM_SYSTEM_N64, 'Nintendo 64', 'Nintendo 64',
     'Nintendo', 'N64', 'n64', ['n64'], [ROM_EXTENSION_Z64, ROM_EXTENSION_N64, ROM_EXTENSION_V64],
     'N64', 'n64', 4);
-  RegisterPlatform(TRomSystem.MD, ROM_SYSTEM_MD, 'Mega Drive', 'Mega Drive',
-    'Sega', 'MD Genesis 32X Mega CD', 'megadrive', ['megadrive', '32x', 'segacd', 'megacd'],
-    [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD, '.32x', ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+  RegisterPlatform(TRomSystem.MD, ROM_SYSTEM_MD, 'MegaDrive', 'MegaDrive',
+    'Sega', 'MD Genesis Sega CD Mega CD 32X', 'megadrive', ['megadrive'], [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD],
+    'MegaDrive', 'md', 4);
+  RegisterPlatform(TRomSystem.SegaCD, ROM_SYSTEM_SEGACD, 'Sega CD', 'Sega CD',
+    'Sega', 'Mega CD CD32X 32X CD', 'segacd', ['segacd', 'megacd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'MegaDrive', 'md', 4);
+  RegisterPlatform(TRomSystem.Sega32X, ROM_SYSTEM_SEGA32X, 'Sega 32X', 'Sega 32X',
+    'Sega', '32X Mars Super 32X', 'sega32x', ['sega32x', '32x'], ['.32x', ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD, ROM_EXTENSION_SMD],
     'MegaDrive', 'md', 4);
   RegisterPlatform(TRomSystem.SG1000, ROM_SYSTEM_SG1000, 'SG-1000', 'SG-1000',
     'Sega', 'SG1000 SG-1000 II SK-1100', 'sg1000', ['sg1000'], [ROM_EXTENSION_SG, ROM_EXTENSION_SMS],
@@ -87,11 +92,14 @@ begin
     'Sega', 'SF7000 floppy', 'sf7000', ['sf7000', 'sg1000'], [ROM_EXTENSION_SF7, ROM_EXTENSION_SF, ROM_EXTENSION_DSK],
     'SF7000', 'sf7000', 2);
   RegisterPlatform(TRomSystem.SMS, ROM_SYSTEM_SMS, 'Master System', 'Master System',
-    'Sega', 'SMS Mark III', 'sms', ['sms'], [ROM_EXTENSION_SMS],
+    'Sega', 'SMS Mark III', 'mastersystem', ['mastersystem', 'sms'], [ROM_EXTENSION_SMS],
     'MasterSystem', 'sms', 2);
   RegisterPlatform(TRomSystem.GameGear, ROM_SYSTEM_GG, 'Game Gear', 'Game Gear',
-    'Sega', 'GG GameGear', 'gg', ['gg'], [ROM_EXTENSION_GG],
+    'Sega', 'GG GameGear', 'gamegear', ['gamegear', 'gg'], [ROM_EXTENSION_GG],
     'GameGear', 'gg', 1);
+  RegisterPlatform(TRomSystem.Saturn, ROM_SYSTEM_SATURN, 'SEGA Saturn', 'Saturn',
+    'Sega', 'Saturn SH2 CD', 'saturn', ['saturn'], [ROM_EXTENSION_BIN, ROM_EXTENSION_GENERIC, '.bios', ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'Saturn', 'saturn', 2);
   RegisterPlatform(TRomSystem.Multivision, ROM_SYSTEM_OMV, 'Multivision', 'Multivision',
     'Tsukuda Original', 'OMV Othello Multivision', 'omv', ['omv', 'sg1000'], [ROM_EXTENSION_MV],
     'Multivision', 'omv', 2);
@@ -108,13 +116,14 @@ begin
     'NEC', 'SGX', 'sgx', ['sgx', 'supergrafx', 'pcengine', 'pce'], [ROM_EXTENSION_SGX, ROM_EXTENSION_PCE, ROM_EXTENSION_ZIP],
     'PCE', 'sgx', 5);
   RegisterPlatform(TRomSystem.PCECD, ROM_SYSTEM_PCECD, 'PC Engine CD', 'PC Engine CD',
-    'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcecd', ['pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcenginecd', ['pcenginecd', 'pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
     'PCE', 'pcecd', 5);
   FItems.Sort(TComparer<TPlatformInfo>.Construct(
     function(const A, B: TPlatformInfo): Integer
     begin
       Result := CompareText(A.Manufacturer, B.Manufacturer);
-      if Result = 0 then Result := CompareText(A.Name, B.Name);
+      if Result = 0 then
+        Result := CompareText(A.Name, B.Name);
     end));
 end;
 
@@ -123,10 +132,7 @@ begin
   FItems.Free;
 end;
 
-class procedure TPlatformRegistry.RegisterPlatform(System: TRomSystem;
-  const Id, Name, ShortName, Manufacturer, SearchTerms, Folder: string;
-  const ScanFolders, Extensions: array of string;
-  const SettingsProfile, SettingsCoreId: string; Ports: Integer; const LegacySettingsId: string);
+class procedure TPlatformRegistry.RegisterPlatform(System: TRomSystem; const Id, Name, ShortName, Manufacturer, SearchTerms, Folder: string; const ScanFolders, Extensions: array of string; const SettingsProfile, SettingsCoreId: string; Ports: Integer; const LegacySettingsId: string);
 begin
   if (System = TRomSystem.Unknown) or (Id = '') or (Name = '') or
     (Manufacturer = '') or (Folder = '') or (Length(ScanFolders) = 0) or
@@ -134,22 +140,23 @@ begin
     (SettingsCoreId = '') then
     raise EArgumentException.Create('Invalid platform: ' + Id);
   for var Existing in FItems do
-    if (Existing.System = System) or SameText(Existing.Id, Id) or
-      SameText(Existing.SettingsCoreId, SettingsCoreId) then
+    if (Existing.System = System) or SameText(Existing.Id, Id) then
       raise EArgumentException.Create('Duplicate platform: ' + Id);
   var Item: TPlatformInfo;
   Item.System := System;
   Item.Id := Id;
-  Item.CoreId := Id.ToUpper;
+  Item.CoreId := SettingsCoreId.ToUpper;
   Item.Name := Name;
   Item.ShortName := ShortName;
   Item.Manufacturer := Manufacturer;
   Item.SearchTerms := SearchTerms;
   Item.Folder := Folder;
   SetLength(Item.ScanFolders, Length(ScanFolders));
-  for var I := 0 to High(ScanFolders) do Item.ScanFolders[I] := ScanFolders[I];
+  for var I := 0 to High(ScanFolders) do
+    Item.ScanFolders[I] := ScanFolders[I];
   SetLength(Item.Extensions, Length(Extensions));
-  for var I := 0 to High(Extensions) do Item.Extensions[I] := Extensions[I];
+  for var I := 0 to High(Extensions) do
+    Item.Extensions[I] := Extensions[I];
   Item.SettingsProfile := SettingsProfile;
   Item.SettingsCoreId := SettingsCoreId;
   Item.LegacySettingsId := LegacySettingsId;
@@ -160,7 +167,8 @@ end;
 class function TPlatformRegistry.All: TArray<TPlatformInfo>;
 begin
   SetLength(Result, FItems.Count);
-  for var I := 0 to FItems.Count - 1 do Result[I] := FItems[I].CopyInfo;
+  for var I := 0 to FItems.Count - 1 do
+    Result[I] := FItems[I].CopyInfo;
 end;
 
 class function TPlatformRegistry.Find(const Id: string; out Info: TPlatformInfo): Boolean;
@@ -203,8 +211,10 @@ begin
       var Masks := '';
       for var Ext in Item.Extensions do
       begin
-        if not Extensions.Contains(Ext) then Extensions.Add(Ext);
-        if Masks <> '' then Masks := Masks + ';';
+        if not Extensions.Contains(Ext) then
+          Extensions.Add(Ext);
+        if Masks <> '' then
+          Masks := Masks + ';';
         Masks := Masks + '*' + Ext;
       end;
       Result := Result + '|' + Item.Name + '|' + Masks;
@@ -212,7 +222,8 @@ begin
     var Masks := '';
     for var Ext in Extensions do
     begin
-      if Masks <> '' then Masks := Masks + ';';
+      if Masks <> '' then
+        Masks := Masks + ';';
       Masks := Masks + '*' + Ext;
     end;
     Result := 'ROM|' + Masks + Result;
@@ -222,3 +233,4 @@ begin
 end;
 
 end.
+

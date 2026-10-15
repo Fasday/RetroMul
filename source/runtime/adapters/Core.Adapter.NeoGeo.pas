@@ -3,9 +3,8 @@
 interface
 
 uses
-  Core.InputConfig,
-  System.SysUtils, System.Classes, System.IniFiles, Core.Storage, Core.Emulation,
-  NeoGeo.Cartridge, NeoGeo.Emulation;
+  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles,
+  Core.Storage, Core.Emulation, NeoGeo.Cartridge, NeoGeo.Emulation;
 
 type
   TNeoGeoKeyMap = array[TEmulatorButton] of UInt32;
@@ -109,7 +108,8 @@ begin
   FCardSize := Ini.ReadInteger('MemoryCard', 'Size', 2048);
   FDiscPresent := Ini.ReadBool('Drive', 'DiscPresent', True);
   FTrayOpen := Ini.ReadBool('Drive', 'TrayOpen', False);
-  if (FCardSize < 2048) or (FCardSize > 16384) or (FCardSize mod 2048 <> 0) then FCardSize := 2048;
+  if (FCardSize < 2048) or (FCardSize > 16384) or (FCardSize mod 2048 <> 0) then
+    FCardSize := 2048;
   for var B in Buttons do
   begin
     FKeys[B] := ReadEmulatorKey(Ini, 'Keys', KeyNames[B], FKeys[B]);
@@ -164,10 +164,14 @@ begin
   FCartridge.CardInserted := Config.FCardInserted;
   FCartridge.CardReadOnly := Config.FCardReadOnly;
   FCartridge.CardSize := Config.FCardSize;
-  if Config.FDIPSettings then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $FE;
-  if Config.FDIPSingleCoin then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $FD;
-  if Config.FDIPFreePlay then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $BF;
-  if Config.FDIPFreeze then FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $7F;
+  if Config.FDIPSettings then
+    FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $FE;
+  if Config.FDIPSingleCoin then
+    FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $FD;
+  if Config.FDIPFreePlay then
+    FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $BF;
+  if Config.FDIPFreeze then
+    FCartridge.CabinetDIPs := FCartridge.CabinetDIPs and $7F;
   FKeys := Config.Keys;
   FKeys2 := Config.Keys2;
 
@@ -307,9 +311,15 @@ begin
     (FCartridge.Protection <> 'vliner') then
   begin
     if Code = vkF3 then
-      if Pressed then Include(FKeyboard, TEmulatorButton.Y) else Exclude(FKeyboard, TEmulatorButton.Y);
+      if Pressed then
+        Include(FKeyboard, TEmulatorButton.Y)
+      else
+        Exclude(FKeyboard, TEmulatorButton.Y);
     if Code = vkF2 then
-      if Pressed then Include(FKeyboard, TEmulatorButton.Mode) else Exclude(FKeyboard, TEmulatorButton.Mode);
+      if Pressed then
+        Include(FKeyboard, TEmulatorButton.Mode)
+      else
+        Exclude(FKeyboard, TEmulatorButton.Mode);
   end;
 
   if FCartridge.Protection = 'vliner' then
@@ -402,7 +412,8 @@ end;
 function TNeoGeoCoreAdapter.GetSystemId: string;
 begin
   Result := ROM_SYSTEM_NEOGEO;
-  if FCartridge.Disc <> nil then Result := ROM_SYSTEM_NEOGEOCD;
+  if FCartridge.Disc <> nil then
+    Result := ROM_SYSTEM_NEOGEOCD;
 end;
 
 function TNeoGeoCoreAdapter.GetName: string;

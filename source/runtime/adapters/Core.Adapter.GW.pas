@@ -3,8 +3,8 @@
 interface
 
 uses
-  Core.RomFormat, System.SysUtils, System.Classes, System.IniFiles, Core.Storage, Core.Emulation,
-  GW.Cartridge, GW.Emulation, Core.InputConfig;
+  Core.RomFormat, System.SysUtils, System.Classes, System.IniFiles, Core.Storage,
+  Core.Emulation, GW.Cartridge, GW.Emulation, Core.InputConfig;
 
 type
   TGWKeyMap = array[TEmulatorButton] of UInt32;

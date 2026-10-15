@@ -111,6 +111,7 @@ uses
   RM.Settings in 'settings\RM.Settings.pas' {SettingsView: TFrame},
   RM.LibraryView in 'library\RM.LibraryView.pas' {LibraryView: TFrame},
   RM.ControlsHelp in 'controls\RM.ControlsHelp.pas' {ControlsHelp: TFrame},
+  Core.Microphone in '..\..\source\hardware\audio\Core.Microphone.pas',
   Core.InputConfig in '..\..\source\services\settings\Core.InputConfig.pas',
   FMXInput in '..\..\dependencies\FMXInput\FMXInput.pas',
   {$IFDEF ANDROID}
@@ -193,6 +194,23 @@ uses
   MD.Cartridge in '..\..\source\cores\md\MD.Cartridge.pas',
   MD.EEPROM in '..\..\source\cores\md\MD.EEPROM.pas',
   HW.SH2 in '..\..\source\hardware\cpu\HW.SH2.pas',
+  HW.SH7604 in '..\..\source\hardware\cpu\HW.SH7604.pas',
+  Saturn.Firmware in '..\..\source\cores\saturn\Saturn.Firmware.pas',
+  HW.SH7034 in '..\..\source\hardware\cpu\HW.SH7034.pas',
+  Saturn.CDB in '..\..\source\cores\saturn\Saturn.CDB.pas',
+  Saturn.Cartridge in '..\..\source\cores\saturn\Saturn.Cartridge.pas',
+  Saturn.CD in '..\..\source\cores\saturn\Saturn.CD.pas',
+  Saturn.SCUDSP in '..\..\source\cores\saturn\Saturn.SCUDSP.pas',
+  Saturn.SCSP in '..\..\source\cores\saturn\Saturn.SCSP.pas',
+  Saturn.SCSP.DSP in '..\..\source\cores\saturn\Saturn.SCSP.DSP.pas',
+  Saturn.SCU in '..\..\source\cores\saturn\Saturn.SCU.pas',
+  Saturn.SMPC in '..\..\source\cores\saturn\Saturn.SMPC.pas',
+  Saturn.VDP1 in '..\..\source\cores\saturn\Saturn.VDP1.pas',
+  Saturn.VDP2 in '..\..\source\cores\saturn\Saturn.VDP2.pas',
+  Saturn.Console in '..\..\source\cores\saturn\Saturn.Console.pas',
+  Saturn.Emulation in '..\..\source\cores\saturn\Saturn.Emulation.pas',
+  Core.Adapter.Saturn in '..\..\source\runtime\adapters\Core.Adapter.Saturn.pas',
+  RM.Settings.Saturn in 'settings\RM.Settings.Saturn.pas',
   MD.Firmware in '..\..\source\cores\md\MD.Firmware.pas',
   MD.Mars in '..\..\source\cores\md\MD.Mars.pas',
   MD.MegaCD in '..\..\source\cores\md\MD.MegaCD.pas',
@@ -305,7 +323,8 @@ uses
   NeoGeo.Video in '..\..\source\cores\neogeo\NeoGeo.Video.pas',
   Core.CD.CHD in '..\..\source\media\cd\Core.CD.CHD.pas',
   NeoGeoCD.Controller in '..\..\source\cores\neogeo\NeoGeoCD.Controller.pas',
-  Core.CD.Disc in '..\..\source\media\cd\Core.CD.Disc.pas';
+  Core.CD.Disc in '..\..\source\media\cd\Core.CD.Disc.pas',
+  RM.Platforms.Presentation in 'theme\RM.Platforms.Presentation.pas';
 
 {$R *.res}
 

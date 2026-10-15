@@ -13,11 +13,19 @@ type
 
   TEmulatorButtons = set of TEmulatorButton;
 
+  TEmulatorAnalogPad = record
+    Valid: Boolean;
+    X,Y: SmallInt; // -32768..32767; zero is centered.
+    LeftTrigger,RightTrigger: Byte;
+  end;
+
   TEmulatorInput = record
     Buttons: TEmulatorButtons;
     Buttons3, Buttons4: TEmulatorButtons; // Additional adapter controllers.
     Buttons5, Buttons6, Buttons7, Buttons8: TEmulatorButtons; // SNES Multitap.
     Buttons2: TEmulatorButtons; // Second controller; ignored by single-player cores.
+    Buttons9,Buttons10,Buttons11,Buttons12: TEmulatorButtons; // Two Saturn six-player taps.
+    Analog: array[0..11] of TEmulatorAnalogPad;
   end;
 
   IEmulatorConfig = interface

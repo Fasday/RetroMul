@@ -8,6 +8,8 @@ uses
 type
   TMegaDriveSettings = class(TSettingsPlatform)
   public
+    procedure Audio(Context: TSettingsPageContext); override;
+    procedure Expansion(Context: TSettingsPageContext); override;
     function PortOptions(Port: Integer): TSettingsPortOptions; override;
   end;
 
@@ -15,6 +17,20 @@ implementation
 
 uses
   System.SysUtils, System.Math, FMX.Types, FMX.StdCtrls, FMX.ListBox, RM.Icons;
+
+procedure TMegaDriveSettings.Audio(Context: TSettingsPageContext);
+begin
+  Context.Heading('GroupMDCDAudio');
+  Context.Check('RowMDCDAudio', 'SegaCD', 'AudioEnabled', True);
+  Context.Heading('GroupMD32XAudio');
+  Context.Check('RowMD32XAudio', 'Sega32X', 'AudioEnabled', True);
+end;
+
+procedure TMegaDriveSettings.Expansion(Context: TSettingsPageContext);
+begin
+  Context.Heading('GroupMDCDInput');
+  Context.Check('RowMDMicrophone', 'SegaCD', 'MicrophoneEnabled', False);
+end;
 
 function TMegaDriveSettings.PortOptions(Port: Integer): TSettingsPortOptions;
 begin

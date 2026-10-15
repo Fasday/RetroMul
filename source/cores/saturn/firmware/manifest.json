@@ -1,0 +1,37 @@
+[
+  {
+    "source": "https://www.emu-land.net/consoles/saturn/bios?act=getfile&id=5061",
+    "final_url": "https://dl.emu-land.net/roms/bios_images/sat/Sega%20Saturn%20BIOS%20%28E%29%20%281.00%29.zip",
+    "name": "Sega Saturn BIOS (E) (1.00).bin",
+    "file": "mpr-17933.bin",
+    "size": 524288,
+    "sha256": "96e106f740ab448cf89f0dd49dfbac7fe5391cb6bd6e14ad5e3061c13330266f",
+    "sha1": "faa8ea183a6d7bbe5d4e03bb1332519800d3fbc3"
+  },
+  {
+    "source": "https://www.emu-land.net/consoles/saturn/bios?act=getfile&id=5063",
+    "final_url": "https://dl.emu-land.net/roms/bios_images/sat/Sega%20Saturn%20BIOS%20%28J%29%20%281.00%29.zip",
+    "name": "Sega Saturn BIOS (J) (1.00).bin",
+    "file": "sega_100.bin",
+    "size": 524288,
+    "sha256": "ae4058627bb5db9be6d8d83c6be95a4aa981acc8a89042e517e73317886c8bc2",
+    "sha1": "2b8cb4f87580683eb4d760e4ed210813d667f0a2"
+  },
+  {
+    "source": "https://www.emu-land.net/consoles/saturn/bios?act=getfile&id=5062",
+    "final_url": "https://dl.emu-land.net/roms/bios_images/sat/Sega%20Saturn%20BIOS%20%28J%29%20%281.01%29.zip",
+    "name": "Sega Saturn BIOS (J) (1.01).bin",
+    "file": "sega_101.bin",
+    "size": 524288,
+    "sha256": "dcfef4b99605f872b6c3b6d05c045385cdea3d1b702906a0ed930df7bcb7deac",
+    "sha1": "df94c5b4d47eb3cc404d88b33a8fda237eaf4720"
+  },
+  {
+    "source": "https://mdk.cab/download/split/satcdb.zip",
+    "name": "Hitachi CDB-106 SH-1 firmware",
+    "file": "cdb106.bin",
+    "size": 65536,
+    "sha256": "2dfb3618b5b612bb49abbf0d1d8d53016908bb81aa8c92515f0836203e0b7f1c",
+    "sha1": "b3c20fbe57cd2eb595e9edac86817e5948dccae4"
+  }
+]

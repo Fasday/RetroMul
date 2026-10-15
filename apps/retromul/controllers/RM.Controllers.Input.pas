@@ -45,13 +45,13 @@ type
 
 implementation
 
-
 uses
   System.SysUtils, System.Types, System.IOUtils, System.Math, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.Dialogs, FMX.Platform, FMX.Edit, FMX.OpenDialog,
-  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console, Core.InputConfig,
-  Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard, NES.Controller, RM.Gamepad, NES.SuborKeyboard,
-  NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
+  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console,
+  Core.InputConfig, Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard,
+  NES.Controller, RM.Gamepad, NES.SuborKeyboard, NES.FamicomKeyboard,
+  NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
   {$IFDEF MSWINDOWS}
     , Winapi.Windows
   {$ENDIF}
@@ -759,6 +759,11 @@ begin
     Result.Buttons6 := Host.Buttons6;
     Result.Buttons7 := Host.Buttons7;
     Result.Buttons8 := Host.Buttons8;
+    Result.Buttons9 := Host.Buttons9;
+    Result.Buttons10 := Host.Buttons10;
+    Result.Buttons11 := Host.Buttons11;
+    Result.Buttons12 := Host.Buttons12;
+    Result.Analog := Host.Analog;
   end;
 
   if FState.Input.Ports.Devices[0] = 'none' then
@@ -769,7 +774,8 @@ begin
     for var Port := 0 to 3 do
     begin
       var Pad := Default(TN64Pad);
-      if FState.Input.Manager.IsPressed(N64LAction + Port) then Pad.Buttons := $20;
+      if FState.Input.Manager.IsPressed(N64LAction + Port) then
+        Pad.Buttons := $20;
       N64Input.SetN64Controller(Port, Pad);
     end;
 

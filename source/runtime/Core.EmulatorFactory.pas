@@ -18,7 +18,7 @@ uses
   System.Zip, System.IOUtils, SG1000.Console, Core.RomFormat,
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, NeoGeo.Cartridge;
+  Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -50,6 +50,7 @@ begin
     var Disc := TCDDisc.Create(Stream, DiscStorage, RomName);
     var IsPCE := False;
     var IsSegaCD := False;
+    var IsSaturn := False;
     try
       for var T := 1 to Disc.TrackCount do
       begin
@@ -67,7 +68,10 @@ begin
           var Sector: TBytes;
           Disc.ReadData(Track.StartLBA + Offset, Sector);
           if Offset = 0 then
+          begin
             IsSegaCD := TEncoding.ASCII.GetString(Sector, 0, 14) = 'SEGADISCSYSTEM';
+            IsSaturn := TEncoding.ASCII.GetString(Sector, 0, 16) = 'SEGA SEGASATURN ';
+          end;
           IsPCE := TEncoding.ASCII.GetString(Sector).Contains('PC Engine CD-ROM SYSTEM');
           if IsPCE then
             Break;
@@ -76,6 +80,12 @@ begin
         Break;
       end;
       var Folder := ExtractFileName(ExcludeTrailingPathDelimiter(ExtractFilePath(SourceName)));
+      if IsSaturn then
+      begin
+        var OwnedDisc := Disc;
+        Disc := nil;
+        Exit(TSaturnCoreAdapter.Create(Stream, DiscStorage, RomName, OwnedDisc));
+      end;
       if IsSegaCD then
       begin
         Stream.Position := 0;
@@ -222,6 +232,8 @@ begin
         Result := TGBACoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.MD:
         Result := TMDCoreAdapter.Create(Input, Storage, RomName);
+      TRomSystem.Saturn:
+        Result := TSaturnCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.SNES:
         Result := TSnesCoreAdapter.Create(Input, Storage, RomName);
     end;

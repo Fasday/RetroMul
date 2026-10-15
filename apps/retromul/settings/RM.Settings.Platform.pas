@@ -3,10 +3,9 @@
 interface
 
 uses
-  RM.Platforms.Presentation,
-  System.Classes, System.SysUtils, System.IniFiles, System.Generics.Collections,
-  FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls, FMX.Edit, FMX.ListBox,
-  FMX.SpinBox, RM.Gamepad, Core.Platforms;
+  RM.Platforms.Presentation, System.Classes, System.SysUtils, System.IniFiles,
+  System.Generics.Collections, FMX.Types, FMX.Controls, FMX.Layouts,
+  FMX.StdCtrls, FMX.Edit, FMX.ListBox, FMX.SpinBox, RM.Gamepad, Core.Platforms;
 
 const
   SETTINGS_CATEGORY_GENERAL = 0;
@@ -194,7 +193,8 @@ begin
   Editors.Parent := Panel;
   Editors.Align := TAlignLayout.Right;
   Editors.Width := 220;
-  if Kind = sekSwitch then Editors.Width := 64;
+  if Kind = sekSwitch then
+    Editors.Width := 64;
   Editors.Margins.Rect := TRectF.Create(16, 8, 0, 8);
   Result.Parent := Editors;
   Result.Align := TAlignLayout.Client;

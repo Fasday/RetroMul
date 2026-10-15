@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.InputConfig, Core.Storage, Core.RomFormat, Core.Snapshots,
+  Core.Microphone, Core.InputConfig, Core.Storage, Core.RomFormat, Core.Snapshots,
   System.SysUtils, System.Classes, System.SyncObjs, Core.Emulation.Types, MD.Console;
 
 const
@@ -29,6 +29,8 @@ type
     FInput, FInput2, FInput3, FInput4: TMDButtons;
     FPause, FReset, FAudioEnabled: Boolean;
     FVolume: Single;
+    FCDAudioEnabled, F32XAudioEnabled, FMicrophoneEnabled: Boolean;
+    FMicrophone: IMicrophoneSource;
     FFrame: TEmulatorFrame;
     FAvailable: Boolean;
     FError, FAudioError, FFinalSaveError: string;
@@ -43,6 +45,7 @@ type
     procedure WakeSetEvent;
     procedure Configure(const Input: TMDButtons; Paused, AudioEnabled: Boolean; Volume: Single;
       const Input2: TMDButtons = []; const Input3: TMDButtons = []; const Input4: TMDButtons = []);
+    procedure ConfigureExpansion(CDAudio, Audio32X, Microphone: Boolean; const Source: IMicrophoneSource);
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
   public
@@ -85,6 +88,8 @@ begin
   FSnapshots := TSnapshotQueue.Create;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil, False, False, '');
+  FCDAudioEnabled := True;
+  F32XAudioEnabled := True;
   FData := Copy(Data);
   FSavePath := SavePath;
   FDiscLocation := DiscLocation;
@@ -114,6 +119,19 @@ begin
     FPause := Paused;
     FAudioEnabled := AudioEnabled;
     FVolume := Volume;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TMDWorker.ConfigureExpansion(CDAudio, Audio32X, Microphone: Boolean; const Source: IMicrophoneSource);
+begin
+  FLock.Acquire;
+  try
+    FCDAudioEnabled := CDAudio;
+    F32XAudioEnabled := Audio32X;
+    FMicrophoneEnabled := Microphone;
+    FMicrophone := Source;
   finally
     FLock.Release;
   end;
@@ -255,6 +273,9 @@ procedure TMDWorker.Execute;
 begin
   var Paused, ResetRequested, Enabled, WasPaused, WasEnabled: Boolean;
   var Volume: Single;
+  var Microphone: IMicrophoneSource;
+  var MicEnabled: Boolean;
+  var MicSamples: TArray<SmallInt>;
   var Frame: TEmulatorFrame;
   var Samples: TArray<SmallInt>;
   var Deadline: Double;
@@ -324,6 +345,7 @@ begin
             begin
               LoadCoreSnapshot(Path, ROM_CORE_ID_MD, FData, Transfer, FStorage);
               Console.ConfigureInputPorts(InputPorts);
+              if Microphone <> nil then Microphone.Clear;
               Console.MarkBatteryDirty;
               if Audio <> nil then
                 Audio.Clear;
@@ -361,11 +383,17 @@ begin
           Paused := FPause;
           Enabled := FAudioEnabled;
           Volume := FVolume;
+          Console.CDAudioEnabled := FCDAudioEnabled;
+          Console.Audio32XEnabled := F32XAudioEnabled;
+          Microphone := FMicrophone;
+          MicEnabled := FMicrophoneEnabled and (FDiscLocation <> '');
           ResetRequested := FReset;
           FReset := False;
         finally
           FLock.Release;
         end;
+        if (Microphone <> nil) and (Paused or ResetRequested or not MicEnabled) then
+          Microphone.Clear;
         if ResetRequested then
         begin
           FrameHints.Pause;
@@ -399,6 +427,11 @@ begin
         if Terminated then
           Break;
 
+        SetLength(MicSamples, Console.SampleFrames);
+        if Length(MicSamples) > 0 then FillChar(MicSamples[0], Length(MicSamples) * SizeOf(SmallInt), 0);
+        if MicEnabled and (Microphone <> nil) then
+          Microphone.ReadSamples(MicSamples);
+
         Frame.Width := Console.Width;
         Frame.Height := Console.Height;
         Frame.FrameNumber := Console.FrameNumber;
@@ -422,7 +455,8 @@ begin
             Audio := TPCMAudio.Create(Format);
           SetLength(Samples, Console.SampleFrames * 2);
           for var i := 0 to High(Samples) do
-            Samples[i] := Round(Console.Samples[i] * Volume);
+            Samples[i] := EnsureRange(Round((Integer(Console.Samples[i]) + MicSamples[i div 2]) * Volume),
+              Integer(Low(SmallInt)), Integer(High(SmallInt)));
           Audio.Submit(Samples, Console.SampleFrames);
           if Audio.Error <> '' then
             raise EInOutError.Create(Audio.Error);

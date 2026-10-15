@@ -14,11 +14,13 @@ var
 implementation
 
 uses
-  Core.Platforms, System.SysUtils, System.Generics.Collections, RM.Gamepad, RM.Settings.GameBoy, RM.Settings.GBA,
-  RM.Settings.NES, RM.Settings.SNES, RM.Settings.N64, RM.Settings.MegaDrive,
-  RM.Settings.Sega8Bit, RM.Settings.GameBoyColor, RM.Settings.SG1000,
-  RM.Settings.SC3000, RM.Settings.SF7000, RM.Settings.Multivision,
-  RM.Settings.PCE, RM.Settings.MasterSystem, RM.Settings.GameGear, RM.Settings.NeoGeo;
+  Core.Platforms, System.SysUtils, System.Generics.Collections, RM.Gamepad,
+  RM.Settings.GameBoy, RM.Settings.GBA, RM.Settings.NES, RM.Settings.SNES,
+  RM.Settings.N64, RM.Settings.MegaDrive, RM.Settings.Sega8Bit,
+  RM.Settings.GameBoyColor, RM.Settings.SG1000, RM.Settings.SC3000,
+  RM.Settings.SF7000, RM.Settings.Multivision, RM.Settings.Saturn,
+  RM.Settings.PCE, RM.Settings.MasterSystem, RM.Settings.GameGear,
+  RM.Settings.NeoGeo;
 
 type
   TSettingsPlatformClass = class of TSettingsPlatform;
@@ -35,6 +37,7 @@ begin
     Classes.Add('NES', TNESSettings);
     Classes.Add('SNES', TSNESSettings);
     Classes.Add('N64', TN64Settings);
+    Classes.Add('Saturn', TSaturnSettings);
     Classes.Add('MegaDrive', TMegaDriveSettings);
     Classes.Add('SG1000', TSG1000Settings);
     Classes.Add('SC3000', TSC3000Settings);
@@ -46,6 +49,9 @@ begin
     Classes.Add('PCE', TPCESettings);
     for var Info in TPlatformRegistry.All do
     begin
+      // Library variants may share one canonical settings page.
+      if not SameText(Info.Id, Info.SettingsCoreId) then
+        Continue;
       var PageClass: TSettingsPlatformClass;
       if not Classes.TryGetValue(Info.SettingsProfile, PageClass) then
         raise EInvalidOpException.Create('Unknown settings profile: ' + Info.SettingsProfile);

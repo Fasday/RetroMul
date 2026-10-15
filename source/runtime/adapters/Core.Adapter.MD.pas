@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.IniFiles, Core.Storage, Core.Emulation,
-  Core.InputConfig, MD.Console, MD.Emulation;
+  Core.InputConfig, Core.Microphone, MD.Console, MD.Emulation;
 
 type
   TMDKeyMap = array[TMDButton] of UInt32;
@@ -12,22 +12,28 @@ type
   TMDConfig = class(TEmulatorConfigBase)
   private
     FKeys, FKeys2, FKeys3, FKeys4: TMDKeyMap;
+    FMicrophoneEnabled, FCDAudioEnabled, F32XAudioEnabled: Boolean;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
   public
     constructor Create(const FileName: string; const Storage: IStorage = nil);
+    property MicrophoneEnabled: Boolean read FMicrophoneEnabled;
+    property CDAudioEnabled: Boolean read FCDAudioEnabled;
+    property Audio32XEnabled: Boolean read F32XAudioEnabled;
     property Keys: TMDKeyMap read FKeys;
     property Keys2: TMDKeyMap read FKeys2;
     property Keys3: TMDKeyMap read FKeys3;
     property Keys4: TMDKeyMap read FKeys4;
   end;
 
-  TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMicrophoneInput)
   private
     FThread: TMDWorker;
     FData: TBytes;
-    FDiscLocation, FDisplayName: string;
+    FDiscLocation, FDisplayName, FSystemId: string;
+    FMDConfig: TMDConfig;
+    FMicrophone: IMicrophoneSource;
     FSnapshotDirectory: string;
     FStorage: IStorage;
     FSavePath, FError: string;
@@ -49,6 +55,7 @@ type
     procedure InsertCoin1;
     procedure InsertCoin2;
     property HasCoinAcceptor: Boolean read GetHasCoinAcceptor;
+    procedure SetMicrophoneSource(const Source: IMicrophoneSource);
     procedure Start;
     procedure Stop;
     procedure Pause;
@@ -72,7 +79,8 @@ type
 implementation
 
 uses
-  System.IOUtils, System.UITypes, System.Hash, MD.Cartridge, Core.RomFormat, Core.CD.Disc, MD.MegaCD;
+  System.IOUtils, System.UITypes, System.Hash, MD.Cartridge, Core.RomFormat,
+  Core.CD.Disc, MD.MegaCD;
 
 const
   KeyNames: array[TMDButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'C', 'Start', 'X', 'Y', 'Z', 'Mode');
@@ -87,12 +95,17 @@ const
     vkDecimal, vkMultiply);
 begin
   inherited Create(FileName, Storage);
+  FCDAudioEnabled := True;
+  F32XAudioEnabled := True;
   FKeys := Defaults;
   FKeys2 := Defaults2;
 end;
 
 procedure TMDConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
+  FMicrophoneEnabled := Ini.ReadBool('SegaCD', 'MicrophoneEnabled', False);
+  FCDAudioEnabled := Ini.ReadBool('SegaCD', 'AudioEnabled', True);
+  F32XAudioEnabled := Ini.ReadBool('Sega32X', 'AudioEnabled', True);
   for var Button := Low(TMDButton) to High(TMDButton) do
   begin
     FKeys[Button] := ReadEmulatorKey(Ini, 'Keys', KeyNames[Button], FKeys[Button]);
@@ -104,6 +117,9 @@ end;
 
 procedure TMDConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
+  Ini.WriteBool('SegaCD', 'MicrophoneEnabled', FMicrophoneEnabled);
+  Ini.WriteBool('SegaCD', 'AudioEnabled', FCDAudioEnabled);
+  Ini.WriteBool('Sega32X', 'AudioEnabled', F32XAudioEnabled);
   for var Button := Low(TMDButton) to High(TMDButton) do
   begin
     Ini.WriteInteger('Keys', KeyNames[Button], FKeys[Button]);
@@ -137,15 +153,20 @@ begin
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
+  FSystemId := ROM_SYSTEM_MD;
   FDisplayName := 'SEGA Genesis / Mega Drive';
   if IsCD then
   begin
     var Disc := TCDDisc.Create(Stream, FStorage, RomName);
+    FSystemId := ROM_SYSTEM_SEGACD;
     FDisplayName := 'SEGA CD / Mega CD';
     try
       FData := Disc.Identity;
-      if TMDMegaCD.Requires32X(Disc) then FDisplayName := 'SEGA CD / 32X';
-    finally Disc.Free; end;
+      if TMDMegaCD.Requires32X(Disc) then
+        FDisplayName := 'SEGA CD / 32X';
+    finally
+      Disc.Free;
+    end;
     FDiscLocation := RomName;
   end
   else
@@ -155,10 +176,17 @@ begin
     Cart := TMDCartridge.Create(NormalizeRom(Data, Format), '');
     try
       FData := Copy(Cart.Data);
-      if Cart.Is32X then FDisplayName := 'SEGA 32X';
-    finally Cart.Free; end;
+      if Cart.Is32X then
+      begin
+        FSystemId := ROM_SYSTEM_SEGA32X;
+        FDisplayName := 'SEGA 32X';
+      end;
+    finally
+      Cart.Free;
+    end;
   end;
   Config := TMDConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_MD), FStorage);
+  FMDConfig := Config;
   FConfig := Config;
   Config.Load;
   FKeys := Config.Keys;
@@ -181,15 +209,29 @@ end;
 procedure TMDCoreAdapter.ApplySettings;
 begin
   if FThread <> nil then
+  begin
+    FThread.ConfigureExpansion(FMDConfig.CDAudioEnabled, FMDConfig.Audio32XEnabled,
+      FMDConfig.MicrophoneEnabled, FMicrophone);
     FThread.Configure(FKeyboard + FGamepad, FPaused,
       FConfig.AudioEnabled, FConfig.AudioVolume, FKeyboard2 + FGamepad2,
       FKeyboard3 + FGamepad3, FKeyboard4 + FGamepad4);
+  end;
+end;
+
+procedure TMDCoreAdapter.SetMicrophoneSource(const Source: IMicrophoneSource);
+begin
+  if Source <> nil then
+    Source.Clear;
+  FMicrophone := Source;
+  ApplySettings;
 end;
 
 procedure TMDCoreAdapter.Start;
 begin
   if FThread <> nil then
     Exit;
+  if FMicrophone <> nil then
+    FMicrophone.Clear;
   FThread := TMDWorker.Create(FData, FSavePath, FStorage, FDiscLocation);
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.InputPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_MD);
@@ -204,6 +246,8 @@ begin
   FThread.StopAndSave;
   FError := FThread.TakeError;
   FreeAndNil(FThread);
+  if FMicrophone <> nil then
+    FMicrophone.Clear;
 end;
 
 procedure TMDCoreAdapter.Pause;
@@ -265,9 +309,15 @@ begin
       else
         Exclude(FKeyboard2, Button);
     if Code = FKeys3[Button] then
-      if Pressed then Include(FKeyboard3, Button) else Exclude(FKeyboard3, Button);
+      if Pressed then
+        Include(FKeyboard3, Button)
+      else
+        Exclude(FKeyboard3, Button);
     if Code = FKeys4[Button] then
-      if Pressed then Include(FKeyboard4, Button) else Exclude(FKeyboard4, Button);
+      if Pressed then
+        Include(FKeyboard4, Button)
+      else
+        Exclude(FKeyboard4, Button);
   end;
   ApplySettings;
 end;
@@ -349,7 +399,7 @@ end;
 
 function TMDCoreAdapter.GetSystemId: string;
 begin
-  Result := ROM_SYSTEM_MD;
+  Result := FSystemId;
 end;
 
 function TMDCoreAdapter.GetName: string;

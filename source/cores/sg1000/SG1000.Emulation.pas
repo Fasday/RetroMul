@@ -3,8 +3,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.SyncObjs, Core.Storage, Core.Emulation.Types,
-  Core.InputConfig, Core.Snapshots, SG1000.Console;
+  System.SysUtils, System.Classes, System.SyncObjs, Core.Storage,
+  Core.Emulation.Types, Core.InputConfig, Core.Snapshots, SG1000.Console;
 
 type
   TSGWorker = class(TThread)

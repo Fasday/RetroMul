@@ -2,7 +2,8 @@
 
 interface
 
-uses RM.Settings.Platform, RM.Settings.Sega8Bit;
+uses
+  RM.Settings.Platform, RM.Settings.Sega8Bit;
 
 type
   TGameGearSettings = class(TSega8BitSettings)
@@ -13,7 +14,8 @@ type
 
 implementation
 
-uses FMX.Types;
+uses
+  FMX.Types;
 
 procedure TGameGearSettings.Video(Context: TSettingsPageContext);
 begin
@@ -34,3 +36,4 @@ begin
 end;
 
 end.
+

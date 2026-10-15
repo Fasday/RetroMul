@@ -1,0 +1,4 @@
+SATURN_BIOS_US_EU RCDATA "firmware\\mpr-17933.bin"
+SATURN_BIOS_JP_100 RCDATA "firmware\\sega_100.bin"
+SATURN_BIOS_JP_101 RCDATA "firmware\\sega_101.bin"
+SATURN_CDB_106 RCDATA "firmware\\cdb106.bin"

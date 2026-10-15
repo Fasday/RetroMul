@@ -18,7 +18,8 @@ procedure TNeoGeoSettings.Video(Context: TSettingsPageContext);
 begin
   Context.Heading('GroupNGHardware');
   if CoreId = 'neogeocd' then
-    Context.Combo('RowNGModel', 'Hardware', 'Model', ['Automatic', 'Neo Geo CD front loader', 'Neo Geo CD top loader', 'Neo Geo CDZ'],
+    Context.Combo('RowNGModel', 'Hardware', 'Model',
+      ['Automatic', 'Neo Geo CD front loader', 'Neo Geo CD top loader', 'Neo Geo CDZ'],
       ['auto', 'front', 'top', 'cdz'], 'auto')
   else
   begin
