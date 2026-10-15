@@ -42,7 +42,8 @@ type
   TMainBrowserState = record
     View: TLibraryView;
     ViewingLibrary: Boolean;
-    BackTool, ScreenshotTool: TButton;
+    BackTool, ScreenshotTool, ActionsTool: TButton;
+    PanelHidden: Boolean;
     Tools: array[0..4] of TButton;
     ScreenshotMenu, SaveMenu, LoadMenu: TPopupMenu;
     HelpTool, CoinTool: TButton;

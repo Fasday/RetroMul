@@ -27,7 +27,7 @@ uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.StdCtrls, FMX.Layouts, RM.Toolbar, RM.Gamepad,
   SG1000.Keyboard, NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad,
-  NES.DataRecorder, RM.Styles
+  NES.DataRecorder, RM.Styles, RM.Gamepad.Viewport
   {$IFDEF MSWINDOWS}
     , Winapi.Windows, Winapi.MultiMon, FMX.Platform.Win, FMX.Helpers.Win
   {$ENDIF};
@@ -38,14 +38,14 @@ begin
     Exit;
 
   {$IF Defined(ANDROID) or Defined(IOS)}
-  if FState.Browser.ScreenshotTool <> nil then
+  if FState.Browser.ActionsTool <> nil then
   begin
     var Actions := FView.FindComponent('LayoutGameActions') as TLayout;
     Actions.Width := 128;
-    FState.Browser.ScreenshotTool.Parent := Actions;
-    FState.Browser.ScreenshotTool.Align := TAlignLayout.Right;
-    FState.Browser.ScreenshotTool.Width := 60;
-    FState.Browser.ScreenshotTool.Margins.Rect := TRectF.Empty;
+    FState.Browser.ActionsTool.Parent := Actions;
+    FState.Browser.ActionsTool.Align := TAlignLayout.Right;
+    FState.Browser.ActionsTool.Width := 60;
+    FState.Browser.ActionsTool.Margins.Rect := TRectF.Empty;
     FView.GamePause.Parent := Actions;
     FView.GamePause.Align := TAlignLayout.Right;
     FView.GamePause.Width := 60;
@@ -200,6 +200,13 @@ begin
     FState.Input.FamicomKeyboard.Height := TNesFamicomKeyboard.PreferredHeight(
       FView.ClientWidth - FView.Padding.Left - FView.Padding.Right,
       FView.ClientHeight - FView.Padding.Top - FView.Padding.Bottom - FView.LayoutHead.Height);
+  {$IF Defined(ANDROID) or Defined(IOS)}
+  ArrangeVirtualGamepads(FState.Input.Gamepad, FState.Input.PowerPad, FView.ImageCanvas);
+  if FView.LayoutShowPanel.Visible then
+    FView.LayoutShowPanel.BringToFront;
+  if FView.GameActionsPopup.IsOpen then
+    FView.UpdateGameChrome;
+  {$ENDIF}
 end;
 
 procedure TWindowController.ApplyControlInset;

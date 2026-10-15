@@ -1,0 +1,351 @@
+﻿unit RM.Gamepad.Base;
+
+interface
+
+uses
+  System.Classes, System.Types, System.Generics.Collections, FMX.Types,
+  FMX.Controls, FMX.Forms, Core.Emulation, Core.Emulation.Types,
+  RM.VirtualController;
+
+type
+  // Common platform input lifetime; layout classes contain no native input code.
+  TVirtualGamepadControl = class(TVirtualController)
+  private
+    FNativeInput: TObject;
+    FTouchForm: TCommonCustomForm;
+    FPreviousTouch: TTouchEvent;
+    {$IFDEF IOS}
+    procedure FormTouch(Sender: TObject; const Touches: TTouches; const Action: TTouchAction);
+    {$ENDIF}
+  protected
+    procedure Notification(AComponent: TComponent; Operation: TOperation); override;
+  public
+    destructor Destroy; override;
+    procedure AttachToForm(Form: TCommonCustomForm);
+    class function PreferredHeight(AvailableWidth, AvailableHeight: Single): Single; static;
+    function PointInObjectLocal(X, Y: Single): Boolean; override;
+    function AspectRatio: Single;
+  end;
+
+  TPlatformGamepad = class(TVirtualGamepadControl)
+  private
+    type
+      TBinding = record
+        Element: TVirtualElement;
+        Part: Integer;
+        Button: TEmulatorButton;
+      end;
+  private
+    FBindings: TList<TBinding>;
+    FButtons, FCoreButtons, FButtonMask: TEmulatorButtons;
+    FOnChange: TNotifyEvent;
+    FStick: TVirtualStick;
+    FLeftTrigger, FRightTrigger: TVirtualElement;
+    FAnalog: TEmulatorAnalogPad;
+    procedure Bind(Element: TVirtualElement; Part: Integer; Button: TEmulatorButton);
+    procedure SetButtonMask(const Value: TEmulatorButtons);
+    procedure SetCoreButtons(const Value: TEmulatorButtons);
+    function GetHighlightedButtons: TEmulatorButtons;
+  protected
+    procedure BuildLayout; virtual; abstract;
+    procedure InputChanged; override;
+    procedure AddPad;
+    procedure AddStick;
+    procedure AddAnalogTriggers;
+    function AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean = False): TVirtualElement;
+    procedure AddMenus(const SelectCaption: string = 'SELECT'; const StartCaption: string = 'START');
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+    procedure ReleaseAll; override;
+    function ButtonBounds(Button: TEmulatorButton): TRectF;
+    property AnalogInput: TEmulatorAnalogPad read FAnalog;
+    property Buttons: TEmulatorButtons read FButtons;
+    property ButtonMask: TEmulatorButtons read FButtonMask write SetButtonMask;
+    property CoreButtons: TEmulatorButtons read FCoreButtons write SetCoreButtons;
+    property HighlightedButtons: TEmulatorButtons read GetHighlightedButtons;
+    property OnChange: TNotifyEvent read FOnChange write FOnChange;
+  end;
+
+  TPlatformGamepadClass = class of TPlatformGamepad;
+
+implementation
+
+uses
+  System.SysUtils, System.Math
+  {$IFDEF ANDROID}, RM.TouchInput.Android{$ENDIF};
+
+destructor TVirtualGamepadControl.Destroy;
+begin
+  AttachToForm(nil);
+  inherited;
+end;
+
+procedure TVirtualGamepadControl.Notification(AComponent: TComponent; Operation: TOperation);
+begin
+  inherited;
+  if (Operation = opRemove) and (AComponent = FTouchForm) then
+  begin
+    FTouchForm := nil;
+    FPreviousTouch := nil;
+    FreeAndNil(FNativeInput);
+    ReleaseAll;
+  end;
+end;
+
+procedure TVirtualGamepadControl.AttachToForm(Form: TCommonCustomForm);
+begin
+  if FTouchForm = Form then
+    Exit;
+  ReleaseAll;
+  if FTouchForm <> nil then
+  begin
+    {$IFDEF IOS}
+    var CurrentTouch: TTouchEvent := FTouchForm.OnTouch;
+    var OwnTouch: TTouchEvent := FormTouch;
+    if (TMethod(CurrentTouch).Code = TMethod(OwnTouch).Code) and (TMethod(CurrentTouch).Data = TMethod(OwnTouch).Data) then
+      FTouchForm.OnTouch := FPreviousTouch;
+    {$ENDIF}
+
+    FTouchForm.RemoveFreeNotification(Self);
+  end;
+  FreeAndNil(FNativeInput);
+  FPreviousTouch := nil;
+  FTouchForm := Form;
+  if Form = nil then
+    Exit;
+  Form.FreeNotification(Self);
+
+  {$IFDEF ANDROID}
+  FNativeInput := TAndroidTouchInput.Create(Self, Form, PointerDown, PointerMove, PointerUp, ReleaseAll, True);
+  {$ENDIF}
+  {$IFDEF IOS}
+  FPreviousTouch := Form.OnTouch;
+  Form.OnTouch := FormTouch;
+  {$ENDIF}
+end;
+
+{$IFDEF IOS}
+procedure TVirtualGamepadControl.FormTouch(Sender: TObject; const Touches: TTouches; const Action: TTouchAction);
+begin
+  if Assigned(FPreviousTouch) then
+    FPreviousTouch(Sender, Touches, Action);
+  if Action = TTouchAction.Cancel then
+  begin
+    ReleaseAll;
+    Exit;
+  end;
+  for var Touch in Touches do
+    case Touch.Action of
+      TTouchAction.Down:
+        PointerDown(Touch.Id, AbsoluteToLocal(Touch.Location));
+      TTouchAction.Move:
+        PointerMove(Touch.Id, AbsoluteToLocal(Touch.Location));
+      TTouchAction.Up:
+        PointerUp(Touch.Id);
+      TTouchAction.Cancel:
+        ReleaseAll;
+    end;
+end;
+
+{$ENDIF}
+
+class function TVirtualGamepadControl.PreferredHeight(AvailableWidth, AvailableHeight: Single): Single;
+begin
+  Result := Max(0, Min(320.0, Min(AvailableWidth * 2 / 3, AvailableHeight * 0.44)));
+end;
+
+function TVirtualGamepadControl.AspectRatio: Single;
+begin
+  Result := DesignSideSize.Height / (DesignSideSize.Width * 2);
+end;
+
+function TVirtualGamepadControl.PointInObjectLocal(X, Y: Single): Boolean;
+var
+  P: TPointF;
+  S: Single;
+begin
+  Result := False;
+  if not inherited PointInObjectLocal(X, Y) then
+    Exit;
+
+  S := EffectiveScale;
+  for var i := Count - 1 downto 0 do
+  begin
+    var E := Elements[i];
+    if not E.HasEnabledParts then
+      Continue;
+
+    var Side := SideBounds(E.Side);
+    P := PointF((X - Side.Left) / S, (Y - Side.Top) / S);
+
+    // Bounds include the pad's neutral centre, so a gesture can start there.
+    if (E is TVirtualDPad) and E.Bounds.Contains(P) then
+      Exit(True);
+
+    for var Part := 0 to E.PartCount - 1 do
+      if E.PartEnabled[Part] and PartBounds(E, Part).Contains(PointF(X, Y)) then
+        Exit(True);
+  end;
+end;
+
+constructor TPlatformGamepad.Create(AOwner: TComponent);
+begin
+  inherited;
+  FBindings := TList<TBinding>.Create;
+  FButtonMask := [Low(TEmulatorButton)..High(TEmulatorButton)];
+  BuildLayout;
+end;
+
+destructor TPlatformGamepad.Destroy;
+begin
+  FOnChange := nil;
+  AttachToForm(nil);
+  FreeAndNil(FBindings);
+  inherited;
+end;
+
+procedure TPlatformGamepad.Bind(Element: TVirtualElement; Part: Integer; Button: TEmulatorButton);
+var
+  B: TBinding;
+begin
+  B.Element := Element;
+  B.Part := Part;
+  B.Button := Button;
+  FBindings.Add(B);
+end;
+
+procedure TPlatformGamepad.AddPad;
+begin
+  var E := Add(TVirtualDPad.Create('dpad', 'PAD', TVirtualSide.Left, RectF(28, 140, 172, 284)));
+  Bind(E, TVirtualDPad.Up, TEmulatorButton.Up);
+  Bind(E, TVirtualDPad.Down, TEmulatorButton.Down);
+  Bind(E, TVirtualDPad.Left, TEmulatorButton.Left);
+  Bind(E, TVirtualDPad.Right, TEmulatorButton.Right);
+end;
+
+procedure TPlatformGamepad.AddStick;
+begin
+  FStick := TVirtualStick.Create('stick', 'STICK', TVirtualSide.Left, RectF(24, 20, 128, 124));
+  Add(FStick);
+end;
+
+procedure TPlatformGamepad.AddAnalogTriggers;
+begin
+  FLeftTrigger := Add(TVirtualTrigger.Create('lt', 'L', TVirtualSide.Left, RectF(172, 16, 228, 116)));
+  FRightTrigger := Add(TVirtualTrigger.Create('rt', 'R', TVirtualSide.Right, RectF(172, 16, 228, 116)));
+  Bind(FLeftTrigger, 0, TEmulatorButton.Select);
+  Bind(FRightTrigger, 0, TEmulatorButton.Mode);
+end;
+
+function TPlatformGamepad.AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean): TVirtualElement;
+begin
+  if Rectangular then
+    Result := TVirtualKey.Create('button' + IntToStr(Ord(Button)), Caption, Side, RectF(X, Y, X + Width, Y + Height))
+  else
+    Result := TVirtualButton.Create('button' + IntToStr(Ord(Button)), Caption, Side, RectF(X, Y, X + Width, Y + Height));
+  if (Button in [TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.C,
+      TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.Z]) then
+    Result.CaptureGroup := 'actions';
+  Add(Result);
+  Bind(Result, 0, Button);
+end;
+
+procedure TPlatformGamepad.AddMenus(const SelectCaption, StartCaption: string);
+begin
+  if SelectCaption <> '' then
+    AddButton(TEmulatorButton.Select, SelectCaption, TVirtualSide.Left, 136, 74, 88, 36, True);
+  if StartCaption <> '' then
+    AddButton(TEmulatorButton.Start, StartCaption, TVirtualSide.Right, 16, 74, 88, 36, True);
+end;
+
+procedure TPlatformGamepad.InputChanged;
+begin
+  inherited;
+  if FBindings = nil then
+    Exit;
+
+  var NewButtons: TEmulatorButtons := [];
+  for var B in FBindings do
+    if (B.Button in FButtonMask) and (B.Element.Value(B.Part) > 0) then
+      if not (B.Element is TVirtualTrigger) or (B.Element.Value(B.Part) >= 0.49999) then
+        Include(NewButtons, B.Button);
+
+  if [TEmulatorButton.Left, TEmulatorButton.Right] <= NewButtons then
+    NewButtons := NewButtons - [TEmulatorButton.Left, TEmulatorButton.Right];
+  if [TEmulatorButton.Up, TEmulatorButton.Down] <= NewButtons then
+    NewButtons := NewButtons - [TEmulatorButton.Up, TEmulatorButton.Down];
+  var NewAnalog := Default(TEmulatorAnalogPad);
+  if FButtonMask <> [] then
+  begin
+    if FStick <> nil then
+    begin
+      NewAnalog.X := Round(FStick.AxisX * 32767);
+      NewAnalog.Y := Round(FStick.AxisY * 32767);
+    end;
+    if FLeftTrigger <> nil then
+      NewAnalog.LeftTrigger := Round(FLeftTrigger.Value * 255);
+    if FRightTrigger <> nil then
+      NewAnalog.RightTrigger := Round(FRightTrigger.Value * 255);
+    NewAnalog.Valid := (NewAnalog.X <> 0) or (NewAnalog.Y <> 0) or
+      (NewAnalog.LeftTrigger <> 0) or (NewAnalog.RightTrigger <> 0);
+  end;
+  if (NewButtons = FButtons) and (NewAnalog.X = FAnalog.X) and (NewAnalog.Y = FAnalog.Y) and
+    (NewAnalog.LeftTrigger = FAnalog.LeftTrigger) and (NewAnalog.RightTrigger = FAnalog.RightTrigger) and
+    (NewAnalog.Valid = FAnalog.Valid) then
+    Exit;
+
+  FAnalog := NewAnalog;
+  FButtons := NewButtons;
+  if Assigned(FOnChange) then
+    FOnChange(Self);
+end;
+
+procedure TPlatformGamepad.SetButtonMask(const Value: TEmulatorButtons);
+begin
+  if FButtonMask = Value then
+    Exit;
+
+  ReleaseAll;
+  FButtonMask := Value;
+  for var B in FBindings do
+    B.Element.PartEnabled[B.Part] := B.Button in Value;
+  if FStick <> nil then
+    for var Part := 0 to FStick.PartCount - 1 do
+      FStick.PartEnabled[Part] := Value <> [];
+end;
+
+function TPlatformGamepad.ButtonBounds(Button: TEmulatorButton): TRectF;
+begin
+  Result := TRectF.Empty;
+  if not (Button in FButtonMask) then
+    Exit;
+
+  for var B in FBindings do
+    if B.Button = Button then
+      Exit(PartBounds(B.Element, B.Part));
+end;
+
+procedure TPlatformGamepad.SetCoreButtons(const Value: TEmulatorButtons);
+begin
+  FCoreButtons := Value * FButtonMask;
+  for var B in FBindings do
+    B.Element.Feedback[B.Part] := Ord(B.Button in FCoreButtons);
+end;
+
+function TPlatformGamepad.GetHighlightedButtons: TEmulatorButtons;
+begin
+  Result := [];
+  for var B in FBindings do
+    if (B.Button in FButtonMask) and ((B.Button in FButtons) or (B.Button in FCoreButtons)) then
+      Include(Result, B.Button);
+end;
+
+procedure TPlatformGamepad.ReleaseAll;
+begin
+  FCoreButtons := [];
+  inherited;
+end;
+
+end.
+

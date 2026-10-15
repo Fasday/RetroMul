@@ -11,6 +11,7 @@ type
   private
     FLoadingCore: Boolean;
     FLoadGeneration: Integer;
+    procedure UpdateVirtualButtons;
     procedure EndCoreLoading;
     procedure CancelCoreLoading;
     procedure InstallCore(const NewEmulation: IEmulationCore; const FileName, DisplayName: string; StartPaused: Boolean);
@@ -47,7 +48,7 @@ uses
   Core.EmulatorFactory, Core.Adapter.SG1000, Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
   Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
   Core.InputConfig, Core.Platforms, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
-  RM.Dialogs, RM.Styles;
+  RM.Dialogs, RM.Styles, RM.Gamepad.Viewport;
 
 procedure TSessionController.FormActivate(Sender: TObject);
 begin
@@ -164,8 +165,19 @@ begin
   FView.SyncActivity;
 end;
 
+procedure TSessionController.UpdateVirtualButtons;
+begin
+  if (FState.Input.Gamepad <> nil) and (FState.Session.Emulation <> nil) then
+  begin
+    var Controls: IEmulationVirtualControls;
+    if Supports(FState.Session.Emulation, IEmulationVirtualControls, Controls) then
+      FState.Input.Gamepad.ButtonMask := Controls.GetVirtualButtons;
+  end;
+end;
+
 procedure TSessionController.SyncActivity;
 begin
+  UpdateVirtualButtons;
   if RetroDialogVisible(FView) and (FState.Session.Emulation <> nil) and (FState.Session.DialogCore <> FState.Session.Emulation) then
   begin
     // A queued message may survive loading a new session.
@@ -208,6 +220,8 @@ begin
   end;
   if FState.Browser.ScreenshotTool <> nil then
     FState.Browser.ScreenshotTool.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.OpeningRom;
+  if FState.Browser.ActionsTool <> nil then
+    FState.Browser.ActionsTool.Enabled := not FState.Session.OpeningRom;
   var Tape: INesTapeCore;
   if FState.Input.DataRecorder <> nil then
   begin
@@ -302,20 +316,34 @@ begin
     FState.Mobile.MiraclePianoTouchAttached := PianoActive;
   end;
   {$ENDIF}
+  {$IFDEF IOS}
+  if PowerPadActive then
+  begin
+    FState.Input.Gamepad.AttachToForm(nil);
+    FState.Input.PowerPad.AttachToForm(FView);
+  end
+  else
+  begin
+    FState.Input.PowerPad.AttachToForm(nil);
+    if KeyboardActive then FState.Input.Gamepad.AttachToForm(nil)
+    else FState.Input.Gamepad.AttachToForm(FView);
+  end;
+  {$ENDIF}
+  ArrangeVirtualGamepads(FState.Input.Gamepad, FState.Input.PowerPad, FView.ImageCanvas);
   if FState.Input.MiraclePiano <> nil then
-    FState.Input.MiraclePiano.Enabled := FState.Input.MiraclePiano.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
-  var Paused := FState.Mobile.InBackground or FState.Session.OpeningRom or FState.Browser.ViewingLibrary or FState.Session.UserPaused or
+    FState.Input.MiraclePiano.Enabled := FState.Input.MiraclePiano.Enabled and not FState.Mobile.InBackground and not FView.GameActionsPopup.IsOpen and not RetroDialogVisible(FView);
+  var Paused := FState.Mobile.InBackground or FView.GameActionsPopup.IsOpen or FState.Session.OpeningRom or FState.Browser.ViewingLibrary or FState.Session.UserPaused or
     (FState.Settings.View <> nil) or (FState.Help.View <> nil) or RetroDialogVisible(FView);
   if FState.Input.PowerPad <> nil then
-    FState.Input.PowerPad.Enabled := FState.Input.PowerPad.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
+    FState.Input.PowerPad.Enabled := FState.Input.PowerPad.Enabled and not FState.Mobile.InBackground and not FView.GameActionsPopup.IsOpen and not RetroDialogVisible(FView);
   if FState.Input.SGKeyboard <> nil then
-    FState.Input.SGKeyboard.Enabled := FState.Input.SGKeyboard.Enabled and not FState.Mobile.InBackground;
+    FState.Input.SGKeyboard.Enabled := FState.Input.SGKeyboard.Enabled and not FState.Mobile.InBackground and not FView.GameActionsPopup.IsOpen;
   if FState.Input.Gamepad <> nil then
-    FState.Input.Gamepad.Enabled := FState.Input.Gamepad.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
+    FState.Input.Gamepad.Enabled := FState.Input.Gamepad.Enabled and not FState.Mobile.InBackground and not FView.GameActionsPopup.IsOpen and not RetroDialogVisible(FView);
   if FState.Input.SuborKeyboard <> nil then
-    FState.Input.SuborKeyboard.Enabled := FState.Input.SuborKeyboard.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
+    FState.Input.SuborKeyboard.Enabled := FState.Input.SuborKeyboard.Enabled and not FState.Mobile.InBackground and not FView.GameActionsPopup.IsOpen and not RetroDialogVisible(FView);
   if FState.Input.FamicomKeyboard <> nil then
-    FState.Input.FamicomKeyboard.Enabled := FState.Input.FamicomKeyboard.Enabled and not FState.Mobile.InBackground and not RetroDialogVisible(FView);
+    FState.Input.FamicomKeyboard.Enabled := FState.Input.FamicomKeyboard.Enabled and not FState.Mobile.InBackground and not FView.GameActionsPopup.IsOpen and not RetroDialogVisible(FView);
   if Paused <> FState.Mobile.ActivityPaused then
   begin
     FState.Mobile.ActivityPaused := Paused;
@@ -628,10 +656,8 @@ begin
   var Platform := TPlatformRegistry.Require(FState.Session.Emulation.SystemId);
   var InputSystem := Platform.Id;
   FView.LoadHostInput(InputSystem);
-  FState.Input.Gamepad.Layout := PlatformPresentation(Platform.System).PadLayout;
-  if (Platform.System = TRomSystem.NES) and (FState.Input.Ports.Devices[0] = 'paddendy') then
-    FState.Input.Gamepad.Layout := TScreenGamepadLayout.Dendy;
-  FState.Input.Gamepad.ButtonMask := CoreButtons(InputSystem, FState.Input.Ports.Devices[0]);
+  FState.Input.Gamepad.Configure(Platform.System, FState.Input.Ports.Devices[0],
+    CoreButtons(InputSystem, FState.Input.Ports.Devices[0]));
 
   FView.ImageCanvas.HitTest := False;
   FView.ImageCanvas.CanFocus := False;
@@ -793,6 +819,7 @@ end;
 function TSessionController.UpdateFrame: Boolean;
 begin
   Result := False;
+  UpdateVirtualButtons;
   if FState.Session.Emulation = nil then
     Exit;
 

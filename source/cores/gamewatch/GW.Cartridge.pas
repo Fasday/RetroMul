@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.UITypes, GW.CPU, GW.Catalog,
-  GW.MGW.Package, GW.Artwork;
+  GW.MGW.Package, GW.Artwork, Core.Emulation.Types;
 
 type
   TGWLayer = GW.Artwork.TGWLayer;
@@ -27,6 +27,7 @@ type
     Artwork: TGWArtwork;
     destructor Destroy; override;
     constructor Create(const Bytes: TBytes; const Name: string; const Renderer: IGWArtworkRenderer = nil);
+    function SupportedButtons: TEmulatorButtons;
     class function Recognizes(const Bytes: TBytes; const Name: string): Boolean; static;
   end;
 
@@ -61,6 +62,17 @@ begin
     for var i := 1 to Length(Text) do
       if Data[i - 1] <> Ord(Text[i]) then
         Exit(False);
+end;
+
+function TGWCartridge.SupportedButtons: TEmulatorButtons;
+begin
+  Result := [];
+  if MGW <> nil then Exit; // Runtime keymap is published by the script worker.
+  var Mask := BA or B;
+  for var Row := Low(Keys) to High(Keys) do
+    for var Bit := Low(Keys[Row]) to High(Keys[Row]) do Mask := Mask or Keys[Row, Bit];
+  for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
+    if (Mask and (Cardinal(1) shl Ord(Button))) <> 0 then Include(Result, Button);
 end;
 
 function GWColor565(Value: Word): TAlphaColor;

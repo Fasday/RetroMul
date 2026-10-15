@@ -5,11 +5,10 @@
         <FrameworkType>FMX</FrameworkType>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Release</Config>
-        <Platform Condition="'$(Platform)'==''">Win64</Platform>
+        <Platform Condition="'$(Platform)'==''">Android64</Platform>
         <TargetedPlatforms>2790547</TargetedPlatforms>
         <AppType>Application</AppType>
         <MainSource>RetroMul.dpr</MainSource>
-        <ProjectName Condition="'$(ProjectName)'==''">RetroMul</ProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>
@@ -489,6 +488,43 @@
         <DCCReference Include="..\..\source\media\rom\Core.RomHashes.pas"/>
         <DCCReference Include="controls\RM.Storage.Dialogs.pas"/>
         <DCCReference Include="devices\RM.Gamepad.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.Saturn.Analog.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.Viewport.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.Base.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.Factory.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.GameGear.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.GameWatch.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.GB.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.GBA.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.GBC.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.Multivision.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.N64.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NeoGeo.AES.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NeoGeo.Arcade.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NeoGeo.CD.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NES.Dendy.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NES.PowerPad.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NES.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NGP.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.NGPC.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.PCE.Pad2.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.PCE.Pad6.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.PCECD.Pad2.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.PCECD.Pad6.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.Saturn.Digital.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SC3000.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SEGA.Mega32X.Pad3.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SEGA.Mega32X.Pad6.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SEGA.MegaCD.Pad3.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SEGA.MegaCD.Pad6.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SEGA.Pad3.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SEGA.Pad6.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SF7000.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SG1000.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SMS.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SNES.Standart.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SuperGrafx.Pad2.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.SuperGrafx.Pad6.pas"/>
         <DCCReference Include="platform\RM.TouchInput.Android.pas"/>
         <DCCReference Include="devices\NES.SuborKeyboard.pas"/>
         <DCCReference Include="devices\NES.FamicomKeyboard.pas"/>

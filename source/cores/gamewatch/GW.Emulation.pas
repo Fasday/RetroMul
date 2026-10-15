@@ -19,6 +19,7 @@ type
     FStorage: IStorage;
     FCartridge: TGWCartridge;
     FInput: TEmulatorInput;
+    FControlButtons: TEmulatorButtons;
     FPause, FReset, FAudioEnabled, FAvailable: Boolean;
     FVolume: Single;
     FFrame: TEmulatorFrame;
@@ -40,6 +41,7 @@ type
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
     function TakeError: string;
     function TakeAudioError: string;
+    function SupportedButtons: TEmulatorButtons;
   end;
 
 implementation
@@ -67,6 +69,7 @@ begin
   FWake := TEvent.Create(nil, False, False, '');
   FSnapshots := TSnapshotQueue.Create;
   FCartridge := Cartridge;
+  FControlButtons := Cartridge.SupportedButtons;
   FStorage := Storage;
 end;
 
@@ -171,12 +174,20 @@ begin
   end;
 end;
 
+function TGWWorker.SupportedButtons: TEmulatorButtons;
+begin
+  FLock.Acquire;
+  try Result := FControlButtons; finally FLock.Release; end;
+end;
+
 procedure TGWWorker.Publish(Console: TGWConsole);
 begin
   var Frame := Console.Frame;
+  var Buttons := Console.SupportedButtons; // Read the script only on its worker thread.
   FLock.Acquire;
   try
     FFrame := Frame;
+    FControlButtons := Buttons;
     FAvailable := True;
   finally
     FLock.Release;
@@ -205,6 +216,7 @@ begin
       if (SaveFile <> '') and FStorage.Exists(SaveFile) then
         SavedData := FStorage.ReadBytes(SaveFile);
       Console := TGWConsole.Create(FCartridge, SavedData);
+      Publish(Console); // Also expose the keymap when starting paused.
       Hints := TEmulationPerformanceHints.Create(Round(1000000000.0 / 60), CoreId);
       var Format: TPCMAudioFormat;
       Format.SampleRate := 44100;

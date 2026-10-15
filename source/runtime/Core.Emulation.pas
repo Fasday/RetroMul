@@ -29,6 +29,8 @@ type
 
   IEmulationSnapshotLocation = Core.Emulation.Types.IEmulationSnapshotLocation;
 
+  IEmulationVirtualControls = Core.Emulation.Types.IEmulationVirtualControls;
+
   IEmulationCore = Core.Emulation.Types.IEmulationCore;
 
   TEmulatorConfigBase = Core.Emulation.Config.TEmulatorConfigBase;

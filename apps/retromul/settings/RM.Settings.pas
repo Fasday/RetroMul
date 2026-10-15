@@ -602,7 +602,7 @@ begin
   if FDevice is TScreenGamepad then
     Aspect := TScreenGamepad(FDevice).AspectRatio;
   if FDevice is TNesPowerPad then
-    Aspect := 3.8 / 4.4;
+    Aspect := TNesPowerPad(FDevice).AspectRatio;
   var Limit := IfThen(FAnnotations, 400, 640);
   var PadWidth := Min(Min(Limit, Max(40, Height / Aspect)), Max(40, Width - 2 * (Rail + 12)));
   FDevice.SetBounds((Width - PadWidth) / 2, (Height - PadWidth * Aspect) / 2,
@@ -1118,6 +1118,7 @@ begin
   // the column is updating, so page declaration order becomes alignment order.
   FGroup.Position.Y := 0;
   FGroup.Visible := True;
+  FGroup.OnResize := ContentResize;
   FGroup.Width := VertScrollBoxScroll.Width - 16;
   FGroup.TagString := (FindComponent('Label' + Name + 'Title') as TLabel).Text;
 end;
@@ -1410,6 +1411,10 @@ begin
     Editors.Width := Min(W, Max(0, P.Width - 32));
     Editors.Margins.Rect := TRectF.Create(16, 8, 0, 8);
   end;
+  // Mobile FMX can resize aligned rows after the view's layout pass. Keep
+  // card and scroll-content heights in sync with those final row sizes.
+  if not FBuilding and not FArranging then
+    Resize;
 end;
 
 procedure TSettingsView.DeviceResize(Sender: TObject);
@@ -1423,7 +1428,7 @@ begin
       if (D.Control <> nil) and (D.Control.Owner = P) then
       begin
         var Slot := FindComponent('LayoutBindingPreview' + IntToStr(D.Port)) as TLayout;
-        Slot.Visible := (FPage <> SETTINGS_PAGE_GW) and ((D.Assignments = nil) or (P.Width >= 600));
+        Slot.Visible := (D.Assignments = nil) or (P.Width >= 600);
         Slot.Align := TAlignLayout.Client;
         P.Height := 460;
         if D.Assignments <> nil then
@@ -1779,9 +1784,7 @@ begin
   Text.Align := TAlignLayout.Top;
   Text.Height := 34;
   TControl(Text.Children[1]).Visible := False;
-  if FPage = SETTINGS_PAGE_GW then
-    D.Control := TLayout.Create(P)
-  else if Device = 'powerpad' then
+  if Device = 'powerpad' then
   begin
     var Pad := TNesPowerPad.Create(P);
     Pad.OnChange := VirtualDeviceChange;
@@ -1812,10 +1815,8 @@ begin
   else
   begin
     var Pad := TScreenGamepad.Create(P);
-    Pad.Layout := SettingsPlatforms.Find(FPage).PadLayout;
-    if Device = 'paddendy' then
-      Pad.Layout := TScreenGamepadLayout.Dendy;
-    Pad.ButtonMask := CoreButtons(SettingsCoreIds[FPage], Device);
+    Pad.Configure(TPlatformRegistry.Require(SettingsCoreIds[FPage]).System, Device,
+      CoreButtons(SettingsCoreIds[FPage], Device));
     Pad.OnChange := VirtualDeviceChange;
     D.Control := Pad;
     var Diagram := TDeviceCallouts.Create(P);
@@ -1855,11 +1856,6 @@ begin
   Preview.Parent := FindComponent('LayoutBindingPreview' + IntToStr(Port)) as TLayout;
   Preview.Align := TAlignLayout.Client;
   Preview.Margins.Rect := TRectF.Empty;
-  if FPage = SETTINGS_PAGE_GW then
-  begin
-    Preview.Visible := False;
-    D.AssignmentList.Align := TAlignLayout.Top;
-  end;
   D.Control.Tag := Port;
   // Keep the editor inside this card. No button is selected until the user clicks.
   var Footer := FindComponent('LayoutBindingFooter' + IntToStr(Port)) as TLayout;

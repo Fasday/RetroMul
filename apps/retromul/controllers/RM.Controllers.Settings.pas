@@ -130,7 +130,7 @@ begin
   FState.Settings.View.BringToFront;
   FView.SyncActivity;
 
-  {$IFDEF ANDROID}
+  {$IF Defined(ANDROID) or Defined(IOS)}
   FState.Input.Gamepad.AttachToForm(nil);
   FState.Input.PowerPad.AttachToForm(nil);
   FState.Input.SuborKeyboard.AttachToForm(nil);
@@ -163,10 +163,8 @@ begin
           InputPorts.ApplyInputPorts(Ports);
           FState.Input.Ports := Ports;
           var Platform := TPlatformRegistry.Require(FState.Input.SystemId);
-          FState.Input.Gamepad.Layout := PlatformPresentation(Platform.System).PadLayout;
-          if (FState.Input.SystemId = ROM_SYSTEM_NES) and (Ports.Devices[0] = 'paddendy') then
-            FState.Input.Gamepad.Layout := TScreenGamepadLayout.Dendy;
-          FState.Input.Gamepad.ButtonMask := CoreButtons(FState.Input.SystemId, Ports.Devices[0]);
+          FState.Input.Gamepad.Configure(Platform.System, Ports.Devices[0],
+            CoreButtons(FState.Input.SystemId, Ports.Devices[0]));
         end;
       end;
       Config.Filter := Ini.ReadString('Video', 'Filter', Config.Filter);

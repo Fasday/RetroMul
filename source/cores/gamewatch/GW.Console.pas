@@ -35,6 +35,7 @@ type
     procedure RunFrame;
     procedure SerializeState(Archive: TStateArchive);
     function SavePersistent: TBytes;
+    function SupportedButtons: TEmulatorButtons;
     property CPU: TGWCPU read FCPU;
     property Frame: TEmulatorFrame read GetFrame;
     property Samples: TArray<SmallInt> read GetSamples;
@@ -100,6 +101,12 @@ begin
   FButtons := 0;
   FSamples := nil;
   Render;
+end;
+
+function TGWConsole.SupportedButtons: TEmulatorButtons;
+begin
+  if FMGW <> nil then Result := FMGW.SupportedButtons
+  else Result := FCartridge.SupportedButtons;
 end;
 
 procedure TGWConsole.SetInput(const Input: TEmulatorInput);

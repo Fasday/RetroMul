@@ -96,6 +96,13 @@ type
     function GetSnapshotDirectory: string;
   end;
 
+  // Optional, thread-safe metadata for controls actually used by a loaded game.
+  // Settings use the platform's complete control set instead.
+  IEmulationVirtualControls = interface
+    ['{7DB70A11-8A90-4EA4-95E7-586D24CF66A7}']
+    function GetVirtualButtons: TEmulatorButtons;
+  end;
+
   IEmulationCore = interface
     ['{757D169F-CE44-4B9F-AE15-9D81C6948D0A}']
     function GetName: string;

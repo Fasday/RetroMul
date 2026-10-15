@@ -47,7 +47,7 @@ implementation
 uses
   System.SysUtils, System.Math, System.Generics.Collections, System.Generics.Defaults, FMX.Graphics,
   FMX.BehaviorManager, RM.LibraryView, RM.Settings, RM.Input, RM.Gamepad,
-  Core.Emulation, RM.Icons, RM.Styles;
+  Core.Emulation, RM.Icons, RM.Styles, NES.PowerPad;
 
 {$R *.fmx}
 
@@ -143,7 +143,7 @@ end;
 procedure TControlsHelpView.BuildPlayer;
 begin
   LayoutDiagram.DeleteChildren;
-  LayoutDiagram.Visible := FSystemId <> ROM_SYSTEM_GW;
+  LayoutDiagram.Visible := True;
   for var I := 0 to 1 do
     TLayout(FindComponent('LayoutAssignmentColumn'+IntToStr(I))).DeleteChildren;
   LayoutAssignments.Height := 0;
@@ -178,7 +178,8 @@ begin
   finally
     Devices.Free;
   end;
-  if Buttons = [] then
+  var PowerPadActive := (FSystemId = ROM_SYSTEM_NES) and (FPorts.Devices[FPlayer] = 'powerpad');
+  if (Buttons = []) and not PowerPadActive then
   begin
     var L := GameplayLabel(Self, LayoutDiagram, Translate('No controller is connected to this port. Choose a device in the controls settings.'), 14);
     L.Align := TAlignLayout.Client;
@@ -186,14 +187,17 @@ begin
   end
   else
   begin
-    if FSystemId <> ROM_SYSTEM_GW then
     begin
-      var Pad := TScreenGamepad.Create(LayoutDiagram);
+      var Pad: TControl;
+      if PowerPadActive then Pad := TNesPowerPad.Create(LayoutDiagram)
+      else
+      begin
+        var Gamepad := TScreenGamepad.Create(LayoutDiagram);
+        Gamepad.Configure(TPlatformRegistry.Require(FSystemId).System, FPorts.Devices[FPlayer], Buttons);
+        Pad := Gamepad;
+      end;
       Pad.HitTest := False;
-      Pad.Layout := PlatformPresentation(FSystemId).PadLayout;
-      if (FSystemId = ROM_SYSTEM_NES) and (FPorts.Devices[FPlayer] = 'paddendy') then
-        Pad.Layout := TScreenGamepadLayout.Dendy;
-      Pad.ButtonMask := Buttons;
+      Pad.Enabled := False;
       var Diagram := TDeviceCallouts.Create(LayoutDiagram);
       Diagram.Parent := LayoutDiagram;
       Diagram.Align := TAlignLayout.Client;
@@ -210,6 +214,12 @@ begin
       AssignmentRow(LayoutAssignments, CoreButtonName(FSystemId, B), Assignments(PadAction(FPlayer, B)), Y, PadAction(FPlayer, B));
       Y := Y + 34;
     end;
+    if PowerPadActive then
+      for var Button := 1 to 12 do
+      begin
+        AssignmentRow(LayoutAssignments, IntToStr(Button), Assignments(PowerPadAction + Button - 1), Y, PowerPadAction + Button - 1);
+        Y := Y + 34;
+      end;
     LayoutAssignments.Height := Y;
   end;
   Resize;

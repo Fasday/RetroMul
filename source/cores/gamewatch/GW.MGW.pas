@@ -42,6 +42,7 @@ type
     FFrame: TEmulatorFrame;
     FSamples: TArray<SmallInt>;
     FVoices: array[0..15] of TMGWVoice;
+    function KeyMapping(Button: TEmulatorButton): TScriptValue;
     function Invoke(const Name: string; const Args: TScriptValues): TScriptValues;
     function NewObject(const Kind: string): TScriptValue;
     function ReadProperty(const Args: TScriptValues): TScriptValues;
@@ -53,6 +54,7 @@ type
   public
     constructor Create(Package: TMGWPackage; const SavedData: TBytes = nil);
     destructor Destroy; override;
+    function SupportedButtons: TEmulatorButtons;
     procedure SetInput(const Input: TEmulatorInput);
     procedure RunFrame;
     procedure SerializeState(Archive: TStateArchive);
@@ -510,19 +512,41 @@ begin
   raise EReadError.Create('MGW unknown system function ' + Name);
 end;
 
-procedure TMGWConsole.SetInput(const Input: TEmulatorInput);
+function TMGWConsole.KeyMapping(Button: TEmulatorButton): TScriptValue;
 const
   Names: array[TEmulatorButton] of string = ('up', 'down', 'left', 'right', 'a', 'b', 'l2', 'l1', 'x', 'r1', 'r2', 'y', 'start');
+begin
+  Result := FEngine.Get(FKeymap, S(Names[Button]));
+  if (Result.Kind = skNil) and (Button = TEmulatorButton.A) then
+    Result := FEngine.Get(FKeymap, S('b'));
+end;
 
+function TMGWConsole.SupportedButtons: TEmulatorButtons;
+begin
+  // Polling-style scripts can read the whole input state without a keymap.
+  if not (FKeymap.Obj is TScriptTable) then Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
+  Result := [];
+  for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
+  begin
+    var Mapping := KeyMapping(Button);
+    if not (Mapping.Obj is TScriptTable) then Continue;
+    for var I := 1 to TScriptTable(Mapping.Obj).Count do
+      if FEngine.Get(Mapping, N(I)).Kind = skNumber then
+      begin
+        Include(Result, Button);
+        Break;
+      end;
+  end;
+end;
+
+procedure TMGWConsole.SetInput(const Input: TEmulatorInput);
   function Keys(const State: TEmulatorInput): TArray<Integer>;
   begin
     Result := nil;
     for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
       if Button in State.Buttons then
       begin
-        var Mapping := FEngine.Get(FKeymap, S(Names[Button]));
-        if (Mapping.Kind = skNil) and (Button = TEmulatorButton.A) then
-          Mapping := FEngine.Get(FKeymap, S('b'));
+        var Mapping := KeyMapping(Button);
         if not (Mapping.Obj is TScriptTable) then
           Continue;
 

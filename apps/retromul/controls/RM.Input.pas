@@ -151,7 +151,7 @@ begin
     Exit;
   end;
   if SystemId = ROM_SYSTEM_GW then
-    Exit([TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Select, TEmulatorButton.Start, TEmulatorButton.C, TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.Z]);
+    Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
   Result := [];
   if not (Device = 'auto') and not Device.StartsWith('pad') then
     Exit;
@@ -206,6 +206,8 @@ begin
         Exit('X');
       TEmulatorButton.Z:
         Exit('Y');
+      TEmulatorButton.Mode:
+        Exit('Start');
     end;
   Result := Names[Button];
   if SystemId = ROM_SYSTEM_SATURN then

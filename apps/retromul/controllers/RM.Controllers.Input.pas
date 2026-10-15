@@ -737,6 +737,7 @@ end;
 procedure TInputController.GamepadChanged(Sender: TObject);
 begin
   FState.Input.GamepadInput.Buttons := FState.Input.Gamepad.Buttons;
+  FState.Input.GamepadInput.Analog[0] := FState.Input.Gamepad.AnalogInput;
   if FState.Session.Emulation <> nil then
     FState.Session.Emulation.SetGamepadInput(FView.CombinedGamepadInput);
 end;
@@ -763,19 +764,29 @@ begin
     Result.Buttons10 := Host.Buttons10;
     Result.Buttons11 := Host.Buttons11;
     Result.Buttons12 := Host.Buttons12;
+    var VirtualAnalog := Result.Analog[0];
     Result.Analog := Host.Analog;
+    if VirtualAnalog.Valid then Result.Analog[0] := VirtualAnalog;
   end;
 
   if FState.Input.Ports.Devices[0] = 'none' then
+  begin
     Result.Buttons := [];
+    Result.Analog[0].Valid := False;
+  end;
 
   var N64Input: IN64ControllerInput;
-  if (FState.Input.Manager <> nil) and Supports(FState.Session.Emulation, IN64ControllerInput, N64Input) then
+  if Supports(FState.Session.Emulation, IN64ControllerInput, N64Input) then
     for var Port := 0 to 3 do
     begin
       var Pad := Default(TN64Pad);
-      if FState.Input.Manager.IsPressed(N64LAction + Port) then
+      if (FState.Input.Manager <> nil) and FState.Input.Manager.IsPressed(N64LAction + Port) then
         Pad.Buttons := $20;
+      if Result.Analog[Port].Valid then
+      begin
+        Pad.StickX := Round(Result.Analog[Port].X / 32767 * 80);
+        Pad.StickY := -Round(Result.Analog[Port].Y / 32767 * 80);
+      end;
       N64Input.SetN64Controller(Port, Pad);
     end;
 

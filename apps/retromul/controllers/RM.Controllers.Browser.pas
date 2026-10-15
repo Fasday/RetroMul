@@ -3,12 +3,28 @@
 interface
 
 uses
-  RM.Controllers.Base;
+  System.Classes, System.UITypes, FMX.Menus, RM.Controllers.Base;
 
 type
   TBrowserController = class(TMainController)
+  private
+    FMenuParent: TMenuItem;
+    FMenuPointerDown, FMenuDragged: Boolean;
+    FMenuPointerY, FMenuScrollY: Single;
+    procedure MobileMenuDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Single);
+    procedure MobileMenuMove(Sender: TObject; Shift: TShiftState; X, Y: Single);
+    procedure MobileMenuUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Single);
+    procedure RenderMobileMenu(Parent: TMenuItem);
+    procedure SizeMobileMenu;
+    procedure MobileMenuClick(Sender: TObject);
+    procedure MobileMenuBack(Sender: TObject);
+    procedure MobileMenuActivity(Sender: TObject);
   public
     procedure InitializeScreenshotTool;
+    procedure InitializeMobileGameMenu;
+    procedure PrepareGameActionsMenu(Sender: TObject);
+    procedure ShowGameActionsMenu(Sender: TObject);
+    procedure SetPanelVisibility(Sender: TObject);
     procedure InitializeLibrary;
     {$IF not Defined(ANDROID) and not Defined(IOS)}
     procedure InitializeDesktopViews;
@@ -24,7 +40,7 @@ type
 implementation
 
 uses
-  System.SysUtils, System.Classes, System.UITypes, FMX.Types, FMX.Controls,
+  System.SysUtils, System.Types, System.Math, FMX.Types, FMX.Controls, FMX.StdCtrls,
   FMX.Objects, FMX.Layouts, RM.Main.View, RM.Toolbar, RM.LibraryView, RM.Dialogs,
   RM.Styles, RM.Icons;
 
@@ -32,15 +48,11 @@ procedure TBrowserController.InitializeScreenshotTool;
 begin
   // Split buttons and hardware views have no installed design-time components.
   {$IF Defined(ANDROID) or Defined(IOS)}
-  var ScreenshotButton := FView.AndroidScreenshot;
-  ScreenshotButton.Visible := True;
+  InitializeMobileGameMenu;
   {$ELSE}
   var ScreenshotButton := TToolbarSplitButton.Create(FView);
-  {$ENDIF}
   FState.Browser.ScreenshotTool := ScreenshotButton;
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
   ScreenshotButton.Name := 'ButtonScreenshot';
-  {$ENDIF}
   ScreenshotButton.Parent := FView.FindComponent('LayoutGameActions') as TLayout;
   ScreenshotButton.Align := TAlignLayout.Right;
   ScreenshotButton.Width := 60;
@@ -49,6 +61,228 @@ begin
   ScreenshotButton.Hint := Translate('Screenshot (F8)');
   ScreenshotButton.ShowHint := True;
   ScreenshotButton.OnClick := FView.ScreenshotClick;
+  {$ENDIF}
+end;
+
+procedure TBrowserController.InitializeMobileGameMenu;
+begin
+  FState.Browser.ActionsTool := FView.GameActionsButton;
+  FView.GameActionsButton.Visible := True;
+  FView.GameActionsButton.Hint := Translate('More actions');
+  FView.GameActionsButton.OnClick := ShowGameActionsMenu;
+  FView.GameActionsMenu.OnPopup := PrepareGameActionsMenu;
+  FView.GameActionsPopup.PlacementTarget := FView.GameActionsButton;
+  FView.GameActionsPopup.OnPopup := MobileMenuActivity;
+  FView.GameActionsPopup.OnClosePopup := MobileMenuActivity;
+  FView.GameActionsBack.OnClick := MobileMenuBack;
+  FView.GameActionsBack.Text := Translate('Back');
+  FState.Browser.ScreenshotMenu := FView.ScreenshotMenu;
+  FState.Browser.SaveMenu := FView.SaveSnapshotMenu;
+  FState.Browser.LoadMenu := FView.LoadSnapshotMenu;
+  FView.ButtonHidePanel.Visible := True;
+  FView.ButtonHidePanel.Hint := Translate('Hide panel');
+  FView.ButtonShowPanel.Hint := Translate('Show panel');
+  FView.ButtonHidePanel.OnClick := SetPanelVisibility;
+  FView.ButtonShowPanel.OnClick := SetPanelVisibility;
+  FView.ButtonCloseRom.Hint := Translate('Close game');
+end;
+
+procedure TBrowserController.ShowGameActionsMenu(Sender: TObject);
+begin
+  PrepareGameActionsMenu(nil);
+  RenderMobileMenu(nil);
+  FView.GameActionsPopup.IsOpen := True;
+end;
+
+procedure TBrowserController.SizeMobileMenu;
+begin
+  var Popup := FView.GameActionsPopup;
+  var Available := FView.LayoutClient.AbsoluteRect;
+  var BelowButton := FView.GameActionsButton.LocalToAbsolute(PointF(0, FView.GameActionsButton.Height)).Y;
+  var ContentHeight := FView.GameActionsItems.Height + Popup.Padding.Top + Popup.Padding.Bottom;
+  if FView.GameActionsBack.Visible then
+    ContentHeight := ContentHeight + FView.GameActionsBack.Height + FView.GameActionsBack.Margins.Top + FView.GameActionsBack.Margins.Bottom;
+  var W := Min(320, Max(0, Available.Width - 16));
+  var H := Min(ContentHeight, Max(0, Available.Bottom - BelowButton - 8));
+  if SameValue(Popup.Width, W, 0.1) and SameValue(Popup.Height, H, 0.1) and
+    SameValue(Popup.PopupFormSize.Width, W, 0.1) and SameValue(Popup.PopupFormSize.Height, H, 0.1) then Exit;
+  Popup.Width := W;
+  Popup.Height := H;
+  // A live popup has its own form. Resizing only the control leaves that form
+  // at the old size, clipping its viewport when changing pages or orientation.
+  Popup.PopupFormSize := TSizeF.Create(Popup.Width, Popup.Height);
+  FView.GameActionsScroll.RealignContent;
+end;
+
+procedure TBrowserController.MobileMenuActivity(Sender: TObject);
+begin
+  if not (csDestroying in FView.ComponentState) then
+    FView.SyncActivity;
+end;
+
+procedure TBrowserController.RenderMobileMenu(Parent: TMenuItem);
+begin
+  FMenuParent := Parent;
+  FView.GameActionsBack.Visible := Parent <> nil;
+  if Parent <> nil then FView.GameActionsBack.ApplyStyleLookup;
+  // FMX still uses the clicked button after OnClick. Detach it now and let
+  // Release defer destruction until the input event has finished.
+  while FView.GameActionsItems.ChildrenCount > 0 do
+    FView.GameActionsItems.Children[FView.GameActionsItems.ChildrenCount - 1].Release;
+  var Count := FView.GameActionsMenu.ItemsCount;
+  if Parent <> nil then Count := Parent.ItemsCount;
+  var Top: Single := 0;
+  for var I := 0 to Count - 1 do
+  begin
+    var Item: TMenuItem;
+    if Parent <> nil then Item := Parent.Items[I]
+    else Item := FView.GameActionsMenu.Items[I];
+    if not Item.Visible or (Item.Text = '-') then Continue;
+    var Button := TButton.Create(FView.GameActionsItems);
+    Button.Parent := FView.GameActionsItems;
+    Button.SetBounds(0, Top, 300, 44);
+    Button.Align := TAlignLayout.Top;
+    Button.Margins.Bottom := 4;
+    Button.Text := Item.Text;
+    Button.StyledSettings := [];
+    Button.TextSettings.FontColor := $FFE8ECF1;
+    Button.TextSettings.Font.Size := 14;
+    Button.TextSettings.HorzAlign := TTextAlign.Leading;
+    Button.StyleLookup := 'buttonstyle';
+    Button.Enabled := Item.Enabled;
+    Button.TagObject := Item;
+    Button.OnClick := MobileMenuClick;
+    Button.OnMouseDown := MobileMenuDown;
+    Button.OnMouseMove := MobileMenuMove;
+    Button.OnMouseUp := MobileMenuUp;
+    Button.Touch.InteractiveGestures := [TInteractiveGesture.Pan];
+    Top := Top + 48;
+  end;
+  FView.GameActionsItems.Height := Top;
+  SizeMobileMenu;
+  FView.GameActionsScroll.RealignContent;
+  FView.GameActionsScroll.ViewportPosition := PointF(0, 0);
+end;
+
+procedure TBrowserController.MobileMenuClick(Sender: TObject);
+begin
+  if FMenuDragged then Exit;
+  var Item := TMenuItem(TButton(Sender).TagObject);
+  if Item.ItemsCount > 0 then
+    RenderMobileMenu(Item)
+  else
+  begin
+    FView.GameActionsPopup.IsOpen := False;
+    if Assigned(Item.OnClick) then Item.OnClick(Item);
+  end;
+end;
+
+procedure TBrowserController.MobileMenuDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Single);
+begin
+  FMenuPointerDown := Button = TMouseButton.mbLeft;
+  FMenuDragged := False;
+  FMenuPointerY := TControl(Sender).LocalToAbsolute(PointF(X, Y)).Y;
+  FMenuScrollY := FView.GameActionsScroll.ViewportPosition.Y;
+end;
+
+procedure TBrowserController.MobileMenuMove(Sender: TObject; Shift: TShiftState; X, Y: Single);
+begin
+  if not FMenuPointerDown then Exit;
+  var Delta := FMenuPointerY - TControl(Sender).LocalToAbsolute(PointF(X, Y)).Y;
+  if Abs(Delta) > 6 then FMenuDragged := True;
+  if FMenuDragged then
+    FView.GameActionsScroll.ViewportPosition := PointF(0, EnsureRange(FMenuScrollY + Delta, 0.0,
+      Max(0.0, FView.GameActionsScroll.ContentBounds.Bottom - FView.GameActionsScroll.ViewportRect.Height)));
+end;
+
+procedure TBrowserController.MobileMenuUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Single);
+begin
+  FMenuPointerDown := False;
+end;
+
+procedure TBrowserController.MobileMenuBack(Sender: TObject);
+begin
+  if (FMenuParent <> nil) and (FMenuParent.Parent is TMenuItem) then
+    RenderMobileMenu(TMenuItem(FMenuParent.Parent))
+  else
+    RenderMobileMenu(nil);
+end;
+
+procedure TBrowserController.SetPanelVisibility(Sender: TObject);
+begin
+  FState.Browser.PanelHidden := Sender = FView.ButtonHidePanel;
+  if FState.Browser.PanelHidden and (FState.Session.UserPaused or FState.Session.AutoPaused) then
+    FView.SwitchPause;
+  UpdateGameChrome;
+  FView.FormResize(FView);
+end;
+
+procedure TBrowserController.PrepareGameActionsMenu(Sender: TObject);
+
+  function Add(Parent: TFmxObject; const Caption: string; Click: TNotifyEvent;
+    Enabled: Boolean = True): TMenuItem;
+  begin
+    Result := TMenuItem.Create(FView.GameActionsMenu);
+    Result.Text := Translate(Caption);
+    Result.OnClick := Click;
+    Result.Enabled := Enabled;
+    Parent.AddObject(Result);
+  end;
+
+  procedure CopyItem(Source: TMenuItem; Parent: TFmxObject);
+  begin
+    var Item := Add(Parent, Source.Text, Source.OnClick, Source.Enabled);
+    Item.Text := Source.Text;
+    Item.TagString := Source.TagString;
+    Item.Visible := Source.Visible;
+    for var I := 0 to Source.ItemsCount - 1 do
+      CopyItem(Source.Items[I], Item);
+  end;
+
+  procedure AddOptions(Parent: TMenuItem; Source: TPopupMenu);
+  begin
+    // Mobile uses quick slots and existing saves; file dialogs remain desktop-only.
+    if Source = FState.Browser.SaveMenu then Exit;
+    FView.PrepareGameplayMenu(Source);
+    var OpenSnapshot: TNotifyEvent := FView.OpenSnapshotClick;
+    for var I := 0 to Source.ItemsCount - 1 do
+    begin
+      if Source.Items[I].Text = '-' then Continue;
+      if (Source = FState.Browser.LoadMenu) and
+        (TMethod(Source.Items[I].OnClick) = TMethod(OpenSnapshot)) then Continue;
+      CopyItem(Source.Items[I], Parent);
+    end;
+  end;
+
+begin
+  var Menu := FView.GameActionsMenu;
+  FMenuParent := nil;
+  Menu.Clear;
+  var Ready := (FState.Session.Emulation <> nil) and not FState.Session.OpeningRom
+    and not FState.Session.EmulationFaulted;
+  var Snapshots := Ready and FState.Session.Emulation.SupportsSnapshots;
+  Add(Menu, 'Back to library', FView.LibraryBack, not FState.Session.OpeningRom);
+  var Paused := FState.Session.UserPaused or
+    ((FState.Session.Emulation <> nil) and FState.Session.Emulation.IsPaused);
+  var PauseText := 'Pause';
+  if Paused then PauseText := 'Resume';
+  Add(Menu, PauseText, FView.PauseClick, Ready);
+  if (FState.Session.Emulation <> nil) and FState.Session.Emulation.HasCoinAcceptor then
+    Add(Menu, 'Insert coin', FView.InsertCoinClick, Ready and not FState.Browser.ViewingLibrary
+      and (FState.Settings.View = nil) and (FState.Help.View = nil));
+  var Save := Add(Menu, 'Save', nil, Snapshots);
+  Add(Save, 'Quick save · F5', FView.SaveStateClick);
+  AddOptions(Save, FState.Browser.SaveMenu);
+  var Load := Add(Menu, 'Load', nil, Snapshots);
+  Add(Load, 'Quick load · F6', FView.LoadStateClick);
+  AddOptions(Load, FState.Browser.LoadMenu);
+  var Screenshot := Add(Menu, 'Screenshot', nil, Ready);
+  Add(Screenshot, 'Take screenshot', FView.ScreenshotClick);
+  AddOptions(Screenshot, FState.Browser.ScreenshotMenu);
+  Add(Menu, 'Full screen', FView.FullscreenClick, Ready and not FState.Browser.ViewingLibrary
+    and (FState.Settings.View = nil) and (FState.Help.View = nil));
+  Add(Menu, 'Settings', FView.SettingsClick, not FState.Session.OpeningRom);
+  Add(Menu, 'Controls and shortcuts', FView.ControlsHelpClick, Ready and not FState.Help.Closing);
 end;
 
 procedure TBrowserController.InitializeLibrary;
@@ -187,6 +421,15 @@ begin
   {$IF not Defined(ANDROID) and not Defined(IOS)}
   FView.LayoutHead.Visible := (FState.Browser.View <> nil) and not FView.FullScreen;
   {$ENDIF}
+
+  if FState.Browser.ActionsTool <> nil then
+  begin
+    FView.LayoutHead.Visible := not FState.Browser.PanelHidden;
+    FView.LayoutShowPanel.Visible := FState.Browser.PanelHidden;
+    if FView.LayoutShowPanel.Visible then
+      FView.LayoutShowPanel.BringToFront;
+    if FView.GameActionsPopup.IsOpen then SizeMobileMenu;
+  end;
 
   if FState.Browser.CoinTool <> nil then
   begin

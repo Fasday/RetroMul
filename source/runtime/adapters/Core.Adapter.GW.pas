@@ -21,7 +21,7 @@ type
     property Keys2: TGWKeyMap read FKeys2;
   end;
 
-  TGWCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TGWCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationVirtualControls)
   private
     FCartridge: TGWCartridge;
     FThread: TGWWorker;
@@ -52,6 +52,7 @@ type
     procedure SetKeyState(Code: UInt32; Pressed: Boolean);
     procedure SetGamepadInput(const Input: TEmulatorInput);
     function GetInputState: TEmulatorInput;
+    function GetVirtualButtons: TEmulatorButtons;
     function GetSnapshotDirectory: string;
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
@@ -216,6 +217,12 @@ procedure TGWCoreAdapter.SetGamepadInput(const Input: TEmulatorInput);
 begin
   FGamepad := Input;
   ApplySettings;
+end;
+
+function TGWCoreAdapter.GetVirtualButtons: TEmulatorButtons;
+begin
+  if FThread <> nil then Result := FThread.SupportedButtons
+  else Result := FCartridge.SupportedButtons;
 end;
 
 function TGWCoreAdapter.GetInputState: TEmulatorInput;

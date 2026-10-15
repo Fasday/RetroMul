@@ -29,8 +29,13 @@ type
     function ExecuteSnapshotDialog(Dialog: TOpenDialog): Boolean; virtual; abstract;
     procedure OpenDirectory(const Directory: string); virtual; abstract;
   published
-    AndroidScreenshot: TButton;
-    ScreenshotMenu, SaveSnapshotMenu, LoadSnapshotMenu: TPopupMenu;
+    GameActionsButton, ButtonHidePanel, ButtonShowPanel: TButton;
+    LayoutShowPanel: TLayout;
+    GameActionsMenu, ScreenshotMenu, SaveSnapshotMenu, LoadSnapshotMenu: TPopupMenu;
+    GameActionsPopup: TPopup;
+    GameActionsItems: TLayout;
+    GameActionsScroll: TVertScrollBox;
+    GameActionsBack: TButton;
     ScreenTabs: TTabControl;
     LibraryScreen: TTabItem;
     GameScreen: TTabItem;

@@ -23,7 +23,14 @@ type
     FId, FCaption: string;
     FSide: TVirtualSide;
     FBounds: TRectF;
-    FValues: TArray<Single>;
+    FValues, FFeedback: TArray<Single>;
+    FPartEnabled: TArray<Boolean>;
+    FCaptureGroup: string;
+    FRetainOnSlide: Boolean;
+    function GetPartEnabled(Part: Integer): Boolean;
+    procedure SetPartEnabled(Part: Integer; Value: Boolean);
+    function GetFeedback(Part: Integer): Single;
+    procedure SetFeedback(Part: Integer; Value: Single);
     procedure SetBounds(const Value: TRectF);
     procedure SetSide(Value: TVirtualSide);
     procedure SetCaption(const Value: string);
@@ -31,12 +38,20 @@ type
     function LocalPartBounds(Part: Integer): TRectF; virtual;
     function HitParts(const P: TPointF): TArray<Integer>; virtual;
     function InputValue(const P: TPointF): Single; virtual;
+    function PartInputValue(Part: Integer; const P: TPointF): Single; virtual;
     procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); virtual; abstract;
     procedure DrawLabel(Canvas: TCanvas; const R: TRectF; const Text: string; Alpha: Single);
   public
     constructor Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer = 1); virtual;
     function Value(Part: Integer = 0): Single;
     function PartCount: Integer;
+    function VisualValue(Part: Integer = 0): Single;
+    function HasEnabledParts: Boolean;
+    property PartEnabled[Part: Integer]: Boolean read GetPartEnabled write SetPartEnabled;
+    property Feedback[Part: Integer]: Single read GetFeedback write SetFeedback;
+    // Nonempty groups enable rolling between action buttons with one contact.
+    property CaptureGroup: string read FCaptureGroup write FCaptureGroup;
+    property RetainOnSlide: Boolean read FRetainOnSlide write FRetainOnSlide;
     property Id: string read FId;
     property Caption: string read FCaption write SetCaption;
     property Side: TVirtualSide read FSide write SetSide;
@@ -47,6 +62,11 @@ type
   TVirtualButton = class(TVirtualElement)
   protected
     function HitParts(const P: TPointF): TArray<Integer>; override;
+    procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); override;
+  end;
+
+  TVirtualKey = class(TVirtualElement)
+  protected
     procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); override;
   end;
 
@@ -63,6 +83,17 @@ type
     procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); override;
   public
     constructor Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer = 4); override;
+  end;
+
+  TVirtualStick = class(TVirtualElement)
+  protected
+    function HitParts(const P: TPointF): TArray<Integer>; override;
+    function PartInputValue(Part: Integer; const P: TPointF): Single; override;
+    procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); override;
+  public
+    constructor Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer = 4); override;
+    function AxisX: Single;
+    function AxisY: Single;
   end;
 
   TVirtualSwitch = class(TVirtualElement)
@@ -83,7 +114,8 @@ type
     type
       TContact = record
         Element: TVirtualElement;
-        Point: TPointF;
+        Point, Position: TPointF;
+        HoldAnchor: Boolean;
       end;
   private
     FElements: TObjectList<TVirtualElement>;
@@ -98,9 +130,11 @@ type
     procedure SetDesignSideSize(const Value: TSizeF);
     procedure SetInkOpacity(Value: Single);
     procedure Recompute;
+    function GroupBounds(Element: TVirtualElement): TRectF;
     function ToSide(const P: TPointF; Side: TVirtualSide): TPointF;
     function TransformRect(const R: TRectF; Side: TVirtualSide): TRectF;
   protected
+    procedure InputChanged; virtual;
     procedure Paint; override;
     procedure Resize; override;
     procedure EnabledChanged; override;
@@ -132,7 +166,7 @@ type
     procedure PointerDown(Id: NativeInt; const P: TPointF);
     procedure PointerMove(Id: NativeInt; const P: TPointF);
     procedure PointerUp(Id: NativeInt);
-    procedure ReleaseAll;
+    procedure ReleaseAll; virtual;
     property Count: Integer read GetCount;
     property Elements[Index: Integer]: TVirtualElement read GetElement; default;
     property DesignSideSize: TSizeF read FDesignSideSize write SetDesignSideSize;
@@ -152,10 +186,14 @@ begin
   inherited Create;
   if (AId = '') or (PartCount < 1) then
     raise EArgumentException.Create('Element needs an ID and at least one part');
+  FRetainOnSlide := True;
   FId := AId;
   FCaption := ACaption;
   FSide := ASide;
   SetLength(FValues, PartCount);
+  SetLength(FFeedback, PartCount);
+  SetLength(FPartEnabled, PartCount);
+  for var I := 0 to PartCount - 1 do FPartEnabled[I] := True;
   SetBounds(ABounds);
 end;
 
@@ -206,6 +244,59 @@ begin
   Result := 1;
 end;
 
+function TVirtualElement.PartInputValue(Part: Integer; const P: TPointF): Single;
+begin
+  Result := InputValue(P);
+end;
+
+constructor TVirtualStick.Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer);
+begin
+  inherited Create(AId, ACaption, ASide, ABounds, 4);
+end;
+
+function TVirtualStick.HitParts(const P: TPointF): TArray<Integer>;
+begin
+  Result := [0, 1, 2, 3];
+end;
+
+function TVirtualStick.PartInputValue(Part: Integer; const P: TPointF): Single;
+begin
+  var X := (P.X - Bounds.CenterPoint.X) / (Bounds.Width / 2);
+  var Y := (P.Y - Bounds.CenterPoint.Y) / (Bounds.Height / 2);
+  var Magnitude := Sqrt(Sqr(X) + Sqr(Y));
+  if Magnitude <= 0.12 then Exit(0);
+  var Amount := Min(1.0, (Magnitude - 0.12) / 0.88);
+  X := X / Magnitude * Amount;
+  Y := Y / Magnitude * Amount;
+  case Part of
+    0: Result := Max(0.0, -Y);
+    1: Result := Max(0.0, Y);
+    2: Result := Max(0.0, -X);
+    3: Result := Max(0.0, X);
+  else Result := 0;
+  end;
+end;
+
+function TVirtualStick.AxisX: Single;
+begin Result := Value(3) - Value(2); end;
+
+function TVirtualStick.AxisY: Single;
+begin Result := Value(1) - Value(0); end;
+
+procedure TVirtualStick.Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single);
+begin
+  Canvas.Stroke.Color := TAlphaColors.White;
+  Canvas.Stroke.Thickness := 1.5;
+  Canvas.Fill.Color := TAlphaColors.White;
+  Canvas.FillEllipse(Bounds, Alpha * 0.08);
+  Canvas.DrawEllipse(Bounds, Alpha);
+  var Center := Bounds.CenterPoint + PointF(AxisX * Bounds.Width * 0.28, AxisY * Bounds.Height * 0.28);
+  var Radius := Min(Bounds.Width, Bounds.Height) * 0.2;
+  var Knob := RectF(Center.X - Radius, Center.Y - Radius, Center.X + Radius, Center.Y + Radius);
+  Canvas.FillEllipse(Knob, Alpha * 0.3);
+  Canvas.DrawEllipse(Knob, Alpha);
+end;
+
 function TVirtualElement.Value(Part: Integer): Single;
 begin
   if (Part < 0) or (Part >= Length(FValues)) then
@@ -216,6 +307,55 @@ end;
 function TVirtualElement.PartCount: Integer;
 begin
   Result := Length(FValues);
+end;
+
+function TVirtualElement.GetPartEnabled(Part: Integer): Boolean;
+begin
+  if (Part < 0) or (Part >= PartCount) then raise EArgumentOutOfRangeException.Create('Part');
+  Result := FPartEnabled[Part];
+end;
+
+procedure TVirtualElement.SetPartEnabled(Part: Integer; Value: Boolean);
+begin
+  if (Part < 0) or (Part >= PartCount) then raise EArgumentOutOfRangeException.Create('Part');
+  if FPartEnabled[Part] = Value then Exit;
+  FPartEnabled[Part] := Value;
+  if FController <> nil then FController.GeometryChanged;
+end;
+
+function TVirtualElement.HasEnabledParts: Boolean;
+begin
+  Result := False;
+  for var Enabled in FPartEnabled do if Enabled then Exit(True);
+end;
+
+function TVirtualElement.GetFeedback(Part: Integer): Single;
+begin
+  if (Part < 0) or (Part >= PartCount) then raise EArgumentOutOfRangeException.Create('Part');
+  Result := FFeedback[Part];
+end;
+
+procedure TVirtualElement.SetFeedback(Part: Integer; Value: Single);
+begin
+  if (Part < 0) or (Part >= PartCount) then raise EArgumentOutOfRangeException.Create('Part');
+  if IsNan(Value) or IsInfinite(Value) then raise EArgumentException.Create('Invalid feedback');
+  FFeedback[Part] := EnsureRange(Value, 0.0, 1.0);
+  if FController <> nil then FController.Repaint;
+end;
+
+function TVirtualElement.VisualValue(Part: Integer): Single;
+begin
+  Result := Max(Value(Part), Feedback[Part]);
+end;
+
+procedure TVirtualKey.Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single);
+begin
+  Canvas.Fill.Color := TAlphaColors.White;
+  Canvas.Stroke.Color := TAlphaColors.White;
+  Canvas.Stroke.Thickness := 1.5;
+  Canvas.FillRect(Bounds, 8, 8, AllCorners, Alpha * (0.16 + 0.54 * VisualValue));
+  Canvas.DrawRect(Bounds, 8, 8, AllCorners, Alpha);
+  DrawLabel(Canvas, Bounds, Caption, Alpha);
 end;
 
 procedure TVirtualElement.DrawLabel(Canvas: TCanvas; const R: TRectF; const Text: string; Alpha: Single);
@@ -241,7 +381,7 @@ begin
   Canvas.Fill.Color := TAlphaColors.White;
   Canvas.Stroke.Color := TAlphaColors.White;
   Canvas.Stroke.Thickness := 1.5;
-  Canvas.FillEllipse(Bounds, Alpha * (0.16 + 0.54 * Value));
+  Canvas.FillEllipse(Bounds, Alpha * (0.16 + 0.54 * VisualValue));
   Canvas.DrawEllipse(Bounds, Alpha);
   DrawLabel(Canvas, Bounds, Caption, Alpha);
 end;
@@ -304,9 +444,10 @@ begin
   Canvas.Stroke.Thickness := 1.5;
   for i := 0 to 3 do
   begin
+    if not PartEnabled[i] then Continue;
     R := Controller.PartBounds(Self, i);
     Canvas.Fill.Color := TAlphaColors.White;
-    Canvas.FillRect(R, 4, 4, AllCorners, Alpha * (0.16 + 0.54 * Value(i)));
+    Canvas.FillRect(R, 4, 4, AllCorners, Alpha * (0.16 + 0.54 * VisualValue(i)));
     Canvas.DrawRect(R, 4, 4, AllCorners, Alpha);
     DrawLabel(Canvas, R, Labels[i], Alpha);
   end;
@@ -324,7 +465,7 @@ begin
   Canvas.DrawRect(Bounds, Bounds.Height / 2, Bounds.Height / 2, AllCorners, Alpha);
   D := Min(Bounds.Height - 8, Bounds.Width / 3);
   R := RectF(Bounds.Left + 4, Bounds.CenterPoint.Y - D / 2, Bounds.Left + 4 + D, Bounds.CenterPoint.Y + D / 2);
-  if FLatched then
+  if VisualValue > 0 then
     R.Offset(Bounds.Width - D - 8, 0);
   Canvas.FillEllipse(R, Alpha * 0.8);
   DrawLabel(Canvas, Bounds, Caption, Alpha);
@@ -344,7 +485,7 @@ begin
   Canvas.Fill.Color := TAlphaColors.White;
   Canvas.FillRect(Bounds, 8, 8, AllCorners, Alpha * 0.12);
   R := Bounds;
-  R.Top := R.Bottom - R.Height * Value;
+  R.Top := R.Bottom - R.Height * VisualValue;
   Canvas.FillRect(R, 6, 6, AllCorners, Alpha * 0.6);
   Canvas.DrawRect(Bounds, 8, 8, AllCorners, Alpha);
   DrawLabel(Canvas, Bounds, Caption, Alpha);
@@ -550,12 +691,29 @@ begin
     ReleaseAll;
 end;
 
+procedure TVirtualController.InputChanged;
+begin
+end;
+
+function TVirtualController.GroupBounds(Element: TVirtualElement): TRectF;
+begin
+  Result := ElementBounds(Element);
+  for var E in FElements do
+    if E.HasEnabledParts and (E.CaptureGroup = Element.CaptureGroup) then
+    begin
+      var Bounds := ElementBounds(E);
+      Result := RectF(Min(Result.Left, Bounds.Left), Min(Result.Top, Bounds.Top),
+        Max(Result.Right, Bounds.Right), Max(Result.Bottom, Bounds.Bottom));
+    end;
+  Result.Inflate(6, 6);
+end;
+
 procedure TVirtualController.Recompute;
 var
   E: TVirtualElement;
   C: TContact;
   NewValues: TArray<Single>;
-  Part, i: Integer;
+  Part, I: Integer;
   V: Single;
 begin
   for E in FElements do
@@ -566,25 +724,32 @@ begin
       NewValues[0] := Ord(TVirtualSwitch(E).FLatched)
     else
       for C in FContacts.Values do
-        if C.Element = E then
+        if (C.Element = E) or ((C.Element.CaptureGroup <> '') and
+          (C.Element.CaptureGroup = E.CaptureGroup)) then
         begin
-          V := E.InputValue(C.Point);
-          // Triggers retain capture beyond their bounds and clamp to 0..1.
-          if E is TVirtualTrigger then
-            NewValues[0] := Max(NewValues[0], V)
+          var Point := ToSide(C.Position, E.Side);
+          V := E.InputValue(Point);
+          if E is TVirtualTrigger then NewValues[0] := Max(NewValues[0], V)
           else
-            for Part in E.HitParts(C.Point) do
+          begin
+            if C.HoldAnchor and (C.Element = E) then NewValues[0] := 1;
+            for Part in E.HitParts(Point) do
               if (Part >= 0) and (Part < E.PartCount) then
-                NewValues[Part] := Max(NewValues[Part], V);
+                NewValues[Part] := Max(NewValues[Part], E.PartInputValue(Part, Point));
+          end;
         end;
-    for i := 0 to E.PartCount - 1 do
-      if not SameValue(E.FValues[i], NewValues[i], 0.0001) then
+    for I := 0 to E.PartCount - 1 do
+    begin
+      if not E.PartEnabled[I] then NewValues[I] := 0;
+      if not SameValue(E.FValues[I], NewValues[I], 0.0001) then
       begin
-        E.FValues[i] := NewValues[i];
-        if Assigned(FOnInput) then
-          FOnInput(Self, E, i, NewValues[i]);
+        E.FValues[I] := NewValues[I];
+        if Assigned(FOnInput) then FOnInput(Self, E, I, NewValues[I]);
       end;
+    end;
   end;
+  // Subclasses read one complete state, without transient opposing directions.
+  InputChanged;
   Repaint;
 end;
 
@@ -599,7 +764,11 @@ begin
   for i := Count - 1 downto 0 do
   begin
     C.Element := Elements[i];
+    if not C.Element.HasEnabledParts then Continue;
+    C.HoldAnchor := (C.Element.CaptureGroup <> '') and C.Element.RetainOnSlide;
+    C.Position := P;
     C.Point := ToSide(P, C.Element.Side);
+    if not C.Element.Bounds.Contains(C.Point) then Continue;
     if Length(C.Element.HitParts(C.Point)) = 0 then
       if not ((C.Element is TVirtualDPad) and C.Element.Bounds.Contains(C.Point)) then
         Continue;
@@ -617,7 +786,16 @@ var
 begin
   if not FContacts.TryGetValue(Id, C) then
     Exit;
+  if not AbsoluteEnabled or not ParentedVisible then
+  begin
+    ReleaseAll;
+    Exit;
+  end;
   C.Point := ToSide(P, C.Element.Side);
+  C.Position := P;
+  if (C.Element.CaptureGroup <> '') and
+    (not LocalRect.Contains(P) or not GroupBounds(C.Element).Contains(P)) then
+    C.HoldAnchor := False;
   FContacts[Id] := C;
   Recompute;
 end;
@@ -638,8 +816,10 @@ begin
     Exit;
   FContacts.Clear;
   for E in FElements do
-    if E is TVirtualSwitch then
-      TVirtualSwitch(E).FLatched := False;
+  begin
+    if E is TVirtualSwitch then TVirtualSwitch(E).FLatched := False;
+    for var I := 0 to E.PartCount - 1 do E.FFeedback[I] := 0;
+  end;
   Recompute;
 end;
 
@@ -651,7 +831,7 @@ begin
   Canvas.Fill.Kind := TBrushKind.Solid;
   // No background: this control can overlay a game view.
   for E in FElements do
-    E.Paint(Canvas, ElementBounds(E), FInkOpacity * AbsoluteOpacity);
+    if E.HasEnabledParts then E.Paint(Canvas, ElementBounds(E), FInkOpacity * AbsoluteOpacity);
 end;
 
 procedure TVirtualController.MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Single);
