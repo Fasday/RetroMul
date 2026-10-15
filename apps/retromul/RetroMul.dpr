@@ -19,6 +19,9 @@ uses
   FMX.SVG.Cache in '..\..\source\ui\fmx\svg\FMX.SVG.Cache.pas',
   FMX.SVG in '..\..\source\ui\fmx\svg\FMX.SVG.pas',
   System.StartUpCopy,
+  System.SysUtils,
+  RM.VirtualController in 'controls\RM.VirtualController.pas',
+  RM.VirtualController.Test in 'controls\RM.VirtualController.Test.pas' {VirtualControllerTestForm},
   A2600.AudioMachine in '..\..\source\cores\a2600\A2600.AudioMachine.pas',
   A2600.Sound.TIA in '..\..\source\hardware\audio\A2600.Sound.TIA.pas',
   Amiga.AHX in '..\..\source\music\trackers\amiga\Amiga.AHX.pas',
@@ -58,6 +61,10 @@ uses
   Core.Storage in '..\..\source\services\storage\Core.Storage.pas',
   Core.Platforms.Icons in '..\..\source\ui\fmx\icons\Core.Platforms.Icons.pas',
   Core.Platforms in '..\..\source\services\catalog\Core.Platforms.pas',
+  Core.RomArchive in '..\..\source\media\rom\Core.RomArchive.pas',
+  Z7.Archive in '..\..\dependencies\Delphi7z\Z7.Archive.pas',
+  Z7.Archive.Lzma in '..\..\dependencies\Delphi7z\Z7.Archive.Lzma.pas',
+  Z7.Archive.Filters in '..\..\dependencies\Delphi7z\Z7.Archive.Filters.pas',
   Core.RomFormat in '..\..\source\media\rom\Core.RomFormat.pas',
   Core.RomHashes in '..\..\source\media\rom\Core.RomHashes.pas',
   RM.Storage.Dialogs in 'controls\RM.Storage.Dialogs.pas',
@@ -312,6 +319,15 @@ uses
   CHD.LZMA in '..\..\source\media\chd\CHD.LZMA.pas',
   CHD in '..\..\source\media\chd\CHD.pas',
   CHD.Zstd in '..\..\source\media\chd\CHD.Zstd.pas',
+  Core.Adapter.NGP in '..\..\source\runtime\adapters\Core.Adapter.NGP.pas',
+  HW.TLCS900H in '..\..\source\hardware\cpu\HW.TLCS900H.pas',
+  NGP.Cartridge in '..\..\source\cores\ngp\NGP.Cartridge.pas',
+  NGP.Firmware in '..\..\source\cores\ngp\NGP.Firmware.pas',
+  NGP.Console in '..\..\source\cores\ngp\NGP.Console.pas',
+  NGP.Emulation in '..\..\source\cores\ngp\NGP.Emulation.pas',
+  NGP.Sound in '..\..\source\cores\ngp\NGP.Sound.pas',
+  NGP.Video in '..\..\source\cores\ngp\NGP.Video.pas',
+  RM.Settings.NGP in 'settings\RM.Settings.NGP.pas',
   NeoGeo.Bootleg in '..\..\source\cores\neogeo\NeoGeo.Bootleg.pas',
   NeoGeo.Cartridge in '..\..\source\cores\neogeo\NeoGeo.Cartridge.pas',
   NeoGeo.Console in '..\..\source\cores\neogeo\NeoGeo.Console.pas',
@@ -333,6 +349,10 @@ begin
   GlobalUseSkia := True;
   {$ENDIF}
   Application.Initialize;
-  Application.CreateForm(TFormMain, FormMain);
+  if FindCmdLineSwitch('virtual-controller-test', ['-', '/'], True) or
+    FindCmdLineSwitch('-virtual-controller-test', ['-'], True) then
+    Application.CreateForm(TVirtualControllerTestForm, VirtualControllerTestForm)
+  else
+    Application.CreateForm(TFormMain, FormMain);
   Application.Run;
 end.

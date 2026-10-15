@@ -50,7 +50,7 @@ implementation
 uses
   System.Math;
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 function Coordinate(Value: Word): Integer;
 begin
@@ -93,33 +93,33 @@ end;
 
 function TSaturnVDP1.VRWord(Address: Cardinal): Word;
 begin
-  Result := (Word(FVRAM[Address and $7FFFF]) shl 8) or FVRAM[(Address + 1) and $7FFFF];
+  Result := (Word(FVRAM[Address and $7FFFF]) shl 8) or FVRAM[(UInt64(Address) + 1) and $7FFFF];
 end;
 
 function TSaturnVDP1.ReadVRAM(Address: Cardinal; Size: Integer): Cardinal;
 begin
   Result := 0;
   for var I := 0 to Size - 1 do
-    Result := (Result shl 8) or FVRAM[(Address + Cardinal(I)) and $7FFFF];
+    Result := (Result shl 8) or FVRAM[(UInt64(Address) + Cardinal(I)) and $7FFFF];
 end;
 
 procedure TSaturnVDP1.WriteVRAM(Address, Value: Cardinal; Size: Integer);
 begin
   for var I := 0 to Size - 1 do
-    FVRAM[(Address + Cardinal(I)) and $7FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
+    FVRAM[(UInt64(Address) + Cardinal(I)) and $7FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
 end;
 
 function TSaturnVDP1.ReadBuffer(Address: Cardinal; Size: Integer): Cardinal;
 begin
   Result := 0;
   for var I := 0 to Size - 1 do
-    Result := (Result shl 8) or FBuffer[FDraw, (Address + Cardinal(I)) and $3FFFF];
+    Result := (Result shl 8) or FBuffer[FDraw, (UInt64(Address) + Cardinal(I)) and $3FFFF];
 end;
 
 procedure TSaturnVDP1.WriteBuffer(Address, Value: Cardinal; Size: Integer);
 begin
   for var I := 0 to Size - 1 do
-    FBuffer[FDraw, (Address + Cardinal(I)) and $3FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
+    FBuffer[FDraw, (UInt64(Address) + Cardinal(I)) and $3FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
 end;
 
 function TSaturnVDP1.DisplayPixel(X, Y: Integer): Word;
@@ -620,7 +620,7 @@ begin
   Result := 0;
   for var I := 0 to Size - 1 do
   begin
-    var A: Integer := (Address + Cardinal(I)) and $1F;
+    var A: Integer := (UInt64(Address) + Cardinal(I)) and $1F;
     var V: Word := 0;
     if A div 2 <= 11 then
       V := FRegisters[A div 2];

@@ -54,7 +54,7 @@ implementation
 uses
   System.Math;
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 function SignedParameter(Value: Cardinal; Bits: Integer; DropLowSix: Boolean = False): Integer;
 begin
@@ -104,25 +104,25 @@ end;
 
 function TSaturnVDP2.VRWord(Address: Cardinal): Word;
 begin
-  Result := (Word(FVRAM[Address and $7FFFF]) shl 8) or FVRAM[(Address + 1) and $7FFFF];
+  Result := (Word(FVRAM[Address and $7FFFF]) shl 8) or FVRAM[(UInt64(Address) + 1) and $7FFFF];
 end;
 
 function TSaturnVDP2.VRLong(Address: Cardinal): Cardinal;
 begin
-  Result := (Cardinal(VRWord(Address)) shl 16) or VRWord(Address + 2);
+  Result := (Cardinal(VRWord(Address)) shl 16) or VRWord(Cardinal((UInt64(Address) + 2) and $FFFFFFFF));
 end;
 
 function TSaturnVDP2.ReadVRAM(Address: Cardinal; Size: Integer): Cardinal;
 begin
   Result := 0;
   for var I := 0 to Size - 1 do
-    Result := (Result shl 8) or FVRAM[(Address + Cardinal(I)) and $7FFFF];
+    Result := (Result shl 8) or FVRAM[(UInt64(Address) + Cardinal(I)) and $7FFFF];
 end;
 
 procedure TSaturnVDP2.WriteVRAM(Address, Value: Cardinal; Size: Integer);
 begin
   for var I := 0 to Size - 1 do
-    FVRAM[(Address + Cardinal(I)) and $7FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
+    FVRAM[(UInt64(Address) + Cardinal(I)) and $7FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
 end;
 
 function TSaturnVDP2.ReadCRAM(Address: Cardinal; Size: Integer): Cardinal;
@@ -131,7 +131,7 @@ begin
   if Size = 1 then
     Exit($FF);
   for var I := 0 to Size - 1 do
-    Result := (Result shl 8) or FCRAM[(Address + Cardinal(I)) and $FFF];
+    Result := (Result shl 8) or FCRAM[(UInt64(Address) + Cardinal(I)) and $FFF];
 end;
 
 procedure TSaturnVDP2.WriteCRAM(Address, Value: Cardinal; Size: Integer);
@@ -140,7 +140,7 @@ begin
     Exit;
   for var I := 0 to Size - 1 do
   begin
-    var A: Integer := (Address + Cardinal(I)) and $FFF;
+    var A: Integer := (UInt64(Address) + Cardinal(I)) and $FFF;
     var B: Byte := (Value shr ((Size - I - 1) * 8)) and $FF;
     FCRAM[A] := B;
     if (Reg($0E) shr 12) and 3 = 0 then
@@ -283,9 +283,9 @@ begin
   var Raw: Cardinal;
   if Reg($0E) and $8000 <> 0 then
   begin
-    Raw := (Cardinal(FCRAM[$800 + (Address and $7FF)]) shl 8) or FCRAM[$800 + ((Address + 1) and $7FF)];
+    Raw := (Cardinal(FCRAM[$800 + (Address and $7FF)]) shl 8) or FCRAM[$800 + ((UInt64(Address) + 1) and $7FF)];
     if Size = 4 then
-      Raw := (Raw shl 16) or (Cardinal(FCRAM[$800 + ((Address + 2) and $7FF)]) shl 8) or FCRAM[$800 + ((Address + 3) and $7FF)];
+      Raw := (Raw shl 16) or (Cardinal(FCRAM[$800 + ((UInt64(Address) + 2) and $7FF)]) shl 8) or FCRAM[$800 + ((Address + 3) and $7FF)];
   end
   else
   begin
@@ -552,7 +552,7 @@ begin
   var Flip: Integer := 0;
   if Words = 2 then
   begin
-    Character := VRWord(Address + 2) and $7FFF;
+    Character := VRWord(UInt64(Address) + 2) and $7FFF;
     Pal := Pattern and $7F;
     Flip := (Pattern shr 14) and 3;
   end

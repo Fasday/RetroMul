@@ -68,7 +68,7 @@ type
 
 implementation
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 const
   TimerBase: array[0..4] of Integer = ($104, $10E, $118, $122, $132);
@@ -153,7 +153,7 @@ begin
     var Pins: Word := (R($1C2, 2) and Direction) or (FPortBInputs and not Direction);
     for var I := 0 to Size - 1 do
     begin
-      var A: Integer := (Address + Cardinal(I)) and $1FF;
+      var A: Integer := (UInt64(Address) + Cardinal(I)) and $1FF;
       var V := R(A, 1);
       if A = $1C2 then
         V := Pins shr 8
@@ -166,7 +166,7 @@ begin
   Result := 0;
   if Address >= $0F000000 then
     for var I := 0 to Size - 1 do
-      Result := (Result shl 8) or FRAM[(Address + Cardinal(I)) and $FFF]
+      Result := (Result shl 8) or FRAM[(UInt64(Address) + Cardinal(I)) and $FFF]
   else
     Result := FRead(FUser, Address, Size);
 end;
@@ -194,7 +194,7 @@ begin
       begin
         W(B + 4, R(B + 4, 1) or $84, 1);
         if Assigned(FSerial) and (R(B + 2, 1) and $20 <> 0) then
-          FSerial(C, Value);
+          FSerial(C, Byte(Value and $FF));
       end;
     end;
     IRQ;
@@ -202,7 +202,7 @@ begin
   end;
   if Address >= $0F000000 then
     for var I := 0 to Size - 1 do
-      FRAM[(Address + Cardinal(I)) and $FFF] := (Value shr ((Size - I - 1) * 8)) and $FF
+      FRAM[(UInt64(Address) + Cardinal(I)) and $FFF] := (Value shr ((Size - I - 1) * 8)) and $FF
   else
     FWrite(FUser, Address, Value, Size);
 end;
@@ -377,15 +377,15 @@ begin
     Write(Dest, Data, Size);
   case (Control shr 12) and 3 of
     1:
-      Inc(Source, Size);
+      Source := Cardinal((Int64(Source) + Size) and $FFFFFFFF);
     2:
-      Dec(Source, Size);
+      Source := Cardinal((Int64(Source) - Size) and $FFFFFFFF);
   end;
   case (Control shr 14) and 3 of
     1:
-      Inc(Dest, Size);
+      Dest := Cardinal((Int64(Dest) + Size) and $FFFFFFFF);
     2:
-      Dec(Dest, Size);
+      Dest := Cardinal((Int64(Dest) - Size) and $FFFFFFFF);
   end;
   W(B, Source, 4);
   W(B + 4, Dest, 4);

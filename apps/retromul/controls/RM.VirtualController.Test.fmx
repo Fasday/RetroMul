@@ -1,0 +1,440 @@
+object VirtualControllerTestForm: TVirtualControllerTestForm
+  Left = 0
+  Top = 0
+  Caption = #1042#1080#1088#1090#1091#1072#1083#1100#1085#1099#1081' '#1082#1086#1085#1090#1088#1086#1083#1083#1077#1088' '#8212' '#1090#1077#1089#1090
+  ClientHeight = 820
+  ClientWidth = 1280
+  Fill.Color = xFF11161C
+  Fill.Kind = Solid
+  Position = ScreenCenter
+  FormFactor.Width = 320
+  FormFactor.Height = 480
+  FormFactor.Devices = [Desktop, iPhone, iPad]
+  OnCreate = FormCreate
+  OnDeactivate = FormDeactivate
+  OnDestroy = FormDestroy
+  OnResize = FormResize
+  OnTouch = FormTouch
+  DesignerMasterStyle = 0
+  object RootLayout: TLayout
+    Align = Client
+    Size.Width = 1280.000000000000000000
+    Size.Height = 820.000000000000000000
+    Size.PlatformDefault = False
+    TabOrder = 0
+    object SettingsSurface: TRectangle
+      Align = Left
+      Fill.Color = xFF202830
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 16.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 16.000000000000000000
+      Size.Width = 300.000000000000000000
+      Size.Height = 820.000000000000000000
+      Size.PlatformDefault = False
+      Stroke.Kind = None
+      object SettingsScroll: TVertScrollBox
+        Align = Client
+        Size.Width = 268.000000000000000000
+        Size.Height = 788.000000000000000000
+        Size.PlatformDefault = False
+        Viewport.Width = 252.000000000000000000
+        Viewport.Height = 788.000000000000000000
+        object SettingsLayout: TLayout
+          Align = Top
+          Size.Width = 252.000000000000000000
+          Size.Height = 897.000000000000000000
+          Size.PlatformDefault = False
+          TabOrder = 0
+          object TitleLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 18.000000000000000000
+            TextSettings.FontColor = claWhite
+            Text = #1042#1080#1088#1090#1091#1072#1083#1100#1085#1099#1081' '#1082#1086#1085#1090#1088#1086#1083#1083#1077#1088
+          end
+          object IntroLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 38.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 74.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = 
+              #1042#1099#1073#1077#1088#1080#1090#1077' '#171#1053#1086#1074#1099#1081' '#1101#1083#1077#1084#1077#1085#1090#187', '#1079#1072#1076#1072#1081#1090#1077' '#1090#1080#1087', '#1089#1090#1086#1088#1086#1085#1091' '#1080' '#1088#1072#1079#1084#1077#1088#1099', '#1079#1072#1090#1077#1084' ' +
+              #1085#1072#1078#1084#1080#1090#1077' '#171#1044#1086#1073#1072#1074#1080#1090#1100#187'. '#1042#1099#1073#1086#1088' '#1087#1086' '#1080#1084#1077#1085#1080' '#1088#1077#1076#1072#1082#1090#1080#1088#1091#1077#1090' '#1089#1091#1097#1077#1089#1090#1074#1091#1102#1097#1080#1081' '#1101#1083#1077#1084 +
+              #1077#1085#1090'.'
+          end
+          object ElementLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 118.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 22.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1053#1086#1074#1099#1081' '#1101#1083#1077#1084#1077#1085#1090' / '#1088#1077#1076#1072#1082#1090#1080#1088#1086#1074#1072#1085#1080#1077
+          end
+          object ElementBox: TComboBox
+            Align = Top
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 146.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = ElementChanged
+          end
+          object TypeLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 184.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 22.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1058#1080#1087' '#1101#1083#1077#1084#1077#1085#1090#1072
+          end
+          object TypeBox: TComboBox
+            Align = Top
+            Items.Strings = (
+              #1050#1085#1086#1087#1082#1072
+              #1050#1088#1077#1089#1090#1086#1074#1080#1085#1072
+              #1055#1077#1088#1077#1082#1083#1102#1095#1072#1090#1077#1083#1100
+              #1058#1088#1080#1075#1075#1077#1088)
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 212.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = TypeChanged
+          end
+          object SideLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 250.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 22.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1057#1090#1086#1088#1086#1085#1072
+          end
+          object SideBox: TComboBox
+            Align = Top
+            Items.Strings = (
+              #1051#1077#1074#1072#1103
+              #1055#1088#1072#1074#1072#1103)
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 278.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = GeometryEdited
+          end
+          object XLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 316.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 20.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = 'X'
+          end
+          object XBox: TNumberBox
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Top
+            Cursor = crIBeam
+            Max = 239.000000000000000000
+            Value = 28.000000000000000000
+            Position.Y = 342.000000000000000000
+            Margins.Bottom = 6.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 30.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = GeometryEdited
+          end
+          object YLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 378.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 20.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = 'Y'
+          end
+          object YBox: TNumberBox
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Top
+            Cursor = crIBeam
+            Max = 319.000000000000000000
+            Value = 140.000000000000000000
+            Position.Y = 404.000000000000000000
+            Margins.Bottom = 6.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 30.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = GeometryEdited
+          end
+          object WidthLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 440.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 20.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1064#1080#1088#1080#1085#1072
+          end
+          object WidthBox: TNumberBox
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Top
+            Cursor = crIBeam
+            Min = 1.000000000000000000
+            Max = 240.000000000000000000
+            Value = 144.000000000000000000
+            Position.Y = 466.000000000000000000
+            Margins.Bottom = 6.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 30.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = GeometryEdited
+          end
+          object HeightLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 502.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 20.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1042#1099#1089#1086#1090#1072
+          end
+          object HeightBox: TNumberBox
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Top
+            Cursor = crIBeam
+            Min = 1.000000000000000000
+            Max = 320.000000000000000000
+            Value = 144.000000000000000000
+            Position.Y = 528.000000000000000000
+            Margins.Bottom = 6.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 30.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = GeometryEdited
+          end
+          object AddButton: TButton
+            Align = Top
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 564.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            Text = #1044#1086#1073#1072#1074#1080#1090#1100' '#1101#1083#1077#1084#1077#1085#1090
+            OnClick = AddClicked
+          end
+          object RemoveButton: TButton
+            Align = Top
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 602.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            Text = #1059#1076#1072#1083#1080#1090#1100' '#1101#1083#1077#1084#1077#1085#1090
+            OnClick = RemoveClicked
+          end
+          object ScaleLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 640.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 22.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1052#1072#1089#1096#1090#1072#1073': 1.00'
+          end
+          object ScaleBar: TTrackBar
+            Align = Top
+            CanParentFocus = True
+            Frequency = 0.050000000000000000
+            Max = 1.500000000000000000
+            Min = 0.350000000000000000
+            Orientation = Horizontal
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 668.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 19.000000000000000000
+            Size.PlatformDefault = False
+            Value = 1.000000000000000000
+            OnChange = AppearanceChanged
+          end
+          object OpacityLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 693.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 22.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1053#1077#1087#1088#1086#1079#1088#1072#1095#1085#1086#1089#1090#1100': 65%'
+          end
+          object OpacityBar: TTrackBar
+            Align = Top
+            CanParentFocus = True
+            Frequency = 0.050000000000000000
+            Max = 1.000000000000000000
+            Min = 0.100000000000000000
+            Orientation = Horizontal
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 721.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 19.000000000000000000
+            Size.PlatformDefault = False
+            Value = 0.600000000000000100
+            OnChange = AppearanceChanged
+          end
+          object PresetLabel: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 746.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 22.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.FontColor = xFFE1E7EE
+            Text = #1056#1072#1079#1084#1077#1088' '#1086#1073#1083#1072#1089#1090#1080' '#1087#1088#1086#1089#1084#1086#1090#1088#1072
+          end
+          object PresetBox: TComboBox
+            Align = Top
+            Items.Strings = (
+              #1055#1086' '#1088#1072#1079#1084#1077#1088#1091' '#1086#1082#1085#1072
+              '960 x 320'
+              '1280 x 400'
+              '640 x 360')
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 774.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            OnChange = AppearanceChanged
+          end
+          object GuidesBox: TCheckBox
+            Align = Top
+            StyledSettings = []
+            IsChecked = True
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 812.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            Text = #1050#1086#1086#1088#1076#1080#1085#1072#1090#1099' '#1080' '#1091#1082#1072#1079#1072#1090#1077#1083#1080
+            TextSettings.FontColor = xFFE1E7EE
+            OnChange = AppearanceChanged
+          end
+          object ResetButton: TButton
+            Align = Top
+            Margins.Bottom = 6.000000000000000000
+            Position.Y = 850.000000000000000000
+            Size.Width = 252.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            Text = #1042#1086#1089#1089#1090#1072#1085#1086#1074#1080#1090#1100' '#1087#1088#1080#1084#1077#1088
+            OnClick = ResetClicked
+          end
+        end
+      end
+    end
+    object PreviewLayout: TLayout
+      Align = Client
+      Padding.Left = 20.000000000000000000
+      Padding.Top = 16.000000000000000000
+      Padding.Right = 20.000000000000000000
+      Padding.Bottom = 16.000000000000000000
+      Size.Width = 980.000000000000000000
+      Size.Height = 820.000000000000000000
+      Size.PlatformDefault = False
+      object HeaderLabel: TLabel
+        Align = Top
+        StyledSettings = []
+        Position.X = 20.000000000000000000
+        Position.Y = 16.000000000000000000
+        Size.Width = 940.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Font.Size = 22.000000000000000000
+        TextSettings.FontColor = claWhite
+        Text = #1055#1088#1086#1089#1084#1086#1090#1088' '#1080' '#1087#1088#1086#1074#1077#1088#1082#1072' '#1074#1074#1086#1076#1072
+      end
+      object HintLabel: TLabel
+        Align = Top
+        StyledSettings = []
+        Position.X = 20.000000000000000000
+        Position.Y = 48.000000000000000000
+        Size.Width = 940.000000000000000000
+        Size.Height = 42.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.FontColor = xFFE1E7EE
+        Text = #1048#1079#1084#1077#1085#1080#1090#1077' '#1088#1072#1079#1084#1077#1088' '#1086#1082#1085#1072', '#1095#1090#1086#1073#1099' '#1087#1088#1086#1074#1077#1088#1080#1090#1100' '#1087#1088#1080#1074#1103#1079#1082#1091' '#1089#1090#1086#1088#1086#1085
+      end
+      object StatusLabel: TLabel
+        Align = Bottom
+        StyledSettings = []
+        Position.X = 20.000000000000000000
+        Position.Y = 736.000000000000000000
+        Size.Width = 940.000000000000000000
+        Size.Height = 68.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.FontColor = xFF66C8FF
+        Text = #1043#1086#1090#1086#1074#1086
+      end
+      object PreviewSurface: TRectangle
+        Align = Client
+        Fill.Color = claBlack
+        Size.Width = 940.000000000000000000
+        Size.Height = 646.000000000000000000
+        Size.PlatformDefault = False
+        Stroke.Kind = None
+        object ViewportLayout: TLayout
+          Align = Client
+          Padding.Left = 8.000000000000000000
+          Padding.Top = 8.000000000000000000
+          Padding.Right = 8.000000000000000000
+          Padding.Bottom = 8.000000000000000000
+          Size.Width = 940.000000000000000000
+          Size.Height = 646.000000000000000000
+          Size.PlatformDefault = False
+          object ControllerLayout: TLayout
+            Align = Center
+            Size.Width = 924.000000000000000000
+            Size.Height = 614.000000000000000000
+            Size.PlatformDefault = False
+            object GuidesPaint: TPaintBox
+              Align = Contents
+              HitTest = False
+              Size.Width = 924.000000000000000000
+              Size.Height = 614.000000000000000000
+              Size.PlatformDefault = False
+              OnPaint = GuidesPaintPaint
+            end
+          end
+        end
+      end
+    end
+  end
+end

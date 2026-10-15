@@ -126,7 +126,7 @@ implementation
 
 uses
   System.Math, System.Hash;
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 function CPURead(User: Pointer; Address: Cardinal; Size: Integer): Cardinal;
 begin
@@ -475,7 +475,7 @@ begin
     if FTimerPhase[T] >= Divider then
     begin
       FTimerPhase[T] := 0;
-      Inc(FSoundRegisters[A + 1]);
+      FSoundRegisters[A + 1] := Byte((Integer(FSoundRegisters[A + 1]) + 1) and $FF);
       if FSoundRegisters[A + 1] = 0 then
       begin
         FSoundPending := FSoundPending or (Word(1) shl (6 + T));

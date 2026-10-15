@@ -84,7 +84,7 @@ implementation
 
 uses
   System.Hash;
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 function SyntheticRingSector(FAD: Cardinal): TBytes;
 begin
@@ -101,9 +101,9 @@ begin
     for var B := 0 to 7 do
     begin
       Bits := Bits xor (Shift and 1);
-      Bits := (Bits shr 1) or (Bits shl 7);
+      Bits := Byte(((Bits shr 1) or (Bits shl 7)) and $FF);
       var Feedback: Cardinal := (Shift shr 1) xor Shift;
-      Shift := (Cardinal(Shift) or (Feedback shl 15)) shr 1;
+      Shift := Word(((Cardinal(Shift) or (Feedback shl 15)) shr 1) and $FFFF);
     end;
     Result[I] := Bits;
   end;
@@ -358,7 +358,7 @@ begin
       Exit;
     end;
     var A: Integer := Address and $1E;
-    var V: Word := Value;
+    var V: Word := Word(Value and $FFFF);
     if Assigned(FBridgeObserver) then
       FBridgeObserver(FCPU.State.PC, Address, Value, Size, True);
     if Size = 1 then
@@ -410,8 +410,8 @@ begin
     DriveReport;
     var Sum: Byte := 0;
     for var I := 0 to 10 do
-      Inc(Sum, FRX[I]);
-    FRX[11] := not Sum;
+      Sum := Byte((Integer(Sum) + FRX[I]) and $FF);
+    FRX[11] := Byte((not Sum) and $FF);
   end;
   if FSerialAt < 12 then
   begin
@@ -427,7 +427,7 @@ begin
     FCPU.PortBInputs := $0400;
     var Sum: Byte := 0;
     for var I := 0 to 11 do
-      Inc(Sum, FTX[I]);
+      Sum := Byte((Integer(Sum) + FTX[I]) and $FF);
     if (Value = 0) and (Sum = $FF) then
       DriveCommand;
     // A report period includes the thirteen clocked bytes, rather than
@@ -448,57 +448,57 @@ procedure TSaturnCDB.DriveReport;
 
 begin
   Move(FMechanismReport, FRX, SizeOf(FMechanismReport));
-  FRX[0] := FMechanismStatus;
+  FRX[0] := Byte((FMechanismStatus) and $FF);
   if FDisc = nil then
     Exit;
   FillChar(FRX[1], 10, 0);
   if FMechanismStatus = $B6 then
   begin
-    FRX[1] := $44;
-    FRX[2] := $F1;
-    FRX[3] := FDriveTarget shr 16;
-    FRX[4] := FDriveTarget shr 8;
-    FRX[5] := FDriveTarget;
+    FRX[1] := Byte(($44) and $FF);
+    FRX[2] := Byte(($F1) and $FF);
+    FRX[3] := Byte((FDriveTarget shr 16) and $FF);
+    FRX[4] := Byte((FDriveTarget shr 8) and $FF);
+    FRX[5] := Byte((FDriveTarget) and $FF);
     for var I := 6 to 9 do
-      FRX[I] := 9;
-    FRX[10] := FDriveTarget mod 75;
+      FRX[I] := Byte((9) and $FF);
+    FRX[10] := Byte((FDriveTarget mod 75) and $FF);
     Exit;
   end;
   if FMechanismStatus = $04 then
   begin
     // Lead-in Q records, repeated three times before advancing. The SH-1
     // firmware, rather than the host, assembles these records into its TOC.
-    FRX[1] := $41;
+    FRX[1] := Byte(($41) and $FF);
     if FTOCEntry < FDisc.TrackCount then
     begin
       var Track := FDisc.Track(FTOCEntry + 1);
       if Track.Audio then
-        FRX[1] := 1;
-      FRX[3] := BCD(Track.Number);
+        FRX[1] := Byte((1) and $FF);
+      FRX[3] := Byte((BCD(Track.Number)) and $FF);
       var FAD := Track.StartLBA + 150;
-      FRX[8] := BCD(FAD div 4500);
-      FRX[9] := BCD((FAD div 75) mod 60);
-      FRX[10] := BCD(FAD mod 75);
+      FRX[8] := Byte((BCD(FAD div 4500)) and $FF);
+      FRX[9] := Byte((BCD((FAD div 75) mod 60)) and $FF);
+      FRX[10] := Byte((BCD(FAD mod 75)) and $FF);
     end
     else
       case FTOCEntry - FDisc.TrackCount of
         0:
           begin
-            FRX[3] := $A0;
-            FRX[8] := BCD(FDisc.Track(1).Number);
+            FRX[3] := Byte(($A0) and $FF);
+            FRX[8] := Byte((BCD(FDisc.Track(1).Number)) and $FF);
           end;
         1:
           begin
-            FRX[3] := $A1;
-            FRX[8] := BCD(FDisc.Track(FDisc.TrackCount).Number);
+            FRX[3] := Byte(($A1) and $FF);
+            FRX[8] := Byte((BCD(FDisc.Track(FDisc.TrackCount).Number)) and $FF);
           end;
         2:
           begin
-            FRX[3] := $A2;
+            FRX[3] := Byte(($A2) and $FF);
             var FAD := FDisc.LeadOut + 150;
-            FRX[8] := BCD(FAD div 4500);
-            FRX[9] := BCD((FAD div 75) mod 60);
-            FRX[10] := BCD(FAD mod 75);
+            FRX[8] := Byte((BCD(FAD div 4500)) and $FF);
+            FRX[9] := Byte((BCD((FAD div 75) mod 60)) and $FF);
+            FRX[10] := Byte((BCD(FAD mod 75)) and $FF);
           end;
       end;
     Inc(FTOCRepeat);
@@ -511,33 +511,33 @@ begin
   end;
   if FDriveFAD >= Cardinal(FDisc.LeadOut + 150) then
   begin
-    FRX[1] := 1;
-    FRX[2] := $AA;
-    FRX[3] := 1;
-    FRX[7] := 4;
-    FRX[8] := BCD(FDriveFAD div 4500);
-    FRX[9] := BCD((FDriveFAD div 75) mod 60);
-    FRX[10] := BCD(FDriveFAD mod 75);
+    FRX[1] := Byte((1) and $FF);
+    FRX[2] := Byte(($AA) and $FF);
+    FRX[3] := Byte((1) and $FF);
+    FRX[7] := Byte((4) and $FF);
+    FRX[8] := Byte((BCD(FDriveFAD div 4500)) and $FF);
+    FRX[9] := Byte((BCD((FDriveFAD div 75) mod 60)) and $FF);
+    FRX[10] := Byte((BCD(FDriveFAD mod 75)) and $FF);
   end
   else if FDriveFAD < 150 then
   begin
-    FRX[1] := $41;
-    FRX[2] := 1;
-    FRX[3] := 0;
-    FRX[7] := 4;
-    FRX[8] := BCD(FDriveFAD div 4500);
-    FRX[9] := BCD((FDriveFAD div 75) mod 60);
-    FRX[10] := BCD(FDriveFAD mod 75);
+    FRX[1] := Byte(($41) and $FF);
+    FRX[2] := Byte((1) and $FF);
+    FRX[3] := Byte((0) and $FF);
+    FRX[7] := Byte((4) and $FF);
+    FRX[8] := Byte((BCD(FDriveFAD div 4500)) and $FF);
+    FRX[9] := Byte((BCD((FDriveFAD div 75) mod 60)) and $FF);
+    FRX[10] := Byte((BCD(FDriveFAD mod 75)) and $FF);
   end
   else
   begin
     var Q: TBytes;
     FDisc.ReadSubQ(Integer(FDriveFAD) - 150, Q);
-    FRX[1] := Q[0];
-    FRX[2] := Q[1];
-    FRX[3] := Q[2];
+    FRX[1] := Byte((Q[0]) and $FF);
+    FRX[2] := Byte((Q[1]) and $FF);
+    FRX[3] := Byte((Q[2]) and $FF);
     Move(Q[3], FRX[4], 3);
-    FRX[7] := 4;
+    FRX[7] := Byte((4) and $FF);
     Move(Q[7], FRX[8], 3);
   end;
 end;

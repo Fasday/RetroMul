@@ -20,7 +20,7 @@ uses
   RM.Settings.GameBoyColor, RM.Settings.SG1000, RM.Settings.SC3000,
   RM.Settings.SF7000, RM.Settings.Multivision, RM.Settings.Saturn,
   RM.Settings.PCE, RM.Settings.MasterSystem, RM.Settings.GameGear,
-  RM.Settings.NeoGeo;
+  RM.Settings.NeoGeo, RM.Settings.NGP;
 
 type
   TSettingsPlatformClass = class of TSettingsPlatform;
@@ -46,6 +46,7 @@ begin
     Classes.Add('GameGear', TGameGearSettings);
     Classes.Add('Multivision', TMultivisionSettings);
     Classes.Add('NeoGeo', TNeoGeoSettings);
+    Classes.Add('NeoGeoPocket', TNGPSettings);
     Classes.Add('PCE', TPCESettings);
     for var Info in TPlatformRegistry.All do
     begin

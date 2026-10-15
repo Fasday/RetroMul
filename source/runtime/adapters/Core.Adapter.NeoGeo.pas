@@ -35,11 +35,11 @@ type
     FNeoConfig: TNeoGeoConfig;
     FKeys, FKeys2: TNeoGeoKeyMap;
     FKeyboard, FKeyboard2, FGamepad, FGamepad2: TEmulatorButtons;
-    FPaused: Boolean;
+    FPaused, FForceAES: Boolean;
     FSavePath, FSnapshotDirectory, FError: string;
     procedure ApplySettings;
   public
-    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False);
+    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False; ForceAES: Boolean = False);
     destructor Destroy; override;
     function GetSystemId: string;
     function GetName: string;
@@ -140,20 +140,25 @@ begin
   end;
 end;
 
-constructor TNeoGeoCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean);
+constructor TNeoGeoCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD, ForceAES: Boolean);
 begin
   inherited Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
 
+  FForceAES := ForceAES and not CD;
   var SystemId := ROM_SYSTEM_NEOGEO;
+  if FForceAES then
+    SystemId := ROM_SYSTEM_NEOGEOAES;
   if CD then
     SystemId := ROM_SYSTEM_NEOGEOCD;
   var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(SystemId), FStorage);
   FConfig := Config;
   FNeoConfig := Config;
   Config.Load;
+  if FForceAES then
+    Config.FModel := 'aes';
   if CD then
     FCartridge := TNeoGeoCartridge.CreateCD(Stream, FStorage, RomName, Config.FBIOS, Config.FModel)
   else
@@ -412,6 +417,7 @@ end;
 function TNeoGeoCoreAdapter.GetSystemId: string;
 begin
   Result := ROM_SYSTEM_NEOGEO;
+  if FForceAES then Result := ROM_SYSTEM_NEOGEOAES;
   if FCartridge.Disc <> nil then
     Result := ROM_SYSTEM_NEOGEOCD;
 end;

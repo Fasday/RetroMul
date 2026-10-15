@@ -63,7 +63,7 @@ implementation
 uses
   System.Math;
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 const
   Levels: array[0..31] of Byte = (15, 14, 13, 12, 11, 10, 9, 8, 8, 6, 6, 5, 3, 2, 0, 0, 7, 7, 7, 7, 4, 4, 4, 4, 1, 1, 1, 1, 1, 1, 1, 1);
@@ -174,7 +174,7 @@ begin
   var Source := FRead(FUser, (D + 8) and $1FFFFFFF, 4);
   FDMA[Channel].Source := Source and $1FFFFFFF;
   FDMA[Channel].LastDescriptor := Source and $80000000 <> 0;
-  Inc(FDMA[Channel].Descriptor, 12);
+  FDMA[Channel].Descriptor := Cardinal((Int64(FDMA[Channel].Descriptor) + 12) and $FFFFFFFF);
   if FDMA[Channel].Remaining = 0 then
     FDMA[Channel].Remaining := $100000;
 end;
@@ -230,16 +230,16 @@ begin
   begin
     FWrite(FUser, Dest, Data shr 16, 2);
     FWrite(FUser, Dest + Step, Data and $FFFF, 2);
-    Inc(FDMA[Channel].Dest, Step * 2);
+    FDMA[Channel].Dest := Cardinal((Int64(FDMA[Channel].Dest) + Step * 2) and $FFFFFFFF);
   end
   else
   begin
     FWrite(FUser, Dest, Data, Size);
-    Inc(FDMA[Channel].Dest, Step);
+    FDMA[Channel].Dest := Cardinal((Int64(FDMA[Channel].Dest) + Step) and $FFFFFFFF);
   end;
   // Fixed source is available only in A-bus CS2, e.g. the CD data FIFO.
   if (Add and $100 <> 0) or (Source < $04000000) or (Source >= $05A00000) then
-    Inc(FDMA[Channel].Source, Size);
+    FDMA[Channel].Source := Cardinal((Int64(FDMA[Channel].Source) + Size) and $FFFFFFFF);
   Dec(FDMA[Channel].Remaining, Size);
   if FDMA[Channel].Remaining = 0 then
   begin
@@ -355,7 +355,7 @@ begin
   Result := 0;
   for var I := 0 to Size - 1 do
   begin
-    var A: Integer := (Address + Cardinal(I)) and $FF;
+    var A: Integer := (UInt64(Address) + Cardinal(I)) and $FF;
     var V := FRegisters[A div 4];
     if A and $FC = $7C then
     begin
@@ -378,7 +378,7 @@ begin
   end;
   for var I := 0 to Size - 1 do
   begin
-    var A: Integer := (Address + Cardinal(I)) and $FF;
+    var A: Integer := (UInt64(Address) + Cardinal(I)) and $FF;
     var Shift: Integer := (3 - (A and 3)) * 8;
     if A and $FC in [$7C, $C8] then
       Continue;

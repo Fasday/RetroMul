@@ -98,7 +98,7 @@ implementation
 
 uses
   System.Math, Saturn.Firmware;
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 const
   SectorSizes: array[0..3] of Integer = (2048, 2336, 2340, 2352);
@@ -1187,7 +1187,7 @@ begin
     var B: TBytes;
     FDisc.ReadRawData(Integer(FFAD) - 150, B);
     var P := FilterDestination(B, FFAD, FConnection);
-    FLast := P;
+    FLast := Byte(P and $FF);
     if P >= 0 then
       for var I := 0 to 199 do
         if not FSectors[I].Used then

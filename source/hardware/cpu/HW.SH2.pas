@@ -43,19 +43,28 @@ implementation
 
 // Native interpreter for the SH-2 ISA. Reference: Renesas REJ09B0171,
 // SH-1/SH-2/SH-DSP Software Manual. Architectural arithmetic wraps at 32 bits.
-{$Q-}{$R-}
+{$Q+}{$R+}
+
+function Add64(A, B: UInt64): UInt64; inline;
+var
+  Lo, Hi: UInt64;
+begin
+  Lo := ((A and $FFFFFFFF) + (B and $FFFFFFFF));
+  Hi := (((A shr 32) + (B shr 32)) + (Lo shr 32));
+  Result := (((Hi and $FFFFFFFF) shl 32) or (Lo and $FFFFFFFF));
+end;
 
 type
   ESH2Address = class(Exception);
 
 function SX8(Value: Cardinal): Cardinal; inline;
 begin
-  Result := Cardinal(Integer(ShortInt(Value and $FF)));
+  Result := Cardinal(Integer(ShortInt((Value and $FF))));
 end;
 
 function SX16(Value: Cardinal): Cardinal; inline;
 begin
-  Result := Cardinal(Integer(SmallInt(Value and $FFFF)));
+  Result := Cardinal(Integer(SmallInt((Value and $FFFF))));
 end;
 
 constructor TSH2.Create(ReadCallback: TSH2Read; WriteCallback: TSH2Write; User: Pointer; FetchCallback: TSH2Read; SH1: Boolean);
@@ -88,7 +97,7 @@ end;
 
 procedure TSH2.SetT(Value: Boolean);
 begin
-  FState.SR := (FState.SR and not Cardinal(1)) or Cardinal(Ord(Value));
+  FState.SR := ((FState.SR and (not Cardinal(1))) or Cardinal(Ord(Value)));
 end;
 
 procedure TSH2.Reset;
@@ -111,11 +120,11 @@ end;
 
 procedure TSH2.ExceptionVector(Vector: Integer; PC: Cardinal);
 begin
-  Dec(FState.R[15], 4);
-  Write(FState.R[15], FState.SR, 4);
-  Dec(FState.R[15], 4);
-  Write(FState.R[15], PC, 4);
-  FState.PC := Read(FState.VBR + Cardinal(Vector) * 4, 4);
+  FState.R[15] := Cardinal(((Int64(FState.R[15]) - 4) and $FFFFFFFF));
+  Write(Cardinal(FState.R[15]), Cardinal(FState.SR), 4);
+  FState.R[15] := Cardinal(((Int64(FState.R[15]) - 4) and $FFFFFFFF));
+  Write(Cardinal(FState.R[15]), PC, 4);
+  FState.PC := Cardinal((Read(Cardinal((Int64(FState.VBR) + (Int64(Cardinal(Vector)) * 4))), 4) and $FFFFFFFF));
   FState.DelayPending := False;
   FState.Sleeping := False;
 end;
@@ -151,26 +160,26 @@ begin
     ((FIRQLevel = 16) or (FIRQLevel > Integer((FState.SR shr 4) and 15))) then
   begin
     ExceptionVector(FIRQVector, At);
-    FState.SR := (FState.SR and not Cardinal($F0)) or (Cardinal(FIRQLevel and 15) shl 4);
+    FState.SR := ((FState.SR and (not Cardinal($F0))) or (Cardinal((FIRQLevel and 15)) shl 4));
     if FIRQLevel = 16 then
-      FState.SR := FState.SR or $F0;
+      FState.SR := (FState.SR or $F0);
     Result := 5;
-    Inc(FState.Cycles, Result);
+    FState.Cycles := Add64(FState.Cycles, UInt64(Result));
     Exit;
   end;
   if FState.Sleeping then
   begin
-    Inc(FState.Cycles);
+    FState.Cycles := Add64(FState.Cycles, 1);
     Exit;
   end;
   try
     if Odd(At) then
       raise ESH2Address.Create('SH-2 instruction address error');
-    Op := FFetch(FUser, At, 2);
-    FState.PC := At + 2;
+    Op := Word((FFetch(FUser, At, 2) and $FFFF));
+    FState.PC := Cardinal(((Int64(At) + 2) and $FFFFFFFF));
     FState.DelayPending := False;
-    N := (Op shr 8) and 15;
-    M := (Op shr 4) and 15;
+    N := ((Op shr 8) and 15);
+    M := ((Op shr 4) and 15);
     A := FState.R[N];
     B := FState.R[M];
     OldSR := FState.SR;
@@ -195,30 +204,30 @@ begin
         0:
           case Op and $F of
             4:
-              Write(A + FState.R[0], B, 1);
+              Write(Cardinal((Int64(A) + FState.R[0])), B, 1);
             5:
-              Write(A + FState.R[0], B, 2);
+              Write(Cardinal((Int64(A) + FState.R[0])), B, 2);
             6:
-              Write(A + FState.R[0], B, 4);
+              Write(Cardinal((Int64(A) + FState.R[0])), B, 4);
             7:
               begin
-                FState.MACL := A * B;
+                FState.MACL := Cardinal(((UInt64(A) * B) and $FFFFFFFF));
                 Result := 2;
               end;
             12:
-              FState.R[N] := SX8(Read(B + FState.R[0], 1));
+              FState.R[N] := Cardinal((SX8(Read(Cardinal((Int64(B) + FState.R[0])), 1)) and $FFFFFFFF));
             13:
-              FState.R[N] := SX16(Read(B + FState.R[0], 2));
+              FState.R[N] := Cardinal((SX16(Read(Cardinal((Int64(B) + FState.R[0])), 2)) and $FFFFFFFF));
             14:
-              FState.R[N] := Read(B + FState.R[0], 4);
+              FState.R[N] := Cardinal((Read(Cardinal((Int64(B) + FState.R[0])), 4) and $FFFFFFFF));
             15:
               begin
                 A := Read(FState.R[M], 4);
-                Inc(FState.R[M], 4);
+                FState.R[M] := Cardinal(((Int64(FState.R[M]) + 4) and $FFFFFFFF));
                 B := Read(FState.R[N], 4);
-                Inc(FState.R[N], 4);
-                Accumulator := Int64(Integer(A)) * Integer(B);
-                Accumulator := Accumulator + Int64((UInt64(FState.MACH) shl 32) or FState.MACL);
+                FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
+                Accumulator := (Int64(Integer(A)) * Integer(B));
+                Accumulator := Int64(Add64(UInt64(Accumulator), ((UInt64(FState.MACH) shl 32) or FState.MACL)));
                 if FState.SR and 2 <> 0 then
                 begin
                 // Saturating MAC.L uses a signed 48-bit accumulator.
@@ -227,9 +236,9 @@ begin
                   if Accumulator > Int64($7FFFFFFFFFFF) then
                     Accumulator := $7FFFFFFFFFFF;
                   if Accumulator < -Int64($800000000000) then
-                    Accumulator := -Int64($800000000000);
+                    Accumulator := (-Int64($800000000000));
                 end;
-                FState.MACH := UInt64(Accumulator) shr 32;
+                FState.MACH := (UInt64(Accumulator) shr 32);
                 FState.MACL := Cardinal(Accumulator);
                 Result := 3;
               end;
@@ -248,14 +257,14 @@ begin
               $2A:
                 FState.R[N] := FState.PR;
               $29:
-                FState.R[N] := FState.SR and 1;
+                FState.R[N] := (FState.SR and 1);
               $03:
                 begin
-                  FState.PR := At + 4;
-                  Delay(At + 4 + A);
+                  FState.PR := Cardinal(((Int64(At) + 4) and $FFFFFFFF));
+                  Delay(Cardinal(((Int64(At) + 4) + A)));
                 end;
               $23:
-                Delay(At + 4 + A);
+                Delay(Cardinal(((Int64(At) + 4) + A)));
             else
               case Op of
                 $0008:
@@ -265,19 +274,19 @@ begin
                 $0009:
                   ;
                 $0019:
-                  FState.SR := FState.SR and not Cardinal($301);
+                  FState.SR := (FState.SR and (not Cardinal($301)));
                 $0028:
                   begin
                     FState.MACH := 0;
                     FState.MACL := 0;
                   end;
                 $000B:
-                  Delay(FState.PR);
+                  Delay(Cardinal(FState.PR));
                 $002B:
                   begin
                     V := Read(FState.R[15], 4);
-                    FState.SR := Read(FState.R[15] + 4, 4) and $3F3;
-                    Inc(FState.R[15], 8);
+                    FState.SR := Cardinal(((Read(Cardinal((Int64(FState.R[15]) + 4)), 4) and $3F3) and $FFFFFFFF));
+                    FState.R[15] := Cardinal(((Int64(FState.R[15]) + 8) and $FFFFFFFF));
                     Delay(V);
                     Result := 4;
                   end;
@@ -292,7 +301,7 @@ begin
             end;
           end;
         1:
-          Write(A + Cardinal(Op and 15) * 4, B, 4);
+          Write(Cardinal((Int64(A) + (Int64(Cardinal((Op and 15))) * 4))), B, 4);
         2:
           case Op and 15 of
             0:
@@ -303,122 +312,122 @@ begin
               Write(A, B, 4);
             4:
               begin
-                Dec(FState.R[N]);
-                Write(FState.R[N], B, 1);
+                FState.R[N] := Cardinal(((Int64(FState.R[N]) - 1) and $FFFFFFFF));
+                Write(Cardinal(FState.R[N]), B, 1);
               end;
             5:
               begin
-                Dec(FState.R[N], 2);
-                Write(FState.R[N], B, 2);
+                FState.R[N] := Cardinal(((Int64(FState.R[N]) - 2) and $FFFFFFFF));
+                Write(Cardinal(FState.R[N]), B, 2);
               end;
             6:
               begin
-                Dec(FState.R[N], 4);
-                Write(FState.R[N], B, 4);
+                FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                Write(Cardinal(FState.R[N]), B, 4);
               end;
             7:
               begin
-                FState.SR := (FState.SR and not Cardinal($301)) or ((A shr 23) and $100) or ((B shr 22) and $200);
-                SetT(((A xor B) and $80000000) <> 0);
+                FState.SR := (((FState.SR and (not Cardinal($301))) or ((A shr 23) and $100)) or ((B shr 22) and $200));
+                SetT((((A xor B) and $80000000) <> 0));
               end;
             8:
-              SetT(A and B = 0);
+              SetT(((A and B) = 0));
             9:
-              FState.R[N] := A and B;
+              FState.R[N] := (A and B);
             10:
-              FState.R[N] := A xor B;
+              FState.R[N] := (A xor B);
             11:
-              FState.R[N] := A or B;
+              FState.R[N] := (A or B);
             12:
               begin
-                V := A xor B;
+                V := (A xor B);
                 SetT((V and $FF = 0) or (V and $FF00 = 0) or
                   (V and $FF0000 = 0) or (V and $FF000000 = 0));
               end;
             13:
-              FState.R[N] := (A shr 16) or (B shl 16);
+              FState.R[N] := ((A shr 16) or (B shl 16));
             14:
-              FState.MACL := Cardinal(Word(A)) * Word(B);
+              FState.MACL := Cardinal(((Int64(Cardinal(Word(A))) * Word(B)) and $FFFFFFFF));
             15:
-              FState.MACL := Cardinal(Integer(SmallInt(A)) * SmallInt(B));
+              FState.MACL := Cardinal((Cardinal((Int64(Integer(SmallInt(A))) * SmallInt(B))) and $FFFFFFFF));
           else
             Valid := False;
           end;
         3:
           case Op and 15 of
             0:
-              SetT(A = B);
+              SetT((A = B));
             2:
-              SetT(A >= B);
+              SetT((A >= B));
             3:
-              SetT(Integer(A) >= Integer(B));
+              SetT((Integer(A) >= Integer(B)));
             4:
               begin
-                OldQ := OldSR and $100 <> 0;
-                MFlag := OldSR and $200 <> 0;
-                Q := A and $80000000 <> 0;
-                A := (A shl 1) or (OldSR and 1);
+                OldQ := ((OldSR and $100) <> 0);
+                MFlag := ((OldSR and $200) <> 0);
+                Q := ((A and $80000000) <> 0);
+                A := ((A shl 1) or (OldSR and 1));
                 V := A;
                 if OldQ = MFlag then
                 begin
-                  A := A - B;
-                  C := A > V;
+                  A := Cardinal(((Int64(A) - B) and $FFFFFFFF));
+                  C := (A > V);
                 end
                 else
                 begin
-                  A := A + B;
-                  C := A < V;
+                  A := Cardinal(((Int64(A) + B) and $FFFFFFFF));
+                  C := (A < V);
                 end;
-                Q := Q xor C xor MFlag;
+                Q := ((Q xor C) xor MFlag);
                 FState.R[N] := A;
-                FState.SR := (FState.SR and not Cardinal($100)) or (Cardinal(Ord(Q)) shl 8);
-                SetT(Q = MFlag);
+                FState.SR := ((FState.SR and (not Cardinal($100))) or (Cardinal(Ord(Q)) shl 8));
+                SetT((Q = MFlag));
               end;
             5:
               begin
-                Product := UInt64(A) * B;
-                FState.MACH := Product shr 32;
+                Product := (UInt64(A) * B);
+                FState.MACH := (Product shr 32);
                 FState.MACL := Cardinal(Product);
                 Result := 2;
               end;
             6:
-              SetT(A > B);
+              SetT((A > B));
             7:
-              SetT(Integer(A) > Integer(B));
+              SetT((Integer(A) > Integer(B)));
             8:
-              FState.R[N] := A - B;
+              FState.R[N] := Cardinal(((Int64(A) - B) and $FFFFFFFF));
             10:
               begin
-                Carry := OldSR and 1;
-                FState.R[N] := A - B - Carry;
-                SetT(UInt64(A) < UInt64(B) + Carry);
+                Carry := (OldSR and 1);
+                FState.R[N] := Cardinal((((Int64(A) - B) - Carry) and $FFFFFFFF));
+                SetT((UInt64(A) < (UInt64(B) + Carry)));
               end;
             11:
               begin
-                V := A - B;
+                V := Cardinal(((Int64(A) - B) and $FFFFFFFF));
                 FState.R[N] := V;
-                SetT(((A xor B) and (A xor V) and $80000000) <> 0);
+                SetT(((((A xor B) and (A xor V)) and $80000000) <> 0));
               end;
             12:
-              FState.R[N] := A + B;
+              FState.R[N] := Cardinal(((Int64(A) + B) and $FFFFFFFF));
             13:
               begin
-                Product := UInt64(Int64(Integer(A)) * Integer(B));
-                FState.MACH := Product shr 32;
+                Product := UInt64((Int64(Integer(A)) * Integer(B)));
+                FState.MACH := (Product shr 32);
                 FState.MACL := Cardinal(Product);
                 Result := 2;
               end;
             14:
               begin
-                Product := UInt64(A) + B + (OldSR and 1);
+                Product := ((UInt64(A) + B) + (OldSR and 1));
                 FState.R[N] := Cardinal(Product);
-                SetT(Product > $FFFFFFFF);
+                SetT((Product > $FFFFFFFF));
               end;
             15:
               begin
-                V := A + B;
+                V := Cardinal(((Int64(A) + B) and $FFFFFFFF));
                 FState.R[N] := V;
-                SetT(((not (A xor B)) and (A xor V) and $80000000) <> 0);
+                SetT(((((not (A xor B)) and (A xor V)) and $80000000) <> 0));
               end;
           else
             Valid := False;
@@ -427,15 +436,15 @@ begin
           if Op and 15 = 15 then
           begin
             A := SX16(Read(FState.R[M], 2));
-            Inc(FState.R[M], 2);
+            FState.R[M] := Cardinal(((Int64(FState.R[M]) + 2) and $FFFFFFFF));
             B := SX16(Read(FState.R[N], 2));
-            Inc(FState.R[N], 2);
-            Accumulator := Int64(Integer(A)) * Integer(B);
+            FState.R[N] := Cardinal(((Int64(FState.R[N]) + 2) and $FFFFFFFF));
+            Accumulator := (Int64(Integer(A)) * Integer(B));
             if FState.SR and 2 <> 0 then
             begin
-              Accumulator := Accumulator + Integer(FState.MACL);
+              Accumulator := (Accumulator + Integer(FState.MACL));
               if (Accumulator > High(Integer)) or (Accumulator < Low(Integer)) then
-                FState.MACH := FState.MACH or 1;
+                FState.MACH := (FState.MACH or 1);
               if Accumulator > High(Integer) then
                 Accumulator := High(Integer);
               if Accumulator < Low(Integer) then
@@ -444,8 +453,8 @@ begin
             end
             else
             begin
-              Accumulator := Accumulator + Int64((UInt64(FState.MACH) shl 32) or FState.MACL);
-              FState.MACH := UInt64(Accumulator) shr 32;
+              Accumulator := Int64(Add64(UInt64(Accumulator), ((UInt64(FState.MACH) shl 32) or FState.MACL)));
+              FState.MACH := (UInt64(Accumulator) shr 32);
               FState.MACL := Cardinal(Accumulator);
             end;
             Result := 3;
@@ -454,138 +463,138 @@ begin
             case Op and $FF of
               $00, $20:
                 begin
-                  SetT(A and $80000000 <> 0);
-                  FState.R[N] := A shl 1;
+                  SetT(((A and $80000000) <> 0));
+                  FState.R[N] := (A shl 1);
                 end;
               $01:
                 begin
                   SetT(Odd(A));
-                  FState.R[N] := A shr 1;
+                  FState.R[N] := (A shr 1);
                 end;
               $21:
                 begin
                   SetT(Odd(A));
-                  FState.R[N] := (A shr 1) or (A and $80000000);
+                  FState.R[N] := ((A shr 1) or (A and $80000000));
                 end;
               $04:
                 begin
-                  SetT(A and $80000000 <> 0);
-                  FState.R[N] := (A shl 1) or (A shr 31);
+                  SetT(((A and $80000000) <> 0));
+                  FState.R[N] := ((A shl 1) or (A shr 31));
                 end;
               $05:
                 begin
                   SetT(Odd(A));
-                  FState.R[N] := (A shr 1) or (A shl 31);
+                  FState.R[N] := ((A shr 1) or (A shl 31));
                 end;
               $24:
                 begin
-                  SetT(A and $80000000 <> 0);
-                  FState.R[N] := (A shl 1) or (OldSR and 1);
+                  SetT(((A and $80000000) <> 0));
+                  FState.R[N] := ((A shl 1) or (OldSR and 1));
                 end;
               $25:
                 begin
                   SetT(Odd(A));
-                  FState.R[N] := (A shr 1) or ((OldSR and 1) shl 31);
+                  FState.R[N] := ((A shr 1) or ((OldSR and 1) shl 31));
                 end;
               $08:
-                FState.R[N] := A shl 2;
+                FState.R[N] := (A shl 2);
               $09:
-                FState.R[N] := A shr 2;
+                FState.R[N] := (A shr 2);
               $18:
-                FState.R[N] := A shl 8;
+                FState.R[N] := (A shl 8);
               $19:
-                FState.R[N] := A shr 8;
+                FState.R[N] := (A shr 8);
               $28:
-                FState.R[N] := A shl 16;
+                FState.R[N] := (A shl 16);
               $29:
-                FState.R[N] := A shr 16;
+                FState.R[N] := (A shr 16);
               $10:
                 begin
-                  FState.R[N] := A - 1;
-                  SetT(FState.R[N] = 0);
+                  FState.R[N] := Cardinal(((Int64(A) - 1) and $FFFFFFFF));
+                  SetT((FState.R[N] = 0));
                 end;
               $11:
-                SetT(Integer(A) >= 0);
+                SetT((Integer(A) >= 0));
               $15:
-                SetT(Integer(A) > 0);
+                SetT((Integer(A) > 0));
               $1B:
                 begin
                   V := Read(A, 1);
-                  SetT(V = 0);
-                  Write(A, V or $80, 1);
+                  SetT((V = 0));
+                  Write(A, Cardinal((V or $80)), 1);
                   Result := 4;
                 end;
               $0B:
                 begin
-                  FState.PR := At + 4;
+                  FState.PR := Cardinal(((Int64(At) + 4) and $FFFFFFFF));
                   Delay(A);
                 end;
               $2B:
                 Delay(A);
               $02:
                 begin
-                  Dec(FState.R[N], 4);
-                  Write(FState.R[N], FState.MACH, 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                  Write(Cardinal(FState.R[N]), Cardinal(FState.MACH), 4);
                 end;
               $12:
                 begin
-                  Dec(FState.R[N], 4);
-                  Write(FState.R[N], FState.MACL, 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                  Write(Cardinal(FState.R[N]), Cardinal(FState.MACL), 4);
                 end;
               $22:
                 begin
-                  Dec(FState.R[N], 4);
-                  Write(FState.R[N], FState.PR, 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                  Write(Cardinal(FState.R[N]), Cardinal(FState.PR), 4);
                 end;
               $03:
                 begin
-                  Dec(FState.R[N], 4);
-                  Write(FState.R[N], FState.SR, 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                  Write(Cardinal(FState.R[N]), Cardinal(FState.SR), 4);
                   Result := 2;
                 end;
               $13:
                 begin
-                  Dec(FState.R[N], 4);
-                  Write(FState.R[N], FState.GBR, 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                  Write(Cardinal(FState.R[N]), Cardinal(FState.GBR), 4);
                   Result := 2;
                 end;
               $23:
                 begin
-                  Dec(FState.R[N], 4);
-                  Write(FState.R[N], FState.VBR, 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) - 4) and $FFFFFFFF));
+                  Write(Cardinal(FState.R[N]), Cardinal(FState.VBR), 4);
                   Result := 2;
                 end;
               $06:
                 begin
                   FState.MACH := Read(A, 4);
-                  Inc(FState.R[N], 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
                 end;
               $16:
                 begin
                   FState.MACL := Read(A, 4);
-                  Inc(FState.R[N], 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
                 end;
               $26:
                 begin
                   FState.PR := Read(A, 4);
-                  Inc(FState.R[N], 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
                 end;
               $07:
                 begin
-                  FState.SR := Read(A, 4) and $3F3;
-                  Inc(FState.R[N], 4);
+                  FState.SR := (Read(A, 4) and $3F3);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
                   Result := 3;
                 end;
               $17:
                 begin
                   FState.GBR := Read(A, 4);
-                  Inc(FState.R[N], 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
                   Result := 3;
                 end;
               $27:
                 begin
                   FState.VBR := Read(A, 4);
-                  Inc(FState.R[N], 4);
+                  FState.R[N] := Cardinal(((Int64(FState.R[N]) + 4) and $FFFFFFFF));
                   Result := 3;
                 end;
               $0A:
@@ -595,7 +604,7 @@ begin
               $2A:
                 FState.PR := A;
               $0E:
-                FState.SR := A and $3F3;
+                FState.SR := (A and $3F3);
               $1E:
                 FState.GBR := A;
               $2E:
@@ -604,7 +613,7 @@ begin
               Valid := False;
             end;
         5:
-          FState.R[N] := Read(B + Cardinal(Op and 15) * 4, 4);
+          FState.R[N] := Cardinal((Read(Cardinal((Int64(B) + (Int64(Cardinal((Op and 15))) * 4))), 4) and $FFFFFFFF));
         6:
           case Op and 15 of
             0:
@@ -619,69 +628,69 @@ begin
               begin
                 FState.R[N] := SX8(Read(B, 1));
                 if N <> M then
-                  Inc(FState.R[M]);
+                  FState.R[M] := Cardinal(((Int64(FState.R[M]) + 1) and $FFFFFFFF));
               end;
             5:
               begin
                 FState.R[N] := SX16(Read(B, 2));
                 if N <> M then
-                  Inc(FState.R[M], 2);
+                  FState.R[M] := Cardinal(((Int64(FState.R[M]) + 2) and $FFFFFFFF));
               end;
             6:
               begin
                 FState.R[N] := Read(B, 4);
                 if N <> M then
-                  Inc(FState.R[M], 4);
+                  FState.R[M] := Cardinal(((Int64(FState.R[M]) + 4) and $FFFFFFFF));
               end;
             7:
-              FState.R[N] := not B;
+              FState.R[N] := (not B);
             8:
-              FState.R[N] := (B and $FFFF0000) or ((B and $FF) shl 8) or ((B shr 8) and $FF);
+              FState.R[N] := (((B and $FFFF0000) or ((B and $FF) shl 8)) or ((B shr 8) and $FF));
             9:
-              FState.R[N] := (B shl 16) or (B shr 16);
+              FState.R[N] := ((B shl 16) or (B shr 16));
             10:
               begin
-                FState.R[N] := 0 - B - (OldSR and 1);
-                SetT((B <> 0) or Odd(OldSR));
+                FState.R[N] := Cardinal((((Int64(0) - B) - (OldSR and 1)) and $FFFFFFFF));
+                SetT(((B <> 0) or Odd(OldSR)));
               end;
             11:
-              FState.R[N] := 0 - B;
+              FState.R[N] := Cardinal(((Int64(0) - B) and $FFFFFFFF));
             12:
-              FState.R[N] := B and $FF;
+              FState.R[N] := (B and $FF);
             13:
-              FState.R[N] := B and $FFFF;
+              FState.R[N] := (B and $FFFF);
             14:
               FState.R[N] := SX8(B);
             15:
               FState.R[N] := SX16(B);
           end;
         7:
-          FState.R[N] := A + SX8(Op);
+          FState.R[N] := Cardinal(((Int64(A) + SX8(Cardinal(Op))) and $FFFFFFFF));
         8:
           case Op shr 8 of
             $80:
-              Write(FState.R[M] + Cardinal(Op and 15), FState.R[0], 1);
+              Write(Cardinal((Int64(FState.R[M]) + Cardinal((Op and 15)))), Cardinal(FState.R[0]), 1);
             $81:
-              Write(FState.R[M] + Cardinal(Op and 15) * 2, FState.R[0], 2);
+              Write(Cardinal((Int64(FState.R[M]) + (Int64(Cardinal((Op and 15))) * 2))), Cardinal(FState.R[0]), 2);
             $84:
-              FState.R[0] := SX8(Read(FState.R[M] + Cardinal(Op and 15), 1));
+              FState.R[0] := Cardinal((SX8(Read(Cardinal((Int64(FState.R[M]) + Cardinal((Op and 15)))), 1)) and $FFFFFFFF));
             $85:
-              FState.R[0] := SX16(Read(FState.R[M] + Cardinal(Op and 15) * 2, 2));
+              FState.R[0] := Cardinal((SX16(Read(Cardinal((Int64(FState.R[M]) + (Int64(Cardinal((Op and 15))) * 2))), 2)) and $FFFFFFFF));
             $88:
-              SetT(FState.R[0] = SX8(Op));
+              SetT((FState.R[0] = SX8(Op)));
             $89, $8B, $8D, $8F:
               begin
-                C := Odd(OldSR) = ((Op and $200) = 0);
+                C := (Odd(OldSR) = ((Op and $200) = 0));
                 if WasSlot then
                   Valid := False
                 else if Op and $400 <> 0 then
                 begin
                   if C then
-                    Delay(At + 4 + SX8(Op) * 2);
+                    Delay(Cardinal(((Int64(At) + 4) + (Int64(SX8(Cardinal(Op))) * 2))));
                 end
                 else if C then
                 begin
-                  FState.PC := At + 4 + SX8(Op) * 2;
+                  FState.PC := Cardinal((((Int64(At) + 4) + (Int64(SX8(Cardinal(Op))) * 2)) and $FFFFFFFF));
                   Result := 3;
                 end;
               end;
@@ -690,91 +699,91 @@ begin
           end;
         9:
           begin
-            V := At + 4;
+            V := Cardinal(((Int64(At) + 4) and $FFFFFFFF));
             if WasSlot then
-              V := Target + 2;
-            FState.R[N] := SX16(Read(V + Cardinal(Op and $FF) * 2, 2));
+              V := Cardinal(((Int64(Target) + 2) and $FFFFFFFF));
+            FState.R[N] := Cardinal((SX16(Read(Cardinal((Int64(V) + (Int64(Cardinal((Op and $FF))) * 2))), 2)) and $FFFFFFFF));
           end;
         10, 11:
           begin
-            V := Op and $FFF;
+            V := (Op and $FFF);
             if V and $800 <> 0 then
-              V := V or $FFFFF000;
+              V := (V or $FFFFF000);
             if Op shr 12 = 11 then
-              FState.PR := At + 4;
-            Delay(At + 4 + V * 2);
+              FState.PR := Cardinal(((Int64(At) + 4) and $FFFFFFFF));
+            Delay(Cardinal(((Int64(At) + 4) + (Int64(V) * 2))));
           end;
         12:
           begin
-            V := Op and $FF;
+            V := (Op and $FF);
             case (Op shr 8) and 15 of
               0:
-                Write(FState.GBR + V, FState.R[0], 1);
+                Write(Cardinal((Int64(FState.GBR) + V)), Cardinal(FState.R[0]), 1);
               1:
-                Write(FState.GBR + V * 2, FState.R[0], 2);
+                Write(Cardinal((Int64(FState.GBR) + (Int64(V) * 2))), Cardinal(FState.R[0]), 2);
               2:
-                Write(FState.GBR + V * 4, FState.R[0], 4);
+                Write(Cardinal((Int64(FState.GBR) + (Int64(V) * 4))), Cardinal(FState.R[0]), 4);
               3:
                 if WasSlot then
                   Valid := False
                 else
                 begin
-                  ExceptionVector(V, At + 2);
+                  ExceptionVector(V, Cardinal((UInt64(At) + 2) and $FFFFFFFF));
                   Branch := True;
                   Result := 8;
                 end;
               4:
-                FState.R[0] := SX8(Read(FState.GBR + V, 1));
+                FState.R[0] := Cardinal((SX8(Read(Cardinal((Int64(FState.GBR) + V)), 1)) and $FFFFFFFF));
               5:
-                FState.R[0] := SX16(Read(FState.GBR + V * 2, 2));
+                FState.R[0] := Cardinal((SX16(Read(Cardinal((Int64(FState.GBR) + (Int64(V) * 2))), 2)) and $FFFFFFFF));
               6:
-                FState.R[0] := Read(FState.GBR + V * 4, 4);
+                FState.R[0] := Cardinal((Read(Cardinal((Int64(FState.GBR) + (Int64(V) * 4))), 4) and $FFFFFFFF));
               7:
                 begin
-                  A := At + 4;
+                  A := Cardinal(((Int64(At) + 4) and $FFFFFFFF));
                   if WasSlot then
-                    A := Target + 2;
-                  FState.R[0] := (A and $FFFFFFFC) + V * 4;
+                    A := Cardinal(((Int64(Target) + 2) and $FFFFFFFF));
+                  FState.R[0] := Cardinal(((Int64((A and $FFFFFFFC)) + (Int64(V) * 4)) and $FFFFFFFF));
                 end;
               8:
-                SetT(FState.R[0] and V = 0);
+                SetT(((FState.R[0] and V) = 0));
               9:
-                FState.R[0] := FState.R[0] and V;
+                FState.R[0] := (FState.R[0] and V);
               10:
-                FState.R[0] := FState.R[0] xor V;
+                FState.R[0] := (FState.R[0] xor V);
               11:
-                FState.R[0] := FState.R[0] or V;
+                FState.R[0] := (FState.R[0] or V);
               12:
                 begin
-                  SetT(Read(FState.GBR + FState.R[0], 1) and V = 0);
+                  SetT(((Read(Cardinal(((UInt64(FState.GBR) + FState.R[0]) and $FFFFFFFF)), 1) and V) = 0));
                   Result := 3;
                 end;
               13:
                 begin
-                  A := FState.GBR + FState.R[0];
-                  Write(A, Read(A, 1) and V, 1);
+                  A := Cardinal(((Int64(FState.GBR) + FState.R[0]) and $FFFFFFFF));
+                  Write(A, Cardinal((Read(A, 1) and V)), 1);
                   Result := 3;
                 end;
               14:
                 begin
-                  A := FState.GBR + FState.R[0];
-                  Write(A, Read(A, 1) xor V, 1);
+                  A := Cardinal(((Int64(FState.GBR) + FState.R[0]) and $FFFFFFFF));
+                  Write(A, Cardinal((Read(A, 1) xor V)), 1);
                   Result := 3;
                 end;
               15:
                 begin
-                  A := FState.GBR + FState.R[0];
-                  Write(A, Read(A, 1) or V, 1);
+                  A := Cardinal(((Int64(FState.GBR) + FState.R[0]) and $FFFFFFFF));
+                  Write(A, Cardinal((Read(A, 1) or V)), 1);
                   Result := 3;
                 end;
             end;
           end;
         13:
           begin
-            V := At + 4;
+            V := Cardinal(((Int64(At) + 4) and $FFFFFFFF));
             if WasSlot then
-              V := Target + 2;
-            FState.R[N] := Read((V and $FFFFFFFC) + Cardinal(Op and $FF) * 4, 4);
+              V := Cardinal(((Int64(Target) + 2) and $FFFFFFFF));
+            FState.R[N] := Cardinal((Read(Cardinal((Int64((V and $FFFFFFFC)) + (Int64(Cardinal((Op and $FF))) * 4))), 4) and $FFFFFFFF));
           end;
         14:
           FState.R[N] := SX8(Op);
@@ -798,7 +807,7 @@ begin
       Result := 5;
     end;
   end;
-  Inc(FState.Cycles, Result);
+  FState.Cycles := Add64(FState.Cycles, UInt64(Result));
 end;
 
 function TSH2.Run(Cycles: Integer): Integer;

@@ -60,7 +60,7 @@ implementation
 uses
   System.Math;
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 // Native sample-clocked Yamaha envelope sequencer; LFO shares AICA constants.
 const
@@ -212,7 +212,7 @@ begin
   var V := FVoices[Channel];
   var E := Reg(B + 8);
   var R := Reg(B + 10);
-  Inc(V.EnvelopeCounter);
+  V.EnvelopeCounter := Cardinal((UInt64(V.EnvelopeCounter) + 1) and $FFFFFFFF);
   var Setting: Integer := E and 31;
   case V.Stage of
     1:
@@ -235,7 +235,7 @@ begin
       if V.EnvelopeCounter mod Cardinal(Period) = 0 then
       begin
         Pulse := True;
-        Inc(V.EnvelopeStep);
+        V.EnvelopeStep := Cardinal((UInt64(V.EnvelopeStep) + 1) and $FFFFFFFF);
       end;
     end;
   if Pulse then
@@ -267,7 +267,7 @@ begin
       end;
     end;
     V.Envelope := Att * 65536;
-    Inc(V.EnvelopePattern);
+    V.EnvelopePattern := Cardinal((UInt64(V.EnvelopePattern) + 1) and $FFFFFFFF);
   end;
   if V.Envelope >= 1023 * 65536 then
   begin
@@ -423,7 +423,7 @@ begin
   var LFO := Reg(B + $12);
   var Phase: Integer := V.LFO shr 24;
   if LFO and $8000 = 0 then
-    Inc(V.LFO, FLFOStep[(LFO shr 10) and 31])
+    V.LFO := Cardinal((UInt64(V.LFO) + FLFOStep[(LFO shr 10) and 31]) and $FFFFFFFF)
   else
   begin
     V.LFO := 0;
@@ -474,7 +474,7 @@ end;
 
 procedure TSaturnSCSP.Sample(CDLeft, CDRight: Integer; out Left, Right: SmallInt);
 begin
-  FNoise := (FNoise shr 1) xor (Cardinal(0) - Cardinal(FNoise and 1) and $400181);
+  FNoise := (FNoise shr 1) xor (Cardinal(-Integer(FNoise and 1)) and $400181);
   var L, R: Int64;
   L := 0;
   R := 0;

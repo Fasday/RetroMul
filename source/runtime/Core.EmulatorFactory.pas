@@ -15,10 +15,10 @@ implementation
 
 uses
   Core.Adapter.PCE, PCE.Cartridge, Core.CD.Disc, Core.Adapter.GW, GW.Cartridge,
-  System.Zip, System.IOUtils, SG1000.Console, Core.RomFormat,
+  Core.RomArchive, System.Zip, System.IOUtils, System.NetEncoding, SG1000.Console, Core.RomFormat,
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn;
+  Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -105,6 +105,12 @@ begin
   end;
 
   var Data := ReadNeoGeoData(Stream);
+  var IsSevenZip := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_7Z);
+  if IsSevenZip then
+  begin
+    Data := SevenZipAsZip(Data);
+    SourceName := ChangeFileExt(SourceName, ROM_EXTENSION_ZIP);
+  end;
   if TGWCartridge.Recognizes(Data, SourceName) then
   begin
     var GWStream := TBytesStream.Create(Data);
@@ -129,15 +135,26 @@ begin
         if Name.Contains('__MACOSX/') or ExtractFileName(Name).StartsWith('._') then
           Continue;
 
-        var Ext := ExtractFileExt(Name).ToLower;
-        if (Ext = ROM_EXTENSION_PCE) or (Ext = ROM_EXTENSION_SGX) or (Ext = ROM_EXTENSION_SG) or (Ext = ROM_EXTENSION_SC) or (Ext = ROM_EXTENSION_SF7) or
-          (Ext = ROM_EXTENSION_SF) or (Ext = ROM_EXTENSION_DSK) or (Ext = ROM_EXTENSION_MV) or
-          (Ext = ROM_EXTENSION_SMS) or (Ext = ROM_EXTENSION_GG) or
-          ((Ext = '.bin') and (Archive.FileInfo[i].UncompressedSize = $2000) and
-          Name.ToLower.Contains('initial program loader')) then
+        var BinaryCartridge := False;
+        if IsSevenZip and SameText(ExtractFileExt(Name), '.bin') and
+          (Archive.FileInfo[i].UncompressedSize <= ROM_MAX_SIZE) then
+        begin
+          var Probe: TBytes;
+          Archive.Read(i, Probe);
+          var ProbeFormat := DetectRom(Probe);
+          BinaryCartridge := not (ProbeFormat.System in [TRomSystem.Unknown, TRomSystem.NeoGeo]);
+        end;
+        if CartridgeArchiveEntry(Name, Archive.FileInfo[i].UncompressedSize) or BinaryCartridge then
         begin
           if Candidate >= 0 then
-            raise EReadError.Create('Sega ZIP must contain one cartridge or disk image');
+          begin
+            if not IsSevenZip then
+              raise EReadError.Create('Cartridge ZIP must contain one cartridge or disk image');
+            var Score := CartridgeVariantScore(Name);
+            var Previous := CartridgeVariantScore(Archive.FileNames[Candidate]);
+            if (Score < Previous) or ((Score = Previous) and
+              (CompareText(Name, Archive.FileNames[Candidate]) >= 0)) then Continue;
+          end;
 
           Candidate := i;
         end;
@@ -145,7 +162,7 @@ begin
       if Candidate >= 0 then
       begin
         if Archive.FileInfo[Candidate].UncompressedSize > ROM_MAX_SIZE then
-          raise EReadError.Create('Sega ZIP image exceeds 64 MiB');
+          raise EReadError.Create('Cartridge archive image exceeds 64 MiB');
 
         SourceName := Archive.FileNames[Candidate];
         if SourceName.ToLower.Contains('initial program loader') then
@@ -197,13 +214,28 @@ begin
     Format.System := TRomSystem.SMS
   else if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_GG) then
     Format.System := TRomSystem.GameGear;
-  if (Format.System = TRomSystem.Unknown) and SameText(ExtractFileExt(RomName), ROM_EXTENSION_GBA) then
+  if (Format.System = TRomSystem.Unknown) and SameText(ExtractFileExt(SourceName), ROM_EXTENSION_GBA) then
     Format.System := TRomSystem.GBA;
   if (Format.System <> TRomSystem.NeoGeo) and (Length(Data) > ROM_MAX_SIZE) then
     raise EReadError.Create('ROM exceeds 64 MiB');
   if Format.System = TRomSystem.Unknown then
-    raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64 or Neo Geo expected; use .sg/.sc for SG-1000/SC-3000)');
+    raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64, Neo Geo or Neo Geo Pocket expected; use .sg/.sc for SG-1000/SC-3000)');
 
+  if Format.System = TRomSystem.NeoGeo then
+  begin
+    var PathHint := RomName.Replace('\','/').ToLower;
+    if RomName.StartsWith('content://',True) then
+      PathHint := TNetEncoding.URL.Decode(PathHint).Replace('\','/').ToLower;
+    if PathHint.Contains('/neogeoaes/') or PathHint.Contains('/aes/') then
+      Format.System := TRomSystem.NeoGeoAES;
+    // Document providers may hide folder names in opaque URIs. The library
+    // still knows which platform folder supplied the selected document.
+    if (Format.System = TRomSystem.NeoGeo) and (Storage <> nil) and
+      RomName.StartsWith('content://',True) then
+      for var Item in Storage.Roms(ROM_SYSTEM_NEOGEOAES) do
+        if Item.Location = RomName then
+        begin Format.System := TRomSystem.NeoGeoAES; Break; end;
+  end;
   Data := NormalizeRom(Data, Format);
   var Input := TBytesStream.Create(Data);
   try
@@ -222,6 +254,10 @@ begin
         Result := TN64CoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NeoGeo:
         Result := TNeoGeoCoreAdapter.Create(Input, Storage, RomName);
+      TRomSystem.NeoGeoAES:
+        Result := TNeoGeoCoreAdapter.Create(Input, Storage, RomName, False, True);
+      TRomSystem.NeoGeoPocket, TRomSystem.NeoGeoPocketColor:
+        Result := TNGPCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NES:
         Result := TNesCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.GB:

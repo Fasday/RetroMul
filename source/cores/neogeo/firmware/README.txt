@@ -23,3 +23,12 @@ brcc32 does not accept a BOM; Pascal source uses UTF-8 with BOM.
 
 An optional neogeo.zip alongside a game can override these exact filenames.
 No additional BIOS download is required for the built-in MVS configuration.
+
+AES firmware added 2026-10-15 for the separate home-console platform.
+Source: https://github.com/Abdess/retrobios/blob/main/bios/SNK/Neo%20Geo/aes.zip
+Hashes verified against MAME src/mame/snk/neogeo.cpp AES BIOS declarations:
+neo-epo.bin 131072 bytes CRC32 d27a71f1 SHA1 1b3b22092f30c4d1b2c15f04d1670eb1e9fbea07
+neo-po.bin  131072 bytes CRC32 16d0c132 SHA1 4e4a440cae46f3889d20234aebd7f8d5f522e22c
+Both AES images are embedded as NG_AES_BIOS_EU / NG_AES_BIOS_JP.
+External firmware overrides still take precedence; missing explicit overrides
+remain an error. With no override, AES can use the built-in regional BIOS.

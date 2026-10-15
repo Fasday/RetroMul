@@ -49,7 +49,7 @@ implementation
 uses
   System.Math;
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 function Signed(Value: Int64; Bits: Integer): Int64;
 begin
@@ -145,7 +145,7 @@ begin
     12:
       if Immediate then
       begin
-        FTop := FPC + 1;
+        FTop := Byte((Integer(FPC) + 1) and $FF);
         FJump := Value and $FF;
       end
       else
@@ -219,7 +219,7 @@ begin
             end;
           5:
             begin
-              V := A - P;
+              V := Cardinal((Int64(A) - P) and $FFFFFFFF);
               Carry := A < P;
               Overflow := ((A xor P) and (A xor V) and $80000000) <> 0;
             end;
@@ -344,9 +344,9 @@ begin
               FDMAIndex := FCT[FDMABank and 3];
               if FDMABank = 4 then
                 FDMAIndex := 0;
-              FDMAAddress := FReadAddress * 4;
+              FDMAAddress := Cardinal((UInt64(FReadAddress) * 4) and $FFFFFFFF);
               if FDMAWrite then
-                FDMAAddress := FWriteAddress * 4;
+                FDMAAddress := Cardinal((UInt64(FWriteAddress) * 4) and $FFFFFFFF);
               FDMAAdd := (Op shr 15) and 7;
               if FDMAAdd > 0 then
                 FDMAAdd := 1 shl (FDMAAdd - 1);
@@ -393,7 +393,7 @@ begin
     if FIncrement[I] then
       FCT[I] := (FCT[I] + 1) and $3F;
   FMul := Signed(Int64(FX) * FY, 48);
-  Inc(FPC);
+  FPC := Byte((Integer(FPC) + 1) and $FF);
   if Jump >= 0 then
     FPC := Jump;
 end;
@@ -421,7 +421,7 @@ begin
       FData[FDMABank, FDMAIndex and $3F] := V;
   end;
   Inc(FDMAIndex);
-  Inc(FDMAAddress, FDMAAdd);
+  FDMAAddress := Cardinal((Int64(FDMAAddress) + FDMAAdd) and $FFFFFFFF);
   Dec(FDMACount);
   if FDMACount = 0 then
   begin
@@ -512,7 +512,7 @@ begin
       if FControl and $10000 = 0 then
       begin
         FProgram[FPC] := Value;
-        Inc(FPC);
+        FPC := Byte((Integer(FPC) + 1) and $FF);
       end;
     $88:
       if FControl and $10000 = 0 then

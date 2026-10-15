@@ -55,7 +55,7 @@ implementation
 uses
   Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.Saturn, Core.Adapter.N64,
   Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, Core.Adapter.GBA, GB.Joypad, NES.Input, NES.Types,
+  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, GB.Joypad, NES.Input, NES.Types,
   MD.Console, SNES.Console, System.Math, FMX.Types;
 
 function HidToHostKey(Code: Integer): Word;
@@ -161,6 +161,8 @@ begin
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
   if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) then
     Exit;
+  if (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) then
+    Exit;
   if SystemId = ROM_SYSTEM_N64 then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
   if SystemId = ROM_SYSTEM_SATURN then
@@ -175,7 +177,7 @@ begin
   else
   begin
     Include(Result, TEmulatorButton.Select);
-    if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) then
+    if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) then
       Result := Result + [TEmulatorButton.C, TEmulatorButton.X];
     if SystemId = ROM_SYSTEM_GBA then
       Result := Result + [TEmulatorButton.C, TEmulatorButton.Z];
@@ -258,8 +260,10 @@ begin
       TEmulatorButton.Y:
         Result := 'Turbo A';
     end;
-  if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) and (Button = TEmulatorButton.X) then
+  if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) and (Button = TEmulatorButton.X) then
     Result := 'D';
+  if ((SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC)) and (Button = TEmulatorButton.Start) then
+    Result := 'Option';
   if (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_GBA) then
     case Button of
       TEmulatorButton.C:
@@ -464,7 +468,7 @@ begin
       Keys[1, MDMapping[B]] := C.Keys2[B];
     end;
   end
-  else if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) then
+  else if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) then
   begin
     var C := TNeoGeoConfig.Create('');
     Config := C;
@@ -473,6 +477,13 @@ begin
       Keys[0, B] := C.Keys[B];
       Keys[1, B] := C.Keys2[B];
     end;
+  end
+  else if (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) then
+  begin
+    var C := TNGPConfig.Create('');
+    Config := C;
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      Keys[0,B] := C.Keys[B];
   end
   else if SystemId = ROM_SYSTEM_N64 then
   begin
@@ -530,7 +541,7 @@ begin
     Count := 12;
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
     Count := 5;
-  if (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
+  if (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
     Count := 1;
   if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X) then
     Count := 4;
@@ -542,16 +553,18 @@ begin
       if (SystemId <> ROM_SYSTEM_SC3000) and (B in CoreButtons(SystemId, BindingDevice)) then
       begin
         var Section := 'Controls';
-        if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_N64) or ((SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X)) or (SystemId = ROM_SYSTEM_SNES) or ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD)) or (SystemId = ROM_SYSTEM_GBA) then
+        if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_N64) or ((SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X)) or (SystemId = ROM_SYSTEM_SNES) or ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) or (SystemId = ROM_SYSTEM_GBA) then
           Section := 'Keys';
         if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           Section := 'Keys';
-        if SystemId = ROM_SYSTEM_SATURN then
+        if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);
         var KeyName := CoreButtonName(SystemId, B).Replace('↑', 'Up').Replace('↓', 'Down')
           .Replace('←', 'Left').Replace('→', 'Right');
+        if ((SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC)) and (B = TEmulatorButton.Start) then
+          KeyName := 'Start';
         if SystemId = ROM_SYSTEM_SATURN then
           case B of
             TEmulatorButton.Select:

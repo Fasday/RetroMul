@@ -32,6 +32,9 @@ const
   SETTINGS_PAGE_PCECD = 18;
   SETTINGS_PAGE_NEOGEOCD = 19;
   SETTINGS_PAGE_SATURN = 20;
+  SETTINGS_PAGE_NEOGEOAES = 21;
+  SETTINGS_PAGE_NGP = 22;
+  SETTINGS_PAGE_NGPC = 23;
 
 type
   TPlatformPresentation = record
@@ -148,6 +151,20 @@ begin
         Result.SettingsPageId := SETTINGS_PAGE_NEOGEO;
         Result.PadLayout := TPlatformPadLayout.NeoGeo;
         Result.IconData := PlatformIconNEOGEO;
+      end;
+    TRomSystem.NeoGeoAES:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_NEOGEOAES;
+        Result.PadLayout := TPlatformPadLayout.NeoGeo;
+        Result.IconData := PlatformIconNEOGEO;
+      end;
+    TRomSystem.NeoGeoPocket, TRomSystem.NeoGeoPocketColor:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_NGP;
+        if System = TRomSystem.NeoGeoPocketColor then
+          Result.SettingsPageId := SETTINGS_PAGE_NGPC;
+        Result.PadLayout := TPlatformPadLayout.GameBoy;
+        Result.IconData := PlatformIconGB;
       end;
     TRomSystem.NeoGeoCD:
       begin

@@ -1,0 +1,2 @@
+NGP_BIOS RCDATA "firmware/ngp_bios.bin"
+NGPC_BIOS RCDATA "firmware/ngpc_bios.bin"

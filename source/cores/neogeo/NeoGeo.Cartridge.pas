@@ -41,7 +41,7 @@ function ReadNeoGeoData(Stream: TStream): TBytes;
 implementation
 
 uses
-  System.Zip, System.IOUtils, System.Hash, NeoGeo.RomSets, NeoGeo.Protection,
+  Core.RomArchive, System.Zip, System.IOUtils, System.Hash, NeoGeo.RomSets, NeoGeo.Protection,
   NeoGeo.Bootleg, NeoGeo.PCB;
 
 {$R NeoGeo.Firmware.res}
@@ -203,15 +203,23 @@ procedure TNeoGeoCartridge.ConfigureHardware(const Storage: IStorage; const Loca
     begin
       for var Folder in TArray<string>.Create(ExtractFilePath(Location),
         TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEO),
+        TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOAES),
         TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD), TPath.Combine(Storage.Root, 'bios')) do
       begin
         if Storage.Exists(TPath.Combine(Folder, Name)) then
           Exit(Storage.ReadBytes(TPath.Combine(Folder, Name)));
         var ZipPath := TPath.Combine(Folder, 'neogeo.zip');
+        if not Storage.Exists(ZipPath) then ZipPath := ChangeFileExt(ZipPath, ROM_EXTENSION_7Z);
         if not Storage.Exists(ZipPath) then Continue;
         var Input := Storage.OpenRead(ZipPath);
         var Zip := TZipFile.Create;
         try
+          if SameText(ExtractFileExt(ZipPath), ROM_EXTENSION_7Z) then
+          begin
+            var PackedData := SevenZipAsZip(ReadNeoGeoData(Input));
+            FreeAndNil(Input);
+            Input := TBytesStream.Create(PackedData);
+          end;
           Zip.Open(Input, zmRead);
           for var I := 0 to Zip.FileCount - 1 do
             if SameText(ExtractFileName(Zip.FileNames[I]), Name) then
@@ -249,6 +257,9 @@ begin
       Bytes := ReadBIOS(Name);
       if Length(Bytes) > 0 then Break;
     end;
+    if (Length(Bytes) = 0) and AES and (BIOSName = '') then
+      if Region = 0 then Bytes := ResourceBytes('NG_AES_BIOS_JP')
+      else Bytes := ResourceBytes('NG_AES_BIOS_EU');
     if Length(Bytes) = 0 then raise EReadError.Create('Neo Geo BIOS not found: ' + string.Join(', ', Names));
     if ((Disc = nil) and (Length(Bytes) <> $20000) and (Length(Bytes) <> $80000)) or
       ((Disc <> nil) and (Length(Bytes) <> $80000)) then raise EReadError.Create('Invalid Neo Geo BIOS size');
@@ -391,9 +402,20 @@ var
 
     var Path := TPath.Combine(ExtractFilePath(Location.Replace('/', PathDelim)), Name + ROM_EXTENSION_ZIP);
     if not Storage.Exists(Path) then
-      Exit;
+      Path := ChangeFileExt(Path, ROM_EXTENSION_7Z);
+    if not Storage.Exists(Path) then Exit;
 
     Stream := Storage.OpenRead(Path);
+    if SameText(ExtractFileExt(Path), ROM_EXTENSION_7Z) then
+    begin
+      var PackedData: TBytes;
+      try
+        PackedData := SevenZipAsZip(ReadNeoGeoData(Stream));
+      finally
+        FreeAndNil(Stream);
+      end;
+      Stream := TBytesStream.Create(PackedData);
+    end;
     Zip := TZipFile.Create;
     Zip.Open(Stream, zmRead);
   end;

@@ -43,7 +43,7 @@ implementation
 uses
   System.Math;
 
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 function Sar(Value: Int64; Count: Integer): Integer;
 begin

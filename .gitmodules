@@ -10,3 +10,6 @@
 [submodule "fmx/FMXVibration"]
 	path = dependencies/FMXVibration
 	url = https://github.com/HemulGM/FMXVibration
+[submodule "dependencies/Delphi7z"]
+	path = dependencies/Delphi7z
+	url = https://github.com/HemulGM/Delphi7z

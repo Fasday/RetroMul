@@ -28,6 +28,9 @@ const
   ROM_SYSTEM_SATURN = 'saturn';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
+  ROM_SYSTEM_NEOGEOAES = 'neogeoaes';
+  ROM_SYSTEM_NGP = 'ngp';
+  ROM_SYSTEM_NGPC = 'ngpc';
   ROM_FOLDER_MD = 'megadrive';
 
   // Uppercase IDs are persisted in snapshots and used by emulation workers.
@@ -83,7 +86,10 @@ const
   ROM_EXTENSION_FIG = '.fig';
   ROM_EXTENSION_GENERIC = '.rom';
   ROM_EXTENSION_ZIP = '.zip';
+  ROM_EXTENSION_7Z = '.7z';
   ROM_EXTENSION_NEO = '.neo';
+  ROM_EXTENSION_NGP = '.ngp';
+  ROM_EXTENSION_NGPC = '.ngc';
   ROM_EXTENSION_CUE = '.cue';
   ROM_EXTENSION_ISO = '.iso';
   ROM_EXTENSION_CHD = '.chd';
@@ -242,7 +248,8 @@ uses
 function IsMDRealtec(const Data: TBytes): Boolean;
 begin
   Result := False;
-  if Length(Data) <> $80000 then Exit;
+  if Length(Data) <> $80000 then
+    Exit;
   var Sum: Cardinal := 0;
   for var I := $200 div 2 to Length(Data) div 2 - 1 do
     Sum := (Sum + (Cardinal(Data[I * 2]) shl 8) + Data[I * 2 + 1]) and $FFFF;
@@ -348,9 +355,21 @@ function DetectRom(const Data: TBytes): TRomFormatInfo;
 
 begin
   Result := Default(TRomFormatInfo);
+  if (Length(Data) >= $40) and (Length(Data) <= $400000) and
+    (Signature(0, 'COPYRIGHT BY SNK CORPORATION') or Signature(0, ' LICENSED BY SNK CORPORATION')) and
+    (Data[$23] in [$00, $10]) then
+  begin
+    Result.System := TRomSystem.NeoGeoPocket;
+    if Data[$23] = $10 then
+      Result.System := TRomSystem.NeoGeoPocketColor;
+    Exit;
+  end;
   // Retail Saturn BIOS reset vectors. Identification is independent of filenames.
-  if (Length(Data)>=16) and Signature(0,AnsiString(#$20#$00#$02#$00#$06#$00#$20#$00#$20#$00#$02#$00#$06#$00#$20#$00)) then
-  begin Result.System:=TRomSystem.Saturn; Exit; end;
+  if (Length(Data) >= 16) and Signature(0, AnsiString(#$20#$00#$02#$00#$06#$00#$20#$00#$20#$00#$02#$00#$06#$00#$20#$00)) then
+  begin
+    Result.System := TRomSystem.Saturn;
+    Exit;
+  end;
   for var Offset in [$1FF0, $3FF0, $7FF0] do
     for var Header in [0, ROM_COPIER_HEADER_SIZE] do
       if Signature(Offset + Header, 'TMR SEGA') and

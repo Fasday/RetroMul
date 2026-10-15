@@ -85,7 +85,7 @@ uses
   System.Math;
 
 // Fixed-width architectural wrap is intentional. Public ranges are checked.
-{$Q-}{$R-}
+{$Q+}{$R+}
 
 procedure SH7604TouchLRU(var Value: Byte; Way: Integer);
 begin
@@ -207,7 +207,7 @@ begin
   begin
     Result := 0;
     for var I := 0 to Size - 1 do
-      Result := (Result shl 8) or FState.CacheRAM[(Address + Cardinal(I)) and $FFF];
+      Result := (Result shl 8) or FState.CacheRAM[(UInt64(Address) + Cardinal(I)) and $FFF];
     Exit;
   end;
   if (Area = 0) and (CCR and 1 <> 0) then
@@ -286,7 +286,7 @@ begin
   if Area = 6 then
   begin
     for var I := 0 to Size - 1 do
-      FState.CacheRAM[(Address + Cardinal(I)) and $FFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
+      FState.CacheRAM[(UInt64(Address) + Cardinal(I)) and $FFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
     Exit;
   end;
   if (Area = 0) and (CCR and 1 <> 0) then
@@ -306,7 +306,7 @@ begin
   Result := 0;
   for var I := 0 to Size - 1 do
   begin
-    var Index: Integer := (Address + Cardinal(I)) and $1FF;
+    var Index: Integer := (UInt64(Address) + Cardinal(I)) and $1FF;
     var Value := FState.Peripheral[Index];
     case Index of
       $11:
@@ -537,7 +537,7 @@ procedure TSH7604.ExternalClock;
 begin
   if Peek($16, 1) and 3 <> 3 then
     Exit;
-  Inc(FState.FRC);
+  FState.FRC := Word((Cardinal(FState.FRC) + 1) and $FFFF);
   var Flags := Peek($11, 1);
   if FState.FRC = 0 then
     Flags := Flags or 2;
@@ -629,19 +629,19 @@ begin
         Control := FState.DMAControl[Channel];
         FWrite(FUser, Dest and $1FFFFFFF, FState.DMAValue[Channel], Size);
         if Block then
-          Inc(Source, 4)
+          Source := Cardinal((Int64(Source) + 4) and $FFFFFFFF)
         else
           case (Control shr 12) and 3 of
             1:
-              Inc(Source, Size);
+              Source := Cardinal((Int64(Source) + Size) and $FFFFFFFF);
             2:
-              Dec(Source, Size);
+              Source := Cardinal((Int64(Source) - Size) and $FFFFFFFF);
           end;
         case (Control shr 14) and 3 of
           1:
-            Inc(Dest, Size);
+            Dest := Cardinal((Int64(Dest) + Size) and $FFFFFFFF);
           2:
-            Dec(Dest, Size);
+            Dest := Cardinal((Int64(Dest) - Size) and $FFFFFFFF);
         end;
         Dec(Count);
         if Block then
@@ -674,7 +674,7 @@ begin
     FState.FRTPhase := (Elapsed + FState.FRTPhase) mod Divider;
     while Ticks > 0 do
     begin
-      Inc(FState.FRC);
+      FState.FRC := Word((Cardinal(FState.FRC) + 1) and $FFFF);
       var Flags := Peek($11, 1);
       if FState.FRC = 0 then
         Flags := Flags or 2;

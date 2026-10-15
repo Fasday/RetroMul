@@ -9,7 +9,7 @@ uses
 
 type
   TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
-    SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn);
+    SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn, NeoGeoAES, NeoGeoPocket, NeoGeoPocketColor);
 
 type
   // Stable system IDs and settings keys preserve existing collections and INI files.
@@ -106,6 +106,15 @@ begin
   RegisterPlatform(TRomSystem.NeoGeo, ROM_SYSTEM_NEOGEO, 'Neo Geo', 'Neo Geo',
     'SNK', 'NG NeoGeo Neo Geo CD', 'neogeo', ['neogeo'], [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO],
     'NeoGeo', 'neogeo', 2);
+  RegisterPlatform(TRomSystem.NeoGeoAES, ROM_SYSTEM_NEOGEOAES, 'Neo Geo AES', 'Neo Geo AES',
+    'SNK', 'NG AES Advanced Entertainment System', 'neogeoaes', ['neogeoaes', 'aes'], [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO],
+    'NeoGeo', 'neogeoaes', 2);
+  RegisterPlatform(TRomSystem.NeoGeoPocket, ROM_SYSTEM_NGP, 'Neo Geo Pocket', 'NGP',
+    'SNK', 'NGP Pocket monochrome', 'ngp', ['ngp', 'neogeopocket'], [ROM_EXTENSION_NGP, ROM_EXTENSION_NGPC, ROM_EXTENSION_ZIP],
+    'NeoGeoPocket', 'ngp', 1);
+  RegisterPlatform(TRomSystem.NeoGeoPocketColor, ROM_SYSTEM_NGPC, 'Neo Geo Pocket Color', 'NGPC',
+    'SNK', 'NGPC Pocket Color', 'ngpc', ['ngpc', 'neogeopocketcolor'], [ROM_EXTENSION_NGP, ROM_EXTENSION_NGPC, ROM_EXTENSION_ZIP],
+    'NeoGeoPocket', 'ngpc', 1);
   RegisterPlatform(TRomSystem.NeoGeoCD, ROM_SYSTEM_NEOGEOCD, 'Neo Geo CD', 'Neo Geo CD',
     'SNK', 'NG NeoGeo CD', 'neogeocd', ['neogeocd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
     'NeoGeo', 'neogeocd', 2, ROM_SYSTEM_NEOGEO);
@@ -157,6 +166,9 @@ begin
   SetLength(Item.Extensions, Length(Extensions));
   for var I := 0 to High(Extensions) do
     Item.Extensions[I] := Extensions[I];
+  if not (System in [TRomSystem.SegaCD, TRomSystem.PCECD, TRomSystem.NeoGeoCD,
+    TRomSystem.Saturn]) then
+    Item.Extensions := Item.Extensions + [ROM_EXTENSION_7Z];
   Item.SettingsProfile := SettingsProfile;
   Item.SettingsCoreId := SettingsCoreId;
   Item.LegacySettingsId := LegacySettingsId;
