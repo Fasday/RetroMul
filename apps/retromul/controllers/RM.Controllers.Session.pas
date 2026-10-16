@@ -1,5 +1,7 @@
 ﻿unit RM.Controllers.Session;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -86,7 +88,7 @@ begin
   if FState.Input.Rumble <> nil then
     FState.Input.Rumble.Stop;
 
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   if FState.Preferences.PauseOnFocusLoss and not FView.InputHasFocus and not FState.Browser.ViewingLibrary and
     not RetroDialogVisible(FView) and (FState.Settings.View = nil) and
     (FState.Session.Emulation <> nil) and not FState.Session.Emulation.IsPaused then
@@ -117,7 +119,7 @@ begin
   if FState.Session.Emulation <> nil then
     FState.Session.Emulation.ClearInput;
   FState.Input.GamepadInput := Default(TEmulatorInput);
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   if not (csDestroying in FView.ComponentState) then
     FView.SyncActivity;
   {$ENDIF}
@@ -150,10 +152,10 @@ begin
     FillChar(FState.Input.KeysDown, SizeOf(FState.Input.KeysDown), 0);
     if (FState.Session.DialogCore <> nil) and (FState.Session.DialogCore = FState.Session.Emulation) and
       not FState.Session.DialogWasPaused and not FState.Session.EmulationFaulted and not FState.Session.UserPaused and
-      not FState.Session.AutoPaused and {$IF Defined(ANDROID) or Defined(IOS)}not FState.Mobile.InBackground and {$ENDIF} not FState.Session.OpeningRom and
+      not FState.Session.AutoPaused and {$IFDEF ISMOBILE}not FState.Mobile.InBackground and {$ENDIF} not FState.Session.OpeningRom and
       not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and (FState.Help.View = nil) then
     begin
-      {$IF not Defined(ANDROID) and not Defined(IOS)}
+      {$IFNDEF ISMOBILE}
       if FState.Preferences.PauseOnFocusLoss and not FView.InputHasFocus then
         FState.Session.AutoPaused := True
       else
@@ -201,7 +203,7 @@ begin
     FView.GamePause.StyleLookup := 'buttonstyle';
     FView.GamePause.TextSettings.FontColor := $FFE8ECF1;
   end;
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   if FView.GamePauseIcon.Align = TAlignLayout.Center then
     FView.GamePause.Text := ''
   else
@@ -248,7 +250,7 @@ begin
     FState.Input.MiraclePiano.Visible := PianoActive;
     FState.Input.MiraclePiano.Enabled := PianoActive and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
   end;
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   var KeyboardActive := SGKeyboardActive or SuborKeyboardActive or FamicomKeyboardActive or PianoActive;
   var PowerPadActive := Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral);
   if PowerPadActive then
@@ -270,7 +272,7 @@ begin
     FState.Input.FamicomKeyboard.Enabled := FamicomKeyboardActive and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
   end;
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   if FState.Input.PowerPad <> nil then
   begin
     FState.Input.PowerPad.Visible := PowerPadActive;
@@ -693,7 +695,7 @@ begin
     FState.Session.EmulationFaulted := False;
     if FState.Session.UserPaused then
       FState.Session.Emulation.Pause;
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     if FState.Mobile.ActivityPaused then
       FState.Session.Emulation.Pause;
     {$ENDIF}
@@ -721,7 +723,7 @@ begin
     raise;
   end;
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   if not FView.FullScreen then
     FView.SwitchFullScreen;
   {$ENDIF}
@@ -796,7 +798,7 @@ begin
   FView.PollDocumentTransfer;
   {$ENDIF}
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   if FState.Session.OpeningRom then
     Exit;
   {$ENDIF}
@@ -848,7 +850,7 @@ begin
     if FState.Browser.GameFPS <> nil then
       FState.Browser.GameFPS.Text := Format('%.1f FPS   ·   %s   ·   %d × %d',
         [Frame.FramesPerSecond, UpperCase(FState.Input.SystemId), Frame.Width, Frame.Height]);
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     var FrameStatus := Format('%s - %.1f FPS', [FState.Session.Emulation.Name, Frame.FramesPerSecond]);
     if FView.LabelStatus.Text <> FrameStatus then
       FView.SetStatus(FrameStatus);
@@ -891,7 +893,7 @@ begin
   end
   else
   begin
-    {$IF not Defined(ANDROID) and not Defined(IOS)}
+    {$IFNDEF ISMOBILE}
     FState.Session.Emulation.Resume;
     {$ENDIF}
   end;

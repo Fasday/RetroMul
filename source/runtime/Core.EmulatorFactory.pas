@@ -15,7 +15,7 @@ implementation
 
 uses
   Core.Adapter.PCE, PCE.Cartridge, Core.CD.Disc, Core.Adapter.GW, GW.Cartridge,
-  Core.RomArchive, System.Zip, System.IOUtils, System.NetEncoding, SG1000.Console, Core.RomFormat,
+  Core.RomArchive, System.Zip, System.IOUtils, SG1000.Console, Core.RomFormat,
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP;
@@ -221,21 +221,6 @@ begin
   if Format.System = TRomSystem.Unknown then
     raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64, Neo Geo or Neo Geo Pocket expected; use .sg/.sc for SG-1000/SC-3000)');
 
-  if Format.System = TRomSystem.NeoGeo then
-  begin
-    var PathHint := RomName.Replace('\','/').ToLower;
-    if RomName.StartsWith('content://',True) then
-      PathHint := TNetEncoding.URL.Decode(PathHint).Replace('\','/').ToLower;
-    if PathHint.Contains('/neogeoaes/') or PathHint.Contains('/aes/') then
-      Format.System := TRomSystem.NeoGeoAES;
-    // Document providers may hide folder names in opaque URIs. The library
-    // still knows which platform folder supplied the selected document.
-    if (Format.System = TRomSystem.NeoGeo) and (Storage <> nil) and
-      RomName.StartsWith('content://',True) then
-      for var Item in Storage.Roms(ROM_SYSTEM_NEOGEOAES) do
-        if Item.Location = RomName then
-        begin Format.System := TRomSystem.NeoGeoAES; Break; end;
-  end;
   Data := NormalizeRom(Data, Format);
   var Input := TBytesStream.Create(Data);
   try
@@ -254,8 +239,6 @@ begin
         Result := TN64CoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NeoGeo:
         Result := TNeoGeoCoreAdapter.Create(Input, Storage, RomName);
-      TRomSystem.NeoGeoAES:
-        Result := TNeoGeoCoreAdapter.Create(Input, Storage, RomName, False, True);
       TRomSystem.NeoGeoPocket, TRomSystem.NeoGeoPocketColor:
         Result := TNGPCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.NES:

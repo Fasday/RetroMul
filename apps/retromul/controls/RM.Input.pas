@@ -55,8 +55,8 @@ implementation
 uses
   Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.Saturn, Core.Adapter.N64,
   Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, GB.Joypad, NES.Input, NES.Types,
-  MD.Console, SNES.Console, System.Math, FMX.Types;
+  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, GB.Joypad, NES.Input,
+  NES.Types, MD.Console, SNES.Console, System.Math, FMX.Types;
 
 function HidToHostKey(Code: Integer): Word;
 const
@@ -73,12 +73,16 @@ begin
   Result := 0;
   if (Code >= 4) and (Code <= 29) then
     Exit(vkA + Code - 4);
+
   if (Code >= 30) and (Code <= 38) then
     Exit(vk1 + Code - 30);
+
   if Code = 39 then
     Exit(vk0);
+
   if (Code >= Low(Keys)) and (Code <= High(Keys)) then
     Exit(Keys[Code]);
+
   case Code of
     224:
       Result := vkLControl;
@@ -109,9 +113,11 @@ begin
     vkMenu:
       Exit(226);
   end;
+
   for var i := 4 to 231 do
     if (Code <> 0) and (HidToHostKey(i) = Code) then
       Exit(i);
+
   Result := 0;
 end;
 
@@ -120,6 +126,7 @@ begin
   Result := '';
   if Input = nil then
     Exit;
+
   var Devices := Input.Devices;
   for var Binding in Input.Bindings do
     for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
@@ -144,29 +151,37 @@ begin
   begin
     if Device = 'none' then
       Exit([]);
+
     Result := [TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right,
         TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Select, TEmulatorButton.Start];
     if Device = 'pad6' then
       Result := Result + [TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.C, TEmulatorButton.Z];
     Exit;
   end;
+
   if SystemId = ROM_SYSTEM_GW then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
+
   Result := [];
   if not (Device = 'auto') and not Device.StartsWith('pad') then
     Exit;
+
   Result := [TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left,
       TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start];
   if (SystemId = ROM_SYSTEM_NES) and (Device = 'paddendy') then
     Result := Result + [TEmulatorButton.X, TEmulatorButton.Y];
   if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) then
     Exit;
+
   if (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) then
     Exit;
+
   if SystemId = ROM_SYSTEM_N64 then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
+
   if SystemId = ROM_SYSTEM_SATURN then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
+
   if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X) then
   begin
     Include(Result, TEmulatorButton.C);
@@ -209,6 +224,7 @@ begin
       TEmulatorButton.Mode:
         Exit('Start');
     end;
+
   Result := Names[Button];
   if SystemId = ROM_SYSTEM_SATURN then
     case Button of
@@ -217,6 +233,7 @@ begin
       TEmulatorButton.Mode:
         Exit('R');
     end;
+
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
   begin
     case Button of
@@ -237,6 +254,7 @@ begin
     end;
     Exit;
   end;
+
   if SystemId = ROM_SYSTEM_N64 then
   begin
     case Button of
@@ -255,6 +273,7 @@ begin
     end;
     Exit;
   end;
+
   if SystemId = ROM_SYSTEM_NES then
     case Button of
       TEmulatorButton.X:
@@ -262,10 +281,12 @@ begin
       TEmulatorButton.Y:
         Result := 'Turbo A';
     end;
+
   if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) and (Button = TEmulatorButton.X) then
     Result := 'D';
   if ((SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC)) and (Button = TEmulatorButton.Start) then
     Result := 'Option';
+
   if (SystemId = ROM_SYSTEM_SNES) or (SystemId = ROM_SYSTEM_GBA) then
     case Button of
       TEmulatorButton.C:
@@ -312,6 +333,7 @@ begin
       var Code := HidToHostKey(Hid);
       if Code = 0 then
         Continue;
+
       Subor.Clear;
       Subor.SetHostKey(Code, True);
       for var K in Subor.GetPressedKeys do
@@ -403,6 +425,7 @@ begin
   end;
 
   FillChar(Keys, SizeOf(Keys), 0);
+
   // Import the existing core keyboard maps once; all later assignments use FMXInput.
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
   begin
@@ -485,7 +508,7 @@ begin
     var C := TNGPConfig.Create('');
     Config := C;
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
-      Keys[0,B] := C.Keys[B];
+      Keys[0, B] := C.Keys[B];
   end
   else if SystemId = ROM_SYSTEM_N64 then
   begin
@@ -574,6 +597,7 @@ begin
             TEmulatorButton.Mode:
               KeyName := 'Mode';
           end;
+
         // Config keys are stable identifiers, not the displayed GW button labels.
         if (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           case B of
@@ -740,48 +764,57 @@ begin
   var Bindings := Input.Bindings;
   var Values := Input.Values;
   for var P := 0 to High(Ports.Devices) do
-    if Ports.Devices[P] = 'pad-analog' then
-      for var B in Bindings do
-        if B.Kind = TInputElementKind.Axis then
-          for var V in Values do
-            if (V.DeviceId = B.DeviceId) and (V.Kind = B.Kind) and (V.Code = B.Code) then
-            begin
-              var Travel := 1.0 - B.AxisOrigin * B.Direction;
-              if Travel <= 0 then
-                Continue;
-              var Amount := EnsureRange((V.Value - B.AxisOrigin) * B.Direction / Travel, 0.0, 1.0);
-              var Magnitude := Round(Amount * 32767);
-              if B.Action = PadAction(P, TEmulatorButton.Left) then
-              begin
-                Result.Analog[P].X := EnsureRange(Integer(Result.Analog[P].X) - Magnitude, -32768, 32767);
-                Result.Analog[P].Valid := True;
-              end;
-              if B.Action = PadAction(P, TEmulatorButton.Right) then
-              begin
-                Result.Analog[P].X := EnsureRange(Integer(Result.Analog[P].X) + Magnitude, -32768, 32767);
-                Result.Analog[P].Valid := True;
-              end;
-              if B.Action = PadAction(P, TEmulatorButton.Up) then
-              begin
-                Result.Analog[P].Y := EnsureRange(Integer(Result.Analog[P].Y) - Magnitude, -32768, 32767);
-                Result.Analog[P].Valid := True;
-              end;
-              if B.Action = PadAction(P, TEmulatorButton.Down) then
-              begin
-                Result.Analog[P].Y := EnsureRange(Integer(Result.Analog[P].Y) + Magnitude, -32768, 32767);
-                Result.Analog[P].Valid := True;
-              end;
-              if B.Action = PadAction(P, TEmulatorButton.Select) then
-              begin
-                Result.Analog[P].LeftTrigger := Round(Amount * 255);
-                Result.Analog[P].Valid := True;
-              end;
-              if B.Action = PadAction(P, TEmulatorButton.Mode) then
-              begin
-                Result.Analog[P].RightTrigger := Round(Amount * 255);
-                Result.Analog[P].Valid := True;
-              end;
-            end;
+  begin
+    if Ports.Devices[P] <> 'pad-analog' then
+      Continue;
+
+    for var B in Bindings do
+    begin
+      if B.Kind <> TInputElementKind.Axis then
+        Continue;
+
+      for var V in Values do
+        if (V.DeviceId = B.DeviceId) and (V.Kind = B.Kind) and (V.Code = B.Code) then
+        begin
+          var Travel := 1.0 - B.AxisOrigin * B.Direction;
+          if Travel <= 0 then
+            Continue;
+
+          var Amount := EnsureRange((V.Value - B.AxisOrigin) * B.Direction / Travel, 0.0, 1.0);
+          var Magnitude := Round(Amount * 32767);
+          if B.Action = PadAction(P, TEmulatorButton.Left) then
+          begin
+            Result.Analog[P].X := EnsureRange(Integer(Result.Analog[P].X) - Magnitude, -32768, 32767);
+            Result.Analog[P].Valid := True;
+          end;
+          if B.Action = PadAction(P, TEmulatorButton.Right) then
+          begin
+            Result.Analog[P].X := EnsureRange(Integer(Result.Analog[P].X) + Magnitude, -32768, 32767);
+            Result.Analog[P].Valid := True;
+          end;
+          if B.Action = PadAction(P, TEmulatorButton.Up) then
+          begin
+            Result.Analog[P].Y := EnsureRange(Integer(Result.Analog[P].Y) - Magnitude, -32768, 32767);
+            Result.Analog[P].Valid := True;
+          end;
+          if B.Action = PadAction(P, TEmulatorButton.Down) then
+          begin
+            Result.Analog[P].Y := EnsureRange(Integer(Result.Analog[P].Y) + Magnitude, -32768, 32767);
+            Result.Analog[P].Valid := True;
+          end;
+          if B.Action = PadAction(P, TEmulatorButton.Select) then
+          begin
+            Result.Analog[P].LeftTrigger := Round(Amount * 255);
+            Result.Analog[P].Valid := True;
+          end;
+          if B.Action = PadAction(P, TEmulatorButton.Mode) then
+          begin
+            Result.Analog[P].RightTrigger := Round(Amount * 255);
+            Result.Analog[P].Valid := True;
+          end;
+        end;
+    end;
+  end;
 end;
 
 end.

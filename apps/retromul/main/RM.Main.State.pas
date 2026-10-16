@@ -1,5 +1,7 @@
 ﻿unit RM.Main.State;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -14,7 +16,7 @@ uses
   {$IF not Defined(LINUX)}
     , System.Sensors.Components
   {$ENDIF}
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
     , FMX.ApplicationEvents
   {$ENDIF}
   {$IFDEF ANDROID}
@@ -42,6 +44,8 @@ type
   TMainBrowserState = record
     View: TLibraryView;
     ViewingLibrary: Boolean;
+    ReloadPending: Boolean;
+    PendingLanguage: string;
     BackTool, ScreenshotTool, ActionsTool: TButton;
     PanelHidden: Boolean;
     Tools: array[0..4] of TButton;
@@ -107,7 +111,7 @@ type
   end;
 
   TMainMobileState = record
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     AppEvents: TApplicationEvents;
     InBackground, ActivityPaused: Boolean;
     {$ENDIF}

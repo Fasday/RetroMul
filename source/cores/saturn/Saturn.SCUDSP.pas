@@ -34,10 +34,13 @@ type
     function Condition(Code: Integer): Boolean;
     procedure Step;
     procedure DMAStep;
+    procedure AdvanceEvents(Target: Int64);
   public
     constructor Create(Read: TSH2Read; Write: TSH2Write; User: Pointer; Done: TDSPDone);
     procedure Reset;
-    procedure Advance(Target: Int64);
+    procedure Advance(Target: Int64); inline;
+    // Board scheduler only: Target is already known to be monotonic.
+    procedure AdvanceForward(Target: Int64); inline;
     function ReadPort(Address: Cardinal): Cardinal;
     procedure WritePort(Address, Value: Cardinal);
     procedure SerializeState(Archive: TStateArchive);
@@ -166,6 +169,7 @@ function TSCUDSP.Condition(Code: Integer): Boolean;
 begin
   if Code = 0 then
     Exit(True);
+
   case Code and 15 of
     1:
       Result := FControl and $200000 <> 0;
@@ -180,6 +184,7 @@ begin
   else
     Exit(False);
   end;
+
   if Code and $20 = 0 then
     Result := not Result;
 end;
@@ -187,9 +192,11 @@ end;
 procedure TSCUDSP.Step;
 begin
   var Op := FProgram[FPC];
+
   // Another D0 transfer cannot replace one that is still using the bus.
   if (Op shr 28 = $C) and (FDMACount > 0) then
     Exit;
+
   var Jump := FJump;
   FJump := -1;
   FillChar(FIncrement, SizeOf(FIncrement), 0);
@@ -280,7 +287,8 @@ begin
           if Overflow then
             FControl := FControl or $80000;
         end;
-      // All buses see the previous cycle's counters and multiplier result.
+
+        // All buses see the previous cycle's counters and multiplier result.
         var XS: Cardinal := 0;
         var YS: Cardinal := 0;
         if (Op shr 23) and 7 in [3, 4, 5, 6, 7] then
@@ -335,11 +343,11 @@ begin
                 FDMABank := FDMABank and 3;
               FDMAWrite := Op and $1000 <> 0;
               FDMAPreserve := Op and $4000 <> 0;
-              for var I := 0 to 3 do
-                if FIncrement[I] then
+              for var i := 0 to 3 do
+                if FIncrement[i] then
                 begin
-                  FCT[I] := (FCT[I] + 1) and $3F;
-                  FIncrement[I] := False;
+                  FCT[i] := (FCT[i] + 1) and $3F;
+                  FIncrement[i] := False;
                 end;
               FDMAIndex := FCT[FDMABank and 3];
               if FDMABank = 4 then
@@ -350,8 +358,9 @@ begin
               FDMAAdd := (Op shr 15) and 7;
               if FDMAAdd > 0 then
                 FDMAAdd := 1 shl (FDMAAdd - 1);
-          // Add is expressed in 16-bit units on B/CPU buses and 32-bit units
-          // on A-bus; a fixed FIFO address is valid there.
+
+              // Add is expressed in 16-bit units on B/CPU buses and 32-bit units
+              // on A-bus; a fixed FIFO address is valid there.
               if (FDMAAddress >= $02000000) and (FDMAAddress < $05A00000) then
                 FDMAAdd := Min(FDMAAdd, 1) * 4
               else
@@ -359,6 +368,19 @@ begin
                 FDMAAdd := FDMAAdd * 2;
                 if FDMAAdd = 2 then
                   FDMAAdd := 4;
+              end;
+
+              // Forward the post-transfer address when issuing DMA. The DSP
+              // continues running and may prepare RA0/WA0 for the next transfer
+              // before the current transfer finishes; completion must not undo it.
+              if not FDMAPreserve then
+              begin
+                var NextAddress := Cardinal((UInt64(FDMAAddress) +
+                  UInt64(FDMAAdd) * Cardinal(FDMACount)) and $FFFFFFFF) shr 2;
+                if FDMAWrite then
+                  FWriteAddress := NextAddress
+                else
+                  FReadAddress := NextAddress;
               end;
               FDMAAt := FNext + 4;
               FControl := FControl or $800000;
@@ -389,9 +411,9 @@ begin
           end;
       end;
   end;
-  for var I := 0 to 3 do
-    if FIncrement[I] then
-      FCT[I] := (FCT[I] + 1) and $3F;
+  for var i := 0 to 3 do
+    if FIncrement[i] then
+      FCT[i] := (FCT[i] + 1) and $3F;
   FMul := Signed(Int64(FX) * FY, 48);
   FPC := Byte((Integer(FPC) + 1) and $FF);
   if Jump >= 0 then
@@ -424,22 +446,26 @@ begin
   FDMAAddress := Cardinal((Int64(FDMAAddress) + FDMAAdd) and $FFFFFFFF);
   Dec(FDMACount);
   if FDMACount = 0 then
-  begin
     FControl := FControl and not $800000;
-    if not FDMAPreserve then
-    begin
-      if FDMAWrite then
-        FWriteAddress := FDMAAddress shr 2
-      else
-        FReadAddress := FDMAAddress shr 2;
-    end;
-  end;
 end;
 
 procedure TSCUDSP.Advance(Target: Int64);
 begin
   if Target < FTime then
     raise EArgumentException.Create('DSP time');
+
+  AdvanceForward(Target);
+end;
+
+procedure TSCUDSP.AdvanceForward(Target: Int64);
+begin
+  if ((FControl and $10000 <> 0) and not FPause) or (FDMACount > 0) then
+    AdvanceEvents(Target);
+  FTime := Target;
+end;
+
+procedure TSCUDSP.AdvanceEvents(Target: Int64);
+begin
   while True do
   begin
     var Next := High(Int64);
@@ -449,6 +475,7 @@ begin
       Next := Min(Next, FDMAAt);
     if Next > Target then
       Break;
+
     if (FDMACount > 0) and (FDMAAt = Next) then
     begin
       DMAStep;
@@ -460,7 +487,6 @@ begin
       Inc(FNext, 2);
     end;
   end;
-  FTime := Target;
 end;
 
 function TSCUDSP.ReadPort(Address: Cardinal): Cardinal;
@@ -559,8 +585,9 @@ begin
   Archive.Field(FDMAPreserve, SizeOf(FDMAPreserve));
   if (FTime < 0) or (FDMACount < 0) or (FDMACount > 256) or (FDMABank < 0) or (FDMABank > 4) or (FJump < -1) or (FJump > 255) then
     raise EReadError.Create('Invalid SCU DSP state');
-  for var I := 0 to 3 do
-    if FCT[I] > 63 then
+
+  for var i := 0 to 3 do
+    if FCT[i] > 63 then
       raise EReadError.Create('Invalid SCU DSP counter');
 end;
 

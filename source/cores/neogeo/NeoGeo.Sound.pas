@@ -3,7 +3,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, MD.Sound, ZX.Sound.YM2149, NeoGeo.Cartridge, Core.Snapshots;
+  System.SysUtils, System.Classes, MD.Sound, ZX.Sound.YM2149, NeoGeo.Cartridge,
+  Core.Snapshots;
 
 const
   NG_SAMPLE_RATE = 44100;
@@ -91,7 +92,9 @@ begin
   FBFraction := 0;
   FNativeLeft := 0;
   FNativeRight := 0;
-  FTimerPhase := 0; FCSMKeyOff := False; FCSMManualMask := 0;
+  FTimerPhase := 0;
+  FCSMKeyOff := False;
+  FCSMManualMask := 0;
   Samples := nil;
 end;
 
@@ -135,7 +138,8 @@ begin
   begin
     if Index < 14 then
     begin
-      if Index = 7 then Value := Value and $3F; // YM2610 has no SSG GPIO ports.
+      if Index = 7 then
+        Value := Value and $3F; // YM2610 has no SSG GPIO ports.
       FSSG.WriteRegister(Index, Value);
     end
     else if Index = $10 then
@@ -158,11 +162,13 @@ begin
     end
     else if (Index >= $22) and (Index <= $B6) and not (Index in [$2A, $2B, $2C]) then
     begin
-      if (Index = $28) and ((Value and 7) = 2) then FCSMManualMask := Value shr 4;
+      if (Index = $28) and ((Value and 7) = 2) then
+        FCSMManualMask := Value shr 4;
       FMDoAddress(FFM, 0, Index);
       FMDoData(FFM, Value);
       if (Index = $28) and ((Value and 7) = 2) and FCSMKeyOff then
-        for var Op := 0 to 3 do FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
+        for var Op := 0 to 3 do
+          FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
     end;
   end
   else if Index = 0 then
@@ -384,9 +390,12 @@ begin
   for var i := 0 to 6 do
   begin
     var Pan := FRegisters[$108 + i];
-    if i = 6 then Pan := FRegisters[$11];
-    if (Pan and $80) <> 0 then Inc(FNativeLeft, FVoices[i].Output);
-    if (Pan and $40) <> 0 then Inc(FNativeRight, FVoices[i].Output);
+    if i = 6 then
+      Pan := FRegisters[$11];
+    if (Pan and $80) <> 0 then
+      Inc(FNativeLeft, FVoices[i].Output);
+    if (Pan and $40) <> 0 then
+      Inc(FNativeRight, FVoices[i].Output);
   end;
 end;
 
@@ -406,7 +415,8 @@ begin
           FFM.State.Status := Byte(FFM.State.Status or (1 shl i));
         if (i = 0) and (FFM.State.Channel3Metadata.CsmModeEnabled <> 0) then
         begin
-          for var Op := 0 to 3 do FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
+          for var Op := 0 to 3 do
+            FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
           FCSMKeyOff := True;
         end;
       end;
@@ -486,12 +496,14 @@ begin
     if (FClockRemainder < 0) or (FClockRemainder >= 432) or (FTimerPhase < 0) or (FTimerPhase >= 216) or
       (FSamplePhase < 0) or (FSamplePhase >= FCart.MasterClock) or
       (FAFraction < 0) or (FAFraction >= 3) or (FBFraction < 0) or (FBFraction >= $10000) or
-      (FCSMManualMask > 15) then raise EReadError.Create('Invalid YM2610 clock snapshot');
-    for var I := 0 to 6 do
-      if (FVoices[I].Position < 0) or (FVoices[I].Ending < 0) or
-        (FVoices[I].Position > $2000000) or (FVoices[I].Ending > $2000000) or
-        ((I < 6) and ((FVoices[I].Step < 0) or (FVoices[I].Step > 48))) or
-        ((I = 6) and FVoices[I].Playing and ((FVoices[I].Step < 127) or (FVoices[I].Step > 24576))) then
+      (FCSMManualMask > 15) then
+      raise EReadError.Create('Invalid YM2610 clock snapshot');
+
+    for var i := 0 to 6 do
+      if (FVoices[i].Position < 0) or (FVoices[i].Ending < 0) or
+        (FVoices[i].Position > $2000000) or (FVoices[i].Ending > $2000000) or
+        ((i < 6) and ((FVoices[i].Step < 0) or (FVoices[i].Step > 48))) or
+        ((i = 6) and FVoices[i].Playing and ((FVoices[i].Step < 127) or (FVoices[i].Step > 24576))) then
         raise EReadError.Create('Invalid YM2610 voice snapshot');
     Samples := nil;
   end;

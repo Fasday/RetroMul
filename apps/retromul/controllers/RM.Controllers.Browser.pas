@@ -1,5 +1,7 @@
 ﻿unit RM.Controllers.Browser;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -26,7 +28,7 @@ type
     procedure ShowGameActionsMenu(Sender: TObject);
     procedure SetPanelVisibility(Sender: TObject);
     procedure InitializeLibrary;
-    {$IF not Defined(ANDROID) and not Defined(IOS)}
+    {$IFNDEF ISMOBILE}
     procedure InitializeDesktopViews;
     {$ENDIF}
     procedure LibraryPlay(Sender: TObject);
@@ -47,7 +49,7 @@ uses
 procedure TBrowserController.InitializeScreenshotTool;
 begin
   // Split buttons and hardware views have no installed design-time components.
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   InitializeMobileGameMenu;
   {$ELSE}
   var ScreenshotButton := TToolbarSplitButton.Create(FView);
@@ -298,7 +300,7 @@ begin
   FView.ScreenTabs.ActiveTab := FView.LibraryScreen;
 end;
 
-{$IF not Defined(ANDROID) and not Defined(IOS)}
+{$IFNDEF ISMOBILE}
 procedure TBrowserController.InitializeDesktopViews;
 begin
   FState.Browser.BackTool := FView.ButtonLibrary;
@@ -385,7 +387,21 @@ begin
   FView.LayoutClient.Visible := False;
   FView.ScreenTabs.ActiveTab := FView.LibraryScreen;
   FState.Browser.View.Visible := True;
-  FState.Browser.View.RefreshSnapshots;
+  FState.Browser.View.CloseDetails;
+  var LanguageRefreshed := FState.Browser.PendingLanguage <> '';
+  if LanguageRefreshed then
+  begin
+    FState.Browser.View.ApplyLanguage(FState.Browser.PendingLanguage);
+    FState.Browser.PendingLanguage := '';
+  end;
+  if FState.Browser.ReloadPending then
+  begin
+    FState.Browser.View.ApplyPreferences;
+    FState.Browser.View.Reload;
+    FState.Browser.ReloadPending := False;
+  end
+  else if not LanguageRefreshed then
+    FState.Browser.View.RefreshSnapshots;
   FState.Browser.View.BringToFront;
   FState.Browser.ViewingLibrary := True;
   FView.SyncActivity;
@@ -418,7 +434,7 @@ begin
         FState.Browser.GameAudio.Text := Translate('Audio off');
   end;
 
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   FView.LayoutHead.Visible := (FState.Browser.View <> nil) and not FView.FullScreen;
   {$ENDIF}
 
@@ -456,7 +472,7 @@ begin
         FMX.Objects.TPath(Child).Stroke.Color := Color;
   end;
 
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   if FView.FullScreen then
   begin
     // SyncActivity and frame/status updates can make controls visible again.
@@ -475,7 +491,7 @@ procedure TBrowserController.SetStatus(const Text: string);
 begin
   FView.Caption := AppName;
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   FView.LabelStatus.Text := Text;
   {$ELSE}
 
@@ -495,7 +511,7 @@ end;
 
 procedure TBrowserController.LayoutClientDblClick(Sender: TObject);
 begin
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   Exit;
   {$ENDIF}
   FView.SwitchFullScreen;

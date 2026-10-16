@@ -51,7 +51,10 @@ type
     procedure Reset;
     function Read(Address: Cardinal): Byte;
     procedure Write(Address: Cardinal; Value: Byte);
-    procedure Advance(Target: Int64);
+    procedure Advance(Target: Int64); inline;
+    // Board scheduler only: Target is already known to be monotonic.
+    procedure AdvanceForward(Target: Int64); inline;
+    procedure VBlankIn;
     procedure SetClock(Clock: Integer);
     procedure SetInput(Port: Integer; Buttons: TSaturnButtons; Connected: Boolean = True);
     procedure SetPeripheral(Port, Slot, Kind: Integer; Buttons: TSaturnButtons; X: Byte = 128; Y: Byte = 128; RightTrigger: Byte = 0; LeftTrigger: Byte = 0);
@@ -82,6 +85,7 @@ begin
   FCommand := Command;
   FIRQ := IRQ;
   FClock := 26846587;
+
   // Deterministic power-on calendar; battery-backed RTC survives system reset.
   FRTC[0] := $20;
   FRTC[1] := $26;
@@ -130,6 +134,7 @@ procedure TSaturnSMPC.SetClock(Clock: Integer);
 begin
   if Clock < 1000000 then
     raise EArgumentOutOfRangeException.Create('SMPC clock');
+
   if FClock > 0 then
     FRTCPhase := FRTCPhase * Clock div FClock;
   FClock := Clock;
@@ -144,6 +149,7 @@ procedure TSaturnSMPC.SetMultitap(Port: Integer; Enabled: Boolean);
 begin
   if not (Port in [0, 1]) then
     raise EArgumentOutOfRangeException.Create('Saturn multitap port');
+
   FMultitap[Port] := Enabled;
 end;
 
@@ -153,6 +159,7 @@ const
 begin
   if not (Port in [0, 1]) or not (Slot in [0..5]) or not (Kind in [0..2]) then
     raise EArgumentOutOfRangeException.Create('Saturn peripheral');
+
   var Device := Default(TSaturnPeripheral);
   Device.Kind := Kind;
   Device.Pad := $FFFF;
@@ -211,6 +218,7 @@ begin
     Result := (Result and not DDR) or (FRegisters[A] and DDR);
     Exit;
   end;
+
   var Data: Byte := $0F;
   if FConnected[Port] then
     case Select of
@@ -243,6 +251,7 @@ procedure TSaturnSMPC.BuildDirect(Port: Integer);
       Emit($FF);
       Exit;
     end;
+
     if Device.Kind = 2 then
       Emit($16)
     else
@@ -277,8 +286,10 @@ begin
   var A: Integer := Address and $7F;
   if not Odd(A) then
     Exit($FF);
+
   if (A = $75) or (A = $77) then
     Exit(PortRead((A - $75) div 2));
+
   Result := FRegisters[A];
 end;
 
@@ -297,6 +308,7 @@ procedure TSaturnSMPC.PeripheralData;
       Emit($F0);
       Exit;
     end;
+
     if D.Kind = 2 then
       Emit($16)
     else
@@ -321,11 +333,11 @@ begin
     begin
       var Mode: Integer := (FRegisters[$03] shr (4 + Port * 2)) and 3;
       var First := FPacketLength;
+
+      // A port in zero-byte mode is omitted, including its port status.
       if Mode = 3 then
-      begin
-        Emit($F0);
         Continue;
-      end;
+
       if FMultitap[Port] then
       begin
         Emit($16);
@@ -345,12 +357,12 @@ begin
     FPacketReady := True;
   end;
   var First: Boolean := FPacketAt = 0;
-  for var I := 0 to 31 do
+  for var i := 0 to 31 do
   begin
-    FRegisters[$21 + I * 2] := $FF;
+    FRegisters[$21 + i * 2] := $FF;
     if FPacketAt < FPacketLength then
     begin
-      FRegisters[$21 + I * 2] := FPacket[FPacketAt];
+      FRegisters[$21 + i * 2] := FPacket[FPacketAt];
       Inc(FPacketAt);
     end;
   end;
@@ -396,30 +408,29 @@ begin
       FResetDisabled := True;
     $16:
       begin
-        for var I := 0 to 6 do
-          FRTC[I] := FRegisters[1 + I * 2];
+        for var i := 0 to 6 do
+          FRTC[i] := FRegisters[1 + i * 2];
         FRTCPhase := 0;
       end;
     $17:
-      for var I := 0 to 3 do
-        FMemory[I] := FRegisters[1 + I * 2];
+      for var i := 0 to 3 do
+        FMemory[i] := FRegisters[1 + i * 2];
     $10:
       begin
-        if FRegisters[$01] <> 0 then
-          FPacketReady := False;
         FPeripheralPending := (FRegisters[$03] and 8 <> 0) or FPacketReady;
         if FRegisters[$01] and 1 <> 0 then
         begin
           FRegisters[$21] := $80 or (Byte(Ord(FResetDisabled)) shl 6);
-          for var I := 0 to 6 do
-            FRegisters[$23 + I * 2] := FRTC[I];
+          for var i := 0 to 6 do
+            FRegisters[$23 + i * 2] := FRTC[i];
           FRegisters[$31] := 0;
           FRegisters[$33] := FRegion;
           FRegisters[$35] := $36 or Byte(Ord(FSoundReleased)) or (Byte(Ord(FClock352)) shl 6);
           FRegisters[$37] := Byte(Ord(FCDReleased)) shl 6;
-          for var I := 0 to 3 do
-            FRegisters[$39 + I * 2] := FMemory[I];
+          for var i := 0 to 3 do
+            FRegisters[$39 + i * 2] := FMemory[i];
           FRegisters[$61] := $4F;
+          FRegisters[$63] := Ord(FPeripheralPending);
           if FPeripheralPending then
             FRegisters[$61] := FRegisters[$61] or $20;
           if Assigned(FIRQ) then
@@ -438,26 +449,35 @@ begin
   var A: Integer := Address and $7F;
   if not Odd(A) then
     Exit;
+
   if A = $01 then
   begin
+    var Previous := FRegisters[A];
     FRegisters[A] := Value;
     if FPeripheralPending and (Value and $40 <> 0) then
     begin
       FPeripheralPending := False;
       FPacketReady := False;
       FRegisters[$61] := 0;
+      FRegisters[$63] := 0;
     end
-    else if FPeripheralPending and (Value and $80 <> 0) then
+    else if FPeripheralPending and ((Previous xor Value) and $80 <> 0) then
     begin
       FRegisters[$63] := 1;
       FDeadline := FTime + Max(1, FClock div 1000);
       FRegisters[$1F] := $10;
-      FRegisters[$01] := 0;
+
+      // CONT is a toggle, not a pulse. Retain its level so that the next
+      // continuation (including 1 -> 0) is recognized. Status is only the
+      // first phase of INTBACK and must not be requested again here.
+      FRegisters[$01] := Value and $FE;
     end;
     Exit;
   end;
+
   if (A >= $21) and (A <= $61) then
     Exit;
+
   if (A = $75) or (A = $77) then
   begin
     var Port: Integer := (A - $75) div 2;
@@ -472,6 +492,7 @@ begin
   begin
     if FDeadline >= 0 then
       Exit;
+
     FRegisters[A] := Value;
     FRegisters[$63] := 1;
     if Value = $10 then
@@ -493,6 +514,7 @@ begin
     FDeadline := FTime + Int64(FClock) * Micro div 1000000;
     Exit;
   end;
+
   FRegisters[A] := Value;
 end;
 
@@ -521,6 +543,12 @@ procedure TSaturnSMPC.Advance(Target: Int64);
 begin
   if Target < FTime then
     raise EArgumentException.Create('SMPC time');
+
+  AdvanceForward(Target);
+end;
+
+procedure TSaturnSMPC.AdvanceForward(Target: Int64);
+begin
   Inc(FRTCPhase, Target - FTime);
   FTime := Target;
   while FRTCPhase >= FClock do
@@ -530,6 +558,24 @@ begin
   end;
   if (FDeadline >= 0) and (Target >= FDeadline) then
     Complete;
+end;
+
+procedure TSaturnSMPC.VBlankIn;
+begin
+  // Peripheral acquisition (including a missing CONT) times out at VBLANK-IN.
+  // Keep status/OREG readable; aborting must not generate another SMPC IRQ.
+  if (FRegisters[$1F] <> $10) or (FRegisters[$03] and 8 = 0) then
+    Exit;
+
+  if not FPeripheralPending and (FDeadline < 0) then
+    Exit;
+
+  FDeadline := -1;
+  FPeripheralPending := False;
+  FPacketReady := False;
+  FPacketAt := 0;
+  FPacketLength := 0;
+  FRegisters[$63] := 0;
 end;
 
 procedure TSaturnSMPC.SerializeState(Archive: TStateArchive);
@@ -560,12 +606,15 @@ begin
   Archive.Field(FPeripheralPending, SizeOf(FPeripheralPending));
   if (FClock < 20000000) or (FClock > 30000000) or (FTime < 0) or (FDeadline < -1) or (FRTCPhase < 0) or (FRTCPhase >= FClock) then
     raise EReadError.Create('Invalid SMPC timing state');
+
   if (FPacketLength < 0) or (FPacketLength > 256) or (FPacketAt < 0) or (FPacketAt > FPacketLength) then
     raise EReadError.Create('Invalid SMPC peripheral packet');
+
   for var Port := 0 to 1 do
   begin
     if (FDirectLength[Port] < 0) or (FDirectLength[Port] > 128) or (FDirectAt[Port] < -1) or (FDirectAt[Port] > FDirectLength[Port] * 2) then
       raise EReadError.Create('Invalid SMPC direct peripheral packet');
+
     for var Slot := 0 to 5 do
       if FDevices[Port, Slot].Kind > 2 then
         raise EReadError.Create('Invalid SMPC peripheral type');

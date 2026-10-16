@@ -22,7 +22,7 @@ type
 
   TCDFile = record
     FAD, Bytes: Cardinal;
-    Flags, UnitSize, Gap: Byte;
+    Flags, UnitSize, Gap, FileNumber: Byte; // FileNumber occupies the legacy reserved byte.
   end;
   // Native command model or original SH-1 firmware backend. Media remains
   // owned by the adapter; the two backends never dispatch the same command.
@@ -32,6 +32,8 @@ type
     FDisc: TCDDisc;
     FIRQ: TCDInterrupt;
     FClock: Integer;
+    FModelNext: Int64; // derived earliest command/sector/report deadline
+    FIRQKnown, FIRQLine, FNativeEnabled: Boolean;
     FTime, FCommandAt, FReportAt, FSectorAt: Int64;
     FCR, FCommand: array[0..3] of Word;
     FHIRQ, FMask: Word;
@@ -55,10 +57,26 @@ type
     FSeekAt, FAuthAt, FSectorFraction: Int64;
     FSeekTarget: Cardinal;
     FSeekPlay: Boolean;
+    FNetlinkScratch: Byte;
+    FNetlinkRegs: array[0..5] of Byte; // IER, DLL, DLM, FCR, LCR, MCR
+    FNetlinkRX: array[0..1023] of Byte;
+    FNetlinkCommand: array[0..255] of Byte;
+    FNetlinkRXAt, FNetlinkRXCount, FNetlinkCommandCount: Integer;
+    FNetlinkEcho, FNetlinkVerbose, FNetlinkQuiet, FNetlinkTXIRQ: Boolean;
+    FNetlinkIRQ: TCDInterrupt;
+    FNetlinkPresent: Boolean;
+    procedure SetNetlinkPresent(Value: Boolean);
+    procedure UpdateNetlinkIRQ;
+    procedure NetlinkReceive(Value: Byte);
+    procedure NetlinkTransmit(Value: Byte);
+    function NetlinkRead(Address: Cardinal): Byte;
+    procedure NetlinkWrite(Address: Cardinal; Value: Byte);
     procedure Seek(Target: Cardinal; Playing: Boolean);
     function GetFAD: Cardinal;
     procedure SetProtection(Value: Boolean);
     procedure UpdateIRQ;
+    procedure AdvanceNative(Target: Int64);
+    procedure AdvanceModel;
     procedure Report(Periodic: Boolean = False);
     procedure Execute;
     procedure ReadSector;
@@ -82,11 +100,15 @@ type
     procedure Reset(Clock: Integer);
     procedure SetClock(Clock: Integer);
     procedure SetPower(Enabled: Boolean; At: Int64);
-    procedure Advance(Target: Int64);
+    procedure Advance(Target: Int64); inline;
+    // Board scheduler only: Target is already known to be monotonic.
+    procedure AdvanceForward(Target: Int64); inline;
     function Read(Address: Cardinal; Size: Integer): Cardinal;
     procedure Write(Address, Value: Cardinal; Size: Integer);
     procedure AudioSample(out Left, Right: Integer);
-    procedure SerializeState(Archive: TStateArchive);
+    procedure SerializeState(Archive: TStateArchive; Extended: Boolean = True; Modem: Boolean = True; ModemPresence: Boolean = True);
+    property NetlinkPresent: Boolean read FNetlinkPresent write SetNetlinkPresent;
+    property NetlinkIRQ: TCDInterrupt read FNetlinkIRQ write FNetlinkIRQ;
     property Disc: TCDDisc read FDisc;
     property FAD: Cardinal read GetFAD;
     property SH1: TSaturnCDB read FNative;
@@ -98,6 +120,7 @@ implementation
 
 uses
   System.Math, Saturn.Firmware;
+
 {$Q+}{$R+}
 
 const
@@ -110,8 +133,8 @@ end;
 
 procedure BE32(var B: TBytes; A: Integer; V: Cardinal);
 begin
-  for var I := 0 to 3 do
-    B[A + I] := (V shr ((3 - I) * 8)) and $FF;
+  for var i := 0 to 3 do
+    B[A + i] := (V shr ((3 - i) * 8)) and $FF;
 end;
 
 constructor TSaturnCD.Create(Disc: TCDDisc; IRQ: TCDInterrupt);
@@ -135,7 +158,9 @@ begin
     Exit;
   if Writing <> (FNative.Read($0A000002, 2) and 1 <> 0) then
     Exit;
+
   var Start := FNative.CPU.Time;
+
   // CPU reads are synchronous. Charge the local bridge advance to the
   // issuing CPU's bus wait; the normal CD clock catches up afterwards.
   while not FNative.HostReady(Size, Writing) and (FNative.CPU.Time - Start < 4096) do
@@ -145,8 +170,12 @@ end;
 
 procedure TSaturnCD.UseSH1(Enabled: Boolean);
 begin
+  FNativeEnabled := Enabled;
+  FModelNext := 0;
+  FIRQKnown := False;
   if Enabled = (FNative <> nil) then
     Exit;
+
   if Enabled then
     FNative := TSaturnCDB.Create(LoadSaturnCDFirmware, FDisc, FIRQ)
   else
@@ -159,8 +188,11 @@ end;
 
 procedure TSaturnCD.SetProtection(Value: Boolean);
 begin
+  FModelNext := 0;
+  FIRQKnown := False;
   if Value = FProtection then
     Exit;
+
   FProtection := Value;
   FAuthenticated := 0;
   FAuthAt := -1;
@@ -196,6 +228,7 @@ begin
     FSectorAt := FTime + FClock div 150;
     Exit;
   end;
+
   // Mechanism travel plus rotational settling; seek completion is independent
   // of command acknowledgement and sector I/O. This is a bounded travel model.
   var Span: Int64 := 333000;
@@ -211,6 +244,20 @@ end;
 
 procedure TSaturnCD.Reset(Clock: Integer);
 begin
+  FModelNext := 0;
+  FIRQKnown := False;
+  FNetlinkScratch := 0;
+  FillChar(FNetlinkRegs, SizeOf(FNetlinkRegs), 0);
+  FillChar(FNetlinkRX, SizeOf(FNetlinkRX), 0);
+  FillChar(FNetlinkCommand, SizeOf(FNetlinkCommand), 0);
+  FNetlinkRXAt := 0;
+  FNetlinkRXCount := 0;
+  FNetlinkCommandCount := 0;
+  FNetlinkEcho := True;
+  FNetlinkVerbose := True;
+  FNetlinkQuiet := False;
+  FNetlinkTXIRQ := False;
+  UpdateNetlinkIRQ;
   FClock := Clock;
   FTime := 0;
   FCommandAt := Clock div 10;
@@ -284,6 +331,8 @@ procedure TSaturnCD.SetClock(Clock: Integer);
   end;
 
 begin
+  FModelNext := 0;
+  FIRQKnown := False;
   Scale(FSeekAt);
   Scale(FAuthAt);
   Scale(FSectorAt);
@@ -295,8 +344,11 @@ end;
 
 procedure TSaturnCD.SetPower(Enabled: Boolean; At: Int64);
 begin
+  FModelNext := 0;
+  FIRQKnown := False;
   if Enabled = FPowered then
     Exit;
+
   if Enabled then
   begin
     Reset(FClock);
@@ -319,8 +371,14 @@ end;
 
 procedure TSaturnCD.UpdateIRQ;
 begin
-  if Assigned(FIRQ) then
-    FIRQ(FPowered and (FHIRQ and FMask <> 0));
+  var Active := FPowered and (FHIRQ and FMask <> 0);
+  if not FIRQKnown or (Active <> FIRQLine) then
+  begin
+    FIRQKnown := True;
+    FIRQLine := Active;
+    if Assigned(FIRQ) then
+      FIRQ(Active);
+  end;
 end;
 
 procedure TSaturnCD.Report(Periodic: Boolean);
@@ -336,6 +394,7 @@ begin
   FCR[3] := $FFFF;
   if (FDisc = nil) or (FStatus in [6, 7]) then
     Exit;
+
   var T := FDisc.TrackAt(Integer(FFAD) - 150) + 1;
   if T < 1 then
     T := FDisc.TrackCount;
@@ -354,16 +413,16 @@ end;
 function TSaturnCD.FreeCount: Integer;
 begin
   Result := 0;
-  for var I := 0 to 199 do
-    if not FSectors[I].Used then
+  for var i := 0 to 199 do
+    if not FSectors[i].Used then
       Inc(Result);
 end;
 
 function TSaturnCD.SectorCount(Partition: Integer): Integer;
 begin
   Result := 0;
-  for var I := 0 to 199 do
-    if FSectors[I].Used and (Integer(FSectors[I].Partition) = Partition) then
+  for var i := 0 to 199 do
+    if FSectors[i].Used and (Integer(FSectors[i].Partition) = Partition) then
       Inc(Result);
 end;
 
@@ -375,15 +434,17 @@ begin
   begin
     Result := -1;
     var Best: Int64 := High(Int64);
-    for var I := 0 to 199 do
-      if FSectors[I].Used and (Integer(FSectors[I].Partition) = Partition) and
-        (Int64(FSectors[I].Sequence) > Previous) and (Int64(FSectors[I].Sequence) < Best) then
+    for var i := 0 to 199 do
+      if FSectors[i].Used and (Integer(FSectors[i].Partition) = Partition) and
+        (Int64(FSectors[i].Sequence) > Previous) and (Int64(FSectors[i].Sequence) < Best) then
       begin
-        Result := I;
-        Best := FSectors[I].Sequence;
+        Result := i;
+        Best := FSectors[i].Sequence;
       end;
+
     if Result < 0 then
       Exit;
+
     Previous := Best;
   end;
 end;
@@ -392,10 +453,11 @@ procedure TSaturnCD.DeleteSectors(Partition, Position, Count: Integer);
 begin
   for var N := 1 to Count do
   begin
-    var I := SectorIndex(Partition, Position);
-    if I < 0 then
+    var i := SectorIndex(Partition, Position);
+    if i < 0 then
       Break;
-    FSectors[I].Used := False;
+
+    FSectors[i].Used := False;
   end;
   if FreeCount > 0 then
     FHIRQ := FHIRQ and not 8;
@@ -403,20 +465,20 @@ end;
 
 procedure TSaturnCD.ResetSelectors(Flags: Byte; Partition: Integer);
 begin
-  for var I := 0 to 23 do
+  for var i := 0 to 23 do
   begin
     if Flags and $80 <> 0 then
-      FFilters[I].No := $FF;
+      FFilters[i].No := $FF;
     if Flags and $40 <> 0 then
-      FFilters[I].Yes := I;
+      FFilters[i].Yes := i;
     if Flags and $10 <> 0 then
     begin
-      FFilters[I].Mode := 0;
-      FFilters[I].Start := 0;
-      FFilters[I].Count := $FFFFFF;
+      FFilters[i].Mode := 0;
+      FFilters[i].Start := 0;
+      FFilters[i].Count := $FFFFFF;
     end;
-    if (Flags and 4 <> 0) or ((Flags = 0) and (I = Partition)) then
-      DeleteSectors(I, 0, 200);
+    if (Flags and 4 <> 0) or ((Flags = 0) and (i = Partition)) then
+      DeleteSectors(i, 0, 200);
   end;
 end;
 
@@ -428,6 +490,7 @@ begin
   begin
     if Filter >= 24 then
       Exit;
+
     var F := FFilters[Filter];
     var Match: Boolean := True;
     var FileID, Channel, Submode, Coding: Byte;
@@ -460,6 +523,7 @@ begin
         Result := F.Yes;
       Exit;
     end;
+
     Filter := F.No;
   end;
 end;
@@ -486,26 +550,28 @@ begin
     FHIRQ := FHIRQ or $80;
     Exit;
   end;
+
   if Kind = 2 then
   begin
     DeleteSectors(Partition, Position, Count);
     FHIRQ := FHIRQ or $80;
     Exit;
   end;
+
   SetLength(FFIFO, Count * FGetSize);
   FFIFOAt := 0;
   FTransferred := 0;
   for var N := 0 to Count - 1 do
   begin
-    var I := SectorIndex(Partition, Position + N);
+    var i := SectorIndex(Partition, Position + N);
     var Offset := 2352 - FGetSize;
     if FGetSize = 2048 then
     begin
       Offset := 16;
-      if FSectors[I].Data[15] = 2 then
+      if FSectors[i].Data[15] = 2 then
         Offset := 24;
     end;
-    Move(FSectors[I].Data[Offset], FFIFO[N * FGetSize], FGetSize);
+    Move(FSectors[i].Data[Offset], FFIFO[N * FGetSize], FGetSize);
   end;
   FTransferKind := Kind;
   FTransferPartition := Partition;
@@ -520,21 +586,22 @@ begin
     DeleteSectors(FTransferPartition, FTransferStart, Min(FTransferCount, FTransferred div FGetSize));
   if FTransferKind = 4 then
     for var N := 0 to Min(FTransferCount, FTransferred div FPutSize) - 1 do
-      for var I := 0 to 199 do
-        if not FSectors[I].Used then
+      for var i := 0 to 199 do
+        if not FSectors[i].Used then
         begin
-          FillChar(FSectors[I], SizeOf(TCDSector), 0);
-          FSectors[I].Used := True;
-          FSectors[I].Partition := FTransferPartition;
+          FillChar(FSectors[i], SizeOf(TCDSector), 0);
+          FSectors[i].Used := True;
+          FSectors[i].Partition := FTransferPartition;
           Inc(FSequence);
-          FSectors[I].Sequence := FSequence;
-          FSectors[I].Data[15] := 1;
+          FSectors[i].Sequence := FSequence;
+          FSectors[i].Data[15] := 1;
           var Offset := 2352 - FPutSize;
           if FPutSize = 2048 then
             Offset := 16;
-          Move(FFIFO[N * FPutSize], FSectors[I].Data[Offset], FPutSize);
+          Move(FFIFO[N * FPutSize], FSectors[i].Data[Offset], FPutSize);
           Break;
         end;
+
   FCR[0] := (Word(FStatus) shl 8) or ((FTransferred div 2) shr 16);
   FCR[1] := (FTransferred div 2) and $FFFF;
   FCR[2] := 0;
@@ -555,15 +622,19 @@ begin
       Inc(Result, FStart);
     Exit;
   end;
+
   if FDisc = nil then
     Exit;
+
   var T: Integer := (Value shr 8) and $FF;
   if Ending then
   begin
     if (T = 0) or (T > FDisc.TrackCount) then
       Exit(FDisc.LeadOut + 150);
+
     Exit(FDisc.Track(T).EndLBA + 150);
   end;
+
   T := EnsureRange(T, 1, FDisc.TrackCount);
   Result := FDisc.Track(T).StartLBA + 150;
 end;
@@ -574,6 +645,7 @@ begin
   FDisc.ReadData(16, B);
   if (Length(B) < 2048) or (TEncoding.ASCII.GetString(B, 1, 5) <> 'CD001') then
     raise EReadError.Create('CD block: missing ISO9660 directory');
+
   ReadDirectory(LE32(B, 158) + 150, LE32(B, 166));
 end;
 
@@ -581,13 +653,14 @@ procedure TSaturnCD.ReadDirectory(FAD, Bytes: Cardinal);
 begin
   if (Bytes > 1024 * 1024) or (FAD < 150) or (Int64(FAD) + ((Bytes + 2047) div 2048) > FDisc.LeadOut + 150) then
     raise EReadError.Create('CD block: invalid directory extent');
+
   var Data: TBytes;
   SetLength(Data, ((Bytes + 2047) div 2048) * 2048);
-  for var I := 0 to Length(Data) div 2048 - 1 do
+  for var i := 0 to Length(Data) div 2048 - 1 do
   begin
     var B: TBytes;
-    FDisc.ReadData(Integer(FAD) - 150 + I, B);
-    Move(B[0], Data[I * 2048], 2048);
+    FDisc.ReadData(Integer(FAD) - 150 + i, B);
+    Move(B[0], Data[i * 2048], 2048);
   end;
   FFiles := nil;
   var At: Integer := 0;
@@ -599,14 +672,26 @@ begin
       At := (At div 2048 + 1) * 2048;
       Continue;
     end;
+
     if (Count < 34) or (At + Count > Integer(Bytes)) then
       raise EReadError.Create('CD block: truncated directory record');
+
     var F: TCDFile;
+    FillChar(F, SizeOf(F), 0); // directory records include padding in legacy raw snapshots
     F.FAD := LE32(Data, At + 2) + 150;
     F.Bytes := LE32(Data, At + 10);
-    F.Flags := Data[At + 25];
+    F.Flags := Data[At + 25] and 2;
     F.UnitSize := Data[At + 26];
     F.Gap := Data[At + 27];
+
+    // CDC_FILE_FN is the XA subheader file number, not the directory index.
+    // ISO9660 records without XA system-use information have file number 0.
+    var SystemAt := 33 + (Integer(Data[At + 32]) or 1);
+    if (SystemAt + 14 <= Count) and (Data[At + SystemAt + 6] = Ord('X')) and (Data[At + SystemAt + 7] = Ord('A')) then
+    begin
+      F.FileNumber := Data[At + SystemAt + 8];
+      F.Flags := F.Flags or (Data[At + SystemAt + 4] and $F8);
+    end;
     SetLength(FFiles, Length(FFiles) + 1);
     FFiles[High(FFiles)] := F;
     Inc(At, Count);
@@ -633,14 +718,15 @@ begin
     UpdateIRQ;
     Exit;
   end;
-  if (FProtection and (FAuthenticated <> 4) and (Cmd in [$70..$74])) or
-    ((Cmd in [$E0, $E1]) and (C[0] and $FF <> 0)) then
+
+  if (FProtection and (FAuthenticated <> 4) and (Cmd in [$70..$74])) or ((Cmd in [$E0, $E1]) and (C[0] and $FF <> 0)) then
   begin
     FCR[0] := $FF00;
     FHIRQ := FHIRQ or $201;
     UpdateIRQ;
     Exit;
   end;
+
   try
     case Cmd of
       $00:
@@ -887,15 +973,15 @@ begin
         end;
       $54:
         begin
-          var I := SectorIndex(P, C[1]);
-          if I < 0 then
+          var i := SectorIndex(P, C[1]);
+          if i < 0 then
             FCR[0] := $FF00
           else
           begin
-            FCR[0] := (Word(FStatus) shl 8) or (FSectors[I].FAD shr 16);
-            FCR[1] := FSectors[I].FAD and $FFFF;
-            FCR[2] := (Word(FSectors[I].Data[16]) shl 8) or FSectors[I].Data[17];
-            FCR[3] := (Word(FSectors[I].Data[18]) shl 8) or FSectors[I].Data[19];
+            FCR[0] := (Word(FStatus) shl 8) or (FSectors[i].FAD shr 16);
+            FCR[1] := FSectors[i].FAD and $FFFF;
+            FCR[2] := (Word(FSectors[i].Data[16]) shl 8) or FSectors[i].Data[17];
+            FCR[3] := (Word(FSectors[i].Data[18]) shl 8) or FSectors[i].Data[19];
           end;
           FHIRQ := FHIRQ or $40;
         end;
@@ -906,11 +992,11 @@ begin
           FSearchFAD := V;
           for var N := C[1] to SectorCount(P) - 1 do
           begin
-            var I := SectorIndex(P, N);
-            if (I >= 0) and (FSectors[I].FAD >= V) then
+            var i := SectorIndex(P, N);
+            if (i >= 0) and (FSectors[i].FAD >= V) then
             begin
               FSearchPosition := N;
-              FSearchFAD := FSectors[I].FAD;
+              FSearchFAD := FSectors[i].FAD;
               Break;
             end;
           end;
@@ -971,34 +1057,34 @@ begin
           end
           else
           begin
-          // Resolve the source list first: copied sectors may join the source
-          // partition, and moving must not change subsequent positional IDs.
+            // Resolve the source list first: copied sectors may join the source
+            // partition, and moving must not change subsequent positional IDs.
             var Indices: TArray<Integer>;
             SetLength(Indices, Count);
             for var N := 0 to Count - 1 do
               Indices[N] := SectorIndex(P, Position + N);
-            for var I in Indices do
+            for var i in Indices do
             begin
               var Raw: TBytes;
               SetLength(Raw, 2352);
-              Move(FSectors[I].Data, Raw[0], 2352);
-              var Dest := FilterDestination(Raw, FSectors[I].FAD, Destination);
+              Move(FSectors[i].Data, Raw[0], 2352);
+              var Dest := FilterDestination(Raw, FSectors[i].FAD, Destination);
               if Cmd = $66 then
               begin
                 if Dest < 0 then
-                  FSectors[I].Used := False
+                  FSectors[i].Used := False
                 else
                 begin
-                  FSectors[I].Partition := Dest;
+                  FSectors[i].Partition := Dest;
                   Inc(FSequence);
-                  FSectors[I].Sequence := FSequence;
+                  FSectors[i].Sequence := FSequence;
                 end;
               end
               else if Dest >= 0 then
                 for var J := 0 to 199 do
                   if not FSectors[J].Used then
                   begin
-                    FSectors[J] := FSectors[I];
+                    FSectors[J] := FSectors[i];
                     FSectors[J].Partition := Dest;
                     Inc(FSequence);
                     FSectors[J].Sequence := FSequence;
@@ -1085,7 +1171,7 @@ begin
                 BE32(B, N * 12 + 4, F.Bytes);
                 B[N * 12 + 8] := F.UnitSize;
                 B[N * 12 + 9] := F.Gap;
-                B[N * 12 + 10] := First + N;
+                B[N * 12 + 10] := F.FileNumber;
                 B[N * 12 + 11] := F.Flags;
               end;
             BeginTransfer(B);
@@ -1152,6 +1238,7 @@ procedure TSaturnCD.ReadSector;
 begin
   if (FDisc = nil) or not FPlaying then
     Exit;
+
   if (FFAD >= FEnd) or (FFAD >= Cardinal(FDisc.LeadOut + 150)) then
   begin
     if (FRepeatLimit = $7F) or (FRepeat < FRepeatLimit) then
@@ -1170,6 +1257,7 @@ begin
       Exit;
     end;
   end;
+
   if FDisc.IsData(Integer(FFAD) - 150) then
   begin
     if FProtection and (FAuthenticated <> 4) and (FFAD >= 166) then
@@ -1179,27 +1267,30 @@ begin
       FHIRQ := FHIRQ or $10;
       Exit;
     end;
+
     if FreeCount = 0 then
     begin
       FHIRQ := FHIRQ or 8;
       Exit;
     end;
+
     var B: TBytes;
     FDisc.ReadRawData(Integer(FFAD) - 150, B);
     var P := FilterDestination(B, FFAD, FConnection);
     FLast := Byte(P and $FF);
     if P >= 0 then
-      for var I := 0 to 199 do
-        if not FSectors[I].Used then
+      for var i := 0 to 199 do
+        if not FSectors[i].Used then
         begin
-          FSectors[I].Used := True;
-          FSectors[I].Partition := P;
-          FSectors[I].FAD := FFAD;
+          FSectors[i].Used := True;
+          FSectors[i].Partition := P;
+          FSectors[i].FAD := FFAD;
           Inc(FSequence);
-          FSectors[I].Sequence := FSequence;
-          Move(B[0], FSectors[I].Data, 2352);
+          FSectors[i].Sequence := FSequence;
+          Move(B[0], FSectors[i].Data, 2352);
           Break;
         end;
+
     FHIRQ := FHIRQ or 4;
   end
   else
@@ -1217,22 +1308,38 @@ procedure TSaturnCD.Advance(Target: Int64);
 begin
   if Target < FTime then
     raise EArgumentException.Create('CD time');
-  if FNative <> nil then
+
+  AdvanceForward(Target);
+end;
+
+procedure TSaturnCD.AdvanceForward(Target: Int64);
+begin
+  if FNativeEnabled then
+    AdvanceNative(Target)
+  else
   begin
-    if FPowered then
-    begin
-      Inc(FNativePhase, (Target - FTime) * 20000000);
-      Inc(FNativeTime, FNativePhase div FClock);
-      FNativePhase := FNativePhase mod FClock;
-      if FNativeTime > FNative.CPU.Time then
-        FNative.Advance(FNativeTime);
-    end;
     FTime := Target;
-    Exit;
+    if FPowered and (Target >= FModelNext) then
+      AdvanceModel;
+  end;
+end;
+
+procedure TSaturnCD.AdvanceNative(Target: Int64);
+begin
+  if FPowered then
+  begin
+    Inc(FNativePhase, (Target - FTime) * 20000000);
+    Inc(FNativeTime, FNativePhase div FClock);
+    FNativePhase := FNativePhase mod FClock;
+    if FNativeTime > FNative.CPU.Time then
+      FNative.Advance(FNativeTime);
   end;
   FTime := Target;
-  if not FPowered then
-    Exit;
+end;
+
+procedure TSaturnCD.AdvanceModel;
+begin
+  var Target := FTime;
   if FPending and (Target >= FCommandAt) then
     Execute;
   if (FAuthAt >= 0) and (Target >= FAuthAt) then
@@ -1244,6 +1351,7 @@ begin
       FAuthenticated := 2;
       var B: TBytes;
       FDisc.ReadData(0, B);
+
       // Sector images carry no optical ring capture. Strict mode must not
       // mistake the IP header for proof of physical-disc authentication.
       if not FProtection and (Length(B) >= 16) and (TEncoding.ASCII.GetString(B, 0, 16) = 'SEGA SEGASATURN ') then
@@ -1282,24 +1390,240 @@ begin
     FReportAt := Target + FClock div 60;
   end;
   UpdateIRQ;
+  FModelNext := High(Int64);
+  if FPending then
+    FModelNext := Min(FModelNext, FCommandAt);
+  if FAuthAt >= 0 then
+    FModelNext := Min(FModelNext, FAuthAt);
+  if FSeekAt >= 0 then
+    FModelNext := Min(FModelNext, FSeekAt);
+  if FPlaying then
+    FModelNext := Min(FModelNext, FSectorAt);
+  if not FPending and not FResponse then
+    FModelNext := Min(FModelNext, FReportAt);
+end;
+
+// A bounded, synchronous offline modem stub: UART register readback, loopback,
+// basic AT setup and explicit NO CARRIER on dial/answer. No sockets or remote I/O.
+procedure TSaturnCD.UpdateNetlinkIRQ;
+begin
+  if Assigned(FNetlinkIRQ) then
+    FNetlinkIRQ(FNetlinkPresent and (((FNetlinkRegs[0] and 1 <> 0) and (FNetlinkRXCount > 0)) or
+      ((FNetlinkRegs[0] and 2 <> 0) and FNetlinkTXIRQ)));
+end;
+
+procedure TSaturnCD.SetNetlinkPresent(Value: Boolean);
+begin
+  FNetlinkPresent := Value;
+  UpdateNetlinkIRQ;
+end;
+
+procedure TSaturnCD.NetlinkReceive(Value: Byte);
+begin
+  if FNetlinkRXCount >= Length(FNetlinkRX) then
+    Exit;
+
+  FNetlinkRX[(FNetlinkRXAt + FNetlinkRXCount) mod Length(FNetlinkRX)] := Value;
+  Inc(FNetlinkRXCount);
+end;
+
+procedure TSaturnCD.NetlinkTransmit(Value: Byte);
+begin
+  if FNetlinkRegs[5] and $10 <> 0 then
+    NetlinkReceive(Value)
+  else if Value = 13 then
+  begin
+    var Command := '';
+    for var i := 0 to FNetlinkCommandCount - 1 do
+      Command := Command + Char(FNetlinkCommand[i]);
+    Command := UpperCase(Trim(Command));
+    var Echo := FNetlinkEcho;
+    var Identification := False;
+    var Reply := 'ERROR';
+    var Numeric := '4';
+    if Command.StartsWith('AT') then
+    begin
+      Reply := 'OK';
+      Numeric := '0';
+      if Command.StartsWith('ATD') or Command.StartsWith('ATA') then
+      begin
+        Reply := 'NO CARRIER';
+        Numeric := '3';
+      end;
+
+      // Setup is accepted without creating a communications channel.
+      if (Command = 'ATZ') or (Command = 'AT&F') then
+      begin
+        FNetlinkEcho := True;
+        FNetlinkVerbose := True;
+        FNetlinkQuiet := False;
+      end;
+      if Pos('E0', Command) > 0 then
+        FNetlinkEcho := False;
+      if Pos('E1', Command) > 0 then
+        FNetlinkEcho := True;
+      if Pos('V0', Command) > 0 then
+        FNetlinkVerbose := False;
+      if Pos('V1', Command) > 0 then
+        FNetlinkVerbose := True;
+      if Pos('Q0', Command) > 0 then
+        FNetlinkQuiet := False;
+      if Pos('Q1', Command) > 0 then
+        FNetlinkQuiet := True;
+      Identification := (Command = 'ATI') or (Command = 'ATI0');
+    end;
+    if Echo then
+    begin
+      for var i := 0 to FNetlinkCommandCount - 1 do
+        NetlinkReceive(FNetlinkCommand[i]);
+      NetlinkReceive(13);
+    end;
+    if Identification then
+      for var Ch in #13#10'28800'#13#10 do
+        NetlinkReceive(Ord(Ch));
+    FNetlinkCommandCount := 0;
+    FillChar(FNetlinkCommand, SizeOf(FNetlinkCommand), 0);
+    if not FNetlinkQuiet then
+    begin
+      if FNetlinkVerbose then
+        Reply := #13#10 + Reply + #13#10
+      else
+        Reply := Numeric + #13;
+      for var Ch in Reply do
+        NetlinkReceive(Ord(Ch));
+    end;
+  end
+  else if Value = 8 then
+  begin
+    if FNetlinkCommandCount > 0 then
+      Dec(FNetlinkCommandCount);
+  end
+  else if (Value >= 32) and (Value < 127) and (FNetlinkCommandCount < Length(FNetlinkCommand)) then
+  begin
+    FNetlinkCommand[FNetlinkCommandCount] := Value;
+    Inc(FNetlinkCommandCount);
+  end;
+  FNetlinkTXIRQ := True;
+  UpdateNetlinkIRQ;
+end;
+
+function TSaturnCD.NetlinkRead(Address: Cardinal): Byte;
+begin
+  if not FNetlinkPresent then
+    Exit($FF);
+
+  Result := 0;
+  case Address of
+    $95001:
+      if FNetlinkRegs[4] and $80 <> 0 then
+        Result := FNetlinkRegs[1]
+      else if FNetlinkRXCount > 0 then
+      begin
+        Result := FNetlinkRX[FNetlinkRXAt];
+        FNetlinkRX[FNetlinkRXAt] := 0;
+        FNetlinkRXAt := (FNetlinkRXAt + 1) mod Length(FNetlinkRX);
+        Dec(FNetlinkRXCount);
+      end;
+    $95005:
+      if FNetlinkRegs[4] and $80 <> 0 then
+        Result := FNetlinkRegs[2]
+      else
+        Result := FNetlinkRegs[0];
+    $95009:
+      begin
+        Result := 1;
+        if (FNetlinkRegs[0] and 1 <> 0) and (FNetlinkRXCount > 0) then
+          Result := 4
+        else if (FNetlinkRegs[0] and 2 <> 0) and FNetlinkTXIRQ then
+        begin
+          Result := 2;
+          FNetlinkTXIRQ := False;
+        end;
+        if FNetlinkRegs[3] and 1 <> 0 then
+          Result := Result or $C0;
+      end;
+    $9500D:
+      Result := FNetlinkRegs[4];
+    $95011:
+      Result := FNetlinkRegs[5];
+    $95015:
+      Result := $60 or Ord(FNetlinkRXCount > 0);
+    $95019:
+      if FNetlinkRegs[5] and $10 <> 0 then
+        Result := ((FNetlinkRegs[5] and 2) shl 3) or ((FNetlinkRegs[5] and 1) shl 5) or
+          ((FNetlinkRegs[5] and 4) shl 4) or ((FNetlinkRegs[5] and 8) shl 4)
+      else
+        Result := $30;
+    $9501D:
+      Result := FNetlinkScratch;
+  end;
+  UpdateNetlinkIRQ;
+end;
+
+procedure TSaturnCD.NetlinkWrite(Address: Cardinal; Value: Byte);
+begin
+  if not FNetlinkPresent then
+    Exit;
+
+  case Address of
+    $95001:
+      if FNetlinkRegs[4] and $80 <> 0 then
+        FNetlinkRegs[1] := Value
+      else
+        NetlinkTransmit(Value);
+    $95005:
+      if FNetlinkRegs[4] and $80 <> 0 then
+        FNetlinkRegs[2] := Value
+      else
+      begin
+        if (Value and 2 <> 0) and (FNetlinkRegs[0] and 2 = 0) then
+          FNetlinkTXIRQ := True;
+        FNetlinkRegs[0] := Value and $F;
+      end;
+    $95009:
+      begin
+        FNetlinkRegs[3] := Value and $C9;
+        if Value and 2 <> 0 then
+        begin
+          FNetlinkRXAt := 0;
+          FNetlinkRXCount := 0;
+          FillChar(FNetlinkRX, SizeOf(FNetlinkRX), 0);
+        end;
+      end;
+    $9500D:
+      FNetlinkRegs[4] := Value;
+    $95011:
+      FNetlinkRegs[5] := Value and $1F;
+    $9501D:
+      FNetlinkScratch := Value;
+  end;
+  UpdateNetlinkIRQ;
 end;
 
 function TSaturnCD.Read(Address: Cardinal; Size: Integer): Cardinal;
 begin
+  FModelNext := 0;
   var A := Address and $FFFFF;
   Result := $FFFFFFFF;
   if Size = 1 then
     Result := $FF
   else if Size = 2 then
     Result := $FFFF;
+
+  // Offline UART/AT compatibility is independent of the selected CD backend.
+  if (Size = 1) and (A >= $95001) and (A <= $9501D) and (A and 3 = 1) then
+    Exit(NetlinkRead(A));
+
   if not FPowered then
     Exit;
+
   if FNative <> nil then
     Exit(FNative.HostRead(Address, Size));
+
   if (A = $18000) or (A = $98000) then
   begin
     Result := 0;
-    for var I := 1 to Size do
+    for var i := 1 to Size do
     begin
       Result := Result shl 8;
       if FFIFOAt < Length(FFIFO) then
@@ -1316,6 +1640,7 @@ begin
     UpdateIRQ;
     Exit;
   end;
+
   var W: Word := $FFFF;
   case A and $FFFFC of
     $90008:
@@ -1344,27 +1669,41 @@ end;
 
 procedure TSaturnCD.Write(Address, Value: Cardinal; Size: Integer);
 begin
+  FModelNext := 0;
   var A := Address and $FFFFF;
+  if (Size = 1) and (A >= $95001) and (A <= $9501D) and (A and 3 = 1) then
+  begin
+    NetlinkWrite(A, Value and $FF);
+    Exit;
+  end;
+
+  if (Size = 1) and (A = $2503D) then
+    Exit;
+
   if not FPowered then
     Exit;
+
   if FNative <> nil then
   begin
     FNative.HostWrite(Address, Value, Size);
     Exit;
   end;
+
   if (A = $18000) or (A = $98000) then
   begin
     if FTransferKind <> 4 then
       Exit;
-    for var I := 0 to Size - 1 do
+
+    for var i := 0 to Size - 1 do
       if FFIFOAt < Length(FFIFO) then
       begin
-        FFIFO[FFIFOAt] := (Value shr ((Size - I - 1) * 8)) and $FF;
+        FFIFO[FFIFOAt] := (Value shr ((Size - i - 1) * 8)) and $FF;
         Inc(FFIFOAt);
         Inc(FTransferred);
       end;
     Exit;
   end;
+
   if Size = 4 then
     Value := Value shr 16;
   case A and $FFFFC of
@@ -1374,11 +1713,11 @@ begin
       FMask := Value and $3FFF;
     $90018, $9001C, $90020, $90024:
       begin
-        var I := ((A and $3C) - $18) div 4;
-        FCommand[I] := Value and $FFFF;
-        if I = 0 then
+        var i := ((A and $3C) - $18) div 4;
+        FCommand[i] := Value and $FFFF;
+        if i = 0 then
           FResponse := True;
-        if I = 3 then
+        if i = 3 then
         begin
           FPending := True;
           FCommandAt := FTime + 128;
@@ -1391,26 +1730,73 @@ end;
 
 procedure TSaturnCD.AudioSample(out Left, Right: Integer);
 begin
+  FModelNext := 0;
   if FNative <> nil then
   begin
     FNative.AudioSample(Left, Right);
     Exit;
   end;
+
   Left := 0;
   Right := 0;
   if FAudioAt >= 2352 then
     Exit;
+
   Left := SmallInt(Word(FAudio[FAudioAt]) or (Word(FAudio[FAudioAt + 1]) shl 8));
   Right := SmallInt(Word(FAudio[FAudioAt + 2]) or (Word(FAudio[FAudioAt + 3]) shl 8));
   Inc(FAudioAt, 4);
 end;
 
-procedure TSaturnCD.SerializeState(Archive: TStateArchive);
+procedure TSaturnCD.SerializeState(Archive: TStateArchive; Extended, Modem, ModemPresence: Boolean);
 begin
+  if Archive.Loading then
+  begin
+    FModelNext := 0;
+    FIRQKnown := False;
+  end;
+  if Extended then
+    Archive.Field(FNetlinkScratch, SizeOf(FNetlinkScratch))
+  else if Archive.Loading then
+    FNetlinkScratch := 0;
+  if Modem then
+  begin
+    Archive.Field(FNetlinkRegs, SizeOf(FNetlinkRegs));
+    Archive.Field(FNetlinkRX, SizeOf(FNetlinkRX));
+    Archive.Field(FNetlinkCommand, SizeOf(FNetlinkCommand));
+    Archive.Field(FNetlinkRXAt, SizeOf(FNetlinkRXAt));
+    Archive.Field(FNetlinkRXCount, SizeOf(FNetlinkRXCount));
+    Archive.Field(FNetlinkCommandCount, SizeOf(FNetlinkCommandCount));
+    Archive.Field(FNetlinkEcho, SizeOf(FNetlinkEcho));
+    Archive.Field(FNetlinkVerbose, SizeOf(FNetlinkVerbose));
+    Archive.Field(FNetlinkQuiet, SizeOf(FNetlinkQuiet));
+    Archive.Field(FNetlinkTXIRQ, SizeOf(FNetlinkTXIRQ));
+    if (FNetlinkRXAt < 0) or (FNetlinkRXAt >= Length(FNetlinkRX)) or
+      (FNetlinkRXCount < 0) or (FNetlinkRXCount > Length(FNetlinkRX)) or
+      (FNetlinkCommandCount < 0) or (FNetlinkCommandCount > Length(FNetlinkCommand)) then
+      raise EReadError.Create('Invalid offline NetLink state');
+  end
+  else if Archive.Loading then
+  begin
+    FillChar(FNetlinkRegs, SizeOf(FNetlinkRegs), 0);
+    FillChar(FNetlinkRX, SizeOf(FNetlinkRX), 0);
+    FillChar(FNetlinkCommand, SizeOf(FNetlinkCommand), 0);
+    FNetlinkRXAt := 0;
+    FNetlinkRXCount := 0;
+    FNetlinkCommandCount := 0;
+    FNetlinkEcho := True;
+    FNetlinkVerbose := True;
+    FNetlinkQuiet := False;
+    FNetlinkTXIRQ := False;
+  end;
+  if ModemPresence then
+    Archive.Field(FNetlinkPresent, SizeOf(FNetlinkPresent))
+  else if Archive.Loading then
+    FNetlinkPresent := Modem;
   var Native := FNative <> nil;
   Archive.Field(Native, SizeOf(Native));
   if Native <> (FNative <> nil) then
     raise EReadError.Create('Saturn CD backend mismatch');
+
   Archive.Field(FNativeTime, SizeOf(FNativeTime));
   Archive.Field(FNativePhase, SizeOf(FNativePhase));
   if FNative <> nil then
@@ -1419,6 +1805,7 @@ begin
   Archive.Field(Protection, SizeOf(Protection));
   if Protection <> FProtection then
     raise EReadError.Create('Saturn optical protection setting mismatch');
+
   Archive.Field(FSeekAt, SizeOf(FSeekAt));
   Archive.Field(FAuthAt, SizeOf(FAuthAt));
   Archive.Field(FSectorFraction, SizeOf(FSectorFraction));
@@ -1462,6 +1849,7 @@ begin
   Archive.Field(Count, SizeOf(Count));
   if (Count < 0) or (Count > 470400) then
     raise EReadError.Create('CD transfer state size');
+
   SetLength(FFIFO, Count);
   if Count > 0 then
     Archive.Field(FFIFO[0], Count);
@@ -1475,9 +1863,13 @@ begin
   Archive.Field(Count, SizeOf(Count));
   if (Count < 0) or (Count > 32768) then
     raise EReadError.Create('CD filesystem state size');
+
   SetLength(FFiles, Count);
   if Count > 0 then
     Archive.Field(FFiles[0], Count * SizeOf(TCDFile));
+  if Archive.Loading and not ModemPresence then
+    for var i := 0 to Count - 1 do
+      FFiles[i].FileNumber := 0;
   Archive.Field(FFileFirst, SizeOf(FFileFirst));
   Archive.Field(FFileCount, SizeOf(FFileCount));
   Archive.Field(FDirectoryFAD, SizeOf(FDirectoryFAD));

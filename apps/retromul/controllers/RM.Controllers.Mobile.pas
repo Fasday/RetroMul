@@ -1,23 +1,25 @@
 ﻿unit RM.Controllers.Mobile;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
   RM.Controllers.Base
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
     , FMX.Platform
   {$ENDIF};
 
 type
   TMobileController = class(TMainController)
   public
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     procedure InitializeMobileViews;
     {$ENDIF}
     {$IFDEF ANDROID}
     procedure InitializeAndroidServices;
     {$ENDIF}
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     function ApplicationStateChanged(Sender: TObject; const AAppEvent: TApplicationEvent; const AContext: TObject): Boolean;
     {$ENDIF}
     {$IFDEF ANDROID}
@@ -30,7 +32,7 @@ implementation
 uses
   System.SysUtils, System.Types, System.UITypes, System.IOUtils, FMX.Types,
   FMX.Controls, FMX.Forms, FMX.Objects, RM.Dialogs
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
     , FMX.ApplicationEvents
   {$ENDIF}
   {$IFDEF ANDROID}
@@ -38,7 +40,7 @@ uses
     RM.DocumentTransfer.Android
   {$ENDIF};
 
-{$IF Defined(ANDROID) or Defined(IOS)}
+{$IFDEF ISMOBILE}
 procedure TMobileController.InitializeMobileViews;
 begin
   FState.Mobile.AppEvents := TApplicationEvents.Create(FView);
@@ -79,7 +81,7 @@ begin
 end;
 
 {$ENDIF}
-{$IF Defined(ANDROID) or Defined(IOS)}
+{$IFDEF ISMOBILE}
 function TMobileController.ApplicationStateChanged(Sender: TObject; const AAppEvent: TApplicationEvent; const AContext: TObject): Boolean;
 begin
   case AAppEvent of

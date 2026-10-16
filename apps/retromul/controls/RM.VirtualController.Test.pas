@@ -3,10 +3,10 @@
 interface
 
 uses
-  System.Classes, System.Types, System.UITypes,
-  FMX.Types, FMX.Controls, FMX.Forms, FMX.Layouts, FMX.Objects,
-  FMX.StdCtrls, FMX.ListBox, FMX.Edit, FMX.EditBox, FMX.NumberBox,
-  FMX.Controls.Presentation, FMX.Graphics, RM.VirtualController;
+  System.Classes, System.Types, System.UITypes, FMX.Types, FMX.Controls,
+  FMX.Forms, FMX.Layouts, FMX.Objects, FMX.StdCtrls, FMX.ListBox, FMX.Edit,
+  FMX.EditBox, FMX.NumberBox, FMX.Controls.Presentation, FMX.Graphics,
+  RM.VirtualController;
 
 type
   TVirtualControllerTestForm = class(TForm)
@@ -86,7 +86,8 @@ var
 
 implementation
 
-uses System.SysUtils, System.Math
+uses
+  System.SysUtils, System.Math
   {$IFDEF ANDROID}, RM.TouchInput.Android{$ENDIF};
 
 {$R *.fmx}
@@ -118,16 +119,20 @@ end;
 
 procedure TVirtualControllerTestForm.FormDeactivate(Sender: TObject);
 begin
-  if FController <> nil then FController.ReleaseAll;
+  if FController <> nil then
+    FController.ReleaseAll;
 end;
 
 procedure TVirtualControllerTestForm.FormTouch(Sender: TObject; const Touches: TTouches; const Action: TTouchAction);
 {$IF not Defined(ANDROID)}
-var T: TTouch; P: TPointF;
+var
+  T: TTouch;
+  P: TPointF;
 {$ENDIF}
 begin
   {$IF not Defined(ANDROID)}
-  if FController = nil then Exit;
+  if FController = nil then
+    Exit;
   if Action = TTouchAction.Cancel then
   begin
     FController.ReleaseAll;
@@ -137,10 +142,14 @@ begin
   begin
     P := FController.AbsoluteToLocal(T.Location);
     case T.Action of
-      TTouchAction.Down: FController.PointerDown(T.Id, P);
-      TTouchAction.Move: FController.PointerMove(T.Id, P);
-      TTouchAction.Up: FController.PointerUp(T.Id);
-      TTouchAction.Cancel: FController.ReleaseAll;
+      TTouchAction.Down:
+        FController.PointerDown(T.Id, P);
+      TTouchAction.Move:
+        FController.PointerMove(T.Id, P);
+      TTouchAction.Up:
+        FController.PointerUp(T.Id);
+      TTouchAction.Cancel:
+        FController.ReleaseAll;
     end;
   end;
   {$ENDIF}
@@ -178,7 +187,9 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.ResetClicked(Sender: TObject);
-begin ResetLayout; end;
+begin
+  ResetLayout;
+end;
 
 function TVirtualControllerTestForm.SelectedElement: TVirtualElement;
 begin
@@ -189,7 +200,8 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.RefreshElements(SelectIndex: Integer);
-var I: Integer;
+var
+  I: Integer;
 begin
   FUpdating := True;
   try
@@ -198,14 +210,18 @@ begin
     for I := 0 to FController.Count - 1 do
       ElementBox.Items.Add(FController[I].Id + '  /  ' + FController[I].Caption);
     ElementBox.ItemIndex := EnsureRange(SelectIndex + 1, 0, FController.Count);
-  finally FUpdating := False; end;
+  finally
+    FUpdating := False;
+  end;
   ElementChanged(Self);
 end;
 
 procedure TVirtualControllerTestForm.ElementChanged(Sender: TObject);
-var E: TVirtualElement;
+var
+  E: TVirtualElement;
 begin
-  if FUpdating then Exit;
+  if FUpdating then
+    Exit;
   E := SelectedElement;
   FUpdating := True;
   try
@@ -228,17 +244,24 @@ begin
       WidthBox.Value := E.Bounds.Width;
       HeightBox.Value := E.Bounds.Height;
       SideBox.ItemIndex := Ord(E.Side);
-      if E is TVirtualDPad then TypeBox.ItemIndex := 1
-      else if E is TVirtualSwitch then TypeBox.ItemIndex := 2
-      else if E is TVirtualTrigger then TypeBox.ItemIndex := 3
-      else TypeBox.ItemIndex := 0;
+      if E is TVirtualDPad then
+        TypeBox.ItemIndex := 1
+      else if E is TVirtualSwitch then
+        TypeBox.ItemIndex := 2
+      else if E is TVirtualTrigger then
+        TypeBox.ItemIndex := 3
+      else
+        TypeBox.ItemIndex := 0;
     end;
-  finally FUpdating := False; end;
+  finally
+    FUpdating := False;
+  end;
   GuidesPaint.Repaint;
 end;
 
 function TVirtualControllerTestForm.EditorBounds: TRectF;
-var X, Y, W, H: Single;
+var
+  X, Y, W, H: Single;
 begin
   X := EnsureRange(XBox.Value, 0.0, FController.DesignSideSize.Width - 1);
   Y := EnsureRange(YBox.Value, 0.0, FController.DesignSideSize.Height - 1);
@@ -256,14 +279,17 @@ end;
 
 procedure TVirtualControllerTestForm.TypeChanged(Sender: TObject);
 begin
-  if FUpdating or (FController = nil) or (SelectedElement <> nil) then Exit;
+  if FUpdating or (FController = nil) or (SelectedElement <> nil) then
+    Exit;
   SaveNewDraft;
 end;
 
 procedure TVirtualControllerTestForm.GeometryEdited(Sender: TObject);
-var E: TVirtualElement;
+var
+  E: TVirtualElement;
 begin
-  if FUpdating or (FController = nil) then Exit;
+  if FUpdating or (FController = nil) then
+    Exit;
   E := SelectedElement;
   if E = nil then
     SaveNewDraft
@@ -278,7 +304,8 @@ end;
 
 procedure TVirtualControllerTestForm.AppearanceChanged(Sender: TObject);
 begin
-  if FUpdating or (FController = nil) then Exit;
+  if FUpdating or (FController = nil) then
+    Exit;
   FController.LayoutScale := ScaleBar.Value;
   FController.InkOpacity := OpacityBar.Value;
   ScaleLabel.Text := Format('Масштаб: %.2f', [ScaleBar.Value]);
@@ -287,16 +314,23 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.AddClicked(Sender: TObject);
-var E: TVirtualElement; Id: string;
+var
+  E: TVirtualElement;
+  Id: string;
 begin
-  if SelectedElement <> nil then Exit;
+  if SelectedElement <> nil then
+    Exit;
   SaveNewDraft;
   Id := 'custom' + IntToStr(FNextId);
   case FNewType of
-    1: E := TVirtualDPad.Create(Id, 'PAD', FNewSide, FNewBounds);
-    2: E := TVirtualSwitch.Create(Id, 'SW', FNewSide, FNewBounds);
-    3: E := TVirtualTrigger.Create(Id, 'TR', FNewSide, FNewBounds);
-  else E := TVirtualButton.Create(Id, IntToStr(FNextId), FNewSide, FNewBounds);
+    1:
+      E := TVirtualDPad.Create(Id, 'PAD', FNewSide, FNewBounds);
+    2:
+      E := TVirtualSwitch.Create(Id, 'SW', FNewSide, FNewBounds);
+    3:
+      E := TVirtualTrigger.Create(Id, 'TR', FNewSide, FNewBounds);
+  else
+    E := TVirtualButton.Create(Id, IntToStr(FNextId), FNewSide, FNewBounds);
   end;
   try
     FController.Add(E);
@@ -309,7 +343,8 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.RemoveClicked(Sender: TObject);
-var I: Integer;
+var
+  I: Integer;
 begin
   I := ElementBox.ItemIndex - 1;
   FController.Remove(SelectedElement);
@@ -317,14 +352,30 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.UpdateViewport;
-var W, H: Single;
+var
+  W, H: Single;
 begin
-  if FController = nil then Exit;
+  if FController = nil then
+    Exit;
   case PresetBox.ItemIndex of
-    1: begin W := 960; H := 320; end;
-    2: begin W := 1280; H := 400; end;
-    3: begin W := 640; H := 360; end;
-  else W := ViewportLayout.Width - 16; H := ViewportLayout.Height - 16;
+    1:
+      begin
+        W := 960;
+        H := 320;
+      end;
+    2:
+      begin
+        W := 1280;
+        H := 400;
+      end;
+    3:
+      begin
+        W := 640;
+        H := 360;
+      end;
+  else
+    W := ViewportLayout.Width - 16;
+    H := ViewportLayout.Height - 16;
   end;
   ControllerLayout.Width := Max(1, Min(W, ViewportLayout.Width - 16));
   ControllerLayout.Height := Max(1, Min(H, ViewportLayout.Height - 16));
@@ -334,7 +385,9 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.FormResize(Sender: TObject);
-begin UpdateViewport; end;
+begin
+  UpdateViewport;
+end;
 
 procedure TVirtualControllerTestForm.GeometryChanged(Sender: TObject);
 begin
@@ -342,7 +395,10 @@ begin
 end;
 
 procedure TVirtualControllerTestForm.InputChanged(Sender: TObject; Element: TVirtualElement; Part: Integer; Value: Single);
-var I, J: Integer; E: TVirtualElement; S: string;
+var
+  I, J: Integer;
+  E: TVirtualElement;
+  S: string;
 begin
   S := '';
   for I := 0 to FController.Count - 1 do
@@ -352,15 +408,22 @@ begin
       if E.Value(J) > 0 then
         S := S + Format('%s[%d]=%.2f   ', [E.Id, J, E.Value(J)]);
   end;
-  if S = '' then S := 'Все элементы отпущены';
+  if S = '' then
+    S := 'Все элементы отпущены';
   StatusLabel.Text := S;
   GuidesPaint.Repaint;
 end;
 
 procedure TVirtualControllerTestForm.GuidesPaintPaint(Sender: TObject; Canvas: TCanvas);
-var E: TVirtualElement; L, R, B, TextRect: TRectF; P, A: TPointF; I: Integer; S: string;
+var
+  E: TVirtualElement;
+  L, R, B, TextRect: TRectF;
+  P, A: TPointF;
+  I: Integer;
+  S: string;
 begin
-  if FController = nil then Exit;
+  if FController = nil then
+    Exit;
   Canvas.Stroke.Kind := TBrushKind.Solid;
   Canvas.Fill.Kind := TBrushKind.Solid;
   L := FController.SideBounds(TVirtualSide.Left);
@@ -377,12 +440,14 @@ begin
     Canvas.Font.Size := 16;
     Canvas.FillText(B, 'ЭКРАН', False, 1, [], TTextAlign.Center, TTextAlign.Center);
   end;
-  if not GuidesBox.IsChecked then Exit;
+  if not GuidesBox.IsChecked then
+    Exit;
   Canvas.Stroke.Color := $FF485661;
   Canvas.DrawLine(PointF(L.Right, 0), PointF(L.Right, GuidesPaint.Height), 0.6);
   Canvas.DrawLine(PointF(R.Left, 0), PointF(R.Left, GuidesPaint.Height), 0.6);
   E := SelectedElement;
-  if E = nil then Exit;
+  if E = nil then
+    Exit;
   for I := 0 to E.PartCount - 1 do
   begin
     B := FController.PartBounds(E, I);
@@ -401,3 +466,4 @@ begin
 end;
 
 end.
+

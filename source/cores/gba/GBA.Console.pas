@@ -1919,6 +1919,7 @@ end;
 procedure TGBAConsole.Step;
 begin
   StepInternal;
+
   // Public single-step callers can inspect the PPU immediately afterwards.
   FlushVideo;
 end;

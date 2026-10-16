@@ -5,10 +5,11 @@
         <FrameworkType>FMX</FrameworkType>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Release</Config>
-        <Platform Condition="'$(Platform)'==''">Android64</Platform>
+        <Platform Condition="'$(Platform)'==''">Win64</Platform>
         <TargetedPlatforms>2790547</TargetedPlatforms>
         <AppType>Application</AppType>
         <MainSource>RetroMul.dpr</MainSource>
+        <ProjectName Condition="'$(ProjectName)'==''">RetroMul</ProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>
@@ -677,6 +678,7 @@
         <DCCReference Include="..\..\source\cores\saturn\Saturn.VDP1.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.VDP2.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Console.pas"/>
+        <DCCReference Include="..\..\source\cores\saturn\Saturn.Audio.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Emulation.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.Saturn.pas"/>
         <DCCReference Include="settings\RM.Settings.Saturn.pas"/>

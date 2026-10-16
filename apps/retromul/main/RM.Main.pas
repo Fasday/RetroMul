@@ -1,5 +1,7 @@
 ﻿unit RM.Main;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -51,10 +53,10 @@ type
     procedure InitializeLibrary; override;
     procedure InitializeScreenshotTool; override;
     procedure InitializePeripherals; override;
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     procedure InitializeMobileViews; override;
     {$ENDIF}
-    {$IF not Defined(ANDROID) and not Defined(IOS)}
+    {$IFNDEF ISMOBILE}
     procedure InitializeDesktopViews; override;
     {$ENDIF}
     {$IFDEF ANDROID}
@@ -122,7 +124,7 @@ type
     procedure TapeAction(Sender: TObject; Action: TTapeAction; const FileName: string); override;
     procedure ChooseTapeFile(Sender: TObject); override;
     procedure SaveTapeAs(Sender: TObject); override;
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     function ApplicationStateChanged(Sender: TObject; const AAppEvent: TApplicationEvent; const AContext: TObject): Boolean; override;
     {$ENDIF}
     {$IFDEF ANDROID}
@@ -213,7 +215,7 @@ begin
       Alive := False;
     end;
   {$IF Defined(MSWINDOWS) or Defined(LINUX) or (Defined(MACOS) and not Defined(IOS))}
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   State.Input.Manager := CreateHostInput;
   {$ENDIF}
   {$ENDIF}
@@ -229,7 +231,7 @@ begin
   {$IFDEF ANDROID}
   InitializeAndroidServices;
   {$ENDIF}
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   InitializeMobileViews;
   {$ENDIF}
   Fill.Color := TAlphaColors.Black;
@@ -248,7 +250,7 @@ begin
   Load;
   LoadHostInput(ROM_SYSTEM_GB);
   InitializeLibrary;
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   InitializeDesktopViews;
   {$ENDIF}
   SyncActivity;
@@ -269,7 +271,7 @@ begin
   FBrowserController.InitializeLibrary;
 end;
 
-{$IF not Defined(ANDROID) and not Defined(IOS)}
+{$IFNDEF ISMOBILE}
 procedure TFormMain.InitializeDesktopViews;
 begin
   FBrowserController.InitializeDesktopViews;
@@ -283,7 +285,7 @@ begin
 end;
 
 {$ENDIF}
-{$IF Defined(ANDROID) or Defined(IOS)}
+{$IFDEF ISMOBILE}
 procedure TFormMain.InitializeMobileViews;
 begin
   FMobileController.InitializeMobileViews;
@@ -331,7 +333,7 @@ begin
   FreeAndNil(State.Input.PowerPad);
   FreeAndNil(State.Input.DataRecorder);
   FreeAndNil(State.Input.Gamepad); // Detach the native listener before destroying the form.
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   FreeAndNil(State.Mobile.AppEvents);
   {$ENDIF}
   {$IFDEF ANDROID}
@@ -937,7 +939,7 @@ begin
   FInputController.SaveTapeAs(Sender);
 end;
 
-{$IF Defined(ANDROID) or Defined(IOS)}
+{$IFDEF ISMOBILE}
 function TFormMain.ApplicationStateChanged(Sender: TObject; const AAppEvent: TApplicationEvent; const AContext: TObject): Boolean;
 begin
   Result := FMobileController.ApplicationStateChanged(Sender, AAppEvent, AContext);

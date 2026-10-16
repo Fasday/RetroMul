@@ -1,5 +1,7 @@
 ﻿unit RM.LibraryView;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -62,6 +64,7 @@ type
     FContinueGamePreview: TImage;
     FCards: TList<TLibraryCard>;
     FListMode, FBuilding, FArranging, FLayouting, FShowPlatform, FShowLetters: Boolean;
+    FInspectorOpen: Boolean;
     FCardWidth: Integer;
     FContinueCollapse, FContinueExtent: Single;
     FOnPlay, FOnSettings, FOnOpen: TNotifyEvent;
@@ -77,7 +80,7 @@ type
     procedure UpdateViewIcons;
     procedure GridResize(Sender: TObject);
     procedure BodyResize(Sender: TObject);
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     procedure ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF; const ContentSizeChanged: Boolean);
     {$ENDIF}
     procedure UpdateInspector;
@@ -94,7 +97,8 @@ type
     procedure SearchChange(Sender: TObject);
     procedure LetterClick(Sender: TObject);
     procedure CardClick(Sender: TObject);
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    procedure DetailsBackClick(Sender: TObject);
+    {$IFDEF ISMOBILE}
     procedure CardTap(Sender: TObject; const Point: TPointF);
     {$ELSE}
     procedure CardDblClick(Sender: TObject);
@@ -115,12 +119,15 @@ type
     procedure ApplyLanguage(const PreviousLanguage: string);
     procedure RecordSession(const FileName, SnapshotDirectory: string);
     procedure RefreshSnapshots;
+    function CloseDetails: Boolean;
     property Selected: TLibraryGame read GetSelected;
     property SnapshotName: string read FSnapshotName;
     property OnPlay: TNotifyEvent read FOnPlay write FOnPlay;
     property OnSettings: TNotifyEvent read FOnSettings write FOnSettings;
     property OnOpen: TNotifyEvent read FOnOpen write FOnOpen;
   end;
+
+function LibrarySystemFullName(const Id: string): string;
 
 function LibrarySystemName(const Id: string): string;
 
@@ -134,7 +141,7 @@ uses
   SCRP.GameList, HGM.FMX.Image, Core.Platforms, Core.RomFormat, Core.SavePaths, RM.Icons,
   RM.SearchEdit, RM.Styles;
 
-{$IF Defined(ANDROID) or Defined(IOS)}
+{$IFDEF ISMOBILE}
 type
   TLibraryScrollBox = class(TVertScrollBox)
   private
@@ -190,6 +197,16 @@ begin
     Result := Id;
 end;
 
+function LibrarySystemFullName(const Id: string): string;
+begin
+  if Id = '' then Exit(Translate('All'));
+  var Info: TPlatformInfo;
+  if TPlatformRegistry.Find(Id, Info) then
+    Result := Translate(Info.Name)
+  else
+    Result := Id;
+end;
+
 function LibraryDate(const Value: TDateTime): string;
 begin
   if Trunc(Value) = Trunc(Date) then
@@ -231,7 +248,7 @@ function ActionButton(Owner: TComponent; Parent: TFmxObject; const Text: string;
 begin
   Result := TButton.Create(Owner);
   Result.Parent := Parent;
-  Result.Text := Translate(Text).Replace('&', '&&');
+  Result.Text := Translate(Text);
   Result.StyledSettings := Result.StyledSettings - [TStyledSetting.Other];
   Result.TextSettings.Trimming := TTextTrimming.Character;
   Result.TextSettings.WordWrap := False;
@@ -275,7 +292,7 @@ begin
   AllLetters.Hint := Translate('All');
   AllLetters.ShowHint := True;
   FLetterButtons.Add(AllLetters);
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   // Retain the standard control in the designer; use stable gesture coordinates at runtime.
   var Scroll := TLibraryScrollBox.Create(Self);
   Scroll.Align := VertScrollBoxScroll.Align;
@@ -301,6 +318,7 @@ begin
   ImageCover := FindComponent('ImageCover') as TImage;
   ButtonPlay := FindComponent('ButtonPlay') as TButton;
   ButtonFavorite := FindComponent('ButtonFavorite') as TButton;
+  (FindComponent('ButtonInspectorBack') as TButton).OnClick := DetailsBackClick;
   ButtonMore := FindComponent('ButtonMore') as TButton;
   FGridButton := FindComponent('ButtonGridView') as TButton;
   FListButton := FindComponent('ButtonListView') as TButton;
@@ -417,7 +435,7 @@ begin
   ButtonMore.OnClick := MoreClick;
   LayoutBody.OnResize := BodyResize;
   LayoutGrid.OnResize := GridResize;
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   FContinue.ClipChildren := True;
   VertScrollBoxScroll.OnViewportPositionChange := ScrollViewportChanged;
   {$ENDIF}
@@ -541,9 +559,10 @@ procedure TLibraryView.ApplyLanguage(const PreviousLanguage: string);
 begin
   FormStyles.RelocalizeUI(Self, PreviousLanguage);
   for var Button in FPlatformButtons do
-    Button.Text := LibrarySystemName(Button.TagString).Replace('&', '&&');
+    Button.Text := LibrarySystemName(Button.TagString);
   for var Platform in TPlatformRegistry.All do
-    (FindComponent('ButtonSidebar' + Platform.Id) as TButton).Text := Translate(Platform.Name).Replace('&', '&&');
+    (FindComponent('ButtonSidebar' + Platform.Id) as TButton).Text := Translate(Platform.Name);
+
   // Rebuild data captions from the game records so titles and metadata stay intact.
   BuildCards;
   UpdateInspector;
@@ -560,7 +579,6 @@ begin
       if SnapshotDirectory <> '' then
         FState.WriteString('Snapshots', Game.Key, SnapshotDirectory);
       SaveState;
-      RefreshSnapshots;
       Break;
     end;
 end;
@@ -705,8 +723,12 @@ begin
         Card.Parent := LayoutGrid;
         Card.StyleLookup := 'retromul_card';
         Card.TagObject := Game;
-        {$IF Defined(ANDROID) or Defined(IOS)}
+        {$IFDEF ISMOBILE}
         Card.OnTap := CardTap;
+        {$IF not Defined(ANDROID) and not Defined(IOS)}
+        // Desktop preview uses mouse clicks instead of native touch taps.
+        Card.OnClick := CardClick;
+        {$ENDIF}
         {$ELSE}
         Card.OnClick := CardClick;
         Card.OnDblClick := CardDblClick;
@@ -879,7 +901,7 @@ begin
   try
     var Available := Max(1, LayoutGrid.Width);
     var Columns := Max(1, Floor((Available + 14) / (FCardWidth + 14)));
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     Columns := Max(2, Columns);
     {$ENDIF}
     if FListMode then
@@ -958,7 +980,60 @@ begin
     inherited;
     PanelSidebar.Visible := Width >= 900;
     LayoutCompactActions.Visible := not PanelSidebar.Visible;
-    PanelInspector.Visible := Width >= 1120;
+    var CompactNav := FindComponent('LayoutCompactNavigation') as TLayout;
+    CompactNav.Visible := not PanelSidebar.Visible;
+    var Nav := FindComponent('LayoutNav') as TLayout;
+    if CompactNav.Visible then
+    begin
+      Nav.Parent := CompactNav;
+      Nav.Align := TAlignLayout.Client;
+      Nav.Margins.Rect := TRectF.Empty;
+    end
+    else
+    begin
+      Nav.Parent := PanelSidebar;
+      Nav.Align := TAlignLayout.Top;
+      Nav.Height := 162;
+      Nav.Margins.Rect := RectF(12, 12, 12, 0);
+    end;
+    for var I := 0 to High(FNavButtons) do
+    begin
+      FNavIcons[I].Visible := not CompactNav.Visible;
+      if CompactNav.Visible then
+      begin
+        FNavButtons[I].Align := TAlignLayout.Left;
+        FNavButtons[I].Width := Max(1, (CompactNav.Width - 8) / 3);
+        FNavButtons[I].Margins.Rect := RectF(0, 0, 4, 0);
+        FNavButtons[I].Position.X := I * 1000; // Left-alignment order.
+        FNavButtons[I].TextSettings.HorzAlign := TTextAlign.Center;
+        FNavButtons[I].StylesData['text.Margins.Left'] := 4;
+      end
+      else
+      begin
+        FNavButtons[I].Align := TAlignLayout.Top;
+        FNavButtons[I].Height := 46;
+        FNavButtons[I].Margins.Rect := RectF(0, 0, 0, 8);
+        FNavButtons[I].Position.Y := I * 54;
+        FNavButtons[I].TextSettings.HorzAlign := TTextAlign.Leading;
+        FNavButtons[I].StylesData['text.Margins.Left'] := 48;
+      end;
+    end;
+    var InspectorOverlay := FindComponent('LayoutInspectorOverlay') as TLayout;
+    var WideInspector := Width >= 1120;
+    if WideInspector then
+    begin
+      PanelInspector.Parent := Self;
+      PanelInspector.Align := TAlignLayout.Right;
+      PanelInspector.Width := 292;
+    end
+    else
+    begin
+      PanelInspector.Parent := FindComponent('LayoutInspectorContent') as TLayout;
+      PanelInspector.Align := TAlignLayout.Client;
+    end;
+    InspectorOverlay.Visible := not WideInspector and FInspectorOpen;
+    PanelInspector.Visible := WideInspector or FInspectorOpen;
+    if InspectorOverlay.Visible then InspectorOverlay.BringToFront;
     for var Child in VertScrollBoxPlatforms.Content.Children do
       if Child is TLayout then
         TLayout(Child).Width := VertScrollBoxPlatforms.Width;
@@ -971,7 +1046,7 @@ begin
       var Stacked := ContentWidth < 520;
       var CardHeight := IfThen(Stacked, 208, 154);
       FContinueExtent := CardHeight + 16;
-      {$IF Defined(ANDROID) or Defined(IOS)}
+      {$IFDEF ISMOBILE}
       if LayoutBody.Height - LayoutHeader.Height - FContinueExtent < 274 then
         FContinueExtent := 0;
       FContinueCollapse := EnsureRange(VertScrollBoxScroll.ViewportPosition.Y, 0, FContinueExtent);
@@ -1057,7 +1132,7 @@ begin
   Resize;
 end;
 
-{$IF Defined(ANDROID) or Defined(IOS)}
+{$IFDEF ISMOBILE}
 procedure TLibraryView.ScrollViewportChanged(Sender: TObject; const OldPosition, NewPosition: TPointF; const ContentSizeChanged: Boolean);
 begin
   if FBuilding or FLayouting or not FContinue.Visible or (FContinueExtent <= 0) then
@@ -1084,49 +1159,72 @@ end;
 
 procedure TLibraryView.UpdateInspector;
 begin
-  ButtonPlay.Enabled := FSelected <> nil;
-  ButtonFavorite.Enabled := FSelected <> nil;
-  if FSelected = nil then
-  begin
-    LabelTitle.Text := Translate('Select a game');
-    ImageCover.Bitmap := nil;
-    LabelDetails.Text := '';
-    LabelDescription.Text := '';
-    LabelGameInfo.Text := '';
-  end
-  else
-  begin
-    LabelTitle.Text := FSelected.Title;
-    LabelDetails.Text := LibrarySystemName(FSelected.SystemId) + sLineBreak + FSelected.Developer;
-    LabelDescription.Text := FSelected.Description;
-    if LabelDescription.Text = '' then
-      LabelDescription.Text := FSelected.Genre;
-    LabelGameInfo.Text := '';
-    if FSelected.Genre <> '' then
-      LabelGameInfo.Text := Translate('Genre: ') + FSelected.Genre;
-    if FSelected.Players <> '' then
-      LabelGameInfo.Text := LabelGameInfo.Text + sLineBreak + Translate('Players: ') + FSelected.Players;
-    if FSelected.Favorite then
-      ButtonFavorite.Text := Translate('Remove from favorites')
-    else
-      ButtonFavorite.Text := Translate('Add to favorites');
-    LoadImage(ImageCover, FSelected.Cover);
-  end;
-
-  var Saves := Snapshots(FSelected);
-  LabelSavesEmpty.Visible := Length(Saves) = 0;
-  LabelSavesEmpty.Text := Translate('No save states yet.');
-  for var i := 0 to 2 do
-  begin
-    FSaveButtons[i].Visible := i < Length(Saves);
-    TControl(FSaveButtons[i].Parent).Visible := FSaveButtons[i].Visible;
-    FSaveImages[i].Visible := i < Length(Saves);
-    if i < Length(Saves) then
+  var Content := TControl(ImageCover.Parent);
+  Content.BeginUpdate;
+  try
+    ButtonPlay.Enabled := FSelected <> nil;
+    ButtonFavorite.Enabled := FSelected <> nil;
+    ImageCover.Visible := (FSelected <> nil) and (FSelected.Cover <> '');
+    if FSelected = nil then
     begin
-      FSaveButtons[i].Text := Saves[i].Name + sLineBreak + FormatDateTime('dd.mm.yyyy hh:nn', Saves[i].Modified);
-      FSaveButtons[i].TagString := Saves[i].Location;
-      LoadImage(FSaveImages[i], Saves[i].PreviewLocation);
+      LabelTitle.Text := Translate('Select a game');
+      ImageCover.Bitmap := nil;
+      LabelDetails.Text := '';
+      LabelDescription.Text := '';
+      LabelGameInfo.Text := '';
+    end
+    else
+    begin
+      LabelTitle.Text := FSelected.Title;
+      LabelDetails.Text := LibrarySystemFullName(FSelected.SystemId) + sLineBreak + FSelected.Developer;
+      LabelDescription.Text := FSelected.Description;
+      if LabelDescription.Text = '' then
+        LabelDescription.Text := FSelected.Genre;
+      LabelGameInfo.Text := '';
+      if FSelected.Genre <> '' then
+        LabelGameInfo.Text := Translate('Genre: ') + FSelected.Genre;
+      if FSelected.Players <> '' then
+        LabelGameInfo.Text := LabelGameInfo.Text + sLineBreak + Translate('Players: ') + FSelected.Players;
+      if FSelected.Favorite then
+        ButtonFavorite.Text := Translate('Remove from favorites')
+      else
+        ButtonFavorite.Text := Translate('Add to favorites');
+      LoadImage(ImageCover, FSelected.Cover);
     end;
+    LabelDetails.Visible := LabelDetails.Text <> '';
+    LabelDescription.Visible := LabelDescription.Text <> '';
+    LabelGameInfo.Visible := LabelGameInfo.Text <> '';
+  
+    var Saves := Snapshots(FSelected);
+    LabelSavesEmpty.Visible := Length(Saves) = 0;
+    LabelSavesEmpty.Text := Translate('No save states yet.');
+    for var i := 0 to 2 do
+    begin
+      FSaveButtons[i].Visible := i < Length(Saves);
+      TControl(FSaveButtons[i].Parent).Visible := FSaveButtons[i].Visible;
+      FSaveImages[i].Visible := i < Length(Saves);
+      if i < Length(Saves) then
+      begin
+        FSaveButtons[i].Text := Saves[i].Name + sLineBreak + FormatDateTime('dd.mm.yyyy hh:nn', Saves[i].Modified);
+        FSaveButtons[i].TagString := Saves[i].Location;
+        LoadImage(FSaveImages[i], Saves[i].PreviewLocation);
+      end;
+    end;
+    // Hidden Top-aligned controls retain old positions. Restore the logical
+    // order before FMX sorts them when the selected game's content changes.
+    var Items: TArray<TControl> := [ImageCover, LabelTitle, LabelDetails,
+      ButtonPlay, ButtonFavorite, LabelDescription, LabelGameInfo,
+      FindComponent('LabelSnapshots') as TControl, LabelSavesEmpty,
+      TControl(FSaveButtons[0].Parent), TControl(FSaveButtons[1].Parent),
+      TControl(FSaveButtons[2].Parent)];
+    var OrderY: Single := 0;
+    for var Item in Items do
+    begin
+      Item.Position.Y := OrderY + Item.Margins.Top;
+      OrderY := OrderY + Item.Margins.Top + Item.Height + Item.Margins.Bottom;
+    end;
+  finally
+    Content.EndUpdate;
   end;
 end;
 
@@ -1253,7 +1351,7 @@ begin
     for var i := 0 to FPlatformButtons.Count - 1 do
     begin
       var Button := FPlatformButtons[i];
-      var Caption := LibrarySystemName(Button.TagString);
+      var Caption := LibrarySystemFullName(Button.TagString);
       if i >= ComboBoxPlatform.Items.Count then
         ComboBoxPlatform.Items.Add(Caption)
       else if ComboBoxPlatform.Items[i] <> Caption then
@@ -1316,11 +1414,26 @@ begin
   for var Card in FCards do
     Card.Selection.Visible := Card.TagObject = FSelected;
   UpdateInspector;
-  if not PanelInspector.Visible then
-    PlayClick(Self);
+  if Width < 1120 then
+  begin
+    FInspectorOpen := True;
+    Resize;
+  end;
 end;
 
-{$IF Defined(ANDROID) or Defined(IOS)}
+function TLibraryView.CloseDetails: Boolean;
+begin
+  Result := FInspectorOpen;
+  FInspectorOpen := False;
+  Resize;
+end;
+
+procedure TLibraryView.DetailsBackClick(Sender: TObject);
+begin
+  CloseDetails;
+end;
+
+{$IFDEF ISMOBILE}
 procedure TLibraryView.CardTap(Sender: TObject; const Point: TPointF);
 begin
   CardClick(Sender);

@@ -1,4 +1,4 @@
-﻿object FormMain: TFormMain
+object FormMain: TFormMain
   Left = 0
   Top = 0
   Caption = 'RetroMul'
@@ -28281,15 +28281,14 @@
               object HidePanelIcon: TPath
                 Align = Center
                 Data.Path = {
-              140000000000000042608940DF4F7B41020000003ADF954070C7804102000000
-              C420AA4070C7804102000000BE9FB640DF4F7B410100000000004041BE9F1641
-              0100000010589241DF4F7B4102000000A77B954112B080410200000001799A41
-              F9A4804102000000FD8E9D41FA1D7B4102000000F9A4A04102F2744102000000
-              12B0A0414FF76A4102000000EFA79D4120B0644101000000DE4F4B414060E940
-              02000000611045413DE2DC40020000009DEF3A413DE2DC400200000020B03441
-              3F60E940010000004060894020B06441020000007DC479409DEF6A4102000000
-              7DC47940611075410200000040608940DE4F7B41
-                }
+                  140000000000000042608940DF4F7B41020000003ADF954070C7804102000000
+                  C420AA4070C7804102000000BE9FB640DF4F7B410100000000004041BE9F1641
+                  0100000010589241DF4F7B4102000000A77B954112B080410200000001799A41
+                  F9A4804102000000FD8E9D41FA1D7B4102000000F9A4A04102F2744102000000
+                  12B0A0414FF76A4102000000EFA79D4120B0644101000000DE4F4B414060E940
+                  02000000611045413DE2DC40020000009DEF3A413DE2DC400200000020B03441
+                  3F60E940010000004060894020B06441020000007DC479409DEF6A4102000000
+                  7DC47940611075410200000040608940DE4F7B41}
                 Fill.Color = xFFE8ECF1
                 HitTest = False
                 Size.Width = 20.000000000000000000
@@ -28628,8 +28627,7 @@
                   0000A0410200000071AC51410000A041020000000000604139D6984102000000
                   00006041000090410200000000006041C72987410200000071AC514100008041
                   020000000000404100008041020000008F532E41000080410200000000002041
-                  C7298741020000000000204100009041030000000000204100009041
-                }
+                  C7298741020000000000204100009041030000000000204100009041}
                 Fill.Color = xFFE8ECF1
                 HitTest = False
                 Size.Width = 4.000000000000000000
@@ -28639,7 +28637,6 @@
                 WrapMode = Fit
               end
             end
-
           end
         end
         object GameStatus: TPanel
@@ -28715,13 +28712,12 @@
         end
         object LayoutShowPanel: TLayout
           Align = Contents
-          HitTest = False
           Visible = False
           object LayoutShowPanelTop: TLayout
             Align = Top
-            HitTest = False
             Padding.Left = 8.000000000000000000
             Padding.Top = 8.000000000000000000
+            Size.Width = 50.000000000000000000
             Size.Height = 48.000000000000000000
             Size.PlatformDefault = False
             object ButtonShowPanel: TButton
@@ -28729,33 +28725,33 @@
               CanFocus = False
               StyledSettings = []
               Hint = 'Show panel'
+              Position.X = 8.000000000000000000
+              Position.Y = 8.000000000000000000
               Size.Width = 44.000000000000000000
               Size.Height = 40.000000000000000000
               Size.PlatformDefault = False
               StyleLookup = 'buttonstyle'
-              Visible = True
               ParentShowHint = False
               ShowHint = True
               object ShowPanelIcon: TPath
                 Align = Center
                 Data.Path = {
-              140000000000000042608940DF4F7B41020000003ADF954070C7804102000000
-              C420AA4070C7804102000000BE9FB640DF4F7B410100000000004041BE9F1641
-              0100000010589241DF4F7B4102000000A77B954112B080410200000001799A41
-              F9A4804102000000FD8E9D41FA1D7B4102000000F9A4A04102F2744102000000
-              12B0A0414FF76A4102000000EFA79D4120B0644101000000DE4F4B414060E940
-              02000000611045413DE2DC40020000009DEF3A413DE2DC400200000020B03441
-              3F60E940010000004060894020B06441020000007DC479409DEF6A4102000000
-              7DC47940611075410200000040608940DE4F7B41
-                }
+                  140000000000000042608940DF4F7B41020000003ADF954070C7804102000000
+                  C420AA4070C7804102000000BE9FB640DF4F7B410100000000004041BE9F1641
+                  0100000010589241DF4F7B4102000000A77B954112B080410200000001799A41
+                  F9A4804102000000FD8E9D41FA1D7B4102000000F9A4A04102F2744102000000
+                  12B0A0414FF76A4102000000EFA79D4120B0644101000000DE4F4B414060E940
+                  02000000611045413DE2DC40020000009DEF3A413DE2DC400200000020B03441
+                  3F60E940010000004060894020B06441020000007DC479409DEF6A4102000000
+                  7DC47940611075410200000040608940DE4F7B41}
                 Fill.Color = xFFE8ECF1
                 HitTest = False
+                RotationAngle = 180.000000000000000000
                 Size.Width = 20.000000000000000000
                 Size.Height = 12.000000000000000000
                 Size.PlatformDefault = False
                 Stroke.Kind = None
                 WrapMode = Fit
-                RotationAngle = 180.000000000000000000
               end
             end
           end
@@ -28779,7 +28775,6 @@
   end
   object GameActionsPopup: TPopup
     ClipChildren = True
-    Placement = Bottom
     Padding.Left = 8.000000000000000000
     Padding.Top = 8.000000000000000000
     Padding.Right = 8.000000000000000000
@@ -28788,10 +28783,14 @@
     Size.Height = 440.000000000000000000
     Size.PlatformDefault = False
     StyleBook = FormStyles.StyleBookWinUI3
+    TabOrder = 2
     object GameActionsBackground: TRectangle
       Align = Contents
       Fill.Color = xFF1B2026
       HitTest = False
+      Size.Width = 320.000000000000000000
+      Size.Height = 440.000000000000000000
+      Size.PlatformDefault = False
       Stroke.Color = xFF343C46
       XRadius = 8.000000000000000000
       YRadius = 8.000000000000000000
@@ -28800,6 +28799,7 @@
       Align = Top
       CanFocus = False
       Margins.Bottom = 4.000000000000000000
+      Size.Width = 80.000000000000000000
       Size.Height = 44.000000000000000000
       Size.PlatformDefault = False
       StyleLookup = 'buttonstyle'
@@ -28808,15 +28808,20 @@
     end
     object GameActionsScroll: TVertScrollBox
       Align = Client
+      Size.Width = 304.000000000000000000
+      Size.Height = 424.000000000000000000
+      Size.PlatformDefault = False
       AutoHide = False
-      TouchTracking = True
       Bounces = False
-      ShowScrollBars = True
+      TouchTracking = True
+      Viewport.Width = 50.000000000000000000
+      Viewport.Height = 50.000000000000000000
       object GameActionsItems: TLayout
         Align = Top
-        HitTest = False
+        Size.Width = 50.000000000000000000
         Size.Height = 384.000000000000000000
         Size.PlatformDefault = False
+        TabOrder = 0
       end
     end
   end

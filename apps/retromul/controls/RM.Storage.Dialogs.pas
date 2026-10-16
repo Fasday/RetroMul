@@ -42,6 +42,7 @@ begin
     else
     begin
       Dialog.Title := Translate('Open ROM');
+
       // Content detection allows renamed ROMs and provider-specific MIME types.
       Dialog.Filter := TPlatformRegistry.FileFilter + '|' + Translate('All files|*');
       Dialog.SelectFiles(Completion);

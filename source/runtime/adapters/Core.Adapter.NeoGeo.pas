@@ -35,11 +35,11 @@ type
     FNeoConfig: TNeoGeoConfig;
     FKeys, FKeys2: TNeoGeoKeyMap;
     FKeyboard, FKeyboard2, FGamepad, FGamepad2: TEmulatorButtons;
-    FPaused, FForceAES: Boolean;
+    FPaused: Boolean;
     FSavePath, FSnapshotDirectory, FError: string;
     procedure ApplySettings;
   public
-    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False; ForceAES: Boolean = False);
+    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False);
     destructor Destroy; override;
     function GetSystemId: string;
     function GetName: string;
@@ -90,6 +90,10 @@ begin
   inherited Create(FileName, Storage);
   FKeys := Defaults;
   FKeys2 := Defaults2;
+  FModel := 'auto';
+  FCountry := 'auto';
+  FCardSize := 2048;
+  FDiscPresent := True;
 end;
 
 procedure TNeoGeoConfig.LoadCoreSettings(Ini: TCustomIniFile);
@@ -140,25 +144,20 @@ begin
   end;
 end;
 
-constructor TNeoGeoCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD, ForceAES: Boolean);
+constructor TNeoGeoCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean);
 begin
   inherited Create;
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
 
-  FForceAES := ForceAES and not CD;
   var SystemId := ROM_SYSTEM_NEOGEO;
-  if FForceAES then
-    SystemId := ROM_SYSTEM_NEOGEOAES;
   if CD then
     SystemId := ROM_SYSTEM_NEOGEOCD;
   var Config := TNeoGeoConfig.Create(FStorage.ConfigFile(SystemId), FStorage);
   FConfig := Config;
   FNeoConfig := Config;
   Config.Load;
-  if FForceAES then
-    Config.FModel := 'aes';
   if CD then
     FCartridge := TNeoGeoCartridge.CreateCD(Stream, FStorage, RomName, Config.FBIOS, Config.FModel)
   else
@@ -186,6 +185,16 @@ begin
   var Identity := Hash.HashAsString;
   FSavePath := FStorage.GameSave(SystemId, RomName, Identity);
   FSnapshotDirectory := FStorage.GameSnapshots(SystemId, RomName, Identity);
+  if not CD then
+  begin
+    // Retain access to saves written before AES joined the Neo Geo platform.
+    var LegacySave := FStorage.GameSave(ROM_SYSTEM_NEOGEOAES, RomName, Identity);
+    if not FStorage.Exists(FSavePath) and FStorage.Exists(LegacySave) then
+      FSavePath := LegacySave;
+    var LegacySnapshots := FStorage.GameSnapshots(ROM_SYSTEM_NEOGEOAES, RomName, Identity);
+    if not FStorage.FolderExists(FSnapshotDirectory) and FStorage.FolderExists(LegacySnapshots) then
+      FSnapshotDirectory := LegacySnapshots;
+  end;
 end;
 
 destructor TNeoGeoCoreAdapter.Destroy;
@@ -417,7 +426,6 @@ end;
 function TNeoGeoCoreAdapter.GetSystemId: string;
 begin
   Result := ROM_SYSTEM_NEOGEO;
-  if FForceAES then Result := ROM_SYSTEM_NEOGEOAES;
   if FCartridge.Disc <> nil then
     Result := ROM_SYSTEM_NEOGEOCD;
 end;

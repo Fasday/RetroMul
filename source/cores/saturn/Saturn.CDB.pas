@@ -84,6 +84,7 @@ implementation
 
 uses
   System.Hash;
+
 {$Q+}{$R+}
 
 function SyntheticRingSector(FAD: Cardinal): TBytes;
@@ -93,10 +94,10 @@ begin
   // performs the verification. This is not a capture of physical optics.
   SetLength(Result, 2352);
   var Shift: Word := 1;
-  for var I := 12 to 2351 do
+  for var i := 12 to 2351 do
   begin
     var Bits: Byte := $A8;
-    if Odd(I) then
+    if Odd(i) then
       Bits := $59;
     for var B := 0 to 7 do
     begin
@@ -105,10 +106,10 @@ begin
       var Feedback: Cardinal := (Shift shr 1) xor Shift;
       Shift := Word(((Cardinal(Shift) or (Feedback shl 15)) shr 1) and $FFFF);
     end;
-    Result[I] := Bits;
+    Result[i] := Bits;
   end;
-  for var I := 1 to 10 do
-    Result[I] := $FF;
+  for var i := 1 to 10 do
+    Result[i] := $FF;
   var M := FAD div 4500;
   var S := (FAD div 75) mod 60;
   var F := FAD mod 75;
@@ -122,8 +123,8 @@ begin
   Result[19] := 0;
   Move(Result[16], Result[20], 4);
   var EDC := CDDataEDC(Result, 2064);
-  for var I := 0 to 3 do
-    Result[2348 + I] := (EDC shr (I * 8)) and $FF;
+  for var i := 0 to 3 do
+    Result[2348 + i] := (EDC shr (i * 8)) and $FF;
 end;
 
 function ReadCPU(User: Pointer; Address: Cardinal; Size: Integer): Cardinal;
@@ -141,6 +142,7 @@ begin
   inherited Create;
   if Length(Firmware) <> 65536 then
     raise EReadError.Create('SH-1 CD firmware must contain 64 KiB');
+
   FROM := Copy(Firmware);
   FDisc := Disc;
   FIRQ := IRQ;
@@ -204,6 +206,7 @@ procedure TSaturnCDB.SetProtection(Value: Boolean);
 begin
   if Value = FProtection then
     Exit;
+
   FProtection := Value;
   Reset;
 end;
@@ -221,11 +224,13 @@ begin
   Result := True;
   if (Channel = 0) and ((FCPU.Read($05FFFF4E, 2) shr 8) and 15 = 3) then
     Exit(FDecodedAt < Length(FDecoded));
+
   if Channel = 1 then
   begin
     var Resource: Integer := (FCPU.Read($05FFFF5E, 2) shr 8) and 15;
     if Resource = 3 then
       Exit((FRegisters[1] and 5 = 5) and (FFIFOCount > 0));
+
     if Resource = 2 then
       Exit((FRegisters[1] and 5 = 4) and (FFIFOCount < Length(FFIFO)));
   end;
@@ -241,8 +246,9 @@ function TSaturnCDB.DMAInput(Channel, Size: Integer): Cardinal;
 begin
   if Channel = 1 then
     Exit(Read($0A000000, Size));
+
   Result := 0;
-  for var I := 0 to Size - 1 do
+  for var i := 0 to Size - 1 do
   begin
     Result := Result shl 8;
     if (Channel = 0) and (FDecodedAt < Length(FDecoded)) then
@@ -275,6 +281,7 @@ procedure TSaturnCDB.PushFIFO(Value: Word);
 begin
   if FFIFOCount = Length(FFIFO) then
     Exit;
+
   FFIFO[FFIFOWrite] := Value;
   FFIFOWrite := (FFIFOWrite + 1) mod Length(FFIFO);
   Inc(FFIFOCount);
@@ -286,14 +293,14 @@ begin
   if Address < $10000 then
   begin
     Result := 0;
-    for var I := 0 to Size - 1 do
-      Result := (Result shl 8) or FROM[(Address + Cardinal(I)) and $FFFF];
+    for var i := 0 to Size - 1 do
+      Result := (Result shl 8) or FROM[(Address + Cardinal(i)) and $FFFF];
   end
   else if (Address and $07000000 = $01000000) then
   begin
     Result := 0;
-    for var I := 0 to Size - 1 do
-      Result := (Result shl 8) or FDRAM[(Address + Cardinal(I)) and $7FFFF];
+    for var i := 0 to Size - 1 do
+      Result := (Result shl 8) or FDRAM[(Address + Cardinal(i)) and $7FFFF];
   end
   else if (Address >= $0A000000) and (Address < $0A000020) then
   begin
@@ -304,7 +311,7 @@ begin
     if A = $18 then
     begin
       V := 0;
-      for var I := 0 to 1 do
+      for var i := 0 to 1 do
       begin
         V := V shl 8;
         if FDecodedAt < Length(FDecoded) then
@@ -344,8 +351,8 @@ end;
 procedure TSaturnCDB.Write(Address, Value: Cardinal; Size: Integer);
 begin
   if (Address and $07000000 = $01000000) then
-    for var I := 0 to Size - 1 do
-      FDRAM[(Address + Cardinal(I)) and $7FFFF] := (Value shr ((Size - I - 1) * 8)) and $FF
+    for var i := 0 to Size - 1 do
+      FDRAM[(Address + Cardinal(i)) and $7FFFF] := (Value shr ((Size - i - 1) * 8)) and $FF
   else if (Address >= $0A000000) and (Address < $0A000020) then
   begin
     if Size = 4 then
@@ -357,6 +364,7 @@ begin
         Write(Address + 2, Value and $FFFF, 2);
       Exit;
     end;
+
     var A: Integer := Address and $1E;
     var V: Word := Word(Value and $FFFF);
     if Assigned(FBridgeObserver) then
@@ -367,7 +375,7 @@ begin
       if Odd(Address) then
         V := (V and $FF00) or (Value and $FF)
       else
-        V := (V and $FF) or (Value shl 8);
+        V := (V and $FF) or ((Value and $FF) shl 8);
     end;
     if A = 0 then
     begin
@@ -380,6 +388,7 @@ begin
     else if A = $02 then
     begin
       FRegisters[1] := V and 15;
+
       // Resetting the FIFO pointers does not erase its storage. In the
       // SH-1 self-test DIR changes to read back the words just written.
       if V and 2 <> 0 then
@@ -403,14 +412,15 @@ procedure TSaturnCDB.Serial(Channel: Integer; Value: Byte);
 begin
   if Channel <> 0 then
     Exit;
+
   Inc(FSerialBytes);
   var Slot := FSerialAt;
   if FSerialAt = 0 then
   begin
     DriveReport;
     var Sum: Byte := 0;
-    for var I := 0 to 10 do
-      Sum := Byte((Integer(Sum) + FRX[I]) and $FF);
+    for var i := 0 to 10 do
+      Sum := Byte((Integer(Sum) + FRX[i]) and $FF);
     FRX[11] := Byte((not Sum) and $FF);
   end;
   if FSerialAt < 12 then
@@ -426,10 +436,11 @@ begin
     FSerialByte := 0;
     FCPU.PortBInputs := $0400;
     var Sum: Byte := 0;
-    for var I := 0 to 11 do
-      Sum := Byte((Integer(Sum) + FTX[I]) and $FF);
+    for var i := 0 to 11 do
+      Sum := Byte((Integer(Sum) + FTX[i]) and $FF);
     if (Value = 0) and (Sum = $FF) then
       DriveCommand;
+
     // A report period includes the thirteen clocked bytes, rather than
     // adding a full sector period after the final byte.
     FDriveSlotAt := FCPU.Time + 20000000 div (75 * FReadSpeed) - 12 * 1600;
@@ -451,6 +462,7 @@ begin
   FRX[0] := Byte((FMechanismStatus) and $FF);
   if FDisc = nil then
     Exit;
+
   FillChar(FRX[1], 10, 0);
   if FMechanismStatus = $B6 then
   begin
@@ -459,11 +471,12 @@ begin
     FRX[3] := Byte((FDriveTarget shr 16) and $FF);
     FRX[4] := Byte((FDriveTarget shr 8) and $FF);
     FRX[5] := Byte((FDriveTarget) and $FF);
-    for var I := 6 to 9 do
-      FRX[I] := Byte((9) and $FF);
+    for var i := 6 to 9 do
+      FRX[i] := Byte((9) and $FF);
     FRX[10] := Byte((FDriveTarget mod 75) and $FF);
     Exit;
   end;
+
   if FMechanismStatus = $04 then
   begin
     // Lead-in Q records, repeated three times before advancing. The SH-1
@@ -509,6 +522,7 @@ begin
     end;
     Exit;
   end;
+
   if FDriveFAD >= Cardinal(FDisc.LeadOut + 150) then
   begin
     FRX[1] := Byte((1) and $FF);
@@ -549,12 +563,14 @@ begin
     FMechanismStatus := $80;
     Exit;
   end;
+
   if FTrayStartup then
   begin
     FTrayStartup := False;
     FMechanismStatus := $30;
     Exit;
   end;
+
   if FTX[0] <> 0 then
   begin
     FReadSpeed := 2;
@@ -584,13 +600,13 @@ begin
     $06, $09:
       begin
         FDriveTarget := (Cardinal(FTX[1]) shl 16) or (Cardinal(FTX[2]) shl 8) or FTX[3];
-      // Firmware deliberately requests FAD 149 while priming the decoder.
-      // Clamping it to the first user sector shifts every incoming header.
+        // Firmware deliberately requests FAD 149 while priming the decoder.
+        // Clamping it to the first user sector shifts every incoming header.
         if FDriveTarget < 4 then
           FDriveTarget := 4;
         FDrivePlaying := FTX[0] = $06;
-      // Mechanical latency is a nominal distance-dependent model; it is
-      // deliberately asynchronous and is not calibrated to a captured drive.
+        // Mechanical latency is a nominal distance-dependent model; it is
+        // deliberately asynchronous and is not calibrated to a captured drive.
         var Distance := Abs(Int64(FDriveTarget) - Int64(FDriveFAD));
         if Distance > FDisc.LeadOut then
           Distance := FDisc.LeadOut;
@@ -642,12 +658,14 @@ procedure TSaturnCDB.DriveSector;
 begin
   if (FDisc = nil) or not FDrivePlaying then
     Exit;
+
   if FProtection and (FDriveFAD >= Cardinal(FDisc.LeadOut + 150)) then
   begin
     FDrivePlaying := False;
     FMechanismStatus := $00;
     Exit;
   end;
+
   if (FDriveFAD < 150) or (FDriveFAD >= Cardinal(FDisc.LeadOut + 150)) or FDisc.IsData(Integer(FDriveFAD) - 150) then
   begin
     var Raw: TBytes;
@@ -686,6 +704,7 @@ begin
   Right := 0;
   if FAudioAt >= 2352 then
     Exit;
+
   Left := SmallInt(Word(FAudio[FAudioAt]) or (Word(FAudio[FAudioAt + 1]) shl 8));
   Right := SmallInt(Word(FAudio[FAudioAt + 2]) or (Word(FAudio[FAudioAt + 3]) shl 8));
   Inc(FAudioAt, 4);
@@ -695,6 +714,7 @@ procedure TSaturnCDB.SetMechanismReport(const Report: TBytes);
 begin
   if Length(Report) <> 11 then
     raise EArgumentException.Create('CD mechanism report must contain eleven bytes');
+
   Move(Report[0], FMechanismReport, 11);
   FMechanismStatus := Report[0];
 end;
@@ -747,6 +767,7 @@ end;
 function TSaturnCDB.HostReady(Size: Integer; Writing: Boolean): Boolean;
 begin
   var Words: Integer := (Size + 1) div 2;
+
   // DACK can refill an active unit directly. At a sector boundary the SH-1
   // must run its completion handler and arm the next buffer before the host
   // consumes more words. A waiting DMA keeps its read phase intact.
@@ -754,6 +775,7 @@ begin
   begin
     if FRegisters[1] and 1 = 0 then
       Exit(False);
+
     while (FFIFOCount + Words > Length(FFIFO)) and FCPU.TransferDMA(1) do
       ;
     Result := FFIFOCount + Words <= Length(FFIFO);
@@ -762,6 +784,7 @@ begin
   begin
     if FRegisters[1] and 1 <> 0 then
       Exit(False);
+
     while (FFIFOCount < Words) and FCPU.TransferDMA(1) do
       ;
     Result := FFIFOCount >= Words;
@@ -833,8 +856,14 @@ begin
     end;
     Exit;
   end;
+
   if Size = 4 then
     Value := Value shr 16;
+
+  // SH-2 MOV.W presents the full source register to the bus callback. Only
+  // the low sixteen data pins reach these bridge registers (including a
+  // sign-extended immediate such as $FFFFFFFF written by retail software).
+  Value := Value and $FFFF;
   case A and $FFFFC of
     $90008:
       FRegisters[15] := FRegisters[15] and Word(Value);
@@ -842,9 +871,9 @@ begin
       FMask := Value;
     $90018, $9001C, $90020, $90024:
       begin
-        var I := ((A and $3C) - $18) div 4;
-        FCommands[I] := Value;
-        if I = 3 then
+        var i := ((A and $3C) - $18) div 4;
+        FCommands[i] := Value;
+        if i = 3 then
         begin
           FRegisters[2] := FRegisters[2] or 1;
           FRegisters[15] := FRegisters[15] and not 1;
@@ -863,6 +892,7 @@ begin
   Archive.Field(Digest[0], Length(Digest));
   if Archive.Loading and not CompareMem(@Digest[0], @Expected[0], Length(Digest)) then
     raise EReadError.Create('SH-1 firmware mismatch');
+
   FCPU.SerializeState(Archive);
   Archive.Field(FDRAM, SizeOf(FDRAM));
   Archive.Field(FRegisters, SizeOf(FRegisters));
@@ -895,6 +925,7 @@ begin
   Archive.Field(Bytes, SizeOf(Bytes));
   if (Bytes < 0) or (Bytes > 2352) then
     raise EReadError.Create('Invalid CD decoder state');
+
   SetLength(FDecoded, Bytes);
   if Bytes > 0 then
     Archive.Field(FDecoded[0], Bytes);
@@ -906,12 +937,15 @@ begin
   Archive.Field(Protection, SizeOf(Protection));
   if Protection <> FProtection then
     raise EReadError.Create('SH-1 optical protection setting mismatch');
+
   if (FFIFORead < 0) or (FFIFORead >= Length(FFIFO)) or (FFIFOWrite < 0) or (FFIFOWrite >= Length(FFIFO)) or (FFIFOCount < 0) or (FFIFOCount > Length(FFIFO)) or (FSerialAt < 0) or (FSerialAt > 12) then
     raise EReadError.Create('Invalid CDB transfer state');
+
   if (FDecodedAt < 0) or (FDecodedAt > Bytes) or (FAudioAt < 0) or (FAudioAt > 2352) or (FAudioAt mod 4 <> 0) or
     (FTOCEntry < 0) or (FTOCEntry > 102) or (FTOCRepeat < 0) or (FTOCRepeat > 2) or
     (FReadSpeed < 1) or (FReadSpeed > 2) then
     raise EReadError.Create('Invalid CDB mechanism state');
+
   if Archive.Loading then
     UpdateIRQ;
 end;

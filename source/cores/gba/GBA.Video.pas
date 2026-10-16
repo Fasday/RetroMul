@@ -1529,11 +1529,11 @@ begin
           begin
             if Enable and (1 shl (8 + BG)) <> 0 then
             begin
-              var Local := Cycle - 4 - BG;
+              var local := Cycle - 4 - BG;
               var Fetch: PGBATileFetch := @FFetch[BG];
-              if (Local >= 0) and
-                (((Local < 988) and ((Local shr 2 and 7) = (TextMapPhases shr (BG * 3) and 7))) or
-                 ((Fetch.Remaining > 0) and (Local = Fetch.NextCycle))) then
+              if (local >= 0) and
+                (((local < 988) and ((local shr 2 and 7) = (TextMapPhases shr (BG * 3) and 7))) or
+                ((Fetch.Remaining > 0) and (local = Fetch.NextCycle))) then
                 ClockTextBackground(BG, Cycle);
             end;
           end

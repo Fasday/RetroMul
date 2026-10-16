@@ -150,7 +150,8 @@ object RetroDialog: TRetroDialog
         Align = TopLeft
         Fill.Color = xFFFFB344
         HitTest = False
-        Margins.Right = 448.000000000000000000
+        Margins.Left = 24.000000000000000000
+        Position.X = 24.000000000000000000
         Size.Width = 64.000000000000000000
         Size.Height = 3.000000000000000000
         Size.PlatformDefault = False

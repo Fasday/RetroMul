@@ -22,11 +22,11 @@ type
     FHardware: TGBAHardware;
     FFlashBusy, FEEPROMBusy: Integer;
     FEEPROMCommand: array[0..81] of Byte;
-    function ReadROMBusSlow(Address: Cardinal; Size: Integer): Cardinal;
+    function ReadROMBusSlow(Address: Cardinal; Size: Integer): Cardinal; inline;
   public
     constructor Create(const Data: TBytes);
     destructor Destroy; override;
-    procedure Tick(Cycles: Integer); inline;
+    procedure Tick(Cycles: Integer); //inline;
     procedure OverrideSaveKind(Kind: TGBASaveKind);
     procedure WriteROM(Address: Cardinal; Value: Byte);
     function ReadROM(Address: Cardinal): Byte;
@@ -208,8 +208,8 @@ function TGBACartridge.ReadROMBusSlow(Address: Cardinal; Size: Integer): Cardina
 begin
   // GPIO bytes and unmapped ROM keep their individual device/open-bus reads.
   Result := 0;
-  for var I := 0 to Size - 1 do
-    Result := Result or (Cardinal(ReadROM(Address + Cardinal(I))) shl (I * 8));
+  for var i := 0 to Size - 1 do
+    Result := Result or (Cardinal(ReadROM(Address + Cardinal(i))) shl (i * 8));
 end;
 
 function TGBACartridge.ReadROM(Address: Cardinal): Byte;

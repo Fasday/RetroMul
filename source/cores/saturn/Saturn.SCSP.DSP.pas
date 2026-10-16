@@ -10,11 +10,21 @@ type
 
   TSCSPWrite = procedure(Address: Cardinal; Value: Byte) of object;
 
+  PSCSPDecodedInstruction = ^TSCSPDecodedInstruction;
+
+  TSCSPDecodedInstruction = record
+    I0, I1, I2, I3: Word;
+    ReadTemp, InputIndex, YSelect, Shift: Byte;
+    MemoryIndex, EffectIndex, CoefficientAddress, AddressWord: Byte;
+  end;
+
   TSCSPDSP = class
   private
     FRead: TSCSPRead;
     FWrite: TSCSPWrite;
     FRegisters: array[0..$4FF] of Byte;
+    FProgram: array[0..127] of TSCSPDecodedInstruction;
+    FProgramDirty: Boolean; // derived decode cache, excluded from snapshots
     FTemp: array[0..127] of Integer;
     FMemory: array[0..31] of Integer;
     FMix: array[0..15] of Integer;
@@ -24,7 +34,8 @@ type
     FReadAddress, FWriteAddress: Cardinal;
     FWriteValue: Word;
     FReadPending, FWritePending, FReadLinear, FRunning: Boolean;
-    function WordAt(Address: Integer): Word;
+    procedure DecodeProgram;
+    function WordAt(Address: Integer): Word; inline;
   public
     RingBase, RingLength: Integer;
     constructor Create(Read: TSCSPRead; Write: TSCSPWrite);
@@ -43,22 +54,22 @@ implementation
 uses
   System.Math;
 
+{$Q-}{$R-}
+function Sar(Value: Int64; Count: Integer): Integer; inline;
+begin
+  // All DSP callers shift by 0..16 and consume only the low 32 result bits.
+  // Logical and arithmetic 64-bit shifts differ only above those bits.
+  Result := Integer(UInt64(Value) shr Count);
+end;
+
+function Signed(Value: Int64; Bits: Integer): Integer; inline;
+begin
+  // Bias/unbias performs sign extension without a data-dependent branch.
+  var Sign: Cardinal := Cardinal(1) shl (Bits - 1);
+  Result := Integer(((Cardinal(Value) and (Sign * 2 - 1)) xor Sign) - Sign);
+end;
 {$Q+}{$R+}
 
-function Sar(Value: Int64; Count: Integer): Integer;
-begin
-  if Value >= 0 then
-    Result := Value shr Count
-  else
-    Result := -((-Value + (Int64(1) shl Count) - 1) shr Count);
-end;
-
-function Signed(Value: Int64; Bits: Integer): Integer;
-begin
-  Result := Value and ((Int64(1) shl Bits) - 1);
-  if Result and (1 shl (Bits - 1)) <> 0 then
-    Dec(Result, 1 shl Bits);
-end;
 // Same 1:4:11 signed floating sample format as the later AICA. PCM remains
 // big endian on Saturn; these conversions operate on the numeric word.
 
@@ -121,19 +132,23 @@ begin
   FWritePending := False;
   FReadLinear := False;
   FRunning := False;
+  FProgramDirty := True;
   RingBase := 0;
   RingLength := 8192;
 end;
 
+{$Q-}{$R-}
 function TSCSPDSP.WordAt(Address: Integer): Word;
 begin
-  Result := (Word(FRegisters[Address]) shl 8) or FRegisters[Address + 1];
+  Result := Swap(PWord(@FRegisters[Address])^);
 end;
+{$Q+}{$R+}
 
 function TSCSPDSP.ReadRegister(Address: Integer): Byte;
 begin
   if (Address >= $700) and (Address < $C00) then
     Exit(FRegisters[Address - $700]);
+
   var V: Integer := 0;
   var Shift: Integer := (3 - (Address and 3)) * 8;
   if (Address >= $C00) and (Address < $E00) then
@@ -160,6 +175,8 @@ begin
   if (Address >= $700) and (Address < $C00) then
   begin
     FRegisters[Address - $700] := Value;
+    if Address >= $800 then
+      FProgramDirty := True;
     if Address = $BFF then
       FRunning := True;
   end;
@@ -181,6 +198,32 @@ begin
   Result := FEffects[Channel and 15];
 end;
 
+procedure TSCSPDSP.DecodeProgram;
+begin
+  for var Index := 0 to 127 do
+  begin
+    var P := $100 + Index * 8;
+    var D := PSCSPDecodedInstruction(@FProgram[Index]);
+    D.I0 := WordAt(P);
+    D.I1 := WordAt(P + 2);
+    D.I2 := WordAt(P + 4);
+    D.I3 := WordAt(P + 6);
+    D.ReadTemp := (D.I0 shr 8) and 127;
+    D.InputIndex := (D.I1 shr 6) and 63;
+    D.YSelect := (D.I1 shr 13) and 3;
+    D.Shift := (D.I2 shr 4) and 3;
+    D.MemoryIndex := D.I1 and 31;
+    D.EffectIndex := (D.I2 shr 8) and 15;
+    D.CoefficientAddress := ((D.I3 shr 9) and 63) * 2;
+    D.AddressWord := $80 + ((D.I3 shr 2) and 31) * 2;
+  end;
+  FProgramDirty := False;
+end;
+
+// Internal microcode fields and all register indices are masked to their
+// hardware widths. Bus callbacks and public register/state access stay checked.
+
+{$Q-}{$R-}
 procedure TSCSPDSP.Step;
 begin
   FillChar(FEffects, SizeOf(FEffects), 0);
@@ -189,19 +232,22 @@ begin
     FillChar(FMix, SizeOf(FMix), 0);
     Exit;
   end;
+
+  if FProgramDirty then
+    DecodeProgram;
   var Acc: Integer := 0;
   var Fraction: Integer := 0;
   var YRegister: Integer := 0;
   var AddressRegister: Integer := 0;
   for var Index := 0 to 127 do
   begin
-    var P: Integer := $100 + Index * 8;
-    var I0 := WordAt(P);
-    var I1 := WordAt(P + 2);
-    var I2 := WordAt(P + 4);
-    var I3 := WordAt(P + 6);
-    var ReadTemp: Integer := (I0 shr 8) and 127;
-    var InputIndex: Integer := (I1 shr 6) and 63;
+    var Decoded := PSCSPDecodedInstruction(@FProgram[Index]);
+    var I0 := Decoded.I0;
+    var I1 := Decoded.I1;
+    var I2 := Decoded.I2;
+    var I3 := Decoded.I3;
+    var ReadTemp: Integer := Decoded.ReadTemp;
+    var InputIndex: Integer := Decoded.InputIndex;
     var Input: Integer := 0;
     if InputIndex < 32 then
       Input := FMemory[InputIndex]
@@ -210,7 +256,7 @@ begin
     else if InputIndex < 50 then
       Input := Integer(FExternal[InputIndex - 48]) * 256;
     if I1 and $20 <> 0 then
-      FMemory[I1 and 31] := FMemoryValue;
+      FMemory[Decoded.MemoryIndex] := FMemoryValue;
     var B: Integer := 0;
     if I2 and 2 = 0 then
     begin
@@ -224,11 +270,12 @@ begin
     if I1 and $8000 = 0 then
       X := FTemp[(ReadTemp + FDelay) and 127];
     var Y: Integer := 0;
-    case (I1 shr 13) and 3 of
+    case Decoded.YSelect of
       0:
         Y := Fraction;
       1:
-        Y := WordAt(((I3 shr 9) and 63) * 2);
+        // COEF is signed Q1.12 in register bits 15..3; low bits are unused.
+        Y := WordAt(Decoded.CoefficientAddress) shr 3;
       2:
         Y := (YRegister shr 11) and $1FFF;
       3:
@@ -237,7 +284,7 @@ begin
     Y := Signed(Y, 13);
     if I2 and 8 <> 0 then
       YRegister := Input;
-    var Shift: Integer := (I2 shr 4) and 3;
+    var Shift: Integer := Decoded.Shift;
     var Shifted: Integer := 0;
     case Shift of
       0:
@@ -253,7 +300,7 @@ begin
     if I0 and $80 <> 0 then
       FTemp[((I0 and 127) + FDelay) and 127] := Shifted;
     if I2 and $1000 <> 0 then
-      FEffects[(I2 shr 8) and 15] := Sar(Shifted, 8);
+      FEffects[Decoded.EffectIndex] := Sar(Shifted, 8);
     if I2 and $40 <> 0 then
     begin
       if Shift = 3 then
@@ -261,6 +308,7 @@ begin
       else
         Fraction := (Shifted shr 11) and $1FFF;
     end;
+
     // Read pipeline: IWT observes the result from two microsteps earlier.
     if FReadPending then
     begin
@@ -279,7 +327,7 @@ begin
     end;
     if I2 and $6000 <> 0 then
     begin
-      var A: Integer := WordAt($80 + ((I3 shr 2) and 31) * 2);
+      var A: Integer := WordAt(Decoded.AddressWord);
       if I2 and $8000 = 0 then
         Inc(A, FDelay);
       if I3 and 2 <> 0 then
@@ -319,8 +367,11 @@ begin
   FillChar(FMix, SizeOf(FMix), 0);
 end;
 
+{$Q+}{$R+}
 procedure TSCSPDSP.SerializeState(Archive: TStateArchive);
 begin
+  if Archive.Loading then
+    FProgramDirty := True;
   Archive.Field(FRegisters, SizeOf(FRegisters));
   Archive.Field(FTemp, SizeOf(FTemp));
   Archive.Field(FMemory, SizeOf(FMemory));

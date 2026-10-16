@@ -1,5 +1,7 @@
 ﻿unit RM.Controllers.Snapshots;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -50,8 +52,6 @@ begin
     raise ENotSupportedException.Create(Translate('Snapshots are not implemented by this core'));
 
   FState.Session.Emulation.SaveSnapshot(Name);
-  if FState.Browser.View <> nil then
-    FState.Browser.View.RefreshSnapshots;
 end;
 
 procedure TSnapshotsController.LoadSnapshot(const Name: string);
@@ -150,7 +150,11 @@ begin
   Menu.Clear;
   try
     if Menu = FState.Browser.ScreenshotMenu then
+    begin
+      {$IFNDEF ISMOBILE}
       AddItem(Translate('Open screenshot folder'), FView.OpenScreenshotFolderClick)
+      {$ENDIF}
+    end
     else if Menu = FState.Browser.SaveMenu then
       AddItem(Translate('Save as...'), FView.SaveSnapshotAsClick)
     else if Menu = FState.Browser.LoadMenu then
@@ -176,7 +180,7 @@ begin
               Result := CompareText(A.Location, B.Location);
           end));
         for var i := 0 to Min(8, Saves.Count) - 1 do
-          AddItem(Saves[i].Name.Replace('&', '&&'), FView.RecentSnapshotClick, Saves[i].Location);
+          AddItem(Saves[i].Name, FView.RecentSnapshotClick, Saves[i].Location);
         if Saves.Count > 0 then
           AddItem('-', nil);
       finally

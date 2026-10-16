@@ -14,12 +14,13 @@ type
 implementation
 
 uses
-  Core.Emulation, RM.VirtualController;
+  System.Types, Core.Emulation, RM.VirtualController;
 
 procedure TGamepadN64Standart.BuildLayout;
 begin
   AddPad;
   AddStick;
+  AddAuxiliaryButton(0, 'L', TVirtualSide.Left, RectF(136, 120, 224, 156));
   AddButton(TEmulatorButton.Select, 'Z', TVirtualSide.Left, 164, 20, 60, 44, True);
   AddButton(TEmulatorButton.Start, 'START', TVirtualSide.Left, 136, 80, 88, 36, True);
   AddButton(TEmulatorButton.Mode, 'R', TVirtualSide.Right, 112, 20, 104, 36, True);

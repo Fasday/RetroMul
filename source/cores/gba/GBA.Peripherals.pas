@@ -52,6 +52,9 @@ type
 
 implementation
 
+uses
+  GBA.Cartridge;
+
 function BCD(Value: Integer): Byte;
 begin
   Result := Byte((Value div 10) * 16 + Value mod 10);
@@ -431,6 +434,7 @@ begin
 
   SetLength(Result, 17);
   Move(FDate, Result[0], 8);
+
   // Explicit Double storage: Win32 can infer an Extended temporary for Now.
   var Host: TDateTime;
   Host := Now;

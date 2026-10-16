@@ -51,6 +51,10 @@ uses
   Androidapi.JNI.GraphicsContentViewText, Androidapi.JNI.Net,
   Androidapi.JNI.JavaTypes,
   {$ENDIF}
+  {$IFDEF IOS}
+  Macapi.ObjectiveC, Macapi.Helpers, iOSapi.Foundation, iOSapi.UIKit,
+  iOSapi.Helpers, Core.Storage, System.IOUtils,
+  {$ENDIF}
   System.UITypes;
 
 type
@@ -58,6 +62,19 @@ type
     ['{9C32D8EC-FE3E-461C-AB40-3410B01119A5}']
     procedure Start;
   end;
+
+  {$IFDEF IOS}
+  TSelectionRequest = class;
+  TIOSSelectionDelegate = class(TOCLocal, UIDocumentPickerDelegate)
+  private
+    FRequest: TSelectionRequest;
+  public
+    constructor Create(Request: TSelectionRequest);
+    procedure documentPicker(controller: UIDocumentPickerViewController; didPickDocumentsAtURLs: NSArray); overload; cdecl;
+    procedure documentPicker(controller: UIDocumentPickerViewController; didPickDocumentAtURL: NSURL); overload; cdecl;
+    procedure documentPickerWasCancelled(controller: UIDocumentPickerViewController); cdecl;
+  end;
+  {$ENDIF}
 
   TSelectionRequest = class(TInterfacedObject, ISelectionRequest)
   private
@@ -68,6 +85,13 @@ type
     FRequestCode: Integer;
     FSubscribed: Boolean;
     procedure ActivityResult(const Sender: TObject; const Message: TMessage);
+    {$ENDIF}
+    {$IFDEF IOS}
+    FIOSDelegate: TIOSSelectionDelegate;
+    FIOSPicker: UIDocumentPickerViewController;
+    FExportDirectory: string;
+    procedure StartIOS;
+    procedure SelectedIOS(const URLs: NSArray);
     {$ENDIF}
     procedure Complete(const AResult: TFMXSelectionResult);
   public
@@ -168,6 +192,13 @@ end;
 
 destructor TSelectionRequest.Destroy;
 begin
+  {$IFDEF IOS}
+  if FIOSPicker <> nil then FIOSPicker.setDelegate(nil);
+  FIOSPicker := nil;
+  FIOSDelegate.Free;
+  if (FExportDirectory <> '') and TDirectory.Exists(FExportDirectory) then
+    TDirectory.Delete(FExportDirectory, True);
+  {$ENDIF}
   {$IFDEF ANDROID}
   if FSubscribed then
     TMessageManager.DefaultManager.Unsubscribe(TMessageResultNotification, ActivityResult);
@@ -194,8 +225,96 @@ begin
   var Callback := FCallback;
   FCallback := nil;
   ActiveRequest := nil;
-  Deliver(Callback, AResult);
+  // Keep the native delegate alive until UIKit has returned from its callback.
+  TThread.ForceQueue(nil,
+    procedure
+    begin
+      if KeepAlive <> nil then Callback(AResult);
+    end);
 end;
+
+{$IFDEF IOS}
+constructor TIOSSelectionDelegate.Create(Request: TSelectionRequest);
+begin
+  inherited Create;
+  FRequest := Request;
+end;
+
+procedure TIOSSelectionDelegate.documentPicker(controller: UIDocumentPickerViewController; didPickDocumentsAtURLs: NSArray);
+begin
+  FRequest.SelectedIOS(didPickDocumentsAtURLs);
+end;
+
+procedure TIOSSelectionDelegate.documentPicker(controller: UIDocumentPickerViewController; didPickDocumentAtURL: NSURL);
+begin
+  FRequest.SelectedIOS(TNSArray.Wrap(TNSArray.OCClass.arrayWithObject((didPickDocumentAtURL as ILocalObject).GetObjectID)));
+end;
+
+procedure TIOSSelectionDelegate.documentPickerWasCancelled(controller: UIDocumentPickerViewController);
+begin
+  var Selection := Default(TFMXSelectionResult);
+  Selection.Status := TFMXSelectionStatus.Cancelled;
+  FRequest.Complete(Selection);
+end;
+
+procedure TSelectionRequest.SelectedIOS(const URLs: NSArray);
+begin
+  if FCompleted then Exit;
+  var Selection := Default(TFMXSelectionResult);
+  try
+    if (URLs = nil) or (URLs.count = 0) then
+      raise EInOutError.Create('The picker returned no document');
+    SetLength(Selection.Locations, URLs.count);
+    for var I := 0 to High(Selection.Locations) do
+      Selection.Locations[I] := RememberIOSDocumentURL(TNSURL.Wrap(URLs.objectAtIndex(I)));
+    Selection.Status := TFMXSelectionStatus.Selected;
+  except
+    on E: Exception do
+    begin
+      Selection.Status := TFMXSelectionStatus.Failed;
+      Selection.Locations := nil;
+      Selection.Error := E.Message;
+    end;
+  end;
+  Complete(Selection);
+end;
+
+procedure TSelectionRequest.StartIOS;
+begin
+  var Window := TiOSHelper.SharedApplication.keyWindow;
+  if Window = nil then raise EInvalidOperation.Create('No active window for document selection');
+  var Presenter := Window.rootViewController;
+  if Presenter = nil then raise EInvalidOperation.Create('No view controller for document selection');
+  while Presenter.presentedViewController <> nil do
+    Presenter := Presenter.presentedViewController;
+  if FSaveName <> '' then
+  begin
+    // Moving a sandbox placeholder returns a writable, security-scoped URL.
+    // The caller writes its contents after the asynchronous selection completes.
+    FExportDirectory := TPath.Combine(TPath.GetTempPath, 'retromul-export-' + TGUID.NewGuid.ToString);
+    TDirectory.CreateDirectory(FExportDirectory);
+    var Path := TPath.Combine(FExportDirectory, TPath.GetFileName(FSaveName));
+    TFile.WriteAllBytes(Path, nil);
+    var URL := TNSURL.OCClass.fileURLWithPath(StrToNSStr(Path));
+    FIOSPicker := TUIDocumentPickerViewController.Wrap(
+      TUIDocumentPickerViewController.Alloc.initWithURL(URL, UIDocumentPickerModeMoveToService));
+  end
+  else
+  begin
+    var UTI := 'public.item';
+    if FFolder then UTI := 'public.folder';
+    var Types := TNSArray.Wrap(TNSArray.OCClass.arrayWithObject((StrToNSStr(UTI) as ILocalObject).GetObjectID));
+    FIOSPicker := TUIDocumentPickerViewController.Wrap(
+      TUIDocumentPickerViewController.Alloc.initWithDocumentTypes(Types, UIDocumentPickerModeOpen));
+    FIOSPicker.setAllowsMultipleSelection(FMultiple and not FFolder);
+  end;
+  if FIOSPicker = nil then raise ENotSupportedException.Create('Cannot create the document picker');
+  FIOSDelegate := TIOSSelectionDelegate.Create(Self);
+  FIOSPicker.setDelegate(FIOSDelegate.GetObjectID);
+  FIOSPicker.setTitle(StrToNSStr(FTitle));
+  Presenter.presentViewController(FIOSPicker, True, nil);
+end;
+{$ENDIF}
 
 procedure TSelectionRequest.Start;
 begin
@@ -233,14 +352,15 @@ begin
     TAndroidHelper.Activity.startActivityForResult(Intent, FRequestCode);
     Exit;
     {$ELSE}
+    {$IFDEF IOS}
+    StartIOS;
+    Exit;
+    {$ELSE}
     // Desktop native dialogs run their modal UI loop. The public API and
     // completion stay asynchronous; no FMX controls are used on worker threads.
     var Service: IFMXDialogService;
     if not TPlatformServices.Current.SupportsPlatformService(IFMXDialogService, Service) then
       raise ENotSupportedException.Create('File dialogs are unavailable on this platform');
-    {$IFDEF IOS}
-    raise ENotSupportedException.Create('iOS document selection is not implemented');
-    {$ENDIF}
 
     if FSaveName <> '' then
     begin
@@ -298,6 +418,7 @@ begin
         Dialog.Free;
       end;
     end;
+    {$ENDIF}
     {$ENDIF}
   except
     on E: Exception do

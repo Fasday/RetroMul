@@ -1,5 +1,7 @@
 ﻿unit RM.Settings;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -145,7 +147,7 @@ type
     FPreview: TControl;
     FPreviewGroup: TPanel;
     FHeight: Single;
-    FBuilding, FRebuildPending, FArranging, FDeviceArranging: Boolean;
+    FBuilding, FRebuildPending, FArranging, FDeviceArranging, FLayoutPending: Boolean;
     FVolumeValue: TLabel;
     FFolderEdit: TEdit;
     FAutosaveMinutes: TSpinBox;
@@ -423,7 +425,7 @@ end;
 constructor TSettingsPreview.Create(AOwner: TComponent);
 begin
   inherited;
-  WrapMode := TImageWrapMode.Stretch;
+  WrapMode := TImageWrapMode.Fit;
   DisableInterpolation := True;
   FPaletteIndex := -1;
   SetPaletteIndex(0);
@@ -510,6 +512,8 @@ function TDeviceCallouts.ButtonBounds(Index: Integer): TRectF;
 begin
   if FDevice is TNesPowerPad then
     Result := TNesPowerPad(FDevice).ButtonBounds(FItems[Index].Button)
+  else if FItems[Index].Button = -1 then
+    Result := TScreenGamepad(FDevice).AuxiliaryButtonBounds(0)
   else
     Result := TScreenGamepad(FDevice).ButtonBounds(TEmulatorButton(FItems[Index].Button));
 end;
@@ -566,6 +570,9 @@ begin
       var Name := CoreButtonName(Core, B);
       AddCallout(Ord(B), PadAction(Port, B), Name, Translate('Button ') + Name, Left, Click);
     end;
+  if (Core = ROM_SYSTEM_N64) and (Device is TScreenGamepad) and
+    not TScreenGamepad(Device).AuxiliaryButtonBounds(0).IsEmpty then
+    AddCallout(-1, N64LAction + Port, 'L', Translate('Button ') + 'L', True, Click);
   Refresh;
   Resize;
 end;
@@ -792,9 +799,7 @@ begin
   PreviewRow.Height := 350;
   TLayout(TLabel(PreviewRow.TagObject).Parent).Visible := False;
   var Preview := FindComponent('SettingsPreviewPalettePreview') as TSettingsPreview;
-          // Restore the original aspect ratio before the fit alignment recalculates.
-  Preview.Size.Size := TSizeF.Create(320, 288);
-  Preview.Align := TAlignLayout.Fit;
+  Preview.Align := TAlignLayout.Client;
   FPreview := Preview;
   Preview.PaletteIndex := Palette.ItemIndex;
   Preview.DisableInterpolation := Scaling.ItemIndex = 0;
@@ -1221,7 +1226,7 @@ end;
 function TSettingsView.PathEdit(const Name, Section, Key, Default: string; Folder: Boolean): TEdit;
 begin
   Result := EditText(Name, Section, Key, Default);
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   Result.ReadOnly := True;
   {$ENDIF}
   var Browse := FindComponent('EditButton' + Name + 'Browse') as TEditButton;
@@ -1241,6 +1246,25 @@ begin
   inherited;
   if (LayoutBody = nil) or FArranging then
     Exit;
+
+  // FMX can call Resize from inside an unfinished parent alignment. Settle
+  // once more after that alignment has applied the final column bounds.
+  if not FLayoutPending then
+  begin
+    FLayoutPending := True;
+    var Alive: TFunc<Boolean> := FAlive;
+    TThread.ForceQueue(nil,
+      procedure
+      begin
+        if not Alive() then
+          Exit;
+        try
+          Resize;
+        finally
+          FLayoutPending := False;
+        end;
+      end);
+  end;
 
   FArranging := True;
   try
@@ -1262,54 +1286,108 @@ begin
         TPath(FCategoryIcons[I]).Stroke.Color := $FFFFB344
       else
         TPath(FCategoryIcons[I]).Stroke.Color := $FFB9C2CC;
-    LayoutHeader.Height := 60 + 44 * (Ord(FPagePicker.Visible) + Ord(FPlatformPicker.Visible));
-    VertScrollBoxScroll.Align := TAlignLayout.Client;
-    FSearch.Visible := LayoutHeader.Width >= 740;
-    if LayoutContent = nil then
-      Exit;
-
-    LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
-    var Columns := (FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
-    LayoutSettingsPreviewColumn.Visible := (FPreviewGroup <> nil) and FPreviewGroup.Visible;
-    if Columns then
+    var CompactSearch := LayoutHeader.Width < 740;
+    var HeadingRow := FindComponent('LayoutSettingsHeading') as TLayout;
+    var CompactSearchSlot := FindComponent('LayoutSettingsCompactSearchSlot') as TLayout;
+    CompactSearchSlot.Visible := CompactSearch;
+    if CompactSearch then
     begin
-      LayoutSettingsPreviewColumn.Align := TAlignLayout.Right;
-      LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Create(16, 0, 0, 0);
-      LayoutSettingsPreviewColumn.Width := LayoutContent.Width * 0.38 - 8;
-      LayoutSettingsMainColumn.Align := TAlignLayout.Client;
+      FSearch.Parent := CompactSearchSlot;
+      FSearch.Align := TAlignLayout.Client;
+      FSearch.Margins.Rect := TRectF.Empty;
     end
     else
     begin
-      LayoutSettingsMainColumn.Align := TAlignLayout.Top;
-      LayoutSettingsPreviewColumn.Align := TAlignLayout.Bottom;
-      // The last main card already contributes the shared 16px bottom margin.
-      LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Empty;
+      FSearch.Parent := HeadingRow;
+      FSearch.Align := TAlignLayout.Right;
+      FSearch.Width := 260;
+      FSearch.Margins.Rect := RectF(16, 0, 0, 12);
     end;
-    var MainHeight: Single := 0;
-    var PreviewHeight: Single := 0;
-    for var Column in [LayoutSettingsMainColumn, LayoutSettingsPreviewColumn] do
-      for var I := 0 to Column.ChildrenCount - 1 do
-        if Column.Children[I] is TPanel then
+    LayoutHeader.Height := 60 + 44 * (Ord(FPagePicker.Visible) + Ord(FPlatformPicker.Visible) + Ord(CompactSearch));
+    VertScrollBoxScroll.Align := TAlignLayout.Client;
+    FSearch.Visible := True;
+    if LayoutContent = nil then
+      Exit;
+
+    LayoutContent.BeginUpdate;
+    try
+      LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
+      var Columns := (FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
+      if FPreviewGroup <> nil then
+        if Columns then
+          FPreviewGroup.Parent := LayoutSettingsPreviewColumn
+        else
         begin
-          var Card := TPanel(Column.Children[I]);
-          if not Card.Visible then
-            Continue;
-          Card.Width := Column.Width;
-          ArrangeGroup(Card);
-          if Column = LayoutSettingsMainColumn then
-            MainHeight := MainHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom
-          else
-            PreviewHeight := PreviewHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom;
+          FPreviewGroup.Parent := LayoutSettingsMainColumn;
+          // Keep the preview next to its image settings in the single column.
+          var VideoGroup := FindComponent('PanelGroupVideo') as TPanel;
+          FPreviewGroup.Index := VideoGroup.Index + 1;
         end;
-    LayoutSettingsMainColumn.Height := MainHeight;
-    LayoutSettingsPreviewColumn.Height := PreviewHeight;
-    if Columns then
-      LayoutContent.Height := Max(MainHeight, PreviewHeight)
-    else if LayoutSettingsPreviewColumn.Visible then
-      LayoutContent.Height := MainHeight + PreviewHeight + LayoutSettingsPreviewColumn.Margins.Top
-    else
-      LayoutContent.Height := MainHeight;
-    ButtonReset.Visible := LayoutFooter.Width >= 520;
+      LayoutSettingsPreviewColumn.Visible := Columns and (FPreviewGroup <> nil) and FPreviewGroup.Visible;
+      if Columns then
+      begin
+        LayoutSettingsPreviewColumn.Align := TAlignLayout.Right;
+        LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Create(16, 0, 0, 0);
+        LayoutSettingsPreviewColumn.Width := LayoutContent.Width * 0.38 - 8;
+        LayoutSettingsMainColumn.Align := TAlignLayout.Client;
+        LayoutSettingsMainColumn.Width := Max(0, LayoutContent.Width - LayoutSettingsPreviewColumn.Width - 16);
+      end
+      else
+      begin
+        LayoutSettingsMainColumn.Align := TAlignLayout.MostTop;
+        LayoutSettingsPreviewColumn.Align := TAlignLayout.Top;
+        // The last main card already contributes the shared 16px bottom margin.
+        LayoutSettingsPreviewColumn.Margins.Rect := TRectF.Empty;
+        LayoutSettingsMainColumn.Width := LayoutContent.Width;
+        LayoutSettingsPreviewColumn.Width := LayoutContent.Width;
+      end;
+      var MainHeight: Single := 0;
+      var PreviewHeight: Single := 0;
+      for var Column in [LayoutSettingsMainColumn, LayoutSettingsPreviewColumn] do
+      begin
+        Column.BeginUpdate;
+        try
+          for var I := 0 to Column.ChildrenCount - 1 do
+            if Column.Children[I] is TPanel then
+            begin
+              var Card := TPanel(Column.Children[I]);
+              if not Card.Visible then
+                Continue;
+              // A resize can arrive while FMX is already aligning this column.
+              // Use the real stack offset, since a nested Realign is skipped.
+              if Column = LayoutSettingsMainColumn then
+                Card.Position.Y := MainHeight
+              else
+                Card.Position.Y := PreviewHeight;
+              Card.Width := Column.Width;
+              ArrangeGroup(Card);
+              if Column = LayoutSettingsMainColumn then
+                MainHeight := MainHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom
+              else
+                PreviewHeight := PreviewHeight + Card.Height + Card.Margins.Top + Card.Margins.Bottom;
+            end;
+        finally
+          Column.EndUpdate;
+        end;
+      end;
+      LayoutSettingsMainColumn.Height := MainHeight;
+      LayoutSettingsPreviewColumn.Height := PreviewHeight;
+      if Columns then
+        LayoutContent.Height := Max(MainHeight, PreviewHeight)
+      else if LayoutSettingsPreviewColumn.Visible then
+        LayoutContent.Height := MainHeight + PreviewHeight + LayoutSettingsPreviewColumn.Margins.Top
+      else
+        LayoutContent.Height := MainHeight;
+    finally
+      LayoutContent.EndUpdate;
+    end;
+    var CompactReset := LayoutFooter.Width < 520;
+    var ResetRow := FindComponent('LayoutSettingsCompactReset') as TLayout;
+    ResetRow.Visible := CompactReset and (FCaptureButton = nil);
+    if CompactReset then ButtonReset.Parent := ResetRow
+    else ButtonReset.Parent := FindComponent('LayoutSettingsActions') as TLayout;
+    ButtonReset.Visible := FCaptureButton = nil;
+    LayoutFooter.Height := 96 + 44 * Ord(ResetRow.Visible);
     ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
     ButtonApply.Visible := FCaptureButton = nil;
     ButtonBack.Visible := FCaptureButton = nil;
@@ -1320,27 +1398,33 @@ end;
 
 procedure TSettingsView.ArrangeGroup(Group: TPanel);
 begin
-  // Group padding and Top-aligned rows are shared by every platform.
-  Group.Padding.Rect := TRectF.Create(16, 14, 16, 12);
-  var ContentHeight: Single := 0;
-  for var Child in Group.Children do
-    if (Child is TControl) and (Child.Owner = Self) then
-    begin
-      var C := TControl(Child);
-      C.Align := TAlignLayout.Top;
-      C.Margins.Rect := TRectF.Create(0, 0, 0, 6);
-      if C is TPanel then
+  Group.BeginUpdate;
+  try
+    // Group padding and Top-aligned rows are shared by every platform.
+    Group.Padding.Rect := TRectF.Create(16, 14, 16, 12);
+    var ContentHeight: Single := 0;
+    for var Child in Group.Children do
+      if (Child is TControl) and (Child.Owner = Self) then
       begin
-        C.Width := Max(0, Group.Width - 32);
-        if C.Tag = 1 then
-          DeviceResize(C)
-        else
-          RowResize(C);
+        var C := TControl(Child);
+        C.Align := TAlignLayout.Top;
+        C.Position.Y := Group.Padding.Top + ContentHeight;
+        C.Margins.Rect := TRectF.Create(0, 0, 0, 6);
+        if C is TPanel then
+        begin
+          C.Width := Max(0, Group.Width - 32);
+          if C.Tag = 1 then
+            DeviceResize(C)
+          else
+            RowResize(C);
+        end;
+        if C.Visible then
+          ContentHeight := ContentHeight + C.Height + C.Margins.Bottom;
       end;
-      if C.Visible then
-        ContentHeight := ContentHeight + C.Height + C.Margins.Bottom;
-    end;
-  Group.Height := ContentHeight + Group.Padding.Top + Group.Padding.Bottom;
+    Group.Height := ContentHeight + Group.Padding.Top + Group.Padding.Bottom;
+  finally
+    Group.EndUpdate;
+  end;
 end;
 
 procedure TSettingsView.ContentResize(Sender: TObject);
@@ -1771,6 +1855,23 @@ begin
 end;
 
 procedure TSettingsView.BuildDevice(Port: Integer; const Device: string);
+
+  procedure AddAssignment(D: TSettingsDevice; Panel: TPanel; Action: Integer; const Caption: string);
+  begin
+    var Binding := SettingsButton(Panel);
+    Binding.Parent := D.AssignmentList;
+    Binding.Align := TAlignLayout.Top;
+    Binding.Height := 32;
+    Binding.Margins.Rect := RectF(8, 4, 8, 4);
+    Binding.Index := D.AssignmentList.ChildrenCount - 1;
+    Binding.Tag := Action;
+    Binding.TagObject := D;
+    Binding.TagString := Caption;
+    Binding.Text := Caption + '   ·   ' + BindingCaption(FInput, Action);
+    Binding.OnClick := AssignmentClick;
+    Binding.Enabled := FInput <> nil;
+  end;
+
 begin
   Heading('GroupBindings' + IntToStr(Port));
   var D := TSettingsDevice.Create;
@@ -1836,19 +1937,12 @@ begin
     var Y: Single := 8;
     for var B in CoreButtons(SettingsCoreIds[FPage], Device) do
     begin
-      var Binding := SettingsButton(P);
-      Binding.Parent := D.AssignmentList;
-      Binding.Align := TAlignLayout.Top;
-      Binding.Height := 32;
-      Binding.Margins.Rect := TRectF.Create(8, 4, 8, 4);
-      // Append at the bottom of the aligned list.
-      Binding.Index := D.AssignmentList.ChildrenCount - 1;
-      Binding.Tag := PadAction(Port, B);
-      Binding.TagObject := D;
-      Binding.TagString := CoreButtonName(SettingsCoreIds[FPage], B);
-      Binding.Text := Binding.TagString + '   ·   ' + BindingCaption(FInput, Binding.Tag);
-      Binding.OnClick := AssignmentClick;
-      Binding.Enabled := FInput <> nil;
+      AddAssignment(D, P, PadAction(Port, B), CoreButtonName(SettingsCoreIds[FPage], B));
+      Y := Y + 40;
+    end;
+    if SettingsCoreIds[FPage] = ROM_SYSTEM_N64 then
+    begin
+      AddAssignment(D, P, N64LAction + Port, 'L');
       Y := Y + 40;
     end;
     D.AssignmentList.Height := Y;
@@ -1946,6 +2040,13 @@ begin
       var Action := -1;
       var Caption := '';
       if Sender is TScreenGamepad then
+      begin
+        if (SettingsCoreIds[FPage] = ROM_SYSTEM_N64) and
+          ((TScreenGamepad(Sender).AuxiliaryButtons and 1) <> 0) then
+        begin
+          Action := N64LAction + D.Port;
+          Caption := Translate('Button ') + 'L';
+        end;
         for var B in TScreenGamepad(Sender).Buttons do
           if B in CoreButtons(SettingsCoreIds[FPage], D.Device) then
           begin
@@ -1953,6 +2054,7 @@ begin
             Caption := Translate('Button ') + CoreButtonName(SettingsCoreIds[FPage], B);
             Break;
           end;
+      end;
 
       if Sender is TNesPowerPad then
         for var B in TNesPowerPad(Sender).Buttons do
@@ -2351,7 +2453,7 @@ begin
     Translation.Free; // Validate the file before writing any settings.
     var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Path', '').Trim;
 
-    {$IF not Defined(ANDROID) and not Defined(IOS)}
+    {$IF not Defined(ANDROID) and not Defined(IOS)} // Native filesystem paths.
     if (Folder <> '') and not TDirectory.Exists(Folder) then
       raise Exception.Create(Translate('ROM folder not found. Choose an existing folder.'));
     {$ENDIF}

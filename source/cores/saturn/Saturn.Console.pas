@@ -3,9 +3,9 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.UITypes, HW.SH2, HW.SH7604, MD.M68k,
-  Saturn.SCU, Saturn.SMPC, Saturn.VDP1, Saturn.VDP2, Core.Snapshots,
-  Core.CD.Disc, Saturn.CD, Saturn.SCSP, Saturn.Cartridge;
+  System.SysUtils, System.Classes, System.UITypes, System.SyncObjs, HW.SH2,
+  HW.SH7604, MD.M68k, Saturn.SCU, Saturn.SMPC, Saturn.VDP1, Saturn.VDP2,
+  Core.Snapshots, Core.CD.Disc, Saturn.CD, Saturn.SCSP, Saturn.Cartridge;
 
 type
   TSaturnBusObserver = reference to procedure(Address, Value: Cardinal; Size: Integer);
@@ -22,6 +22,18 @@ type
 
       PPort = ^TPort;
   private
+    FRenderThread: TThread;
+    FRenderWake, FRenderDone: TLightweightEvent;
+    FRenderStop, FRenderPending, FRunningFrame: Boolean;
+    FRenderMailbox: array[0..31] of Integer; // [16]: idle/work/stop, isolated cache line
+    FRenderLine, FRenderOffset: Integer;
+    FRenderError: string;
+    procedure SetThreadedVideo(Value: Boolean);
+    function GetThreadedVideo: Boolean;
+    procedure SynchronizeVideo(RaiseError: Boolean = True);
+    procedure RenderLine(Line, Offset: Integer);
+  private
+    FPixels: TArray<TAlphaColor>; // renderer reads this reference away from CPU timestamps
     FBIOS: TBytes;
     FWorkLow, FWorkHigh: array[0..$FFFFF] of Byte;
     FBackup: array[0..$7FFF] of Byte;
@@ -55,7 +67,6 @@ type
     FLine, FClock: Integer;
     FHBlank, FSlaveOn, FSoundOn, FResetPending, FPAL: Boolean;
     FFrames: UInt64;
-    FPixels: TArray<TAlphaColor>;
     FFrameWidth, FFrameHeight: Integer;
     FCD: TSaturnCD;
     FSCSP: TSaturnSCSP;
@@ -63,6 +74,7 @@ type
     FSamples: TArray<SmallInt>;
     FSampleFrames: Integer;
     procedure CDIRQ(Active: Boolean);
+    procedure NetlinkIRQ(Active: Boolean);
     function SoundRAMRead(Address: Cardinal): Byte;
     procedure SoundRAMWrite(Address: Cardinal; Value: Byte);
     procedure SoundDMA(Target: Int64);
@@ -73,6 +85,7 @@ type
     FBusObserver: TSaturnBusObserver;
     FInstructionObserver: TSaturnInstructionObserver;
     procedure RasterEvent;
+    procedure CaptureRaster;
     procedure AdvanceDevices(Target: Int64);
     procedure SCUIRQ(Level, Vector: Integer);
     procedure SMPCCommand(Command: Byte);
@@ -81,7 +94,8 @@ type
     function ReadByte(Address: Cardinal): Byte;
     procedure WriteByte(Address: Cardinal; Value: Byte);
     function Wait(CPU: Integer; Address: Cardinal; Size: Integer; Writing: Boolean): Integer;
-    function ReserveDMA(At: Int64; Address: Cardinal; Size: Integer; Writing: Boolean): Int64;
+    function ReserveDMA(At: Int64; Address: Cardinal; Size: Integer; Writing: Boolean; SCUBurst: Boolean = False): Int64;
+    function ReserveSCUDMA(At: Int64; Address: Cardinal; Size: Integer; Writing: Boolean): Int64;
     function DMAReady(Address: Cardinal; Size: Integer; Writing: Boolean): Boolean;
   public
     constructor Create(const BIOS: TBytes; Region: Byte = 4; PAL: Boolean = False; Disc: TCDDisc = nil; RAMCart: Integer = 0; const CartROM: TBytes = nil);
@@ -111,11 +125,13 @@ type
     property VDP2: TSaturnVDP2 read FVDP2;
     property SCU: TSaturnSCU read FSCU;
     property SMPC: TSaturnSMPC read FSMPC;
+    property ThreadedVideo: Boolean read GetThreadedVideo write SetThreadedVideo;
     property Pixels: TArray<TAlphaColor> read FPixels;
     property FrameWidth: Integer read FFrameWidth;
     property FrameHeight: Integer read FFrameHeight;
     property FrameNumber: UInt64 read FFrames;
     property Time: Int64 read FTime;
+    property ClockFrequency: Integer read FClock;
     property SlaveOn: Boolean read FSlaveOn;
     property BackupDirty: Boolean read FBackupDirty write FBackupDirty;
     property InstructionObserver: TSaturnInstructionObserver read FInstructionObserver write FInstructionObserver;
@@ -125,8 +141,16 @@ type
 implementation
 
 uses
-  System.Math, System.Hash;
+  System.Math, System.Hash, Saturn.SCUDSP;
+
 {$Q+}{$R+}
+
+const
+{$IFDEF MSWINDOWS}
+  RenderSpinLimit = 4096;
+{$ELSE}
+  RenderSpinLimit = 128;
+{$ENDIF}
 
 function CPURead(User: Pointer; Address: Cardinal; Size: Integer): Cardinal;
 begin
@@ -179,6 +203,7 @@ begin
     A := $05B00000 + (A and $FFF)
   else
     Exit;
+
   if Hi <> 0 then
     Board.WriteBus(A, (Value shr 8) and $FF, 1);
   if Lo <> 0 then
@@ -205,33 +230,37 @@ begin
   inherited Create;
   if Length(BIOS) <> $80000 then
     raise EReadError.Create('Saturn BIOS must contain exactly 512 KiB');
+
   FBIOS := Copy(BIOS);
   FPAL := PAL;
   FSoundCallbacks.UserData := Self;
   FSoundCallbacks.ReadCallback := SoundRead;
   FSoundCallbacks.WriteCallback := SoundWrite;
   FSoundCallbacks.InterruptAcknowledgeCallback := SoundAck;
-  for var I := 0 to 1 do
+  for var i := 0 to 1 do
   begin
-    FPort[I].Owner := Self;
-    FPort[I].Index := I;
-    FCPU[I] := TSH7604.Create(CPURead, CPUWrite, @FPort[I], CPUWait, I = 1);
+    FPort[i].Owner := Self;
+    FPort[i].Index := i;
+    FCPU[i] := TSH7604.Create(CPURead, CPUWrite, @FPort[i], CPUWait, i = 1);
   end;
-  for var I := 0 to 1 do
+  for var i := 0 to 1 do
   begin
-    FCPU[I].ReserveDMA := CPUDMAReserve;
-    FCPU[I].DMAReady := CPUDMAReady;
+    FCPU[i].ReserveDMA := CPUDMAReserve;
+    FCPU[i].DMAReady := CPUDMAReady;
   end;
   FSCU := TSaturnSCU.Create(SCURead, SCUWrite, Self, SCUIRQ);
-  FSCU.Reserve := ReserveDMA;
+  FSCU.Reserve := ReserveSCUDMA;
   FSCU.Ready := DMAReady;
   FSMPC := TSaturnSMPC.Create(Region, SMPCCommand, SMPCIRQ);
   FVDP1 := TSaturnVDP1.Create(DrawIRQ);
   FVDP2 := TSaturnVDP2.Create(PAL);
+  FVDP2.RasterSync := CaptureRaster;
   FCD := TSaturnCD.Create(Disc, CDIRQ);
+  FCD.NetlinkIRQ := NetlinkIRQ;
   FSCSP := TSaturnSCSP.Create(SoundRAMRead, SoundRAMWrite);
   FCartridge := TSaturnCartridge.Create(RAMCart, CartROM);
   SetLength(FSamples, 8192);
+
   // New backup RAM has the BIOS format signature and free block headers.
   FillChar(FBackup, SizeOf(FBackup), 0);
   var Header: AnsiString := 'BackUpRam Format';
@@ -240,8 +269,149 @@ begin
   Reset;
 end;
 
+function TSaturnConsole.GetThreadedVideo: Boolean;
+begin
+  Result := FRenderThread <> nil;
+end;
+
+procedure TSaturnConsole.SynchronizeVideo(RaiseError: Boolean);
+begin
+  if FRenderPending then
+  begin
+    var Spins := 0;
+    var Limit := 0;
+    if TThread.ProcessorCount > 1 then
+      Limit := RenderSpinLimit;
+    while (TInterlocked.CompareExchange(FRenderMailbox[16], 0, 0) <> 0) and (Spins < Limit) do
+    begin
+      TThread.SpinWait(1);
+      Inc(Spins);
+    end;
+
+    // The mailbox is the completion predicate; events are notifications.
+    // Recheck after resetting so neither late nor coalesced signals lose work.
+    while TInterlocked.CompareExchange(FRenderMailbox[16], 0, 0) <> 0 do
+    begin
+      FRenderDone.ResetEvent;
+      if (TInterlocked.CompareExchange(FRenderMailbox[16], 0, 0) <> 0) and
+        (FRenderDone.WaitFor(High(Cardinal)) <> wrSignaled) then
+        raise EInvalidOperation.Create('Saturn video worker synchronization failed');
+    end;
+
+    FRenderPending := False;
+  end;
+  if RaiseError and (FRenderError <> '') then
+    raise EInvalidOperation.Create('Saturn video worker: ' + FRenderError);
+end;
+
+procedure TSaturnConsole.SetThreadedVideo(Value: Boolean);
+begin
+  if Value = (FRenderThread <> nil) then
+  begin
+    if not Value then
+    begin
+      FreeAndNil(FRenderDone);
+      FreeAndNil(FRenderWake);
+    end;
+    Exit;
+  end;
+
+  if Value then
+  begin
+    FRenderWake := TLightweightEvent.Create(False);
+    FRenderDone := TLightweightEvent.Create(False);
+    FRenderStop := False;
+    FRenderError := '';
+    FillChar(FRenderMailbox, SizeOf(FRenderMailbox), 0);
+    FRenderThread := TThread.CreateAnonymousThread(
+      procedure
+      begin
+        var Limit := 0;
+        if TThread.ProcessorCount > 1 then
+          Limit := RenderSpinLimit;
+        while True do
+        begin
+          var Job := TInterlocked.CompareExchange(FRenderMailbox[16], 0, 0);
+          var Spins := 0;
+          while (Job = 0) and (Spins < Limit) do
+          begin
+            TThread.SpinWait(1);
+            Inc(Spins);
+            Job := TInterlocked.CompareExchange(FRenderMailbox[16], 0, 0);
+          end;
+          if Job = 0 then
+          begin
+            if FRenderWake.WaitFor(High(Cardinal)) <> wrSignaled then
+            begin
+              FRenderError := 'Worker wake failed';
+              TInterlocked.Exchange(FRenderMailbox[16], 0);
+              FRenderDone.SetEvent;
+              Exit;
+            end;
+
+            FRenderWake.ResetEvent;
+            Continue;
+          end;
+          if Job = 2 then
+            Exit;
+
+          FRenderWake.ResetEvent;
+          try
+            FVDP2.RenderLine(FRenderLine, FVDP1, FPixels, FRenderOffset, True);
+            FVDP1.ScanLine;
+          except
+            on E: Exception do
+              FRenderError := E.ClassName + ': ' + E.Message;
+          end;
+          TInterlocked.Exchange(FRenderMailbox[16], 0);
+          FRenderDone.SetEvent;
+        end;
+      end);
+    FRenderThread.FreeOnTerminate := False;
+    FRenderThread.Start;
+  end
+  else
+  begin
+    SynchronizeVideo(False);
+    FRenderStop := True;
+    TInterlocked.Exchange(FRenderMailbox[16], 2);
+    FRenderWake.SetEvent;
+    FRenderThread.WaitFor;
+    FreeAndNil(FRenderThread);
+    FreeAndNil(FRenderDone);
+    FreeAndNil(FRenderWake);
+    FRenderError := '';
+  end;
+end;
+
+procedure TSaturnConsole.RenderLine(Line, Offset: Integer);
+begin
+  SynchronizeVideo;
+  var W := FVDP2.Width;
+  if (Line < 0) or (Line >= FVDP2.Height) or (Offset < 0) or
+    (W > Length(FPixels)) or (Offset > Length(FPixels) - W) then
+    Exit;
+
+  FVDP2.LatchLine(Line, FVDP1.RotationEnabled);
+  if FRenderThread = nil then
+  begin
+    FVDP2.RenderLine(Line, FVDP1, FPixels, Offset, True);
+    FVDP1.ScanLine;
+  end
+  else
+  begin
+    FRenderLine := Line;
+    FRenderOffset := Offset;
+    FRenderDone.ResetEvent;
+    FRenderPending := True;
+    TInterlocked.Exchange(FRenderMailbox[16], 1);
+    FRenderWake.SetEvent;
+  end;
+end;
+
 destructor TSaturnConsole.Destroy;
 begin
+  SetThreadedVideo(False);
   FCartridge.Free;
   FSCSP.Free;
   FCD.Free;
@@ -256,6 +426,7 @@ end;
 
 procedure TSaturnConsole.Reset;
 begin
+  SynchronizeVideo;
   FillChar(FWorkLow, SizeOf(FWorkLow), 0);
   FillChar(FWorkHigh, SizeOf(FWorkHigh), 0);
   FillChar(FSound, SizeOf(FSound), 0);
@@ -327,6 +498,7 @@ end;
 
 procedure TSaturnConsole.SMPCCommand(Command: Byte);
 begin
+  SynchronizeVideo;
   case Command of
     $02:
       begin
@@ -368,12 +540,13 @@ begin
         FCD.SetClock(FClock);
         FSlaveOn := False;
         FSoundOn := False;
-      // The boot ROM clock-change contract resets these LSIs, retaining the
-      // CD block and work RAM. Sound RAM remains backed by its own DRAM.
+
+        // The boot ROM clock-change contract resets these LSIs, retaining the
+        // CD block and work RAM. Sound RAM remains backed by its own DRAM.
         FSCU.Reset;
         FSCSP.Reset;
-        FVDP1.Reset;
-        FVDP2.Reset;
+        FVDP1.Reset(False);
+        FVDP2.Reset(False);
         FillChar(FSoundRegisters, SizeOf(FSoundRegisters), 0);
         FillChar(FTimerPhase, SizeOf(FTimerPhase), 0);
         FSoundPending := 0;
@@ -402,6 +575,7 @@ begin
   var A: Integer := Address and $FFF;
   if (A < $400) or (A >= $600) or ((A >= $400) and (A <= $403)) or (A = $408) or (A = $409) then
     Exit(FSCSP.ReadRegister(A));
+
   case A of
     $404:
       Result := $09; // MIDI input empty, output FIFO empty
@@ -423,13 +597,14 @@ begin
   var Enable: Word := (Word(FSoundRegisters[$41E]) shl 8) or FSoundRegisters[$41F];
   var Pending := FSoundPending and Enable;
   var Level: Integer := 0;
-  for var I := 0 to 10 do
-    if Pending and (1 shl I) <> 0 then
+  for var i := 0 to 10 do
+    if Pending and (1 shl i) <> 0 then
     begin
-      var B := Min(I, 7);
+      var B := Min(i, 7);
       Level := Ord(FSoundRegisters[$425] and (1 shl B) <> 0) or (Ord(FSoundRegisters[$427] and (1 shl B) <> 0) shl 1) or (Ord(FSoundRegisters[$429] and (1 shl B) <> 0) shl 2);
       Break;
     end;
+
   Clown68000Interrupt(FSoundCPU, Level);
   Enable := (Word(FSoundRegisters[$42A]) shl 8) or FSoundRegisters[$42B];
   if FMainSoundPending and Enable <> 0 then
@@ -486,6 +661,11 @@ begin
   SoundIRQ;
 end;
 
+procedure TSaturnConsole.NetlinkIRQ(Active: Boolean);
+begin
+  FSCU.SetExternal(12, Active);
+end;
+
 procedure TSaturnConsole.CDIRQ(Active: Boolean);
 begin
   FSCU.SetExternal(0, Active);
@@ -508,6 +688,7 @@ begin
     FSoundDMAControl := (Word(FSoundRegisters[$416]) shl 8) or FSoundRegisters[$417];
     if FSoundDMAControl and $1000 = 0 then
       Exit;
+
     FSoundDMAMemory := ((Cardinal(FSoundRegisters[$414] and $F0) shl 12) or (Cardinal(FSoundRegisters[$412]) shl 8) or FSoundRegisters[$413]) and $7FFFE;
     FSoundDMARegister := ((Cardinal(FSoundRegisters[$414] and 15) shl 8) or FSoundRegisters[$415]) and $FFE;
     FSoundDMACount := (FSoundDMAControl and $FFE) div 2;
@@ -519,6 +700,7 @@ begin
     var V: Word := 0;
     var RegisterAddress := FSoundDMARegister;
     var Memory := FSoundDMAMemory;
+
     // The DMA register block cannot itself be a DMA source/destination.
     var ValidRegister: Boolean := (RegisterAddress < $412) or (RegisterAddress > $416);
     if (FSoundDMACount > 0) and (FSoundDMAControl and $2000 <> 0) then
@@ -542,6 +724,7 @@ begin
     FSoundDMARegister := (RegisterAddress + 2) and $FFE;
     Dec(FSoundDMACount);
     Inc(FSoundDMANext, 4);
+
     // Shared sound bus ownership delays simultaneous SH-2 transactions.
     FBusUntil := Max(FBusUntil, FSoundDMANext);
     if FSoundDMACount <= 0 then
@@ -620,11 +803,53 @@ begin
   end;
 end;
 
+function ReadMemoryBE(Data: PByte; Size: Integer): Cardinal; inline;
+begin
+  case Size of
+    1:
+      Result := Data^;
+    2:
+      Result := Swap(PWord(Data)^);
+  else
+    var V := PCardinal(Data)^;
+    Result := (V shl 24) or ((V and $FF00) shl 8) or ((V shr 8) and $FF00) or (V shr 24);
+  end;
+end;
+
+procedure WriteMemoryBE(Data: PByte; Value: Cardinal; Size: Integer); inline;
+begin
+  case Size of
+    1:
+      Data^ := Value and $FF;
+    2:
+      PWord(Data)^ := Swap(Word(Value and $FFFF));
+    4:
+      PCardinal(Data)^ := (Value shl 24) or ((Value and $FF00) shl 8) or
+        ((Value shr 8) and $FF00) or (Value shr 24);
+  end;
+end;
+
 function TSaturnConsole.ReadBus(Address: Cardinal; Size: Integer): Cardinal;
 begin
   if not (Size in [1, 2, 4]) then
     raise EArgumentException.Create('Saturn bus size');
+
   Address := Address and $1FFFFFFF;
+
+  // Aligned accesses cannot cross a RAM mirror or BIOS boundary. Unaligned
+  // DMA/debug accesses retain the byte-by-byte bus path below.
+  if Address and Cardinal(Size - 1) = 0 then
+    case Address of
+      $00000000..$000FFFFF:
+        Exit(ReadMemoryBE(@FBIOS[Address and $7FFFF], Size));
+      $00200000..$002FFFFF:
+        Exit(ReadMemoryBE(@FWorkLow[Address and $FFFFF], Size));
+      $05A00000..$05AFFFFF:
+        Exit(ReadMemoryBE(@FSound[Address and $7FFFF], Size));
+      $06000000..$07FFFFFF:
+        Exit(ReadMemoryBE(@FWorkHigh[Address and $FFFFF], Size));
+    end;
+
   case Address of
     $05800000..$058FFFFF:
       Exit(FCD.Read(Address, Size));
@@ -639,18 +864,45 @@ begin
     $05FE0000..$05FEFFFF:
       Exit(FSCU.ReadRegister(Address, Size));
   end;
+
   Result := 0;
-  for var I := 0 to Size - 1 do
-    Result := (Result shl 8) or ReadByte(Address + Cardinal(I));
+  for var i := 0 to Size - 1 do
+    Result := (Result shl 8) or ReadByte(Address + Cardinal(i));
 end;
 
 procedure TSaturnConsole.WriteBus(Address, Value: Cardinal; Size: Integer);
 begin
   if not (Size in [1, 2, 4]) then
     raise EArgumentException.Create('Saturn bus size');
+
   Address := Address and $1FFFFFFF;
   if Assigned(FBusObserver) then
+  begin
+    SynchronizeVideo;
     FBusObserver(Address, Value, Size);
+  end;
+  if (Address >= $05C00000) and (Address < $05FC0000) then
+    SynchronizeVideo;
+
+  if Address and Cardinal(Size - 1) = 0 then
+    case Address of
+      $00200000..$002FFFFF:
+        begin
+          WriteMemoryBE(@FWorkLow[Address and $FFFFF], Value, Size);
+          Exit;
+        end;
+      $05A00000..$05AFFFFF:
+        begin
+          WriteMemoryBE(@FSound[Address and $7FFFF], Value, Size);
+          Exit;
+        end;
+      $06000000..$07FFFFFF:
+        begin
+          WriteMemoryBE(@FWorkHigh[Address and $FFFFF], Value, Size);
+          Exit;
+        end;
+    end;
+
   case Address of
     $05800000..$058FFFFF:
       begin
@@ -683,8 +935,9 @@ begin
         Exit;
       end;
   end;
-  for var I := 0 to Size - 1 do
-    WriteByte(Address + Cardinal(I), (Value shr ((Size - I - 1) * 8)) and $FF);
+
+  for var i := 0 to Size - 1 do
+    WriteByte(Address + Cardinal(i), (Value shr ((Size - i - 1) * 8)) and $FF);
 end;
 
 function TSaturnConsole.Wait(CPU: Integer; Address: Cardinal; Size: Integer; Writing: Boolean): Integer;
@@ -727,7 +980,12 @@ begin
     Result := FCD.SH1.HostReady(Size, Writing);
 end;
 
-function TSaturnConsole.ReserveDMA(At: Int64; Address: Cardinal; Size: Integer; Writing: Boolean): Int64;
+function TSaturnConsole.ReserveSCUDMA(At: Int64; Address: Cardinal; Size: Integer; Writing: Boolean): Int64;
+begin
+  Result := ReserveDMA(At, Address, Size, Writing, True);
+end;
+
+function TSaturnConsole.ReserveDMA(At: Int64; Address: Cardinal; Size: Integer; Writing: Boolean; SCUBurst: Boolean): Int64;
 begin
   var Clocks: Integer := 4;
   case Address of
@@ -736,7 +994,13 @@ begin
     $02000000..$059FFFFF:
       Clocks := ((Size + 1) div 2) * 4;
     $05A00000..$05FDFFFF:
-      Clocks := ((Size + 1) div 2) * 2;
+      begin
+        Clocks := ((Size + 1) div 2) * 2;
+        // SCU burst writes use the 16-bit B-bus at the CPU clock rate.
+        // SH-2 DMA accesses and B-bus reads retain their existing latency.
+        if SCUBurst and Writing then
+          Clocks := (Size + 1) div 2;
+      end;
     $06000000..$07FFFFFF:
       begin
         if Writing then
@@ -745,6 +1009,13 @@ begin
           Clocks := 3;
       end;
   end;
+
+  // SCU owns the CPU bus in burst mode; SH-2 non-burst read timing
+  // must not be charged for every SDRAM word. Sega's programming FAQ
+  // measures WRAM-H -> VDP1 at about 2.25 clocks/longword. Our serial
+  // phases remain conservative at three, rather than the former five.
+  if SCUBurst and not Writing and (Address >= $06000000) and (Address <= $07FFFFFF) then
+    Clocks := 1;
   Result := Max(At, FBusUntil) + Clocks;
   FBusUntil := Result;
 end;
@@ -753,6 +1024,7 @@ function TSaturnConsole.ReadCPU(CPU: Integer; Address: Cardinal; Size: Integer):
 begin
   if not (CPU in [0, 1]) then
     raise EArgumentOutOfRangeException.Create('Saturn CPU');
+
   Result := FCPU[CPU].Read(Address, Size);
 end;
 
@@ -760,6 +1032,7 @@ procedure TSaturnConsole.WriteCPU(CPU: Integer; Address, Value: Cardinal; Size: 
 begin
   if not (CPU in [0, 1]) then
     raise EArgumentOutOfRangeException.Create('Saturn CPU');
+
   FCPU[CPU].Write(Address, Value, Size);
 end;
 
@@ -767,6 +1040,7 @@ function TSaturnConsole.CPUState(CPU: Integer): TSH2State;
 begin
   if not (CPU in [0, 1]) then
     raise EArgumentOutOfRangeException.Create('Saturn CPU');
+
   Result := FCPU[CPU].State;
 end;
 
@@ -774,6 +1048,7 @@ procedure TSaturnConsole.SetCPUState(CPU: Integer; const State: TSH2State);
 begin
   if not (CPU in [0, 1]) then
     raise EArgumentOutOfRangeException.Create('Saturn CPU');
+
   FCPU[CPU].State := State;
 end;
 
@@ -788,6 +1063,7 @@ begin
     Sync := 1500;
     Total := 1820;
   end;
+  var Lines := FVDP2.FieldLines;
   case FRasterPhase of
     0:
       begin
@@ -796,7 +1072,12 @@ begin
         if FFrameHeight > 256 then
           RenderY := FLine * 2 + Ord(FVDP2.Field);
         if (FLine < FVDP2.ScanHeight) and (RenderY < FFrameHeight) then
-          FVDP2.RenderLine(RenderY, FVDP1, FPixels, RenderY * FFrameWidth);
+          RenderLine(RenderY, RenderY * FFrameWidth);
+        if FLine = FVDP2.ScanHeight then
+        begin
+          SynchronizeVideo;
+          FVDP1.VBlankIn;
+        end;
         FSCU.HBlank;
         FRasterPhase := 1;
         FNextRaster := FLineStart + Sync;
@@ -806,20 +1087,25 @@ begin
         Inc(FLine);
         if FLine = FVDP2.ScanHeight then
         begin
+          FSMPC.VBlankIn;
           FSCU.Signal(0);
-          FVDP1.VBlank;
         end;
-        var Lines: Integer := 263;
-        if FPAL then
-          Lines := 313;
-        if (FVDP2.ReadRegister(0, 2) and $80 <> 0) and FVDP2.Field then
-          Dec(Lines);
+
+        // V-blank OUT precedes the first active line. Software must have
+        // time to write FCM/FCT before VDP1 samples them for this field.
+        if FLine = Lines - 1 then
+          FSCU.VBlankOut;
         if FLine >= Lines then
         begin
           FLine := 0;
           Inc(FFrames);
+          SynchronizeVideo;
           FVDP2.NewField;
-          FSCU.VBlankOut;
+
+          // VDP1 exchanges buffers at the field boundary, after V-blank.
+          // V-blank-in handlers must be able to finish drawing and request
+          // the exchange before CEF is latched into BEF for the new field.
+          FVDP1.VBlank;
           FFrameWidth := FVDP2.Width;
           FFrameHeight := FVDP2.Height;
           SetLength(FPixels, FFrameWidth * FFrameHeight);
@@ -835,29 +1121,12 @@ begin
         FNextRaster := FLineStart + Active;
       end;
   end;
-  FVDP2.SetRaster(FLine, 0, FHBlank, FLine >= FVDP2.ScanHeight);
+  FVDP2.SetRaster(FLine, 0, FHBlank, (FLine >= FVDP2.ScanHeight) and (FLine < Lines - 1));
 end;
 
-procedure TSaturnConsole.AdvanceDevices(Target: Int64);
+procedure TSaturnConsole.CaptureRaster;
 begin
-  SoundDMA(Target);
-  Inc(FSamplePhase, (Target - FTime) * 44100);
-  while FSamplePhase >= FClock do
-  begin
-    Dec(FSamplePhase, FClock);
-    SoundTick;
-  end;
-  FTime := Target;
-  FCPU[0].Advance(Target);
-  if FSlaveOn then
-    FCPU[1].Advance(Target);
-  FSCU.Advance(Target);
-  FSMPC.Advance(Target);
-  FVDP1.Advance(Target);
-  FCD.Advance(Target);
-  while FNextRaster <= Target do
-    RasterEvent;
-  var Dot: Integer := Max(0, Integer(Target - FLineStart)) div 4;
+  var Dot: Integer := Max(0, Integer(FTime - FLineStart)) div 4;
   var TotalDots: Integer := 427;
   var SyncDot: Integer := 347;
   if FSMPC.Clock352 then
@@ -867,14 +1136,58 @@ begin
   end;
   if Dot >= SyncDot then
     Inc(Dot, 512 - TotalDots);
-  FVDP2.SetRaster(FLine, (Dot * 2) and $3FF, FHBlank, FLine >= FVDP2.ScanHeight);
+  var Lines := FVDP2.FieldLines;
+  FVDP2.SetRaster(FLine, (Dot * 2) and $3FF, FHBlank, (FLine >= FVDP2.ScanHeight) and (FLine < Lines - 1));
 end;
 
+// The scheduler bounds intervals/counters before entering this hot path.
+{$Q-}
+procedure TSaturnConsole.AdvanceDevices(Target: Int64);
+begin
+  var VDP1BusBusy := FSCU.VDP1BusBusy;
+  if FSoundDMAActive then
+    SoundDMA(Target)
+  else
+  begin
+    FSoundDMAControl := (Word(FSoundRegisters[$416]) shl 8) or FSoundRegisters[$417];
+    if FSoundDMAControl and $1000 <> 0 then
+      SoundDMA(Target);
+  end;
+  Inc(FSamplePhase, (Target - FTime) * 44100);
+  while FSamplePhase >= FClock do
+  begin
+    Dec(FSamplePhase, FClock);
+    SoundTick;
+  end;
+  FTime := Target;
+  FCPU[0].AdvanceForward(Target);
+  if FSlaveOn then
+    FCPU[1].AdvanceForward(Target);
+  FSCU.AdvanceForward(Target);
+  FSMPC.AdvanceForward(Target);
+  FVDP1.AdvanceForward(Target, VDP1BusBusy);
+  FCD.AdvanceForward(Target);
+  while FNextRaster <= Target do
+    RasterEvent;
+end;
+
+// CPU is selected only from master/slave (sound is handled before indexing).
+{$R-}
 procedure TSaturnConsole.RunCycles(Cycles: Int64);
 begin
   if (Cycles < 0) or (Cycles > Int64(FClock) * 60) then
     raise EArgumentOutOfRangeException.Create('Saturn run interval');
+
+  {$Q+}
   var Target := FTime + Cycles;
+  // Reserve the maximum 60-second interval plus instruction overshoot.
+  if (Target > High(Int64) - Int64(30000000) * 61) or
+    (FCPUTime[0] > High(Int64) - Int64(30000000) * 61) or
+    (FCPUTime[1] > High(Int64) - Int64(30000000) * 61) or
+    (FSoundAt > High(Int64) - Int64(30000000) * 61) then
+    raise EArgumentOutOfRangeException.Create('Saturn clock counter exhausted');
+
+  {$Q-}
   while FTime < Target do
   begin
     var CPU: Integer := 0;
@@ -886,7 +1199,8 @@ begin
       CPU := 2;
       Due := FSoundAt;
     end;
-    var Next := Min(Target, Min(FNextRaster, Due));
+    // Do not step over DMA ownership changes while advancing VDP1 drawing.
+    var Next := Min(Target, Min(FNextRaster, Min(Due, FSCU.NextDMA)));
     if Next > FTime then
       AdvanceDevices(Next);
     if FResetPending then
@@ -894,37 +1208,76 @@ begin
       Reset;
       Exit;
     end;
+
     if FTime >= Target then
       Break;
+
     if Due > FTime then
       Continue;
+
     if CPU = 2 then
     begin
       var Used := Clown68000DoCycles(FSoundCPU, FSoundCallbacks, 1);
       Inc(FSoundFraction, Int64(Used) * FClock);
-      Inc(FSoundAt, FSoundFraction div 11289600);
-      FSoundFraction := FSoundFraction mod 11289600;
+      var SoundClocks := FSoundFraction div 11289600;
+      Inc(FSoundAt, SoundClocks);
+      Dec(FSoundFraction, SoundClocks * 11289600);
       Continue;
     end;
-    // Events are visible to both CPUs before the next instruction is issued.
-    var Before := FCPU[CPU].State;
+
+    // Events are visible to both CPUs before instruction issue is attempted.
     if Assigned(FInstructionObserver) then
-      FInstructionObserver(CPU, Before);
-    var WasIRQ: Boolean := (CPU = 0) and not Before.DelayPending and (FIRQLevel > Integer((Before.SR shr 4) and 15));
+    begin
+      SynchronizeVideo;
+      FInstructionObserver(CPU, FCPU[CPU].State);
+    end;
+    if FSCU.CPUBusBusy then
+    begin
+      var CachedSpent := FCPU[CPU].StepBusReleased;
+      if CachedSpent <> 0 then
+      begin
+        Inc(FCPUTime[CPU], CachedSpent);
+        Continue;
+      end;
+
+      // A cache miss, store or other checked instruction waits for the next
+      // DMA phase; devices and raster events keep advancing during the wait.
+      var UntilDMA := Min(Target, Min(FNextRaster, FSCU.NextDMA));
+      var Held := Integer(Min(Int64(4096), Max(Int64(1), UntilDMA - FCPUTime[CPU])));
+      FCPU[CPU].Hold(Held);
+      Inc(FCPUTime[CPU], Held);
+      Continue;
+    end;
     var Vector := FIRQVector;
     var Spent := FCPU[CPU].Step;
     Inc(FCPUTime[CPU], Spent);
-    if WasIRQ and (FCPU[CPU].State.R[15] = Before.R[15] - 8) then
+
+    // A higher-priority on-chip IRQ also pushes eight bytes, but must not
+    // acknowledge the SCU. Use the CPU's actual interrupt acceptance event.
+    if (CPU = 0) and FCPU[CPU].ExternalInterruptAccepted then
       FSCU.Acknowledge(Vector);
   end;
+  if not FRunningFrame then
+    SynchronizeVideo;
 end;
+
+{$Q+}{$R+}
 
 procedure TSaturnConsole.RunFrame;
 begin
   FSampleFrames := 0;
   var Frame := FFrames;
-  while FFrames = Frame do
-    RunCycles(1708);
+
+  // A frame ends at the VDP2 field event, not at the next arbitrary
+  // 1708-clock chunk. This also handles 1820-clock lines and interlace.
+  FRunningFrame := True;
+  try
+    while FFrames = Frame do
+      RunCycles(Max(Int64(1), FNextRaster - FTime));
+  finally
+    FRunningFrame := False;
+    SynchronizeVideo;
+  end;
 end;
 
 procedure TSaturnConsole.SetInput(Port: Integer; Buttons: TSaturnButtons; Connected: Boolean);
@@ -936,6 +1289,7 @@ procedure TSaturnConsole.LoadBackup(const Data: TBytes);
 begin
   if Length(Data) <> SizeOf(FBackup) then
     raise EReadError.Create('Saturn backup RAM size');
+
   Move(Data[0], FBackup, SizeOf(FBackup));
   FBackupDirty := False;
 end;
@@ -961,10 +1315,12 @@ end;
 
 procedure TSaturnConsole.SerializeState(Archive: TStateArchive);
 begin
-  var Version: Cardinal := $53415404;
+  SynchronizeVideo;
+  var Version: Cardinal := $53415409;
   Archive.Field(Version, SizeOf(Version));
-  if Version <> $53415404 then
+  if (Version < $53415404) or (Version > $53415409) then
     raise EReadError.Create('Unsupported Saturn snapshot format; a current Saturn snapshot is required');
+
   var Hash := THashSHA2.Create;
   Hash.Update(FBIOS);
   var Identity := Hash.HashAsBytes;
@@ -972,6 +1328,7 @@ begin
   Archive.Field(Identity[0], Length(Identity));
   if Archive.Loading and not CompareMem(@Identity[0], @Expected[0], Length(Identity)) then
     raise EReadError.Create('Saturn snapshot BIOS mismatch');
+
   SetLength(Identity, 32);
   FillChar(Identity[0], 32, 0);
   if FCD.Disc <> nil then
@@ -984,6 +1341,7 @@ begin
   Archive.Field(Identity[0], Length(Identity));
   if Archive.Loading and not CompareMem(@Identity[0], @Expected[0], Length(Identity)) then
     raise EReadError.Create('Saturn snapshot disc mismatch');
+
   Archive.Field(FWorkLow, SizeOf(FWorkLow));
   Archive.Field(FWorkHigh, SizeOf(FWorkHigh));
   Archive.Field(FBackup, SizeOf(FBackup));
@@ -1004,10 +1362,10 @@ begin
   Archive.Field(FSoundRegisters, SizeOf(FSoundRegisters));
   FCPU[0].SerializeState(Archive);
   FCPU[1].SerializeState(Archive);
-  FSCU.SerializeState(Archive);
+  FSCU.SerializeState(Archive, Version >= $53415408);
   FSMPC.SerializeState(Archive);
-  FVDP1.SerializeState(Archive);
-  FVDP2.SerializeState(Archive);
+  FVDP1.SerializeState(Archive, Version >= $53415407);
+  FVDP2.SerializeState(Archive, Version >= $53415405);
   Archive.Field(FCPUTime, SizeOf(FCPUTime));
   Archive.Field(FTime, SizeOf(FTime));
   Archive.Field(FNextRaster, SizeOf(FNextRaster));
@@ -1023,12 +1381,13 @@ begin
   Archive.Field(FFrames, SizeOf(FFrames));
   Archive.Field(FFrameWidth, SizeOf(FFrameWidth));
   Archive.Field(FFrameHeight, SizeOf(FFrameHeight));
-  FCD.SerializeState(Archive);
+  FCD.SerializeState(Archive, Version >= $53415405, Version >= $53415406, Version >= $53415409);
   FSCSP.SerializeState(Archive);
   FCartridge.SerializeState(Archive);
   Archive.Field(FSampleFrames, SizeOf(FSampleFrames));
   if (FSampleFrames < 0) or (FSampleFrames > 4096) then
     raise EReadError.Create('Saturn snapshot audio size');
+
   if FSampleFrames > 0 then
     Archive.Field(FSamples[0], FSampleFrames * 4);
   Archive.Field(FBusUntil, SizeOf(FBusUntil));
@@ -1038,6 +1397,7 @@ begin
     (FRasterPhase < 0) or (FRasterPhase > 2) or (FLineStart < 0) or (FLineStart > FTime) or
     (FSoundDMACount < 0) or (FSoundDMACount > $FFE) or (FSoundDMAActive and ((FSoundDMACount = 0) or (FSoundDMANext < FTime))) then
     raise EReadError.Create('Saturn state timing');
+
   SetLength(FPixels, FFrameWidth * FFrameHeight);
   Archive.Field(FPixels[0], Length(FPixels) * SizeOf(TAlphaColor));
   if Archive.Loading then

@@ -42,6 +42,8 @@ type
     FStick: TVirtualStick;
     FLeftTrigger, FRightTrigger: TVirtualElement;
     FAnalog: TEmulatorAnalogPad;
+    FAuxiliary: array[0..31] of TVirtualElement;
+    FAuxiliaryButtons: Cardinal;
     procedure Bind(Element: TVirtualElement; Part: Integer; Button: TEmulatorButton);
     procedure SetButtonMask(const Value: TEmulatorButtons);
     procedure SetCoreButtons(const Value: TEmulatorButtons);
@@ -53,12 +55,15 @@ type
     procedure AddStick;
     procedure AddAnalogTriggers;
     function AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean = False): TVirtualElement;
+    procedure AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF);
     procedure AddMenus(const SelectCaption: string = 'SELECT'; const StartCaption: string = 'START');
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure ReleaseAll; override;
     function ButtonBounds(Button: TEmulatorButton): TRectF;
+    function AuxiliaryButtonBounds(Index: Integer): TRectF;
+    property AuxiliaryButtons: Cardinal read FAuxiliaryButtons;
     property AnalogInput: TEmulatorAnalogPad read FAnalog;
     property Buttons: TEmulatorButtons read FButtons;
     property ButtonMask: TEmulatorButtons read FButtonMask write SetButtonMask;
@@ -259,6 +264,21 @@ begin
     AddButton(TEmulatorButton.Start, StartCaption, TVirtualSide.Right, 16, 74, 88, 36, True);
 end;
 
+procedure TPlatformGamepad.AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF);
+begin
+  if (Index < Low(FAuxiliary)) or (Index > High(FAuxiliary)) or (FAuxiliary[Index] <> nil) then
+    raise EArgumentOutOfRangeException.Create('Auxiliary button');
+  FAuxiliary[Index] := Add(TVirtualKey.Create('auxiliary' + IntToStr(Index), Caption, Side, Bounds));
+end;
+
+function TPlatformGamepad.AuxiliaryButtonBounds(Index: Integer): TRectF;
+begin
+  Result := TRectF.Empty;
+  if (Index >= Low(FAuxiliary)) and (Index <= High(FAuxiliary)) and
+    (FAuxiliary[Index] <> nil) and FAuxiliary[Index].PartEnabled[0] then
+    Result := PartBounds(FAuxiliary[Index], 0);
+end;
+
 procedure TPlatformGamepad.InputChanged;
 begin
   inherited;
@@ -290,12 +310,17 @@ begin
     NewAnalog.Valid := (NewAnalog.X <> 0) or (NewAnalog.Y <> 0) or
       (NewAnalog.LeftTrigger <> 0) or (NewAnalog.RightTrigger <> 0);
   end;
-  if (NewButtons = FButtons) and (NewAnalog.X = FAnalog.X) and (NewAnalog.Y = FAnalog.Y) and
+  var NewAuxiliary: Cardinal := 0;
+  for var I := Low(FAuxiliary) to High(FAuxiliary) do
+    if (FAuxiliary[I] <> nil) and (FAuxiliary[I].Value > 0) then
+      NewAuxiliary := NewAuxiliary or (Cardinal(1) shl I);
+  if (NewButtons = FButtons) and (NewAuxiliary = FAuxiliaryButtons) and (NewAnalog.X = FAnalog.X) and (NewAnalog.Y = FAnalog.Y) and
     (NewAnalog.LeftTrigger = FAnalog.LeftTrigger) and (NewAnalog.RightTrigger = FAnalog.RightTrigger) and
     (NewAnalog.Valid = FAnalog.Valid) then
     Exit;
 
   FAnalog := NewAnalog;
+  FAuxiliaryButtons := NewAuxiliary;
   FButtons := NewButtons;
   if Assigned(FOnChange) then
     FOnChange(Self);
@@ -310,6 +335,8 @@ begin
   FButtonMask := Value;
   for var B in FBindings do
     B.Element.PartEnabled[B.Part] := B.Button in Value;
+  for var E in FAuxiliary do
+    if E <> nil then E.PartEnabled[0] := Value <> [];
   if FStick <> nil then
     for var Part := 0 to FStick.PartCount - 1 do
       FStick.PartEnabled[Part] := Value <> [];

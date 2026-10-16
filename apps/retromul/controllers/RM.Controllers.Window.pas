@@ -1,5 +1,7 @@
 ﻿unit RM.Controllers.Window;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -37,7 +39,7 @@ begin
   if csDestroying in FView.ComponentState then
     Exit;
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   if FState.Browser.ActionsTool <> nil then
   begin
     var Actions := FView.FindComponent('LayoutGameActions') as TLayout;
@@ -200,7 +202,7 @@ begin
     FState.Input.FamicomKeyboard.Height := TNesFamicomKeyboard.PreferredHeight(
       FView.ClientWidth - FView.Padding.Left - FView.Padding.Right,
       FView.ClientHeight - FView.Padding.Top - FView.Padding.Bottom - FView.LayoutHead.Height);
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   ArrangeVirtualGamepads(FState.Input.Gamepad, FState.Input.PowerPad, FView.ImageCanvas);
   if FView.LayoutShowPanel.Visible then
     FView.LayoutShowPanel.BringToFront;
@@ -331,7 +333,7 @@ procedure TWindowController.SwitchFullScreen;
 begin
   if (FState.Session.Emulation = nil) or FState.Browser.ViewingLibrary or (FState.Settings.View <> nil) or (FState.Help.View <> nil) then
     Exit;
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   if not FView.FullScreen then
     FState.Browser.FullScreenPadding := FView.Padding.Rect;
   {$ENDIF}
@@ -365,14 +367,14 @@ begin
   end;
   {$ENDIF}
 
-  {$IF not Defined(ANDROID) and not Defined(IOS)}
+  {$IFNDEF ISMOBILE}
   if FView.FullScreen then
     FView.Padding.Rect := TRectF.Empty
   else
     FView.Padding.Rect := FState.Browser.FullScreenPadding;
   {$ENDIF}
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   // The game tab owns its toolbar as well as the canvas.
   FView.LayoutClient.Visible := True;
   {$ENDIF}

@@ -193,6 +193,7 @@ begin
   FBusyIndicator.Align := TAlignLayout.Client;
   FBusyIndicator.HitTest := False;
   FBusyIndicator.Visible := False;
+  FBusyIndicator.Margins.Rect := RectF(-6, -6, 0, 0);
 
   FReady := True;
 end;

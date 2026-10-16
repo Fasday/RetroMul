@@ -1,4 +1,4 @@
-﻿object LibraryView: TLibraryView
+object LibraryView: TLibraryView
   Size.Width = 1224.000000000000000000
   Size.Height = 818.000000000000000000
   Size.PlatformDefault = False
@@ -10,6 +10,39 @@
     Size.PlatformDefault = False
     StyleLookup = 'retromul_settings'
     TabOrder = 0
+  end
+  object LayoutInspectorOverlay: TLayout
+    Align = Contents
+    Size.Width = 1224.000000000000000000
+    Size.Height = 818.000000000000000000
+    Size.PlatformDefault = False
+    Visible = False
+    object PanelInspectorHeader: TPanel
+      Align = Top
+      Padding.Left = 12.000000000000000000
+      Padding.Top = 4.000000000000000000
+      Padding.Right = 12.000000000000000000
+      Padding.Bottom = 4.000000000000000000
+      Size.Width = 1224.000000000000000000
+      Size.Height = 52.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_sidebar'
+      object ButtonInspectorBack: TButton
+        Align = Left
+        Position.X = 12.000000000000000000
+        Position.Y = 4.000000000000000000
+        Size.Width = 140.000000000000000000
+        Size.Height = 44.000000000000000000
+        Size.PlatformDefault = False
+        Text = 'Back'
+      end
+    end
+    object LayoutInspectorContent: TLayout
+      Align = Client
+      Size.Width = 1224.000000000000000000
+      Size.Height = 766.000000000000000000
+      Size.PlatformDefault = False
+    end
   end
   object PanelSidebar: TPanel
     Align = Left
@@ -693,6 +726,15 @@
         Size.PlatformDefault = False
       end
     end
+    object LayoutCompactNavigation: TLayout
+      Align = Top
+      Margins.Bottom = 8.000000000000000000
+      Position.Y = 48.000000000000000000
+      Size.Width = 668.000000000000000000
+      Size.Height = 44.000000000000000000
+      Size.PlatformDefault = False
+      Visible = False
+    end
     object LayoutCompactActions: TLayout
       Align = Top
       Size.Width = 50.000000000000000000
@@ -895,6 +937,7 @@
         Visible = False
         object ComboBoxPlatform: TComboBox
           Align = Client
+          ItemHeight = 34.000000000000000000
           Margins.Top = 4.000000000000000000
           Margins.Right = 7.000000000000000000
           Margins.Bottom = 8.000000000000000000
@@ -906,39 +949,24 @@
       end
       object LayoutFilterRow0: TLayout
         Align = Top
-        Position.Y = 0.000000000000000000
+        Size.Width = 620.000000000000000000
         Size.Height = 41.000000000000000000
         Size.PlatformDefault = False
       end
       object LayoutFilterRow1: TLayout
         Align = Top
         Position.Y = 41.000000000000000000
+        Size.Width = 620.000000000000000000
         Size.Height = 41.000000000000000000
         Size.PlatformDefault = False
       end
       object LayoutFilterRow2: TLayout
         Align = Top
         Position.Y = 82.000000000000000000
+        Size.Width = 620.000000000000000000
         Size.Height = 41.000000000000000000
         Size.PlatformDefault = False
       end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     end
     object LabelCount: TLabel
       Align = Top

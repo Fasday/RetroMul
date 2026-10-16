@@ -3,10 +3,10 @@
 interface
 
 uses
-  RM.Platforms.Presentation,
-  Core.Platforms, Core.RomFormat, System.Classes, System.Types, System.UITypes, FMX.Types,
-  FMX.Controls, FMX.Forms, FMX.Layouts, FMX.Objects, FMX.StdCtrls, FMXInput,
-  Core.InputConfig, Core.Storage, FMX.Controls.Presentation;
+  RM.Platforms.Presentation, Core.Platforms, Core.RomFormat, System.Classes,
+  System.Types, System.UITypes, FMX.Types, FMX.Controls, FMX.Forms, FMX.Layouts,
+  FMX.Objects, FMX.StdCtrls, FMXInput, Core.InputConfig, Core.Storage,
+  FMX.Controls.Presentation;
 
 type
   TControlsHelpView = class(TFrame)
@@ -45,9 +45,10 @@ type
 implementation
 
 uses
-  System.SysUtils, System.Math, System.Generics.Collections, System.Generics.Defaults, FMX.Graphics,
-  FMX.BehaviorManager, RM.LibraryView, RM.Settings, RM.Input, RM.Gamepad,
-  Core.Emulation, RM.Icons, RM.Styles, NES.PowerPad;
+  System.SysUtils, System.Math, System.Generics.Collections,
+  System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager, RM.LibraryView,
+  RM.Settings, RM.Input, RM.Gamepad, Core.Emulation, RM.Icons, RM.Styles,
+  NES.PowerPad;
 
 {$R *.fmx}
 
@@ -103,7 +104,7 @@ begin
   FPlayers := EnsureRange(Players, 1, 8);
   FormStyles.RelocalizeUI(Self, 'en');
   if SystemId = ROM_SYSTEM_GW then
-    (FindComponent('LabelControllerTitle') as TLabel).Text := 'Game && Watch';
+    (FindComponent('LabelControllerTitle') as TLabel).Text := LibrarySystemName(SystemId);
   LabelSubtitle.Text := Translate('Current bindings · ') + LibrarySystemName(SystemId) + Translate(' · game paused');
   if KeyboardPeripheral then
     LabelNote.Text := Translate('Letter shortcuts, F5, F6 and F8 are unavailable with keyboard peripherals.');
@@ -113,19 +114,19 @@ begin
   ButtonSettings.StylesData['text.Margins.Left'] := 36;
   ButtonSettings.StylesData['text.Margins.Right'] := 10;
   ButtonFooterClose.OnClick := CloseClick;
-  for var I := 0 to High(FPlayerButtons) do
+  for var i := 0 to High(FPlayerButtons) do
   begin
-    FPlayerButtons[I] := FindComponent('ButtonPlayer' + IntToStr(I + 1)) as TButton;
-    FPlayerButtons[I].Text := Translate('Player ') + IntToStr(I + 1);
-    FPlayerButtons[I].Visible := I < FPlayers;
-    FPlayerButtons[I].OnClick := PlayerClick;
+    FPlayerButtons[i] := FindComponent('ButtonPlayer' + IntToStr(i + 1)) as TButton;
+    FPlayerButtons[i].Text := Translate('Player ') + IntToStr(i + 1);
+    FPlayerButtons[i].Visible := i < FPlayers;
+    FPlayerButtons[i].OnClick := PlayerClick;
   end;
-  for var I := 0 to 9 do
+  for var i := 0 to 9 do
   begin
-    var Row := FindComponent('LayoutFunction' + IntToStr(I)) as TLayout;
-    if KeyboardPeripheral and (I in [1, 2, 3, 4, 6, 7, 9]) then
+    var Row := FindComponent('LayoutFunction' + IntToStr(i)) as TLayout;
+    if KeyboardPeripheral and (i in [1, 2, 3, 4, 6, 7, 9]) then
       Row.Opacity := 0.4;
-    if I = 9 then
+    if i = 9 then
       Row.Visible := HasCoinAcceptor;
   end;
   LayoutFunctions.Height := (9 + Ord(HasCoinAcceptor)) * 44;
@@ -139,13 +140,12 @@ begin
   inherited;
 end;
 
-
 procedure TControlsHelpView.BuildPlayer;
 begin
   LayoutDiagram.DeleteChildren;
   LayoutDiagram.Visible := True;
-  for var I := 0 to 1 do
-    TLayout(FindComponent('LayoutAssignmentColumn'+IntToStr(I))).DeleteChildren;
+  for var i := 0 to 1 do
+    TLayout(FindComponent('LayoutAssignmentColumn' + IntToStr(i))).DeleteChildren;
   LayoutAssignments.Height := 0;
   for var i := 0 to FPlayers - 1 do
     if i = FPlayer then
@@ -189,7 +189,8 @@ begin
   begin
     begin
       var Pad: TControl;
-      if PowerPadActive then Pad := TNesPowerPad.Create(LayoutDiagram)
+      if PowerPadActive then
+        Pad := TNesPowerPad.Create(LayoutDiagram)
       else
       begin
         var Gamepad := TScreenGamepad.Create(LayoutDiagram);
@@ -212,6 +213,11 @@ begin
     for var B in Buttons do
     begin
       AssignmentRow(LayoutAssignments, CoreButtonName(FSystemId, B), Assignments(PadAction(FPlayer, B)), Y, PadAction(FPlayer, B));
+      Y := Y + 34;
+    end;
+    if FSystemId = ROM_SYSTEM_N64 then
+    begin
+      AssignmentRow(LayoutAssignments, 'L', Assignments(N64LAction + FPlayer), Y, N64LAction + FPlayer);
       Y := Y + 34;
     end;
     if PowerPadActive then
@@ -309,95 +315,111 @@ begin
   L.HitTest := True;
 end;
 
-
 procedure TControlsHelpView.Resize;
 begin
   inherited;
-  if (csLoading in ComponentState) or FArranging or (RectangleSurface = nil) or (LayoutFunctions = nil) or (csDestroying in ComponentState) then Exit;
+  if (csLoading in ComponentState) or FArranging or (RectangleSurface = nil) or (LayoutFunctions = nil) or (csDestroying in ComponentState) then
+    Exit;
   FArranging := True;
   try
-    var W := Max(1,Min(1080,Width-40));
-    var H := Max(1,Min(740,Height-40));
+    var W := Max(1, Min(1080, Width - 40));
+    var H := Max(1, Min(740, Height - 40));
     RectangleSurface.Width := W;
     RectangleSurface.Height := H;
-    LabelTitle.TextSettings.Font.Size := IfThen(W<650,18,25);
-    var CloseW := IfThen(W<500,100,144);
+    LabelTitle.TextSettings.Font.Size := IfThen(W < 650, 18, 25);
+    var CloseW := IfThen(W < 500, 100, 144);
     ButtonFooterClose.Width := CloseW;
-    ButtonSettings.Width := Max(1,Min(230,W-60-CloseW));
-    if W<500 then ButtonSettings.Text:=Translate('Settings')
-    else ButtonSettings.Text:=Translate('Configure controls');
-    var ContentW := Max(1,W-62);
-    var TwoColumns := W>=850;
+    ButtonSettings.Width := Max(1, Min(230, W - 60 - CloseW));
+    if W < 500 then
+      ButtonSettings.Text := Translate('Settings')
+    else
+      ButtonSettings.Text := Translate('Configure controls');
+    var ContentW := Max(1, W - 62);
+    var TwoColumns := W >= 850;
     var ColumnW := ContentW;
-    if TwoColumns then ColumnW:=(ContentW-48)*0.56;
+    if TwoColumns then
+      ColumnW := (ContentW - 48) * 0.56;
     LayoutLeft.Align := TAlignLayout.Top;
     LayoutRight.Align := TAlignLayout.Top;
-    LayoutRight.Margins.Rect := RectF(0,24,0,0);
+    LayoutRight.Margins.Rect := RectF(0, 24, 0, 0);
     RectangleDivider.Visible := TwoColumns;
     if TwoColumns then
     begin
-      LayoutLeft.Align:=TAlignLayout.Left;
-      LayoutLeft.Width:=ColumnW;
-      LayoutRight.Align:=TAlignLayout.Client;
-      LayoutRight.Margins.Rect:=RectF(24,0,0,0);
+      LayoutLeft.Align := TAlignLayout.Left;
+      LayoutLeft.Width := ColumnW;
+      LayoutRight.Align := TAlignLayout.Client;
+      LayoutRight.Margins.Rect := RectF(24, 0, 0, 0);
     end;
-    var TabColumns:=Max(1,Trunc(ColumnW/108));
-    var TabRows:=Ceil(FPlayers/TabColumns);
+    var TabColumns := Max(1, Trunc(ColumnW / 108));
+    var TabRows := Ceil(FPlayers / TabColumns);
     LayoutPlayerTabs.BeginUpdate;
     try
-      for var I:=0 to 7 do
-        TLayout(FindComponent('LayoutPlayerTabRow'+IntToStr(I))).Visible:=I<TabRows;
-      for var I:=0 to FPlayers-1 do
+      for var i := 0 to 7 do
+        TLayout(FindComponent('LayoutPlayerTabRow' + IntToStr(i))).Visible := i < TabRows;
+      for var i := 0 to FPlayers - 1 do
       begin
-        var Row:=FindComponent('LayoutPlayerTabRow'+IntToStr(I div TabColumns)) as TLayout;
-        Row.Position.Y:=(I div TabColumns)*38; // Alignment ordering key.
-        FPlayerButtons[I].Parent:=Row;
-        FPlayerButtons[I].Position.X:=(I mod TabColumns)*108;
+        var Row := FindComponent('LayoutPlayerTabRow' + IntToStr(i div TabColumns)) as TLayout;
+        Row.Position.Y := (i div TabColumns) * 38; // Alignment ordering key.
+        FPlayerButtons[i].Parent := Row;
+        FPlayerButtons[i].Position.X := (i mod TabColumns) * 108;
       end;
-      LayoutPlayerTabs.Height:=TabRows*38;
-    finally LayoutPlayerTabs.EndUpdate; end;
-    var AssignmentColumns:=1;
-    if (FSystemId<>ROM_SYSTEM_GW) and (ColumnW>=380) then AssignmentColumns:=2;
-    var AllRows:=TList<TControl>.Create;
+      LayoutPlayerTabs.Height := TabRows * 38;
+    finally
+      LayoutPlayerTabs.EndUpdate;
+    end;
+    var AssignmentColumns := 1;
+    if (FSystemId <> ROM_SYSTEM_GW) and (ColumnW >= 380) then
+      AssignmentColumns := 2;
+    var AllRows := TList<TControl>.Create;
     try
-      for var I:=0 to 1 do
+      for var i := 0 to 1 do
       begin
-        var Column:=FindComponent('LayoutAssignmentColumn'+IntToStr(I)) as TLayout;
+        var Column := FindComponent('LayoutAssignmentColumn' + IntToStr(i)) as TLayout;
         if Column.Children <> nil then
-          for var Child in Column.Children do AllRows.Add(TControl(Child));
+          for var Child in Column.Children do
+            AllRows.Add(TControl(Child));
       end;
       AllRows.Sort(TComparer<TControl>.Construct(
-        function(const A,B:TControl):Integer
-        begin Result:=CompareValue(A.Tag,B.Tag); end));
-      var Rows:=Ceil(AllRows.Count/AssignmentColumns);
-      var RowHeight:=IfThen(FSystemId=ROM_SYSTEM_GW,32,34);
-      for var I:=0 to 1 do
+        function(const A, B: TControl): Integer
+        begin
+          Result := CompareValue(A.Tag, B.Tag);
+        end));
+      var Rows := Ceil(AllRows.Count / AssignmentColumns);
+      var RowHeight := IfThen(FSystemId = ROM_SYSTEM_GW, 32, 34);
+      for var i := 0 to 1 do
       begin
-        var Column:=FindComponent('LayoutAssignmentColumn'+IntToStr(I)) as TLayout;
-        Column.Visible:=I<AssignmentColumns;
-        Column.Width:=ColumnW/AssignmentColumns;
-        Column.Height:=Rows*RowHeight;
+        var Column := FindComponent('LayoutAssignmentColumn' + IntToStr(i)) as TLayout;
+        Column.Visible := i < AssignmentColumns;
+        Column.Width := ColumnW / AssignmentColumns;
+        Column.Height := Rows * RowHeight;
       end;
-      for var I:=0 to AllRows.Count-1 do
+      for var i := 0 to AllRows.Count - 1 do
       begin
-        var Row:=AllRows[I];
-        Row.Parent:=FindComponent('LayoutAssignmentColumn'+IntToStr(I div Max(1,Rows))) as TLayout;
-        Row.Align:=TAlignLayout.Top;
-        Row.Height:=RowHeight;
-        Row.Margins.Right:=IfThen(AssignmentColumns=2,10,0);
-        Row.Position.Y:=(I mod Max(1,Rows))*RowHeight;
-        TControl(Row.Children[0]).Width:=IfThen(FSystemId=ROM_SYSTEM_GW,112,40);
+        var Row := AllRows[i];
+        Row.Parent := FindComponent('LayoutAssignmentColumn' + IntToStr(i div Max(1, Rows))) as TLayout;
+        Row.Align := TAlignLayout.Top;
+        Row.Height := RowHeight;
+        Row.Margins.Right := IfThen(AssignmentColumns = 2, 10, 0);
+        Row.Position.Y := (i mod Max(1, Rows)) * RowHeight;
+        TControl(Row.Children[0]).Width := IfThen(FSystemId = ROM_SYSTEM_GW, 112, 40);
       end;
-      LayoutAssignments.Height:=Rows*RowHeight;
-    finally AllRows.Free; end;
-    LayoutLeft.Height:=30+8+LayoutPlayerTabs.Height+2+24+12+LayoutAssignments.Height;
-    if LayoutDiagram.Visible then LayoutLeft.Height:=LayoutLeft.Height+10+180;
-    LayoutRight.Height:=LayoutFunctions.Height+70;
+      LayoutAssignments.Height := Rows * RowHeight;
+    finally
+      AllRows.Free;
+    end;
+    LayoutLeft.Height := 30 + 8 + LayoutPlayerTabs.Height + 2 + 24 + 12 + LayoutAssignments.Height;
+    if LayoutDiagram.Visible then
+      LayoutLeft.Height := LayoutLeft.Height + 10 + 180;
+    LayoutRight.Height := LayoutFunctions.Height + 70;
     for var Row in LayoutFunctions.Children do
-      TControl(TFmxObject(Row).Children[0]).Width:=Max(120,IfThen(TwoColumns,ContentW-ColumnW-48,ContentW)-128);
-    if TwoColumns then LayoutContent.Height:=Max(LayoutLeft.Height,LayoutRight.Height)
-    else LayoutContent.Height:=LayoutLeft.Height+24+LayoutRight.Height;
-  finally FArranging:=False; end;
+      TControl(TFmxObject(Row).Children[0]).Width := Max(120, IfThen(TwoColumns, ContentW - ColumnW - 48, ContentW) - 128);
+    if TwoColumns then
+      LayoutContent.Height := Max(LayoutLeft.Height, LayoutRight.Height)
+    else
+      LayoutContent.Height := LayoutLeft.Height + 24 + LayoutRight.Height;
+  finally
+    FArranging := False;
+  end;
 end;
 
 procedure TControlsHelpView.PlayerClick(Sender: TObject);

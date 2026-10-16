@@ -143,6 +143,9 @@ begin
     Result.Version := 3;
   if PlatformCore = ROM_CORE_ID_NEOGEOCD then
     Result.Version := 2;
+  // Saturn v5 adds physical presence of the optional offline NetLink cartridge.
+  if SameText(PlatformCore, 'SATURN') then
+    Result.Version := 5;
   var Core := AnsiString(PlatformCore);
   if (Length(Core) = 0) or (Length(Core) > 8) then
     raise EArgumentException.Create('Invalid snapshot platform');
@@ -192,7 +195,8 @@ begin
       (Header.Version <> Expected.Version) then
       raise EReadError.CreateFmt('N64 snapshot version %d is unsupported; expected version %d', [Header.Version, Expected.Version]);
     if not CompareMem(@Header.Magic, @Expected.Magic, 8) or
-      (Header.Version <> Expected.Version) or
+      ((Header.Version <> Expected.Version) and not
+        (SameText(platform, 'SATURN') and ((Header.Version = 2) or (Header.Version = 3) or (Header.Version = 4)))) or
       not CompareMem(@Header.platform, @Expected.platform, 8) or
       not CompareMem(@Header.ROMHash, @Expected.ROMHash, 32) or
       (Header.PayloadSize = 0) or (Header.PayloadSize > 64 * 1024 * 1024) or

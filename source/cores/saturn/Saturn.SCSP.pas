@@ -72,13 +72,13 @@ const
 
 class constructor TSaturnSCSP.Create;
 begin
-  for var I := 0 to 2047 do
-    FGain[I] := Round(Power(10, -I * 3 / (32.0 * 20)) * 65536);
-  for var I := 0 to 14 do
-    FPan[I] := Round(Power(10, -I * 3 / 20.0) * 65536);
+  for var i := 0 to 2047 do
+    FGain[i] := Round(Power(10, -i * 3 / (32.0 * 20)) * 65536);
+  for var i := 0 to 14 do
+    FPan[i] := Round(Power(10, -i * 3 / 20.0) * 65536);
   FPan[15] := 0;
-  for var I := 0 to 31 do
-    FLFOStep[I] := Round(LFOFrequency[I] * 4294967296.0 / 44100);
+  for var i := 0 to 31 do
+    FLFOStep[i] := Round(LFOFrequency[i] * 4294967296.0 / 44100);
   for var Depth := 0 to 7 do
     for var Wave := 0 to 255 do
     begin
@@ -119,21 +119,21 @@ end;
 
 procedure TSaturnSCSP.KeyExecute;
 begin
-  for var I := 0 to 31 do
+  for var i := 0 to 31 do
   begin
-    if Reg(I * $20) and $800 <> 0 then
+    if Reg(i * $20) and $800 <> 0 then
     begin
-      if not FVoices[I].Active or (FVoices[I].Stage = 3) then
+      if not FVoices[i].Active or (FVoices[i].Stage = 3) then
       begin
-        FVoices[I] := Default(TSCSPVoice);
-        FVoices[I].Active := True;
-        FVoices[I].Envelope := $280 * 65536;
-        FVoices[I].Stage := 0;
+        FVoices[i] := Default(TSCSPVoice);
+        FVoices[i].Active := True;
+        FVoices[i].Envelope := $280 * 65536;
+        FVoices[i].Stage := 0;
       end;
     end
-    else if FVoices[I].Active then
-      FVoices[I].Stage := 3;
-    FRegisters[I * $20] := FRegisters[I * $20] and not $10;
+    else if FVoices[i].Active then
+      FVoices[i].Stage := 3;
+    FRegisters[i * $20] := FRegisters[i * $20] and not $10;
   end;
 end;
 
@@ -142,6 +142,7 @@ begin
   var A: Integer := Address and $FFF;
   if A >= $700 then
     Exit(FDSP.ReadRegister(A));
+
   if (A >= $600) and (A < $680) then
   begin
     var V := Word(FStack[(A - $600) div 2]);
@@ -150,15 +151,19 @@ begin
     else
       Exit(V shr 8);
   end;
+
   if (A = $408) or (A = $409) then
   begin
-    var I: Integer := (Reg($408) shr 11) and 31;
-    var V: Word := ((Integer(FVoices[I].Position shr 12) and 15) shl 7) or ((FVoices[I].Stage and 3) shl 5) or ((FVoices[I].Envelope shr 21) and 31);
+    var i: Integer := (Reg($408) shr 11) and 31;
+
+    // Position is Q12; CA reports samples / 4096 (SCSP manual, p. 89).
+    var V: Word := ((Integer(FVoices[i].Position shr 24) and 15) shl 7) or ((FVoices[i].Stage and 3) shl 5) or ((FVoices[i].Envelope shr 21) and 31);
     if Odd(A) then
       Exit(V and $FF)
     else
       Exit(V shr 8);
   end;
+
   Result := 0;
   if A < $600 then
     Result := FRegisters[A];
@@ -172,8 +177,10 @@ begin
     FDSP.WriteRegister(A, Value);
     Exit;
   end;
+
   if A >= $600 then
     Exit;
+
   FRegisters[A] := Value;
   if (A < $400) and (A and $1F in [0, 1]) and (Reg(A and $3E0) and $1000 <> 0) then
     KeyExecute;
@@ -203,8 +210,11 @@ end;
 
 procedure TSaturnSCSP.Envelope(Channel: Integer);
 const
-  Periods: array[0..3, 0..6] of Integer = ((8192, 4096, 4096, 0, 0, 0, 0),
-    (8192, 4096, 4096, 4096, 4096, 4096, 4096), (4096, 0, 0, 0, 0, 0, 0), (4096, 4096, 2048, 2048, 0, 0, 0));
+  Periods: array[0..3, 0..6] of Integer = (
+    (8192, 4096, 4096, 0, 0, 0, 0),
+    (8192, 4096, 4096, 4096, 4096, 4096, 4096),
+    (4096, 0, 0, 0, 0, 0, 0),
+    (4096, 4096, 2048, 2048, 0, 0, 0));
   Counts: array[0..3] of Integer = (3, 7, 1, 4);
   Fraction: array[0..3, 0..3] of Integer = ((0, 0, 0, 0), (1, 0, 0, 0), (1, 0, 1, 0), (1, 1, 1, 0));
 begin
@@ -381,6 +391,7 @@ begin
       FStack[(FStackAt + Channel) and 63] := 0;
     Exit;
   end;
+
   var B := Channel * $20;
   var Control := Reg(B);
   var V := FVoices[Channel];
@@ -456,6 +467,7 @@ procedure TSaturnSCSP.MixStereo(Sample, Level, Pan: Integer; var Left, Right: In
 begin
   if Level = 0 then
     Exit;
+
   var V: Int64 := Sample;
   if Level < 7 then
     V := V div (1 shl (7 - Level));
@@ -479,10 +491,10 @@ begin
   L := 0;
   R := 0;
   FDSP.external(EnsureRange(CDLeft, -32768, 32767), EnsureRange(CDRight, -32768, 32767));
-  for var I := 0 to 31 do
+  for var i := 0 to 31 do
   begin
-    var V := VoiceSample(I);
-    var B := I * $20;
+    var V := VoiceSample(i);
+    var B := i * $20;
     var Mix := Reg(B + $14);
     var OutReg := Reg(B + $16);
     var Send: Integer := Mix and 7;
@@ -491,10 +503,10 @@ begin
     MixStereo(V, (OutReg shr 13) and 7, (OutReg shr 8) and 31, L, R);
   end;
   FDSP.Step;
-  for var I := 0 to 15 do
+  for var i := 0 to 15 do
   begin
-    var OutReg := Reg(I * $20 + $16);
-    MixStereo(FDSP.Effect(I), (OutReg shr 5) and 7, OutReg and 31, L, R);
+    var OutReg := Reg(i * $20 + $16);
+    MixStereo(FDSP.Effect(i), (OutReg shr 5) and 7, OutReg and 31, L, R);
   end;
   var OutReg := Reg(16 * $20 + $16);
   MixStereo(CDLeft, (OutReg shr 5) and 7, OutReg and 31, L, R);
@@ -524,8 +536,9 @@ begin
   FDSP.SerializeState(Archive);
   if (FStackAt <> 0) and (FStackAt <> 32) then
     raise EReadError.Create('Invalid SCSP stack state');
-  for var I := 0 to 31 do
-    if (FVoices[I].Stage < 0) or (FVoices[I].Stage > 3) or (FVoices[I].Envelope < 0) or (FVoices[I].Envelope > 1023 * 65536) then
+
+  for var i := 0 to 31 do
+    if (FVoices[i].Stage < 0) or (FVoices[i].Stage > 3) or (FVoices[i].Envelope < 0) or (FVoices[i].Envelope > 1023 * 65536) then
       raise EReadError.Create('Invalid SCSP envelope state');
 end;
 
@@ -533,6 +546,7 @@ function TSaturnSCSP.VoiceState(Channel: Integer): TSCSPVoice;
 begin
   if not (Channel in [0..31]) then
     raise EArgumentOutOfRangeException.Create('SCSP slot');
+
   Result := FVoices[Channel];
 end;
 

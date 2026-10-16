@@ -3,7 +3,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.IniFiles, Core.Storage.Types;
+  System.SysUtils, System.Classes, System.IniFiles, Core.Storage.Types
+  {$IFDEF IOS}, iOSapi.Foundation{$ENDIF};
 
 type
   TStorageFile = Core.Storage.Types.TStorageFile;
@@ -63,14 +64,156 @@ type
     property MaxRomFileSize: Int64 read GetMaxRomFileSize write SetMaxRomFileSize;
   end;
 
+{$IFDEF IOS}
+// Keep document-provider grants alive for cores and restore them on next launch.
+function RememberIOSDocumentURL(const URL: NSURL): string;
+{$ENDIF}
+
 implementation
 
 uses
   System.IOUtils, System.StrUtils, System.Generics.Collections, Core.Platforms, Core.RomFormat,
   {$IFDEF ANDROID}
   Core.Storage.Android, {$ENDIF}
+  {$IFDEF IOS} Macapi.Helpers, System.Hash, {$ENDIF}
   {$IFDEF MSWINDOWS} Winapi.Windows, {$ELSE} Posix.Stdio, Posix.Unistd, {$ENDIF}
   System.Types;
+
+{$IFDEF IOS}
+type
+  TIOSDocumentGrant = record
+    OriginalPath, CurrentPath: string;
+    URL: NSURL;
+    Scoped: Boolean;
+  end;
+var
+  IOSDocumentGrants: TList<TIOSDocumentGrant>;
+  IOSGrantsLoaded: Boolean;
+
+function IOSBookmarkFile: string;
+begin
+  Result := TPath.Combine(TPath.GetHomePath, 'Library/Application Support/RetroMul/document-access.ini');
+end;
+
+procedure LoadIOSDocumentGrants;
+begin
+  // Called under the grants monitor, including before the first worker starts.
+  if IOSGrantsLoaded then Exit;
+  IOSGrantsLoaded := True;
+  var Ini := TMemIniFile.Create(IOSBookmarkFile, TEncoding.UTF8);
+  var Sections := TStringList.Create;
+  try
+    var Updated := False;
+    Ini.ReadSections(Sections);
+    for var Section in Sections do
+    try
+      var Data := TNSData.Wrap(TNSData.Alloc.initWithBase64EncodedString(
+        StrToNSStr(Ini.ReadString(Section, 'Bookmark', '')), 0));
+      if Data = nil then Continue;
+      var Stale := False;
+      var URL := TNSURL.Wrap(TNSURL.OCClass.URLByResolvingBookmarkData(Data,
+        NSURLBookmarkResolutionWithoutUI, nil, @Stale, nil));
+      if URL = nil then Continue;
+      var Grant := Default(TIOSDocumentGrant);
+      Grant.URL := URL;
+      Grant.Scoped := URL.startAccessingSecurityScopedResource;
+      Grant.CurrentPath := NSStrToStr(URL.path);
+      if not Grant.Scoped and not TFile.Exists(Grant.CurrentPath) and
+        not TDirectory.Exists(Grant.CurrentPath) then Continue;
+      Grant.OriginalPath := Ini.ReadString(Section, 'Path', Grant.CurrentPath);
+      IOSDocumentGrants.Add(Grant);
+      if Stale then
+      begin
+        Data := URL.bookmarkDataWithOptions(NSURLBookmarkCreationMinimalBookmark, nil, nil, nil);
+        if Data <> nil then
+        begin
+          Ini.WriteString(Section, 'Bookmark', NSStrToStr(Data.base64EncodedStringWithOptions(0)));
+          Updated := True;
+        end;
+      end;
+    except
+      // A removed document must not prevent opening other games or choosing again.
+    end;
+    if Updated then Ini.UpdateFile;
+  finally
+    Sections.Free;
+    Ini.Free;
+  end;
+end;
+
+function RememberIOSDocumentURL(const URL: NSURL): string;
+begin
+  if URL = nil then raise EArgumentNilException.Create('Document URL');
+  Result := NSStrToStr(URL.path);
+  if Result = '' then raise EInOutError.Create('The document picker returned an empty path');
+  TMonitor.Enter(IOSDocumentGrants);
+  try
+    LoadIOSDocumentGrants;
+    for var Existing in IOSDocumentGrants do
+      if (Result = Existing.CurrentPath) or
+        Result.StartsWith(IncludeTrailingPathDelimiter(Existing.CurrentPath)) then
+      begin
+        Result := Existing.OriginalPath + Result.Substring(Length(Existing.CurrentPath));
+        Exit;
+      end;
+    var Grant := Default(TIOSDocumentGrant);
+    Grant.OriginalPath := Result;
+    Grant.CurrentPath := Result;
+    Grant.URL := URL;
+    Grant.Scoped := URL.startAccessingSecurityScopedResource;
+    try
+      if not Grant.Scoped and not TFile.Exists(Result) and not TDirectory.Exists(Result) then
+        raise EInOutError.Create('Cannot access the selected document. Please choose it again.');
+      var Data := URL.bookmarkDataWithOptions(NSURLBookmarkCreationMinimalBookmark, nil, nil, nil);
+      if Data = nil then raise EInOutError.Create('Cannot preserve access to the selected document');
+      ForceDirectories(ExtractFilePath(IOSBookmarkFile));
+      var Ini := TMemIniFile.Create(IOSBookmarkFile, TEncoding.UTF8);
+      try
+        var Section := THashSHA2.GetHashString(Result);
+        Ini.WriteString(Section, 'Path', Result);
+        Ini.WriteString(Section, 'Bookmark', NSStrToStr(Data.base64EncodedStringWithOptions(0)));
+        Ini.UpdateFile;
+      finally
+        Ini.Free;
+      end;
+      IOSDocumentGrants.Add(Grant);
+    except
+      if Grant.Scoped then URL.stopAccessingSecurityScopedResource;
+      raise;
+    end;
+  finally
+    TMonitor.Exit(IOSDocumentGrants);
+  end;
+end;
+
+function IOSGrantedPath(const Location: string; ToNative: Boolean): string;
+begin
+  Result := Location;
+  TMonitor.Enter(IOSDocumentGrants);
+  try
+    LoadIOSDocumentGrants;
+    var BestLength := 0;
+    for var Grant in IOSDocumentGrants do
+    begin
+      var Source := Grant.OriginalPath;
+      var Target := Grant.CurrentPath;
+      if not ToNative then
+      begin
+        Source := Grant.CurrentPath;
+        Target := Grant.OriginalPath;
+      end;
+      if (Length(Source) > BestLength) and
+        ((Location = Source) or Location.StartsWith(IncludeTrailingPathDelimiter(Source))) then
+      begin
+        BestLength := Length(Source);
+        Result := Target + Location.Substring(BestLength);
+      end;
+    end;
+  finally
+    TMonitor.Exit(IOSDocumentGrants);
+  end;
+end;
+{$ENDIF}
 
 function NativeStoragePath(const Location: string): string;
 begin
@@ -84,13 +227,20 @@ begin
   else
     Result := '\\?\' + Result;
   {$ELSE}
+  {$IFDEF IOS}
+  Result := IOSGrantedPath(Location, True);
+  {$ELSE}
   Result := Location;
+  {$ENDIF}
   {$ENDIF}
 end;
 
 function LogicalStoragePath(const Location: string): string;
 begin
   Result := Location;
+  {$IFDEF IOS}
+  Result := IOSGrantedPath(Location, False);
+  {$ENDIF}
   {$IFDEF MSWINDOWS}
   if Result.StartsWith('\\?\UNC\', True) then
     Result := '\\' + Copy(Result, 9, MaxInt)
@@ -289,8 +439,8 @@ begin
   if not MoveFileEx(PChar(NativeStoragePath(Source)), PChar(NativeStoragePath(Target)), MOVEFILE_REPLACE_EXISTING or MOVEFILE_WRITE_THROUGH) then
     RaiseLastOSError;
   {$ELSE}
-  var Src := UTF8String(Source);
-  var Dst := UTF8String(Target);
+  var Src := UTF8String(NativeStoragePath(Source));
+  var Dst := UTF8String(NativeStoragePath(Target));
   if Posix.Stdio.__rename(PAnsiChar(Src), PAnsiChar(Dst)) <> 0 then
     RaiseLastOSError;
   {$ENDIF}
@@ -643,6 +793,15 @@ begin
 
   FPicker.Select(False, Callback);
 end;
+
+{$IFDEF IOS}
+initialization
+  IOSDocumentGrants := TList<TIOSDocumentGrant>.Create;
+finalization
+  for var Grant in IOSDocumentGrants do
+    if Grant.Scoped then Grant.URL.stopAccessingSecurityScopedResource;
+  IOSDocumentGrants.Free;
+{$ENDIF}
 
 end.
 

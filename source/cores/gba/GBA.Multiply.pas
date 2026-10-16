@@ -16,7 +16,7 @@ begin
   Result := (V shr N) and 1;
 end;
 
-function ROR128(V: TPair; N: Integer): TPair;
+function ROR128(V: TPair; N: Integer): TPair; inline;
 begin
   Result.Lo := (V.Lo shr N) or (V.Hi shl (64 - N));
   Result.Hi := (V.Hi shr N) or (V.Lo shl (64 - N));

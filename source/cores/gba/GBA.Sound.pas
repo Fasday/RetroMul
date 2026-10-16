@@ -275,7 +275,7 @@ begin
       Exit;
   end;
 
-  if (Offset < $80) and (FRegs[$24] and $80 = 0) then
+  if (Offset < $82) and (FRegs[$24] and $80 = 0) then
     Exit;
 
   var Previous := FRegs[Offset - $60];
@@ -285,7 +285,9 @@ begin
     if Value and $80 = 0 then
     begin
       FillChar(FChannels, SizeOf(FChannels), 0);
-      FillChar(FRegs, $24, 0);
+      // Master disable resets only PSG registers ($60..$81).
+      // Direct Sound routing at SOUNDCNT_H survives power cycling.
+      FillChar(FRegs, $22, 0);
       ClearFIFO(0);
       ClearFIFO(1);
       FCurrent[0] := 0;

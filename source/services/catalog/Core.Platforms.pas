@@ -52,7 +52,7 @@ end;
 class constructor TPlatformRegistry.Create;
 begin
   FItems := TList<TPlatformInfo>.Create;
-  RegisterPlatform(TRomSystem.GameWatch, ROM_SYSTEM_GW, 'Game & Watch', 'Game & Watch',
+  RegisterPlatform(TRomSystem.GameWatch, ROM_SYSTEM_GW, 'Game && Watch', 'G&&W',
     'Nintendo', 'GW MGW LCD Micro Vs', 'gw', ['gw'], [ROM_EXTENSION_GW, ROM_EXTENSION_MGW, ROM_EXTENSION_ZIP],
     '', 'gw', 2);
   RegisterPlatform(TRomSystem.GB, ROM_SYSTEM_GB, 'Game Boy', 'GB',
@@ -70,7 +70,7 @@ begin
   RegisterPlatform(TRomSystem.SNES, ROM_SYSTEM_SNES, 'Super Nintendo', 'SNES',
     'Nintendo', 'SNES Super Famicom', 'snes', ['snes'], [ROM_EXTENSION_SFC, ROM_EXTENSION_SMC, ROM_EXTENSION_SWC, ROM_EXTENSION_FIG],
     'SNES', 'snes', 2);
-  RegisterPlatform(TRomSystem.N64, ROM_SYSTEM_N64, 'Nintendo 64', 'Nintendo 64',
+  RegisterPlatform(TRomSystem.N64, ROM_SYSTEM_N64, 'Nintendo 64', 'N64',
     'Nintendo', 'N64', 'n64', ['n64'], [ROM_EXTENSION_Z64, ROM_EXTENSION_N64, ROM_EXTENSION_V64],
     'N64', 'n64', 4);
   RegisterPlatform(TRomSystem.MD, ROM_SYSTEM_MD, 'MegaDrive', 'MegaDrive',
@@ -103,28 +103,25 @@ begin
   RegisterPlatform(TRomSystem.Multivision, ROM_SYSTEM_OMV, 'Multivision', 'Multivision',
     'Tsukuda Original', 'OMV Othello Multivision', 'omv', ['omv', 'sg1000'], [ROM_EXTENSION_MV],
     'Multivision', 'omv', 2);
-  RegisterPlatform(TRomSystem.NeoGeo, ROM_SYSTEM_NEOGEO, 'Neo Geo', 'Neo Geo',
-    'SNK', 'NG NeoGeo Neo Geo CD', 'neogeo', ['neogeo'], [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO],
+  RegisterPlatform(TRomSystem.NeoGeo, ROM_SYSTEM_NEOGEO, 'Neo Geo', 'NG',
+    'SNK', 'NG NeoGeo MVS AES Advanced Entertainment System', 'neogeo', ['neogeo', 'neogeoaes', 'aes'], [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO],
     'NeoGeo', 'neogeo', 2);
-  RegisterPlatform(TRomSystem.NeoGeoAES, ROM_SYSTEM_NEOGEOAES, 'Neo Geo AES', 'Neo Geo AES',
-    'SNK', 'NG AES Advanced Entertainment System', 'neogeoaes', ['neogeoaes', 'aes'], [ROM_EXTENSION_ZIP, ROM_EXTENSION_NEO],
-    'NeoGeo', 'neogeoaes', 2);
   RegisterPlatform(TRomSystem.NeoGeoPocket, ROM_SYSTEM_NGP, 'Neo Geo Pocket', 'NGP',
     'SNK', 'NGP Pocket monochrome', 'ngp', ['ngp', 'neogeopocket'], [ROM_EXTENSION_NGP, ROM_EXTENSION_NGPC, ROM_EXTENSION_ZIP],
     'NeoGeoPocket', 'ngp', 1);
   RegisterPlatform(TRomSystem.NeoGeoPocketColor, ROM_SYSTEM_NGPC, 'Neo Geo Pocket Color', 'NGPC',
     'SNK', 'NGPC Pocket Color', 'ngpc', ['ngpc', 'neogeopocketcolor'], [ROM_EXTENSION_NGP, ROM_EXTENSION_NGPC, ROM_EXTENSION_ZIP],
     'NeoGeoPocket', 'ngpc', 1);
-  RegisterPlatform(TRomSystem.NeoGeoCD, ROM_SYSTEM_NEOGEOCD, 'Neo Geo CD', 'Neo Geo CD',
+  RegisterPlatform(TRomSystem.NeoGeoCD, ROM_SYSTEM_NEOGEOCD, 'Neo Geo CD', 'NG CD',
     'SNK', 'NG NeoGeo CD', 'neogeocd', ['neogeocd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
     'NeoGeo', 'neogeocd', 2, ROM_SYSTEM_NEOGEO);
-  RegisterPlatform(TRomSystem.PCE, ROM_SYSTEM_PCE, 'PC Engine / TurboGrafx-16', 'PC Engine',
+  RegisterPlatform(TRomSystem.PCE, ROM_SYSTEM_PCE, 'PC Engine / TurboGrafx-16', 'PCE',
     'NEC', 'PCE CoreGrafx Shuttle GT LT TurboExpress', 'pcengine', ['pcengine', 'pce'], [ROM_EXTENSION_PCE, ROM_EXTENSION_ZIP],
     'PCE', 'pce', 5);
   RegisterPlatform(TRomSystem.SuperGrafx, ROM_SYSTEM_SGX, 'SuperGrafx', 'SuperGrafx',
     'NEC', 'SGX', 'sgx', ['sgx', 'supergrafx', 'pcengine', 'pce'], [ROM_EXTENSION_SGX, ROM_EXTENSION_PCE, ROM_EXTENSION_ZIP],
     'PCE', 'sgx', 5);
-  RegisterPlatform(TRomSystem.PCECD, ROM_SYSTEM_PCECD, 'PC Engine CD', 'PC Engine CD',
+  RegisterPlatform(TRomSystem.PCECD, ROM_SYSTEM_PCECD, 'PC Engine CD', 'PCE CD',
     'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcenginecd', ['pcenginecd', 'pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
     'PCE', 'pcecd', 5);
   FItems.Sort(TComparer<TPlatformInfo>.Construct(
@@ -185,6 +182,9 @@ end;
 
 class function TPlatformRegistry.Find(const Id: string; out Info: TPlatformInfo): Boolean;
 begin
+  // Accept old collection IDs without exposing a second platform.
+  if SameText(Id, ROM_SYSTEM_NEOGEOAES) or SameText(Id, 'aes') then
+    Exit(Find(TRomSystem.NeoGeo, Info));
   for var Item in FItems do
     if SameText(Item.Id, Id) or SameText(Item.Folder, Id) then
     begin
@@ -197,6 +197,9 @@ end;
 
 class function TPlatformRegistry.Find(System: TRomSystem; out Info: TPlatformInfo): Boolean;
 begin
+  // Keep the legacy enum ordinal stable for persisted data.
+  if System = TRomSystem.NeoGeoAES then
+    System := TRomSystem.NeoGeo;
   for var Item in FItems do
     if Item.System = System then
     begin

@@ -1,5 +1,7 @@
 ﻿unit RM.Controllers.Settings;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -60,7 +62,10 @@ begin
     begin
       FormStyles.RelocalizeUI(FView.LayoutClient, PreviousLanguage);
       if FState.Browser.View <> nil then
-        FState.Browser.View.ApplyLanguage(PreviousLanguage);
+        if FState.Browser.ViewingLibrary then
+          FState.Browser.View.ApplyLanguage(PreviousLanguage)
+        else if FState.Browser.PendingLanguage = '' then
+          FState.Browser.PendingLanguage := PreviousLanguage;
       if FState.Settings.View <> nil then
         FState.Settings.View.ApplyLanguage(PreviousLanguage);
       if FState.Session.Emulation = nil then
@@ -130,7 +135,7 @@ begin
   FState.Settings.View.BringToFront;
   FView.SyncActivity;
 
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   FState.Input.Gamepad.AttachToForm(nil);
   FState.Input.PowerPad.AttachToForm(nil);
   FState.Input.SuborKeyboard.AttachToForm(nil);
@@ -181,8 +186,13 @@ begin
   FView.Load;
   if FState.Browser.View <> nil then
   begin
-    FState.Browser.View.ApplyPreferences;
-    FState.Browser.View.Reload;
+    FState.Browser.ReloadPending := True;
+    if FState.Browser.ViewingLibrary then
+    begin
+      FState.Browser.View.ApplyPreferences;
+      FState.Browser.View.Reload;
+      FState.Browser.ReloadPending := False;
+    end;
   end;
   FView.ReloadHostInputBindings;
   FView.SyncActivity;
@@ -224,18 +234,18 @@ begin
         // running state to it so dismissal can resume the session later.
         if RetroDialogVisible(FView) and (FState.Session.DialogCore = FState.Session.Emulation) then
           FState.Session.DialogWasPaused := False;
-        {$IF not Defined(ANDROID) and not Defined(IOS)}
+        {$IFNDEF ISMOBILE}
         if FState.Preferences.PauseOnFocusLoss and not FView.InputHasFocus and not RetroDialogVisible(FView) then
           FState.Session.AutoPaused := True
         else
         {$ENDIF}
         if not RetroDialogVisible(FView)
-          {$IF Defined(ANDROID) or Defined(IOS)}and not FState.Mobile.InBackground{$ENDIF} then
+          {$IFDEF ISMOBILE}and not FState.Mobile.InBackground{$ENDIF} then
           FState.Session.Emulation.Resume;
       end;
       FView.SyncActivity;
 
-      {$IF Defined(ANDROID) or Defined(IOS)}
+      {$IFDEF ISMOBILE}
       FView.FormActivate(FView);
       {$ENDIF}
 
@@ -267,9 +277,9 @@ begin
     Players:=1; if FState.Input.Ports.Multitap[0] then Players:=5;
   end;
   if FState.Input.SystemId = ROM_SYSTEM_SNES then
-    if FState.Input.Ports.Multitap[1] then
+    if FState.Input.Ports.Multitap[0] then
       Players := 8
-    else if FState.Input.Ports.Multitap[0] then
+    else if FState.Input.Ports.Multitap[1] then
       Players := 5;
   if FState.Input.SystemId = ROM_SYSTEM_NES then
   begin

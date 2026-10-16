@@ -55,7 +55,7 @@ implementation
 
 uses
   System.Diagnostics, System.Math, Core.SavePaths, Core.PerformanceHints,
-  Core.RomFormat, PCM.Audio;
+  Core.RomFormat, PCM.Audio, Saturn.Audio;
 
 function TSaturnWorker.GetInputPorts: TCoreInputPorts;
 begin
@@ -220,15 +220,68 @@ var
   Console: TSaturnConsole;
   Hints: TEmulationPerformanceHints;
   Audio: TPCMAudio;
-  AudioFailed: Boolean;
+  AudioFailed, AudioPrimed: Boolean;
+  PendingAudio: TArray<SmallInt>;
+  PendingFrames: Integer;
+  AudioEpoch: UInt64;
+  Stretch: TSaturnAudioStretch;
+  SmoothWork, SmoothAudio, PostWork, StretchRatio: Double;
+  WorkStarted, CoreFinished: Int64;
+
+  procedure ClearAudio;
+  begin
+    PendingFrames := 0;
+    AudioPrimed := False;
+    Stretch.Reset;
+    SmoothWork := 0;
+    SmoothAudio := 0;
+    PostWork := 0;
+    if Audio <> nil then
+    begin
+      Audio.Clear;
+      Audio.SetPaused(True);
+      AudioEpoch := Audio.QueueState.SubmittedSamples;
+    end;
+  end;
+
+  function QueuedFrames: Integer;
+  begin
+    Result := 0;
+    if Audio = nil then
+      Exit;
+
+    var Q := Audio.QueueState;
+    if not Q.DeviceOpen then
+      Exit;
+
+    if Q.PositionKnown then
+    begin
+      var Submitted := Q.SubmittedSamples - AudioEpoch;
+      var Delta := (Submitted + UInt64($100000000) - Q.PlayedSamples) and $FFFFFFFF;
+      if Delta <= 8192 then
+        Result := Delta;
+    end
+    else
+      Result := Q.QueuedBlocks * 738;
+  end;
+
 begin
   Console := nil;
   Hints := nil;
   Audio := nil;
   AudioFailed := False;
+  AudioPrimed := False;
+  PendingFrames := 0;
+  AudioEpoch := 0;
+  Stretch := TSaturnAudioStretch.Create;
+  SmoothWork := 0;
+  SmoothAudio := 0;
+  PostWork := 0;
+  StretchRatio := 1;
   try
     try
       Console := TSaturnConsole.Create(FBIOS, FRegion, FPAL, FDisc, FRAMCart, CartROM);
+      Console.ThreadedVideo := TThread.ProcessorCount > 1;
       Console.CD.UseSH1(UseSH1);
       Console.CD.Protection := Protection;
       if (SaveFile <> '') and FStorage.Exists(SaveFile) then
@@ -250,8 +303,18 @@ begin
           procedure(const Name: string; Loading: Boolean)
           begin
             Hints.Pause;
+            PendingFrames := 0;
+            AudioPrimed := False;
+            Stretch.Reset;
+            SmoothWork := 0;
+            SmoothAudio := 0;
+            PostWork := 0;
             if Audio <> nil then
+            begin
               Audio.Clear;
+              Audio.SetPaused(True);
+              AudioEpoch := Audio.QueueState.SubmittedSamples;
+            end;
             var Path := ResolveSnapshotPath(SnapshotDirectory, Name);
             var Transfer: TStateTransfer :=
               procedure(State: TStateArchive)
@@ -287,20 +350,20 @@ begin
         if ResetRequested then
         begin
           Console.Reset;
-          if Audio <> nil then
-            Audio.Clear;
+          ClearAudio;
           Hints.Pause;
           Deadline := TStopwatch.GetTimeStamp;
         end;
         if Paused then
         begin
           Hints.Pause;
-          if Audio <> nil then
-            Audio.Clear;
+          ClearAudio;
           FWake.WaitFor(10);
           Deadline := TStopwatch.GetTimeStamp;
           Continue;
         end;
+        var StartingPlayback := False;
+        WorkStarted := TStopwatch.GetTimeStamp;
         Hints.BeginWork;
         var Ports := InputPorts;
         var Pads: array[0..11] of TEmulatorButtons;
@@ -367,19 +430,83 @@ begin
             Console.SMPC.SetPeripheral(Port, Slot, Kind, SaturnPad(Pads[Player]), X, Y, R, L);
           end;
         end;
+        var FrameStartedAt := Console.Time;
+        var FrameClock := Console.ClockFrequency;
         Console.RunFrame;
+        CoreFinished := TStopwatch.GetTimeStamp;
         Rate := Console.FramesPerSecond;
         if Terminated then
           Break;
+
         if Enabled and not AudioFailed then
         try
           if Audio = nil then
+          begin
             Audio := TPCMAudio.Create(Format);
-          var Samples: TArray<SmallInt>;
-          SetLength(Samples, Console.SampleFrames * 2);
-          for var I := 0 to High(Samples) do
-            Samples[I] := Round(Console.Samples[I] * Volume);
-          Audio.Submit(Samples, Console.SampleFrames);
+            StartingPlayback := True;
+            Audio.SetPaused(True);
+            AudioEpoch := Audio.QueueState.SubmittedSamples;
+          end;
+
+          // Estimate sustained producer speed from work only, never limiter
+          // sleep. Preserve pitch when a heavy scene cannot supply 44.1 kHz.
+          var NativeSeconds := Console.SampleFrames / Format.SampleRate;
+          if NativeSeconds > 0 then
+          begin
+            var WorkSeconds: Double := (CoreFinished - WorkStarted) / TStopwatch.Frequency + PostWork;
+            if SmoothAudio = 0 then
+            begin
+              SmoothWork := WorkSeconds;
+              SmoothAudio := NativeSeconds;
+            end
+            else
+            begin
+              SmoothWork := SmoothWork * 0.8 + WorkSeconds * 0.2;
+              SmoothAudio := SmoothAudio * 0.8 + NativeSeconds * 0.2;
+            end;
+          end;
+          var NativeSamples: TArray<SmallInt>;
+          SetLength(NativeSamples, Console.SampleFrames * Format.Channels);
+          for var I := 0 to High(NativeSamples) do
+            NativeSamples[I] := Round(Console.Samples[I] * Volume);
+          var SamplesOut: TArray<SmallInt>;
+          if Audio.QueueState.DeviceOpen then
+          begin
+            StretchRatio := 1;
+            if SmoothAudio > 0 then
+              StretchRatio := Max(1.0, SmoothWork / SmoothAudio);
+            if AudioPrimed then
+            begin
+              var Expected := QueuedFrames + Console.SampleFrames * StretchRatio;
+              var Correction := EnsureRange((Format.SampleRate * 0.064 - Expected) / (Format.SampleRate / 5), -0.15, 0.15);
+              StretchRatio := StretchRatio * (1 + Correction);
+            end;
+            StretchRatio := EnsureRange(StretchRatio, 0.95, 1.75);
+            Stretch.Process(NativeSamples, Console.SampleFrames, StretchRatio, SamplesOut);
+          end
+          else
+            SamplesOut := NativeSamples;
+          var CountOut := Length(SamplesOut) div Format.Channels;
+          SetLength(PendingAudio, (PendingFrames + CountOut) * Format.Channels);
+          if CountOut > 0 then
+            Move(SamplesOut[0], PendingAudio[PendingFrames * Format.Channels], CountOut * Format.Channels * SizeOf(SmallInt));
+          Inc(PendingFrames, CountOut);
+          if AudioPrimed or (PendingFrames >= Format.SampleRate * 64 div 1000) then
+          begin
+            StartingPlayback := StartingPlayback or not AudioPrimed;
+            var Offset := 0;
+            while Offset < PendingFrames do
+            begin
+              var Count := Min(Format.BlockFrames, PendingFrames - Offset);
+              var Samples := Copy(PendingAudio, Offset * Format.Channels, Count * Format.Channels);
+              Audio.Submit(Samples, Count);
+              Inc(Offset, Count);
+            end;
+            PendingFrames := 0;
+            if not AudioPrimed then
+              Audio.SetPaused(False);
+            AudioPrimed := True;
+          end;
           if Audio.Error <> '' then
             raise EInOutError.Create(Audio.Error);
         except
@@ -392,20 +519,41 @@ begin
               FLock.Release;
             end;
             FreeAndNil(Audio);
+            AudioPrimed := False;
+            PendingFrames := 0;
+            Stretch.Reset;
             AudioFailed := True;
           end;
         end
         else if not Enabled then
         begin
-          if Audio <> nil then
-            Audio.Clear;
+          ClearAudio;
           AudioFailed := False;
         end;
         Publish(Console);
         Hints.EndWork;
-        Deadline := Deadline + TStopwatch.Frequency / Rate;
+        PostWork := (TStopwatch.GetTimeStamp - CoreFinished) / TStopwatch.Frequency;
+
+        // Opening/starting a host device is not sustained emulation work.
+        if StartingPlayback then
+          PostWork := 0;
+
+        // Use the field actually emulated: interlace alternates field lengths,
+        // and a loaded snapshot may start part-way through a field.
+        var FieldSeconds := 1.0 / Rate;
+        if (Console.ClockFrequency = FrameClock) and (Console.Time > FrameStartedAt) then
+          FieldSeconds := (Console.Time - FrameStartedAt) / FrameClock;
+        Deadline := Deadline + TStopwatch.Frequency * FieldSeconds;
         if TStopwatch.GetTimeStamp - Deadline > TStopwatch.Frequency div 10 then
           Deadline := TStopwatch.GetTimeStamp;
+        if Enabled and not AudioFailed and AudioPrimed and (Audio <> nil) and Audio.QueueState.DeviceOpen then
+        begin
+          // Pace from the device clock with a 64 ms lead. A late field uses
+          // the cushion and the next fast field replenishes it without sleep.
+          Deadline :=
+            TStopwatch.GetTimeStamp +
+            (QueuedFrames - Format.SampleRate * 64 div 1000) * (TStopwatch.Frequency / Format.SampleRate);
+        end;
         Hints.WaitUntil(FWake, Round(Deadline));
       end;
     except
@@ -449,6 +597,7 @@ begin
       end;
     end;
     Audio.Free;
+    Stretch.Free;
     Console.Free;
     Hints.Free;
   end;

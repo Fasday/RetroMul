@@ -21,11 +21,9 @@ begin
     Context.Combo('RowNGModel', 'Hardware', 'Model',
       ['Automatic', 'Neo Geo CD front loader', 'Neo Geo CD top loader', 'Neo Geo CDZ'],
       ['auto', 'front', 'top', 'cdz'], 'auto')
-  else if CoreId = 'neogeoaes' then
-    Context.Check('RowNGPAL', 'Hardware', 'PAL', False)
   else
   begin
-    Context.Combo('RowNGModel', 'Hardware', 'Model', ['Neo Geo MVS', 'Neo Geo AES'], ['auto', 'aes'], 'auto');
+    Context.Combo('RowNGModel', 'Hardware', 'Model', ['Automatic', 'Neo Geo MVS', 'Neo Geo AES'], ['auto', 'mvs', 'aes'], 'auto');
     Context.Check('RowNGPAL', 'Hardware', 'PAL', False);
   end;
   Context.Combo('RowNGRegion', 'Hardware', 'Region', ['Automatic', 'Japan', 'USA', 'Europe'],
@@ -48,7 +46,7 @@ begin
   Context.PathEdit('RowNGCardPath', 'MemoryCard', 'Path', '', False);
   Context.Combo('RowNGCardSize', 'MemoryCard', 'Size', ['2 KiB', '4 KiB', '6 KiB', '8 KiB', '10 KiB', '12 KiB', '14 KiB', '16 KiB'],
     ['2048', '4096', '6144', '8192', '10240', '12288', '14336', '16384'], '2048');
-  if (CoreId <> 'neogeoaes') and (Context.Draft.ReadString('Hardware', 'Model', 'auto') <> 'aes') then
+  if Context.Draft.ReadString('Hardware', 'Model', 'auto') <> 'aes' then
   begin
     Context.Heading('GroupNGCabinet');
     Context.Check('RowNGSettingsMode', 'Cabinet', 'Settings', False);

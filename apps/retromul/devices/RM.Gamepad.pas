@@ -27,6 +27,7 @@ type
     procedure SetButtonMask(const Value: TEmulatorButtons);
     procedure SetCoreButtons(const Value: TEmulatorButtons);
     function GetAnalogInput: TEmulatorAnalogPad;
+    function GetAuxiliaryButtons: Cardinal;
     function GetButtons: TEmulatorButtons;
     function GetCoreButtons: TEmulatorButtons;
     function GetHighlightedButtons: TEmulatorButtons;
@@ -49,6 +50,8 @@ type
     procedure PointerUp(Id: NativeInt);
     procedure ReleaseAll;
     function ButtonBounds(Button: TEmulatorButton): TRectF;
+    function AuxiliaryButtonBounds(Index: Integer): TRectF;
+    property AuxiliaryButtons: Cardinal read GetAuxiliaryButtons;
     function PointInObjectLocal(X, Y: Single): Boolean; override;
     property System: TRomSystem read FSystem;
     property DeviceId: string read FDevice;
@@ -242,6 +245,22 @@ function TScreenGamepad.GetAnalogInput: TEmulatorAnalogPad;
 begin
   Result := Default(TEmulatorAnalogPad);
   if FPad <> nil then Result := FPad.AnalogInput;
+end;
+
+function TScreenGamepad.GetAuxiliaryButtons: Cardinal;
+begin
+  Result := 0;
+  if FPad <> nil then Result := FPad.AuxiliaryButtons;
+end;
+
+function TScreenGamepad.AuxiliaryButtonBounds(Index: Integer): TRectF;
+begin
+  Result := TRectF.Empty;
+  if FPad = nil then Exit;
+  Result := FPad.AuxiliaryButtonBounds(Index);
+  if Result.IsEmpty then Exit;
+  Result := TRectF.Create(AbsoluteToLocal(FPad.LocalToAbsolute(Result.TopLeft)),
+    AbsoluteToLocal(FPad.LocalToAbsolute(Result.BottomRight)));
 end;
 
 function TScreenGamepad.GetButtons: TEmulatorButtons;

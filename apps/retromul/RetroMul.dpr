@@ -252,6 +252,7 @@ uses
   Saturn.VDP1 in '..\..\source\cores\saturn\Saturn.VDP1.pas',
   Saturn.VDP2 in '..\..\source\cores\saturn\Saturn.VDP2.pas',
   Saturn.Console in '..\..\source\cores\saturn\Saturn.Console.pas',
+  Saturn.Audio in '..\..\source\cores\saturn\Saturn.Audio.pas',
   Saturn.Emulation in '..\..\source\cores\saturn\Saturn.Emulation.pas',
   Core.Adapter.Saturn in '..\..\source\runtime\adapters\Core.Adapter.Saturn.pas',
   RM.Settings.Saturn in 'settings\RM.Settings.Saturn.pas',

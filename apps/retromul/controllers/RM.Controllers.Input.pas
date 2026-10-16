@@ -1,5 +1,7 @@
 ﻿unit RM.Controllers.Input;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -222,7 +224,7 @@ begin
   if (FState.Session.Emulation <> nil) and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom and
     not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and (FState.Help.View = nil) and
     not RetroDialogVisible(FView) and FView.InputHasFocus and
-    {$IF Defined(ANDROID) or Defined(IOS)}not FState.Mobile.InBackground and {$ENDIF}
+    {$IFDEF ISMOBILE}not FState.Mobile.InBackground and {$ENDIF}
     not FState.Session.Emulation.IsPaused and Supports(FState.Session.Emulation, IEmulationRumbleOutput, Rumble) and
     Rumble.HasRumble then
     Level := Rumble.RumbleLevel;
@@ -258,7 +260,7 @@ begin
   Wanted := (Wanted or WantsRotation) and not FState.Session.OpeningRom and not FState.Session.EmulationFaulted and not FState.Session.UserPaused and
     not FState.Session.AutoPaused and not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and
     (FState.Help.View = nil) and not RetroDialogVisible(FView);
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
   Wanted := Wanted and not FState.Mobile.InBackground;
   {$ENDIF}
 
@@ -338,7 +340,7 @@ begin
     // System.Sensors normalizes Android and iOS acceleration to g.
     X := FState.Input.MotionSensor.Sensor.AccelerationX;
     Y := FState.Input.MotionSensor.Sensor.AccelerationY;
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IF Defined(ANDROID) or Defined(IOS)} // Native sensor orientation.
     var Rotation := 0;
     {$IFDEF ANDROID}
     // Android sensor axes follow the device's natural orientation, which
@@ -604,7 +606,7 @@ begin
         FState.Session.Emulation.Reset;
         FState.Session.UserPaused := False;
         FState.Session.EmulationFaulted := False;
-        {$IF Defined(ANDROID) or Defined(IOS)}
+        {$IFDEF ISMOBILE}
         if FState.Mobile.ActivityPaused then
           FState.Session.Emulation.Pause;
         {$ENDIF}
@@ -672,6 +674,10 @@ begin
       FView.SettingsClose(FView)
     else if not FState.Browser.ViewingLibrary then
       FView.LibraryBack(FView)
+    else if (FState.Browser.View <> nil) and FState.Browser.View.CloseDetails then
+    begin
+      // Close the compact game details before leaving the library.
+    end
     else
       Exit;
     Key := 0;
@@ -679,6 +685,14 @@ begin
     Exit;
   end;
   {$ENDIF}
+
+  if FState.Browser.ViewingLibrary and (Key = vkEscape) and
+    (FState.Browser.View <> nil) and FState.Browser.View.CloseDetails then
+  begin
+    Key := 0;
+    KeyChar := #0;
+    Exit;
+  end;
 
   if (FState.Settings.View <> nil) or FState.Browser.ViewingLibrary then
     Exit;
@@ -780,7 +794,8 @@ begin
     for var Port := 0 to 3 do
     begin
       var Pad := Default(TN64Pad);
-      if (FState.Input.Manager <> nil) and FState.Input.Manager.IsPressed(N64LAction + Port) then
+      if ((Port = 0) and ((FState.Input.Gamepad.AuxiliaryButtons and 1) <> 0)) or
+        ((FState.Input.Manager <> nil) and FState.Input.Manager.IsPressed(N64LAction + Port)) then
         Pad.Buttons := $20;
       if Result.Analog[Port].Valid then
       begin

@@ -1,5 +1,7 @@
 ﻿unit RM.Main.View;
 
+{$I ..\RM.Mobile.inc}
+
 interface
 
 uses
@@ -10,7 +12,7 @@ uses
   {$IF not Defined(LINUX)}
     , System.Sensors
   {$ENDIF}
-  {$IF Defined(ANDROID) or Defined(IOS)}
+  {$IFDEF ISMOBILE}
     , FMX.Platform
   {$ENDIF};
 
@@ -98,10 +100,10 @@ type
     procedure InitializeLibrary; virtual; abstract;
     procedure InitializeScreenshotTool; virtual; abstract;
     procedure InitializePeripherals; virtual; abstract;
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     procedure InitializeMobileViews; virtual; abstract;
     {$ENDIF}
-    {$IF not Defined(ANDROID) and not Defined(IOS)}
+    {$IFNDEF ISMOBILE}
     procedure InitializeDesktopViews; virtual; abstract;
     {$ENDIF}
     {$IFDEF ANDROID}
@@ -171,7 +173,7 @@ type
     procedure TapeAction(Sender: TObject; Action: TTapeAction; const FileName: string); virtual; abstract;
     procedure ChooseTapeFile(Sender: TObject); virtual; abstract;
     procedure SaveTapeAs(Sender: TObject); virtual; abstract;
-    {$IF Defined(ANDROID) or Defined(IOS)}
+    {$IFDEF ISMOBILE}
     function ApplicationStateChanged(Sender: TObject; const AAppEvent: TApplicationEvent; const AContext: TObject): Boolean; virtual; abstract;
     {$ENDIF}
     {$IFDEF ANDROID}

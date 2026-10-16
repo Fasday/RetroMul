@@ -1,4 +1,4 @@
-object SettingsView: TSettingsView
+﻿object SettingsView: TSettingsView
   Size.Width = 1228.000000000000000000
   Size.Height = 796.000000000000000000
   Size.PlatformDefault = False
@@ -429,6 +429,14 @@ object SettingsView: TSettingsView
       Size.Width = 916.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
+      object LayoutSettingsCompactSearchSlot: TLayout
+        Align = Bottom
+        Margins.Bottom = 12.000000000000000000
+        Size.Width = 916.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        Visible = False
+      end
       object LayoutSettingsHeading: TLayout
         Align = Top
         Size.Width = 916.000000000000000000
@@ -481,6 +489,13 @@ object SettingsView: TSettingsView
       Size.Width = 916.000000000000000000
       Size.Height = 96.000000000000000000
       Size.PlatformDefault = False
+      object LayoutSettingsCompactReset: TLayout
+        Align = Top
+        Size.Width = 916.000000000000000000
+        Size.Height = 44.000000000000000000
+        Size.PlatformDefault = False
+        Visible = False
+      end
       object LabelStatus: TLabel
         Align = Top
         Size.Width = 916.000000000000000000
@@ -2096,10 +2111,8 @@ object SettingsView: TSettingsView
           end
         end
         object LayoutRow160144EditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 504.363647460937500000
-          Size.Width = 363.636352539062500000
+          Align = Client
+          Size.Width = 868.000000000000000000
           Size.Height = 350.000000000000000000
           Size.PlatformDefault = False
           object LayoutPalettePreviewSlot: TLayout
