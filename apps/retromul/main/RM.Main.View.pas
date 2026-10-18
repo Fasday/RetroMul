@@ -8,7 +8,7 @@ uses
   System.SysUtils, System.Classes, System.Types, System.UITypes, FMX.Types,
   FMX.Controls, FMX.Forms, FMX.TabControl, FMX.Objects, FMX.StdCtrls,
   FMX.Layouts, FMX.Menus, FMX.Dialogs, WinUI3.Form, Core.Emulation, Core.Storage,
-  RM.Input, FMXInput, NES.DataRecorder, NES.FamicomDataRecorder, RM.Main.State
+  RM.ShaderBitmap, RM.Input, FMXInput, NES.DataRecorder, NES.FamicomDataRecorder, RM.Main.State
   {$IF not Defined(LINUX)}
     , System.Sensors
   {$ENDIF}
@@ -55,7 +55,7 @@ type
     GamePlatform: TLabel;
     GameFPS: TLabel;
     GameAudio: TLabel;
-    ImageCanvas: TImage;
+    LayoutVideoOutput: TLayout;
     TimerUpdate: TTimer;
     ImageLogo: TImage;
     RectangleBG: TRectangle;
@@ -66,6 +66,7 @@ type
     LabelStatus: TLabel;
     ButtonCloseRom: TButton;
   public
+    ImageCanvas: TShaderBitmap;
     function SystemLanguage: string;
     function CurrentTick: UInt64;
     function NewStorage: IStorage;

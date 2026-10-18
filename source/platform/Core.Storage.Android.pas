@@ -21,6 +21,7 @@ implementation
 
 uses
   System.SysUtils, System.Math, System.DateUtils, System.Generics.Collections,
+  System.IOUtils, Posix.Unistd, Posix.Stdio, Androidapi.JNI.Os,
   Androidapi.Helpers, Androidapi.JNI.Net, Androidapi.JNI.JavaTypes,
   Androidapi.JNI.Provider, Androidapi.JNI.GraphicsContentViewText,
   Androidapi.JNIBridge;
@@ -38,12 +39,22 @@ type
     function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
   end;
 
+  TDocumentFileStream = class(THandleStream)
+  private
+    FDescriptor: JParcelFileDescriptor;
+  public
+    constructor Create(const Descriptor: JParcelFileDescriptor);
+    destructor Destroy; override;
+  end;
+
   TDocumentStream = class(TStream)
   private
-    FUri: Jnet_Uri;
     FInput: JInputStream;
+    FCache: TFileStream;
+    FCachePath: string;
     FPosition, FSize: Int64;
-    procedure Reopen;
+    FEOF: Boolean;
+    procedure CacheUntil(Target: Int64);
   protected
     function GetSize: Int64; override;
   public
@@ -128,35 +139,74 @@ begin
   raise EStreamError.Create('Document output stream does not support seeking');
 end;
 
+constructor TDocumentFileStream.Create(const Descriptor: JParcelFileDescriptor);
+begin
+  inherited Create(Descriptor.getFd);
+  FDescriptor := Descriptor;
+end;
+
+destructor TDocumentFileStream.Destroy;
+begin
+  if FDescriptor <> nil then
+    FDescriptor.close;
+  inherited;
+end;
+
 constructor TDocumentStream.Create(const Uri: string);
 begin
   inherited Create;
-  FUri := ParseUri(Uri);
   FSize := TAndroidStorage.Describe(Uri).Size;
-  Reopen;
-end;
-
-procedure TDocumentStream.Reopen;
-begin
-  if FInput <> nil then
-    FInput.close;
-  FInput := Resolver.openInputStream(FUri);
+  FInput := Resolver.openInputStream(ParseUri(Uri));
   if FInput = nil then
     raise EReadError.Create('Cannot open document');
-  FPosition := 0;
+  FCachePath := TStorage.Default.TemporaryFile('.document');
+  TDirectory.CreateDirectory(ExtractFilePath(FCachePath));
+  FCache := TFileStream.Create(FCachePath, fmCreate);
+end;
+
+procedure TDocumentStream.CacheUntil(Target: Int64);
+begin
+  while not FEOF and (FCache.Size < Target) do
+  begin
+    TStorage.CheckReadCancelled;
+    var Bytes := TJavaArray<Byte>.Create(Integer(Min(Int64(65536), Target - FCache.Size)));
+    try
+      var Count := FInput.read(Bytes);
+      if Count <= 0 then
+      begin
+        FEOF := True;
+        FSize := FCache.Size;
+        Break;
+      end;
+      FCache.Position := FCache.Size;
+      FCache.WriteBuffer(Bytes.Data^, Count);
+    finally
+      Bytes.Free;
+    end;
+  end;
 end;
 
 destructor TDocumentStream.Destroy;
 begin
-  if FInput <> nil then
-    FInput.close;
-  inherited;
+  try
+    if FInput <> nil then
+      FInput.close;
+  finally
+    FCache.Free;
+    if FCachePath <> '' then
+    try
+      TFile.Delete(FCachePath);
+    except
+      // Cache cleanup must not hide a document read/cancellation error.
+    end;
+    inherited;
+  end;
 end;
 
 function TDocumentStream.GetSize: Int64;
 begin
   if FSize < 0 then
-    raise EReadError.Create('Document provider did not report its size');
+    CacheUntil(High(Int64));
   Result := FSize;
 end;
 
@@ -164,17 +214,13 @@ function TDocumentStream.Read(var Buffer; Count: Longint): Longint;
 begin
   if Count <= 0 then
     Exit(0);
-  var Bytes := TJavaArray<Byte>.Create(Min(Count, 65536));
-  try
-    Result := FInput.read(Bytes);
-    if Result < 0 then
-      Result := 0;
-    if Result > 0 then
-      Move(Bytes.Data^, Buffer, Result);
-    Inc(FPosition, Result);
-  finally
-    Bytes.Free;
-  end;
+  Count := Min(Count, 65536);
+  if FPosition > High(Int64) - Count then
+    Exit(0);
+  CacheUntil(FPosition + Count);
+  FCache.Position := FPosition;
+  Result := FCache.Read(Buffer, Count);
+  Inc(FPosition, Result);
 end;
 
 function TDocumentStream.Write(const Buffer; Count: Longint): Longint;
@@ -184,26 +230,39 @@ end;
 
 function TDocumentStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
 begin
-  var Target := Offset;
+  var Base: Int64 := 0;
   case Origin of
-    soCurrent:
-      Inc(Target, FPosition);
-    soEnd:
-      Inc(Target, Size);
+    soBeginning: ;
+    soCurrent: Base := FPosition;
+    soEnd: Base := Size;
+  else
+    raise EStreamError.Create('Invalid document seek origin');
   end;
-  if Target < 0 then
+  if (Offset < -Base) or (Offset > High(Int64) - Base) then
     raise EStreamError.Create('Invalid document position');
-  if Target < FPosition then
-    Reopen;
-  var Buffer: array[0..4095] of Byte;
-  while FPosition < Target do
-    if Read(Buffer, Min(Int64(SizeOf(Buffer)), Target - FPosition)) = 0 then
-      raise EReadError.Create('Unexpected end of document');
+  FPosition := Base + Offset;
   Result := FPosition;
 end;
 
 class function TAndroidStorage.OpenUri(const Uri: string): TStream;
 begin
+  var Descriptor: JParcelFileDescriptor := nil;
+  try
+    try
+      Descriptor := Resolver.openFileDescriptor(ParseUri(Uri), StringToJString('r'));
+      if (Descriptor <> nil) and (lseek(Descriptor.getFd, 0, SEEK_CUR) >= 0) then
+      begin
+        Result := TDocumentFileStream.Create(Descriptor);
+        Descriptor := nil; // The stream keeps the descriptor open.
+        Exit;
+      end;
+    except
+      // Some providers offer only an input stream, or a non-seekable pipe.
+    end;
+  finally
+    if Descriptor <> nil then
+      Descriptor.close;
+  end;
   Result := TDocumentStream.Create(Uri);
 end;
 

@@ -456,13 +456,23 @@ end;
 
 procedure TGBCoreAdapter.Start;
 begin
-  FThread.Start;
+  // GB and GBC share this lifecycle. A pause request must survive Start,
+  // including repeated calls after the worker has already been launched.
+  if (FThread <> nil) and FThread.Suspended and not FThread.Finished then
+    FThread.Start;
 end;
 
 procedure TGBCoreAdapter.Stop;
 begin
   if (FThread <> nil) and not FThread.Finished then
+  begin
     FThread.RequestStop;
+    // Match other cores: returning from Stop means no further emulation work.
+    // A never-started worker exits immediately once released after termination.
+    if FThread.Suspended then
+      FThread.Start;
+    FThread.WaitFor;
+  end;
 end;
 
 function TGBCoreAdapter.TakeError: string;

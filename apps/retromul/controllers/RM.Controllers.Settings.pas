@@ -177,6 +177,7 @@ begin
       var GBConfig: IGBEmulatorConfig;
       if Supports(Config, IGBEmulatorConfig, GBConfig) then
         Config.Load;
+      FView.ImageCanvas.LoadSettings(Ini);
       FView.ImageCanvas.DisableInterpolation := SameText(Config.Filter, 'nearest');
       FView.UpdateFrame;
       FView.ImageCanvas.Repaint;

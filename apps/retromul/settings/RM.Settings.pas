@@ -10,7 +10,7 @@ uses
   System.UITypes, FMX.Forms, FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls,
   FMX.Text, FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox,
   FMX.Controls.Presentation, Core.Storage, Core.Emulation, FMXInput, FMX.Objects,
-  RM.Settings.Platform, RM.Settings.Catalog;
+  RM.Settings.Platform, RM.Settings.Catalog, RM.ShaderBitmap, RM.BitmapShaders;
 
 const
   SETTINGS_CATEGORY_GENERAL = RM.Settings.platform.SETTINGS_CATEGORY_GENERAL;
@@ -146,6 +146,8 @@ type
     FGroup: TPanel;
     FPreview: TControl;
     FPreviewGroup: TPanel;
+    FPreviewShaderFile: string;
+    FPreviewShaderLoaded: Boolean;
     FHeight: Single;
     FBuilding, FRebuildPending, FArranging, FDeviceArranging, FLayoutPending: Boolean;
     FVolumeValue: TLabel;
@@ -162,6 +164,11 @@ type
     procedure PlatformSelectionChange(Sender: TObject);
     procedure PlatformPickerChange(Sender: TObject);
     procedure BuildPalettePreview(Palette, Scaling: TComboBox);
+    procedure BuildVideoPreview;
+    procedure UpdateShaderPreview;
+    procedure ShaderParameterChange(Sender: TObject);
+    procedure ShaderFileChange(Sender: TObject);
+    function ShaderTrack(const Name, Key: string; Default, Minimum, Maximum: Integer): TTrackBar;
     procedure ClearPathClick(Sender: TObject);
     procedure SaveTemplateClick(Sender: TObject);
     procedure BuildPage(PreserveScroll: Boolean = False);
@@ -269,13 +276,14 @@ type
     function Poll: TArray<TInputValue>; override;
   end;
 
-  TSettingsPreview = class(TImage)
+  TSettingsPreview = class(TShaderBitmap)
   private
     FPaletteIndex: Integer;
     procedure SetPaletteIndex(Value: Integer);
   public
     constructor Create(AOwner: TComponent); override;
     property PaletteIndex: Integer read FPaletteIndex write SetPaletteIndex;
+    procedure SetColorPattern;
   published
     property Align;
     property Margins;
@@ -468,7 +476,42 @@ begin
   finally
     Bitmap.Unmap(Data);
   end;
-  Repaint;
+  ResetHistory;
+end;
+
+procedure TSettingsPreview.SetColorPattern;
+begin
+  if FPaletteIndex = -1 then Exit;
+  Bitmap.SetSize(256, 240);
+  var Data: TBitmapData;
+  if not Bitmap.Map(TMapAccess.Write, Data) then Exit;
+  try
+    // Fine edges, gradients and saturated colors make all built-in effects visible.
+    for var Y := 0 to Bitmap.Height - 1 do
+      for var X := 0 to Bitmap.Width - 1 do
+      begin
+        var Pixel: TAlphaColorRec;
+        Pixel.A := 255;
+        Pixel.R := X;
+        Pixel.G := Y * 255 div 239;
+        Pixel.B := 255 - X;
+        if Y < 48 then
+        begin
+          Pixel.R := 255 * Ord((X div 32 and 1) <> 0);
+          Pixel.G := 255 * Ord((X div 32 and 2) <> 0);
+          Pixel.B := 255 * Ord((X div 32 and 4) <> 0);
+        end;
+        if (Y > 176) and (X > 16) and (X < 240) then
+        begin
+          var Shade := Byte(48 + 160 * Ord(((X div 4 + Y div 4) and 1) = 0));
+          Pixel.R := Shade; Pixel.G := Shade; Pixel.B := Shade;
+        end;
+        if (X in [16, 239]) or (Y in [64, 160]) then Pixel.Color := TAlphaColors.White;
+        Data.SetPixel(X, Y, Pixel.Color);
+      end;
+    FPaletteIndex := -1;
+  finally Bitmap.Unmap(Data); end;
+  ResetHistory;
 end;
 
 procedure TSettingsTrackBar.DoRealign;
@@ -787,10 +830,9 @@ begin
   BuildPage;
 end;
 
-procedure TSettingsView.BuildPalettePreview(Palette, Scaling: TComboBox);
+procedure TSettingsView.BuildVideoPreview;
 begin
-  Palette.OnChange := PreviewChange;
-  Scaling.OnChange := PreviewChange;
+  var PreviousGroup := FGroup;
   Heading('GroupPreview');
   FPreviewGroup := FGroup;
   var PreviewRow := Row('Row160144');
@@ -798,11 +840,119 @@ begin
   PreviewRow.Padding.Rect := TRectF.Empty;
   PreviewRow.Height := 350;
   TLayout(TLabel(PreviewRow.TagObject).Parent).Visible := False;
-  var Preview := FindComponent('SettingsPreviewPalettePreview') as TSettingsPreview;
-  Preview.Align := TAlignLayout.Client;
-  FPreview := Preview;
+  FPreview := FindComponent('SettingsPreviewPalettePreview') as TSettingsPreview;
+  FPreview.Align := TAlignLayout.Client;
+  FGroup := PreviousGroup;
+end;
+
+procedure TSettingsView.BuildPalettePreview(Palette, Scaling: TComboBox);
+begin
+  Palette.OnChange := PreviewChange;
+  Scaling.OnChange := PreviewChange;
+  BuildVideoPreview;
+  var Preview := TSettingsPreview(FPreview);
   Preview.PaletteIndex := Palette.ItemIndex;
   Preview.DisableInterpolation := Scaling.ItemIndex = 0;
+end;
+
+function TSettingsView.ShaderTrack(const Name, Key: string;
+  Default, Minimum, Maximum: Integer): TTrackBar;
+begin
+  Row(Name);
+  Result := FindComponent('SettingsTrackBar' + Name + 'Editor') as TSettingsTrackBar;
+  Result.OnChange := nil;
+  Field(Result, 'Shaders', Key).DefaultValue := IntToStr(Default);
+  Result.Min := Minimum;
+  Result.Max := Maximum;
+  Result.Frequency := 1;
+  Result.Tracking := True;
+  Result.TagString := Key;
+  Result.TagObject := FindComponent('Label' + Name + 'Value');
+  Result.Value := EnsureRange(FDrafts[FPage].ReadInteger('Shaders', Key, Default), Minimum, Maximum);
+  Result.OnChange := ShaderParameterChange;
+  ShaderParameterChange(Result);
+end;
+
+procedure TSettingsView.ShaderParameterChange(Sender: TObject);
+begin
+  var Track := TTrackBar(Sender);
+  var Value := Round(Track.Value);
+  var Caption := IntToStr(Value) + '%';
+  if Track.TagString = 'LCDResponseMS' then
+    Caption := IntToStr(Value) + ' ' + Translate('ms');
+  TLabel(Track.TagObject).Text := Caption;
+  if FBuilding then Exit;
+  StorePage;
+  UpdateShaderPreview;
+end;
+
+procedure TSettingsView.ShaderFileChange(Sender: TObject);
+begin
+  if FBuilding then Exit;
+  StorePage;
+  UpdateShaderPreview;
+end;
+
+procedure TSettingsView.UpdateShaderPreview;
+begin
+  if not (FPreview is TSettingsPreview) then Exit;
+  var Preview := TSettingsPreview(FPreview);
+  var Draft := FDrafts[FPage];
+  var Options := TBitmapShaderSettings.Default;
+  Options.ScanlineStrength := Draft.ReadInteger('Shaders', 'Scanlines', 35) / 100;
+  Options.Curvature := Draft.ReadInteger('Shaders', 'Curvature', 8) / 100;
+  Options.MaskStrength := Draft.ReadInteger('Shaders', 'Mask', 65) / 100;
+  Options.Glow := Draft.ReadInteger('Shaders', 'Glow', 20) / 100;
+  Options.LCDGridStrength := Draft.ReadInteger('Shaders', 'LCDGrid', 35) / 100;
+  Options.LCDResponseMS := Draft.ReadInteger('Shaders', 'LCDResponseMS', 65);
+  Options.Gamma := Draft.ReadInteger('Shaders', 'Gamma', 100) / 100;
+  Options.Saturation := Draft.ReadInteger('Shaders', 'Saturation', 100) / 100;
+  Options.Temperature := Draft.ReadInteger('Shaders', 'Temperature', 100) / 100 - 1;
+  Preview.Settings := Options;
+  Preview.DisableInterpolation := Draft.ReadString('Video', 'Filter', 'nearest') = 'nearest';
+  var Effect := Draft.ReadString('Shaders', 'Mode', 'off');
+  var NextMode := TBitmapShaderMode.Original;
+  if Effect = 'scanlines' then NextMode := TBitmapShaderMode.Scanlines
+  else if Effect = 'crt' then NextMode := TBitmapShaderMode.CRT
+  else if Effect = 'lcd' then NextMode := TBitmapShaderMode.LCD
+  else if Effect = 'color' then NextMode := TBitmapShaderMode.ColorCorrection;
+  var Status := FindComponent('LabelShaderPreviewStatus') as TLabel;
+  if Effect = 'custom' then
+  begin
+    var FileName := Draft.ReadString('Shaders', 'File', '').Trim;
+    if (FileName <> FPreviewShaderFile) or (not FPreviewShaderLoaded and not Status.Visible) then
+    begin
+      FPreviewShaderFile := FileName;
+      FPreviewShaderLoaded := False;
+      Status.Visible := False;
+      if FileName <> '' then
+      begin
+        if not System.IOUtils.TPath.IsPathRooted(FileName) then
+          FileName := System.IOUtils.TPath.Combine(System.IOUtils.TPath.GetDocumentsPath, FileName);
+        try
+          Preview.LoadShaderFromFile(FileName);
+          FPreviewShaderLoaded := True;
+        except
+          on E: Exception do
+          begin
+            Preview.Mode := TBitmapShaderMode.Original;
+            Status.Text := Translate('Cannot preview this shader. Check the shader file.');
+            Status.Hint := E.Message;
+            Status.ShowHint := True;
+            Status.Visible := True;
+          end;
+        end;
+      end
+      else
+      begin
+        Status.Text := Translate('Choose a shader file to see the preview.');
+        Status.Visible := True;
+      end;
+    end;
+    if FPreviewShaderLoaded then NextMode := TBitmapShaderMode.Custom;
+  end
+  else Status.Visible := False;
+  Preview.Mode := NextMode;
 end;
 
 procedure TSettingsView.ClearPathClick(Sender: TObject);
@@ -843,6 +993,16 @@ begin
     platform.Initialize(FContext);
   end;
   ReplaceRuntime('RowNGModelEditor', TSettingsComboBox);
+  ReplaceRuntime('RowShaderModeEditor', TSettingsComboBox);
+  ReplaceRuntime('RowShaderScanlinesEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderCurvatureEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderMaskEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderGlowEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderLCDGridEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderLCDResponseEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderGammaEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderSaturationEditor', TSettingsTrackBar);
+  ReplaceRuntime('RowShaderTemperatureEditor', TSettingsTrackBar);
   ReplaceRuntime('RowNGRegionEditor', TSettingsComboBox);
   ReplaceRuntime('RowNGCardSizeEditor', TSettingsComboBox);
   var NeoGeoClear := FindComponent('EditButtonRowNGBIOSClear') as TEditButton;
@@ -937,8 +1097,12 @@ begin
     FFolderEdit := nil;
     FAutosaveMinutes := nil;
     FVolumeValue := nil;
+    if FPreview is TSettingsPreview then TSettingsPreview(FPreview).Mode := TBitmapShaderMode.Original;
     FPreview := nil;
     FPreviewGroup := nil;
+    FPreviewShaderFile := '';
+    FPreviewShaderLoaded := False;
+    (FindComponent('LabelShaderPreviewStatus') as TLabel).Visible := False;
     FDevices.Clear;
     FFields.Clear;
     LayoutSettingsMainColumn.BeginUpdate;
@@ -1013,8 +1177,41 @@ begin
       if FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO then
       begin
         Heading('GroupVideo');
-        Combo('RowImagescaling', 'Video', 'Filter', [], ['nearest', 'linear'], 'nearest');
+        var Scaling := Combo('RowImagescaling', 'Video', 'Filter', [], ['nearest', 'linear'], 'nearest');
+        Scaling.OnChange := PreviewChange;
         platform.Video(FContext);
+        FGroup := FindComponent('PanelGroupVideo') as TPanel;
+        var ShaderMode := Combo('RowShaderMode', 'Shaders', 'Mode',
+          ['Off', 'Scanlines', 'CRT', 'LCD', 'Color correction', 'Custom'],
+          ['off', 'scanlines', 'crt', 'lcd', 'color', 'custom'], 'off');
+        ShaderMode.OnChange := PortChange;
+        var Effect := FDrafts[FPage].ReadString('Shaders', 'Mode', 'off');
+        if (Effect = 'scanlines') or (Effect = 'crt') then
+          ShaderTrack('RowShaderScanlines', 'Scanlines', 35, 0, 100);
+        if Effect = 'crt' then
+        begin
+          ShaderTrack('RowShaderCurvature', 'Curvature', 8, 0, 30);
+          ShaderTrack('RowShaderMask', 'Mask', 65, 0, 100);
+          ShaderTrack('RowShaderGlow', 'Glow', 20, 0, 100);
+        end;
+        if Effect = 'lcd' then
+        begin
+          ShaderTrack('RowShaderLCDGrid', 'LCDGrid', 35, 0, 100);
+          ShaderTrack('RowShaderLCDResponse', 'LCDResponseMS', 65, 0, 500);
+        end;
+        if Effect = 'custom' then
+          EditText('RowShaderFile', 'Shaders', 'File', '').OnChangeTracking := ShaderFileChange;
+        if (Effect = 'color') or (Effect = 'custom') then
+        begin
+          ShaderTrack('RowShaderGamma', 'Gamma', 100, 25, 400);
+          ShaderTrack('RowShaderSaturation', 'Saturation', 100, 0, 200);
+          ShaderTrack('RowShaderTemperature', 'Temperature', 100, 0, 200);
+        end;
+        if FPreview = nil then
+        begin
+          BuildVideoPreview;
+          TSettingsPreview(FPreview).SetColorPattern;
+        end;
         Heading('GroupAudio');
         Check('RowAudio', 'Audio', 'Enabled', True);
         var VolumeRow := Row('RowVolume');
@@ -1059,6 +1256,7 @@ begin
     end;
   finally
     FBuilding := False;
+    UpdateShaderPreview;
     Resize;
     LayoutSettingsMainColumn.EndUpdate;
     LayoutSettingsPreviewColumn.EndUpdate;
@@ -1105,7 +1303,11 @@ begin
     else if F.Control is TSpinBox then
       FDrafts[FPage].WriteInteger(F.Section, F.Key, Round(TSpinBox(F.Control).Value))
     else if F.Control is TTrackBar then
-      FDrafts[FPage].WriteFloat(F.Section, F.Key, TTrackBar(F.Control).Value / 100)
+    begin
+      if F.Section = 'Shaders' then
+        FDrafts[FPage].WriteInteger(F.Section, F.Key, Round(TTrackBar(F.Control).Value))
+      else FDrafts[FPage].WriteFloat(F.Section, F.Key, TTrackBar(F.Control).Value / 100);
+    end
     else if F.Control is TEdit then
       FDrafts[FPage].WriteString(F.Section, F.Key, TEdit(F.Control).Text.Trim);
   end;
@@ -2241,12 +2443,12 @@ end;
 
 procedure TSettingsView.PreviewChange(Sender: TObject);
 begin
-  if FPreview is TSettingsPreview then
-  begin
-    var Preview := TSettingsPreview(FPreview);
-    Preview.PaletteIndex := (FindComponent('SettingsComboBoxRowGameBoypaletteEditor') as TComboBox).ItemIndex;
-    Preview.DisableInterpolation := (FindComponent('SettingsComboBoxRowImagescalingEditor') as TComboBox).ItemIndex = 0;
-  end;
+  if FBuilding then Exit;
+  StorePage;
+  if (FPage = SETTINGS_PAGE_GB) and (FPreview is TSettingsPreview) then
+    TSettingsPreview(FPreview).PaletteIndex :=
+      (FindComponent('SettingsComboBoxRowGameBoypaletteEditor') as TComboBox).ItemIndex;
+  UpdateShaderPreview;
 end;
 
 procedure TSettingsView.ResetClick(Sender: TObject);

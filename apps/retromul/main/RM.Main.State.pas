@@ -33,6 +33,8 @@ type
     SoundErrorShown: Boolean;
     RomDisplayName: string;
     OpeningRom: Boolean;
+    PendingAutosaveChoice: Boolean;
+    PreserveOpeningAutosave: Boolean;
     EmulationFaulted: Boolean;
     UserPaused: Boolean;
     AutoPaused: Boolean;

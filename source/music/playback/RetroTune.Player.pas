@@ -4,9 +4,11 @@ interface
 
 uses
   System.Classes, System.SysUtils, System.SyncObjs, RetroTune.Decoder,
-  RetroTune.Spectrum;
+  RetroTune.Spectrum, PCM.Audio;
 
 type
+  TTuneAudioFactory = reference to function(const Format: TPCMAudioFormat): TPCMAudio;
+
   TTunePlayerState = (Stopped, Playing, Paused, Finished);
 
   TTunePlayerStatus = record
@@ -22,6 +24,7 @@ type
   TTunePlayer = class(TThread)
   private
     FDecoder: ITuneDecoder;
+    FAudioFactory: TTuneAudioFactory;
     FInfo: TTuneInfo;
     FLock: TCriticalSection;
     FWake: TEvent;
@@ -40,7 +43,7 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(const Decoder: ITuneDecoder);
+    constructor Create(const Decoder: ITuneDecoder; const AudioFactory: TTuneAudioFactory = nil);
     destructor Destroy; override;
     procedure Play;
     procedure Pause;
@@ -58,9 +61,9 @@ type
 implementation
 
 uses
-  PCM.Audio, System.Math;
+  System.Math;
 
-constructor TTunePlayer.Create(const Decoder: ITuneDecoder);
+constructor TTunePlayer.Create(const Decoder: ITuneDecoder; const AudioFactory: TTuneAudioFactory);
 begin
   // TThread.AfterConstruction starts it only after all fields are initialized.
   inherited Create(False);
@@ -69,6 +72,7 @@ begin
     raise EArgumentNilException.Create('Decoder is required');
 
   FDecoder := Decoder;
+  FAudioFactory := AudioFactory;
   FInfo := Decoder.GetInfo;
   if (FInfo.TrackCount < 1) or (FInfo.DefaultTrack < 0) or (FInfo.DefaultTrack >= FInfo.TrackCount) then
     raise EArgumentException.Create('Invalid decoder track information');
@@ -341,7 +345,7 @@ var
   Current: TTunePlayerStatus;
   Generation, AppliedGeneration: UInt64;
   Volume, Count, I, Channel, Sum, QueueLimit: Integer;
-  HaveGeneration, WasPlaying, AtEnd: Boolean;
+  HaveGeneration, WasPlaying, AtEnd, PendingBlock, DevicePaused: Boolean;
   Target, Actual: Double;
 begin
   Audio := nil;
@@ -358,6 +362,9 @@ begin
     HaveGeneration := False;
     WasPlaying := False;
     AtEnd := False;
+    PendingBlock := False;
+    Count := 0;
+    DevicePaused := False;
     AppliedGeneration := 0;
     while not Terminated do
     begin
@@ -372,8 +379,14 @@ begin
       end;
       if Current.State = TTunePlayerState.Stopped then
       begin
-        if WasPlaying and (Audio <> nil) then
+        if (Audio <> nil) and (WasPlaying or HaveGeneration or DevicePaused) then
+        begin
           Audio.Clear;
+          if DevicePaused then
+            Audio.SetPaused(False);
+        end;
+        DevicePaused := False;
+        PendingBlock := False;
         WasPlaying := False;
         HaveGeneration := False;
         FWake.WaitFor(50);
@@ -384,6 +397,7 @@ begin
         begin
           if Audio <> nil then
             Audio.Clear;
+          PendingBlock := False;
           if not MoveDecoder(Current.Track, Target, Generation, Actual) then
             Continue;
           FLock.Acquire;
@@ -401,16 +415,27 @@ begin
         end;
         if Current.State <> TTunePlayerState.Playing then
         begin
-          if WasPlaying and (Audio <> nil) then
-            Audio.Clear;
+          if WasPlaying and (Audio <> nil) and not DevicePaused then
+            DevicePaused := Audio.SetPaused(True);
+          // A backend without pause support drains its existing short queue;
+          // clearing it would discard samples already consumed by the decoder.
           WasPlaying := False;
           FWake.WaitFor(50);
           Continue;
         end;
         if Audio = nil then
-          Audio := TPCMAudio.Create(AudioFormat);
+          if Assigned(FAudioFactory) then
+            Audio := FAudioFactory(AudioFormat)
+          else
+            Audio := TPCMAudio.Create(AudioFormat);
         if (Audio.Error <> '') or not Audio.QueueState.DeviceOpen then
           raise EInvalidOpException.Create('PCM audio device: ' + Audio.Error);
+        if DevicePaused then
+        begin
+          if not Audio.SetPaused(False) then
+            raise EInvalidOpException.Create('PCM audio device could not resume');
+          DevicePaused := False;
+        end;
         WasPlaying := True;
         if AtEnd then
         begin
@@ -418,7 +443,7 @@ begin
           begin
             FLock.Acquire;
             try
-              if FGeneration = Generation then
+              if (FGeneration = Generation) and (FStatus.State = TTunePlayerState.Playing) then
               begin
                 FStatus.State := TTunePlayerState.Finished;
                 if FStatus.DurationSeconds < 0 then
@@ -437,16 +462,21 @@ begin
           FWake.WaitFor(5);
           Continue;
         end;
-        Count := FDecoder.Render(Samples, BlockFrames);
-        if (Count < 0) or (Count > BlockFrames) then
-          raise EInvalidOpException.Create('Decoder returned an invalid PCM frame count');
-        for I := 0 to Count * FInfo.Channels - 1 do
-          Samples[I] := (Integer(Samples[I]) * Volume) div 100;
+        if not PendingBlock then
+        begin
+          Count := FDecoder.Render(Samples, BlockFrames);
+          if (Count < 0) or (Count > BlockFrames) then
+            raise EInvalidOpException.Create('Decoder returned an invalid PCM frame count');
+          for I := 0 to Count * FInfo.Channels - 1 do
+            Samples[I] := (Integer(Samples[I]) * Volume) div 100;
+          PendingBlock := True;
+        end;
         FLock.Acquire;
         try
-          // Discard a block if stop/track/pause arrived during rendering.
+          // Generation changes discard obsolete PCM; pause retains the block.
           if (FGeneration = Generation) and (FStatus.State = TTunePlayerState.Playing) then
           begin
+            PendingBlock := False;
             if Count = 0 then
               AtEnd := True
             else
@@ -477,6 +507,8 @@ begin
           if Audio <> nil then
             Audio.Clear;
           FreeAndNil(Audio);
+          DevicePaused := False;
+          PendingBlock := False;
           WasPlaying := False;
           HaveGeneration := False;
           FLock.Acquire;

@@ -34,8 +34,11 @@ type
   public
     constructor Create(const Root: string = ''; const Picker: IStoragePicker = nil);
     class function Default: IStorage; static;
+    // Keep the returned scope alive on the calling thread during loading.
+    class function BeginReadCancellation(const CheckCancelled: TProc): IInterface; static;
+    class procedure CheckReadCancelled; static;
     procedure SetRomFolder(const Value: string);
-    function OpenRead(const Location: string): TStream;
+    function OpenRead(const Location: string): TStream; virtual;
     function OpenWrite(const Location: string): TStream;
     function Exists(const Location: string): Boolean;
     function ModifiedTime(const Location: string): TDateTime;
@@ -84,6 +87,94 @@ uses
   {$IFDEF IOS} Macapi.Helpers, System.Hash, {$ENDIF}
   {$IFDEF MSWINDOWS} Winapi.Windows, {$ELSE} Posix.Stdio, Posix.Unistd, {$ENDIF}
   System.Types;
+
+type
+  TReadCancellationScope = class(TInterfacedObject)
+  private
+    FPrevious: TReadCancellationScope;
+  public
+    CheckCancelled: TProc;
+    constructor Create(const Check: TProc);
+    destructor Destroy; override;
+  end;
+
+  TCancellableReadStream = class(TStream)
+  private
+    FSource: TStream;
+    FCheckCancelled: TProc;
+  protected
+    function GetSize: Int64; override;
+  public
+    constructor Create(Source: TStream; const Check: TProc);
+    destructor Destroy; override;
+    function Read(var Buffer; Count: Longint): Longint; override;
+    function Write(const Buffer; Count: Longint): Longint; override;
+    function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
+  end;
+
+threadvar
+  ReadCancellationScope: TReadCancellationScope;
+
+constructor TReadCancellationScope.Create(const Check: TProc);
+begin
+  inherited Create;
+  CheckCancelled := Check;
+  FPrevious := ReadCancellationScope;
+  ReadCancellationScope := Self;
+end;
+
+destructor TReadCancellationScope.Destroy;
+begin
+  ReadCancellationScope := FPrevious;
+  inherited;
+end;
+
+constructor TCancellableReadStream.Create(Source: TStream; const Check: TProc);
+begin
+  inherited Create;
+  FSource := Source;
+  FCheckCancelled := Check;
+end;
+
+destructor TCancellableReadStream.Destroy;
+begin
+  FSource.Free;
+  inherited;
+end;
+
+function TCancellableReadStream.GetSize: Int64;
+begin
+  FCheckCancelled();
+  Result := FSource.Size;
+end;
+
+function TCancellableReadStream.Read(var Buffer; Count: Longint): Longint;
+begin
+  FCheckCancelled();
+  Result := FSource.Read(Buffer, Count);
+end;
+
+function TCancellableReadStream.Write(const Buffer; Count: Longint): Longint;
+begin
+  raise EWriteError.Create('Read-only stream');
+end;
+
+function TCancellableReadStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
+begin
+  FCheckCancelled();
+  Result := FSource.Seek(Offset, Origin);
+end;
+
+class function TStorage.BeginReadCancellation(const CheckCancelled: TProc): IInterface;
+begin
+  Result := TReadCancellationScope.Create(CheckCancelled);
+end;
+
+class procedure TStorage.CheckReadCancelled;
+begin
+  if (ReadCancellationScope <> nil) and Assigned(ReadCancellationScope.CheckCancelled) then
+    ReadCancellationScope.CheckCancelled();
+end;
 
 {$IFDEF IOS}
 type
@@ -355,11 +446,15 @@ end;
 
 function TStorage.OpenRead(const Location: string): TStream;
 begin
+  CheckReadCancelled;
   {$IFDEF ANDROID}
   if Location.StartsWith('content://') then
-    Exit(TAndroidStorage.OpenUri(Location));
+    Result := TAndroidStorage.OpenUri(Location)
+  else
   {$ENDIF}
-  Result := TFileStream.Create(NativeStoragePath(Location), fmOpenRead or fmShareDenyWrite);
+    Result := TFileStream.Create(NativeStoragePath(Location), fmOpenRead or fmShareDenyWrite);
+  if (ReadCancellationScope <> nil) and Assigned(ReadCancellationScope.CheckCancelled) then
+    Result := TCancellableReadStream.Create(Result, ReadCancellationScope.CheckCancelled);
 end;
 
 function TStorage.OpenWrite(const Location: string): TStream;
@@ -745,7 +840,8 @@ begin
       begin
         var HasCue := False;
         for var Candidate in Candidates do
-          if SameText(Candidate.Name, ChangeFileExt(Item.Name, '.cue')) then
+          if SameText(Candidate.Name, ChangeFileExt(Item.Name, '.cue')) and
+            (ExtractFilePath(Candidate.RelativePath) = ExtractFilePath(Item.RelativePath)) then
             HasCue := True;
         if HasCue then
           Continue;

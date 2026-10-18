@@ -5,6 +5,7 @@
 interface
 
 uses
+  RM.BitmapShaders,
   RM.Platforms.Presentation,
   System.SysUtils, FMX.Types, Core.Emulation, RM.Controllers.Base;
 
@@ -13,11 +14,15 @@ type
   private
     FLoadingCore: Boolean;
     FLoadGeneration: Integer;
+    FCancelLoad: TProc;
     procedure UpdateVirtualButtons;
     procedure EndCoreLoading;
     procedure CancelCoreLoading;
+    procedure BeginGameLoading(const FileName, DisplayName: string;
+      StartPaused: Boolean; const SnapshotName: string);
     procedure InstallCore(const NewEmulation: IEmulationCore; const FileName, DisplayName: string; StartPaused: Boolean);
   public
+    destructor Destroy; override;
     procedure FormActivate(Sender: TObject);
     procedure FormDeactivate(Sender: TObject);
     procedure ApplicationException(Sender: TObject; E: Exception);
@@ -45,12 +50,37 @@ type
 implementation
 
 uses
-  System.Classes, System.UITypes, System.Math, RM.Input, System.IOUtils,
+  System.Classes, System.SyncObjs, System.UITypes, System.Math, RM.Input, System.IOUtils,
   FMX.Forms, FMX.Objects, FMX.Graphics, FMX.OpenDialog, Core.Storage,
   Core.EmulatorFactory, Core.Adapter.SG1000, Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
   Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
   Core.InputConfig, Core.Platforms, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
-  RM.Dialogs, RM.Styles, RM.Gamepad.Viewport;
+  RM.Dialogs, RM.Styles, RM.Gamepad.Viewport, Core.SavePaths;
+
+function NewLoadCancellation(out CancelLoad: TProc): TProc;
+begin
+  // A separate closure frame contains only the shared flag. Read streams can
+  // retain the check without retaining the form, worker or loaded core.
+  var Cancelled: Integer := 0;
+  CancelLoad :=
+    procedure
+    begin
+      TInterlocked.Exchange(Cancelled, 1);
+    end;
+  Result :=
+    procedure
+    begin
+      if TInterlocked.CompareExchange(Cancelled, 0, 0) <> 0 then
+        raise EAbort.Create('Game loading cancelled');
+    end;
+end;
+
+destructor TSessionController.Destroy;
+begin
+  if Assigned(FCancelLoad) then
+    FCancelLoad();
+  inherited;
+end;
 
 procedure TSessionController.FormActivate(Sender: TObject);
 begin
@@ -503,7 +533,7 @@ end;
 
 procedure TSessionController.FinishFileSelection;
 begin
-  if FLoadingCore then
+  if FLoadingCore or FState.Session.PendingAutosaveChoice then
     Exit;
 
   {$IFDEF ANDROID}
@@ -526,8 +556,10 @@ end;
 
 procedure TSessionController.EndCoreLoading;
 begin
+  FCancelLoad := nil;
+  FState.Session.PreserveOpeningAutosave := False;
   FLoadingCore := False;
-  FState.Session.OpeningRom := False;
+  FState.Session.OpeningRom := FState.Session.PendingAutosaveChoice;
   CloseRetroLoading(FView);
   FView.FinishFileSelection;
 end;
@@ -537,15 +569,76 @@ begin
   if not FLoadingCore then
     Exit;
 
+  if Assigned(FCancelLoad) then
+    FCancelLoad();
   Inc(FLoadGeneration);
   EndCoreLoading;
 end;
 
 procedure TSessionController.LoadRom(const FileName: string; const DisplayName: string; StartPaused: Boolean; const SnapshotName: string);
 begin
-  if FLoadingCore then
+  if FLoadingCore or FState.Session.PendingAutosaveChoice then Exit;
+  Inc(FLoadGeneration);
+  // The explicit snapshot is already a launch choice. Otherwise consult only
+  // the persisted association; never open ROM streams or instantiate a core here.
+  var Path := '';
+  if SnapshotName = '' then
+    Path := FindRecordedAutosave(FState.Session.Storage, FileName);
+  if Path = '' then
+  begin
+    BeginGameLoading(FileName, DisplayName, StartPaused, SnapshotName);
     Exit;
+  end;
 
+  var Text := Translate('An autosave was found for this game. Load it?') + sLineBreak + sLineBreak;
+  if FState.Autosave.OnExit then
+    Text := Text + Translate('The autosave will be overwritten when you exit the game.')
+  else
+    Text := Text + Translate('Autosave on exit is disabled.');
+  if FState.Autosave.Periodic then
+    Text := Text + sLineBreak + Translate('Periodic autosaving will also overwrite this autosave.');
+
+  var IsAlive := FState.Session.CallbackAlive;
+  var Generation := FLoadGeneration;
+  FState.Session.PendingAutosaveChoice := True;
+  FState.Session.OpeningRom := True;
+  ShowRetroChoice(FView, Text,
+    procedure(Choice: TRetroDialogChoice)
+    begin
+      if not IsAlive() then
+        Exit;
+      if Generation <> FLoadGeneration then
+        Exit;
+      try
+        if Choice <> TRetroDialogChoice.Cancel then
+        begin
+          // Preserve the chosen snapshot when replacing the same running game;
+          // save a different game's progress normally before switching.
+          var PreviousDirectory := FView.GameSnapshotDirectory;
+          FState.Session.PreserveOpeningAutosave := (Choice = TRetroDialogChoice.Accept) and
+            SameText(ExcludeTrailingPathDelimiter(PreviousDirectory), ExcludeTrailingPathDelimiter(ExtractFilePath(Path)));
+          FState.Session.PendingAutosaveChoice := False;
+          try
+            var Snapshot := '';
+            if Choice = TRetroDialogChoice.Accept then Snapshot := Path;
+            // Restored games wait for an explicit Resume after the dialog closes.
+            BeginGameLoading(FileName, DisplayName, StartPaused or (Choice = TRetroDialogChoice.Accept), Snapshot);
+          except
+            on E: Exception do
+              ShowRetroMessage(FView, Translate('Unable to open game: ') + E.Message);
+          end;
+        end;
+      finally
+        FState.Session.PendingAutosaveChoice := False;
+        if not FLoadingCore then FState.Session.PreserveOpeningAutosave := False;
+        FView.FinishFileSelection;
+        FView.SyncActivity;
+      end;
+    end, 'Load autosave', 'Start new game', 'Cancel launch');
+end;
+
+procedure TSessionController.BeginGameLoading(const FileName, DisplayName: string; StartPaused: Boolean; const SnapshotName: string);
+begin
   var SourceName := FileName;
   if FileName.StartsWith('content://', True) then
     SourceName := FState.Session.Storage.Describe(FileName).Name;
@@ -553,8 +646,7 @@ begin
   if not (SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD)) then
   begin
     InstallCore(FView.NewCore(FileName), FileName, DisplayName, StartPaused);
-    if SnapshotName <> '' then
-      FView.LoadSnapshot(SnapshotName);
+    if SnapshotName <> '' then FView.LoadSnapshot(SnapshotName);
     Exit;
   end;
 
@@ -566,8 +658,8 @@ begin
   var Title := DisplayName;
   var Snapshot := SnapshotName;
   var Paused := StartPaused;
-  Inc(FLoadGeneration);
   var Generation := FLoadGeneration;
+  var CheckCancelled := NewLoadCancellation(FCancelLoad);
   FLoadingCore := True;
   FState.Session.OpeningRom := True;
   FView.FormDeactivate(FView);
@@ -584,16 +676,25 @@ begin
         Core: IEmulationCore;
         ErrorText: string;
       begin
+        var Scope := TStorage.BeginReadCancellation(CheckCancelled);
         try
+          CheckCancelled();
           var Stream := Storage.OpenRead(Path);
           try
             Core := CreateEmulationCore(Stream, Storage, Path);
+            CheckCancelled();
           finally
             Stream.Free;
           end;
         except
           on E: Exception do
             ErrorText := E.Message;
+        end;
+        Scope := nil;
+        try
+          CheckCancelled();
+        except
+          on E: EAbort do Exit;
         end;
         TThread.ForceQueue(nil,
           procedure
@@ -610,8 +711,7 @@ begin
               else
               try
                 InstallCore(Core, Path, Title, Paused);
-                if Snapshot <> '' then
-                  FView.LoadSnapshot(Snapshot);
+                if Snapshot <> '' then FView.LoadSnapshot(Snapshot);
               except
                 on E: Exception do
                   ShowRetroMessage(FView, Translate('Unable to open game: ') + E.Message);
@@ -633,7 +733,7 @@ begin
   // Construct first: an invalid ROM leaves the current worker running.
   if FState.Session.Emulation <> nil then
   begin
-    FView.AutosaveOnExit;
+    if not FState.Session.PreserveOpeningAutosave then FView.AutosaveOnExit;
     FState.Session.Emulation.Stop;
   end;
 
@@ -654,6 +754,8 @@ begin
   FState.Session.Emulation := nil; // Join before replacing the session.
   FView.SyncMotionSensor;
   FState.Session.Emulation := NewEmulation;
+  FState.Session.PreserveOpeningAutosave := False;
+  FState.Session.PendingAutosaveChoice := False;
 
   var Platform := TPlatformRegistry.Require(FState.Session.Emulation.SystemId);
   var InputSystem := Platform.Id;
@@ -684,6 +786,12 @@ begin
   FState.Session.UserPaused := StartPaused;
   FState.Session.AutoPaused := False;
 
+  var VideoIni := FState.Session.Storage.ReadConfig(FState.Session.Emulation.Config.FileName);
+  try
+    FView.ImageCanvas.LoadSettings(VideoIni);
+  finally
+    VideoIni.Free;
+  end;
   FView.ImageCanvas.DisableInterpolation := SameText(FState.Session.Emulation.Config.Filter, 'nearest');
   FillChar(FState.Input.KeysDown, SizeOf(FState.Input.KeysDown), 0);
   FState.Session.RomDisplayName := DisplayName;
@@ -701,12 +809,14 @@ begin
     {$ENDIF}
     FState.Session.Emulation.Start;
     FState.Autosave.LastTick := FView.CurrentTick;
+    var Info: IEmulationSnapshotLocation;
+    var Directory := '';
+    if FState.Session.Emulation.SupportsSnapshots and
+      Supports(FState.Session.Emulation, IEmulationSnapshotLocation, Info) then
+      Directory := Info.GetSnapshotDirectory;
+    RecordGameSnapshotDirectory(FState.Session.Storage, FileName, Directory);
     if FState.Browser.View <> nil then
     begin
-      var Info: IEmulationSnapshotLocation;
-      var Directory := '';
-      if Supports(FState.Session.Emulation, IEmulationSnapshotLocation, Info) then
-        Directory := Info.GetSnapshotDirectory;
       FState.Browser.View.RecordSession(FileName, Directory);
       FState.Browser.View.Visible := False;
       FView.ScreenTabs.ActiveTab := FView.GameScreen;
@@ -737,6 +847,7 @@ end;
 procedure TSessionController.Stop;
 begin
   CancelCoreLoading;
+  Inc(FLoadGeneration);
 
   if FView.FullScreen then
     FView.SwitchFullScreen;
@@ -747,12 +858,15 @@ begin
     FView.AutosaveOnExit;
     FView.TimerUpdate.Enabled := False;
     FState.Session.Emulation.Stop;
+    FView.ImageCanvas.Mode := TBitmapShaderMode.Original;
     FView.ImageCanvas.Bitmap := nil;
     FView.ImageLogo.Visible := True;
     FState.Session.Emulation := nil;
   end;
   if FState.Browser.View <> nil then
     FView.LibraryBack(FView);
+  FState.Session.PendingAutosaveChoice := False;
+  FState.Session.OpeningRom := False;
   FView.SyncActivity;
 end;
 

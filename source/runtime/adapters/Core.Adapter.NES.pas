@@ -430,7 +430,10 @@ end;
 
 procedure TNesCoreAdapter.Start;
 begin
-  FThread.Start;
+  // Emulation pause uses requests, not TThread suspension. Start only a new
+  // worker so repeated calls preserve both running and paused states.
+  if (FThread <> nil) and FThread.Suspended and not FThread.Finished then
+    FThread.Start;
 end;
 
 procedure TNesCoreAdapter.Stop;

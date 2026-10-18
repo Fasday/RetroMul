@@ -41,7 +41,7 @@ type
 implementation
 
 uses
-  System.Generics.Defaults, Core.RomFormat;
+  System.Generics.Defaults, System.StrUtils, Core.RomFormat;
 
 function TPlatformInfo.CopyInfo: TPlatformInfo;
 begin
@@ -174,7 +174,11 @@ begin
     Item.Extensions[i] := Extensions[i];
   if not (System in [TRomSystem.SegaCD, TRomSystem.PCECD, TRomSystem.NeoGeoCD,
       TRomSystem.Saturn]) then
+  begin
+    if not MatchText(ROM_EXTENSION_ZIP, Item.Extensions) then
+      Item.Extensions := Item.Extensions + [ROM_EXTENSION_ZIP];
     Item.Extensions := Item.Extensions + [ROM_EXTENSION_7Z];
+  end;
   Item.SettingsProfile := SettingsProfile;
   Item.SettingsCoreId := SettingsCoreId;
   Item.LegacySettingsId := LegacySettingsId;

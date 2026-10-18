@@ -3,6 +3,14 @@
 uses
   System.SysUtils,
   System.StartUpCopy,
+  RM.ShaderBitmap in '..\..\source\ui\fmx\shaders\RM.ShaderBitmap.pas',
+  RM.BitmapShaders in '..\..\source\ui\fmx\shaders\RM.BitmapShaders.pas',
+  {$IF Defined(ANDROID) or Defined(IOS)}
+  RM.BitmapShaders.Skia in '..\..\source\ui\fmx\shaders\RM.BitmapShaders.Skia.pas',
+  {$ENDIF}
+  RM.BitmapShaderSources in '..\..\source\ui\fmx\shaders\RM.BitmapShaderSources.pas',
+  RM.BitmapShaders.D2D in '..\..\source\ui\fmx\shaders\RM.BitmapShaders.D2D.pas',
+  RM.ShaderCompiler in '..\..\source\ui\fmx\shaders\RM.ShaderCompiler.pas',
   FMX.Forms,
   {$IF Defined(ANDROID) or Defined(IOS)}
   FMX.Skia,

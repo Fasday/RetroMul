@@ -1,4 +1,4 @@
-object RetroDialog: TRetroDialog
+﻿object RetroDialog: TRetroDialog
   Size.Width = 900.000000000000000000
   Size.Height = 640.000000000000000000
   Size.PlatformDefault = False
@@ -41,6 +41,7 @@ object RetroDialog: TRetroDialog
         TextSettings.FontColor = xFFE8ECF1
         TextSettings.VertAlign = Leading
         TextSettings.Trimming = None
+        TextSettings.WordWrap = True
         TabOrder = 0
       end
     end
@@ -113,9 +114,23 @@ object RetroDialog: TRetroDialog
       Size.Width = 512.000000000000000000
       Size.Height = 42.000000000000000000
       Size.PlatformDefault = False
+      object ButtonAlternative: TButton
+        Align = Right
+        StyledSettings = []
+        Margins.Right = 12.000000000000000000
+        Size.Width = 148.000000000000000000
+        Size.Height = 42.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'buttonstyle'
+        TabOrder = 2
+        TextSettings.Font.Size = 14.000000000000000000
+        TextSettings.FontColor = xFFE8ECF1
+        Visible = False
+      end
       object ButtonAccept: TButton
         Align = Right
         StyledSettings = []
+        Margins.Right = 12.000000000000000000
         Position.X = 204.000000000000000000
         Size.Width = 148.000000000000000000
         Size.Height = 42.000000000000000000
@@ -129,7 +144,6 @@ object RetroDialog: TRetroDialog
       object ButtonCancel: TButton
         Align = Right
         StyledSettings = []
-        Margins.Right = 12.000000000000000000
         Position.X = 352.000000000000000000
         Size.Width = 148.000000000000000000
         Size.Height = 42.000000000000000000

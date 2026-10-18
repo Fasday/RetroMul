@@ -469,33 +469,40 @@ begin
   try
     for var platform in TPlatformRegistry.All do
     begin
-      var Folder := TPath.Combine(FStorage.RomFolder, platform.Folder);
-      if not FStorage.RomFolder.StartsWith('content://', True) then
-        for var Candidate in platform.ScanFolders do
-          if FStorage.FolderExists(TPath.Combine(FStorage.RomFolder, Candidate)) then
-          begin
-            Folder := TPath.Combine(FStorage.RomFolder, Candidate);
-            Break;
-          end;
-      var Metadata := TGameList.Create;
+      // Each alias folder has its own metadata and relative artwork paths.
+      var Metadata := TObjectList<TGameList>.Create(True);
       var Lookup := TDictionary<string, TGame>.Create;
       try
-        var XML := TPath.Combine(Folder, 'gamelist.xml');
-        if not FStorage.RomFolder.StartsWith('content://') and FStorage.Exists(XML) then
-        begin
-          var Stream := FStorage.OpenRead(XML);
-          try
+        if not FStorage.RomFolder.StartsWith('content://', True) then
+          for var Candidate in platform.ScanFolders do
+          begin
+            var Folder := TPath.Combine(FStorage.RomFolder, Candidate);
+            var XML := TPath.Combine(Folder, 'gamelist.xml');
+            if not FStorage.Exists(XML) then
+              Continue;
+            var Catalog := TGameList.Create;
+            Metadata.Add(Catalog);
+            var Stream := FStorage.OpenRead(XML);
             try
-              Metadata.LoadFromStream(Stream);
-            except
-              Metadata.Clear;
+              try
+                Catalog.LoadFromStream(Stream);
+              except
+                Catalog.Clear;
+              end;
+            finally
+              Stream.Free;
             end;
-          finally
-            Stream.Free;
+            for var Game in Catalog.Games do
+            begin
+              Game.Image := Game.GetPhysicalPath(Folder, Game.Image);
+              Game.Box := Game.GetPhysicalPath(Folder, Game.Box);
+              var Key := ExpandFileName(Game.GetPhysicalPath(Folder, Game.Path));
+              {$IFDEF MSWINDOWS}
+              Key := LowerCase(Key);
+              {$ENDIF}
+              Lookup.AddOrSetValue(Key, Game);
+            end;
           end;
-          for var Game in Metadata.Games do
-            Lookup.AddOrSetValue(LowerCase(ExpandFileName(Game.GetPhysicalPath(Folder, Game.Path))), Game);
-        end;
         for var FileInfo in FStorage.Roms(platform.Id) do
         begin
           var Item := TLibraryGame.Create;
@@ -504,13 +511,17 @@ begin
           Item.SystemId := platform.Id;
           Item.Title := TPath.GetFileNameWithoutExtension(FileInfo.Name);
           var Entry: TGame;
-          if Lookup.TryGetValue(LowerCase(ExpandFileName(FileInfo.Location)), Entry) then
+          var Key := ExpandFileName(FileInfo.Location);
+          {$IFDEF MSWINDOWS}
+          Key := LowerCase(Key);
+          {$ENDIF}
+          if Lookup.TryGetValue(Key, Entry) then
           begin
             if Entry.Name <> '' then
               Item.Title := Entry.Name;
-            Item.Cover := Entry.GetPhysicalPath(Folder, Entry.Image);
+            Item.Cover := Entry.Image;
             if Item.Cover.IsEmpty then
-              Item.Cover := Entry.GetPhysicalPath(Folder, Entry.Box);
+              Item.Cover := Entry.Box;
             Item.Description := Entry.Desc;
             Item.Developer := Entry.Developer;
             Item.Genre := Entry.Genre;

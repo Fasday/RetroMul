@@ -50,6 +50,7 @@ type
     procedure SetRuntimeOptions(const Value: TGBRuntimeOptions);
     procedure ApplyRuntimeOptions(CPU: TGBCPU; GPU: TGBVideo; Sound: TGBSound);
     procedure SetScreenPalette(const Value: Integer);
+    function GetPauseRequested: Boolean;
   protected
     FBootROMData: TBytes;
     FBootModel: TGBBootModel;
@@ -85,7 +86,7 @@ type
     function GetRumbleLevel: Byte;
     property SoundVolume: Single read FSoundVolume write SetSoundVolume;
     property ScreenPalette: Integer write SetScreenPalette;
-    property PauseRequested: Boolean read FPauseRequested;
+    property PauseRequested: Boolean read GetPauseRequested;
     property HasCamera: Boolean read FHasCamera;
     procedure SubmitCameraFrame(const Frame: TGBCameraFrame);
   end;
@@ -283,6 +284,16 @@ begin
   FLock.Acquire;
   try
     FPauseRequested := False;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TGBEmulationThread.GetPauseRequested: Boolean;
+begin
+  FLock.Acquire;
+  try
+    Result := FPauseRequested;
   finally
     FLock.Release;
   end;

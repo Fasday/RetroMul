@@ -9,6 +9,7 @@ uses
 
 type
   TRetroDialogKind = (Information, Warning, Error, Confirmation, Loading);
+  TRetroDialogChoice = (Accept, Alternative, Cancel);
 
   TRetroDialog = class(TFrame)
     RectangleBackdrop: TRectangle;
@@ -17,19 +18,23 @@ type
     CircleBadge: TCircle;
     LabelBadge, LabelTitle, LabelMessage: TLabel;
     VertScrollBoxMessage: TVertScrollBox;
-    ButtonClose, ButtonCancel, ButtonAccept: TButton;
+    ButtonClose, ButtonCancel, ButtonAccept, ButtonAlternative: TButton;
   private
-    FReady, FConfirmation, FLoading: Boolean;
+    FReady, FConfirmation, FLoading, FCustomActions, FArranging: Boolean;
     FBusyIndicator: TAniIndicator;
     FOnResult: TProc<Boolean>;
+    FOnAlternative: TProc;
     procedure AcceptClick(Sender: TObject);
     procedure CancelClick(Sender: TObject);
+    procedure AlternativeClick(Sender: TObject);
     procedure Arrange;
   protected
     procedure Resize; override;
   public
     constructor Create(AOwner: TComponent); override;
-    procedure Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>);
+    procedure Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
+      const AcceptText: string = ''; const CancelText: string = '';
+      const AlternativeText: string = ''; const OnAlternative: TProc = nil);
     procedure FocusDefault;
     procedure HandleKey(var Key: Word; var KeyChar: WideChar);
   end;
@@ -37,7 +42,11 @@ type
 // All dialogs are asynchronous and belong to the host form. Call on the UI thread.
 procedure ShowRetroMessage(Owner: TComponent; const Text: string; Kind: TRetroDialogKind = TRetroDialogKind.Error);
 
-procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>);
+procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>;
+  const AcceptText: string = ''; const CancelText: string = '');
+
+procedure ShowRetroChoice(Owner: TComponent; const Text: string; const OnResult: TProc<TRetroDialogChoice>;
+  const AcceptText, AlternativeText, CancelText: string);
 
 procedure ShowRetroLoading(Owner: TComponent; const Text: string; const OnCancel: TProc);
 
@@ -61,6 +70,8 @@ type
   TDialogRequest = class
     Requester: TComponent;
     Text: string;
+    AcceptText, CancelText, AlternativeText: string;
+    OnAlternative: TProc;
     Kind: TRetroDialogKind;
     OnResult: TProc<Boolean>;
   end;
@@ -78,13 +89,15 @@ type
     procedure BeginModal;
     procedure EndModal;
     procedure ShowNext;
-    procedure Complete(Confirmed: Boolean; InvokeCallback: Boolean = True);
+    procedure Complete(Confirmed: Boolean; InvokeCallback: Boolean = True; Alternative: Boolean = False);
   protected
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
-    procedure Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>);
+    procedure Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
+      const AcceptText: string = ''; const CancelText: string = '';
+      const AlternativeText: string = ''; const OnAlternative: TProc = nil);
   end;
 
 function FindHost(Form: TCustomForm; CreateIfMissing: Boolean): TRetroDialogHost;
@@ -125,11 +138,30 @@ begin
     Host.Enqueue(Owner, Text, Kind, nil);
 end;
 
-procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>);
+procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>;
+  const AcceptText, CancelText: string);
 begin
   var Host := FindHost(OwnerForm(Owner), True);
   if Host <> nil then
-    Host.Enqueue(Owner, Text, TRetroDialogKind.Confirmation, OnResult);
+    Host.Enqueue(Owner, Text, TRetroDialogKind.Confirmation, OnResult, AcceptText, CancelText);
+end;
+
+procedure ShowRetroChoice(Owner: TComponent; const Text: string; const OnResult: TProc<TRetroDialogChoice>;
+  const AcceptText, AlternativeText, CancelText: string);
+begin
+  var Host := FindHost(OwnerForm(Owner), True);
+  if Host <> nil then
+    Host.Enqueue(Owner, Text, TRetroDialogKind.Confirmation,
+      procedure(Confirmed: Boolean)
+      begin
+        if not Assigned(OnResult) then Exit;
+        if Confirmed then OnResult(TRetroDialogChoice.Accept)
+        else OnResult(TRetroDialogChoice.Cancel);
+      end, AcceptText, CancelText, AlternativeText,
+      procedure
+      begin
+        if Assigned(OnResult) then OnResult(TRetroDialogChoice.Alternative);
+      end);
 end;
 
 procedure SetRetroDialogActivity(Owner: TCustomForm; OnActivity: TNotifyEvent);
@@ -184,6 +216,7 @@ begin
   Visible := False;
   ButtonAccept.OnClick := AcceptClick;
   ButtonCancel.OnClick := CancelClick;
+  ButtonAlternative.OnClick := AlternativeClick;
   ButtonClose.OnClick := CancelClick;
   AddButtonIcon(ButtonClose, IconClose, 16);
 
@@ -198,14 +231,17 @@ begin
   FReady := True;
 end;
 
-procedure TRetroDialog.Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>);
+procedure TRetroDialog.Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
+  const AcceptText, CancelText, AlternativeText: string; const OnAlternative: TProc);
 const
   Titles: array[TRetroDialogKind] of string = ('Information', 'Warning', 'Error', 'Confirmation', 'Loading...');
   Symbols: array[TRetroDialogKind] of string = ('i', '!', '!', '?', '');
 begin
   FOnResult := OnResult;
+  FOnAlternative := OnAlternative;
   FConfirmation := Kind = TRetroDialogKind.Confirmation;
   FLoading := Kind = TRetroDialogKind.Loading;
+  FCustomActions := (AcceptText <> '') or (CancelText <> '');
   FBusyIndicator.Visible := FLoading;
   FBusyIndicator.Enabled := FLoading;
   LabelBadge.Visible := not FLoading;
@@ -219,6 +255,15 @@ begin
     ButtonAccept.Text := Translate('Confirm')
   else
     ButtonAccept.Text := Translate('OK');
+  if AcceptText <> '' then
+    ButtonAccept.Text := Translate(AcceptText);
+  if CancelText <> '' then
+    ButtonCancel.Text := Translate(CancelText);
+  ButtonAlternative.Visible := AlternativeText <> '';
+  ButtonAlternative.Text := Translate(AlternativeText);
+  ButtonAlternative.TextSettings.WordWrap := True;
+  ButtonAccept.TextSettings.WordWrap := FCustomActions;
+  ButtonCancel.TextSettings.WordWrap := FCustomActions;
   ButtonCancel.Visible := FConfirmation or FLoading;
   VertScrollBoxMessage.ViewportPosition := TPointF.Zero;
   Arrange;
@@ -246,13 +291,21 @@ begin
     Callback(False);
 end;
 
+procedure TRetroDialog.AlternativeClick(Sender: TObject);
+begin
+  var Callback := FOnAlternative;
+  if Assigned(Callback) then Callback();
+end;
+
 procedure TRetroDialog.HandleKey(var Key: Word; var KeyChar: WideChar);
 begin
   if (Key = vkEscape) {$IFDEF ANDROID} or (Key = vkHardwareBack){$ENDIF} then
     CancelClick(Self)
   else if Key = vkReturn then
   begin
-    if FLoading or (FConfirmation and not ButtonAccept.IsFocused) or ButtonClose.IsFocused then
+    if ButtonAlternative.Visible and ButtonAlternative.IsFocused then
+      AlternativeClick(Self)
+    else if FLoading or (FConfirmation and not ButtonAccept.IsFocused) or ButtonClose.IsFocused then
       CancelClick(Self)
     else
       AcceptClick(Self);
@@ -275,39 +328,111 @@ end;
 
 procedure TRetroDialog.Arrange;
 begin
-  var W := Max(1, Min(560, Width - 32));
-  var Padding := Min(24, Max(8, W / 12));
-  var TextWidth := Max(1, W - Padding * 2 - 16);
-  var TextHeight: Single;
-
-  var Layout := TTextLayoutManager.DefaultTextLayout.Create;
+  if FArranging then Exit;
+  FArranging := True;
   try
-    Layout.BeginUpdate;
-    Layout.Font.Assign(LabelMessage.TextSettings.Font);
-    Layout.MaxSize := TPointF.Create(TextWidth, 100000);
-    Layout.WordWrap := True;
-    Layout.Text := LabelMessage.Text;
-    Layout.EndUpdate;
-    TextHeight := Max(24, Ceil(Layout.TextHeight) + 8);
-  finally
-    Layout.Free;
-  end;
+    var W := Max(1, Min(560, Width - 32));
+    var Padding := Min(24, Max(8, W / 12));
+    var TextWidth := Max(1, W - Padding * 2 - 16);
+    var TextHeight: Single;
 
-  var FixedHeight := Padding * 2 + 44 + 16 + 16 + 42;
-  var BodyHeight := Min(TextHeight, Max(0, Height - 32 - FixedHeight));
-  var H := FixedHeight + BodyHeight;
-  // Center alignment places the card; its rows own all child geometry.
-  PanelCard.Width := W;
-  PanelCard.Height := H;
-  PanelCard.Padding.Rect := TRectF.Create(Padding, Padding, Padding, Padding);
-  VertScrollBoxMessage.Height := BodyHeight;
-  LabelMessage.Height := TextHeight;
-  var ButtonWidth := Min(148, W - Padding * 2);
-  if FConfirmation then
-    ButtonWidth := Min(ButtonWidth, (W - Padding * 2 - 12) / 2);
-  ButtonAccept.Width := ButtonWidth;
-  ButtonCancel.Width := ButtonWidth;
-  ButtonCancel.Margins.Right := IfThen(FLoading, 0, 12);
+    var Layout := TTextLayoutManager.DefaultTextLayout.Create;
+    try
+      Layout.BeginUpdate;
+      Layout.Font.Assign(LabelMessage.TextSettings.Font);
+      Layout.MaxSize := TPointF.Create(TextWidth, 100000);
+      Layout.WordWrap := True;
+      Layout.Text := LabelMessage.Text;
+      Layout.EndUpdate;
+      TextHeight := Max(24, Ceil(Layout.TextHeight) + 8);
+    finally
+      Layout.Free;
+    end;
+
+    var ActionHeight: Single := 42;
+    if FCustomActions then
+      ActionHeight := 56;
+    var Stacked := ButtonAlternative.Visible and (W < 480);
+    if Stacked then
+      ActionHeight := 160;
+    var FixedHeight := Padding * 2 + 44 + 16 + 16 + ActionHeight;
+    var BodyHeight := Min(TextHeight, Max(0, Height - 32 - FixedHeight));
+    var H := FixedHeight + BodyHeight;
+    // Center alignment places the card; its rows own all child geometry.
+    PanelCard.BeginUpdate;
+    try
+      PanelCard.Width := W;
+      PanelCard.Height := H;
+      PanelCard.Padding.Rect := TRectF.Create(Padding, Padding, Padding, Padding);
+      VertScrollBoxMessage.Height := BodyHeight;
+      LabelMessage.Height := TextHeight;
+      var ButtonWidth := Min(148, W - Padding * 2);
+      if FConfirmation then
+        if FCustomActions then
+          if ButtonAlternative.Visible then
+            ButtonWidth := Max(1, (W - Padding * 2 - 24) / 3)
+          else
+            ButtonWidth := Max(1, (W - Padding * 2 - 12) / 2)
+        else
+          ButtonWidth := Min(ButtonWidth, (W - Padding * 2 - 12) / 2);
+      var Actions := TControl(ButtonAccept.Parent);
+      Actions.BeginUpdate;
+      try
+        Actions.Height := ActionHeight;
+        ButtonAccept.Height := ActionHeight;
+        ButtonCancel.Height := ActionHeight;
+        ButtonAccept.Width := ButtonWidth;
+        ButtonCancel.Width := ButtonWidth;
+        var Buttons: TArray<TButton> := [ButtonAccept, ButtonAlternative, ButtonCancel];
+        for var I := 0 to High(Buttons) do
+        begin
+          var Button := Buttons[I];
+          Button.Margins.Left := 0;
+          Button.Margins.Top := 0;
+          Button.Margins.Bottom := 0;
+          if Stacked then
+          begin
+            Button.Align := TAlignLayout.Top;
+            Button.Position.Y := I * 56;
+            Button.Height := 48;
+            Button.Margins.Right := 0;
+            if I < High(Buttons) then Button.Margins.Bottom := 8;
+          end
+          else
+          begin
+            Button.Align := TAlignLayout.Right;
+            Button.Position.X := I * 200;
+            Button.Width := ButtonWidth;
+            Button.Height := ActionHeight;
+            // Right-aligned controls are ordered from cancel back to accept.
+            // Reserve space after the left/middle actions, never at the outer edge.
+            if (Button <> ButtonCancel) and ButtonCancel.Visible then
+              Button.Margins.Right := 12
+            else
+              Button.Margins.Right := 0;
+          end;
+        end;
+      finally
+        Actions.EndUpdate;
+      end;
+    finally
+      PanelCard.EndUpdate;
+    end;
+    // TVertScrollBox can retain the previous content width after shrinking.
+    VertScrollBoxMessage.Content.BeginUpdate;
+    try
+      LabelMessage.Width := TextWidth;
+      VertScrollBoxMessage.Content.Width := Max(1, W - Padding * 2);
+    finally
+      VertScrollBoxMessage.Content.EndUpdate;
+    end;
+    VertScrollBoxMessage.RealignContent;
+  finally
+    FArranging := False;
+    // Centering moves the card while BeginUpdate suppresses invalidation of its
+    // old bounds. Repaint the backdrop too, so no previous card pixels remain.
+    Repaint;
+  end;
 end;
 
 constructor TRetroDialogHost.Create(AOwner: TComponent);
@@ -415,30 +540,41 @@ begin
     procedure(Confirmed: Boolean)
     begin
       Complete(Confirmed);
+    end, FActive.AcceptText, FActive.CancelText, FActive.AlternativeText,
+    procedure
+    begin
+      Complete(False, True, True);
     end);
   FDialog.Visible := True;
   FDialog.BringToFront;
   FDialog.FocusDefault;
 end;
 
-procedure TRetroDialogHost.Complete(Confirmed: Boolean; InvokeCallback: Boolean);
+procedure TRetroDialogHost.Complete(Confirmed: Boolean; InvokeCallback, Alternative: Boolean);
 begin
   if (FActive = nil) or FCompleting then
     Exit;
 
   var Callback := FActive.OnResult;
+  var AlternativeCallback := FActive.OnAlternative;
   FreeAndNil(FActive);
   FCompleting := True;
   try
-    if InvokeCallback and Assigned(Callback) then
-      Callback(Confirmed);
+    if InvokeCallback then
+      if Alternative then
+      begin
+        if Assigned(AlternativeCallback) then AlternativeCallback();
+      end
+      else if Assigned(Callback) then
+        Callback(Confirmed);
   finally
     FCompleting := False;
     ShowNext;
   end;
 end;
 
-procedure TRetroDialogHost.Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>);
+procedure TRetroDialogHost.Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
+  const AcceptText, CancelText, AlternativeText: string; const OnAlternative: TProc);
 begin
   if not Assigned(OnResult) then
   begin
@@ -455,6 +591,10 @@ begin
   Request.Text := Text;
   Request.Kind := Kind;
   Request.OnResult := OnResult;
+  Request.AcceptText := AcceptText;
+  Request.CancelText := CancelText;
+  Request.AlternativeText := AlternativeText;
+  Request.OnAlternative := OnAlternative;
   if Requester <> nil then
     Requester.FreeNotification(Self);
   FQueue.Add(Request);

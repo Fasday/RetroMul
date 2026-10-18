@@ -96,6 +96,7 @@ begin
       if Bitmap.IsEmpty then
         Continue;
       FView.ImageCanvas.Bitmap.Assign(Bitmap);
+      FView.ImageCanvas.ResetHistory;
       FView.ImageCanvas.Repaint;
       Exit;
     except
@@ -321,14 +322,17 @@ end;
 procedure TSnapshotsController.AutosaveOnExit;
 begin
   if FState.Autosave.OnExit and (FState.Session.Emulation <> nil) and
-    not FState.Session.EmulationFaulted and FState.Session.Emulation.SupportsSnapshots then
+    not FState.Session.PendingAutosaveChoice and not FState.Session.PreserveOpeningAutosave and
+    not FState.Session.EmulationFaulted and
+    FState.Session.Emulation.SupportsSnapshots then
     FView.SaveSnapshot(SNAPSHOT_AUTOSAVE);
 end;
 
 procedure TSnapshotsController.PollAutosave;
 begin
   if not FState.Autosave.Periodic or (FState.Session.Emulation = nil) or FState.Session.EmulationFaulted or
-    FState.Session.OpeningRom or FState.Browser.ViewingLibrary or (FState.Settings.View <> nil) or (FState.Help.View <> nil) or
+    FState.Session.OpeningRom or FState.Session.PendingAutosaveChoice or FState.Browser.ViewingLibrary or
+    (FState.Settings.View <> nil) or (FState.Help.View <> nil) or
     FState.Session.Emulation.IsPaused or not FState.Session.Emulation.SupportsSnapshots then
     Exit;
 

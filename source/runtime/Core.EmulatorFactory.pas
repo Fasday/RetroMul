@@ -148,7 +148,7 @@ begin
           Continue;
 
         var BinaryCartridge := False;
-        if IsSevenZip and SameText(ExtractFileExt(Name), '.bin') and
+        if SameText(ExtractFileExt(Name), '.bin') and
           (Archive.FileInfo[i].UncompressedSize <= ROM_MAX_SIZE) then
         begin
           var Probe: TBytes;

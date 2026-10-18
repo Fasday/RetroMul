@@ -225,7 +225,7 @@ var
   PendingFrames: Integer;
   AudioEpoch: UInt64;
   Stretch: TSaturnAudioStretch;
-  SmoothWork, SmoothAudio, PostWork, StretchRatio: Double;
+  SmoothWork, SmoothAudio, PostWork: Double;
   WorkStarted, CoreFinished: Int64;
 
   procedure ClearAudio;
@@ -277,7 +277,6 @@ begin
   SmoothWork := 0;
   SmoothAudio := 0;
   PostWork := 0;
-  StretchRatio := 1;
   try
     try
       Console := TSaturnConsole.Create(FBIOS, FRegion, FPAL, FDisc, FRAMCart, CartROM);
@@ -472,7 +471,7 @@ begin
           var SamplesOut: TArray<SmallInt>;
           if Audio.QueueState.DeviceOpen then
           begin
-            StretchRatio := 1;
+            var StretchRatio: Double := 1;
             if SmoothAudio > 0 then
               StretchRatio := Max(1.0, SmoothWork / SmoothAudio);
             if AudioPrimed then

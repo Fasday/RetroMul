@@ -55,6 +55,7 @@ type
     FScreenPowerPad: TPowerPadButtons;
     FPowerPadShortcuts: array[1..4] of Boolean;
     FResetRequested, FPauseRequested, FResumeRequested: Boolean;
+    FRequestedPaused: Boolean;
     FFrame: TFrameBuffer;
     FFramePending: Boolean;
     FUsesSuborKeyboard: Boolean;
@@ -65,6 +66,7 @@ type
     FRunFrameMs: Double;
     FPaused: Boolean;
     procedure RequestCoin(Player: Integer);
+    function GetPaused: Boolean;
     procedure RunEmulation;
     procedure SnapshotCommand(const Name: string; Loading: Boolean);
     procedure WorkerCommand(const Name: string; Loading, Tape: Boolean; Action: TTapeAction);
@@ -113,7 +115,7 @@ type
     property UsesSuborKeyboard: Boolean read FUsesSuborKeyboard;
     property UsesMiraclePiano: Boolean read FUsesMiraclePiano;
     property UsesFamicomKeyboard: Boolean read FUsesFamicomKeyboard;
-    property IsPausd: Boolean read FPaused;
+    property IsPausd: Boolean read GetPaused;
     property Console: TNesConsole read FConsole;
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   end;
@@ -697,6 +699,7 @@ begin
   try
     FillChar(FPendingCoins, SizeOf(FPendingCoins), 0);
     FResetRequested := True;
+    FRequestedPaused := False;
     FPauseRequested := False;
     FResumeRequested := False;
     FStatus.Error := '';
@@ -712,6 +715,7 @@ begin
   FLock.Enter;
   try
     FPauseRequested := True;
+    FRequestedPaused := True;
     FResumeRequested := False;
   finally
     FLock.Leave;
@@ -724,11 +728,24 @@ begin
   FLock.Enter;
   try
     FResumeRequested := True;
+    FRequestedPaused := False;
     FPauseRequested := False;
   finally
     FLock.Leave;
   end;
   FWake.SetEvent;
+end;
+
+function TNesEmulationThread.GetPaused: Boolean;
+begin
+  FLock.Enter;
+  try
+    // Report the latest host request even while the worker is between frame
+    // boundaries. A fault still holds the core paused until reset/state load.
+    Result := FRequestedPaused or (FStatus.Error <> '');
+  finally
+    FLock.Leave;
+  end;
 end;
 
 function TNesEmulationThread.TakeSnapshot(var Frame: TFrameBuffer; out Status: TEmulationStatus): Boolean;
@@ -848,7 +865,14 @@ begin
           FpsStart := NextFrame;
           Frames := 0;
           if Failed then
-            FPaused := False;
+          begin
+            FLock.Enter;
+            try
+              FPaused := FRequestedPaused;
+            finally
+              FLock.Leave;
+            end;
+          end;
           Failed := False;
         end;
         var PianoKeys: TMiracleKeys;

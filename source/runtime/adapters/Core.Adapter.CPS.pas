@@ -5,7 +5,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.SyncObjs, System.IniFiles,
   Core.Storage, Core.Emulation, CPS.Cartridge, CPS.RomSets, Core.Snapshots,
-  Core.CD.Disc;
+  Core.CD.Disc, PCM.Audio;
 
 type
   TCPSKeys = array[TEmulatorButton] of UInt32;
@@ -22,6 +22,17 @@ type
     DIPs: TCPSDIPs;
     Keys: array[0..3] of TCPSKeys;
     constructor Create(const FileName: string; const Storage: IStorage);
+  end;
+
+  // Keeps the hardware PCM stream continuous across video-frame boundaries.
+  TCPSAudioBuffer = record
+  private
+    FPending: TArray<SmallInt>;
+    FCount: Integer;
+    FPrimed: Boolean;
+  public
+    procedure Clear(Audio: TPCMAudio);
+    procedure Submit(Audio: TPCMAudio; const Samples: TArray<SmallInt>; const Format: TPCMAudioFormat);
   end;
 
   TCPSWorker = class(TThread)
@@ -107,11 +118,56 @@ implementation
 
 uses
   System.UITypes, System.Diagnostics, System.Math, CPS1.Console, CPS1.QSound,
-  CPS1.Multigame, CPS2.Console, CPS3.Console, CPS.Video, PCM.Audio,
+  CPS1.Multigame, CPS2.Console, CPS3.Console, CPS.Video,
   Core.SavePaths, System.IOUtils;
 
 const
   KeyNames: array[TEmulatorButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+
+procedure TCPSAudioBuffer.Clear(Audio: TPCMAudio);
+begin
+  FCount := 0;
+  FPrimed := False;
+  if Audio <> nil then
+  begin
+    Audio.Clear;
+    Audio.SetPaused(True);
+  end;
+end;
+
+procedure TCPSAudioBuffer.Submit(Audio: TPCMAudio; const Samples: TArray<SmallInt>; const Format: TPCMAudioFormat);
+begin
+  // Keep complete blocks and prime 46 ms before starting playback. Re-prime
+  // after an underrun, pause, reset or state load instead of playing fragments.
+  if FPrimed and (Audio.QueueState.QueuedBlocks = 0) then
+  begin
+    FPrimed := False;
+    Audio.SetPaused(True);
+  end;
+  if Length(FPending) < FCount + Length(Samples) then
+    SetLength(FPending, FCount + Length(Samples));
+  if Length(Samples) > 0 then
+    Move(Samples[0], FPending[FCount], Length(Samples) * SizeOf(SmallInt));
+  Inc(FCount, Length(Samples));
+  var BlockSamples := Format.BlockFrames * Format.Channels;
+  if not FPrimed and (FCount < BlockSamples * 2) then
+    Exit;
+  var Used := 0;
+  while (FCount - Used >= BlockSamples) and
+    (Audio.QueueState.QueuedBlocks < Format.BlockCount) do
+  begin
+    Audio.Submit(Copy(FPending, Used, BlockSamples), Format.BlockFrames);
+    Inc(Used, BlockSamples);
+  end;
+  Dec(FCount, Used);
+  if FCount > 0 then
+    Move(FPending[Used], FPending[0], FCount * SizeOf(SmallInt));
+  if not FPrimed and (Used > 0) then
+  begin
+    Audio.SetPaused(False);
+    FPrimed := True;
+  end;
+end;
 
 procedure TCPSWorker.OrientFrame(var Frame: TEmulatorFrame);
 begin
@@ -299,6 +355,7 @@ var
   LastBattery: TBytes;
   LastBatteryRevision: UInt64;
   AudioFailed: Boolean;
+  AudioBuffer: TCPSAudioBuffer;
 
   procedure SaveBattery;
   begin
@@ -340,6 +397,7 @@ begin
   C3 := nil;
   Audio := nil;
   AudioFailed := False;
+  AudioBuffer := Default(TCPSAudioBuffer);
   LastBatteryRevision := 0;
   try
     try
@@ -390,7 +448,7 @@ begin
       var Format: TPCMAudioFormat;
       Format.SampleRate := 44100;
       Format.Channels := 2;
-      Format.BlockFrames := 2048;
+      Format.BlockFrames := 1024;
       Format.BlockCount := 4;
       var FPS := CPS_FPS;
       if C3 <> nil then
@@ -413,8 +471,7 @@ begin
             if Loading then
             begin
               LoadCoreSnapshot(Path, FCoreId, FIdentity, Transfer, FStorage);
-              if Audio <> nil then
-                Audio.Clear;
+              AudioBuffer.Clear(Audio);
               var Restored: TEmulatorFrame;
               Restored.Width := CPS_WIDTH;
               Restored.Height := CPS_HEIGHT;
@@ -471,8 +528,7 @@ begin
             C12.Reset
           else
             C3.Reset;
-          if Audio <> nil then
-            Audio.Clear;
+          AudioBuffer.Clear(Audio);
         end;
         if C12 <> nil then
         begin
@@ -493,8 +549,7 @@ begin
 
         if Paused then
         begin
-          if Audio <> nil then
-            Audio.Clear;
+          AudioBuffer.Clear(Audio);
           FWake.WaitFor(20);
           Deadline := TStopwatch.GetTimeStamp;
           Continue;
@@ -527,7 +582,10 @@ begin
         if Enabled and not AudioFailed then
         try
           if Audio = nil then
+          begin
             Audio := TPCMAudio.Create(Format);
+            Audio.SetPaused(True);
+          end;
           var Samples: TArray<SmallInt>;
           if C12 <> nil then
             Samples := Copy(C12.Samples)
@@ -535,8 +593,7 @@ begin
             Samples := Copy(C3.Sound.Samples);
           for var i := 0 to High(Samples) do
             Samples[i] := Round(Samples[i] * Volume);
-          if Length(Samples) > 0 then
-            Audio.Submit(Samples, Length(Samples) div 2);
+          AudioBuffer.Submit(Audio, Samples, Format);
           if Audio.Error <> '' then
             raise EInOutError.Create(Audio.Error);
         except
@@ -554,18 +611,22 @@ begin
         end
         else if not Enabled then
         begin
-          if Audio <> nil then
-            Audio.Clear;
+          AudioBuffer.Clear(Audio);
           AudioFailed := False;
         end;
         if Frame.FrameNumber mod 120 = 0 then
           SaveBattery;
         Inc(Deadline, Round(TStopwatch.Frequency / FPS));
         var Now := TStopwatch.GetTimeStamp;
-        if Deadline > Now then
-          FWake.WaitFor(Max(1, Integer((Deadline - Now) * 1000 div TStopwatch.Frequency)))
-        else if Now - Deadline > TStopwatch.Frequency div 4 then
+        if Now - Deadline > TStopwatch.Frequency div 4 then
           Deadline := Now;
+        // Configure wakes this event for input updates too. A wake is not a
+        // frame tick: keep waiting until the wall-clock deadline has arrived.
+        while not Terminated and (Now < Deadline) do
+        begin
+          FWake.WaitFor(Max(1, Integer((Deadline - Now) * 1000 div TStopwatch.Frequency)));
+          Now := TStopwatch.GetTimeStamp;
+        end;
       end;
     except
       on E: Exception do
@@ -680,12 +741,10 @@ end;
 procedure TCPSCoreAdapter.Start;
 begin
   if FWorker <> nil then
-  begin
-    Resume;
     Exit;
-  end;
 
-  FPaused := False;
+  // Continue Game requests Pause before starting the worker and restoring state.
+  // Preserve that request; only Resume should release an existing pause.
   FWorker := TCPSWorker.Create(FCart, FStorage, FIdentity, FSavePath, FSnapshotDirectory, GetSystemId, FDisc);
   FWorker.DIPOverride := FOptions.DIPs;
   FWorker.MultigameBanks := FOptions.MultigameBanks;

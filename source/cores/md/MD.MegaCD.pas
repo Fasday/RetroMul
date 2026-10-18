@@ -46,6 +46,7 @@ type
     FBase: Int64;
     FBackup: array[0..8191] of Byte;
     FDirty: Boolean;
+    procedure FormatBackup;
     function GateByte(Address: Integer): Byte;
     procedure SetGateByte(Address: Integer; Value: Byte);
     function GateRead(Index: Integer; SubCPU: Boolean): Word;
@@ -131,12 +132,28 @@ begin
   if (Length(BIOS) <> $20000) or (Disc = nil) or (MasterClock <= 0) then
     raise EArgumentException.Create('Mega CD requires a 128-KiB BIOS and a disc');
   FBoot := Copy(BIOS); FClock := MasterClock;
+  FormatBackup;
   FCallbacks.UserData := Self; FCallbacks.ReadCallback := SubReadCallback;
   FCallbacks.WriteCallback := SubWriteCallback; FCallbacks.InterruptAcknowledgeCallback := SubAck;
   Reset;
 end;
 destructor TMDMegaCD.Destroy;
 begin FDisc.Free; inherited; end;
+
+procedure TMDMegaCD.FormatBackup;
+const
+  // BIOS BRMFORMAT: directory terminator, duplicated free-block count,
+  // then the volume identifier in the final 64 bytes of the 8-KiB RAM.
+  DirectoryEnd: array[0..15] of Byte = (
+    $5F,$5F,$5F,$5F,$5F,$5F,$5F,$5F,$5F,$5F,$5F,0,0,0,0,$40);
+  VolumeID: AnsiString = 'SEGA_CD_ROM'#0#1#0#0#0'RAM_CARTRIDGE___';
+begin
+  FillChar(FBackup, SizeOf(FBackup), 0);
+  Move(DirectoryEnd, FBackup[$1FC0], SizeOf(DirectoryEnd));
+  for var I := 0 to 3 do FBackup[$1FD1 + I * 2] := $7D;
+  Move(VolumeID[1], FBackup[$1FE0], Length(VolumeID));
+  FDirty := True;
+end;
 
 procedure TMDMegaCD.Reset;
 begin
@@ -946,7 +963,19 @@ begin SetLength(Result, SizeOf(FBackup)); Move(FBackup, Result[0], Length(Result
 procedure TMDMegaCD.LoadBattery(const Data: TBytes);
 begin
   if Length(Data) <> SizeOf(FBackup) then raise EReadError.Create('Invalid Mega CD backup RAM size');
-  Move(Data[0], FBackup, SizeOf(FBackup)); FDirty := False;
+  // Older versions could persist untouched, unformatted RAM. Repair only
+  // uniformly erased images; never infer that a nonempty save is disposable.
+  var Empty := (Data[0] = 0) or (Data[0] = $FF);
+  if Empty then
+    for var I := 1 to High(Data) do
+      if Data[I] <> Data[0] then
+      begin Empty := False; Break; end;
+  if Empty then
+    FormatBackup
+  else
+  begin
+    Move(Data[0], FBackup, SizeOf(FBackup)); FDirty := False;
+  end;
 end;
 procedure TMDMegaCD.SerializeState(Archive: TStateArchive);
 begin

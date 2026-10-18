@@ -101,18 +101,12 @@ object FormMain: TFormMain
           Size.PlatformDefault = False
           Stroke.Kind = None
         end
-        object ImageCanvas: TImage
-          MultiResBitmap = <
-            item
-            end>
+        object LayoutVideoOutput: TLayout
           Align = Client
-          DisableInterpolation = True
           HitTest = False
           Size.Width = 1105.000000000000000000
           Size.Height = 691.000000000000000000
           Size.PlatformDefault = False
-          OnMouseDown = ImageCanvasMouseDown
-          OnMouseUp = ImageCanvasMouseUp
           object ImageLogo: TImage
             MultiResBitmap.Height = 1024
             MultiResBitmap.Width = 1536

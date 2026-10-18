@@ -1120,7 +1120,7 @@ begin
     var Imm := SX(Op and $FFFF, 16);
     var Address := Add64(A, Imm);
     var Target := Add64(FPC, Imm shl 2);
-    var V: UInt64 := 0;
+    var V: UInt64;
     case Code of
       0:
         Special(Op);

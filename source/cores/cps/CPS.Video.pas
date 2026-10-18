@@ -34,6 +34,7 @@ type
     FPartial: TArray<TAlphaColor>;
     FRendered: Integer;
     FHigh: array[0..CPS_WIDTH * CPS_HEIGHT - 1] of Boolean;
+    FSpriteDrawn: array[0..CPS_WIDTH * CPS_HEIGHT - 1] of Boolean;
     function MapCode(Kind, Code: Integer): Integer;
     function Pen(Code, Size, X, Y, Half: Integer): Byte;
     procedure Layer(LayerNo: Integer; HighOnly: Boolean);
@@ -528,6 +529,9 @@ begin
       Break;
     end;
 
+  // Traverse front to back. Even an opaque sprite hidden by a tile owns its
+  // pixel, preventing sprites behind it from leaking through the background.
+  FillChar(FSpriteDrawn, SizeOf(FSpriteDrawn), 0);
   for var j := 0 to Count - 1 do
   begin
     var i := j;
@@ -587,7 +591,11 @@ begin
             if Attr and $40 <> 0 then
               DY := 15 - DY;
             var Colour := Pen(Tile, 16, DX, DY, 0);
-            var Visible := not FHigh[Y * CPS_WIDTH + X];
+            var Pixel := Y * CPS_WIDTH + X;
+            if (Colour = 15) or FSpriteDrawn[Pixel] then
+              Continue;
+            FSpriteDrawn[Pixel] := True;
+            var Visible := not FHigh[Pixel];
             if FCPS2 then
               Visible := (FSpritePriorityMask[(FObjects[i * 4] shr 13) and 7] and
                 (1 shl FDepth[Y * CPS_WIDTH + X])) = 0;

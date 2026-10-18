@@ -8,7 +8,7 @@ uses
   System.SysUtils, System.Classes, System.Types, System.UITypes, FMX.Types,
   FMX.Platform, FMX.Dialogs, Core.Emulation, Core.Storage, FMXInput,
   NES.FamicomDataRecorder, RM.Main.View, RM.Main.State, RM.Controllers.Browser,
-  RM.Controllers.Window, RM.Controllers.Settings, RM.Controllers.Snapshots,
+  RM.ShaderBitmap, RM.Controllers.Window, RM.Controllers.Settings, RM.Controllers.Snapshots,
   RM.Controllers.Input, RM.Controllers.Mobile, RM.Controllers.Session, FMX.Menus,
   FMX.Objects, FMX.StdCtrls, FMX.Controls.Presentation, FMX.Layouts,
   FMX.Controls, FMX.TabControl
@@ -196,6 +196,16 @@ begin
   FSessionController := TSessionController.Create(Self);
   FormStyles := TFormStyles.Create(Application);
   inherited;
+  ImageCanvas := TShaderBitmap.Create(Self);
+  ImageCanvas.Name := 'ImageCanvas';
+  ImageCanvas.Parent := LayoutVideoOutput.Parent;
+  ImageCanvas.Index := LayoutVideoOutput.Index;
+  ImageCanvas.Align := TAlignLayout.Client;
+  ImageCanvas.OnMouseDown := ImageCanvasMouseDown;
+  ImageCanvas.OnMouseUp := ImageCanvasMouseUp;
+  ImageLogo.Parent := ImageCanvas;
+  LabelPaused.Parent := ImageCanvas;
+  FreeAndNil(LayoutVideoOutput);
   // Screen changes are controlled by application state, not swipe gestures.
   SetRetroDialogActivity(Self, DialogActivityChanged);
   State.Session.PreviousExceptionHandler := Application.OnException;

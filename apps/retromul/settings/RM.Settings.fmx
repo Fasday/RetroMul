@@ -1876,6 +1876,733 @@
           end
         end
       end
+      object PanelRowShaderMode: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderModeText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderModeTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Shader'
+          end
+          object LabelRowShaderModeDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Display effect for this platform.'
+          end
+        end
+        object LayoutRowShaderModeEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderModeEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+        end
+      end
+      object PanelRowShaderFile: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderFileText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderFileTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Custom shader file'
+          end
+          object LabelRowShaderFileDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Absolute path or path relative to Documents (.shader.json).'
+          end
+        end
+        object LayoutRowShaderFileEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowShaderFileEditor: TEdit
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+        end
+      end
+      object PanelRowShaderScanlines: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderScanlinesText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderScanlinesTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Scanline strength (%)'
+          end
+          object LabelRowShaderScanlinesDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Darkening between scanlines.'
+          end
+        end
+        object LayoutRowShaderScanlinesEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderScanlinesEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderScanlinesValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderCurvature: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderCurvatureText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderCurvatureTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'CRT curvature (%)'
+          end
+          object LabelRowShaderCurvatureDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Screen curvature.'
+          end
+        end
+        object LayoutRowShaderCurvatureEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderCurvatureEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderCurvatureValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderMask: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderMaskText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderMaskTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'CRT mask (%)'
+          end
+          object LabelRowShaderMaskDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Phosphor mask strength.'
+          end
+        end
+        object LayoutRowShaderMaskEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderMaskEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderMaskValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderGlow: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderGlowText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderGlowTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'CRT glow (%)'
+          end
+          object LabelRowShaderGlowDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Phosphor glow strength.'
+          end
+        end
+        object LayoutRowShaderGlowEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderGlowEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderGlowValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderLCDGrid: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderLCDGridText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderLCDGridTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'LCD grid (%)'
+          end
+          object LabelRowShaderLCDGridDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Pixel grid strength.'
+          end
+        end
+        object LayoutRowShaderLCDGridEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderLCDGridEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderLCDGridValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderLCDResponse: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderLCDResponseText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderLCDResponseTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'LCD response (ms)'
+          end
+          object LabelRowShaderLCDResponseDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Set to zero to disable image persistence.'
+          end
+        end
+        object LayoutRowShaderLCDResponseEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderLCDResponseEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderLCDResponseValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderGamma: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderGammaText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderGammaTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Gamma (%)'
+          end
+          object LabelRowShaderGammaDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = '100 is neutral.'
+          end
+        end
+        object LayoutRowShaderGammaEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderGammaEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderGammaValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderSaturation: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderSaturationText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderSaturationTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Saturation (%)'
+          end
+          object LabelRowShaderSaturationDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = '100 is neutral.'
+          end
+        end
+        object LayoutRowShaderSaturationEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderSaturationEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderSaturationValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+      object PanelRowShaderTemperature: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowShaderTemperatureText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowShaderTemperatureTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Color temperature'
+          end
+          object LabelRowShaderTemperatureDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = '100 is neutral; lower is cooler, higher is warmer.'
+          end
+        end
+        object LayoutRowShaderTemperatureEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutRowShaderTemperatureEditorSlot: TLayout
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+          end
+          object LabelRowShaderTemperatureValue: TLabel
+            Align = Right
+            StyledSettings = [Family, Style, FontColor]
+            Margins.Left = 8.000000000000000000
+            Size.Width = 64.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.HorzAlign = Trailing
+            TextSettings.WordWrap = False
+            Text = '0%'
+          end
+        end
+      end
+
       object PanelRowGameBoypalette: TPanel
         Align = Top
         Padding.Left = 16.000000000000000000
@@ -2133,6 +2860,17 @@
         TextSettings.WordWrap = False
         Text = 'Preview'
       end
+      object LabelShaderPreviewStatus: TLabel
+        Align = Bottom
+        StyledSettings = [Family, Style, FontColor]
+        Margins.Top = 8.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.WordWrap = True
+        Text = 'Choose a shader file to see the preview.'
+        Visible = False
+      end
       object PanelRow160144: TPanel
         Tag = 1
         Align = Top
@@ -2167,7 +2905,7 @@
             Size.Height = 8.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 14.000000000000000000
-            Text = 'Example using the selected palette.'
+            Text = 'Preview of the selected palette and shader settings.'
           end
         end
         object LayoutRow160144EditorContainer: TLayout
