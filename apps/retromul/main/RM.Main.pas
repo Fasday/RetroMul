@@ -810,7 +810,7 @@ begin
     Exit;
   {$ENDIF}
   {$IF Defined(MACOS) and not Defined(IOS)}
-  if TNSWorkspace.OCClass.sharedWorkspace.openFile(StrToNSStr(Directory)) then
+  if TNSWorkspace.Wrap(TNSWorkspace.OCClass.sharedWorkspace).openFile(StrToNSStr(Directory)) then
     Exit;
   {$ENDIF}
   {$IF Defined(LINUX) and not Defined(ANDROID)}

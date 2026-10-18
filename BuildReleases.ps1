@@ -6,11 +6,17 @@ Builds Release binaries and packages them into releases/RetroMul-<platform>.zip.
 .\BuildReleases.ps1
 .EXAMPLE
 .\BuildReleases.ps1 -Platforms win32,win64 -BdsPath 'G:\Program Files (x86)\Embarcadero\Studio\37.0'
+.EXAMPLE
+.\BuildReleases.ps1 -Platforms macos64,macosarm64
+.NOTES
+macOS targets are included by default and require the corresponding RAD Studio toolchains
+and SDKs. Archives contain a local .app bundle, without Apple signing or
+notarization. ARM64 linking may also require a configured Mac/PAServer profile.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('win32', 'win64', 'linux64', 'android32', 'android64')]
-    [string[]] $Platforms = @('win32', 'win64', 'linux64', 'android32', 'android64'),
+    [ValidateSet('win32', 'win64', 'linux64', 'android32', 'android64', 'macos64', 'macosarm64')]
+    [string[]] $Platforms = @('win32', 'win64', 'linux64', 'android32', 'android64', 'macos64', 'macosarm64'),
     [string] $BdsPath = $env:BDS
 )
 
@@ -57,13 +63,42 @@ Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 New-Item -ItemType Directory -Force -Path $releaseDirectory | Out-Null
 
-$platformNames = @{ win32 = 'Win32'; win64 = 'Win64'; linux64 = 'Linux64'; android32 = 'Android'; android64 = 'Android64' }
+function Set-ZipUnixHost([string] $Path) {
+    # .NET on Windows writes a DOS host marker even with Unix ExternalAttributes.
+    # Mark central-directory entries as Unix so extractors honor their modes.
+    # These locally created archives have no comment and exactly three entries.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite)
+    $reader = [IO.BinaryReader]::new($stream)
+    try {
+        $stream.Position = $stream.Length - 22
+        if ($reader.ReadUInt32() -ne 0x06054b50) { throw 'ZIP end record not found.' }
+        $stream.Position = $stream.Length - 12
+        $count = $reader.ReadUInt16()
+        $stream.Position = $stream.Length - 6
+        $offset = $reader.ReadUInt32()
+        if ($count -ne 3 -or $offset -eq [uint32]::MaxValue) { throw 'Unexpected macOS ZIP directory format.' }
+        for ($index = 0; $index -lt $count; $index++) {
+            $stream.Position = $offset
+            if ($reader.ReadUInt32() -ne 0x02014b50) { throw 'ZIP central-directory entry not found.' }
+            $stream.Position = $offset + 5
+            $stream.WriteByte(3) # Unix host system.
+            $stream.Position = $offset + 28
+            $nameLength = $reader.ReadUInt16()
+            $extraLength = $reader.ReadUInt16()
+            $commentLength = $reader.ReadUInt16()
+            $offset += 46 + $nameLength + $extraLength + $commentLength
+        }
+    } finally { $reader.Dispose(); $stream.Dispose() }
+}
+
+$platformNames = @{ win32 = 'Win32'; win64 = 'Win64'; linux64 = 'Linux64'; android32 = 'Android'; android64 = 'Android64'; macos64 = 'OSX64'; macosarm64 = 'OSXARM64' }
 foreach ($prefix in ($Platforms | Select-Object -Unique)) {
     $prefix = $prefix.ToLowerInvariant()
     $platform = $platformNames[$prefix]
     $isAndroid = $prefix -in @('android32', 'android64')
+    $isMacTarget = $prefix -in @('macos64', 'macosarm64')
     $outputDirectory = Join-Path $projectDirectory "$platform\Release"
-    $binaryName = if ($isAndroid) { 'RetroMul.apk' } elseif ($prefix -eq 'linux64') { 'RetroMul' } else { 'RetroMul.exe' }
+    $binaryName = if ($isAndroid) { 'RetroMul.apk' } elseif ($prefix -eq 'linux64' -or $isMacTarget) { 'RetroMul' } else { 'RetroMul.exe' }
     $binaryPath = if ($isAndroid) {
         Join-Path $outputDirectory "RetroMul\bin\$binaryName"
     } else {
@@ -72,9 +107,25 @@ foreach ($prefix in ($Platforms | Select-Object -Unique)) {
     $archivePath = Join-Path $releaseDirectory "RetroMul-$prefix.zip"
     $temporaryArchive = Join-Path $releaseDirectory (".RetroMul-$prefix-" + [guid]::NewGuid().ToString('N') + '.zip')
 
+    if ($isMacTarget) {
+        # Match the project's Release deployment resource, including per-platform
+        # overrides, rather than assuming both architectures use the same icon.
+        [xml] $projectXml = Get-Content -LiteralPath $projectFile -Raw -Encoding UTF8
+        $iconDeployment = @($projectXml.Project.ProjectExtensions.BorlandProject.Deployment.DeployFile |
+            Where-Object { $_.Class -eq 'ProjectOSXResource' -and $_.Configuration -eq 'Release' -and
+                $_.Platform.Name -eq $platform -and $_.Platform.RemoteName -eq "$projectName.icns" })
+        if ($iconDeployment.Count -ne 1) { throw "Expected one Release icon deployment for $platform in $projectFile" }
+        $iconPath = $iconDeployment[0].LocalName.Replace('$(BDS)', $BdsPath).Replace('$(ProjectName)', $projectName)
+        if (-not [IO.Path]::IsPathRooted($iconPath)) { $iconPath = Join-Path $projectDirectory $iconPath }
+        if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) { throw "macOS icon not found: $iconPath" }
+        $plistPath = Join-Path $outputDirectory "$projectName.info.plist"
+        # A previous metadata file must not survive a build that failed to generate it.
+        if (Test-Path -LiteralPath $plistPath) { Remove-Item -LiteralPath $plistPath -Force }
+    }
+
     # Delete only the expected previous binary so it cannot pass as a fresh build.
     if (Test-Path -LiteralPath $binaryPath) { Remove-Item -LiteralPath $binaryPath -Force }
-    $target = if ($isAndroid) { '/t:Build;Deploy' } else { '/t:Build' }
+    $target = if ($isAndroid) { '/t:Build;Deploy' } elseif ($isMacTarget) { '/t:Build;BuildInfoPlist' } else { '/t:Build' }
     # Artwork paths in the .dproj use ProjectName before Delphi targets define it.
     # Set it as a global property so it is available during project evaluation.
     $arguments = @($projectFile, '/nologo', '/v:minimal', $target, "/p:ProjectName=$projectName", '/p:Config=Release', "/p:Platform=$platform",
@@ -96,19 +147,31 @@ foreach ($prefix in ($Platforms | Select-Object -Unique)) {
     if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf) -or (Get-Item -LiteralPath $binaryPath).Length -eq 0) {
         throw "Build did not produce a nonempty executable: $binaryPath"
     }
+    if ($isMacTarget -and (-not (Test-Path -LiteralPath $plistPath -PathType Leaf) -or (Get-Item -LiteralPath $plistPath).Length -eq 0)) {
+        throw "Build did not produce macOS bundle metadata: $plistPath"
+    }
 
     try {
         $zip = [IO.Compression.ZipFile]::Open($temporaryArchive, [IO.Compression.ZipArchiveMode]::Create)
         try {
-            $entry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $binaryPath, $binaryName, [IO.Compression.CompressionLevel]::Optimal)
-            if ($prefix -eq 'linux64') {
+            $entryName = if ($isMacTarget) { "$projectName.app/Contents/MacOS/$binaryName" } else { $binaryName }
+            $entry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $binaryPath, $entryName, [IO.Compression.CompressionLevel]::Optimal)
+            if ($prefix -eq 'linux64' -or $isMacTarget) {
                 # Unix regular file, mode 0755: preserve execute permission on unzip.
                 $entry.ExternalAttributes = -2115174400
             }
+            if ($isMacTarget) {
+                $entry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $plistPath, "$projectName.app/Contents/Info.plist", [IO.Compression.CompressionLevel]::Optimal)
+                $entry.ExternalAttributes = -2119958528 # Unix regular file, mode 0644.
+                $entry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $iconPath, "$projectName.app/Contents/Resources/$projectName.icns", [IO.Compression.CompressionLevel]::Optimal)
+                $entry.ExternalAttributes = -2119958528
+            }
         } finally { $zip.Dispose() }
+        if ($isMacTarget) { Set-ZipUnixHost $temporaryArchive }
         Move-Item -LiteralPath $temporaryArchive -Destination $archivePath -Force
     } finally {
         if (Test-Path -LiteralPath $temporaryArchive) { Remove-Item -LiteralPath $temporaryArchive -Force }
     }
     Write-Host "Created $archivePath"
+    if ($isMacTarget) { Write-Host 'The .app bundle has not been signed or notarized by this script.' }
 }
