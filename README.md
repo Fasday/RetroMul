@@ -12,7 +12,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Game Boy | `.gb`, `.gbx` |
 | Game Boy Color | `.gbc`, `.gbx` |
 | Game & Watch | `.gw`, `.mgw`, catalogued MAME `.zip` sets with SVG screens |
-| Game Boy Advance (experimental) | `.gba` |
+| Game Boy Advance | `.gba` |
 | Nintendo 64 (experimental) | `.z64`, `.n64`, `.v64` |
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
 | SEGA SG-1000 | `.sg` (legacy `.sms` images in `sg1000/`) |
@@ -21,28 +21,15 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Othello Multivision | `.mv` |
 | SEGA Master System / Mark III | `.sms` |
 | SEGA Game Gear | `.gg` |
+| SEGA Saturn | `.iso`, `.cue`, `.chd` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
-| Neo Geo CD / CDZ (experimental) | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
-| PC Engine / TurboGrafx-16 (experimental) | `.pce`, single-HuCard `.zip` |
-| SuperGrafx (experimental) | `.sgx`, `.pce`, single-HuCard `.zip` |
-| PC Engine CD / Duo / Arcade Card (experimental) | `.cue`, `.iso`, `.chd` (built-in System Cards 1/2/3) |
-
-Cartridge ROM detection uses file contents. GBX files select Game Boy or Game Boy Color from the cartridge header. Mega Drive loading handles SMD interleaving and byte-swapped images; SNES loading handles supported copier headers. For Neo Geo CD, open the disc's `.cue`, `.iso`, or `.chd` file. SG-1000 and SC-3000 cartridges have no mandatory header and are selected by `.sg` and `.sc`; unknown raw `.bin` files are not guessed as these systems.
-
-Neo Geo runs in MVS arcade mode with embedded system firmware. Split ROM sets need their parent ZIPs in the same directory. The loader recognizes catalogued original, decrypted, bootleg, and PCB variants; a ZIP extension alone does not guarantee a supported set. See the [Neo Geo core notes](source/cores/neogeo/README.txt) for hardware coverage, controls, and limitations.
-
-Neo Geo CD / CDZ is experimental. It boots through an external 512 KiB CD/CDZ BIOS named `neocd.bin`, placed beside the image or in `ROMS/neogeocd/`. Common BIOS names such as `top-sp1.bin`, `front-sp1.bin`, and `neocd_z.rom` are also accepted. MVS firmware cannot boot CD games.
-
-CD images support Mode 1 ISO data, CUE sheets with MODE1/2048 or MODE1/2352 data and BINARY or 44.1 kHz stereo 16-bit PCM WAV audio, and CHD images. Keep every file referenced by a CUE together; choose the CUE to retain CD music. The library hides a matching ISO when a CUE with the same base name exists. Extract CD ZIP archives first. Compressed audio CUE tracks and parent/differential CHDs are not supported by the CD frontend.
-
-CD games use the **Neo Geo (CD)** input settings for both players, with Select in place of Coin. CDDA music mixes with the emulated YM2610 audio. Backup saves and snapshots are kept separately from MVS games. Disc images load in the background with a loading indicator and Cancel button; large images can take several seconds to open. Android disc access uses the selected ROM folder through the system storage picker. CHD decoding uses the native cross-platform Delphi library in `source/media/chd`, with no external decoder binaries. See the [Neo Geo CD notes](source/cores/neogeo/README.txt) and [decoder documentation](source/media/chd/README.md) for compatibility and image limits.
-
-Game Boy Advance uses a native ARM/Thumb core with built-in open emibios firmware, stereo audio, SRAM/Flash/EEPROM saves, RTC, tilt, gyroscope and solar-sensor cartridges, cartridge rumble, and save states. GBA settings allow automatic or manual save-memory selection and a Boktai sunlight level from 0 to 255. A replacement 16 KiB BIOS can be selected in GBA settings. Compatibility is still incomplete; see the [GBA firmware notes](source/cores/gba/firmware/README.md) for the bundled firmware, source and license.
+| Neo Geo CD / CDZ | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
+| PC Engine / TurboGrafx-16 | `.pce`, single-HuCard `.zip` |
+| SuperGrafx | `.sgx`, `.pce`, single-HuCard `.zip` |
+| PC Engine CD / Duo / Arcade Card | `.cue`, `.iso`, `.chd` (built-in System Cards 1/2/3) |
 
 ## Features
-
-Game & Watch uses a native Delphi SM5xx core for firmware packages and a native script runtime for MGW simulations. SVG LCD segments are rendered with the project's FMX SVG implementation. Games appear under the Game & Watch library filter and have configurable controls, audio, snapshots and MGW high-score/settings persistence. See the [Game & Watch notes](source/cores/gamewatch/README.md) for archive contents, controls and verified coverage.
 
 - Browse a game library in grid or list view with cover art and information from `gamelist.xml`, search by title, filter by system or initial letter, and keep favorites and recently played games. ROM files can also be opened directly or dropped onto the desktop application.
 - Assign keyboard keys, controller buttons, axes, and D-pad directions for each system and controller port. View the active bindings in the in-game controls help.
@@ -54,20 +41,10 @@ Game & Watch uses a native Delphi SM5xx core for firmware packages and a native 
 - Customize Game Boy / Game Boy Color frame blending, separate monochrome background and sprite palettes, layer visibility, sprite limits, CPU speed (100–400%), and individual sound-channel volume. Game Boy Color also offers LCD color correction. Higher CPU speeds and relaxed sprite limits can change game behavior.
 - Use Game Boy / Game Boy Color / Game Boy Advance cartridge rumble and cartridge motion inputs on supported devices; tilt and rotation depend on available device sensors.
 - Use supported NES peripherals, including Zapper, Power Pad, Family BASIC and Subor keyboards, Miracle Piano, and the Famicom Data Recorder. Four Score must be disabled when using Zapper, Power Pad or Miracle Piano.
-- Use an English or Russian interface, with language selection in settings.
+- Use an English, Russian or Portuguese interface, with language selection in settings (or custom).
 - Listen to native streaming audio. Supported audio platforms include Windows, Linux, Android, macOS, and iOS.
 
 Compatibility depends on the game's cartridge hardware, protection, and peripherals. Mapper or ROM-set support does not imply complete hardware accuracy or full gameplay compatibility for every game. Save-state formats can change between builds.
-
-Nintendo 64 uses a native Delphi VR4300/RSP interpreter and software RDP with no external emulator, plugin or PIF BIOS. Cartridge settings select EEPROM 4/16 Kbit, SRAM or FlashRAM. It is experimental: advanced rendering, exact timing and full FPU/RSP conformance remain incomplete. Passing CPU/RSP tests does not establish commercial gameplay compatibility. Implementation and test details: `codex-work/n64/REPORT.md`.
-
-The SEGA 8-bit family shares RetroMul's Delphi Z80, TMS9918A / Sega Mode 4 video, and clocked PSG. SG-1000 / SC-3000 support NTSC/PAL, two controllers, snapshots and known cartridge RAM layouts including BASIC II/III and Music Editor. SC-3000 accepts physical and on-screen keyboard input; Shift, Ctrl, Graph and Kana latch when tapped. BASIC RAM checks can take several seconds. RetromulTerm uses F12 to exit computer sessions so Escape remains available as BREAK.
-
-Master System / Mark III support cartridge banking, SRAM, optional 8/16/32 KiB BIOS and YM2413 FM. Game Gear uses a 160×144 viewport, 12-bit palette, stereo PSG, separate Start input, automatic or manual Japanese/export hardware region, Sega / Codemasters cartridges, SRAM and 93C46 EEPROM saves. Game Gear timing is always NTSC. Each platform has its own settings, library filter, saves and snapshots.
-
-SF-7000 supports 160 KiB raw disks and CPC DSK images through its native floppy controller; select the external 8 KiB IPL in settings or put it beside the disk. SC/SF computer models also provide PCM WAV cassette support. The library checks both dedicated `sc3000/`, `sf7000/`, `omv/` folders and legacy matching extensions in `sg1000/`. Game Gear link-cable multiplayer, SMS light gun/paddle peripherals and complete hardware timing conformance remain outside the verified coverage. Verification and current limitations: `codex-work/sega8/REPORT.md`.
-
-PC Engine reuses RetroMul's HuC6280 and PSG with native VDC/VCE video, SuperGrafx's second VDC and priority controller, HuCard banking, timer/IRQs, TurboTap and Avenue Pad 6. CD-ROM², Super CD-ROM², Duo and Arcade Card configurations add native CD commands, CDDA, ADPCM, BRAM and expansion RAM. CD media parsing and CHD access are shared through `Core.CD.Disc` and `Core.CD.CHD`. System Cards 1/2/3 are embedded, with automatic hardware/region selection and an optional external replacement. All five BIOS menus, state continuation and diagnostic CD boot are tested; commercial CD gameplay remains unverified. Bounded HuCard checks do not imply full gameplay or hardware accuracy. See the [PC Engine notes](source/cores/pce/README.md).
 
 ## Getting started
 
@@ -90,6 +67,7 @@ ROMS/
   gg/
   snes/
   neogeo/
+  saturn/
   neogeocd/
   pcengine/
   sgx/
@@ -98,20 +76,17 @@ ROMS/
 
 Place ROMs in the corresponding folders. On desktop, an optional `gamelist.xml` in each system folder supplies titles, descriptions, cover paths, and other metadata; games without metadata use their filenames. On Android, choose the ROM folder through the system folder picker.
 
-Choose input devices and button bindings in Settings before playing. Use the game toolbar to pause, save or load a state, return to the library, or open settings and controls help.
-
-For Neo Geo CD, put the BIOS and all disc companion files in `neogeocd/` before opening the game. On Android, grant access to the ROM folder so the loader can find the BIOS and CUE tracks. A standalone data ISO does not include CD music tracks.
-
 Desktop shortcuts during gameplay:
 
 | Key | Action |
 | --- | --- |
 | `P` | Pause / resume |
+| `R` | Reset |
 | `F5` | Save the quick state |
 | `F6` | Load the quick state |
 | `F8` | Take a screenshot |
 
-These shortcuts are suspended while an emulated NES keyboard is active. The Save and Load toolbar menus provide access to other snapshot slots.
+These shortcuts are suspended while an emulated NES or Subor keyboard is active.
 
 ## Building from source
 
@@ -135,8 +110,6 @@ Open `RetromulGroup.groupproj` for the project group, or open an individual proj
 .\BuildReleases.ps1 -Platforms win32,win64
 ```
 
-Packages are written to `releases/RetroMul-<platform>.zip`. Use `-BdsPath` if the script cannot locate RAD Studio. This script packages RetroMul; build RetroTune and RetromulTerm from their own projects. Development checks, reports, and helper tools are kept in `codex-work`.
-
 ## Source layout
 
 | Directory | Responsibility |
@@ -154,10 +127,6 @@ Packages are written to `releases/RetroMul-<platform>.zip`. Use `-BdsPath` if th
 | `source/music` | Reusable decoders, trackers, playback, synthesis and export |
 | `source/ui/fmx` | Shared FMX controls, SVG rendering and Game & Watch artwork backend |
 | `dependencies` | Git submodules: DelphiWinUI3, FMXVibration, FMXInput and PCMAudio |
-
-Existing unit names are retained. For example, the shared `MD.Z80` and `MD.M68k` implementations now live in `source/hardware/cpu`. `Core.Emulation` remains a compatibility facade; hardware that needs only input/frame contracts imports `Core.Emulation.Types`. Persistent configuration and worker-rate measurement live in separate service/runtime units.
-
-System IDs, settings keys and save formats remain stable. FMX page IDs, gamepad layouts and artwork are defined in `RM.Platforms.Presentation`, separately from the common platform registry. Game & Watch cartridge parsing accepts an `IGWArtworkRenderer`; the FMX and terminal projects explicitly include `GW.Artwork.FMX` to register their image backend.
 
 Initialize dependencies with `git submodule update --init --recursive`. Their repository URLs and pinned commits are unchanged; the logical submodule names in `.gitmodules` are retained so existing Git metadata continues to work. DelphiWinUI3's nested submodules remain part of that dependency. Do not add dependency contents to the parent repository as ordinary files.
 
