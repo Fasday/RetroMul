@@ -245,6 +245,7 @@ begin
             var N := BootStream.Read(BootData[Count], Length(BootData) - Count);
             if N = 0 then
               Break;
+
             Inc(Count, N);
           end;
           if Count = 0 then
@@ -260,6 +261,7 @@ begin
 
       FBootROMData := PrepareGBBootROM(FConfig.BootModel, BootData);
     end;
+
     // Validate mapper support before the frontend replaces the active session.
     TGBMBC.Create(ROM).Free;
   finally

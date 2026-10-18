@@ -109,7 +109,10 @@ begin
     ReadWord($18E + Cardinal(FHeaderOffset - MD_ROM_HEADER_OFFSET)),
     (Cardinal(ReadWord(0)) shl 16) or ReadWord(2));
   var Product := UpperCase(HeaderText($180, 14));
-  F32X := Pos('32X', UpperCase(HeaderText($100, 16))) > 0;
+  // Homebrew such as SRB32X uses a SEGA SSF header. An explicit .32x
+  // cartridge must still attach the expansion hardware.
+  F32X := SameText(Extension, '.32x') or
+    (Pos('32X', UpperCase(HeaderText($100, 16))) > 0);
   var InitialSP := (Cardinal(ReadWord(0)) shl 16) or ReadWord(2);
   FJCart := (Pos('T-120096', Product) > 0) or (Pos('T-120146', Product) > 0) or
     (Pos('T-120106', Product) > 0) or (Pos('T-120066', Product) > 0) or

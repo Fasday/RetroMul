@@ -38,6 +38,7 @@ type
     FCPU: TSH2;
     FState: TSH7604State;
     FRead: TSH2Read;
+    FReadDMA: TSH2Read;
     FWrite: TSH2Write;
     FWait: TSH7604Wait;
     FReserveDMA: TSH7604DMAReserve;
@@ -77,6 +78,7 @@ type
     constructor Create(Read: TSH2Read; Write: TSH2Write; User: Pointer; Wait: TSH7604Wait = nil; SlaveMode: Boolean = False);
     destructor Destroy; override;
     procedure Reset;
+    procedure SetOpcodeDecoder(Decoder: TSH2OpcodeDecoder);
     procedure Hold(Clocks: Integer);
     function Step: Integer;
     // Issue only through the cache/internal fast path while another master
@@ -97,6 +99,7 @@ type
     property ExternalInterruptAccepted: Boolean read FExternalAccepted;
     property ReserveDMA: TSH7604DMAReserve read FReserveDMA write FReserveDMA;
     property DMAReady: TSH7604DMAReady read FDMAReady write FDMAReady;
+    property DMARead: TSH2Read read FReadDMA write FReadDMA;
   end;
 
 procedure SH7604TouchLRU(var Value: Byte; Way: Integer); inline;
@@ -136,7 +139,7 @@ begin
     FFetchLRU^ := (FFetchLRU^ and FFetchLRUMask) or FFetchLRUBits;
     Exit(Swap(PWord(NativeUInt(FFetchData) + (Address and 15))^));
   end;
-  Result := Read(Address,2,True);
+  Result := Read(Address, 2, True);
 end;
 
 {$Q+}{$R+}
@@ -171,19 +174,21 @@ begin
   if not Assigned(Read) or not Assigned(Write) then
     raise EArgumentException.Create('SH7604 requires a bus');
   FRead := Read;
+  FReadDMA := Read;
   FWrite := Write;
   FUser := User;
   FWait := Wait;
   FSlaveMode := SlaveMode;
   FFetchLine := High(Cardinal);
-  if FCPU <> nil then FCPU.InvalidateInstructionLine;
-  FillChar(FDataCache,SizeOf(FDataCache),$FF);
+  if FCPU <> nil then
+    FCPU.InvalidateInstructionLine;
+  FillChar(FDataCache, SizeOf(FDataCache), $FF);
   FCPU := TSH2.Create(CPURead, CPUWrite, Self, CPUFetch);
   // Advance commits flag transitions before instruction issue. TCSR byte
   // reads only copy those flags into FRTReadFlags, without a bus transfer.
-  FCPU.SetByteReadLatch($FFFFFE11,@FState.Peripheral[$11],@FState.FRTReadFlags);
-  FCPU.SetDataCacheView(@FDataCache[0],True);
-  FCacheBank.Tags := @FState.CacheTag[0,0];
+  FCPU.SetByteReadLatch($FFFFFE11, @FState.Peripheral[$11], @FState.FRTReadFlags);
+  FCPU.SetDataCacheView(@FDataCache[0], True);
+  FCacheBank.Tags := @FState.CacheTag[0, 0];
   FCacheBank.RAM := @FState.CacheRAM[0];
   FCacheBank.LRU := @FState.CacheLRU[0];
   FCacheBank.CCR := @FState.Peripheral[$92];
@@ -206,11 +211,17 @@ begin
   FCPU.State := Value;
 end;
 
+procedure TSH7604.SetOpcodeDecoder(Decoder: TSH2OpcodeDecoder);
+begin
+  FCPU.SetOpcodeDecoder(Decoder, FUser);
+end;
+
 procedure TSH7604.Reset;
 begin
   FFetchLine := High(Cardinal);
-  if FCPU <> nil then FCPU.InvalidateInstructionLine;
-  FillChar(FDataCache,SizeOf(FDataCache),$FF);
+  if FCPU <> nil then
+    FCPU.InvalidateInstructionLine;
+  FillChar(FDataCache, SizeOf(FDataCache), $FF);
   FExternalAccepted := False;
   FIRQDirty := True;
   FState := Default(TSH7604State);
@@ -242,9 +253,13 @@ function TSH7604.Peek(Index, Size: Integer): Cardinal;
 begin
   var At := Index and $1FF;
   case Size of
-    1: Exit(FState.Peripheral[At]);
-    2: if At <= $1FE then Exit(Swap(PWord(@FState.Peripheral[At])^));
-    4: if At <= $1FC then
+    1:
+      Exit(FState.Peripheral[At]);
+    2:
+      if At <= $1FE then
+        Exit(Swap(PWord(@FState.Peripheral[At])^));
+    4:
+      if At <= $1FC then
       begin
         var V := PCardinal(@FState.Peripheral[At])^;
         Exit((V shl 24) or ((V and $FF00) shl 8) or
@@ -264,22 +279,33 @@ begin
       begin
         var B := Byte(Value);
         if FState.Peripheral[At] <> B then
-        begin FState.Peripheral[At] := B; FIRQDirty := True; end;
+        begin
+          FState.Peripheral[At] := B;
+          FIRQDirty := True;
+        end;
         Exit;
       end;
-    2: if At <= $1FE then
+    2:
+      if At <= $1FE then
       begin
         var W := Swap(Word(Value));
         if PWord(@FState.Peripheral[At])^ <> W then
-        begin PWord(@FState.Peripheral[At])^ := W; FIRQDirty := True; end;
+        begin
+          PWord(@FState.Peripheral[At])^ := W;
+          FIRQDirty := True;
+        end;
         Exit;
       end;
-    4: if At <= $1FC then
+    4:
+      if At <= $1FC then
       begin
         var V := (Value shl 24) or ((Value and $FF00) shl 8) or
           ((Value shr 8) and $FF00) or (Value shr 24);
         if PCardinal(@FState.Peripheral[At])^ <> V then
-        begin PCardinal(@FState.Peripheral[At])^ := V; FIRQDirty := True; end;
+        begin
+          PCardinal(@FState.Peripheral[At])^ := V;
+          FIRQDirty := True;
+        end;
         Exit;
       end;
   end;
@@ -288,7 +314,10 @@ begin
     At := (Index + I) and $1FF;
     var B := Byte(Value shr ((Size - I - 1) * 8));
     if FState.Peripheral[At] <> B then
-    begin FState.Peripheral[At] := B; FIRQDirty := True; end;
+    begin
+      FState.Peripheral[At] := B;
+      FIRQDirty := True;
+    end;
   end;
 end;
 {$Q+}{$R+}
@@ -304,8 +333,10 @@ end;
 function CacheValue(Data: Pointer; Size: Integer): Cardinal; inline;
 begin
   case Size of
-    1: Result := PByte(Data)^;
-    2: Result := Swap(PWord(Data)^);
+    1:
+      Result := PByte(Data)^;
+    2:
+      Result := Swap(PWord(Data)^);
   else
     var V := PCardinal(Data)^;
     Result := (V shl 24) or ((V and $FF00) shl 8) or
@@ -335,7 +366,8 @@ begin
     var Index := Address and $1FF;
     if ((Index <= $12) and (Index + Cardinal(Size) > $12)) or
       ((Index <= $81) and (Index + Cardinal(Size) > $81)) or
-      ((Index >= $100) and (Index <= $11F)) then SynchronizePeripherals;
+      ((Index >= $100) and (Index <= $11F)) then
+      SynchronizePeripherals;
     if (Address >= $FFFFFF00) and (Address <= $FFFFFF1F) then
       WaitDivision;
     Exit(PeripheralRead(Address, Size));
@@ -365,10 +397,14 @@ begin
     var Tag: Cardinal := (Address and $1FFFFC00) or 2;
     var Way: Integer := -1;
     // Preserve the former last-match rule for debug-created duplicate tags.
-    if FState.CacheTag[3, Entry] = Tag then Way := 3
-    else if FState.CacheTag[2, Entry] = Tag then Way := 2
-    else if FState.CacheTag[1, Entry] = Tag then Way := 1
-    else if FState.CacheTag[0, Entry] = Tag then Way := 0;
+    if FState.CacheTag[3, Entry] = Tag then
+      Way := 3
+    else if FState.CacheTag[2, Entry] = Tag then
+      Way := 2
+    else if FState.CacheTag[1, Entry] = Tag then
+      Way := 1
+    else if FState.CacheTag[0, Entry] = Tag then
+      Way := 0;
     if (Way < 0) and (CCR and (4 shr Ord(Instruction)) = 0) then
     begin
       var LRU := FState.CacheLRU[Entry];
@@ -396,7 +432,8 @@ begin
         FFetchLine := High(Cardinal);
       end;
       // The interpreter can select another valid instruction line itself.
-      if FCPU <> nil then FCPU.InvalidateInstructionLine;
+      if FCPU <> nil then
+        FCPU.InvalidateInstructionLine;
       FDataCache[Entry].Line := High(Cardinal);
       FState.CacheTag[Way, Entry] := Tag;
     end;
@@ -410,10 +447,26 @@ begin
         FFetchData := @FState.CacheRAM[Way * 1024 + Entry * 16];
         FFetchLRU := @FState.CacheLRU[Entry];
         case Way of
-          0: begin FFetchLRUMask := $07; FFetchLRUBits := $00; end;
-          1: begin FFetchLRUMask := $19; FFetchLRUBits := $20; end;
-          2: begin FFetchLRUMask := $2A; FFetchLRUBits := $14; end;
-          3: begin FFetchLRUMask := $34; FFetchLRUBits := $0B; end;
+          0:
+            begin
+              FFetchLRUMask := $07;
+              FFetchLRUBits := $00;
+            end;
+          1:
+            begin
+              FFetchLRUMask := $19;
+              FFetchLRUBits := $20;
+            end;
+          2:
+            begin
+              FFetchLRUMask := $2A;
+              FFetchLRUBits := $14;
+            end;
+          3:
+            begin
+              FFetchLRUMask := $34;
+              FFetchLRUBits := $0B;
+            end;
         end;
         FCPU.SetInstructionLine(FFetchLine, FFetchData, FFetchLRU, FFetchLRUMask, FFetchLRUBits);
       end;
@@ -423,10 +476,26 @@ begin
         FDataCache[Entry].Data := @FState.CacheRAM[Way * 1024 + Entry * 16];
         FDataCache[Entry].LRU := @FState.CacheLRU[Entry];
         case Way of
-          0: begin FDataCache[Entry].Mask := $07; FDataCache[Entry].Bits := $00; end;
-          1: begin FDataCache[Entry].Mask := $19; FDataCache[Entry].Bits := $20; end;
-          2: begin FDataCache[Entry].Mask := $2A; FDataCache[Entry].Bits := $14; end;
-          3: begin FDataCache[Entry].Mask := $34; FDataCache[Entry].Bits := $0B; end;
+          0:
+            begin
+              FDataCache[Entry].Mask := $07;
+              FDataCache[Entry].Bits := $00;
+            end;
+          1:
+            begin
+              FDataCache[Entry].Mask := $19;
+              FDataCache[Entry].Bits := $20;
+            end;
+          2:
+            begin
+              FDataCache[Entry].Mask := $2A;
+              FDataCache[Entry].Bits := $14;
+            end;
+          3:
+            begin
+              FDataCache[Entry].Mask := $34;
+              FDataCache[Entry].Bits := $0B;
+            end;
         end;
       end;
       Result := CacheValue(@FState.CacheRAM[At], Size);
@@ -441,8 +510,10 @@ procedure TSH7604.Write(Address, Value: Cardinal; Size: Integer);
 begin
   if not (Size in [1, 2, 4]) then
     raise EArgumentException.Create('SH7604 access size');
+
   if Address and Cardinal(Size - 1) <> 0 then
     raise EArgumentException.Create('Unaligned SH7604 access');
+
   if Address >= $FFFFFE00 then
   begin
     SynchronizePeripherals;
@@ -452,6 +523,7 @@ begin
     SchedulePeripherals;
     Exit;
   end;
+
   var Area := Address shr 29;
   var Entry: Integer := (Address shr 4) and 63;
   var Tag := Address and $1FFFFC00;
@@ -459,38 +531,46 @@ begin
   if Area = 2 then
   begin
     FFetchLine := High(Cardinal);
-    if FCPU <> nil then FCPU.InvalidateInstructionLine;
+    if FCPU <> nil then
+      FCPU.InvalidateInstructionLine;
     FDataCache[Entry].Line := High(Cardinal);
     for var I := 0 to 3 do
       if FState.CacheTag[I, Entry] and $1FFFFC00 = Tag then
         FState.CacheTag[I, Entry] := 0;
     Exit;
   end;
+
   if Area = 3 then
   begin
     FFetchLine := High(Cardinal);
-    if FCPU <> nil then FCPU.InvalidateInstructionLine;
+    if FCPU <> nil then
+      FCPU.InvalidateInstructionLine;
     FDataCache[Entry].Line := High(Cardinal);
     FState.CacheTag[(CCR shr 6) and 3, Entry] := Tag or ((Address shr 1) and 2);
     FState.CacheLRU[Entry] := (Value shr 4) and 63;
     Exit;
   end;
+
   if Area = 6 then
   begin
     for var I := 0 to Size - 1 do
       FState.CacheRAM[(UInt64(Address) + Cardinal(I)) and $FFF] := (Value shr ((Size - I - 1) * 8)) and $FF;
     Exit;
   end;
+
   if (Area = 0) and (CCR and 1 <> 0) then
     for var Way := 0 to 3 do
       if FState.CacheTag[Way, Entry] = (Tag or 2) then
       begin
         var Data := @FState.CacheRAM[Way * 1024 + Entry * 16 + Integer(Address and 15)];
         case Size of
-          1: PByte(Data)^ := Byte(Value);
-          2: PWord(Data)^ := Swap(Word(Value));
-          4: PCardinal(Data)^ := (Value shl 24) or ((Value and $FF00) shl 8) or
-            ((Value shr 8) and $FF00) or (Value shr 24);
+          1:
+            PByte(Data)^ := Byte(Value);
+          2:
+            PWord(Data)^ := Swap(Word(Value));
+          4:
+            PCardinal(Data)^ := (Value shl 24) or ((Value and $FF00) shl 8) or
+              ((Value shr 8) and $FF00) or (Value shr 24);
         end;
         SH7604TouchLRU(FState.CacheLRU[Entry], Way);
       end;
@@ -532,10 +612,10 @@ begin
       $19:
         Value := FState.FRTTemp;
       $80:
-      begin
-        FState.WDTReadFlags := Value;
-        Value := Value or $18; // WTCSR reserved bits 4 and 3 always read as one.
-      end;
+        begin
+          FState.WDTReadFlags := Value;
+          Value := Value or $18; // WTCSR reserved bits 4 and 3 always read as one.
+        end;
     end;
     Result := (Result shl 8) or Value;
   end;
@@ -599,15 +679,18 @@ begin
   // MOV.W passes the complete source register, including sign-extended bits.
   // Keyed WDT/BSC registers see only the bits driven by that bus access.
   case Size of
-    1: Value := Value and $FF;
-    2: Value := Value and $FFFF;
+    1:
+      Value := Value and $FF;
+    2:
+      Value := Value and $FFFF;
   end;
   // FRT/DIVU/etc. cannot alter cache tags/storage. CCR can disable or purge.
-  if (Address and $1FF <= $92) and ((Address and $1FF)+Cardinal(Size)>$92) then
+  if (Address and $1FF <= $92) and ((Address and $1FF) + Cardinal(Size) > $92) then
   begin
     FFetchLine := High(Cardinal);
-    if FCPU <> nil then FCPU.InvalidateInstructionLine;
-    FillChar(FDataCache,SizeOf(FDataCache),$FF);
+    if FCPU <> nil then
+      FCPU.InvalidateInstructionLine;
+    FillChar(FDataCache, SizeOf(FDataCache), $FF);
   end;
   var Index: Integer := Address and $1FF;
   if (Index >= $1E0) and (Index <= $1FB) then
@@ -698,7 +781,8 @@ end;
 
 procedure TSH7604.UpdateIRQ;
 begin
-  if not FIRQDirty then Exit;
+  if not FIRQDirty then
+    Exit;
   FIRQDirty := False;
   var Level := FExternalLevel;
   var Vector := FExternalVector;
@@ -851,7 +935,7 @@ begin
           Inc(FState.DMANext, 2);
           Exit(True);
         end;
-        FState.DMAValue[Channel] := FRead(FUser, FState.DMASource[Channel] and $1FFFFFFF, FState.DMASize[Channel]);
+        FState.DMAValue[Channel] := FReadDMA(FUser, FState.DMASource[Channel] and $1FFFFFFF, FState.DMASize[Channel]);
         FState.DMAPhase[Channel] := 2;
         if Assigned(FReserveDMA) then
           FState.DMANext := FReserveDMA(FUser, FState.DMANext, FState.DMADest[Channel] and $1FFFFFFF, FState.DMASize[Channel], True)
@@ -886,7 +970,8 @@ begin
             Dest := Cardinal((Int64(Dest) - Size) and $FFFFFFFF);
         end;
         Count := Peek(Base + 8, 4) and $FFFFFF;
-        if Count = 0 then Count := $1000000;
+        if Count = 0 then
+          Count := $1000000;
         Dec(Count);
         if Block then
           FState.DMABlockUnit[Channel] := (FState.DMABlockUnit[Channel] + 1) and 3;
@@ -911,36 +996,45 @@ begin
   var Counter: Integer := FState.FRC;
   var UntilA := (Integer(FState.OCR[0]) - Counter) and $FFFF;
   var UntilB := (Integer(FState.OCR[1]) - Counter) and $FFFF;
-  if UntilA = 0 then UntilA := $10000;
-  if UntilB = 0 then UntilB := $10000;
+  if UntilA = 0 then
+    UntilA := $10000;
+  if UntilB = 0 then
+    UntilB := $10000;
   var UntilOverflow := $10000 - Counter;
-  var Flags := Peek($11,1);
+  var Flags := Peek($11, 1);
   if (Flags and 1 <> 0) and (FState.OCR[0] <> 0) and (Ticks >= UntilA) then
   begin
     Flags := Flags or 8;
-    if UntilB <= UntilA then Flags := Flags or 4;
-    if UntilOverflow <= UntilA then Flags := Flags or 2;
+    if UntilB <= UntilA then
+      Flags := Flags or 4;
+    if UntilOverflow <= UntilA then
+      Flags := Flags or 2;
     var Remaining := Ticks - UntilA;
     if (FState.OCR[1] > 0) and (FState.OCR[1] <= FState.OCR[0]) and
-      (Remaining >= FState.OCR[1]) then Flags := Flags or 4;
+      (Remaining >= FState.OCR[1]) then
+      Flags := Flags or 4;
     FState.FRC := Remaining mod FState.OCR[0];
   end
   else
   begin
-    if Ticks >= UntilA then Flags := Flags or 8;
-    if Ticks >= UntilB then Flags := Flags or 4;
-    if Ticks >= UntilOverflow then Flags := Flags or 2;
+    if Ticks >= UntilA then
+      Flags := Flags or 8;
+    if Ticks >= UntilB then
+      Flags := Flags or 4;
+    if Ticks >= UntilOverflow then
+      Flags := Flags or 2;
     FState.FRC := (Counter + Ticks) and $FFFF;
   end;
-  Store($11,Flags,1);
+  Store($11, Flags, 1);
 end;
 
 procedure TSH7604.SynchronizePeripherals(Force: Boolean);
 const
   WDTDividers: array[0..7] of Integer = (2, 64, 128, 256, 512, 1024, 4096, 8192);
-  Shifts: array[0..7] of Byte = (1,6,7,8,9,10,12,13);
+  Shifts: array[0..7] of Byte = (1, 6, 7, 8, 9, 10, 12, 13);
 begin
-  if not Force and (FPeripheralAt = FState.Time) then Exit;
+  if not Force and (FPeripheralAt = FState.Time) then
+    Exit;
   var Target := FState.Time;
   // Before the scheduled flag/division deadline no observable event can
   // change. A counter read can update only count/fraction, keeping the same
@@ -975,24 +1069,26 @@ begin
     var Phase := Elapsed + FState.FRTPhase;
     var Ticks: Int64 := Phase shr (3 + Select * 2);
     FState.FRTPhase := Phase and (Divider - 1);
-    if Ticks > 16 then AdvanceFRTBatch(Ticks)
-    else while Ticks > 0 do
-    begin
-      FState.FRC := Word((Cardinal(FState.FRC) + 1) and $FFFF);
-      var Flags := Peek($11, 1);
-      if FState.FRC = 0 then
-        Flags := Flags or 2;
-      if FState.FRC = FState.OCR[1] then
-        Flags := Flags or 4;
-      if FState.FRC = FState.OCR[0] then
+    if Ticks > 16 then
+      AdvanceFRTBatch(Ticks)
+    else
+      while Ticks > 0 do
       begin
-        Flags := Flags or 8;
-        if Flags and 1 <> 0 then
-          FState.FRC := 0;
+        FState.FRC := Word((Cardinal(FState.FRC) + 1) and $FFFF);
+        var Flags := Peek($11, 1);
+        if FState.FRC = 0 then
+          Flags := Flags or 2;
+        if FState.FRC = FState.OCR[1] then
+          Flags := Flags or 4;
+        if FState.FRC = FState.OCR[0] then
+        begin
+          Flags := Flags or 8;
+          if Flags and 1 <> 0 then
+            FState.FRC := 0;
+        end;
+        Store($11, Flags, 1);
+        Dec(Ticks);
       end;
-      Store($11, Flags, 1);
-      Dec(Ticks);
-    end;
   end;
   if Peek($80, 1) and $20 <> 0 then
   begin
@@ -1028,34 +1124,40 @@ end;
 procedure TSH7604.SchedulePeripherals;
 const
   WDTDividers: array[0..7] of Integer = (2, 64, 128, 256, 512, 1024, 4096, 8192);
+
   procedure Due(Delta: Int64);
   begin
     Delta := Max(Int64(0), Delta);
     if Delta <= High(Int64) - FState.Time then
       FPeripheralNext := Min(FPeripheralNext, FState.Time + Delta);
   end;
+
 begin
   FPeripheralNext := High(Int64);
-  if FState.DIVUntil <> 0 then FPeripheralNext := FState.DIVUntil;
-  var Select := Peek($16,1) and 3;
+  if FState.DIVUntil <> 0 then
+    FPeripheralNext := FState.DIVUntil;
+  var Select := Peek($16, 1) and 3;
   if Select <> 3 then
   begin
     var Divider: Integer := 8 shl (Select * 2);
-    var Flags := Peek($11,1);
+    var Flags := Peek($11, 1);
     for var Event := 0 to 2 do
       if Flags and (2 shl Event) = 0 then
       begin
         var Compare: Integer := 0;
-        if Event = 1 then Compare := FState.OCR[1]
-        else if Event = 2 then Compare := FState.OCR[0];
+        if Event = 1 then
+          Compare := FState.OCR[1]
+        else if Event = 2 then
+          Compare := FState.OCR[0];
         var Distance := (Compare - Integer(FState.FRC)) and $FFFF;
-        if Distance = 0 then Distance := $10000;
+        if Distance = 0 then
+          Distance := $10000;
         Due(Int64(Distance) * Divider - FState.FRTPhase);
       end;
   end;
-  if Peek($80,1) and $20 <> 0 then
-    Due(Int64(256 - Peek($81,1)) * WDTDividers[Peek($80,1) and 7] - FState.WDTPhase)
-  else if (Peek($81,1) <> 0) or (FState.WDTPhase <> 0) then
+  if Peek($80, 1) and $20 <> 0 then
+    Due(Int64(256 - Peek($81, 1)) * WDTDividers[Peek($80, 1) and 7] - FState.WDTPhase)
+  else if (Peek($81, 1) <> 0) or (FState.WDTPhase <> 0) then
     Due(0);
 end;
 
@@ -1069,13 +1171,17 @@ end;
 procedure TSH7604.AdvanceForward(Target: Int64);
 begin
   FState.Time := Target;
-  if Target >= FPeripheralNext then SynchronizePeripherals(True);
+  if Target >= FPeripheralNext then
+    SynchronizePeripherals(True);
   if FState.DMANext <= Target then
   begin
-    if FState.Peripheral[$1B3] and 7 <> 1 then FState.DMANext := Target + 4
-    else AdvanceDMA(Target);
+    if FState.Peripheral[$1B3] and 7 <> 1 then
+      FState.DMANext := Target + 4
+    else
+      AdvanceDMA(Target);
   end;
-  if FIRQDirty then UpdateIRQ;
+  if FIRQDirty then
+    UpdateIRQ;
 end;
 
 procedure TSH7604.AdvanceDMA(Target: Int64);
@@ -1116,7 +1222,8 @@ end;
 
 procedure TSH7604.Hold(Clocks: Integer);
 begin
-  if Clocks < 0 then raise EArgumentException.Create('Negative SH7604 hold');
+  if Clocks < 0 then
+    raise EArgumentException.Create('Negative SH7604 hold');
   FCPU.AddWaitCycles(Clocks);
 end;
 
@@ -1125,7 +1232,8 @@ begin
   FAccessWait := 0;
   FExternalAccepted := False;
   Result := FCPU.StepCached;
-  if Result = 0 then Result := StepChecked;
+  if Result = 0 then
+    Result := StepChecked;
 end;
 
 function TSH7604.StepBusReleased: Integer;
@@ -1166,13 +1274,15 @@ end;
 
 procedure TSH7604.SerializeState(Archive: TStateArchive);
 begin
-  if not Archive.Loading then SynchronizePeripherals;
+  if not Archive.Loading then
+    SynchronizePeripherals;
   FCPU.SerializeState(Archive);
   Archive.Field(FState, SizeOf(FState));
   Archive.Field(FExternalLevel, SizeOf(FExternalLevel));
   Archive.Field(FExternalVector, SizeOf(FExternalVector));
   Archive.Field(FNMI, SizeOf(FNMI));
-  if Archive.Loading then FIRQDirty := True;
+  if Archive.Loading then
+    FIRQDirty := True;
   if (FState.Time < 0) or (FState.DMANext < 0) or (FState.DIVUntil < 0) or (FState.FRTPhase > 127) or (FState.WDTPhase < 0) or (FState.WDTPhase > 8191) or (FState.DMAPriority < 0) or (FState.DMAPriority > 1) or
     (FExternalLevel < 0) or (FExternalLevel > 15) or (FExternalVector < 0) or (FExternalVector > 255) then
     raise EReadError.Create('Invalid SH7604 state');
@@ -1183,8 +1293,9 @@ begin
   if Archive.Loading then
   begin
     FFetchLine := High(Cardinal);
-    if FCPU <> nil then FCPU.InvalidateInstructionLine;
-    FillChar(FDataCache,SizeOf(FDataCache),$FF);
+    if FCPU <> nil then
+      FCPU.InvalidateInstructionLine;
+    FillChar(FDataCache, SizeOf(FDataCache), $FF);
     FPeripheralAt := FState.Time;
     SchedulePeripherals;
     UpdateIRQ;

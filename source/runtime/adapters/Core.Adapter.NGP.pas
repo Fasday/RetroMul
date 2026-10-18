@@ -4,8 +4,7 @@ interface
 
 uses
   Core.RomFormat, System.SysUtils, System.Classes, System.IniFiles, Core.Storage,
-  Core.Emulation, NGP.Console, NGP.Emulation, Core.InputConfig,
-  NGP.Cartridge;
+  Core.Emulation, NGP.Console, NGP.Emulation, Core.InputConfig, NGP.Cartridge;
 
 type
   TNGPKeyMap = array[TEmulatorButton] of UInt32;
@@ -110,7 +109,8 @@ constructor TNGPCoreAdapter.Create(Stream: TStream; const Storage: IStorage; con
 begin
   inherited Create;
   FStorage := Storage;
-  if FStorage = nil then FStorage := TStorage.Default;
+  if FStorage = nil then
+    FStorage := TStorage.Default;
   FCartridgeROM := ReadRomData(Stream);
   var Cart := TNGPCartridge.Create(FCartridgeROM);
   try
@@ -119,7 +119,8 @@ begin
     Cart.Free;
   end;
   FSystemId := ROM_SYSTEM_NGP;
-  if FColor then FSystemId := ROM_SYSTEM_NGPC;
+  if FColor then
+    FSystemId := ROM_SYSTEM_NGPC;
   FConfigObject := TNGPConfig.Create(FStorage.ConfigFile(FSystemId), FStorage);
   FConfig := FConfigObject;
   FConfig.Load;
@@ -127,27 +128,36 @@ begin
   if BIOSPath = '' then
   begin
     var Names: TArray<string>;
-    if FColor then Names := TArray<string>.Create('ngpc_bios.bin','ngpcbios.bin')
-    else Names := TArray<string>.Create('ngp_bios.bin','ngpbios.bin');
-    for var Folder in TArray<string>.Create(ExtractFilePath(RomName),
-      TPath.Combine(FStorage.RomFolder,FSystemId),TPath.Combine(FStorage.Root,'bios')) do
+    if FColor then
+      Names := TArray<string>.Create('ngpc_bios.bin', 'ngpcbios.bin')
+    else
+      Names := TArray<string>.Create('ngp_bios.bin', 'ngpbios.bin');
+    for var Folder in TArray<string>.Create(ExtractFilePath(RomName), TPath.Combine(FStorage.RomFolder, FSystemId), TPath.Combine(FStorage.Root, 'bios')) do
     begin
       for var Name in Names do
       begin
-        var Candidate := TPath.Combine(Folder,Name);
-        if FStorage.Exists(Candidate) then begin BIOSPath := Candidate; Break; end;
+        var Candidate := TPath.Combine(Folder, Name);
+        if FStorage.Exists(Candidate) then
+        begin
+          BIOSPath := Candidate;
+          Break;
+        end;
       end;
-      if BIOSPath <> '' then Break;
+      if BIOSPath <> '' then
+        Break;
     end;
   end;
-  if BIOSPath = '' then FBIOS := LoadNGPBIOS(FColor)
-  else FBIOS := FStorage.ReadBytes(BIOSPath);
+  if BIOSPath = '' then
+    FBIOS := LoadNGPBIOS(FColor)
+  else
+    FBIOS := FStorage.ReadBytes(BIOSPath);
   if Length(FBIOS) <> $10000 then
     raise EReadError.Create('Neo Geo Pocket BIOS must contain exactly 64 KiB');
+
   FIdentity := Copy(FCartridgeROM);
   var N := Length(FIdentity);
-  SetLength(FIdentity,N+Length(FBIOS)+1);
-  Move(FBIOS[0],FIdentity[N],Length(FBIOS));
+  SetLength(FIdentity, N + Length(FBIOS) + 1);
+  Move(FBIOS[0], FIdentity[N], Length(FBIOS));
   FIdentity[High(FIdentity)] := Ord(FColor);
   FSnapshotDirectory := FStorage.GameSnapshots(FSystemId, RomName, SnapshotIdentity(FIdentity));
   FSaveFile := FStorage.GameSave(FSystemId, RomName, SnapshotIdentity(FCartridgeROM));
@@ -171,11 +181,11 @@ begin
   if FThread <> nil then
     Exit;
 
-  FThread := TNGPWorker.Create(FCartridgeROM,FBIOS,FIdentity,FStorage,FColor,FSystemId);
-  FThread.InputPorts := LoadCoreInputPorts(FStorage,FSystemId);
+  FThread := TNGPWorker.Create(FCartridgeROM, FBIOS, FIdentity, FStorage, FColor, FSystemId);
+  FThread.InputPorts := LoadCoreInputPorts(FStorage, FSystemId);
   FThread.SaveFile := FSaveFile;
-  FThread.SystemSaveFile:=TPath.Combine(FStorage.SaveRoot,
-    FSystemId+'-system-'+SnapshotIdentity(FBIOS).Substring(0,16)+'.bin');
+  FThread.SystemSaveFile := TPath.Combine(FStorage.SaveRoot,
+    FSystemId + '-system-' + SnapshotIdentity(FBIOS).Substring(0, 16) + '.bin');
   FThread.SnapshotDirectory := FSnapshotDirectory;
   ApplySettings;
   FThread.Start;
@@ -305,8 +315,10 @@ end;
 
 function TNGPCoreAdapter.GetName: string;
 begin
-  if FColor then Result := 'SNK Neo Geo Pocket Color'
-  else Result := 'SNK Neo Geo Pocket';
+  if FColor then
+    Result := 'SNK Neo Geo Pocket Color'
+  else
+    Result := 'SNK Neo Geo Pocket';
 end;
 
 function TNGPCoreAdapter.GetSupportsSnapshots: Boolean;

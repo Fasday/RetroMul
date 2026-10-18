@@ -150,6 +150,7 @@ begin
   begin
     if FConfigObject.CartROM = '' then
       raise EReadError.Create('Select a Saturn ROM cartridge image in Saturn settings');
+
     FCartROM := FStorage.ReadBytes(FConfigObject.CartROM);
     if (Length(FCartROM) <> $100000) and (Length(FCartROM) <> $200000) and (Length(FCartROM) <> $400000) then
       raise EReadError.Create('Saturn ROM cartridge must contain 1, 2 or 4 MiB');
@@ -158,6 +159,7 @@ begin
   begin
     if Stream.Size - Stream.Position <> $80000 then
       raise EReadError.Create('Saturn BIOS must contain exactly 512 KiB');
+
     SetLength(FBIOS, $80000);
     Stream.ReadBuffer(FBIOS[0], Length(FBIOS));
     FIdentity := Copy(FBIOS);
@@ -174,6 +176,7 @@ begin
           BIOSPath := Candidate;
           Break;
         end;
+
         Candidate := TPath.Combine(FStorage.RomFolder, TPath.Combine('saturn', Name));
         if not Candidate.StartsWith('content://', True) and FStorage.Exists(Candidate) then
         begin
@@ -181,6 +184,7 @@ begin
           Break;
         end;
       end;
+
     if BIOSPath = '' then
       FBIOS := LoadBuiltinSaturnBIOS(DefaultSaturnBIOSName(FConfigObject.Region))
     else if BIOSPath.StartsWith('builtin:', True) then
@@ -189,6 +193,7 @@ begin
       FBIOS := FStorage.ReadBytes(BIOSPath);
     if Length(FBIOS) <> $80000 then
       raise EReadError.Create('Saturn BIOS must contain exactly 512 KiB');
+
     FIdentity := FDisc.Identity;
   end;
   FSnapshotDirectory := FStorage.GameSnapshots('saturn', RomName, SnapshotIdentity(FIdentity));

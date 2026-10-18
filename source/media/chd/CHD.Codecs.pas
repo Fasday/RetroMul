@@ -1,6 +1,6 @@
 ﻿unit CHD.Codecs;
 
-// CD codec layout and ECC restoration from libchdr (BSD-3-Clause).
+// CD codec layout and ECC
 
 interface
 
@@ -175,8 +175,8 @@ begin
     begin
       Result[i * 2448] := 0;
       Result[i * 2448 + 11] := 0;
-      for var J := 1 to 10 do
-        Result[i * 2448 + J] := 255;
+      for var j := 1 to 10 do
+        Result[i * 2448 + j] := 255;
       CHDGenerateECC(Result, i * 2448);
     end;
   end;

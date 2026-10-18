@@ -43,7 +43,8 @@ type
   end;
 
   TMemoryAccessKind = (MEMORY_ADDRESS, MEMORY_BYTE, MEMORY_WORD,
-    MEMORY_LONGWORD, MEMORY_LONGWORD_BACKWARDS);
+    MEMORY_LONGWORD, MEMORY_LONGWORD_BACKWARDS,
+    MEMORY_PROGRAM_BYTE, MEMORY_PROGRAM_WORD, MEMORY_PROGRAM_LONG);
 
   TDecodedMemoryAddressMode = record
     Address: Cardinal;
@@ -92,6 +93,7 @@ type
     ResultValue: Cardinal;
     StartingProgramCounter: Cardinal;
     TerminateEarly: Byte;
+    ProgramRead: TMemoryReadCallback;
   end;
 
 const
@@ -578,11 +580,11 @@ procedure ActionUNIMPLEMENTED1(var Stuff: TInstructionContext);
 
 procedure ActionUNIMPLEMENTED2(var Stuff: TInstructionContext);
 
-procedure Clown68000Reset(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks);
+procedure Clown68000Reset(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; ProgramRead: TMemoryReadCallback = nil);
 
 procedure Clown68000Interrupt(var State: TM68kState; Level: Cardinal);
 
-function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal; InterruptVector: Integer = -1): Cardinal;
+function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal; InterruptVector: Integer = -1; ProgramRead: TMemoryReadCallback = nil): Cardinal;
 
 implementation
 
@@ -1073,6 +1075,22 @@ begin
   Result := Value or ReadWord(Stuff, (Add32(Address, 2)));
 end;
 
+function ReadProgramWord(var Stuff: TInstructionContext; Address: Cardinal): Cardinal;
+begin
+  if not Assigned(Stuff.ProgramRead) then
+    Exit(ReadWord(Stuff, Address));
+  if Address and 1 <> 0 then
+    Group0Exception(Stuff, 3, Address, 1);
+  Result := Stuff.ProgramRead(Stuff.Callbacks^.UserData, (Address shr 1) and $7FFFFF,
+    1, 1, Stuff.CyclesDone, Stuff.TerminateEarly);
+end;
+
+function ReadProgramLong(var Stuff: TInstructionContext; Address: Cardinal): Cardinal;
+begin
+  var High := ReadProgramWord(Stuff, Address);
+  Result := (High shl 16) or ReadProgramWord(Stuff, Add32(Address, 2));
+end;
+
 function ReadLongWordBackwards(var Stuff: TInstructionContext; Address: Cardinal): Cardinal;
 begin
   var Value: Cardinal := 0;
@@ -1232,7 +1250,7 @@ begin
 
   if (AddressMode = ADDRESS_MODE_SPECIAL) and (AddressModeRegister = ADDRESS_MODE_REGISTER_SPECIAL_ABSOLUTE_SHORT) then
   begin
-    var ShortAddress := ReadWord(Stuff, State^.ProgramCounter);
+    var ShortAddress := ReadProgramWord(Stuff, State^.ProgramCounter);
     Address := Sub32(ShortAddress and $7FFF, ShortAddress and $8000);
     IncrementProgramCounter(State, 2);
 
@@ -1243,7 +1261,7 @@ begin
   end
   else if (AddressMode = ADDRESS_MODE_SPECIAL) and (AddressModeRegister = ADDRESS_MODE_REGISTER_SPECIAL_ABSOLUTE_LONG) then
   begin
-    Address := ReadLongWord(Stuff, State^.ProgramCounter);
+    Address := ReadProgramLong(Stuff, State^.ProgramCounter);
     IncrementProgramCounter(State, 4);
 
     if IsLongword then
@@ -1323,7 +1341,7 @@ begin
 
     if (AddressMode = ADDRESS_MODE_ADDRESS_REGISTER_INDIRECT_WITH_DISPLACEMENT) or IsPCDisplacement then
     begin
-      var Displacement := ReadWord(Stuff, State^.ProgramCounter);
+      var Displacement := ReadProgramWord(Stuff, State^.ProgramCounter);
       Address := Add32(Address, Sub32(Displacement and $7FFF, Displacement and $8000));
       IncrementProgramCounter(State, 2);
 
@@ -1334,7 +1352,7 @@ begin
     end
     else if (AddressMode = ADDRESS_MODE_ADDRESS_REGISTER_INDIRECT_WITH_INDEX) or IsPCIndex then
     begin
-      var ExtensionWord := ReadWord(Stuff, State^.ProgramCounter);
+      var ExtensionWord := ReadProgramWord(Stuff, State^.ProgramCounter);
       var DisplacementRegister := (ExtensionWord shr 12) and 7;
       var DisplacementRegisterValue: Cardinal;
 
@@ -1359,6 +1377,18 @@ begin
   end;
 
   DecodedMemoryAddressMode.Address := Address;
+  if (AddressMode = ADDRESS_MODE_SPECIAL) and
+    (AddressModeRegister in [ADDRESS_MODE_REGISTER_SPECIAL_IMMEDIATE,
+      ADDRESS_MODE_REGISTER_SPECIAL_PROGRAM_COUNTER_WITH_DISPLACEMENT,
+      ADDRESS_MODE_REGISTER_SPECIAL_PROGRAM_COUNTER_WITH_INDEX]) then
+    case DecodedMemoryAddressMode.AccessKind of
+      MEMORY_BYTE:
+        DecodedMemoryAddressMode.AccessKind := MEMORY_PROGRAM_BYTE;
+      MEMORY_WORD:
+        DecodedMemoryAddressMode.AccessKind := MEMORY_PROGRAM_WORD;
+      MEMORY_LONGWORD:
+        DecodedMemoryAddressMode.AccessKind := MEMORY_PROGRAM_LONG;
+    end;
 end;
 
 procedure DecodeAddressMode(var Stuff: TInstructionContext; var DecodedAddressMode: TDecodedAddressMode; OperationSizeInBytes: Cardinal; AddressMode: Integer; AddressModeRegister: Cardinal);
@@ -1401,6 +1431,13 @@ end;
 function ReadDecodedMemory(var Stuff: TInstructionContext; const Memory: TDecodedMemoryAddressMode): Cardinal;
 begin
   case Memory.AccessKind of
+    MEMORY_PROGRAM_BYTE:
+      Result := (ReadProgramWord(Stuff, Memory.Address and $FFFFFFFE) shr
+        ((1 - Integer(Memory.Address and 1)) * 8)) and $FF;
+    MEMORY_PROGRAM_WORD:
+      Result := ReadProgramWord(Stuff, Memory.Address);
+    MEMORY_PROGRAM_LONG:
+      Result := ReadProgramLong(Stuff, Memory.Address);
     MEMORY_ADDRESS:
       Result := Memory.Address;
     MEMORY_BYTE:
@@ -2419,6 +2456,22 @@ begin
   ActionMOVECommon(Stuff);
 end;
 
+function ReadMOVEMWord(var Stuff: TInstructionContext; Address: Cardinal): Cardinal;
+begin
+  if (Stuff.OpCode.PrimaryAddressMode = ADDRESS_MODE_SPECIAL) and
+    (Stuff.OpCode.PrimaryRegister in [ADDRESS_MODE_REGISTER_SPECIAL_PROGRAM_COUNTER_WITH_DISPLACEMENT,
+      ADDRESS_MODE_REGISTER_SPECIAL_PROGRAM_COUNTER_WITH_INDEX]) then
+    Result := ReadProgramWord(Stuff, Address)
+  else
+    Result := ReadWord(Stuff, Address);
+end;
+
+function ReadMOVEMLong(var Stuff: TInstructionContext; Address: Cardinal): Cardinal;
+begin
+  var High := ReadMOVEMWord(Stuff, Address);
+  Result := (High shl 16) or ReadMOVEMWord(Stuff, Add32(Address, 2));
+end;
+
 procedure WriteMemoryByKind(var Stuff: TInstructionContext; AccessKind: TMemoryAccessKind; Address, Value: Cardinal);
 begin
   var Memory: TDecodedMemoryAddressMode;
@@ -2498,9 +2551,9 @@ begin
       if MemoryToRegister <> 0 then
       begin
         if IsLongword <> 0 then
-          State^.DataRegisters[ItemIndex] := ReadLongWord(Stuff, MemoryAddress)
+          State^.DataRegisters[ItemIndex] := ReadMOVEMLong(Stuff, MemoryAddress)
         else
-          State^.DataRegisters[ItemIndex] := Sub32(ReadWord(Stuff, MemoryAddress) and Sub32(Cardinal(1) shl 15, 1), ReadWord(Stuff, MemoryAddress) and (Cardinal(1) shl 15));
+          State^.DataRegisters[ItemIndex] := Sub32(ReadMOVEMWord(Stuff, MemoryAddress) and Sub32(Cardinal(1) shl 15, 1), ReadMOVEMWord(Stuff, MemoryAddress) and (Cardinal(1) shl 15));
       end
       else
       begin
@@ -2523,9 +2576,9 @@ begin
       if MemoryToRegister <> 0 then
       begin
         if IsLongword <> 0 then
-          State^.AddressRegisters[ItemIndex] := ReadLongWord(Stuff, MemoryAddress)
+          State^.AddressRegisters[ItemIndex] := ReadMOVEMLong(Stuff, MemoryAddress)
         else
-          State^.AddressRegisters[ItemIndex] := Sub32(ReadWord(Stuff, MemoryAddress) and Sub32(Cardinal(1) shl 15, 1), ReadWord(Stuff, MemoryAddress) and (Cardinal(1) shl 15)) and $FFFFFFFF;
+          State^.AddressRegisters[ItemIndex] := Sub32(ReadMOVEMWord(Stuff, MemoryAddress) and Sub32(Cardinal(1) shl 15, 1), ReadMOVEMWord(Stuff, MemoryAddress) and (Cardinal(1) shl 15)) and $FFFFFFFF;
       end
       else
       begin
@@ -3191,12 +3244,13 @@ begin
   Group1Or2Exception(Stuff, 11);
 end;
 
-procedure Clown68000Reset(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks);
+procedure Clown68000Reset(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; ProgramRead: TMemoryReadCallback);
 begin
   var StateRef: PM68kState := @State;
   var Stuff: TInstructionContext := Default(TInstructionContext);
   Stuff.State := StateRef;
   Stuff.Callbacks := @Callbacks;
+  Stuff.ProgramRead := ProgramRead;
   try
     StateRef^.Halted := 0;
     StateRef^.Stopped := 0;
@@ -3204,8 +3258,8 @@ begin
     StateRef^.StatusRegister := Word(StateRef^.StatusRegister and (not STATUS_TRACE));
     StateRef^.StatusRegister := Word(StateRef^.StatusRegister or $0700);
     SetSupervisorMode(StateRef, 1);
-    StateRef^.AddressRegisters[7] := ReadLongWord(Stuff, 0);
-    StateRef^.ProgramCounter := ReadLongWord(Stuff, 4);
+    StateRef^.AddressRegisters[7] := ReadProgramLong(Stuff, 0);
+    StateRef^.ProgramCounter := ReadProgramLong(Stuff, 4);
   except
     on E: ECPUException do
       StateRef^.Halted := 1;
@@ -3219,7 +3273,7 @@ begin
   StateRef^.PendingInterrupt := Byte(Level);
 end;
 
-function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal; InterruptVector: Integer): Cardinal;
+function Clown68000DoCycles(var State: TM68kState; var Callbacks: TM68kReadWriteCallbacks; CyclesToDo: Cardinal; InterruptVector: Integer; ProgramRead: TMemoryReadCallback): Cardinal;
 begin
   var StateRef: PM68kState := @State;
   var CallbacksRef: PM68kReadWriteCallbacks := @Callbacks;
@@ -3231,6 +3285,7 @@ begin
   var Stuff: TInstructionContext := Default(TInstructionContext);
   Stuff.State := StateRef;
   Stuff.Callbacks := CallbacksRef;
+  Stuff.ProgramRead := ProgramRead;
   Stuff.CyclesLeftInInstruction := 0;
   Stuff.CyclesDone := 0;
   Stuff.TerminateEarly := 0;
@@ -3247,7 +3302,7 @@ begin
       Stuff.StartingProgramCounter := StateRef^.ProgramCounter;
       if StateRef^.Stopped = 0 then
       begin
-        Instruction := DecodeOpcode(Stuff.OpCode, ReadWord(Stuff, StateRef^.ProgramCounter));
+        Instruction := DecodeOpcode(Stuff.OpCode, ReadProgramWord(Stuff, StateRef^.ProgramCounter));
         StateRef^.InstructionRegister := Word(Stuff.OpCode.Raw);
         IncrementProgramCounter(StateRef, 2);
         case Instruction of

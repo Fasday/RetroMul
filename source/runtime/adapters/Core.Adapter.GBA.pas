@@ -179,6 +179,7 @@ begin
     if Length(FBIOS) <> 16384 then
       raise EReadError.Create('GBA BIOS must be exactly 16384 bytes');
   end;
+
   Hash := THashSHA2.Create;
   Hash.Update(FData);
   FSavePath := FStorage.GameSave(ROM_SYSTEM_GBA, RomName, Hash.HashAsString);

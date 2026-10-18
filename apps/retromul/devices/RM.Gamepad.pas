@@ -191,6 +191,7 @@ var System: TRomSystem; Device: string;
 begin
   System := TRomSystem.NES; Device := 'pad';
   case FLayout of
+    TScreenGamepadLayout.CPS: System := TRomSystem.CPS1;
     TScreenGamepadLayout.Dendy: Device := 'paddendy';
     TScreenGamepadLayout.Sega:
       begin

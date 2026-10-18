@@ -53,9 +53,11 @@ begin
   for var i := 0 to High(A.Devices) do
     if A.Devices[i] <> B.Devices[i] then
       Exit;
+
   for var i := 0 to High(A.Multitap) do
     if A.Multitap[i] <> B.Multitap[i] then
       Exit;
+
   Result := (A.Expansion = B.Expansion) and (A.FourScore = B.FourScore) and
     (A.LegacyZapper = B.LegacyZapper) and (A.KeyboardEnabled = B.KeyboardEnabled);
 end;
@@ -94,14 +96,17 @@ begin
     try
       if FInitialized and SameInputPorts(FCurrent, Ports) then
         Exit;
+
       if (Worker = nil) or Worker.Suspended then
       begin
         FCurrent := Ports;
         FInitialized := True;
         Exit;
       end;
+
       if Worker.Finished then
         raise EInvalidOpException.Create('Emulation worker is not running');
+
       FRequested := Ports;
       FError := '';
       FDone.ResetEvent;
@@ -114,6 +119,7 @@ begin
     while FDone.WaitFor(50) <> wrSignaled do
       if Worker.Finished then
         raise EInvalidOpException.Create('Emulation stopped before connecting input devices');
+
     FLock.Enter;
     try
       if FError <> '' then
@@ -133,6 +139,7 @@ begin
   try
     if not FPending then
       Exit;
+
     Ports := FRequested;
   finally
     FLock.Leave;

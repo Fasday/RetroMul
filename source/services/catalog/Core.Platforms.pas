@@ -9,7 +9,8 @@ uses
 
 type
   TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
-    SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn, NeoGeoAES, NeoGeoPocket, NeoGeoPocketColor);
+    SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn, NeoGeoAES, NeoGeoPocket, NeoGeoPocketColor,
+    CPS1, CPS2, CPS3);
 
 type
   // Stable system IDs and settings keys preserve existing collections and INI files.
@@ -52,6 +53,12 @@ end;
 class constructor TPlatformRegistry.Create;
 begin
   FItems := TList<TPlatformInfo>.Create;
+  RegisterPlatform(TRomSystem.CPS1, ROM_SYSTEM_CPS1, 'Capcom Play System I', 'CPS-1',
+    'Capcom', 'CPS CPS1 arcade', 'cps1', ['cps1'], [ROM_EXTENSION_ZIP], 'CPS1', 'cps1', 4);
+  RegisterPlatform(TRomSystem.CPS2, ROM_SYSTEM_CPS2, 'Capcom Play System II', 'CPS-2',
+    'Capcom', 'CPS CPS2 arcade', 'cps2', ['cps2'], [ROM_EXTENSION_ZIP], 'CPS2', 'cps2', 4);
+  RegisterPlatform(TRomSystem.CPS3, ROM_SYSTEM_CPS3, 'Capcom Play System III', 'CPS-3',
+    'Capcom', 'CPS CPS3 arcade SIMM No-CD', 'cps3', ['cps3'], [ROM_EXTENSION_ZIP], 'CPS3', 'cps3', 2);
   RegisterPlatform(TRomSystem.GameWatch, ROM_SYSTEM_GW, 'Game && Watch', 'G&&W',
     'Nintendo', 'GW MGW LCD Micro Vs', 'gw', ['gw'], [ROM_EXTENSION_GW, ROM_EXTENSION_MGW, ROM_EXTENSION_ZIP],
     '', 'gw', 2);
@@ -145,9 +152,11 @@ begin
     (Length(Extensions) = 0) or (Ports < 1) or (Ports > 8) or
     (SettingsCoreId = '') then
     raise EArgumentException.Create('Invalid platform: ' + Id);
+
   for var Existing in FItems do
     if (Existing.System = System) or SameText(Existing.Id, Id) then
       raise EArgumentException.Create('Duplicate platform: ' + Id);
+
   var Item: TPlatformInfo;
   Item.System := System;
   Item.Id := Id;
@@ -158,13 +167,13 @@ begin
   Item.SearchTerms := SearchTerms;
   Item.Folder := Folder;
   SetLength(Item.ScanFolders, Length(ScanFolders));
-  for var I := 0 to High(ScanFolders) do
-    Item.ScanFolders[I] := ScanFolders[I];
+  for var i := 0 to High(ScanFolders) do
+    Item.ScanFolders[i] := ScanFolders[i];
   SetLength(Item.Extensions, Length(Extensions));
-  for var I := 0 to High(Extensions) do
-    Item.Extensions[I] := Extensions[I];
+  for var i := 0 to High(Extensions) do
+    Item.Extensions[i] := Extensions[i];
   if not (System in [TRomSystem.SegaCD, TRomSystem.PCECD, TRomSystem.NeoGeoCD,
-    TRomSystem.Saturn]) then
+      TRomSystem.Saturn]) then
     Item.Extensions := Item.Extensions + [ROM_EXTENSION_7Z];
   Item.SettingsProfile := SettingsProfile;
   Item.SettingsCoreId := SettingsCoreId;
@@ -176,8 +185,8 @@ end;
 class function TPlatformRegistry.All: TArray<TPlatformInfo>;
 begin
   SetLength(Result, FItems.Count);
-  for var I := 0 to FItems.Count - 1 do
-    Result[I] := FItems[I].CopyInfo;
+  for var i := 0 to FItems.Count - 1 do
+    Result[i] := FItems[i].CopyInfo;
 end;
 
 class function TPlatformRegistry.Find(const Id: string; out Info: TPlatformInfo): Boolean;
@@ -185,12 +194,14 @@ begin
   // Accept old collection IDs without exposing a second platform.
   if SameText(Id, ROM_SYSTEM_NEOGEOAES) or SameText(Id, 'aes') then
     Exit(Find(TRomSystem.NeoGeo, Info));
+
   for var Item in FItems do
     if SameText(Item.Id, Id) or SameText(Item.Folder, Id) then
     begin
       Info := Item.CopyInfo;
       Exit(True);
     end;
+
   Info := Default(TPlatformInfo);
   Result := False;
 end;
@@ -206,6 +217,7 @@ begin
       Info := Item.CopyInfo;
       Exit(True);
     end;
+
   Info := Default(TPlatformInfo);
   Result := False;
 end;

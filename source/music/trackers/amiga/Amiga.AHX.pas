@@ -653,6 +653,7 @@ begin
     if FSubsongs[i] >= NumPos then
       raise EArgumentException.Create('Invalid AHX subsong');
   end;
+
   SetLength(FPositions, NumPos);
   for var i := 0 to NumPos - 1 do
     for var C := 0 to FChannels - 1 do

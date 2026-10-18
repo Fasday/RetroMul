@@ -39,10 +39,11 @@ begin
   inherited Create;
   if (Channels < 1) or (Channels > 4) then
     raise EArgumentOutOfRangeException.Create('DAC channels');
+
   FSamples := Copy(Samples);
   FChannels := Channels;
-  for var I := 0 to 1 do
-    FDC[I].Configure(44100, 20);
+  for var i := 0 to 1 do
+    FDC[i].Configure(44100, 20);
   Reset;
 end;
 
@@ -53,8 +54,8 @@ begin
     Voices[C] := Default(TZXDACVoice);
     Voices[C].Gain := 1;
   end;
-  for var I := 0 to 1 do
-    FDC[I].Reset;
+  for var i := 0 to 1 do
+    FDC[i].Reset;
 end;
 
 procedure TZXSampleDAC.Sample(out Left, Right: SmallInt);
@@ -69,9 +70,11 @@ begin
       var S := Voices[C].Sample;
       if (S < 0) or (S >= Length(FSamples)) then
         Continue;
+
       var Size := Length(FSamples[S].PCM);
       if Size = 0 then
         Continue;
+
       var Loop := EnsureRange(FSamples[S].Loop, 0, Size);
       if Voices[C].Position >= Size then
       begin
@@ -80,6 +83,7 @@ begin
           Voices[C].Enabled := False;
           Continue;
         end;
+
         Voices[C].Position := Loop + Frac((Voices[C].Position - Loop) / (Size - Loop)) * (Size - Loop);
       end;
       var At := Trunc(Voices[C].Position);

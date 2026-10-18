@@ -19,7 +19,9 @@ type
     {$ENDIF}
   protected
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
+    procedure ButtonActivated; override;
   public
+    class var TouchHapticsEnabled: Boolean;
     destructor Destroy; override;
     procedure AttachToForm(Form: TCommonCustomForm);
     class function PreferredHeight(AvailableWidth, AvailableHeight: Single): Single; static;
@@ -77,8 +79,15 @@ type
 implementation
 
 uses
-  System.SysUtils, System.Math
+  System.SysUtils, System.Math, FMX.Vibrate
   {$IFDEF ANDROID}, RM.TouchInput.Android{$ENDIF};
+
+procedure TVirtualGamepadControl.ButtonActivated;
+begin
+  inherited;
+  if TouchHapticsEnabled then
+    TouchImpact;
+end;
 
 destructor TVirtualGamepadControl.Destroy;
 begin
@@ -374,5 +383,7 @@ begin
   inherited;
 end;
 
-end.
+initialization
+  TVirtualGamepadControl.TouchHapticsEnabled := True;
 
+end.

@@ -46,6 +46,10 @@ type
     Halted: Boolean;
     InterruptMode, EIDelay: Byte;
     IFF2, NMIPending: Byte;
+    // Internal address latch and whether the last operation wrote ALU flags.
+    // POP AF and EX AF,AF' do not count as ALU flag writes (Zilog NMOS).
+    Memptr: Word;
+    Q: Byte;
   end;
 
   TZ80ReadCallback = function(UserData: Pointer; Address: Cardinal): Cardinal;
@@ -77,7 +81,10 @@ procedure Z80Interrupt(var State: TZ80State; AssertInterrupt: Byte);
 
 procedure Z80NonMaskableInterrupt(var State: TZ80State);
 
-function Z80DoInstruction(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks): Cardinal;
+// Optional M1 bus view for encrypted CPUs. Operands and the indexed CB tail
+// retain the normal data bus. HOLD interrupts clear when acknowledged;
+// existing callers retain their original level-sensitive interrupt behavior.
+function Z80DoInstruction(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; OpcodeRead: TZ80ReadCallback = nil; HoldInterrupt: Boolean = False): Cardinal;
 
 implementation
 
@@ -720,13 +727,13 @@ end;
 function MemoryRead(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; Address: Cardinal): Cardinal;
 begin
   State.Cycles := Word(State.Cycles + 3);
-  Result := Cardinal(Callbacks.ReadCallback(Callbacks.UserData, Address));
+  Result := Callbacks.ReadCallback(Callbacks.UserData, Address and $FFFF) and $FF;
 end;
 
 procedure MemoryWrite(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; Address: Cardinal; Data: Cardinal);
 begin
   State.Cycles := Word(State.Cycles + 3);
-  Callbacks.WriteCallback(Callbacks.UserData, Address, Data);
+  Callbacks.WriteCallback(Callbacks.UserData, Address and $FFFF, Data and $FF);
 end;
 
 function InstructionMemoryRead(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks): Cardinal;
@@ -736,11 +743,18 @@ begin
   Result := Data;
 end;
 
-function OpcodeFetch(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks): Cardinal;
+function OpcodeFetch(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; OpcodeRead: TZ80ReadCallback): Cardinal;
 begin
   Inc(State.Cycles);
   State.R := Byte((State.R and $80) or ((State.R + 1) and $7F));
-  Result := InstructionMemoryRead(State, Callbacks);
+  if Assigned(OpcodeRead) then
+  begin
+    Inc(State.Cycles, 3);
+    Result := OpcodeRead(Callbacks.UserData, State.ProgramCounter) and $FF;
+    State.ProgramCounter := (State.ProgramCounter + 1) and $FFFF;
+  end
+  else
+    Result := InstructionMemoryRead(State, Callbacks);
 end;
 
 function MemoryRead16Bit(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; Address: Cardinal): Cardinal;
@@ -925,9 +939,9 @@ begin
   Result := (Integer(Address and $FFFF) + SignedDisplacement) and $FFFF;
 end;
 
-procedure DecodeInstruction(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; var Instruction: TZ80Instruction);
+procedure DecodeInstruction(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; var Instruction: TZ80Instruction; OpcodeRead: TZ80ReadCallback);
 begin
-  var Opcode: Cardinal := OpcodeFetch(State, Callbacks);
+  var Opcode: Cardinal := OpcodeFetch(State, Callbacks, OpcodeRead);
   var Displacement: Cardinal := 0;
 
   Instruction.Metadata := InstructionMetadataLookupNormal[State.RegisterMode][Opcode];
@@ -942,7 +956,7 @@ begin
     CLOWNZ80_OPCODE_CB_PREFIX:
       if State.RegisterMode = CLOWNZ80_REGISTER_MODE_HL then
       begin
-        Opcode := OpcodeFetch(State, Callbacks);
+        Opcode := OpcodeFetch(State, Callbacks, OpcodeRead);
         Instruction.Metadata := InstructionMetadataLookupBits[State.RegisterMode][Opcode];
       end
       else
@@ -954,13 +968,14 @@ begin
           Instruction.Address := RelativeAddress((State.IXH shl 8) or State.IXL, Displacement)
         else
           Instruction.Address := RelativeAddress((State.IYH shl 8) or State.IYL, Displacement);
+        State.Memptr := Word(Instruction.Address);
         Instruction.Metadata := InstructionMetadataLookupBits[CLOWNZ80_REGISTER_MODE_HL][Opcode];
         if Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT then
           Instruction.Metadata := InstructionMetadataLookupBits[State.RegisterMode][Opcode];
       end;
     CLOWNZ80_OPCODE_ED_PREFIX:
       begin
-        Opcode := OpcodeFetch(State, Callbacks);
+        Opcode := OpcodeFetch(State, Callbacks, OpcodeRead);
         Instruction.Metadata := InstructionMetadataLookupMisc[Opcode];
       end;
   end;
@@ -988,9 +1003,15 @@ begin
       CLOWNZ80_OPERAND_HL_INDIRECT:
         Instruction.Address := (Cardinal(State.H) shl 8) or Cardinal(State.L);
       CLOWNZ80_OPERAND_IX_INDIRECT:
-        Instruction.Address := RelativeAddress((State.IXH shl 8) or State.IXL, Displacement);
+        begin
+          Instruction.Address := RelativeAddress((State.IXH shl 8) or State.IXL, Displacement);
+          State.Memptr := Word(Instruction.Address);
+        end;
       CLOWNZ80_OPERAND_IY_INDIRECT:
-        Instruction.Address := RelativeAddress((State.IYH shl 8) or State.IYL, Displacement);
+        begin
+          Instruction.Address := RelativeAddress((State.IYH shl 8) or State.IYL, Displacement);
+          State.Memptr := Word(Instruction.Address);
+        end;
       CLOWNZ80_OPERAND_ADDRESS:
         begin
           Instruction.Address := InstructionMemoryRead(State, Callbacks);
@@ -1029,7 +1050,6 @@ begin
   var HlLowScope214: Cardinal;
   var AHighScope215: Cardinal;
   var ALowScope216: Cardinal;
-  var De: Cardinal;
   State.RegisterMode := Byte(CLOWNZ80_REGISTER_MODE_HL);
 
   case Instruction.Metadata.Opcode of
@@ -1051,6 +1071,7 @@ begin
         if State.B <> 0 then
         begin
           State.ProgramCounter := RelativeAddress(State.ProgramCounter, Instruction.Literal);
+          State.Memptr := State.ProgramCounter;
           State.Cycles := Word(State.Cycles + 5);
         end;
       end;
@@ -1061,12 +1082,14 @@ begin
             Break;
 
           State.ProgramCounter := RelativeAddress(State.ProgramCounter, Instruction.Literal);
+          State.Memptr := State.ProgramCounter;
           State.Cycles := Word(State.Cycles + 5);
         until True;
       end;
     CLOWNZ80_OPCODE_JR_UNCONDITIONAL:
       begin
         State.ProgramCounter := RelativeAddress(State.ProgramCounter, Instruction.Literal);
+        State.Memptr := State.ProgramCounter;
         State.Cycles := Word(State.Cycles + 5);
       end;
     CLOWNZ80_OPCODE_LD_8_BIT, CLOWNZ80_OPCODE_LD_16_BIT:
@@ -1074,6 +1097,17 @@ begin
         var SourceValue := ReadOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[0]);
         ResultValue := SourceValue;
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
+        if Instruction.Metadata.Opcode = CLOWNZ80_OPCODE_LD_16_BIT then
+        begin
+          if CLOWNZ80_OPERAND_ADDRESS in [Instruction.Metadata.Operands[0], Instruction.Metadata.Operands[1]] then
+            State.Memptr := Word((Instruction.Address + 1) and $FFFF);
+        end
+        else if (Instruction.Metadata.Operands[0] in [CLOWNZ80_OPERAND_BC_INDIRECT,
+            CLOWNZ80_OPERAND_DE_INDIRECT, CLOWNZ80_OPERAND_ADDRESS]) then
+          State.Memptr := Word((Instruction.Address + 1) and $FFFF)
+        else if (Instruction.Metadata.Operands[1] in [CLOWNZ80_OPERAND_BC_INDIRECT,
+            CLOWNZ80_OPERAND_DE_INDIRECT, CLOWNZ80_OPERAND_ADDRESS]) then
+          State.Memptr := (Word(State.A) shl 8) or Word((Instruction.Address + 1) and $FF);
       end;
     CLOWNZ80_OPCODE_ADD_HL:
       begin
@@ -1084,6 +1118,8 @@ begin
         State.F := Byte(State.F and ((FLAG_MASK_SIGN or FLAG_MASK_ZERO) or FLAG_MASK_PARITY_OVERFLOW));
         State.F := Byte(State.F or ((ResultValueWithCarry16bit shr (16 - FLAG_BIT_CARRY)) and Cardinal(FLAG_MASK_CARRY)));
         State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (12 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
+        State.F := State.F or Byte((ResultValue shr 8) and $28);
+        State.Memptr := Word((DestinationValue + 1) and $FFFF);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         State.Cycles := Word(State.Cycles + 7);
       end;
@@ -1113,6 +1149,7 @@ begin
           State.F := State.F or FLAG_MASK_ZERO;
         State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
         State.F := Byte(State.F or ((((not (SourceValue xor DestinationValue)) and (SourceValue xor ResultValue)) shr (7 - FLAG_BIT_PARITY_OVERFLOW)) and Cardinal(FLAG_MASK_PARITY_OVERFLOW)));
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         if (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or
           (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT) or
@@ -1132,6 +1169,7 @@ begin
         State.F := Byte(State.F or ((((not (SourceValue xor DestinationValue)) and (SourceValue xor ResultValue)) shr (7 - FLAG_BIT_PARITY_OVERFLOW)) and Cardinal(FLAG_MASK_PARITY_OVERFLOW)));
         State.F := Byte(State.F xor FLAG_MASK_HALF_CARRY);
         State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         if (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or
           (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT) or
@@ -1148,6 +1186,7 @@ begin
         State.F := Byte(State.F and ((FLAG_MASK_SIGN or FLAG_MASK_ZERO) or FLAG_MASK_PARITY_OVERFLOW));
         if Carry <> 0 then
           State.F := State.F or FLAG_MASK_CARRY;
+        State.F := State.F or (State.A and $28);
       end;
     CLOWNZ80_OPCODE_RRCA:
       begin
@@ -1158,6 +1197,7 @@ begin
         State.F := Byte(State.F and ((FLAG_MASK_SIGN or FLAG_MASK_ZERO) or FLAG_MASK_PARITY_OVERFLOW));
         if Carry <> 0 then
           State.F := State.F or FLAG_MASK_CARRY;
+        State.F := State.F or (State.A and $28);
       end;
     CLOWNZ80_OPCODE_RLA:
       begin
@@ -1169,6 +1209,7 @@ begin
         State.F := State.F and (FLAG_MASK_SIGN or FLAG_MASK_ZERO or FLAG_MASK_PARITY_OVERFLOW);
         if Carry <> 0 then
           State.F := State.F or FLAG_MASK_CARRY;
+        State.F := State.F or (State.A and $28);
       end;
     CLOWNZ80_OPCODE_RRA:
       begin
@@ -1179,6 +1220,7 @@ begin
         State.F := Byte(State.F and ((FLAG_MASK_SIGN or FLAG_MASK_ZERO) or FLAG_MASK_PARITY_OVERFLOW));
         if Carry <> 0 then
           State.F := State.F or FLAG_MASK_CARRY;
+        State.F := State.F or (State.A and $28);
       end;
     CLOWNZ80_OPCODE_DAA:
       begin
@@ -1188,9 +1230,9 @@ begin
         CorrectionFactor := CorrectionFactor or Cardinal((State.F and FLAG_MASK_HALF_CARRY) shl (4 - FLAG_BIT_HALF_CARRY));
         CorrectionFactor := (CorrectionFactor shr 2) or (CorrectionFactor shr 3);
         if Integer(State.F and FLAG_MASK_ADD_SUBTRACT) <> 0 then
-          State.A := Byte(State.A - CorrectionFactor)
+          State.A := Byte(Sub32(State.A, CorrectionFactor) and $FF)
         else
-          State.A := Byte(State.A + CorrectionFactor);
+          State.A := Byte((State.A + CorrectionFactor) and $FF);
         State.A := Byte(State.A and $FF);
         State.F := Byte(State.F and FLAG_MASK_ADD_SUBTRACT);
         State.F := Byte(State.F or (ArithmeticShiftRight(State.A, (7 - FLAG_BIT_SIGN)) and FLAG_MASK_SIGN));
@@ -1199,24 +1241,37 @@ begin
         if ComputeParity(State.A) <> 0 then
           State.F := State.F or FLAG_MASK_PARITY_OVERFLOW;
         State.F := Byte(State.F or ((CorrectionFactor shr (6 - FLAG_BIT_CARRY)) and Cardinal(FLAG_MASK_CARRY)));
+        State.F := State.F or (State.A and $28);
       end;
     CLOWNZ80_OPCODE_CPL:
       begin
         State.A := not State.A;
         State.A := Byte(State.A and $FF);
-        State.F := Byte(State.F or (FLAG_MASK_HALF_CARRY or FLAG_MASK_ADD_SUBTRACT));
+        State.F := (State.F and $C5) or (State.A and $28) or FLAG_MASK_HALF_CARRY or FLAG_MASK_ADD_SUBTRACT;
       end;
     CLOWNZ80_OPCODE_SCF:
       begin
+        // Zilog NMOS: a preceding ALU flag write replaces F3/F5;
+        // otherwise SCF/CCF OR the old flags with A. Prefixes clear Q.
+        var XY := State.A and $28;
+        if State.Q = 0 then
+          XY := XY or (State.F and $28);
         State.F := Byte(State.F and ((FLAG_MASK_SIGN or FLAG_MASK_ZERO) or FLAG_MASK_PARITY_OVERFLOW));
         State.F := Byte(State.F or FLAG_MASK_CARRY);
+        State.F := (State.F and $D7) or XY;
       end;
     CLOWNZ80_OPCODE_CCF:
       begin
+        // Zilog NMOS: a preceding ALU flag write replaces F3/F5;
+        // otherwise SCF/CCF OR the old flags with A. Prefixes clear Q.
+        var XY := State.A and $28;
+        if State.Q = 0 then
+          XY := XY or (State.F and $28);
         State.F := Byte(State.F and (not (FLAG_MASK_ADD_SUBTRACT or FLAG_MASK_HALF_CARRY)));
         if (State.F and FLAG_MASK_CARRY) <> 0 then
           State.F := State.F or FLAG_MASK_HALF_CARRY;
         State.F := Byte(State.F xor FLAG_MASK_CARRY);
+        State.F := (State.F and $D7) or XY;
       end;
     CLOWNZ80_OPCODE_HALT:
       State.Halted := True;
@@ -1234,6 +1289,7 @@ begin
         State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
         State.F := Byte(State.F or ((((not (SourceValue xor DestinationValue)) and (SourceValue xor ResultValue)) shr (7 - FLAG_BIT_PARITY_OVERFLOW)) and Cardinal(FLAG_MASK_PARITY_OVERFLOW)));
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_ADC_A:
       begin
@@ -1249,6 +1305,7 @@ begin
         State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
         State.F := Byte(State.F or ((((not (SourceValue xor DestinationValue)) and (SourceValue xor ResultValue)) shr (7 - FLAG_BIT_PARITY_OVERFLOW)) and Cardinal(FLAG_MASK_PARITY_OVERFLOW)));
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_SUB:
       begin
@@ -1267,6 +1324,7 @@ begin
         State.F := Byte(State.F xor FLAG_MASK_HALF_CARRY);
         State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_SBC_A:
       begin
@@ -1285,6 +1343,7 @@ begin
         State.F := Byte(State.F xor FLAG_MASK_HALF_CARRY);
         State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_AND:
       begin
@@ -1299,6 +1358,7 @@ begin
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_XOR:
       begin
@@ -1312,6 +1372,7 @@ begin
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_OR:
       begin
@@ -1325,6 +1386,7 @@ begin
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_CP:
       begin
@@ -1342,12 +1404,13 @@ begin
         State.F := Byte(State.F or ((((not (SourceValue xor DestinationValue)) and (SourceValue xor ResultValue)) shr (7 - FLAG_BIT_PARITY_OVERFLOW)) and Cardinal(FLAG_MASK_PARITY_OVERFLOW)));
         State.F := Byte(State.F xor FLAG_MASK_HALF_CARRY);
         State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
+        State.F := State.F or Byte((not SourceValue) and $28);
       end;
     CLOWNZ80_OPCODE_POP:
       begin
         ResultValue := MemoryRead16Bit(State, Callbacks, State.StackPointer);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
-        State.StackPointer := Word(State.StackPointer + 2);
+        State.StackPointer := Word((Cardinal(State.StackPointer) + 2) and $FFFF);
         State.StackPointer := Word(State.StackPointer and $FFFF);
       end;
     CLOWNZ80_OPCODE_RET_CONDITIONAL:
@@ -1358,13 +1421,15 @@ begin
             Break;
 
           State.ProgramCounter := Word(MemoryRead16Bit(State, Callbacks, State.StackPointer));
-          State.StackPointer := Word(State.StackPointer + 2);
+          State.Memptr := State.ProgramCounter;
+          State.StackPointer := Word((Cardinal(State.StackPointer) + 2) and $FFFF);
           State.StackPointer := Word(State.StackPointer and $FFFF);
         until True;
       end;
     CLOWNZ80_OPCODE_RET_UNCONDITIONAL, CLOWNZ80_OPCODE_RETN, CLOWNZ80_OPCODE_RETI:
       begin
         State.ProgramCounter := Word(MemoryRead16Bit(State, Callbacks, State.StackPointer));
+        State.Memptr := State.ProgramCounter;
         State.StackPointer := Word((Cardinal(State.StackPointer) + 2) and $FFFF);
         if Instruction.Metadata.Opcode <> CLOWNZ80_OPCODE_RET_UNCONDITIONAL then
           State.InterruptsEnabled := State.IFF2;
@@ -1398,6 +1463,7 @@ begin
       end;
     CLOWNZ80_OPCODE_JP_CONDITIONAL:
       begin
+        State.Memptr := Word(Instruction.Literal);
         repeat
           if not EvaluateCondition(State.F, Instruction.Metadata.Condition) then
             Break;
@@ -1410,6 +1476,8 @@ begin
       begin
         var SourceValue: Cardinal := ReadOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[0]);
         State.ProgramCounter := Word(SourceValue);
+        if Instruction.Metadata.Opcode = CLOWNZ80_OPCODE_JP_UNCONDITIONAL then
+          State.Memptr := State.ProgramCounter;
       end;
     CLOWNZ80_OPCODE_CB_PREFIX, CLOWNZ80_OPCODE_ED_PREFIX:
       begin
@@ -1426,6 +1494,10 @@ begin
     CLOWNZ80_OPCODE_OUT, CLOWNZ80_OPCODE_IN:
       begin
         var Port := (Cardinal(State.A) shl 8) or ReadOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[0]);
+        if Instruction.Metadata.Opcode = CLOWNZ80_OPCODE_OUT then
+          State.Memptr := Word((Port and $FF00) or ((Port + 1) and $FF))
+        else
+          State.Memptr := Word((Port + 1) and $FFFF);
         if Instruction.Metadata.Opcode = CLOWNZ80_OPCODE_OUT then
         begin
           if Assigned(Callbacks.PortWriteCallback) then
@@ -1446,6 +1518,7 @@ begin
         ResultValue := MemoryRead16Bit(State, Callbacks, State.StackPointer);
         MemoryWrite16Bit(State, Callbacks, State.StackPointer, DestinationValue);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
+        State.Memptr := Word(ResultValue);
       end;
     CLOWNZ80_OPCODE_EX_DE_HL:
       begin
@@ -1479,6 +1552,7 @@ begin
       end;
     CLOWNZ80_OPCODE_CALL_CONDITIONAL:
       begin
+        State.Memptr := Word(Instruction.Literal);
         repeat
           if not EvaluateCondition(State.F, Instruction.Metadata.Condition) then
             Break;
@@ -1493,6 +1567,7 @@ begin
       end;
     CLOWNZ80_OPCODE_CALL_UNCONDITIONAL:
       begin
+        State.Memptr := Word(Instruction.Literal);
         State.Cycles := Word(State.Cycles + 1);
         State.StackPointer := (State.StackPointer + $FFFF) and $FFFF;
         MemoryWrite(State, Callbacks, State.StackPointer, ArithmeticShiftRight(State.ProgramCounter, 8));
@@ -1508,6 +1583,7 @@ begin
         State.StackPointer := (State.StackPointer + $FFFF) and $FFFF;
         MemoryWrite(State, Callbacks, State.StackPointer, (State.ProgramCounter and $FF));
         State.ProgramCounter := Word(Instruction.Metadata.EmbeddedLiteral);
+        State.Memptr := State.ProgramCounter;
       end;
     CLOWNZ80_OPCODE_RLC:
       begin
@@ -1524,6 +1600,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_ZERO);
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp357 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp356 := Ord((Temp357 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1544,6 +1621,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_ZERO);
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp363 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp362 := Ord((Temp363 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1565,6 +1643,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_ZERO);
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp369 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp368 := Ord((Temp369 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1586,6 +1665,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_ZERO);
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp375 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp374 := Ord((Temp375 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1605,6 +1685,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         if Carry <> 0 then
           State.F := Byte(State.F or FLAG_MASK_CARRY);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp381 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp380 := Ord((Temp381 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1624,6 +1705,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         if Carry <> 0 then
           State.F := Byte(State.F or FLAG_MASK_CARRY);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp387 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp386 := Ord((Temp387 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1643,6 +1725,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         if Carry <> 0 then
           State.F := Byte(State.F or FLAG_MASK_CARRY);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp393 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp392 := Ord((Temp393 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1662,6 +1745,7 @@ begin
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         if Carry <> 0 then
           State.F := Byte(State.F or FLAG_MASK_CARRY);
+        State.F := State.F or Byte(ResultValue and $28);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         var Temp399 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp398 := Ord((Temp399 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
@@ -1676,6 +1760,12 @@ begin
         State.F := Byte(State.F or FLAG_MASK_HALF_CARRY);
         if (Instruction.Metadata.EmbeddedLiteral = $80) and (Integer(State.F and FLAG_MASK_ZERO) = 0) then
           State.F := Byte(State.F or FLAG_MASK_SIGN);
+        if (Instruction.DoublePrefixMode <> 0) or
+          (Instruction.Metadata.Operands[1] in [CLOWNZ80_OPERAND_HL_INDIRECT,
+            CLOWNZ80_OPERAND_IX_INDIRECT, CLOWNZ80_OPERAND_IY_INDIRECT]) then
+          State.F := State.F or Byte((State.Memptr shr 8) and $28)
+        else
+          State.F := State.F or Byte(DestinationValue and $28);
         var Temp404 := Ord((Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_HL_INDIRECT) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IX_INDIRECT));
         var Temp403 := Ord((Temp404 <> 0) or (Instruction.Metadata.Operands[1] = CLOWNZ80_OPERAND_IY_INDIRECT));
         State.Cycles := Word(State.Cycles + Temp403);
@@ -1701,6 +1791,7 @@ begin
     CLOWNZ80_OPCODE_IN_REGISTER, CLOWNZ80_OPCODE_IN_NO_REGISTER, CLOWNZ80_OPCODE_OUT_REGISTER, CLOWNZ80_OPCODE_OUT_NO_REGISTER:
       begin
         var Port := (Cardinal(State.B) shl 8) or State.C;
+        State.Memptr := Word((Port + 1) and $FFFF);
         var Reg := DECODE_REGISTERS[(Instruction.Metadata.EmbeddedLiteral shr 3) and 7];
         if Instruction.Metadata.Opcode in [CLOWNZ80_OPCODE_OUT_REGISTER, CLOWNZ80_OPCODE_OUT_NO_REGISTER] then
         begin
@@ -1746,6 +1837,8 @@ begin
         State.F := Byte(State.F or ((ResultValueWithCarry16bit shr (16 - FLAG_BIT_CARRY)) and Cardinal(FLAG_MASK_CARRY)));
         State.F := Byte(State.F xor FLAG_MASK_HALF_CARRY);
         State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
+        State.F := State.F or Byte((ResultValue shr 8) and $28);
+        State.Memptr := Word((DestinationValue + 1) and $FFFF);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         State.Cycles := Word(State.Cycles + 7);
       end;
@@ -1762,6 +1855,8 @@ begin
         State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (12 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
         State.F := Byte(State.F or ((((not (SourceValue xor DestinationValue)) and (SourceValue xor ResultValue)) shr (15 - FLAG_BIT_PARITY_OVERFLOW)) and Cardinal(FLAG_MASK_PARITY_OVERFLOW)));
         State.F := Byte(State.F or ((ResultValueWithCarry16bit shr (16 - FLAG_BIT_CARRY)) and Cardinal(FLAG_MASK_CARRY)));
+        State.F := State.F or Byte((ResultValue shr 8) and $28);
+        State.Memptr := Word((DestinationValue + 1) and $FFFF);
         WriteOperand(State, Callbacks, Instruction, Instruction.Metadata.Operands[1], ResultValue);
         State.Cycles := Word(State.Cycles + 7);
       end;
@@ -1782,6 +1877,7 @@ begin
         State.F := Byte(State.F xor FLAG_MASK_HALF_CARRY);
         State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
       end;
     CLOWNZ80_OPCODE_IM:
       State.InterruptMode := Instruction.Metadata.EmbeddedLiteral;
@@ -1837,6 +1933,8 @@ begin
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
+        State.Memptr := Word((((Cardinal(State.H) shl 8) or State.L) + 1) and $FFFF);
       end;
     CLOWNZ80_OPCODE_RLD:
       begin
@@ -1856,189 +1954,74 @@ begin
         if ComputeParity(ResultValue) <> 0 then
           State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
         State.A := Byte(ResultValue);
+        State.F := State.F or Byte(ResultValue and $28);
+        State.Memptr := Word((((Cardinal(State.H) shl 8) or State.L) + 1) and $FFFF);
       end;
-    CLOWNZ80_OPCODE_LDI:
+    CLOWNZ80_OPCODE_LDI, CLOWNZ80_OPCODE_LDD, CLOWNZ80_OPCODE_LDIR, CLOWNZ80_OPCODE_LDDR:
       begin
-        De := (Cardinal(State.D) shl 8) or Cardinal(State.E);
-        var HlScope217 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        MemoryWrite(State, Callbacks, De, MemoryRead(State, Callbacks, HlScope217));
-        State.L := (State.L + 1) and $FF;
-        if State.L = 0 then
-          State.H := (State.H + 1) and $FF;
-        State.E := (State.E + 1) and $FF;
-        if State.E = 0 then
-          State.D := (State.D + 1) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and ((FLAG_MASK_CARRY or FLAG_MASK_ZERO) or FLAG_MASK_SIGN));
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.Cycles := Word(State.Cycles + 2);
-      end;
-    CLOWNZ80_OPCODE_LDD:
-      begin
-        var DeScope218 := (Cardinal(State.D) shl 8) or Cardinal(State.E);
-        var HlScope219 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        MemoryWrite(State, Callbacks, DeScope218, MemoryRead(State, Callbacks, HlScope219));
-        State.L := (State.L + $FF) and $FF;
-        if State.L = $FF then
-          State.H := (State.H + $FF) and $FF;
-        State.E := (State.E + $FF) and $FF;
-        if State.E = $FF then
-          State.D := (State.D + $FF) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and ((FLAG_MASK_CARRY or FLAG_MASK_ZERO) or FLAG_MASK_SIGN));
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.Cycles := Word(State.Cycles + 2);
-      end;
-    CLOWNZ80_OPCODE_LDIR:
-      begin
-        var DeScope220 := (Cardinal(State.D) shl 8) or Cardinal(State.E);
-        var HlScope221 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        MemoryWrite(State, Callbacks, DeScope220, MemoryRead(State, Callbacks, HlScope221));
-        State.L := (State.L + 1) and $FF;
-        if State.L = 0 then
-          State.H := (State.H + 1) and $FF;
-        State.E := (State.E + 1) and $FF;
-        if State.E = 0 then
-          State.D := (State.D + 1) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and ((FLAG_MASK_CARRY or FLAG_MASK_ZERO) or FLAG_MASK_SIGN));
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.Cycles := Word(State.Cycles + 2);
-        if Integer(State.F and FLAG_MASK_PARITY_OVERFLOW) <> 0 then
+        var Delta: Integer := 1;
+        if Instruction.Metadata.Opcode in [CLOWNZ80_OPCODE_LDD, CLOWNZ80_OPCODE_LDDR] then
+          Delta := -1;
+        var HLAddress := (Cardinal(State.H) shl 8) or State.L;
+        var DEAddress := (Cardinal(State.D) shl 8) or State.E;
+        var Data := MemoryRead(State, Callbacks, HLAddress);
+        MemoryWrite(State, Callbacks, DEAddress, Data);
+        HLAddress := (Integer(HLAddress) + $10000 + Delta) and $FFFF;
+        DEAddress := (Integer(DEAddress) + $10000 + Delta) and $FFFF;
+        State.H := Byte(HLAddress shr 8);
+        State.L := Byte(HLAddress and $FF);
+        State.D := Byte(DEAddress shr 8);
+        State.E := Byte(DEAddress and $FF);
+        var BC := (((Cardinal(State.B) shl 8) or State.C) + $FFFF) and $FFFF;
+        State.B := Byte(BC shr 8);
+        State.C := Byte(BC and $FF);
+        var Sum := (Data + State.A) and $FF;
+        State.F := (State.F and $C1) or Byte((Sum and 8) or ((Sum and 2) shl 4));
+        if BC <> 0 then
+          State.F := State.F or FLAG_MASK_PARITY_OVERFLOW;
+        Inc(State.Cycles, 2);
+        if (BC <> 0) and (Instruction.Metadata.Opcode in [CLOWNZ80_OPCODE_LDIR, CLOWNZ80_OPCODE_LDDR]) then
         begin
-          State.Cycles := Word(State.Cycles + 5);
-          State.ProgramCounter := (State.ProgramCounter + $FFFE) and $FFFF;
+          Inc(State.Cycles, 5);
+          State.ProgramCounter := (Cardinal(State.ProgramCounter) + $FFFE) and $FFFF;
+          State.Memptr := (Cardinal(State.ProgramCounter) + 1) and $FFFF;
+
+          // The extra repeat cycle places bits 11/13 of the opcode PC in F3/F5.
+          State.F := (State.F and $D7) or Byte((State.ProgramCounter shr 8) and $28);
         end;
       end;
-    CLOWNZ80_OPCODE_LDDR:
+    CLOWNZ80_OPCODE_CPI, CLOWNZ80_OPCODE_CPD, CLOWNZ80_OPCODE_CPIR, CLOWNZ80_OPCODE_CPDR:
       begin
-        var DeScope222 := (Cardinal(State.D) shl 8) or Cardinal(State.E);
-        var HlScope223 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        MemoryWrite(State, Callbacks, DeScope222, MemoryRead(State, Callbacks, HlScope223));
-        State.L := (State.L + $FF) and $FF;
-        if State.L = $FF then
-          State.H := (State.H + $FF) and $FF;
-        State.E := (State.E + $FF) and $FF;
-        if State.E = $FF then
-          State.D := (State.D + $FF) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and ((FLAG_MASK_CARRY or FLAG_MASK_ZERO) or FLAG_MASK_SIGN));
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.Cycles := Word(State.Cycles + 2);
-        if Integer(State.F and FLAG_MASK_PARITY_OVERFLOW) <> 0 then
+        var Delta: Integer := 1;
+        if Instruction.Metadata.Opcode in [CLOWNZ80_OPCODE_CPD, CLOWNZ80_OPCODE_CPDR] then
+          Delta := -1;
+        var HLAddress := (Cardinal(State.H) shl 8) or State.L;
+        var Data := MemoryRead(State, Callbacks, HLAddress);
+        var Difference := (Integer(State.A) - Integer(Data)) and $FF;
+        var HalfCarry := (State.A xor Data xor Cardinal(Difference)) and $10;
+        HLAddress := (Integer(HLAddress) + $10000 + Delta) and $FFFF;
+        State.H := Byte(HLAddress shr 8);
+        State.L := Byte(HLAddress and $FF);
+        var BC := (((Cardinal(State.B) shl 8) or State.C) + $FFFF) and $FFFF;
+        State.B := Byte(BC shr 8);
+        State.C := Byte(BC and $FF);
+        State.F := (State.F and FLAG_MASK_CARRY) or FLAG_MASK_ADD_SUBTRACT or
+          Byte((Difference and $80) or Integer(HalfCarry));
+        if Difference = 0 then
+          State.F := State.F or FLAG_MASK_ZERO;
+        if BC <> 0 then
+          State.F := State.F or FLAG_MASK_PARITY_OVERFLOW;
+        var Adjusted := (Difference - Integer(HalfCarry shr 4)) and $FF;
+        State.F := State.F or Byte((Adjusted and 8) or ((Adjusted and 2) shl 4));
+        State.Memptr := (Integer(State.Memptr) + $10000 + Delta) and $FFFF;
+        Inc(State.Cycles, 5);
+        if (BC <> 0) and (Difference <> 0) and
+          (Instruction.Metadata.Opcode in [CLOWNZ80_OPCODE_CPIR, CLOWNZ80_OPCODE_CPDR]) then
         begin
-          State.Cycles := Word(State.Cycles + 5);
-          State.ProgramCounter := (State.ProgramCounter + $FFFE) and $FFFF;
-        end;
-      end;
-    CLOWNZ80_OPCODE_CPI:
-      begin
-        var HlScope224 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        var SourceValue: Cardinal := MemoryRead(State, Callbacks, HlScope224);
-        DestinationValue := Cardinal(State.A);
-        ResultValue := Sub32(DestinationValue, SourceValue);
-        State.L := (State.L + 1) and $FF;
-        if State.L = 0 then
-          State.H := (State.H + 1) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and FLAG_MASK_CARRY);
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.F := Byte(State.F or ((ResultValue shr (7 - FLAG_BIT_SIGN)) and Cardinal(FLAG_MASK_SIGN)));
-        if ResultValue = 0 then
-          State.F := Byte(State.F or FLAG_MASK_ZERO);
-        State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
-        State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
-        State.Cycles := Word(State.Cycles + 2);
-      end;
-    CLOWNZ80_OPCODE_CPD:
-      begin
-        var HlScope225 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        var SourceValue: Cardinal := MemoryRead(State, Callbacks, HlScope225);
-        DestinationValue := Cardinal(State.A);
-        ResultValue := Sub32(DestinationValue, SourceValue);
-        State.L := (State.L + $FF) and $FF;
-        if State.L = $FF then
-          State.H := (State.H + $FF) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and FLAG_MASK_CARRY);
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.F := Byte(State.F or ((ResultValue shr (7 - FLAG_BIT_SIGN)) and Cardinal(FLAG_MASK_SIGN)));
-        if ResultValue = 0 then
-          State.F := Byte(State.F or FLAG_MASK_ZERO);
-        State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
-        State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
-        State.Cycles := Word(State.Cycles + 2);
-      end;
-    CLOWNZ80_OPCODE_CPIR:
-      begin
-        var HlScope226 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        var SourceValue: Cardinal := MemoryRead(State, Callbacks, HlScope226);
-        DestinationValue := Cardinal(State.A);
-        ResultValue := Sub32(DestinationValue, SourceValue);
-        State.L := (State.L + 1) and $FF;
-        if State.L = 0 then
-          State.H := (State.H + 1) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and FLAG_MASK_CARRY);
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.F := Byte(State.F or ((ResultValue shr (7 - FLAG_BIT_SIGN)) and Cardinal(FLAG_MASK_SIGN)));
-        if ResultValue = 0 then
-          State.F := Byte(State.F or FLAG_MASK_ZERO);
-        State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
-        State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
-        State.Cycles := Word(State.Cycles + 2);
-        if (Integer(State.F and FLAG_MASK_PARITY_OVERFLOW) <> 0) and (Integer(State.F and FLAG_MASK_ZERO) = 0) then
-        begin
-          State.Cycles := Word(State.Cycles + 5);
-          State.ProgramCounter := (State.ProgramCounter + $FFFE) and $FFFF;
-        end;
-      end;
-    CLOWNZ80_OPCODE_CPDR:
-      begin
-        var HlScope227 := (Cardinal(State.H) shl 8) or Cardinal(State.L);
-        var SourceValue: Cardinal := MemoryRead(State, Callbacks, HlScope227);
-        DestinationValue := Cardinal(State.A);
-        ResultValue := Sub32(DestinationValue, SourceValue);
-        State.L := (State.L + $FF) and $FF;
-        if State.L = $FF then
-          State.H := (State.H + $FF) and $FF;
-        State.C := (State.C + $FF) and $FF;
-        if State.C = $FF then
-          State.B := (State.B + $FF) and $FF;
-        State.F := Byte(State.F and FLAG_MASK_CARRY);
-        if (State.B or State.C) <> 0 then
-          State.F := Byte(State.F or FLAG_MASK_PARITY_OVERFLOW);
-        State.F := Byte(State.F or ((ResultValue shr (7 - FLAG_BIT_SIGN)) and Cardinal(FLAG_MASK_SIGN)));
-        if ResultValue = 0 then
-          State.F := Byte(State.F or FLAG_MASK_ZERO);
-        State.F := Byte(State.F or ((((SourceValue xor DestinationValue) xor ResultValue) shr (4 - FLAG_BIT_HALF_CARRY)) and Cardinal(FLAG_MASK_HALF_CARRY)));
-        State.F := Byte(State.F or FLAG_MASK_ADD_SUBTRACT);
-        State.Cycles := Word(State.Cycles + 2);
-        if (Integer(State.F and FLAG_MASK_PARITY_OVERFLOW) <> 0) and (Integer(State.F and FLAG_MASK_ZERO) = 0) then
-        begin
-          State.Cycles := Word(State.Cycles + 5);
-          State.ProgramCounter := (State.ProgramCounter + $FFFE) and $FFFF;
+          Inc(State.Cycles, 5);
+          State.ProgramCounter := (Cardinal(State.ProgramCounter) + $FFFE) and $FFFF;
+          State.Memptr := (Cardinal(State.ProgramCounter) + 1) and $FFFF;
+          State.F := (State.F and $D7) or Byte((State.ProgramCounter shr 8) and $28);
         end;
       end;
     CLOWNZ80_OPCODE_INI, CLOWNZ80_OPCODE_IND, CLOWNZ80_OPCODE_INIR, CLOWNZ80_OPCODE_INDR, CLOWNZ80_OPCODE_OUTI, CLOWNZ80_OPCODE_OUTD, CLOWNZ80_OPCODE_OTIR, CLOWNZ80_OPCODE_OTDR:
@@ -2059,7 +2042,10 @@ begin
         end
         else
           Data := MemoryRead(State, Callbacks, Address);
+        State.Memptr := (Integer(Port) + $10000 + Delta) and $FFFF;
         State.B := (Integer(State.B) + 255) and 255;
+        if not Input then
+          State.Memptr := (Integer((Cardinal(State.B) shl 8) or State.C) + $10000 + Delta) and $FFFF;
         Address := (Integer(Address) + 65536 + Delta) and $FFFF;
         State.H := Address shr 8;
         State.L := Address and 255;
@@ -2086,9 +2072,50 @@ begin
         begin
           Inc(State.Cycles, 5);
           State.ProgramCounter := (Integer(State.ProgramCounter) + $FFFE) and $FFFF;
+          State.Memptr := (Cardinal(State.ProgramCounter) + 1) and $FFFF;
+          State.F := (State.F and $D7) or Byte((State.ProgramCounter shr 8) and $28);
+
+          // Repeat microcycles change H/PV as well as F3/F5. These are visible
+          // to interrupts and to self-modifying blocks which end with a NOP.
+          var ParityOperand: Integer;
+          if (State.F and FLAG_MASK_CARRY) <> 0 then
+          begin
+            State.F := State.F and $EF;
+            if (Data and $80) <> 0 then
+            begin
+              ParityOperand := (Integer(State.B) - 1) and 7;
+              if (State.B and $0F) = 0 then
+                State.F := State.F or FLAG_MASK_HALF_CARRY;
+            end
+            else
+            begin
+              ParityOperand := (Integer(State.B) + 1) and 7;
+              if (State.B and $0F) = $0F then
+                State.F := State.F or FLAG_MASK_HALF_CARRY;
+            end;
+          end
+          else
+            ParityOperand := State.B and 7;
+          if ComputeParity(ParityOperand) = 0 then
+            State.F := State.F xor FLAG_MASK_PARITY_OVERFLOW;
         end;
       end;
   end;
+  State.Q := Ord(Instruction.Metadata.Opcode in [
+      CLOWNZ80_OPCODE_ADD_HL, CLOWNZ80_OPCODE_INC_8_BIT, CLOWNZ80_OPCODE_DEC_8_BIT, CLOWNZ80_OPCODE_RLCA,
+      CLOWNZ80_OPCODE_RRCA, CLOWNZ80_OPCODE_RLA, CLOWNZ80_OPCODE_RRA, CLOWNZ80_OPCODE_DAA,
+      CLOWNZ80_OPCODE_CPL, CLOWNZ80_OPCODE_SCF, CLOWNZ80_OPCODE_CCF, CLOWNZ80_OPCODE_ADD_A,
+      CLOWNZ80_OPCODE_ADC_A, CLOWNZ80_OPCODE_SUB, CLOWNZ80_OPCODE_SBC_A, CLOWNZ80_OPCODE_AND,
+      CLOWNZ80_OPCODE_XOR, CLOWNZ80_OPCODE_OR, CLOWNZ80_OPCODE_CP, CLOWNZ80_OPCODE_RLC,
+      CLOWNZ80_OPCODE_RRC, CLOWNZ80_OPCODE_RL, CLOWNZ80_OPCODE_RR, CLOWNZ80_OPCODE_SLA,
+      CLOWNZ80_OPCODE_SRA, CLOWNZ80_OPCODE_SLL, CLOWNZ80_OPCODE_SRL, CLOWNZ80_OPCODE_BIT,
+      CLOWNZ80_OPCODE_IN_REGISTER, CLOWNZ80_OPCODE_IN_NO_REGISTER, CLOWNZ80_OPCODE_SBC_HL, CLOWNZ80_OPCODE_ADC_HL,
+      CLOWNZ80_OPCODE_NEG, CLOWNZ80_OPCODE_LD_A_I, CLOWNZ80_OPCODE_LD_A_R, CLOWNZ80_OPCODE_RRD,
+      CLOWNZ80_OPCODE_RLD, CLOWNZ80_OPCODE_LDI, CLOWNZ80_OPCODE_LDD, CLOWNZ80_OPCODE_LDIR,
+      CLOWNZ80_OPCODE_LDDR, CLOWNZ80_OPCODE_CPI, CLOWNZ80_OPCODE_CPD, CLOWNZ80_OPCODE_CPIR,
+      CLOWNZ80_OPCODE_CPDR, CLOWNZ80_OPCODE_INI, CLOWNZ80_OPCODE_IND, CLOWNZ80_OPCODE_INIR,
+      CLOWNZ80_OPCODE_INDR, CLOWNZ80_OPCODE_OUTI, CLOWNZ80_OPCODE_OUTD, CLOWNZ80_OPCODE_OTIR,
+      CLOWNZ80_OPCODE_OTDR]);
 end;
 
 procedure ConstantInitialise;
@@ -2122,6 +2149,8 @@ begin
   State.EIDelay := 0;
   State.IFF2 := 0;
   State.NMIPending := 0;
+  State.Memptr := 0;
+  State.Q := 0;
 end;
 
 procedure Z80Interrupt(var State: TZ80State; AssertInterrupt: Byte);
@@ -2134,7 +2163,7 @@ begin
   State.NMIPending := 1;
 end;
 
-function Z80DoInstruction(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks): Cardinal;
+function Z80DoInstruction(var State: TZ80State; var Callbacks: TZ80ReadAndWriteCallbacks; OpcodeRead: TZ80ReadCallback; HoldInterrupt: Boolean): Cardinal;
 begin
   var Instruction: TZ80Instruction;
   State.Cycles := 0;
@@ -2151,6 +2180,8 @@ begin
     State.StackPointer := Word((Cardinal(State.StackPointer) + $FFFF) and $FFFF);
     Callbacks.WriteCallback(Callbacks.UserData, State.StackPointer, State.ProgramCounter and $FF);
     State.ProgramCounter := $66;
+    State.Memptr := State.ProgramCounter;
+    State.Q := 0;
     State.Cycles := 11;
     Exit(State.Cycles);
   end;
@@ -2160,6 +2191,8 @@ begin
   if (State.InterruptPending <> 0) and (State.InterruptsEnabled <> 0) and
     (State.EIDelay = 0) and (State.RegisterMode = CLOWNZ80_REGISTER_MODE_HL) then
   begin
+    if HoldInterrupt then
+      State.InterruptPending := 0;
     State.InterruptsEnabled := 0;
     State.IFF2 := 0;
     State.Halted := False;
@@ -2169,16 +2202,18 @@ begin
     Callbacks.WriteCallback(Callbacks.UserData, State.StackPointer, ArithmeticShiftRight(State.ProgramCounter, 8));
     State.StackPointer := (State.StackPointer + $FFFF) and $FFFF;
     Callbacks.WriteCallback(Callbacks.UserData, State.StackPointer, (State.ProgramCounter and $FF));
+
     // The Mega Drive's undriven interrupt data bus supplies $FF (RST $38 in IM 0).
     if State.InterruptMode = 2 then
     begin
-      State.ProgramCounter := Word(MemoryRead16Bit(State, Callbacks,
-          (Cardinal(State.i) shl 8) or $FF));
+      State.ProgramCounter := Word(MemoryRead16Bit(State, Callbacks, (Cardinal(State.i) shl 8) or $FF));
       State.Cycles := 19;
     end
     else
       State.ProgramCounter := $38;
 
+    State.Memptr := State.ProgramCounter;
+    State.Q := 0;
     Exit(State.Cycles);
   end;
 
@@ -2189,7 +2224,7 @@ begin
     Exit(State.Cycles);
   end;
 
-  DecodeInstruction(State, Callbacks, Instruction);
+  DecodeInstruction(State, Callbacks, Instruction, OpcodeRead);
   ExecuteInstruction(State, Callbacks, Instruction);
   if (State.EIDelay > 0) and
     (Instruction.Metadata.Opcode <> CLOWNZ80_OPCODE_DD_PREFIX) and

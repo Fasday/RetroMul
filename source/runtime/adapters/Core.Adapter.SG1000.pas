@@ -151,8 +151,8 @@ begin
   FOptions.FMEnabled := Ini.ReadBool('Audio', 'FMEnabled', True);
   FOptions.FMVolume := EnsureRange(Ini.ReadInteger('Audio', 'FMVolume', 100), 0, 100);
   FOptions.DiskWriteProtected := Ini.ReadBool('Disk', 'WriteProtected', False);
-  for var I := 0 to 3 do
-    FOptions.ChannelVolume[I] := EnsureRange(Ini.ReadInteger('Audio', 'Channel' + IntToStr(I + 1) + 'Volume', 100), 0, 100);
+  for var i := 0 to 3 do
+    FOptions.ChannelVolume[i] := EnsureRange(Ini.ReadInteger('Audio', 'Channel' + IntToStr(i + 1) + 'Volume', 100), 0, 100);
   for var Button := Low(TSGButton) to High(TSGButton) do
   begin
     FKeys[Button] := ReadEmulatorKey(Ini, 'Keys', KeyNames[Button], FKeys[Button]);
@@ -178,8 +178,8 @@ begin
   Ini.WriteBool('Audio', 'FMEnabled', FOptions.FMEnabled);
   Ini.WriteInteger('Audio', 'FMVolume', FOptions.FMVolume);
   Ini.WriteBool('Disk', 'WriteProtected', FOptions.DiskWriteProtected);
-  for var I := 0 to 3 do
-    Ini.WriteInteger('Audio', 'Channel' + IntToStr(I + 1) + 'Volume', FOptions.ChannelVolume[I]);
+  for var i := 0 to 3 do
+    Ini.WriteInteger('Audio', 'Channel' + IntToStr(i + 1) + 'Volume', FOptions.ChannelVolume[i]);
   if FPAL then
     Ini.WriteString('Video', 'Region', 'PAL')
   else
@@ -293,6 +293,7 @@ begin
       end;
       if IPL = '' then
         raise EReadError.Create('SF-7000 needs its 8 KiB IPL ROM. Select it in SF-7000 settings or place ipl.rom beside the disk.');
+
       FBootROM := FStorage.ReadBytes(IPL);
       var Disk := SG1000.Disk.TSGDisk.Create(FData);
       Disk.Free;

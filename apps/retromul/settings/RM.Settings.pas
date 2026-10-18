@@ -990,6 +990,7 @@ begin
       Periodic.OnSwitch := AutosaveToggle;
       Heading('GroupOnscreenbuttons');
       Number('RowBottominset', 'General', 'ControlBottomInset', 100, 400);
+      Check('RowTouchhaptics', 'General', 'TouchHaptics', True);
     end
     else if FCategory = SETTINGS_CATEGORY_LIBRARY then
     begin

@@ -135,6 +135,7 @@ type
     function TransformRect(const R: TRectF; Side: TVirtualSide): TRectF;
   protected
     procedure InputChanged; virtual;
+    procedure ButtonActivated; virtual;
     procedure Paint; override;
     procedure Resize; override;
     procedure EnabledChanged; override;
@@ -719,6 +720,10 @@ procedure TVirtualController.InputChanged;
 begin
 end;
 
+procedure TVirtualController.ButtonActivated;
+begin
+end;
+
 function TVirtualController.GroupBounds(Element: TVirtualElement): TRectF;
 begin
   Result := ElementBounds(Element);
@@ -734,6 +739,7 @@ end;
 
 procedure TVirtualController.Recompute;
 begin
+  var Activated := False;
   for var E in FElements do
   begin
     var NewValues: TArray<Single> := nil;
@@ -764,6 +770,10 @@ begin
         NewValues[i] := 0;
       if not SameValue(E.FValues[i], NewValues[i], 0.0001) then
       begin
+        // One edge per digital activation, including sliding onto another key.
+        // Stick motion is continuous and must not generate repeated impacts.
+        if not (E is TVirtualStick) and (E.FValues[i] < 0.5) and (NewValues[i] >= 0.5) then
+          Activated := True;
         E.FValues[i] := NewValues[i];
         if Assigned(FOnInput) then
           FOnInput(Self, E, i, NewValues[i]);
@@ -773,6 +783,9 @@ begin
 
   // Subclasses read one complete state, without transient opposing directions.
   InputChanged;
+  // Coalesce diagonal/multiple part changes from one touch into one impact.
+  if Activated then
+    ButtonActivated;
   Repaint;
 end;
 

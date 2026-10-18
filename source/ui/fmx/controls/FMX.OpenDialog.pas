@@ -65,6 +65,7 @@ type
 
   {$IFDEF IOS}
   TSelectionRequest = class;
+
   TIOSSelectionDelegate = class(TOCLocal, UIDocumentPickerDelegate)
   private
     FRequest: TSelectionRequest;
@@ -141,6 +142,7 @@ procedure TFMXOpenDialog.SaveFile(const SuggestedName: string; const ACallback: 
 begin
   if SuggestedName = '' then
     raise EArgumentException.Create('A suggested file name is required');
+
   Select(False, ACallback, SuggestedName);
 end;
 
@@ -193,7 +195,8 @@ end;
 destructor TSelectionRequest.Destroy;
 begin
   {$IFDEF IOS}
-  if FIOSPicker <> nil then FIOSPicker.setDelegate(nil);
+  if FIOSPicker <> nil then
+    FIOSPicker.setDelegate(nil);
   FIOSPicker := nil;
   FIOSDelegate.Free;
   if (FExportDirectory <> '') and TDirectory.Exists(FExportDirectory) then
@@ -229,7 +232,8 @@ begin
   TThread.ForceQueue(nil,
     procedure
     begin
-      if KeepAlive <> nil then Callback(AResult);
+      if KeepAlive <> nil then
+        Callback(AResult);
     end);
 end;
 
@@ -259,7 +263,8 @@ end;
 
 procedure TSelectionRequest.SelectedIOS(const URLs: NSArray);
 begin
-  if FCompleted then Exit;
+  if FCompleted then
+    Exit;
   var Selection := Default(TFMXSelectionResult);
   try
     if (URLs = nil) or (URLs.count = 0) then
@@ -282,9 +287,13 @@ end;
 procedure TSelectionRequest.StartIOS;
 begin
   var Window := TiOSHelper.SharedApplication.keyWindow;
-  if Window = nil then raise EInvalidOperation.Create('No active window for document selection');
+  if Window = nil then
+    raise EInvalidOperation.Create('No active window for document selection');
+
   var Presenter := Window.rootViewController;
-  if Presenter = nil then raise EInvalidOperation.Create('No view controller for document selection');
+  if Presenter = nil then
+    raise EInvalidOperation.Create('No view controller for document selection');
+
   while Presenter.presentedViewController <> nil do
     Presenter := Presenter.presentedViewController;
   if FSaveName <> '' then
@@ -302,13 +311,16 @@ begin
   else
   begin
     var UTI := 'public.item';
-    if FFolder then UTI := 'public.folder';
+    if FFolder then
+      UTI := 'public.folder';
     var Types := TNSArray.Wrap(TNSArray.OCClass.arrayWithObject((StrToNSStr(UTI) as ILocalObject).GetObjectID));
     FIOSPicker := TUIDocumentPickerViewController.Wrap(
       TUIDocumentPickerViewController.Alloc.initWithDocumentTypes(Types, UIDocumentPickerModeOpen));
     FIOSPicker.setAllowsMultipleSelection(FMultiple and not FFolder);
   end;
-  if FIOSPicker = nil then raise ENotSupportedException.Create('Cannot create the document picker');
+  if FIOSPicker = nil then
+    raise ENotSupportedException.Create('Cannot create the document picker');
+
   FIOSDelegate := TIOSSelectionDelegate.Create(Self);
   FIOSPicker.setDelegate(FIOSDelegate.GetObjectID);
   FIOSPicker.setTitle(StrToNSStr(FTitle));

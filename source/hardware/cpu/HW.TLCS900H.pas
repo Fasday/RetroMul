@@ -1,8 +1,6 @@
 ﻿unit HW.TLCS900H;
 
-// TLCS-900/H instruction implementation adapted from MAME.
-// Copyright (c) Wilbert Pol. BSD-3-Clause; see TLCS900H.LICENSE.
-// Native Pascal bus callbacks, interrupt interface and state serialization.
+// TLCS-900/H instruction implementation
 
 interface
 

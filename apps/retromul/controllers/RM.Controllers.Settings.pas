@@ -28,7 +28,7 @@ uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
   Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES, Core.SavePaths,
   Core.Platforms, Core.RomFormat, Core.InputConfig, RM.Input, RM.Gamepad,
-  RM.Settings, RM.ControlsHelp, RM.Styles, RM.Dialogs;
+  RM.Settings, RM.ControlsHelp, RM.Styles, RM.Dialogs, RM.Gamepad.Base;
 
 procedure TSettingsController.Load;
 begin
@@ -73,6 +73,7 @@ begin
     end;
     FState.Input.BottomInset := EnsureRange(Ini.ReadInteger('General', 'ControlBottomInset', 100), 0, 400);
     FView.ApplyControlInset;
+    TVirtualGamepadControl.TouchHapticsEnabled := Ini.ReadBool('General', 'TouchHaptics', True);
     FState.Preferences.PauseOnFocusLoss := Ini.ReadBool('General', 'PauseOnFocusLoss', True);
     FState.Preferences.StartFullscreen := Ini.ReadBool('General', 'StartFullscreen', False);
     FState.Autosave.OnExit := Ini.ReadBool('General', 'AutosaveOnExit', True);

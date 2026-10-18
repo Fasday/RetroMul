@@ -8,10 +8,15 @@ uses
 
 type
   TStorageFile = Core.Storage.Types.TStorageFile;
+
   TStorageSnapshot = Core.Storage.Types.TStorageSnapshot;
+
   TStorageSelection = Core.Storage.Types.TStorageSelection;
+
   TStorageSelectionCallback = Core.Storage.Types.TStorageSelectionCallback;
+
   IStoragePicker = Core.Storage.Types.IStoragePicker;
+
   IStorage = Core.Storage.Types.IStorage;
 
   TStorage = class(TInterfacedObject, IStorage)
@@ -72,7 +77,8 @@ function RememberIOSDocumentURL(const URL: NSURL): string;
 implementation
 
 uses
-  System.IOUtils, System.StrUtils, System.Generics.Collections, Core.Platforms, Core.RomFormat,
+  System.IOUtils, System.StrUtils, System.Generics.Collections, Core.Platforms,
+  Core.RomFormat,
   {$IFDEF ANDROID}
   Core.Storage.Android, {$ENDIF}
   {$IFDEF IOS} Macapi.Helpers, System.Hash, {$ENDIF}
@@ -86,6 +92,7 @@ type
     URL: NSURL;
     Scoped: Boolean;
   end;
+
 var
   IOSDocumentGrants: TList<TIOSDocumentGrant>;
   IOSGrantsLoaded: Boolean;
@@ -98,7 +105,8 @@ end;
 procedure LoadIOSDocumentGrants;
 begin
   // Called under the grants monitor, including before the first worker starts.
-  if IOSGrantsLoaded then Exit;
+  if IOSGrantsLoaded then
+    Exit;
   IOSGrantsLoaded := True;
   var Ini := TMemIniFile.Create(IOSBookmarkFile, TEncoding.UTF8);
   var Sections := TStringList.Create;
@@ -108,18 +116,21 @@ begin
     for var Section in Sections do
     try
       var Data := TNSData.Wrap(TNSData.Alloc.initWithBase64EncodedString(
-        StrToNSStr(Ini.ReadString(Section, 'Bookmark', '')), 0));
-      if Data = nil then Continue;
+          StrToNSStr(Ini.ReadString(Section, 'Bookmark', '')), 0));
+      if Data = nil then
+        Continue;
       var Stale := False;
       var URL := TNSURL.Wrap(TNSURL.OCClass.URLByResolvingBookmarkData(Data,
-        NSURLBookmarkResolutionWithoutUI, nil, @Stale, nil));
-      if URL = nil then Continue;
+          NSURLBookmarkResolutionWithoutUI, nil, @Stale, nil));
+      if URL = nil then
+        Continue;
       var Grant := Default(TIOSDocumentGrant);
       Grant.URL := URL;
       Grant.Scoped := URL.startAccessingSecurityScopedResource;
       Grant.CurrentPath := NSStrToStr(URL.path);
       if not Grant.Scoped and not TFile.Exists(Grant.CurrentPath) and
-        not TDirectory.Exists(Grant.CurrentPath) then Continue;
+        not TDirectory.Exists(Grant.CurrentPath) then
+        Continue;
       Grant.OriginalPath := Ini.ReadString(Section, 'Path', Grant.CurrentPath);
       IOSDocumentGrants.Add(Grant);
       if Stale then
@@ -134,7 +145,8 @@ begin
     except
       // A removed document must not prevent opening other games or choosing again.
     end;
-    if Updated then Ini.UpdateFile;
+    if Updated then
+      Ini.UpdateFile;
   finally
     Sections.Free;
     Ini.Free;
@@ -143,9 +155,11 @@ end;
 
 function RememberIOSDocumentURL(const URL: NSURL): string;
 begin
-  if URL = nil then raise EArgumentNilException.Create('Document URL');
+  if URL = nil then
+    raise EArgumentNilException.Create('Document URL');
   Result := NSStrToStr(URL.path);
-  if Result = '' then raise EInOutError.Create('The document picker returned an empty path');
+  if Result = '' then
+    raise EInOutError.Create('The document picker returned an empty path');
   TMonitor.Enter(IOSDocumentGrants);
   try
     LoadIOSDocumentGrants;
@@ -165,7 +179,8 @@ begin
       if not Grant.Scoped and not TFile.Exists(Result) and not TDirectory.Exists(Result) then
         raise EInOutError.Create('Cannot access the selected document. Please choose it again.');
       var Data := URL.bookmarkDataWithOptions(NSURLBookmarkCreationMinimalBookmark, nil, nil, nil);
-      if Data = nil then raise EInOutError.Create('Cannot preserve access to the selected document');
+      if Data = nil then
+        raise EInOutError.Create('Cannot preserve access to the selected document');
       ForceDirectories(ExtractFilePath(IOSBookmarkFile));
       var Ini := TMemIniFile.Create(IOSBookmarkFile, TEncoding.UTF8);
       try
@@ -178,7 +193,8 @@ begin
       end;
       IOSDocumentGrants.Add(Grant);
     except
-      if Grant.Scoped then URL.stopAccessingSecurityScopedResource;
+      if Grant.Scoped then
+        URL.stopAccessingSecurityScopedResource;
       raise;
     end;
   finally
@@ -221,6 +237,7 @@ begin
   Result := Location.Replace('/', '\');
   if Result.StartsWith('\\?\') then
     Exit;
+
   Result := ExpandFileName(Result);
   if Result.StartsWith('\\') then
     Result := '\\?\UNC\' + Copy(Result, 3, MaxInt)
@@ -320,6 +337,7 @@ procedure TStorage.SetMaxRomFileSize(Value: Int64);
 begin
   if Value <= 0 then
     raise EArgumentOutOfRangeException.Create('MaxRomFileSize must be positive (bytes)');
+
   FMaxRomFileSize := Value;
 end;
 
@@ -506,9 +524,9 @@ end;
 function TStorage.ConfigFile(const SystemId: string): string;
 begin
   var SettingsId := SystemId;
-  var Platform: TPlatformInfo;
-  if TPlatformRegistry.Find(SystemId, Platform) then
-    SettingsId := Platform.SettingsCoreId;
+  var platform: TPlatformInfo;
+  if TPlatformRegistry.Find(SystemId, platform) then
+    SettingsId := platform.SettingsCoreId;
   Result := TPath.Combine(FRoot, SafeName(SettingsId) + '.ini');
 end;
 
@@ -521,10 +539,10 @@ begin
     var ReadLocation := Location;
     if not Exists(ReadLocation) then
     begin
-      var Platform: TPlatformInfo;
-      if TPlatformRegistry.Find(TPath.GetFileNameWithoutExtension(Location), Platform) and
-        (Platform.LegacySettingsId <> '') and SameText(Location, ConfigFile(Platform.Id)) then
-        ReadLocation := ConfigFile(Platform.LegacySettingsId);
+      var platform: TPlatformInfo;
+      if TPlatformRegistry.Find(TPath.GetFileNameWithoutExtension(Location), platform) and
+        (platform.LegacySettingsId <> '') and SameText(Location, ConfigFile(platform.Id)) then
+        ReadLocation := ConfigFile(platform.LegacySettingsId);
     end;
     if Exists(ReadLocation) then
     begin
@@ -675,10 +693,10 @@ begin
   if RomSystem = TRomSystem.Unknown then
     Exit(nil);
 
-  var Platform := TPlatformRegistry.Require(SystemId);
-  var FolderName := Platform.Folder;
-  var Extensions := Platform.Extensions;
-  var FolderNames := Platform.ScanFolders;
+  var platform := TPlatformRegistry.Require(SystemId);
+  var FolderName := platform.Folder;
+  var Extensions := platform.Extensions;
+  var FolderNames := platform.ScanFolders;
   var Candidates: TArray<TStorageFile>;
   {$IFDEF ANDROID}
   if FRomFolder.StartsWith('content://') then
@@ -688,8 +706,8 @@ begin
       if MatchText(Folder.Name, FolderNames) then
       begin
         var Items := TAndroidStorage.Enumerate(Folder.Location, False);
-        for var I := 0 to High(Items) do
-          Items[I].RelativePath := Folder.Name + '/' + Items[I].Name;
+        for var i := 0 to High(Items) do
+          Items[i].RelativePath := Folder.Name + '/' + Items[i].Name;
         Candidates := Candidates + Items;
       end;
   end
@@ -721,6 +739,7 @@ begin
         SameText(Item.Name, 'neocd.zip') or SameText(Item.Name, 'neogeo.7z') or
         SameText(Item.Name, 'gg-bios.7z') or SameText(Item.Name, 'neocd.7z')) then
         Continue;
+
       // Prefer the CUE with its complete TOC/audio over the paired data ISO.
       if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and SameText(ExtractFileExt(Item.Name), '.iso') then
       begin
@@ -731,6 +750,7 @@ begin
         if HasCue then
           Continue;
       end;
+
       // Listing never opens ROM streams. Header validation belongs to loading.
       var MaxSize := FMaxRomFileSize;
       if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and (MaxSize = ROM_MAX_SIZE) then
@@ -746,6 +766,7 @@ begin
         not Item.RelativePath.ToLower.StartsWith('sgx/') and not Item.RelativePath.ToLower.StartsWith('supergrafx/') and
         not Item.RelativePath.ToLower.StartsWith('sgx\') and not Item.RelativePath.ToLower.StartsWith('supergrafx\') then
         Continue;
+
       if RomSystem = TRomSystem.PCE then
       begin
         if Item.Name.ToLower.Contains('(sgx)') or Item.Name.ToLower.Contains('supergrafx') then
@@ -753,6 +774,7 @@ begin
         if Item.Name.ToLower.Contains('[bios]') or Item.Name.ToLower.StartsWith('syscard') then
           Continue;
       end;
+
       var Match := Item;
       if Match.RelativePath = '' then
         Match.RelativePath := FolderName + '/' + Item.Name;
@@ -797,9 +819,11 @@ end;
 {$IFDEF IOS}
 initialization
   IOSDocumentGrants := TList<TIOSDocumentGrant>.Create;
+
 finalization
   for var Grant in IOSDocumentGrants do
-    if Grant.Scoped then Grant.URL.stopAccessingSecurityScopedResource;
+    if Grant.Scoped then
+      Grant.URL.stopAccessingSecurityScopedResource;
   IOSDocumentGrants.Free;
 {$ENDIF}
 

@@ -61,8 +61,10 @@ begin
   inherited Create;
   if (Clock < 1000000) or (Clock > 32000000) then
     raise EArgumentOutOfRangeException.Create('Invalid OPL clock');
+
   if (SampleRate < 8000) or (SampleRate > 192000) then
     raise EArgumentOutOfRangeException.Create('Invalid OPL sample rate');
+
   FOPL3 := IsOPL3;
   FOPL1 := IsOPL1;
   FClock := Clock;
@@ -107,8 +109,10 @@ procedure TOPLSound.WriteRegister(RegisterID: Word; Value: Byte);
 begin
   if RegisterID > $1FF then
     raise EArgumentOutOfRangeException.Create('Invalid OPL register');
+
   if not FOPL3 and (RegisterID > $FF) then
     Exit;
+
   // YM3526 has no waveform-select enable or waveform registers.
   if FOPL1 then
   begin
@@ -126,15 +130,15 @@ begin
         if (Value and $80) <> 0 then
           FStatus := 0
         else
-          for var J := 0 to 1 do
+          for var i := 0 to 1 do
           begin
-            FTimerMasked[J] := (Value and ($40 shr J)) <> 0;
-            if FTimerMasked[J] then
-              FStatus := FStatus and not ($40 shr J);
-            var Running := (Value and (1 shl J)) <> 0;
-            if Running <> FTimerRunning[J] then
-              FTimerCycles[J] := 0;
-            FTimerRunning[J] := Running;
+            FTimerMasked[i] := (Value and ($40 shr i)) <> 0;
+            if FTimerMasked[i] then
+              FStatus := FStatus and not ($40 shr i);
+            var Running := (Value and (1 shl i)) <> 0;
+            if Running <> FTimerRunning[i] then
+              FTimerCycles[i] := 0;
+            FTimerRunning[i] := Running;
           end;
       end;
   end;
@@ -156,6 +160,7 @@ begin
   Port := Port and 3;
   if not FOPL3 and (Port >= 2) then
     Exit;
+
   if (Port and 1) = 0 then
     FAddress[Port shr 1] := Value + Word(Port shr 1) * $100
   else
@@ -181,16 +186,16 @@ end;
 
 procedure TOPLSound.AdvanceClocks(Cycles: Cardinal);
 begin
-  for var J := 0 to 1 do
-    if FTimerRunning[J] then
+  for var i := 0 to 1 do
+    if FTimerRunning[i] then
     begin
-      FTimerCycles[J] := FTimerCycles[J] + Cycles;
-      var Period := UInt64(256 - Integer(FTimerValue[J])) * Cardinal(FDivider) * Cardinal(4 shl (J * 2));
-      if FTimerCycles[J] >= Period then
+      FTimerCycles[i] := FTimerCycles[i] + Cycles;
+      var Period := UInt64(256 - Integer(FTimerValue[i])) * Cardinal(FDivider) * Cardinal(4 shl (i * 2));
+      if FTimerCycles[i] >= Period then
       begin
-        FTimerCycles[J] := FTimerCycles[J] mod Period;
-        if not FTimerMasked[J] then
-          FStatus := FStatus or ($40 shr J);
+        FTimerCycles[i] := FTimerCycles[i] mod Period;
+        if not FTimerMasked[i] then
+          FStatus := FStatus or ($40 shr i);
       end;
     end;
 end;
@@ -227,6 +232,7 @@ procedure TOPLSound.Render(var PCM: array of SmallInt; Frames: Integer);
 begin
   if (Frames < 0) or (Frames > Length(PCM) div 2) then
     raise EArgumentOutOfRangeException.Create('Invalid OPL render buffer');
+
   for var J := 0 to Frames - 1 do
     Sample(PCM[J * 2], PCM[J * 2 + 1]);
 end;

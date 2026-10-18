@@ -42,6 +42,8 @@ type
   private
     FState: TBoardState;
     FCPU: array[0..1] of TSH2;
+    // Derived views of live hardware cache RAM; never serialized.
+    FDataCache: array[0..1,0..63] of TSH2DataCacheView;
     FPort: array[0..1] of TPort;
     FROM, FBoot68k: TBytes;
     FBoot: array[0..1] of TBytes;
@@ -113,6 +115,7 @@ begin
   begin
     FPort[I].Owner := Self; FPort[I].Index := I;
     FCPU[I] := TSH2.Create(SHRead, SHWrite, @FPort[I], SHFetch);
+    FCPU[I].SetDataCacheView(@FDataCache[I,0],True);
   end;
   Reset;
 end;
@@ -126,6 +129,7 @@ end;
 procedure TMD32X.Reset;
 begin
   FState := Default(TBoardState);
+  FillChar(FDataCache,SizeOf(FDataCache),$FF);
   FState.Registers[0] := $82; // Adapter present, reset released, ADEN clear.
   FState.Registers[8] := $FFFF;
   if not FPAL then FState.Video[0] := $8000;
@@ -201,8 +205,8 @@ begin
   end;
   Priority := FState.Peripheral[CPU,$E2] and 15;
   for var I := 0 to 1 do
-    if (PeekPeripheral(CPU,$18C+I*16,4) and 6 = 6) and (Priority > Level) then
-    begin Level := Priority; Vector := PeekPeripheral(CPU,$1A0+I*8,4) and $7F; end;
+    if (FState.Peripheral[CPU,$18F+I*16] and 6 = 6) and (Priority > Level) then
+    begin Level := Priority; Vector := FState.Peripheral[CPU,$1A3+I*8] and $7F; end;
   FCPU[CPU].Interrupt(Level, Vector);
 end;
 
@@ -438,6 +442,8 @@ begin
       $18,$19: ; // Input capture is read-only.
       $92:
         begin
+          FCPU[CPU].InvalidateInstructionLine;
+          FillChar(FDataCache[CPU],SizeOf(FDataCache[CPU]),$FF);
           if B and $10 <> 0 then
           begin
             FillChar(FState.CacheTag[CPU],SizeOf(FState.CacheTag[CPU]),0);
@@ -565,7 +571,8 @@ begin
       FState.Peripheral[CPU,$11] := Flags; Dec(Ticks);
     end;
   end;
-  if Target >= FState.DMANext[CPU] then
+  if (Target >= FState.DMANext[CPU]) and
+    (FState.Peripheral[CPU,$1B3] and 7 = 1) then
   begin
     var Channel := 0;
     if PeekPeripheral(CPU,$1B0,4) and 8 <> 0 then Channel := FState.DMAPriority[CPU];
@@ -637,11 +644,34 @@ begin
         for var J := 0 to 3 do
           FState.CacheRAM[CPU,Way*1024+Integer(Entry)*16+I*4+J] := (V shr ((3-J)*8)) and $FF;
       end;
+      FCPU[CPU].InvalidateInstructionLine;
+      FDataCache[CPU,Entry].Line := High(Cardinal);
       FState.CacheTag[CPU,Way,Entry] := Tag;
     end;
     if Way >= 0 then
     begin
-      TouchCache(CPU,Entry,Way); Result := 0;
+      TouchCache(CPU,Entry,Way);
+      // Keep the interpreter on the bus's live bytes and hardware LRU state.
+      var Mask, Bits: Byte;
+      case Way of
+        0: begin Mask := $07; Bits := $00; end;
+        1: begin Mask := $19; Bits := $20; end;
+        2: begin Mask := $2A; Bits := $14; end;
+      else begin Mask := $34; Bits := $0B; end;
+      end;
+      var Data := @FState.CacheRAM[CPU,Way*1024+Integer(Entry)*16];
+      var LRU := @FState.CacheLRU[CPU,Entry];
+      if Instruction then
+        FCPU[CPU].SetInstructionLine(Address and $FFFFFFF0,Data,LRU,Mask,Bits)
+      else
+      begin
+        FDataCache[CPU,Entry].Line := Address and $FFFFFFF0;
+        FDataCache[CPU,Entry].Data := Data;
+        FDataCache[CPU,Entry].LRU := LRU;
+        FDataCache[CPU,Entry].Mask := Mask;
+        FDataCache[CPU,Entry].Bits := Bits;
+      end;
+      Result := 0;
       for var I := 0 to Size - 1 do
         Result := (Result shl 8) or FState.CacheRAM[CPU,Way*1024+Integer(Entry)*16+Integer(Address and 15)+I];
       Exit;
@@ -659,12 +689,16 @@ begin
   var CCR := FState.Peripheral[CPU,$92];
   if Area = 2 then
   begin
+    FCPU[CPU].InvalidateInstructionLine;
+    FDataCache[CPU,Entry].Line := High(Cardinal);
     for var I := 0 to 3 do
       if FState.CacheTag[CPU,I,Entry] and $1FFFFC00 = Tag then FState.CacheTag[CPU,I,Entry] := 0;
     Exit;
   end;
   if Area = 3 then
   begin
+    FCPU[CPU].InvalidateInstructionLine;
+    FDataCache[CPU,Entry].Line := High(Cardinal);
     FState.CacheTag[CPU,(CCR shr 6) and 3,Entry] := Tag or ((Address shr 1) and 2);
     FState.CacheLRU[CPU,Entry] := (Value shr 4) and 63; Exit;
   end;
@@ -885,6 +919,8 @@ end;
 
 procedure TMD32X.SerializeState(Archive: TStateArchive);
 begin
+  if Archive.Loading then
+    FillChar(FDataCache,SizeOf(FDataCache),$FF);
   Archive.Field(FState, SizeOf(FState));
   for var I := 0 to 1 do FCPU[I].SerializeState(Archive);
   if (FState.FrameSelect < 0) or (FState.FrameSelect > 1) or

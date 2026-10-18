@@ -77,6 +77,7 @@ begin
     FStream.ReadBuffer(StoredSize, SizeOf(StoredSize));
     if (StoredSize <> Size) or (Size < 0) or (Size > FStream.Size - FStream.Position) then
       raise EReadError.Create('Incompatible or truncated snapshot');
+
     if Size > 0 then
       FStream.ReadBuffer(Value, Size);
   end
@@ -119,7 +120,18 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
+  // CPS v2 adds OKI bank state, enlarged sprite buffers and board peripherals.
+  if SameText(PlatformCore, 'CPS1') or SameText(PlatformCore, 'CPS2') then
+    Result.Version := 2;
+  // CPS1 v3 stores medal devices and independent multigame flash selectors.
+  if SameText(PlatformCore, 'CPS1') then
+    Result.Version := 4;
+  // Z80 MEMPTR/Q extend the serialized CPU record; reject older layouts.
   if (PlatformCore = ROM_CORE_ID_SG1000) or (PlatformCore = ROM_CORE_ID_SC3000) then
+    Result.Version := 3;
+  if (PlatformCore = ROM_CORE_ID_SF7000) or (PlatformCore = ROM_CORE_ID_OMV) or
+    (PlatformCore = ROM_CORE_ID_SMS) or (PlatformCore = ROM_CORE_ID_GG) or
+    SameText(PlatformCore, 'NGP') or SameText(PlatformCore, 'NGPC') then
     Result.Version := 2;
   if SameText(PlatformCore, 'N64') then
     // N64 v4 preserves the clocked DMA/event queues, hidden RDRAM bits,
@@ -129,20 +141,20 @@ begin
   // Earlier layouts are rejected; host enhancement settings are not restored.
   if (PlatformCore = ROM_CORE_ID_GB) or (PlatformCore = ROM_CORE_ID_GBC) then
     Result.Version := 5;
-  // MD v8 adds expansion topology and timed expansion peripheral state.
+  // MD v9 also stores Z80 MEMPTR/Q.
   if PlatformCore = ROM_CORE_ID_MD then
-    Result.Version := 8;
+    Result.Version := 9;
   // SNES v10 adds the S-DSP phase latches, SPC MMIO latches and PPU mosaic counter.
   if PlatformCore = ROM_CORE_ID_SNES then
     Result.Version := 10;
   // GBA v6 adds the clocked video pipeline and HALT synchronizer.
   if PlatformCore = ROM_CORE_ID_GBA then
     Result.Version := 6;
-  // Neo Geo v2 adds the LSPC VRAM read latch.
+  // Neo Geo v4 and Neo Geo CD v3 also store Z80 MEMPTR/Q.
   if PlatformCore = ROM_CORE_ID_NEOGEO then
-    Result.Version := 3;
+    Result.Version := 4;
   if PlatformCore = ROM_CORE_ID_NEOGEOCD then
-    Result.Version := 2;
+    Result.Version := 3;
   // Saturn v5 adds physical presence of the optional offline NetLink cartridge.
   if SameText(PlatformCore, 'SATURN') then
     Result.Version := 5;
@@ -194,12 +206,15 @@ begin
       CompareMem(@Header.platform, @Expected.platform, 8) and
       (Header.Version <> Expected.Version) then
       raise EReadError.CreateFmt('N64 snapshot version %d is unsupported; expected version %d', [Header.Version, Expected.Version]);
+
     if not CompareMem(@Header.Magic, @Expected.Magic, 8) or
       ((Header.Version <> Expected.Version) and not
-        (SameText(platform, 'SATURN') and ((Header.Version = 2) or (Header.Version = 3) or (Header.Version = 4)))) or
+      (SameText(platform, 'SATURN') and ((Header.Version = 2) or (Header.Version = 3) or (Header.Version = 4)))) or
       not CompareMem(@Header.platform, @Expected.platform, 8) or
       not CompareMem(@Header.ROMHash, @Expected.ROMHash, 32) or
-      (Header.PayloadSize = 0) or (Header.PayloadSize > 64 * 1024 * 1024) or
+      (Header.PayloadSize = 0) or
+      ((Header.PayloadSize > 64 * 1024 * 1024) and not
+      (SameText(platform, 'CPS3') and (Header.PayloadSize <= 128 * 1024 * 1024))) or
       (Int64(Header.PayloadSize) <> Input.Size - Input.Position) then
       raise EReadError.Create('Snapshot is incompatible with this game or core');
 
@@ -275,6 +290,7 @@ begin
     (Width > 2048) or (Height > 2048) or (Stride < Width) or
     (Int64(Stride) * Height * 4 > MaxInt) then
     raise EArgumentOutOfRangeException.Create('Invalid snapshot preview dimensions');
+
   Stream := TMemoryStream.Create;
   Compressed := TMemoryStream.Create;
   try

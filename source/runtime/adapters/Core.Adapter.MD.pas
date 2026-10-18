@@ -230,6 +230,7 @@ procedure TMDCoreAdapter.Start;
 begin
   if FThread <> nil then
     Exit;
+
   if FMicrophone <> nil then
     FMicrophone.Clear;
   FThread := TMDWorker.Create(FData, FSavePath, FStorage, FDiscLocation);
@@ -243,6 +244,7 @@ procedure TMDCoreAdapter.Stop;
 begin
   if FThread = nil then
     Exit;
+
   FThread.StopAndSave;
   FError := FThread.TakeError;
   FreeAndNil(FThread);
@@ -296,6 +298,7 @@ var
 begin
   if Code = 0 then
     Exit;
+
   for Button := Low(TMDButton) to High(TMDButton) do
   begin
     if Code = FKeys[Button] then

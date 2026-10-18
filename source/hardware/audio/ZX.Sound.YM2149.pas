@@ -104,8 +104,10 @@ begin
   inherited Create;
   if (Clock < 100000) or (Clock > 8000000) then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 clock');
+
   if (SampleRate < 8000) or (SampleRate > 192000) then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 sample rate');
+
   FClock := Clock;
   FSampleRate := SampleRate;
   FDivider := 8;
@@ -114,10 +116,10 @@ begin
   SetPan(0, 1, 0);
   SetPan(1, 0.7071067811865475, 0.7071067811865475);
   SetPan(2, 0, 1);
-  for var J := 0 to 1 do
+  for var i := 0 to 1 do
   begin
-    FFilter[J].Configure(Clock / FDivider, Min(14000, SampleRate * 0.4));
-    FDC[J].Configure(SampleRate, 20);
+    FFilter[i].Configure(Clock / FDivider, Min(14000, SampleRate * 0.4));
+    FDC[i].Configure(SampleRate, 20);
   end;
   Reset;
 end;
@@ -126,15 +128,17 @@ procedure TYM2149F.SetClock(Value: Integer);
 begin
   if (Value < 100000) or (Value > 8000000) then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 clock');
+
   FClock := Value;
-  for var J := 0 to 1 do
-    FFilter[J].Configure(FClock / FDivider, Min(14000, FSampleRate * 0.4));
+  for var i := 0 to 1 do
+    FFilter[i].Configure(FClock / FDivider, Min(14000, FSampleRate * 0.4));
 end;
 
 procedure TYM2149F.RetriggerTone(Channel: Integer);
 begin
   if (Channel < 0) or (Channel > 2) then
     raise EArgumentOutOfRangeException.Create('YM2149 tone channel');
+
   // Fast Tracker's phase effect forces the next native tone transition.
   FToneCounter[Channel] := $FFFE;
 end;
@@ -153,11 +157,11 @@ begin
   FSegment := 0;
   ResetEnvelopeSegment;
   FPhase := 0;
-  for var J := 0 to 1 do
+  for var i := 0 to 1 do
   begin
-    FFilter[J].Reset;
-    FDC[J].Reset;
-    FFiltered[J] := 0;
+    FFilter[i].Reset;
+    FDC[i].Reset;
+    FFiltered[i] := 0;
   end;
 end;
 
@@ -184,6 +188,7 @@ procedure TYM2149F.WriteRegister(RegisterID, Value: Byte);
 begin
   if RegisterID > 15 then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 register');
+
   var Previous := FRegisters[RegisterID];
   FRegisters[RegisterID] := Value and RegisterMasks[RegisterID];
   if RegisterID = 13 then
@@ -209,6 +214,7 @@ function TYM2149F.ReadRegister(RegisterID: Byte): Byte;
 begin
   if RegisterID > 15 then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 register');
+
   if (RegisterID >= 14) and ((FRegisters[7] and (64 shl (RegisterID - 14))) = 0) then
   begin
     if Assigned(FOnPortRead) then
@@ -225,6 +231,7 @@ begin
   if (Channel < 0) or (Channel > 2) or IsNan(Amplitude) or IsInfinite(Amplitude) or
     (Amplitude < -1) or (Amplitude > 1) then
     raise EArgumentOutOfRangeException.Create('Invalid AY/YM sample DAC');
+
   FDACOverride[Channel] := Amplitude;
 end;
 
@@ -233,6 +240,7 @@ begin
   if (Channel < 0) or (Channel > 2) or IsNan(Left) or IsNan(Right) or IsInfinite(Left) or IsInfinite(Right) or
     (Left < 0) or (Left > 1) or (Right < 0) or (Right > 1) then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 pan');
+
   FPan[Channel, 0] := Left;
   FPan[Channel, 1] := Right;
 end;
@@ -276,22 +284,22 @@ begin
     FEnvelopeCounter := 0;
     StepEnvelope;
   end;
-  for var J := 0 to 2 do
+  for var i := 0 to 2 do
   begin
-    Inc(FToneCounter[J]);
-    var Period := Max(1, Integer(FRegisters[J * 2]) + Integer(FRegisters[J * 2 + 1]) * 256);
-    if FToneCounter[J] >= Period then
+    Inc(FToneCounter[i]);
+    var Period := Max(1, Integer(FRegisters[i * 2]) + Integer(FRegisters[i * 2 + 1]) * 256);
+    if FToneCounter[i] >= Period then
     begin
-      FToneCounter[J] := 0;
-      FTone[J] := not FTone[J];
+      FToneCounter[i] := 0;
+      FTone[i] := not FTone[i];
     end;
-    Levels[J] := 0;
-    if (FTone[J] or ((FRegisters[7] and (1 shl J)) <> 0)) and
-      (((FNoise and 1) <> 0) or ((FRegisters[7] and (8 shl J)) <> 0)) then
-      if (FRegisters[8 + J] and 16) <> 0 then
-        Levels[J] := FEnvelope
+    Levels[i] := 0;
+    if (FTone[i] or ((FRegisters[7] and (1 shl i)) <> 0)) and
+      (((FNoise and 1) <> 0) or ((FRegisters[7] and (8 shl i)) <> 0)) then
+      if (FRegisters[8 + i] and 16) <> 0 then
+        Levels[i] := FEnvelope
       else
-        Levels[J] := (FRegisters[8 + J] and 15) * 2 + 1;
+        Levels[i] := (FRegisters[8 + i] and 15) * 2 + 1;
   end;
 end;
 
@@ -303,15 +311,15 @@ begin
   Step(Levels);
   Left := 0;
   Right := 0;
-  for var J := 0 to 2 do
+  for var i := 0 to 2 do
   begin
-    var Amplitude := YMDAC[Levels[J]];
+    var Amplitude := YMDAC[Levels[i]];
     if FAYModel then
-      Amplitude := AYDAC[Levels[J]];
-    if FDACOverride[J] >= 0 then
-      Amplitude := FDACOverride[J];
-    Left := Left + Amplitude * FPan[J, 0] / 3;
-    Right := Right + Amplitude * FPan[J, 1] / 3;
+      Amplitude := AYDAC[Levels[i]];
+    if FDACOverride[i] >= 0 then
+      Amplitude := FDACOverride[i];
+    Left := Left + Amplitude * FPan[i, 0] / 3;
+    Right := Right + Amplitude * FPan[i, 1] / 3;
   end;
 end;
 
@@ -334,8 +342,9 @@ procedure TYM2149F.Render(var PCM: array of SmallInt; Frames: Integer);
 begin
   if (Frames < 0) or (Frames > Length(PCM) div 2) then
     raise EArgumentOutOfRangeException.Create('Invalid YM2149 buffer');
-  for var J := 0 to Frames - 1 do
-    Sample(PCM[J * 2], PCM[J * 2 + 1]);
+
+  for var i := 0 to Frames - 1 do
+    Sample(PCM[i * 2], PCM[i * 2 + 1]);
 end;
 
 procedure TYM2149F.SerializeState(const Field: TYM2149StateField);

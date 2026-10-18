@@ -12,12 +12,15 @@ type
 
   TSH2Write = procedure(User: Pointer; Address, Value: Cardinal; Size: Integer);
 
+  TSH2OpcodeDecoder = function(User: Pointer; Address: Cardinal; Opcode: Word): Word;
+
   TSH2DataCacheView = record
     Line: Cardinal;
     Data: Pointer;
     LRU: PByte;
     Mask, Bits: Byte;
   end;
+
   PSH2DataCacheView = ^TSH2DataCacheView;
 
   // Hardware-owned arrays; pointers remain stable across reset/state load.
@@ -25,6 +28,7 @@ type
     Tags: PCardinal;
     RAM, LRU, CCR: PByte;
   end;
+
   PSH2CacheBank = ^TSH2CacheBank;
 
   TSH2State = record
@@ -38,6 +42,8 @@ type
   private
     FState: TSH2State;
     FRead, FFetch: TSH2Read;
+    FOpcodeDecoder: TSH2OpcodeDecoder;
+    FDecodeUser: Pointer;
     FWrite: TSH2Write;
     FUser: Pointer;
     FIRQLevel, FIRQVector: Integer;
@@ -71,6 +77,7 @@ type
     procedure SetCacheBank(Bank: PSH2CacheBank);
     procedure SetInstructionLine(Line: Cardinal; Data: Pointer; LRU: PByte; Mask, Bits: Byte); inline;
     procedure Reset;
+    procedure SetOpcodeDecoder(Decoder: TSH2OpcodeDecoder; User: Pointer);
     function Step: Integer;
     // Zero means no instruction was issued; the checked executor is required.
     function StepCached: Integer;
@@ -91,6 +98,7 @@ implementation
 
 // Cycle counters wrap modulo 2^64, exactly as unsigned hardware arithmetic.
 {$Q-}
+
 function Add64(A, B: UInt64): UInt64; inline;
 begin
   Result := A + B;
@@ -133,9 +141,13 @@ end;
 procedure TSH2.SetByteReadLatch(Address: Cardinal; Value, Latch: PByte);
 begin
   FByteReadAddress := High(Cardinal);
-  FByteReadValue := nil; FByteReadLatch := nil;
-  if (Value = nil) or (Latch = nil) then Exit;
-  FByteReadAddress := Address; FByteReadValue := Value; FByteReadLatch := Latch;
+  FByteReadValue := nil;
+  FByteReadLatch := nil;
+  if (Value = nil) or (Latch = nil) then
+    Exit;
+  FByteReadAddress := Address;
+  FByteReadValue := Value;
+  FByteReadLatch := Latch;
 end;
 
 procedure TSH2.SetCacheBank(Bank: PSH2CacheBank);
@@ -173,6 +185,13 @@ begin
   FCodeLRU := LRU;
   FCodeMask := Mask;
   FCodeBits := Bits;
+end;
+
+procedure TSH2.SetOpcodeDecoder(Decoder: TSH2OpcodeDecoder; User: Pointer);
+begin
+  FOpcodeDecoder := Decoder;
+  FDecodeUser := User;
+  InvalidateInstructionLine;
 end;
 
 procedure TSH2.Reset;
@@ -216,6 +235,7 @@ var
   Branch, Valid, OldQ, Q, MFlag, C: Boolean;
   Product: UInt64;
   Accumulator: Int64;
+
   procedure Delay(Address: Cardinal);
   begin
     if WasSlot then
@@ -862,31 +882,55 @@ function TSH2.TryNativeRead(Address: Cardinal; Size: Integer; out Value: Cardina
 begin
   if (Size = 1) and (Address = FByteReadAddress) and (FByteReadValue <> nil) then
   begin
-    Value := FByteReadValue^; FByteReadLatch^ := Byte(Value); Exit(True);
+    Value := FByteReadValue^;
+    FByteReadLatch^ := Byte(Value);
+    Exit(True);
   end;
   var View := FDataView;
-  if FDataIndexed then Inc(View,(Address shr 4) and 63);
+  if FDataIndexed then
+    Inc(View, (Address shr 4) and 63);
   var Selected: TSH2DataCacheView;
   if (View = nil) or (Address and $FFFFFFF0 <> View.Line) or
-    (Address and Cardinal(Size-1) <> 0) then
+    (Address and Cardinal(Size - 1) <> 0) then
   begin
     // The derived view can be absent after a state load or a different data
     // access. Bus availability must depend on hardware tags, not that hint.
     var Bank := FCacheBank;
     if (Bank = nil) or (Address shr 29 <> 0) or (Bank.CCR^ and 1 = 0) or
-      (Address and Cardinal(Size-1) <> 0) then Exit(False);
+      (Address and Cardinal(Size - 1) <> 0) then
+      Exit(False);
     var Entry := (Address shr 4) and 63;
     var Tag := (Address and $1FFFFC00) or 2;
     var Way := 3;
-    while PCardinal(NativeUInt(Bank.Tags)+(Cardinal(Way)*64+Entry)*4)^ <> Tag do
-    begin Dec(Way); if Way < 0 then Exit(False); end;
-    Selected.Data := Pointer(NativeUInt(Bank.RAM)+Cardinal(Way)*1024+Entry*16);
-    Selected.LRU := PByte(NativeUInt(Bank.LRU)+Entry);
+    while PCardinal(NativeUInt(Bank.Tags) + (Cardinal(Way) * 64 + Entry) * 4)^ <> Tag do
+    begin
+      Dec(Way);
+      if Way < 0 then
+        Exit(False);
+    end;
+    Selected.Data := Pointer(NativeUInt(Bank.RAM) + Cardinal(Way) * 1024 + Entry * 16);
+    Selected.LRU := PByte(NativeUInt(Bank.LRU) + Entry);
     case Way of
-      0: begin Selected.Mask := $07; Selected.Bits := $00; end;
-      1: begin Selected.Mask := $19; Selected.Bits := $20; end;
-      2: begin Selected.Mask := $2A; Selected.Bits := $14; end;
-      3: begin Selected.Mask := $34; Selected.Bits := $0B; end;
+      0:
+        begin
+          Selected.Mask := $07;
+          Selected.Bits := $00;
+        end;
+      1:
+        begin
+          Selected.Mask := $19;
+          Selected.Bits := $20;
+        end;
+      2:
+        begin
+          Selected.Mask := $2A;
+          Selected.Bits := $14;
+        end;
+      3:
+        begin
+          Selected.Mask := $34;
+          Selected.Bits := $0B;
+        end;
     end;
     View := @Selected;
   end;
@@ -895,15 +939,18 @@ begin
   View.LRU^ := (View.LRU^ and View.Mask) or View.Bits;
   var Data := NativeUInt(View.Data) + (Address and 15);
   case Size of
-    1: Value := PByte(Data)^;
-    2: Value := Swap(PWord(Data)^);
+    1:
+      Value := PByte(Data)^;
+    2:
+      Value := Swap(PWord(Data)^);
     4:
       begin
         var Raw := PCardinal(Data)^;
         Value := (Raw shl 24) or ((Raw and $FF00) shl 8) or
           ((Raw shr 8) and $FF00) or (Raw shr 24);
       end;
-  else Exit(False);
+  else
+    Exit(False);
   end;
   Result := True;
 end;
@@ -911,310 +958,513 @@ end;
 function TSH2.SelectInstructionLine(Address: Cardinal): Boolean;
 begin
   var Bank := FCacheBank;
-  if (Address shr 29 <> 0) or (Bank.CCR^ and 1 = 0) then Exit(False);
+  if (Address shr 29 <> 0) or (Bank.CCR^ and 1 = 0) then
+    Exit(False);
   var Entry := (Address shr 4) and 63;
   var Tag := (Address and $1FFFFC00) or 2;
   var Way := 3;
-  while PCardinal(NativeUInt(Bank.Tags)+(Cardinal(Way)*64+Entry)*4)^ <> Tag do
-  begin Dec(Way); if Way < 0 then Exit(False); end;
+  while PCardinal(NativeUInt(Bank.Tags) + (Cardinal(Way) * 64 + Entry) * 4)^ <> Tag do
+  begin
+    Dec(Way);
+    if Way < 0 then
+      Exit(False);
+  end;
   FCodeLine := Address and $FFFFFFF0;
-  FCodeData := Pointer(NativeUInt(Bank.RAM)+Cardinal(Way)*1024+Entry*16);
-  FCodeLRU := PByte(NativeUInt(Bank.LRU)+Entry);
+  FCodeData := Pointer(NativeUInt(Bank.RAM) + Cardinal(Way) * 1024 + Entry * 16);
+  FCodeLRU := PByte(NativeUInt(Bank.LRU) + Entry);
   case Way of
-    0: begin FCodeMask := $07; FCodeBits := $00; end;
-    1: begin FCodeMask := $19; FCodeBits := $20; end;
-    2: begin FCodeMask := $2A; FCodeBits := $14; end;
-    3: begin FCodeMask := $34; FCodeBits := $0B; end;
+    0:
+      begin
+        FCodeMask := $07;
+        FCodeBits := $00;
+      end;
+    1:
+      begin
+        FCodeMask := $19;
+        FCodeBits := $20;
+      end;
+    2:
+      begin
+        FCodeMask := $2A;
+        FCodeBits := $14;
+      end;
+    3:
+      begin
+        FCodeMask := $34;
+        FCodeBits := $0B;
+      end;
   end;
   Result := True;
 end;
 
 function TSH2.StepCached: Integer;
-label Slow, Commit;
+label
+  Slow, Commit;
 var
   At, A, B, V, NextPC: Cardinal;
   Op: Word;
   N: Integer;
-  WasSlot, Delayed: Boolean;
+  WasSlot, delayed: Boolean;
 begin
   At := FState.PC;
   WasSlot := FState.DelayPending;
   NextPC := At + 2;
-  Delayed := False;
-  if FState.Sleeping or Odd(At) then goto Slow;
+  delayed := False;
+  if FState.Sleeping or Odd(At) then
+    goto Slow;
   if At and $FFFFFFF0 <> FCodeLine then
   begin
-    if FCacheBank = nil then goto Slow;
-    if not SelectInstructionLine(At) then goto Slow;
+    if FCacheBank = nil then
+      goto Slow;
+    if not SelectInstructionLine(At) then
+      goto Slow;
   end;
   if not WasSlot and (FIRQLevel > 0) and
-    ((FIRQLevel = 16) or (FIRQLevel > Integer((FState.SR shr 4) and 15))) then goto Slow;
+    ((FIRQLevel = 16) or (FIRQLevel > Integer((FState.SR shr 4) and 15))) then
+    goto Slow;
   // Fetch live bytes and retain the hardware LRU touch even on fallback.
   // The second identical touch in StepChecked is idempotent.
   FCodeLRU^ := (FCodeLRU^ and FCodeMask) or FCodeBits;
-  Op := Swap(PWord(NativeUInt(FCodeData)+(At and 15))^);
+  Op := Swap(PWord(NativeUInt(FCodeData) + (At and 15))^);
+  if Assigned(FOpcodeDecoder) then
+    Op := FOpcodeDecoder(FDecodeUser, At, Op);
   Result := 1;
   case Op shr 12 of
     0:
       case Op of
-        $0009: ;
-        $0008: SetT(False);
-        $0018: SetT(True);
-        $0019: FState.SR := FState.SR and not Cardinal($301);
-        $0028: begin FState.MACH := 0; FState.MACL := 0; end;
-        $001B: begin FState.Sleeping := True; Result := 3; end;
+        $0009:
+          ;
+        $0008:
+          SetT(False);
+        $0018:
+          SetT(True);
+        $0019:
+          FState.SR := FState.SR and not Cardinal($301);
+        $0028:
+          begin
+            FState.MACH := 0;
+            FState.MACL := 0;
+          end;
+        $001B:
+          begin
+            FState.Sleeping := True;
+            Result := 3;
+          end;
         $000B:
           begin
-            if WasSlot then goto Slow;
-            FState.DelayTarget := FState.PR; Delayed := True; Result := 2;
+            if WasSlot then
+              goto Slow;
+            FState.DelayTarget := FState.PR;
+            delayed := True;
+            Result := 2;
           end;
         $002B:
           begin
-            if WasSlot then goto Slow;
-            if not TryNativeRead(FState.R[15],4,V) then goto Slow;
-            if not TryNativeRead(FState.R[15]+4,4,A) then goto Slow;
+            if WasSlot then
+              goto Slow;
+            if not TryNativeRead(FState.R[15], 4, V) then
+              goto Slow;
+            if not TryNativeRead(FState.R[15] + 4, 4, A) then
+              goto Slow;
             FState.SR := A and $3F3;
-            Inc(FState.R[15],8);
-            FState.DelayTarget := V; Delayed := True; Result := 4;
+            Inc(FState.R[15], 8);
+            FState.DelayTarget := V;
+            delayed := True;
+            Result := 4;
           end;
       else
-        if (Op and $F0FF) in [$0003,$0023] then
+        if (Op and $F0FF) in [$0003, $0023] then
         begin
-          if FSH1 or WasSlot then goto Slow;
-          if Op and $20 = 0 then FState.PR := At+4;
-          FState.DelayTarget := At+4+FState.R[(Op shr 8) and 15];
-          Delayed := True; Result := 2; goto Commit;
+          if FSH1 or WasSlot then
+            goto Slow;
+          if Op and $20 = 0 then
+            FState.PR := At + 4;
+          FState.DelayTarget := At + 4 + FState.R[(Op shr 8) and 15];
+          delayed := True;
+          Result := 2;
+          goto Commit;
         end;
         if Op and 15 = 7 then
         begin
-          if FSH1 then goto Slow;
-          Result := ExecuteOpcode(Op,At,FState.DelayTarget,WasSlot); goto Commit;
+          if FSH1 then
+            goto Slow;
+          Result := ExecuteOpcode(Op, At, FState.DelayTarget, WasSlot);
+          goto Commit;
         end;
-        if (Op and 15) in [12,13,14] then
+        if (Op and 15) in [12, 13, 14] then
         begin
           var Size := 1 shl (Op and 3);
           A := FState.R[(Op shr 4) and 15] + FState.R[0];
-          if not TryNativeRead(A,Size,V) then goto Slow;
+          if not TryNativeRead(A, Size, V) then
+            goto Slow;
           N := (Op shr 8) and 15;
           case Size of
-            1: FState.R[N] := SX8(V);
-            2: FState.R[N] := SX16(V);
-            4: FState.R[N] := V;
+            1:
+              FState.R[N] := SX8(V);
+            2:
+              FState.R[N] := SX16(V);
+            4:
+              FState.R[N] := V;
           end;
           goto Commit;
         end;
         N := (Op shr 8) and 15;
         case Op and $FF of
-          $02: FState.R[N] := FState.SR;
-          $12: FState.R[N] := FState.GBR;
-          $22: FState.R[N] := FState.VBR;
-          $0A: FState.R[N] := FState.MACH;
-          $1A: FState.R[N] := FState.MACL;
-          $2A: FState.R[N] := FState.PR;
-          $29: FState.R[N] := FState.SR and 1;
-        else goto Slow;
+          $02:
+            FState.R[N] := FState.SR;
+          $12:
+            FState.R[N] := FState.GBR;
+          $22:
+            FState.R[N] := FState.VBR;
+          $0A:
+            FState.R[N] := FState.MACH;
+          $1A:
+            FState.R[N] := FState.MACL;
+          $2A:
+            FState.R[N] := FState.PR;
+          $29:
+            FState.R[N] := FState.SR and 1;
+        else
+          goto Slow;
         end;
       end;
     2:
       begin
-        if (Op and 15) in [7,12,13,14,15] then
-        begin Result := ExecuteOpcode(Op,At,FState.DelayTarget,WasSlot); goto Commit; end;
-        if not ((Op and 15) in [8,9,10,11]) then goto Slow;
-        N := (Op shr 8) and 15; A := FState.R[N]; B := FState.R[(Op shr 4) and 15];
+        if (Op and 15) in [7, 12, 13, 14, 15] then
+        begin
+          Result := ExecuteOpcode(Op, At, FState.DelayTarget, WasSlot);
+          goto Commit;
+        end;
+        if not ((Op and 15) in [8, 9, 10, 11]) then
+          goto Slow;
+        N := (Op shr 8) and 15;
+        A := FState.R[N];
+        B := FState.R[(Op shr 4) and 15];
         case Op and 15 of
-          8: SetT(A and B = 0);
-          9: FState.R[N] := A and B;
-          10: FState.R[N] := A xor B;
-          11: FState.R[N] := A or B;
+          8:
+            SetT(A and B = 0);
+          9:
+            FState.R[N] := A and B;
+          10:
+            FState.R[N] := A xor B;
+          11:
+            FState.R[N] := A or B;
         end;
       end;
     3:
       begin
-        if (Op and 15) in [4,5,10,11,13,14,15] then
+        if (Op and 15) in [4, 5, 10, 11, 13, 14, 15] then
         begin
-          if FSH1 and ((Op and 15) in [5,13]) then goto Slow;
-          Result := ExecuteOpcode(Op,At,FState.DelayTarget,WasSlot); goto Commit;
+          if FSH1 and ((Op and 15) in [5, 13]) then
+            goto Slow;
+          Result := ExecuteOpcode(Op, At, FState.DelayTarget, WasSlot);
+          goto Commit;
         end;
-        N := (Op shr 8) and 15; A := FState.R[N]; B := FState.R[(Op shr 4) and 15];
+        N := (Op shr 8) and 15;
+        A := FState.R[N];
+        B := FState.R[(Op shr 4) and 15];
         case Op and 15 of
-          0: SetT(A = B);
-          2: SetT(A >= B);
-          3: SetT(Integer(A) >= Integer(B));
-          6: SetT(A > B);
-          7: SetT(Integer(A) > Integer(B));
-          8: FState.R[N] := A - B;
-          12: FState.R[N] := A + B;
-        else goto Slow;
+          0:
+            SetT(A = B);
+          2:
+            SetT(A >= B);
+          3:
+            SetT(Integer(A) >= Integer(B));
+          6:
+            SetT(A > B);
+          7:
+            SetT(Integer(A) > Integer(B));
+          8:
+            FState.R[N] := A - B;
+          12:
+            FState.R[N] := A + B;
+        else
+          goto Slow;
         end;
       end;
     4:
       begin
-        N := (Op shr 8) and 15; A := FState.R[N];
+        N := (Op shr 8) and 15;
+        A := FState.R[N];
         case Op and $FF of
-          $06,$16,$26,$07,$17,$27:
+          $06, $16, $26, $07, $17, $27:
             begin
-              if not TryNativeRead(A,4,V) then goto Slow;
+              if not TryNativeRead(A, 4, V) then
+                goto Slow;
               case Op and $FF of
-                $06: FState.MACH := V;
-                $16: FState.MACL := V;
-                $26: FState.PR := V;
-                $07: FState.SR := V and $3F3;
-                $17: FState.GBR := V;
-                $27: FState.VBR := V;
+                $06:
+                  FState.MACH := V;
+                $16:
+                  FState.MACL := V;
+                $26:
+                  FState.PR := V;
+                $07:
+                  FState.SR := V and $3F3;
+                $17:
+                  FState.GBR := V;
+                $27:
+                  FState.VBR := V;
               end;
-              Inc(FState.R[N],4);
-              if Op and 1 <> 0 then Result := 3;
+              Inc(FState.R[N], 4);
+              if Op and 1 <> 0 then
+                Result := 3;
             end;
-          $0A,$1A,$2A,$0E,$1E,$2E,$24,$25:
-            begin Result := ExecuteOpcode(Op,At,FState.DelayTarget,WasSlot); goto Commit; end;
-          $00,$20: begin SetT(A and $80000000 <> 0); FState.R[N] := A shl 1; end;
-          $01: begin SetT(Odd(A)); FState.R[N] := A shr 1; end;
-          $21: begin SetT(Odd(A)); FState.R[N] := (A shr 1) or (A and $80000000); end;
-          $04: begin SetT(A and $80000000 <> 0); FState.R[N] := (A shl 1) or (A shr 31); end;
-          $05: begin SetT(Odd(A)); FState.R[N] := (A shr 1) or (A shl 31); end;
-          $08: FState.R[N] := A shl 2;
-          $09: FState.R[N] := A shr 2;
-          $18: FState.R[N] := A shl 8;
-          $19: FState.R[N] := A shr 8;
-          $28: FState.R[N] := A shl 16;
-          $29: FState.R[N] := A shr 16;
+          $0A, $1A, $2A, $0E, $1E, $2E, $24, $25:
+            begin
+              Result := ExecuteOpcode(Op, At, FState.DelayTarget, WasSlot);
+              goto Commit;
+            end;
+          $00, $20:
+            begin
+              SetT(A and $80000000 <> 0);
+              FState.R[N] := A shl 1;
+            end;
+          $01:
+            begin
+              SetT(Odd(A));
+              FState.R[N] := A shr 1;
+            end;
+          $21:
+            begin
+              SetT(Odd(A));
+              FState.R[N] := (A shr 1) or (A and $80000000);
+            end;
+          $04:
+            begin
+              SetT(A and $80000000 <> 0);
+              FState.R[N] := (A shl 1) or (A shr 31);
+            end;
+          $05:
+            begin
+              SetT(Odd(A));
+              FState.R[N] := (A shr 1) or (A shl 31);
+            end;
+          $08:
+            FState.R[N] := A shl 2;
+          $09:
+            FState.R[N] := A shr 2;
+          $18:
+            FState.R[N] := A shl 8;
+          $19:
+            FState.R[N] := A shr 8;
+          $28:
+            FState.R[N] := A shl 16;
+          $29:
+            FState.R[N] := A shr 16;
           $10:
             begin
-              if FSH1 then goto Slow;
-              FState.R[N] := A - 1; SetT(FState.R[N] = 0);
+              if FSH1 then
+                goto Slow;
+              FState.R[N] := A - 1;
+              SetT(FState.R[N] = 0);
             end;
-          $11: SetT(Integer(A) >= 0);
-          $15: SetT(Integer(A) > 0);
-          $0B,$2B:
+          $11:
+            SetT(Integer(A) >= 0);
+          $15:
+            SetT(Integer(A) > 0);
+          $0B, $2B:
             begin
-              if WasSlot then goto Slow;
-              if Op and $20 = 0 then FState.PR := At + 4;
-              FState.DelayTarget := A; Delayed := True; Result := 2;
+              if WasSlot then
+                goto Slow;
+              if Op and $20 = 0 then
+                FState.PR := At + 4;
+              FState.DelayTarget := A;
+              delayed := True;
+              Result := 2;
             end;
-        else goto Slow;
+        else
+          goto Slow;
         end;
       end;
     5:
       begin
-        A := FState.R[(Op shr 4) and 15] + (Op and 15)*4;
-        if not TryNativeRead(A,4,V) then goto Slow;
+        A := FState.R[(Op shr 4) and 15] + (Op and 15) * 4;
+        if not TryNativeRead(A, 4, V) then
+          goto Slow;
         FState.R[(Op shr 8) and 15] := V;
       end;
     6:
       begin
-        if (Op and 15) in [0,1,2,4,5,6] then
+        if (Op and 15) in [0, 1, 2, 4, 5, 6] then
         begin
           var M := (Op shr 4) and 15;
           var Size := 1 shl (Op and 3);
-          if not TryNativeRead(FState.R[M],Size,V) then goto Slow;
+          if not TryNativeRead(FState.R[M], Size, V) then
+            goto Slow;
           N := (Op shr 8) and 15;
           case Size of
-            1: FState.R[N] := SX8(V);
-            2: FState.R[N] := SX16(V);
-            4: FState.R[N] := V;
+            1:
+              FState.R[N] := SX8(V);
+            2:
+              FState.R[N] := SX16(V);
+            4:
+              FState.R[N] := V;
           end;
-          if (Op and 4 <> 0) and (N <> M) then Inc(FState.R[M],Size);
+          if (Op and 4 <> 0) and (N <> M) then
+            Inc(FState.R[M], Size);
           goto Commit;
         end;
-        N := (Op shr 8) and 15; B := FState.R[(Op shr 4) and 15];
+        N := (Op shr 8) and 15;
+        B := FState.R[(Op shr 4) and 15];
         case Op and 15 of
-          3: FState.R[N] := B;
-          7: FState.R[N] := not B;
-          8: FState.R[N] := (B and $FFFF0000) or ((B and $FF) shl 8) or ((B shr 8) and $FF);
-          9: FState.R[N] := (B shl 16) or (B shr 16);
-          10: begin FState.R[N] := 0-B-(FState.SR and 1); SetT((B <> 0) or Odd(FState.SR)); end;
-          11: FState.R[N] := 0-B;
-          12: FState.R[N] := B and $FF;
-          13: FState.R[N] := B and $FFFF;
-          14: FState.R[N] := SX8(B);
-          15: FState.R[N] := SX16(B);
+          3:
+            FState.R[N] := B;
+          7:
+            FState.R[N] := not B;
+          8:
+            FState.R[N] := (B and $FFFF0000) or ((B and $FF) shl 8) or ((B shr 8) and $FF);
+          9:
+            FState.R[N] := (B shl 16) or (B shr 16);
+          10:
+            begin
+              FState.R[N] := 0 - B - (FState.SR and 1);
+              SetT((B <> 0) or Odd(FState.SR));
+            end;
+          11:
+            FState.R[N] := 0 - B;
+          12:
+            FState.R[N] := B and $FF;
+          13:
+            FState.R[N] := B and $FFFF;
+          14:
+            FState.R[N] := SX8(B);
+          15:
+            FState.R[N] := SX16(B);
         end;
       end;
     7:
-      begin N := (Op shr 8) and 15; FState.R[N] := FState.R[N] + SX8(Op); end;
+      begin
+        N := (Op shr 8) and 15;
+        FState.R[N] := FState.R[N] + SX8(Op);
+      end;
     8:
       case Op shr 8 of
-        $84,$85:
+        $84, $85:
           begin
             var Size := 1 shl ((Op shr 8) and 1);
-            A := FState.R[(Op shr 4) and 15] + Cardinal((Op and 15)*Size);
-            if not TryNativeRead(A,Size,V) then goto Slow;
-            if Size = 1 then FState.R[0] := SX8(V) else FState.R[0] := SX16(V);
+            A := FState.R[(Op shr 4) and 15] + Cardinal((Op and 15) * Size);
+            if not TryNativeRead(A, Size, V) then
+              goto Slow;
+            if Size = 1 then
+              FState.R[0] := SX8(V)
+            else
+              FState.R[0] := SX16(V);
           end;
-        $88: SetT(FState.R[0] = SX8(Op));
-        $8D,$8F:
+        $88:
+          SetT(FState.R[0] = SX8(Op));
+        $8D, $8F:
           begin
-            if FSH1 or WasSlot then goto Slow;
+            if FSH1 or WasSlot then
+              goto Slow;
             if Odd(FState.SR) = (Op and $200 = 0) then
-            begin FState.DelayTarget := At+4+SX8(Op)*2; Delayed := True; Result := 2; end;
+            begin
+              FState.DelayTarget := At + 4 + SX8(Op) * 2;
+              delayed := True;
+              Result := 2;
+            end;
           end;
-        $89,$8B:
+        $89, $8B:
           begin
-            if WasSlot then goto Slow;
+            if WasSlot then
+              goto Slow;
             if Odd(FState.SR) = (Op and $200 = 0) then
-            begin NextPC := At+4+SX8(Op)*2; Result := 3; end;
+            begin
+              NextPC := At + 4 + SX8(Op) * 2;
+              Result := 3;
+            end;
           end;
-      else goto Slow;
+      else
+        goto Slow;
       end;
-    9,13:
+    9, 13:
       begin
-        A := At+4; if WasSlot then A := FState.DelayTarget+2;
+        A := At + 4;
+        if WasSlot then
+          A := FState.DelayTarget + 2;
         var Size := 2;
-        if Op shr 12 = 9 then A := A+(Op and $FF)*2
-        else begin Size := 4; A := (A and $FFFFFFFC)+(Op and $FF)*4; end;
-        if not TryNativeRead(A,Size,V) then goto Slow;
-        if Size = 2 then V := SX16(V);
+        if Op shr 12 = 9 then
+          A := A + (Op and $FF) * 2
+        else
+        begin
+          Size := 4;
+          A := (A and $FFFFFFFC) + (Op and $FF) * 4;
+        end;
+        if not TryNativeRead(A, Size, V) then
+          goto Slow;
+        if Size = 2 then
+          V := SX16(V);
         FState.R[(Op shr 8) and 15] := V;
       end;
-    10,11:
+    10, 11:
       begin
-        if WasSlot then goto Slow;
-        V := Op and $FFF; if V and $800 <> 0 then V := V or $FFFFF000;
-        if Op shr 12 = 11 then FState.PR := At+4;
-        FState.DelayTarget := At+4+V*2; Delayed := True; Result := 2;
+        if WasSlot then
+          goto Slow;
+        V := Op and $FFF;
+        if V and $800 <> 0 then
+          V := V or $FFFFF000;
+        if Op shr 12 = 11 then
+          FState.PR := At + 4;
+        FState.DelayTarget := At + 4 + V * 2;
+        delayed := True;
+        Result := 2;
       end;
     12:
       case (Op shr 8) and 15 of
-        4,5,6:
+        4, 5, 6:
           begin
             var Size := 1 shl ((Op shr 8) and 3);
-            A := FState.GBR + Cardinal((Op and $FF)*Size);
-            if not TryNativeRead(A,Size,V) then goto Slow;
+            A := FState.GBR + Cardinal((Op and $FF) * Size);
+            if not TryNativeRead(A, Size, V) then
+              goto Slow;
             case Size of
-              1: FState.R[0] := SX8(V);
-              2: FState.R[0] := SX16(V);
-              4: FState.R[0] := V;
+              1:
+                FState.R[0] := SX8(V);
+              2:
+                FState.R[0] := SX16(V);
+              4:
+                FState.R[0] := V;
             end;
           end;
         7:
           begin
-            V := At+4; if WasSlot then V := FState.DelayTarget+2;
-            FState.R[0] := (V and $FFFFFFFC)+(Op and $FF)*4;
+            V := At + 4;
+            if WasSlot then
+              V := FState.DelayTarget + 2;
+            FState.R[0] := (V and $FFFFFFFC) + (Op and $FF) * 4;
           end;
-        8: SetT(FState.R[0] and (Op and $FF) = 0);
-        9: FState.R[0] := FState.R[0] and (Op and $FF);
-        10: FState.R[0] := FState.R[0] xor (Op and $FF);
-        11: FState.R[0] := FState.R[0] or (Op and $FF);
-      else goto Slow;
+        8:
+          SetT(FState.R[0] and (Op and $FF) = 0);
+        9:
+          FState.R[0] := FState.R[0] and (Op and $FF);
+        10:
+          FState.R[0] := FState.R[0] xor (Op and $FF);
+        11:
+          FState.R[0] := FState.R[0] or (Op and $FF);
+      else
+        goto Slow;
       end;
-    14: FState.R[(Op shr 8) and 15] := SX8(Op);
-  else goto Slow;
+    14:
+      FState.R[(Op shr 8) and 15] := SX8(Op);
+  else
+    goto Slow;
   end;
   goto Commit;
 Slow:
   Exit(0);
 Commit:
-  if WasSlot then NextPC := FState.DelayTarget;
+  if WasSlot then
+    NextPC := FState.DelayTarget;
   FState.PC := NextPC;
-  FState.DelayPending := Delayed;
+  FState.DelayPending := delayed;
   FInterruptAccepted := False;
-  FState.Cycles := Add64(FState.Cycles,UInt64(Result));
+  FState.Cycles := Add64(FState.Cycles, UInt64(Result));
 end;
 
 function TSH2.Step: Integer;
 begin
   Result := StepCached;
-  if Result = 0 then Result := StepChecked;
+  if Result = 0 then
+    Result := StepChecked;
 end;
 
 function TSH2.StepChecked: Integer;
@@ -1223,7 +1473,6 @@ var
   At, Target, A, B: Cardinal;
   N, M: Integer;
   WasSlot, Fast: Boolean;
-
 begin
   Result := 1;
   FInterruptAccepted := False;
@@ -1255,7 +1504,10 @@ begin
       FCodeLRU^ := (FCodeLRU^ and FCodeMask) or FCodeBits;
       Op := Swap(PWord(NativeUInt(FCodeData) + (At and 15))^);
     end
-    else Op := Word((FFetch(FUser, At, 2) and $FFFF));
+    else
+      Op := Word((FFetch(FUser, At, 2) and $FFFF));
+    if Assigned(FOpcodeDecoder) then
+      Op := FOpcodeDecoder(FDecodeUser, At, Op);
     FState.PC := Cardinal(((Cardinal(At) + 2) and $FFFFFFFF));
     FState.DelayPending := False;
     // Common ISA groups use a small executor frame. Branches with delay
@@ -1263,116 +1515,156 @@ begin
     // the full decoder. Every instruction still fetches and consumes cycles.
     Fast := True;
     case Op shr 12 of
-      0: Fast := Op = $0009;
-      1: Write(FState.R[(Op shr 8) and 15] + (Op and 15) * 4,
-        FState.R[(Op shr 4) and 15],4);
+      0:
+        Fast := Op = $0009;
+      1:
+        Write(FState.R[(Op shr 8) and 15] + (Op and 15) * 4,
+          FState.R[(Op shr 4) and 15], 4);
       2:
-      begin
-        N := (Op shr 8) and 15;
-        A := FState.R[N];
-        B := FState.R[(Op shr 4) and 15];
-        case Op and 15 of
-          0: Write(A, B, 1);
-          1: Write(A, B, 2);
-          2: Write(A, B, 4);
-          8: SetT(A and B = 0);
-          9: FState.R[N] := A and B;
-          10: FState.R[N] := A xor B;
-          11: FState.R[N] := A or B;
-        else Fast := False;
+        begin
+          N := (Op shr 8) and 15;
+          A := FState.R[N];
+          B := FState.R[(Op shr 4) and 15];
+          case Op and 15 of
+            0:
+              Write(A, B, 1);
+            1:
+              Write(A, B, 2);
+            2:
+              Write(A, B, 4);
+            8:
+              SetT(A and B = 0);
+            9:
+              FState.R[N] := A and B;
+            10:
+              FState.R[N] := A xor B;
+            11:
+              FState.R[N] := A or B;
+          else
+            Fast := False;
+          end;
         end;
-      end;
       3:
-      begin
-        N := (Op shr 8) and 15;
-        A := FState.R[N];
-        B := FState.R[(Op shr 4) and 15];
-        case Op and 15 of
-          0: SetT(A = B);
-          2: SetT(A >= B);
-          3: SetT(Integer(A) >= Integer(B));
-          6: SetT(A > B);
-          7: SetT(Integer(A) > Integer(B));
-          8: FState.R[N] := A - B;
-          12: FState.R[N] := A + B;
-        else Fast := False;
+        begin
+          N := (Op shr 8) and 15;
+          A := FState.R[N];
+          B := FState.R[(Op shr 4) and 15];
+          case Op and 15 of
+            0:
+              SetT(A = B);
+            2:
+              SetT(A >= B);
+            3:
+              SetT(Integer(A) >= Integer(B));
+            6:
+              SetT(A > B);
+            7:
+              SetT(Integer(A) > Integer(B));
+            8:
+              FState.R[N] := A - B;
+            12:
+              FState.R[N] := A + B;
+          else
+            Fast := False;
+          end;
         end;
-      end;
-      5: FState.R[(Op shr 8) and 15] := Read(FState.R[(Op shr 4) and 15] + (Op and 15) * 4,4);
+      5:
+        FState.R[(Op shr 8) and 15] := Read(FState.R[(Op shr 4) and 15] + (Op and 15) * 4, 4);
       6:
-      begin
-        N := (Op shr 8) and 15;
-        M := (Op shr 4) and 15;
-        B := FState.R[M];
-        case Op and 15 of
-          0,4:
-            begin
-              FState.R[N] := SX8(Read(B, 1));
-              if (Op and 4 <> 0) and (N <> M) then Inc(FState.R[M]);
-            end;
-          1,5:
-            begin
-              FState.R[N] := SX16(Read(B, 2));
-              if (Op and 4 <> 0) and (N <> M) then Inc(FState.R[M], 2);
-            end;
-          2,6:
-            begin
-              FState.R[N] := Read(B, 4);
-              if (Op and 4 <> 0) and (N <> M) then Inc(FState.R[M], 4);
-            end;
-          3: FState.R[N] := B;
-          7: FState.R[N] := not B;
-          8: FState.R[N] := (B and $FFFF0000) or ((B and $FF) shl 8) or ((B shr 8) and $FF);
-          9: FState.R[N] := (B shl 16) or (B shr 16);
-          10:
-            begin
-              FState.R[N] := 0 - B - (FState.SR and 1);
-              SetT((B <> 0) or Odd(FState.SR));
-            end;
-          11: FState.R[N] := 0 - B;
-          12: FState.R[N] := B and $FF;
-          13: FState.R[N] := B and $FFFF;
-          14: FState.R[N] := SX8(B);
-          15: FState.R[N] := SX16(B);
+        begin
+          N := (Op shr 8) and 15;
+          M := (Op shr 4) and 15;
+          B := FState.R[M];
+          case Op and 15 of
+            0, 4:
+              begin
+                FState.R[N] := SX8(Read(B, 1));
+                if (Op and 4 <> 0) and (N <> M) then
+                  Inc(FState.R[M]);
+              end;
+            1, 5:
+              begin
+                FState.R[N] := SX16(Read(B, 2));
+                if (Op and 4 <> 0) and (N <> M) then
+                  Inc(FState.R[M], 2);
+              end;
+            2, 6:
+              begin
+                FState.R[N] := Read(B, 4);
+                if (Op and 4 <> 0) and (N <> M) then
+                  Inc(FState.R[M], 4);
+              end;
+            3:
+              FState.R[N] := B;
+            7:
+              FState.R[N] := not B;
+            8:
+              FState.R[N] := (B and $FFFF0000) or ((B and $FF) shl 8) or ((B shr 8) and $FF);
+            9:
+              FState.R[N] := (B shl 16) or (B shr 16);
+            10:
+              begin
+                FState.R[N] := 0 - B - (FState.SR and 1);
+                SetT((B <> 0) or Odd(FState.SR));
+              end;
+            11:
+              FState.R[N] := 0 - B;
+            12:
+              FState.R[N] := B and $FF;
+            13:
+              FState.R[N] := B and $FFFF;
+            14:
+              FState.R[N] := SX8(B);
+            15:
+              FState.R[N] := SX16(B);
+          end;
         end;
-      end;
       7:
-      begin
-        N := (Op shr 8) and 15;
-        FState.R[N] := FState.R[N] + SX8(Op);
-      end;
+        begin
+          N := (Op shr 8) and 15;
+          FState.R[N] := FState.R[N] + SX8(Op);
+        end;
       8:
         case Op shr 8 of
-          $88: SetT(FState.R[0] = SX8(Op));
-          $89,$8B:
-            if WasSlot then Fast := False
+          $88:
+            SetT(FState.R[0] = SX8(Op));
+          $89, $8B:
+            if WasSlot then
+              Fast := False
             else if Odd(FState.SR) = (Op and $200 = 0) then
             begin
               FState.PC := At + 4 + SX8(Op) * 2;
               Result := 3;
             end;
-        else Fast := False;
+        else
+          Fast := False;
         end;
       9:
         begin
           A := At + 4;
-          if WasSlot then A := Target + 2;
+          if WasSlot then
+            A := Target + 2;
           FState.R[(Op shr 8) and 15] := SX16(Read(A + (Op and $FF) * 2, 2));
         end;
       13:
         begin
           A := At + 4;
-          if WasSlot then A := Target + 2;
+          if WasSlot then
+            A := Target + 2;
           FState.R[(Op shr 8) and 15] := Read((A and $FFFFFFFC) + (Op and $FF) * 4, 4);
         end;
-      14: FState.R[(Op shr 8) and 15] := SX8(Op);
-    else Fast := False;
+      14:
+        FState.R[(Op shr 8) and 15] := SX8(Op);
+    else
+      Fast := False;
     end;
     if Fast then
     begin
-      if WasSlot then FState.PC := Target;
+      if WasSlot then
+        FState.PC := Target;
     end
-    else Result := ExecuteOpcode(Op, At, Target, WasSlot);
+    else
+      Result := ExecuteOpcode(Op, At, Target, WasSlot);
   except
     on E: ESH2Address do
     begin

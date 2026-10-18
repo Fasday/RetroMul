@@ -221,8 +221,10 @@ end;
 
 function TGWCoreAdapter.GetVirtualButtons: TEmulatorButtons;
 begin
-  if FThread <> nil then Result := FThread.SupportedButtons
-  else Result := FCartridge.SupportedButtons;
+  if FThread <> nil then
+    Result := FThread.SupportedButtons
+  else
+    Result := FCartridge.SupportedButtons;
 end;
 
 function TGWCoreAdapter.GetInputState: TEmulatorInput;
@@ -282,7 +284,7 @@ end;
 
 function TGWCoreAdapter.GetName: string;
 begin
-  Result := 'Game & Watch';
+  Result := 'Game && Watch';
 end;
 
 function TGWCoreAdapter.GetSupportsSnapshots: Boolean;

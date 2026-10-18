@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, MD.Sound, ZX.Sound.YM2149, Core.AudioFilter;
+  System.SysUtils, MD.Sound, ZX.Sound.YM2149, Core.AudioFilter, Core.Snapshots;
 
 type
   // OPN FM operators are shared with the existing OPN2 core. YM2203 runs
@@ -26,7 +26,9 @@ type
     procedure Reset;
     procedure WriteRegister(Index, Value: Byte);
     function ReadRegister(Index: Byte): Byte;
+    function ReadStatus: Byte;
     function Sample: SmallInt;
+    procedure SerializeState(State: TStateArchive);
   end;
 
 implementation
@@ -34,12 +36,28 @@ implementation
 uses
   System.Math;
 
+procedure TYM2203.SerializeState(State: TStateArchive);
+begin
+  State.Field(FFM, SizeOf(FFM));
+  FSSG.SerializeState(State.Field);
+  State.Field(FPrescaler, SizeOf(FPrescaler));
+  State.Field(FDivider, SizeOf(FDivider));
+  State.Field(FPhase, SizeOf(FPhase));
+  State.Field(FFiltered, SizeOf(FFiltered));
+  State.Field(FFilter, SizeOf(FFilter));
+  State.Field(FDC, SizeOf(FDC));
+  State.Field(FRegisters, SizeOf(FRegisters));
+  if (FPrescaler < 0) or (FPrescaler > 3) or (FDivider < 1) then
+    raise EArgumentException.Create('Invalid YM2203 state');
+end;
+
 constructor TYM2203.Create(Clock, SampleRate: Integer);
 begin
   inherited Create;
   if (Clock < 1000000) or (Clock > 8000000) or
     (SampleRate < 8000) or (SampleRate > 192000) then
     raise EArgumentOutOfRangeException.Create('YM2203 clock/sample rate');
+
   FClock := Clock;
   FSampleRate := SampleRate;
   FSSG := TYM2149F.Create(Clock div 4, SampleRate);
@@ -107,6 +125,7 @@ begin
     SelectPrescaler;
     Exit;
   end;
+
   if Index < 16 then
     FSSG.WriteRegister(Index, Value)
   else if ((Index >= $24) and (Index <= $28)) or
@@ -123,7 +142,17 @@ end;
 
 function TYM2203.ReadRegister(Index: Byte): Byte;
 begin
-  Result := FRegisters[Index];
+  if Index < 16 then
+    Result := FSSG.ReadRegister(Index)
+  else
+    Result := FRegisters[Index];
+end;
+
+function TYM2203.ReadStatus: Byte;
+begin
+  // The bus owner supplies busy timing in master-clock cycles. The shared
+  // OPN2 synthesis state also has a busy latch, but Sample bypasses its bus.
+  Result := FFM.State.Status and 3;
 end;
 
 function TYM2203.GenerateFM: Integer;
@@ -190,6 +219,7 @@ begin
           end;
       end;
     end;
+
   // YM2203 has no YM2612 9-bit DAC quantization or per-channel clipping.
   Result := Result div 2;
 end;

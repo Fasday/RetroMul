@@ -71,6 +71,7 @@ begin
       var R := Integer((C shr 16) and $FF);
       var G := Integer((C shr 8) and $FF);
       var B := Integer(C and $FF);
+
       // Approximate LCD channel mixing; preserve alpha and the uncorrected core frame.
       Frame.Pixels[I] := (C and $FF000000) or
         (UInt32((26 * R + 4 * G + 2 * B) div 32) shl 16) or

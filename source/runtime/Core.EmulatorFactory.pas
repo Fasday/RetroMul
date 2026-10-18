@@ -18,7 +18,8 @@ uses
   Core.RomArchive, System.Zip, System.IOUtils, SG1000.Console, Core.RomFormat,
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP;
+  Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
+  Core.Adapter.CPS, CPS.RomSets;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -124,6 +125,17 @@ begin
 
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ZIP) then
   begin
+    var CPSStream := TBytesStream.Create(Data);
+    try
+      var CPSSet: TCPSRomSet;
+      if TCPSRomSet.IdentifyStream(CPSStream, SourceName, CPSSet) then
+      begin
+        CPSStream.Position := 0;
+        Exit(TCPSCoreAdapter.Create(CPSStream, Storage, SourceName));
+      end;
+    finally
+      CPSStream.Free;
+    end;
     var ArchiveStream := TBytesStream.Create(Data);
     var Archive := TZipFile.Create;
     try
@@ -153,7 +165,8 @@ begin
             var Score := CartridgeVariantScore(Name);
             var Previous := CartridgeVariantScore(Archive.FileNames[Candidate]);
             if (Score < Previous) or ((Score = Previous) and
-              (CompareText(Name, Archive.FileNames[Candidate]) >= 0)) then Continue;
+              (CompareText(Name, Archive.FileNames[Candidate]) >= 0)) then
+              Continue;
           end;
 
           Candidate := i;
@@ -218,6 +231,7 @@ begin
     Format.System := TRomSystem.GBA;
   if (Format.System <> TRomSystem.NeoGeo) and (Length(Data) > ROM_MAX_SIZE) then
     raise EReadError.Create('ROM exceeds 64 MiB');
+
   if Format.System = TRomSystem.Unknown then
     raise EReadError.Create('Unrecognized ROM header (NES, Game Boy, Game Boy Color, Game Boy Advance, Mega Drive, SNES, Nintendo 64, Neo Geo or Neo Geo Pocket expected; use .sg/.sc for SG-1000/SC-3000)');
 

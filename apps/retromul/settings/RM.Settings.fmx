@@ -1296,6 +1296,66 @@
                 end
               end
             end
+            object PanelRowTouchhaptics: TPanel
+              Align = Top
+              Padding.Left = 16.000000000000000000
+              Padding.Top = 12.000000000000000000
+              Padding.Right = 16.000000000000000000
+              Padding.Bottom = 12.000000000000000000
+              Margins.Bottom = 6.000000000000000000
+              Position.X = 16.000000000000000000
+              Position.Y = 134.000000000000000000
+              Size.Width = 852.000000000000000000
+              Size.Height = 72.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'retromul_row'
+              object LayoutRowTouchhapticsText: TLayout
+                Align = Client
+                Size.Width = 740.000000000000000000
+                Size.Height = 48.000000000000000000
+                Size.PlatformDefault = False
+                object LabelRowTouchhapticsTitle: TLabel
+                  Align = Top
+                  StyledSettings = [Family, Style]
+                  Size.Width = 740.000000000000000000
+                  Size.Height = 24.000000000000000000
+                  Size.PlatformDefault = False
+                  TextSettings.Font.Size = 15.000000000000000000
+                  TextSettings.FontColor = claWhite
+                  TextSettings.WordWrap = False
+                  Text = 'Touch vibration'
+                end
+                object LabelRowTouchhapticsDetail: TLabel
+                  Align = Client
+                  StyledSettings = [Family, Style]
+                  Opacity = 0.720000028610229500
+                  Size.Width = 740.000000000000000000
+                  Size.Height = 24.000000000000000000
+                  Size.PlatformDefault = False
+                  TextSettings.Font.Size = 14.000000000000000000
+                  TextSettings.FontColor = claWhite
+                  Text = 'A short pulse when an on-screen gamepad button is pressed.'
+                end
+              end
+              object LayoutRowTouchhapticsEditorContainer: TLayout
+                Align = Right
+                Margins.Left = 16.000000000000000000
+                Position.X = 772.000000000000000000
+                Position.Y = 12.000000000000000000
+                Size.Width = 64.000000000000000000
+                Size.Height = 48.000000000000000000
+                Size.PlatformDefault = False
+                object SwitchRowTouchhapticsEditor: TSwitch
+                  Align = Client
+                  IsChecked = False
+                  Margins.Top = 8.000000000000000000
+                  Margins.Bottom = 8.000000000000000000
+                  Size.Width = 64.000000000000000000
+                  Size.Height = 32.000000000000000000
+                  Size.PlatformDefault = False
+                end
+              end
+            end
           end
         end
         object LayoutSettingsPreviewColumn: TLayout

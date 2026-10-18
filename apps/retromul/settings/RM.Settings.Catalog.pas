@@ -31,6 +31,9 @@ begin
   var Classes := TDictionary<string, TSettingsPlatformClass>.Create;
   try
     Classes.Add('', TSettingsPlatform);
+    Classes.Add('CPS1', TSettingsPlatform);
+    Classes.Add('CPS2', TSettingsPlatform);
+    Classes.Add('CPS3', TSettingsPlatform);
     Classes.Add('GameBoy', TGameBoySettings);
     Classes.Add('GameBoyColor', TGameBoyColorSettings);
     Classes.Add('GBA', TGBASettings);
@@ -53,9 +56,11 @@ begin
       // Library variants may share one canonical settings page.
       if not SameText(Info.Id, Info.SettingsCoreId) then
         Continue;
+
       var PageClass: TSettingsPlatformClass;
       if not Classes.TryGetValue(Info.SettingsProfile, PageClass) then
         raise EInvalidOpException.Create('Unknown settings profile: ' + Info.SettingsProfile);
+
       SettingsPlatforms.Add(PageClass.Create(Info));
     end;
   finally

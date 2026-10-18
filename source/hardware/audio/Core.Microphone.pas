@@ -53,6 +53,7 @@ begin
   inherited Create;
   if (Capacity < 1) or (Capacity > MICROPHONE_SAMPLE_RATE) then
     raise EArgumentOutOfRangeException.Create('Microphone buffer capacity must be 1..44100 samples');
+
   FLock := TCriticalSection.Create;
   SetLength(FBuffer, Capacity);
 end;

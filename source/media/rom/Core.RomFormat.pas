@@ -31,6 +31,9 @@ const
   ROM_SYSTEM_NEOGEOAES = 'neogeoaes';
   ROM_SYSTEM_NGP = 'ngp';
   ROM_SYSTEM_NGPC = 'ngpc';
+  ROM_SYSTEM_CPS1 = 'cps1';
+  ROM_SYSTEM_CPS2 = 'cps2';
+  ROM_SYSTEM_CPS3 = 'cps3';
   ROM_FOLDER_MD = 'megadrive';
 
   // Uppercase IDs are persisted in snapshots and used by emulation workers.
@@ -243,16 +246,29 @@ function IsMDRealtec(const Data: TBytes): Boolean;
 implementation
 
 uses
-  SNES.Cartridge, GBA.Cartridge;
+  SNES.Cartridge, GBA.Cartridge, CPS.RomSets;
+
+function CPSSystem(Generation: TCPSGeneration): TRomSystem;
+begin
+  case Generation of
+    TCPSGeneration.CPS1:
+      Result := TRomSystem.CPS1;
+    TCPSGeneration.CPS2:
+      Result := TRomSystem.CPS2;
+  else
+    Result := TRomSystem.CPS3;
+  end;
+end;
 
 function IsMDRealtec(const Data: TBytes): Boolean;
 begin
   Result := False;
   if Length(Data) <> $80000 then
     Exit;
+
   var Sum: Cardinal := 0;
-  for var I := $200 div 2 to Length(Data) div 2 - 1 do
-    Sum := (Sum + (Cardinal(Data[I * 2]) shl 8) + Data[I * 2 + 1]) and $FFFF;
+  for var i := $200 div 2 to Length(Data) div 2 - 1 do
+    Sum := (Sum + (Cardinal(Data[i * 2]) shl 8) + Data[i * 2 + 1]) and $FFFF;
   var Signature := (Cardinal(Data[$18E]) shl 24) or (Cardinal(Data[$18F]) shl 16) or Sum;
   Result := (Signature = $000006AB) or (Signature = $FFFFF863) or
     (Signature = $FFFF44FB) or (Signature = $0000C0CD);
@@ -364,12 +380,14 @@ begin
       Result.System := TRomSystem.NeoGeoPocketColor;
     Exit;
   end;
+
   // Retail Saturn BIOS reset vectors. Identification is independent of filenames.
   if (Length(Data) >= 16) and Signature(0, AnsiString(#$20#$00#$02#$00#$06#$00#$20#$00#$20#$00#$02#$00#$06#$00#$20#$00)) then
   begin
     Result.System := TRomSystem.Saturn;
     Exit;
   end;
+
   for var Offset in [$1FF0, $3FF0, $7FF0] do
     for var Header in [0, ROM_COPIER_HEADER_SIZE] do
       if Signature(Offset + Header, 'TMR SEGA') and
@@ -381,6 +399,7 @@ begin
           Result.System := TRomSystem.GameGear;
         Exit;
       end;
+
   if Length(Data) >= 64 then
   begin
     var N64Signature := (Cardinal(Data[0]) shl 24) or (Cardinal(Data[1]) shl 16) or
@@ -395,6 +414,7 @@ begin
       Exit;
     end;
   end;
+
   var GBX := ReadGBXFooter(Data);
   if GBX.Present then
   begin
@@ -408,7 +428,20 @@ begin
   end;
 
   if Signature(0, NEOGEO_ROM_SIGNATURE) or Signature(0, NEOGEO_ZIP_ROM_SIGNATURE) then
-    Result.System := TRomSystem.NeoGeo
+  begin
+    Result.System := TRomSystem.NeoGeo;
+    if Signature(0, NEOGEO_ZIP_ROM_SIGNATURE) then
+    begin
+      var Input := TBytesStream.Create(Data);
+      try
+        var CPSSet: TCPSRomSet;
+        if TCPSRomSet.IdentifyStream(Input, '', CPSSet) then
+          Result.System := CPSSystem(CPSSet.Generation);
+      finally
+        Input.Free;
+      end;
+    end;
+  end
   else if IsGBAROM(Data) then
     Result.System := TRomSystem.GBA
   else if Signature(0, NES_ROM_SIGNATURE) then
@@ -459,6 +492,23 @@ begin
 
   var Position := Stream.Position;
   try
+    if (Position = 0) and (Stream.Size >= 4) then
+    begin
+      var Magic: Cardinal;
+      Stream.ReadBuffer(Magic, 4);
+      Stream.Position := Position;
+      if Magic = $04034B50 then
+      begin
+        var CPSSet: TCPSRomSet;
+        if TCPSRomSet.IdentifyStream(Stream, '', CPSSet) then
+        begin
+          Result := Default(TRomFormatInfo);
+          Result.System := CPSSystem(CPSSet.Generation);
+          Exit;
+        end;
+      end;
+    end;
+
     var Data: TBytes;
     if Stream.Size - Position >= 4 then
     begin
@@ -482,6 +532,7 @@ begin
     end;
     SetLength(Data, Count);
     Result := DetectRom(Data);
+
     // Keep the short signature read for existing systems. SNES has no leading
     // signature; ExHiROM stores its header past 4 MiB.
     if (Result.System = TRomSystem.Unknown) and (Count = ROM_SIGNATURE_PROBE_SIZE) then
@@ -498,6 +549,7 @@ begin
         var Read := Stream.Read(Data[Count], Length(Data) - Count);
         if Read = 0 then
           Break;
+
         Inc(Count, Read);
       end;
       SetLength(Data, Count);
@@ -541,13 +593,15 @@ begin
   if Format.System = TRomSystem.N64 then
     if (Length(Data) < $1000) or (Length(Data) > ROM_MAX_SIZE) or ((Length(Data) and 3) <> 0) then
       raise EReadError.Create('Invalid N64 ROM size');
+
   if Format.Encoding = TRomEncoding.WordSwapped then
   begin
     if (Length(Data) and 3) <> 0 then
       raise EReadError.Create('Invalid word-swapped ROM size');
-    for var I := 0 to Length(Data) div 4 - 1 do
-      for var J := 0 to 3 do
-        Result[I * 4 + J] := Data[I * 4 + 3 - J];
+
+    for var i := 0 to Length(Data) div 4 - 1 do
+      for var j := 0 to 3 do
+        Result[i * 4 + j] := Data[i * 4 + 3 - j];
   end
   else if Format.Encoding = TRomEncoding.SnesCopier then
     Result := Copy(Data, ROM_COPIER_HEADER_SIZE, Length(Data) - ROM_COPIER_HEADER_SIZE)

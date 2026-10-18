@@ -270,6 +270,7 @@ procedure TSnesCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 begin
   if Code = 0 then
     Exit;
+
   for var Port := 0 to 7 do
     for var Button := Low(TSnesButton) to High(TSnesButton) do
       if Code = FKeys[Port, Button] then

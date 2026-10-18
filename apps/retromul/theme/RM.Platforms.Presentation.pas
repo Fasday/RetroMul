@@ -8,7 +8,7 @@ uses
 {$SCOPEDENUMS ON}
 
 type
-  TPlatformPadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64, PCE);
+  TPlatformPadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64, PCE, CPS);
 
 const
   SETTINGS_PAGE_MAIN = 0;
@@ -35,6 +35,9 @@ const
   SETTINGS_PAGE_NEOGEOAES = SETTINGS_PAGE_NEOGEO;
   SETTINGS_PAGE_NGP = 22;
   SETTINGS_PAGE_NGPC = 23;
+  SETTINGS_PAGE_CPS1 = 24;
+  SETTINGS_PAGE_CPS2 = 25;
+  SETTINGS_PAGE_CPS3 = 26;
 
 type
   TPlatformPresentation = record
@@ -56,6 +59,16 @@ function PlatformPresentation(System: TRomSystem): TPlatformPresentation;
 begin
   Result := Default(TPlatformPresentation);
   case System of
+    TRomSystem.CPS1, TRomSystem.CPS2, TRomSystem.CPS3:
+      begin
+        case System of
+          TRomSystem.CPS1: Result.SettingsPageId := SETTINGS_PAGE_CPS1;
+          TRomSystem.CPS2: Result.SettingsPageId := SETTINGS_PAGE_CPS2;
+          TRomSystem.CPS3: Result.SettingsPageId := SETTINGS_PAGE_CPS3;
+        end;
+        Result.PadLayout := TPlatformPadLayout.CPS;
+        Result.IconData := PlatformIconCPS;
+      end;
     TRomSystem.GameWatch:
       begin
         Result.SettingsPageId := SETTINGS_PAGE_GW;
