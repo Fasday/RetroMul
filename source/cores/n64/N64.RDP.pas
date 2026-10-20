@@ -172,8 +172,8 @@ type
     FDataWord: Cardinal;
     FDataBytes: Integer;
     // Band drawing (TN64RDPGroup): this RDP draws the rows with
-    // (Y shr 3) mod FBands = FBand of band-safe primitives; band 0 draws the
-    // other ones (a serial stretch, between barriers) alone.
+    // (Y shr BandRowShift) mod FBands = FBand of band-safe primitives; band 0
+    // draws the other ones (a serial stretch, between barriers) alone.
     FGroup: TN64RDPGroup;
     FBand, FBands: Integer;
     FSerialPrim, FInSerial, FBandDrawn: Boolean;
@@ -265,6 +265,12 @@ type
     procedure WriteFramebuffer16(Address, Value: Cardinal);
     procedure CompleteDelayedHidden;
   public const
+    // Bands take rows in stripes of 1 shl BandRowShift in turn: narrow ones
+    // share the rows of small primitives out, so the bands' work between two
+    // barriers differs less (Command & Conquer, four bands, waits at the
+    // barriers of primitives with carries: 8 rows 0.55-0.83 s per band in 300
+    // frames, 2 rows 0.19-0.25 s; single rows slowed Resident Evil 2).
+    BandRowShift = 1;
     // Feed results.
     FeedNone = 0;
     FeedSync = 1; // a Full Sync completed
@@ -609,7 +615,7 @@ begin
   else if FSerialPrim then
     Result := FBand = 0
   else
-    Result := ((Y shr 3) mod FBands) = FBand;
+    Result := ((Y shr BandRowShift) mod FBands) = FBand;
 end;
 
 function TN64RDP.ReadsRDRAM: Boolean;
@@ -2689,7 +2695,7 @@ begin
     FMemoryColor := FCarryColor;
     FMemoryCoverage := FCarryCoverage;
   end
-  else if ((P shr 3) mod FBands) <> FBand then
+  else if ((P shr BandRowShift) mod FBands) <> FBand then
     FGroup.GetCarry(FCarrySeq, P, FMemoryColor, FMemoryCoverage);
 end;
 
