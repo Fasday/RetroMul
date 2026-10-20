@@ -105,11 +105,11 @@ type
     Pair: Boolean;
     // How each word issues (TN64RSP.StepKind).
     Kind, SecondKind: Byte;
-    // The clock's one external instruction is an MFC0 or MTC0 (journalled
-    // ahead as RunClocks does).
-    External: Boolean;
-    // A load or store issues (the only instructions fences concern).
-    Memory: Boolean;
+    // What RunBlock checks before the clock (none mostly): StepWaits, a
+    // stall (Wait); StepMemory, a load or store (the only instructions
+    // fences concern); StepExternal, the clock's one external instruction is
+    // an MFC0 or MTC0 (journalled ahead as RunClocks does).
+    Checks: Byte;
   end;
   PRSPBlockStep = ^TRSPBlockStep;
 
@@ -4069,6 +4069,12 @@ begin
   Result := RunClocks(PC, Status, Interrupt, Cycles, False);
 end;
 
+const
+  // TRSPBlockStep.Checks.
+  StepWaits = 1;
+  StepMemory = 2;
+  StepExternal = 4;
+
 procedure TN64RSP.ClearBlocks;
 begin
   for var I := 0 to High(FBlockHead) do
@@ -4236,8 +4242,11 @@ begin
     S.Wait := Wait;
     S.Kind := StepKind(Op);
     S.SecondKind := StepKind(Second);
-    S.External := Masks.External;
-    S.Memory := LoadStore(Op) or (Pair and LoadStore(Second));
+    S.Checks := Ord(Wait > 0) * StepWaits;
+    if LoadStore(Op) or (Pair and LoadStore(Second)) then
+      S.Checks := S.Checks or StepMemory;
+    if Masks.External then
+      S.Checks := S.Checks or StepExternal;
 
     // The issue clock.
     var Lo := SLo;
@@ -4376,10 +4385,18 @@ begin
         else
           Result := 3;
         end;
+    // Vector loads and stores: those VectorMemory leaves to
+    // VectorMemoryDirect (blocks run with direct SP memory) straight there.
     50:
-      Result := 1;
+      if ((Op shr 11) and 31) <= 4 then
+        Result := 52
+      else
+        Result := 1;
     58:
-      Result := 2;
+      if ((Op shr 11) and 31) <= 4 then
+        Result := 53
+      else
+        Result := 2;
   end;
 end;
 
@@ -4447,6 +4464,10 @@ begin
         VectorLogic(Op);
       51:
         VectorCarry(Op);
+      52:
+        VectorMemoryDirect(Op, False);
+      53:
+        VectorMemoryDirect(Op, True);
     else
       VectorOp(Op);
     end;
@@ -4506,35 +4527,41 @@ begin
       FReg[T] := Ord(FReg[S] < Cardinal(Integer(SmallInt(Op and $FFFF))));
   else
     begin
-      // Loads and stores: big-endian bytes, each address wrapped in DMEM.
+      // Loads and stores: big-endian bytes, each address wrapped in DMEM,
+      // straight in SP memory (blocks run with it direct); a store saves
+      // the lines of its first and last byte first, as DMemWrite does.
       var Address := ((FReg[S] and $FFF) + (Op and $FFF)) and $FFF;
+      var M := FBus.DMemBytes;
       case Kind of
         40:
-          FReg[T] := Cardinal(Integer(ShortInt(DMemRead(Address))));
+          FReg[T] := Cardinal(Integer(ShortInt(M[Address])));
         41:
-          FReg[T] := Cardinal(Integer(SmallInt((Word(DMemRead(Address)) shl 8) or DMemRead((Address + 1) and $FFF))));
+          FReg[T] := Cardinal(Integer(SmallInt((Word(M[Address]) shl 8) or M[(Address + 1) and $FFF])));
         42:
-          FReg[T] := (Cardinal(DMemRead(Address)) shl 24) or (Cardinal(DMemRead((Address + 1) and $FFF)) shl 16) or
-            (Cardinal(DMemRead((Address + 2) and $FFF)) shl 8) or DMemRead((Address + 3) and $FFF);
+          FReg[T] := (Cardinal(M[Address]) shl 24) or (Cardinal(M[(Address + 1) and $FFF]) shl 16) or
+            (Cardinal(M[(Address + 2) and $FFF]) shl 8) or M[(Address + 3) and $FFF];
         43:
-          FReg[T] := DMemRead(Address);
+          FReg[T] := M[Address];
         44:
-          FReg[T] := (Cardinal(DMemRead(Address)) shl 8) or DMemRead((Address + 1) and $FFF);
-        45:
-          DMemWrite(Address, Byte(FReg[T] and $FF));
-        46:
-          begin
-            var V := FReg[T];
-            DMemWrite(Address, Byte((V shr 8) and $FF));
-            DMemWrite((Address + 1) and $FFF, Byte(V and $FF));
-          end;
+          FReg[T] := (Cardinal(M[Address]) shl 8) or M[(Address + 1) and $FFF];
       else
         begin
           var V := FReg[T];
-          DMemWrite(Address, Byte(V shr 24));
-          DMemWrite((Address + 1) and $FFF, Byte((V shr 16) and $FF));
-          DMemWrite((Address + 2) and $FFF, Byte((V shr 8) and $FF));
-          DMemWrite((Address + 3) and $FFF, Byte(V and $FF));
+          var Size: Cardinal := 4;
+          if Kind = 45 then
+            Size := 1
+          else if Kind = 46 then
+            Size := 2;
+          if FAhead then
+          begin
+            if FLineRun[Address shr 6] <> FRun then
+              SaveLine(Address);
+            var Last := (Address + Size - 1) and $FFF;
+            if FLineRun[Last shr 6] <> FRun then
+              SaveLine(Last);
+          end;
+          for var I := 0 to Size - 1 do
+            M[(Address + I) and $FFF] := Byte((V shr ((Size - 1 - I) * 8)) and $FF);
         end;
       end;
     end;
@@ -4563,48 +4590,53 @@ begin
 
     while True do
     begin
-      if S.Wait > 0 then
+      var Checks := S.Checks;
+      if Checks <> 0 then
       begin
-        if S.Wait >= Cycles - Ran then
+        if (Checks and StepWaits) <> 0 then
         begin
-          Result := 1;
-          Break;
+          if S.Wait >= Cycles - Ran then
+          begin
+            Result := 1;
+            Break;
+          end;
+          FStalledOpcode := S.Op;
+          FStalledPC := PC;
+          FStalledSecondOpcode := S.Second;
+          Inc(Ran, S.Wait);
         end;
-        FStalledOpcode := S.Op;
-        FStalledPC := PC;
-        FStalledSecondOpcode := S.Second;
-        Inc(Ran, S.Wait);
-      end;
-      if S.Memory and Ahead and FFenced and not FReplaying and (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
-      begin
-        HoldStep(Done, S);
-        if not LiftFence(PC, S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
+        if ((Checks and StepMemory) <> 0) and Ahead and FFenced and not FReplaying and
+          (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
         begin
-          FAheadStop := TRSPAheadStop.Fence;
+          HoldStep(Done, S);
+          if not LiftFence(PC, S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
+          begin
+            FAheadStop := TRSPAheadStop.Fence;
+            Inc(FBlockClocks, Ran - Before);
+            Exit(2);
+          end;
+        end;
+        if ((Checks and StepExternal) <> 0) and Ahead and not JournalCOP0(S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
+        begin
+          // The window ends before the clock, as RunClocks ends it. (No lift
+          // came first: an MFC0 or MTC0 shares its clock with no load or
+          // store, both being scalar-unit instructions.)
+          HoldStep(Done, S);
+          StopAtExternal(S.Op, S.Second);
           Inc(FBlockClocks, Ran - Before);
           Exit(2);
         end;
-      end;
-      if S.External and Ahead and not JournalCOP0(S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
-      begin
-        // The window ends before the clock, as RunClocks ends it. (No lift
-        // came first: an MFC0 or MTC0 shares its clock with no load or
-        // store, both being scalar-unit instructions.)
-        HoldStep(Done, S);
-        StopAtExternal(S.Op, S.Second);
-        Inc(FBlockClocks, Ran - Before);
-        Exit(2);
       end;
       if S = Last then
         DelaySlot := FBranch;
       IssueKind(S.Kind, S.Op, PC, Status, Interrupt);
       // (An MTC0 run here, not ahead, may halt the RSP: then not the word
       // paired with it, nor any clock after it.)
-      if S.Pair and (not S.External or ((Status and 1) = 0)) then
+      if S.Pair and (((Checks and StepExternal) = 0) or ((Status and 1) = 0)) then
         IssueKind(S.SecondKind, S.Second, PC, Status, Interrupt);
       Inc(Ran);
       Done := S;
-      if S.External and ((Status and $21) <> 0) then
+      if ((Checks and StepExternal) <> 0) and ((Status and $21) <> 0) then
       begin
         if (Status and $20) <> 0 then
           Status := Status or 1;

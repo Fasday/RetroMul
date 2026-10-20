@@ -137,9 +137,11 @@ type
     RSPWindowMax = 65536;
     // Windows run on the RSP thread once the last one had this many clocks
     // (shorter ones cost more to hand over than they save); the thread
-    // publishes its clocks in parts of AheadPart.
+    // publishes its clocks in parts of AheadPart (each part costs the RSP's
+    // block lookup anew and a publication: GoldenEye ran 4% faster than with
+    // parts of 64, which cost the emulation thread less of a wait each).
     RSPThreadMin = 256;
-    AheadPart = 64;
+    AheadPart = 1024;
     // SP DMA transfers one window may know of (the list never grows, so the
     // beats may read it while the window runs on another thread).
     RSPMaxTransfers = 4096;
