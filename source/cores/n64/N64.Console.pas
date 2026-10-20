@@ -1,4 +1,8 @@
 ﻿unit N64.Console;
+// Runs without range and overflow checks (every index is masked and all
+// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
+// tests.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -200,6 +204,8 @@ type
     FSPDone, FRSPDoneBase: Int64;
     // A deferred write is being applied.
     FRSPApplying: Boolean;
+    // When the CPU batch being run started (SyncDevice).
+    FBatchStart: UInt64;
     // While a deferred kick is applied: the list's copy (FXBusCount bytes of
     // FRSPXBusData from FXBusAt) holds DMEM from FXBusStart on, for the RDP.
     FXBusAt, FXBusCount: Integer;
@@ -410,6 +416,7 @@ type
     function ReadHidden(Address: Cardinal): Byte; override;
     procedure WriteHidden(Address: Cardinal; Value: Byte); override;
     function GuestTick: UInt64; override;
+    procedure SyncDevice(Elapsed: UInt64); override;
     function InterruptPending: Boolean; override;
     procedure RunInstructions(Count: Integer);
     procedure RunCycles(Cycles: Cardinal);
@@ -497,14 +504,16 @@ begin
   {$ENDIF}
 end;
 
-function DefaultRDPBands: Integer;
+function DefaultRDPBands(RSPThread: Boolean): Integer;
 begin
-  // One band per physical core left to them by the emulation thread, at
-  // most three. Bands beyond the free cores, or on SMT siblings of busy
-  // ones, slow the emulation thread down more than they draw: with two
-  // cores one band is fastest in GoldenEye, and three take a third of its
-  // speed (three bands on four cores lead or tie in every game measured).
-  Result := Max(1, Min(3, PhysicalCores - 1));
+  // One band per physical core left to them by the emulation thread (and
+  // the RSP thread), at most six. Bands beyond the free cores, or on SMT
+  // siblings of busy ones, slow the emulation thread down more than they
+  // draw: with two cores one band is fastest in GoldenEye, and three take a
+  // third of its speed. With six cores four bands draw Command & Conquer 5%
+  // faster than three (the emulation thread waited for them); with four
+  // cores two and three tie.
+  Result := Max(1, Min(6, PhysicalCores - 1 - Ord(RSPThread)));
 end;
 
 constructor TN64Console.Create(const Data: TBytes);
@@ -556,7 +565,6 @@ begin
   FRSP := TN64RSP.Create(Self);
   FRDP := TN64RDP.Create(Self);
   FRDPTiming := TN64RDP.Create(Self, True);
-  FRDPBands := DefaultRDPBands;
   FRDPDrawing := True;
   FPlacement := True;
   {$IFDEF DEBUG}
@@ -576,6 +584,7 @@ begin
   // With a core for the emulation thread, one for the RSP thread and one
   // for the RDP bands.
   FRSPThreaded := PhysicalCores >= 3;
+  FRDPBands := DefaultRDPBands(FRSPThreaded);
   // Read by the emulation thread while the RSP thread adds to them.
   SetLength(FRSPNotes, TN64RSP.JournalCapacity);
   FRSPJournal := FRSP.Journal;
@@ -2314,6 +2323,18 @@ begin
         Continue;
       end;
     end;
+    if (Executed = 0) and not FRSPStress and not TraceEnabled then
+    begin
+      // Instructions up to the next event (or a device access) in one go:
+      // time passes as after each of them (SyncDevice sets it for an access).
+      var Start := FTimeline.Now;
+      FBatchStart := Start;
+      var Cycles: UInt64;
+      Executed := FCPU.RunBatch(Remaining, FTimeline.NextDue - Start, Cycles);
+      AdvanceTime(Cardinal(Start + Cycles - FTimeline.Now));
+      Dec(Remaining, Executed);
+      Continue;
+    end;
     if Executed = 0 then
     begin
       FCPU.Step;
@@ -2360,6 +2381,11 @@ begin
   if Elapsed > 0 then
     FCPU.ApplyIdle(Integer(Elapsed), Pending);
   Result := Integer(Elapsed);
+end;
+
+procedure TN64Console.SyncDevice(Elapsed: UInt64);
+begin
+  FTimeline.AdvanceTo(FBatchStart + Elapsed);
 end;
 
 procedure TN64Console.RunCycles(Cycles: Cardinal);

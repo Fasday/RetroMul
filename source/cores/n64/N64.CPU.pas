@@ -1,8 +1,8 @@
 ﻿unit N64.CPU;
-// The interpreter runs without range and overflow checks (every index is
-// masked and all guest arithmetic wraps explicitly); N64_CHECKED builds them
-// in, for the tests.
-{$IFNDEF N64_CHECKED}{$Q-}{$R-}{$ENDIF}
+// Runs without range and overflow checks (every index is masked and all
+// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
+// tests.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -61,6 +61,27 @@ type
     FDelay, FInDelay, FLL: Boolean;
     FLLAddress: UInt64;
     FCountHalf: Integer;
+    // RunBatch: PClocks of the batch's instructions before the current one,
+    // and whether the current one accessed a device.
+    FBatching, FBatchDevice: Boolean;
+    FBatchElapsed: UInt64;
+    // FastStep: the 4 KB code page fetched from last, in RDRAM from
+    // FFastCodePhysical, while the context and the TLB are the same.
+    FFastCodePage: UInt64;
+    FFastCodePhysical, FFastCodeContext, FFastCodeGeneration: Cardinal;
+    FFastCodeValid: Boolean;
+    // Set by FastStep when it declines: whether the instruction could leave
+    // what FastReady found unchanged (all but COP0 instructions, if they do
+    // not fault).
+    FSlowSafe: Boolean;
+    procedure DeviceAccess; inline;
+    function FastCode(PC: UInt64; Context: Cardinal): Boolean;
+    function FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal;
+      out Cached: Boolean): Boolean; inline;
+    function FastReady(out Context: Cardinal; out UntilCompare: UInt64): Boolean;
+    function FastRun(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
+    function IdleHead: Boolean; inline;
+    procedure FastFlush(Clocks: Cardinal; Count: Integer);
     procedure SetPCExact(Value: UInt64); inline;
     procedure ApplyStalls(Op: Cardinal);
     procedure ApplyInterlocks(Op: Cardinal); inline;
@@ -104,6 +125,12 @@ type
     constructor Create(Bus: TN64Bus);
     procedure Reset;
     procedure Step;
+    // Up to MaxSteps Steps, stopping after the one that brought their
+    // PClocks to Budget or more (an event is due by then), after one that
+    // accessed a device (FBus.SyncDevice came first; the device may have
+    // changed what comes next) and where IdleLimit may find an idle loop's
+    // head. Returns how many ran; Cycles: their PClocks.
+    function RunBatch(MaxSteps: Integer; Budget: UInt64; out Cycles: UInt64): Integer;
     function SkipIdle(MaxInstructions: Integer): Integer;
     // Idle-loop fast-forward across device events. IdleLimit validates the
     // loop at its head; ApplyIdle then stands for Count single steps, with
@@ -781,6 +808,7 @@ begin
       Exit((UInt64(FBus.ReadRAM32(P)) shl 32) or FBus.ReadRAM32(P + 4));
     end;
   end;
+  DeviceAccess;
   if Size = 4 then
     Result := FBus.Read32(Cardinal(Physical))
   else
@@ -826,6 +854,7 @@ begin
     end;
     Exit;
   end;
+  DeviceAccess;
   if FBus.TraceEnabled and (Physical >= $03F00000) and (Physical < $04A00000) then
   begin
     var Written := Value;
@@ -1441,6 +1470,534 @@ begin
     CP0[1] := 31
   else
     Dec(CP0[1]);
+end;
+
+procedure TN64CPU.DeviceAccess;
+begin
+  if FBatching then
+  begin
+    FBatchDevice := True;
+    FBus.SyncDevice(FBatchElapsed);
+  end;
+end;
+
+function TN64CPU.FastCode(PC: UInt64; Context: Cardinal): Boolean;
+begin
+  // The code page of PC in RDRAM, as Fetch would find it without faulting:
+  // kernel KSEG0/KSEG1, or a page translated before in this context.
+  Result := False;
+  var Physical: UInt64;
+  if (PC >= KSeg0Base) and (PC < KSeg2Base) then
+  begin
+    if not KernelMode then
+      Exit;
+    Physical := PC and $1FFFF000;
+  end
+  else
+  begin
+    var Page := PC shr 12;
+    var Slot := PageSlot(Page);
+    if (FPages[Slot].Page <> Page) or (FPages[Slot].Generation <> FTLBGeneration) or
+      (FPages[Slot].Context <> Context) or not (FPages[Slot].WriteOK or FPages[Slot].ReadOK) then
+      Exit;
+    Physical := FPages[Slot].Physical;
+  end;
+  // RDRAM ends on a page boundary.
+  if Physical + $1000 > FBus.RAMSize then
+    Exit;
+  FFastCodePage := PC shr 12;
+  FFastCodePhysical := Cardinal(Physical);
+  FFastCodeContext := Context;
+  FFastCodeGeneration := FTLBGeneration;
+  FFastCodeValid := True;
+  Result := True;
+end;
+
+function TN64CPU.FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal;
+  out Cached: Boolean): Boolean;
+begin
+  // A data access as Load or Store would make it without faulting and in
+  // RDRAM: aligned, through kernel KSEG0/KSEG1 or a page translated before
+  // in this context (for writing, by a write).
+  Result := False;
+  if (Address and UInt64(Size - 1)) <> 0 then
+    Exit;
+  var P: UInt64;
+  if (Address >= KSeg0Base) and (Address < KSeg2Base) then
+  begin
+    if not KernelMode then
+      Exit;
+    P := Address and $1FFFFFFF;
+    Cached := Address < KSeg1Base;
+  end
+  else
+  begin
+    var Page := Address shr 12;
+    var Slot := PageSlot(Page);
+    if (FPages[Slot].Page <> Page) or (FPages[Slot].Generation <> FTLBGeneration) or
+      (FPages[Slot].Context <> Context) or not (FPages[Slot].WriteOK or (not Writing and FPages[Slot].ReadOK)) then
+      Exit;
+    P := FPages[Slot].Physical or (Address and $FFF);
+    Cached := FPages[Slot].Cached;
+  end;
+  if P + Cardinal(Size) > FBus.RAMSize then
+    Exit;
+  Physical := Cardinal(P);
+  Result := True;
+end;
+
+function TN64CPU.FastReady(out Context: Cardinal; out UntilCompare: UInt64): Boolean;
+begin
+  // Before fast steps: what Step checks before each instruction, which holds
+  // for all of them until a full Step runs or COUNT reaches COMPARE (they
+  // change no COP0 register and no TLB entry, and the interrupt line changes
+  // only with device accesses and events, which end the batch). False: the
+  // next instruction takes an interrupt (Step does), or Random is out of its
+  // range (Step makes it 31). UntilCompare: PClocks before COUNT reaches
+  // COMPARE.
+  Result := False;
+  Context := 0;
+  UntilCompare := 0;
+  if FBus.InterruptLine then
+    CP0[13] := CP0[13] or $400
+  else
+    CP0[13] := CP0[13] and not UInt64($400);
+  if ((CP0[12] and 7) = 1) and ((CP0[12] and CP0[13] and $FF00) <> 0) then
+    Exit;
+  if (CP0[1] < (CP0[6] and 31)) or (CP0[1] > 31) then
+    Exit;
+  Context := PageContext;
+  var Distance := (UInt64(CP0[11] and $FFFFFFFF) + UInt64($100000000) - (CP0[9] and $FFFFFFFF)) and $FFFFFFFF;
+  if Distance = 0 then
+    Distance := $100000000;
+  UntilCompare := Distance * 2 - Cardinal(FCountHalf);
+  Result := True;
+end;
+
+procedure TN64CPU.FastFlush(Clocks: Cardinal; Count: Integer);
+begin
+  // The COUNT and Random updates of Count fast steps of Clocks PClocks, as
+  // their Steps would have made them one by one (COUNT reached COMPARE at
+  // most in the last).
+  if Count = 0 then
+    Exit;
+  AdvanceCount(Clocks);
+  var Wired := CP0[6] and 31;
+  CP0[1] := 31 - ((31 - CP0[1] + Cardinal(Count)) mod (32 - Wired));
+end;
+
+function TN64CPU.IdleHead: Boolean;
+begin
+  // IdleLimit's first test: anywhere else it declines.
+  Result := FInDelay and not FDelay and (FPC = Sub64(FInstructionPC, 4)) and (FNextPC = Add64(FPC, 4));
+end;
+
+function TN64CPU.FastRun(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
+begin
+  // Steps of the most common instructions from here on, exactly as Step
+  // runs them (after FastReady), at most MaxSteps: up to the one that brings
+  // their PClocks to Limit or more, or after which IdleLimit may find an idle
+  // loop's head (as RunBatch), or before one that fetches or accesses data
+  // other than in RDRAM through a known page, may fault, or is another one
+  // (FSlowSafe tells whether Step would leave FastReady's findings). Their
+  // COUNT and Random updates come at the end (FastFlush). Returns how many
+  // ran; Clocks: their PClocks.
+  Result := 0;
+  Clocks := 0;
+  // Fast steps change no COP0 register.
+  var Status := CP0[12];
+  var Cop1Usable := (Status and $20000000) <> 0;
+  // A 64-bit operation outside kernel mode without its UX/SX/KX bit faults.
+  var Mode := Integer((Status shr 3) and 3);
+  if (Status and 6) <> 0 then
+    Mode := 0;
+  var WideOK := (Mode = 0) or ((Status and (UInt64($80) shr Mode)) <> 0);
+  // The code page needs no RDP wait (checked at its first fetch here: no
+  // RDP work is queued meanwhile).
+  var CodeClean := False;
+  while Result < MaxSteps do
+  begin
+    FSlowSafe := False;
+    var PC := FPC;
+    if (PC and 3) <> 0 then
+      Break;
+    if not FFastCodeValid or (FFastCodePage <> (PC shr 12)) or (FFastCodeContext <> Context) or
+      (FFastCodeGeneration <> FTLBGeneration) then
+    begin
+      if not FastCode(PC, Context) then
+        Break;
+      CodeClean := False;
+    end;
+    var Op: Cardinal;
+    if CodeClean then
+      Op := FBus.PlainRAM32(FFastCodePhysical or Cardinal(PC and $FFF))
+    else
+    begin
+      Op := FBus.ReadRAM32(FFastCodePhysical or Cardinal(PC and $FFF));
+      CodeClean := FBus.RDPReadClean(FFastCodePhysical);
+    end;
+    var Code := Op shr 26;
+    FSlowSafe := Code <> 16;
+    var S := Integer((Op shr 21) and 31);
+    var T := Integer((Op shr 16) and 31);
+    var Fn := Integer(Op and 63);
+    var A := GPR[S];
+    var Imm := SX16(Op);
+    var Reads: Byte;
+    var Size := 0;
+    var Physical: Cardinal := 0;
+    var Cached := False;
+    var Wide := False;
+    case Code of
+      0:
+        begin
+          case Fn of
+            0, 2, 3, 4, 6, 7, 8, 9, 15..19, 24..27, 33, 35, 36..39, 42, 43:
+              ;
+            20, 22, 23, 28..31, 45, 47, 56, 58..60, 62, 63:
+              Wide := True;
+          else
+            Break;
+          end;
+          Reads := SpecialReads[Fn];
+        end;
+      47:
+        Reads := OpReads[Code];
+      1:
+        begin
+          if not (T in [0..3, 16..19]) then
+            Break;
+          Reads := OpReads[Code];
+        end;
+      2..7, 9..15, 20..23:
+        Reads := OpReads[Code];
+      32, 33, 35..37, 39..41, 43, 49, 53, 55, 57, 61, 63:
+        begin
+          if (Code in [49, 53, 57, 61]) and not Cop1Usable then
+            Break;
+          Wide := Code in [55, 63];
+          case Code of
+            32, 36, 40:
+              Size := 1;
+            33, 37, 41:
+              Size := 2;
+            53, 55, 61, 63:
+              Size := 8;
+          else
+            Size := 4;
+          end;
+          if not FastData(Add64(A, Imm), Size, Code in [40, 41, 43, 57, 61, 63], Context, Physical, Cached) then
+            Break;
+          Reads := OpReads[Code];
+        end;
+    else
+      Break;
+    end;
+    if Wide and not WideOK then
+      Break;
+    // Step and ApplyInterlocks: the stall behind the previous instruction (none
+    // of these is a COP0 or COP1 instruction, so only a load target it reads
+    // and a cached store before an access count), then this one's hazards.
+    var C: Cardinal := 1;
+    if (FPreviousLoad >= 0) or FPreviousStore then
+    begin
+      if FPreviousLoad >= 0 then
+        if (((Reads and 1) <> 0) and (FPreviousLoad = S)) or (((Reads and 2) <> 0) and (FPreviousLoad = T)) or
+          (((Reads and 8) <> 0) and (FPreviousLoad = FPRegister(T))) then
+          Inc(C);
+      if FPreviousStore and ((Reads and 4) <> 0) and Cached then
+        Inc(C);
+    end;
+    FPreviousLoad := -1;
+    FPreviousFP := -1;
+    FPreviousCondition := False;
+    FPreviousException := False;
+    FPreviousStore := False;
+    case Code of
+      32, 33, 35..37, 39, 55:
+        if T <> 0 then
+          FPreviousLoad := T;
+      49, 53:
+        FPreviousLoad := FPRegister(T);
+      40, 41, 43, 57, 61, 63:
+        FPreviousStore := Cached;
+    end;
+    FInstructionPC := PC;
+    FInDelay := FDelay;
+    FDelay := False;
+    FPC := FNextPC;
+    FNextPC := Add64(FNextPC, 4);
+    case Code of
+      0:
+        begin
+          var B := GPR[T];
+          var D := Integer((Op shr 11) and 31);
+          var N := Integer((Op shr 6) and 31);
+          case Fn of
+            0:
+              GPR[D] := SX32(B shl N);
+            2:
+              GPR[D] := SX32((B and $FFFFFFFF) shr N);
+            3:
+              GPR[D] := SX32(SAR(B, N, 32));
+            4:
+              GPR[D] := SX32(B shl (A and 31));
+            6:
+              GPR[D] := SX32((B and $FFFFFFFF) shr (A and 31));
+            7:
+              GPR[D] := SX32(SAR(B, A and 31, 32));
+            8, 9:
+              begin
+                if Fn = 9 then
+                  GPR[D] := Add64(PC, 8);
+                Branch(True, False, A);
+              end;
+            15:
+              ; // SYNC
+            16:
+              GPR[D] := HI;
+            17:
+              HI := A;
+            18:
+              GPR[D] := LO;
+            19:
+              LO := A;
+            20:
+              GPR[D] := B shl (A and 63);
+            22:
+              GPR[D] := B shr (A and 63);
+            23:
+              GPR[D] := SAR(B, A and 63, 64);
+            24, 25:
+              begin
+                // Multiply and divide stall the whole pipe (Special).
+                Inc(C, 4);
+                var V: UInt64;
+                if Fn = 24 then
+                  Multiply64(SX(A, 32), SX(B, 32), True, HI, V)
+                else
+                  V := (A and $FFFFFFFF) * (B and $FFFFFFFF);
+                LO := SX(V, 32);
+                HI := SX(V shr 32, 32);
+              end;
+            26, 27:
+              begin
+                Inc(C, 36);
+                if Fn = 26 then
+                  Divide64(SX(A, 32), SX(B, 32), True, HI, LO)
+                else
+                  Divide64(A and $FFFFFFFF, B and $FFFFFFFF, False, HI, LO);
+                HI := SX(HI, 32);
+                LO := SX(LO, 32);
+              end;
+            28, 29:
+              begin
+                Inc(C, 7);
+                Multiply64(A, B, Fn = 28, HI, LO);
+              end;
+            30, 31:
+              begin
+                Inc(C, 68);
+                Divide64(A, B, Fn = 30, HI, LO);
+              end;
+            45:
+              GPR[D] := Add64(A, B);
+            47:
+              GPR[D] := Sub64(A, B);
+            56:
+              GPR[D] := B shl N;
+            58:
+              GPR[D] := B shr N;
+            59:
+              GPR[D] := SAR(B, N, 64);
+            60:
+              GPR[D] := B shl (N + 32);
+            62:
+              GPR[D] := B shr (N + 32);
+            63:
+              GPR[D] := SAR(B, N + 32, 64);
+            33:
+              GPR[D] := SX32(Add64(A, B));
+            35:
+              GPR[D] := SX32(Sub64(A, B));
+            36:
+              GPR[D] := A and B;
+            37:
+              GPR[D] := A or B;
+            38:
+              GPR[D] := A xor B;
+            39:
+              GPR[D] := not (A or B);
+            42:
+              GPR[D] := Ord(SignedLess(A, B));
+            43:
+              GPR[D] := Ord(A < B);
+          end;
+        end;
+      1:
+        begin
+          var Target := Add64(FPC, Imm shl 2);
+          var Taken := SignedLess(A, 0);
+          if (T and 1) <> 0 then
+            Taken := not Taken;
+          if T >= 16 then
+            GPR[31] := Add64(PC, 8);
+          Branch(Taken, (T and 2) <> 0, Target);
+        end;
+      2, 3:
+        begin
+          if Code = 3 then
+            GPR[31] := Add64(PC, 8);
+          Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Op and $3FFFFFF) shl 2));
+        end;
+      4, 20:
+        Branch(A = GPR[T], Code = 20, Add64(FPC, Imm shl 2));
+      5, 21:
+        Branch(A <> GPR[T], Code = 21, Add64(FPC, Imm shl 2));
+      6, 22:
+        Branch(not SignedLess(0, A), Code = 22, Add64(FPC, Imm shl 2));
+      7, 23:
+        Branch(SignedLess(0, A), Code = 23, Add64(FPC, Imm shl 2));
+      9:
+        GPR[T] := SX32(Add64(A, Imm));
+      10:
+        GPR[T] := Ord(SignedLess(A, Imm));
+      11:
+        GPR[T] := Ord(A < Imm);
+      12:
+        GPR[T] := A and (Op and $FFFF);
+      13:
+        GPR[T] := A or (Op and $FFFF);
+      14:
+        GPR[T] := A xor (Op and $FFFF);
+      15:
+        GPR[T] := SX32((Op and $FFFF) shl 16);
+      32:
+        GPR[T] := SX8(FBus.ReadRAM8(Physical));
+      33:
+        GPR[T] := SX16(FBus.ReadRAM16(Physical));
+      35:
+        GPR[T] := SX32(FBus.ReadRAM32(Physical));
+      36:
+        GPR[T] := FBus.ReadRAM8(Physical);
+      37:
+        GPR[T] := FBus.ReadRAM16(Physical);
+      39:
+        GPR[T] := FBus.ReadRAM32(Physical);
+      49:
+        SetFPBits(T, 16, FBus.ReadRAM32(Physical));
+      53:
+        SetFPBits(T, 17, (UInt64(FBus.ReadRAM32(Physical)) shl 32) or FBus.ReadRAM32(Physical + 4));
+      55:
+        GPR[T] := (UInt64(FBus.ReadRAM32(Physical)) shl 32) or FBus.ReadRAM32(Physical + 4);
+      63:
+        begin
+          var V := GPR[T];
+          FLL := False;
+          FBus.WriteRAM32(Physical, Cardinal(V shr 32));
+          FBus.WriteRAM32(Physical + 4, Cardinal(V and $FFFFFFFF));
+        end;
+      40:
+        begin
+          FLL := False;
+          FBus.WriteRAM8(Physical, Byte(GPR[T] and $FF));
+        end;
+      41:
+        begin
+          FLL := False;
+          FBus.WriteRAM8(Physical, Byte((GPR[T] shr 8) and $FF));
+          FBus.WriteRAM8(Physical + 1, Byte(GPR[T] and $FF));
+        end;
+      43:
+        begin
+          FLL := False;
+          FBus.WriteRAM32(Physical, Cardinal(GPR[T] and $FFFFFFFF));
+        end;
+      57:
+        begin
+          var V := FPBits(T, 16);
+          FLL := False;
+          FBus.WriteRAM32(Physical, Cardinal(V and $FFFFFFFF));
+        end;
+      61:
+        begin
+          var V := FPBits(T, 17);
+          FLL := False;
+          FBus.WriteRAM32(Physical, Cardinal(V shr 32));
+          FBus.WriteRAM32(Physical + 4, Cardinal(V and $FFFFFFFF));
+        end;
+    end;
+    // Step's end: a store's hazard needs it cached (it is).
+    GPR[0] := 0;
+    if Size = 0 then
+      FPreviousStore := False;
+    Inc(Result);
+    Inc(Clocks, C);
+    if (Clocks >= Limit) or IdleHead then
+      Break;
+  end;
+  FastFlush(Cardinal(Clocks), Result);
+end;
+
+function TN64CPU.RunBatch(MaxSteps: Integer; Budget: UInt64; out Cycles: UInt64): Integer;
+begin
+  Result := 0;
+  var Elapsed: UInt64 := 0;
+  FBatchElapsed := 0;
+  FBatchDevice := False;
+  FBatching := True;
+  try
+    // Ready: what FastReady checks holds, until a Step that may change it or
+    // COUNT reaching COMPARE (UntilCompare PClocks on).
+    var Ready := False;
+    var Context: Cardinal := 0;
+    var UntilCompare: UInt64 := 0;
+    while Result < MaxSteps do
+    begin
+      if not Ready then
+        Ready := FastReady(Context, UntilCompare);
+      if Ready then
+      begin
+        var Limit := Budget - Elapsed;
+        if UntilCompare < Limit then
+          Limit := UntilCompare;
+        var Clocks: UInt64;
+        var N := FastRun(MaxSteps - Result, Limit, Context, Clocks);
+        Inc(Result, N);
+        Inc(Elapsed, Clocks);
+        if N > 0 then
+        begin
+          if Clocks >= UntilCompare then
+            Ready := False
+          else
+            Dec(UntilCompare, Clocks);
+          if (Elapsed >= Budget) or (Result >= MaxSteps) or IdleHead then
+            Break;
+          if not Ready then
+            Continue;
+        end;
+      end;
+      // A full Step: of the instruction FastRun stopped before, or of any one
+      // when not Ready.
+      FBatchElapsed := Elapsed;
+      FBatchDevice := False;
+      Step;
+      var C := FCyclesConsumed;
+      // Still ready after an instruction that changed no COP0 register, no
+      // TLB entry and not the interrupt line (no COP0 instruction, fault or
+      // device access), if COUNT has not reached COMPARE.
+      Ready := Ready and FSlowSafe and not FPreviousException and not FBatchDevice and (C < UntilCompare);
+      if Ready then
+        Dec(UntilCompare, C);
+      Inc(Result);
+      Inc(Elapsed, C);
+      if FBatchDevice or (Elapsed >= Budget) or IdleHead then
+        Break;
+    end;
+  finally
+    FBatching := False;
+  end;
+  Cycles := Elapsed;
 end;
 
 procedure TN64CPU.ExecuteInstruction;

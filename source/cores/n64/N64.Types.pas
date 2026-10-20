@@ -1,4 +1,8 @@
 ﻿unit N64.Types;
+// Runs without range and overflow checks (every index is masked and all
+// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
+// tests.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -100,6 +104,10 @@ type
     function ReadHidden(Address: Cardinal): Byte; virtual;
     procedure WriteHidden(Address: Cardinal; Value: Byte); virtual;
     function GuestTick: UInt64; virtual;
+    // The CPU, running a batch of instructions (TN64CPU.RunBatch), is about to
+    // access a device (anything but direct RDRAM): the instructions before
+    // the current one took Elapsed PClocks since the batch started.
+    procedure SyncDevice(Elapsed: UInt64); virtual;
     procedure SetTraceSink(const Sink: TN64TraceSink);
     procedure Trace(Kind: TN64TraceKind; PC, Address, Value: UInt64);
     // $800000 with FDirectMemory, otherwise 0 (no direct RDRAM).
@@ -111,6 +119,11 @@ type
     function ReadRAM32(Address: Cardinal): Cardinal; inline;
     procedure WriteRAM8(Address: Cardinal; Value: Byte); inline;
     procedure WriteRAM32(Address, Value: Cardinal); inline;
+    // Whether reads of the 4 KB RDRAM page with Address need not wait for
+    // RDP work queued now (which stays so until more is queued), and a word
+    // of RDRAM read without the wait (after that).
+    function RDPReadClean(Address: Cardinal): Boolean; inline;
+    function PlainRAM32(Address: Cardinal): Cardinal; inline;
     // Callers guarantee Address < RAMSize.
     function ReadHiddenRAM(Address: Cardinal): Byte; inline;
     procedure WriteHiddenRAM(Address: Cardinal; Value: Byte); inline;
@@ -338,6 +351,10 @@ begin
   Result := 0;
 end;
 
+procedure TN64Bus.SyncDevice(Elapsed: UInt64);
+begin
+end;
+
 procedure TN64Bus.SetTraceSink(const Sink: TN64TraceSink);
 begin
   FTraceSink := Sink;
@@ -383,6 +400,18 @@ begin
   if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) = $FFF)) then
     SyncRDPRead(Address, 2);
   Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
+end;
+
+function TN64Bus.RDPReadClean(Address: Cardinal): Boolean;
+begin
+  Result := not FRDPPending or (FRDPWrites[Address shr RDPPageShift] <= FRDPDone);
+end;
+
+function TN64Bus.PlainRAM32(Address: Cardinal): Cardinal;
+begin
+  // RDRAM holds big-endian words.
+  var V := PCardinal(@FRAM[Address])^;
+  Result := (V shl 24) or ((V and $FF00) shl 8) or ((V shr 8) and $FF00) or (V shr 24);
 end;
 
 function TN64Bus.ReadRAM32(Address: Cardinal): Cardinal;

@@ -1,8 +1,8 @@
 ﻿unit N64.RSP;
-// The interpreter runs without range and overflow checks (every index is
-// masked and all guest arithmetic wraps explicitly); N64_CHECKED builds them
-// in, for the tests.
-{$IFNDEF N64_CHECKED}{$Q-}{$R-}{$ENDIF}
+// Runs without range and overflow checks (every index is masked and all
+// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
+// tests.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -3378,7 +3378,7 @@ begin
   // Ahead: stop before the first clock that is not free (see RunAhead); the
   // checkpoint is taken before the first clock that changes anything.
   Result := 0;
-  for var Iteration := 1 to Cycles do
+  while Result < Cycles do
   begin
     if (Status and 1) <> 0 then
       Break;
@@ -3506,6 +3506,16 @@ begin
       FStallKnown := True;
       AgePipeline;
       Inc(Result);
+      // The clocks after it hold the same words, for as long as the hazard
+      // lasts: they only age the pipeline (and run ahead need nothing else).
+      var Sources := Masks.Sources;
+      var Vectors := Masks.Vectors;
+      while (Result < Cycles) and ((Storing and ((FLoadHistory and 2) <> 0)) or
+        ((Sources and (FScalarLo or FScalarHi)) <> 0) or ((Vectors and (FVectorLo or FVectorHi)) <> 0)) do
+      begin
+        AgePipeline;
+        Inc(Result);
+      end;
       Continue;
     end;
     FHasStalledOpcode := False;
