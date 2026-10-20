@@ -108,6 +108,8 @@ type
     // The clock's one external instruction is an MFC0 or MTC0 (journalled
     // ahead as RunClocks does).
     External: Boolean;
+    // A load or store issues (the only instructions fences concern).
+    Memory: Boolean;
   end;
   PRSPBlockStep = ^TRSPBlockStep;
 
@@ -233,12 +235,14 @@ type
     function BlockValid(B: PRSPBlock; Slot: Integer): Boolean; inline;
     function FindBlock(PC: Cardinal): PRSPBlock;
     function BuildBlock(PC: Cardinal): PRSPBlock;
+
     function RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
       var Ran: Integer): Integer;
     function TouchesFence(Op: Cardinal): Boolean;
     procedure HoldStep(Done, S: PRSPBlockStep);
     procedure StopAtExternal(Op, Second: Cardinal);
     class function JournalStep(Op, Second: Cardinal; Pair: Boolean): Boolean; static;
+    class function LoadStore(Op: Cardinal): Boolean; static;
     procedure SaveCheckpoint(PC: Cardinal);
     procedure SaveLine(Offset: Cardinal);
     function JournalCOP0(Op, Second: Cardinal; Pair: Boolean; Clock: Integer): Boolean;
@@ -292,6 +296,7 @@ type
     procedure VectorMADM(Op: Cardinal);
     procedure VectorMADN(Op: Cardinal);
     procedure VectorMADH(Op: Cardinal);
+
     procedure VectorAddSub(Op: Cardinal);
     procedure VectorAdd(Op: Cardinal);
     procedure VectorSub(Op: Cardinal);
@@ -301,9 +306,14 @@ type
     procedure VectorAbs(Op: Cardinal);
     procedure VectorCarry(Op: Cardinal);
     procedure VectorSar(Op: Cardinal);
-    procedure VectorCompare(Op: Cardinal);
+
+    procedure VectorLT(Op: Cardinal);
+    procedure VectorEQ(Op: Cardinal);
+    procedure VectorNE(Op: Cardinal);
+    procedure VectorGE(Op: Cardinal);
     procedure VectorClipLow(Op: Cardinal);
-    procedure VectorClipHigh(Op: Cardinal);
+    procedure VectorCH(Op: Cardinal);
+    procedure VectorCR(Op: Cardinal);
     procedure VectorMerge(Op: Cardinal);
     procedure VectorLogic(Op: Cardinal);
     procedure VectorReserved(Op: Cardinal);
@@ -746,12 +756,20 @@ begin
       VectorCarry(Op);
     29:
       VectorSar(Op);
-    32..35:
-      VectorCompare(Op);
+    32:
+      VectorLT(Op);
+    33:
+      VectorEQ(Op);
+    34:
+      VectorNE(Op);
+    35:
+      VectorGE(Op);
     36:
       VectorClipLow(Op);
-    37, 38:
-      VectorClipHigh(Op);
+    37:
+      VectorCH(Op);
+    38:
+      VectorCR(Op);
     39:
       VectorMerge(Op);
     40..45:
@@ -1107,159 +1125,239 @@ begin
     end;
 end;
 
-procedure TN64RSP.VectorCompare(Op: Cardinal);
+// VLT, VEQ, VNE, VGE: VS where the test holds, else VT, into VD and ACC_LO;
+// VCC's low byte the tests, VCO cleared. The test per lane without
+// branches (Test 0 or 1, the result picked by a mask).
+
+procedure TN64RSP.VectorLT(Op: Cardinal);
 begin
-  // VLT, VEQ, VNE, VGE: VCC low byte from the test, VCO cleared.
+  // Less, or equal with VCO's carry and not-equal both set.
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
-  var S := (Op shr 11) and 31;
-  var D := (Op shr 6) and 31;
-  var Fn := Op and 63;
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  var Equal := Cardinal(FVCO) and (Cardinal(FVCO) shr 8);
   var Compare: Cardinal := 0;
   for var I := 0 to 7 do
   begin
-    var A := S16(FVec[S, I]);
-    var B := S16(VT[I]);
-    var Carry := ((FVCO shr I) and 1) <> 0;
-    var NotEqual := ((FVCO shr (I + 8)) and 1) <> 0;
-    var Test: Boolean;
-    case Fn of
-      32:
-        Test := (A < B) or ((A = B) and Carry and NotEqual);
-      33:
-        Test := (A = B) and not NotEqual;
-      34:
-        Test := (A <> B) or NotEqual;
-    else
-      Test := (A > B) or ((A = B) and not (Carry and NotEqual));
-    end;
-    var R: Word;
-    if Test then
-    begin
-      Compare := Compare or (Cardinal(1) shl I);
-      R := FVec[S, I];
-    end
-    else
-      R := VT[I];
-    SetAccLo(I, R);
-    FVec[D, I] := R;
+    var S := VS[I];
+    var T := VT[I];
+    var Test := Cardinal(Ord(S16(S) < S16(T))) or (Cardinal(Ord(S = T)) and (Equal shr I) and 1);
+    Compare := Compare or (Test shl I);
+    var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
+    A[I] := (A[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
   end;
   FVCO := 0;
   FVCC := Word(Compare);
 end;
 
-procedure TN64RSP.VectorClipLow(Op: Cardinal);
+procedure TN64RSP.VectorEQ(Op: Cardinal);
 begin
-  // VCL: the clip compare continuing a VCH/VCR, from VCO, VCC and VCE.
+  // Equal, without VCO's not-equal.
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
-  var S := (Op shr 11) and 31;
-  var D := (Op shr 6) and 31;
-  var Compare := Cardinal(FVCC);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  var Kept := not (Cardinal(FVCO) shr 8);
+  var Compare: Cardinal := 0;
   for var I := 0 to 7 do
   begin
-    var UA := Integer(FVec[S, I]);
-    var UB := Integer(VT[I]);
-    var LowFlag := ((FVCC shr I) and 1) <> 0;
-    var HighFlag := ((FVCC shr (I + 8)) and 1) <> 0;
-    var R := Word(UA);
-    if ((FVCO shr I) and 1) <> 0 then
+    var S := VS[I];
+    var T := VT[I];
+    var Test := Cardinal(Ord(S = T)) and (Kept shr I) and 1;
+    Compare := Compare or (Test shl I);
+    var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
+    A[I] := (A[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
+  end;
+  FVCO := 0;
+  FVCC := Word(Compare);
+end;
+
+procedure TN64RSP.VectorNE(Op: Cardinal);
+begin
+  // Not equal, or VCO's not-equal.
+  var Copy: TRSPQuadLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  var NotEqual := Cardinal(FVCO) shr 8;
+  var Compare: Cardinal := 0;
+  for var I := 0 to 7 do
+  begin
+    var S := VS[I];
+    var T := VT[I];
+    var Test := Cardinal(Ord(S <> T)) or ((NotEqual shr I) and 1);
+    Compare := Compare or (Test shl I);
+    var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
+    A[I] := (A[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
+  end;
+  FVCO := 0;
+  FVCC := Word(Compare);
+end;
+
+procedure TN64RSP.VectorGE(Op: Cardinal);
+begin
+  // Greater, or equal unless VCO's carry and not-equal are both set.
+  var Copy: TRSPQuadLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  var Kept := not (Cardinal(FVCO) and (Cardinal(FVCO) shr 8));
+  var Compare: Cardinal := 0;
+  for var I := 0 to 7 do
+  begin
+    var S := VS[I];
+    var T := VT[I];
+    var Test := Cardinal(Ord(S16(S) > S16(T))) or (Cardinal(Ord(S = T)) and (Kept shr I) and 1);
+    Compare := Compare or (Test shl I);
+    var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
+    A[I] := (A[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
+  end;
+  FVCO := 0;
+  FVCC := Word(Compare);
+end;
+procedure TN64RSP.VectorClipLow(Op: Cardinal);
+begin
+  // VCL: the clip compare continuing a VCH/VCR, from VCO, VCC and VCE; all
+  // three cleared but for VCC's new flags.
+  var Copy: TRSPQuadLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var Acc: PRSPAccLanes := @FAcc;
+  var CO := Cardinal(FVCO);
+  var CC := Cardinal(FVCC);
+  var CE := Cardinal(FVCE);
+  var Compare: Cardinal := 0;
+  for var I := 0 to 7 do
+  begin
+    var UA := Cardinal(VS[I]);
+    var UB := Cardinal(VT[I]);
+    var Low := (CC shr I) and 1;
+    var High := (CC shr (I + 8)) and 1;
+    var R: Word;
+    if ((CO shr I) and 1) <> 0 then
     begin
-      if ((FVCO shr (I + 8)) and 1) = 0 then
-        if ((FVCE shr I) and 1) <> 0 then
-          LowFlag := UA + UB <= 65536
+      if ((CO shr (I + 8)) and 1) = 0 then
+        if ((CE shr I) and 1) <> 0 then
+          Low := Cardinal(Ord(UA + UB <= 65536))
         else
-          LowFlag := UA + UB = 0;
-      if LowFlag then
-        R := Word((-S16(VT[I])) and $FFFF);
+          Low := Cardinal(Ord(UA + UB = 0));
+      // VT negated, or VS.
+      R := Word(UA xor ((UA xor ((65536 - UB) and $FFFF)) and Word(-Integer(Low))));
     end
     else
     begin
-      if ((FVCO shr (I + 8)) and 1) = 0 then
-        HighFlag := UA >= UB;
-      if HighFlag then
-        R := Word(UB);
+      if ((CO shr (I + 8)) and 1) = 0 then
+        High := Cardinal(Ord(UA >= UB));
+      // VT, or VS.
+      R := Word(UA xor ((UA xor UB) and Word(-Integer(High))));
     end;
-    Compare := Compare and not ((Cardinal(1) shl I) or (Cardinal(1) shl (I + 8)));
-    if LowFlag then
-      Compare := Compare or (Cardinal(1) shl I);
-    if HighFlag then
-      Compare := Compare or (Cardinal(1) shl (I + 8));
-    SetAccLo(I, R);
-    FVec[D, I] := R;
+    Compare := Compare or (Low shl I) or (High shl (I + 8));
+    Acc[I] := (Acc[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
   end;
   FVCO := 0;
   FVCC := Word(Compare);
   FVCE := 0;
 end;
 
-procedure TN64RSP.VectorClipHigh(Op: Cardinal);
+procedure TN64RSP.VectorCH(Op: Cardinal);
 begin
-  // VCH (sets VCO and VCE for a following VCL) and VCR.
+  // VCH: VCO, VCC and VCE for a following VCL.
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
-  var S := (Op shr 11) and 31;
-  var D := (Op shr 6) and 31;
-  var High := (Op and 63) = 37;
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var Acc: PRSPAccLanes := @FAcc;
   var Carry: Cardinal := 0;
   var Compare: Cardinal := 0;
   var Extension: Cardinal := 0;
   for var I := 0 to 7 do
   begin
-    var A := S16(FVec[S, I]);
-    var B := S16(VT[I]);
-    var UB := Integer(VT[I]);
-    var LowFlag, HighFlag: Boolean;
-    var R := FVec[S, I];
-    if (A < 0) <> (B < 0) then
+    var A := S16(VS[I]);
+    var UB := Cardinal(VT[I]);
+    var B := S16(Word(UB));
+    // VT's bits inverted, as a signed value.
+    var NotB := S16(Word(UB xor $FFFF));
+    var R := VS[I];
+    var Low, High: Cardinal;
+    // (Signs that differ keep the sum within 16 bits, equal ones the
+    // difference.)
+    if (A xor B) < 0 then
     begin
       var Sum := A + B;
-      if High then
-      begin
-        Sum := S16(Word(Sum and $FFFF));
-        LowFlag := Sum <= 0;
-      end
-      else
-        LowFlag := Sum + 1 <= 0;
-      HighFlag := B < 0;
-      if LowFlag then
-        if High then
-          R := Word((-B) and $FFFF)
-        else
-          R := Word(UB xor $FFFF);
-      if High then
-      begin
-        Carry := Carry or (Cardinal(1) shl I);
-        if (Sum <> 0) and (A <> S16(Word(UB xor $FFFF))) then
-          Carry := Carry or (Cardinal(1) shl (I + 8));
-        if Sum = -1 then
-          Extension := Extension or (Cardinal(1) shl I);
-      end;
+      Low := Cardinal(Ord(Sum <= 0));
+      High := Cardinal(Ord(B < 0));
+      if Low <> 0 then
+        R := Word((-B) and $FFFF);
+      Carry := Carry or (Cardinal(1) shl I) or (Cardinal(Ord((Sum <> 0) and (A <> NotB))) shl (I + 8));
+      Extension := Extension or (Cardinal(Ord(Sum = -1)) shl I);
     end
     else
     begin
       var Difference := A - B;
-      if High then
-        Difference := S16(Word(Difference and $FFFF));
-      LowFlag := B < 0;
-      HighFlag := Difference >= 0;
-      if HighFlag then
+      Low := Cardinal(Ord(B < 0));
+      High := Cardinal(Ord(Difference >= 0));
+      if High <> 0 then
         R := Word(UB);
-      if High and (Difference <> 0) and (A <> S16(Word(UB xor $FFFF))) then
-        Carry := Carry or (Cardinal(1) shl (I + 8));
+      Carry := Carry or (Cardinal(Ord((Difference <> 0) and (A <> NotB))) shl (I + 8));
     end;
-    if LowFlag then
-      Compare := Compare or (Cardinal(1) shl I);
-    if HighFlag then
-      Compare := Compare or (Cardinal(1) shl (I + 8));
-    SetAccLo(I, R);
-    FVec[D, I] := R;
+    Compare := Compare or (Low shl I) or (High shl (I + 8));
+    Acc[I] := (Acc[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
   end;
   FVCO := Word(Carry);
   FVCC := Word(Compare);
   FVCE := Word(Extension);
 end;
-
+procedure TN64RSP.VectorCR(Op: Cardinal);
+begin
+  // VCR: VCC from the clip compare against VT (one's complement); VCO and
+  // VCE cleared.
+  var Copy: TRSPQuadLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var Acc: PRSPAccLanes := @FAcc;
+  var Compare: Cardinal := 0;
+  for var I := 0 to 7 do
+  begin
+    var A := S16(VS[I]);
+    var UB := Cardinal(VT[I]);
+    var B := S16(Word(UB));
+    var R := VS[I];
+    var Low, High: Cardinal;
+    if (A xor B) < 0 then
+    begin
+      Low := Cardinal(Ord(A + B + 1 <= 0));
+      High := Cardinal(Ord(B < 0));
+      if Low <> 0 then
+        R := Word(UB xor $FFFF);
+    end
+    else
+    begin
+      Low := Cardinal(Ord(B < 0));
+      High := Cardinal(Ord(A - B >= 0));
+      if High <> 0 then
+        R := Word(UB);
+    end;
+    Compare := Compare or (Low shl I) or (High shl (I + 8));
+    Acc[I] := (Acc[I] and not Int64($FFFF)) or R;
+    VD[I] := R;
+  end;
+  FVCO := 0;
+  FVCC := Word(Compare);
+  FVCE := 0;
+end;
 procedure TN64RSP.VectorMerge(Op: Cardinal);
 begin
   // VMRG: VS where VCC is set, else VT; clears VCO.
@@ -4139,6 +4237,8 @@ begin
     S.Kind := StepKind(Op);
     S.SecondKind := StepKind(Second);
     S.External := Masks.External;
+    S.Memory := LoadStore(Op) or (Pair and LoadStore(Second));
+
     // The issue clock.
     var Lo := SLo;
     SLo := SHi and not Lo;
@@ -4169,6 +4269,7 @@ begin
     Branched := (Flags and 4) <> 0;
     PC := (PC + 4 + 4 * Cardinal(Ord(Pair))) and $FFC;
   end;
+
   for var I := 0 to Words - 1 do
     FBlockWords[FWordCount + I] := FDec[(Start + I) and 1023].Op;
   Result.Words := Words;
@@ -4180,7 +4281,8 @@ end;
 class function TN64RSP.StepKind(Op: Cardinal): Byte;
 begin
   // How a block issues Op (IssueKind): the frequent vector instructions by
-  // their own routines, other vector ones through VectorOp, vector loads and
+  // their own routines (kinds 4..19, 48..51), other vector ones through
+  // VectorOp (3), vector loads and
   // stores through VectorMemory, the frequent scalar ones (no branches, no
   // COP0/COP2) in place, the rest through IssueInstruction (0).
   Result := 0;
@@ -4253,6 +4355,24 @@ begin
             Result := 12;
           17:
             Result := 13;
+          20, 21:
+            Result := 51;
+          32:
+            Result := 15;
+          33:
+            Result := 16;
+          34:
+            Result := 17;
+          35:
+            Result := 18;
+          36:
+            Result := 19;
+          37:
+            Result := 48;
+          39:
+            Result := 49;
+          40..45:
+            Result := 50;
         else
           Result := 3;
         end;
@@ -4304,11 +4424,29 @@ begin
         VectorSub(Op);
       14:
         VectorMulFrac(Op);
+      15:
+        VectorLT(Op);
+      16:
+        VectorEQ(Op);
+      17:
+        VectorNE(Op);
+      18:
+        VectorGE(Op);
+      19:
+        VectorClipLow(Op);
       20..47:
         begin
           IssueScalar(Kind, Op);
           FReg[0] := 0;
         end;
+      48:
+        VectorCH(Op);
+      49:
+        VectorMerge(Op);
+      50:
+        VectorLogic(Op);
+      51:
+        VectorCarry(Op);
     else
       VectorOp(Op);
     end;
@@ -4422,6 +4560,7 @@ begin
     var Done: PRSPBlockStep := nil;
     // A branch is pending only before the last clock (its delay slot).
     var DelaySlot := False;
+
     while True do
     begin
       if S.Wait > 0 then
@@ -4436,7 +4575,7 @@ begin
         FStalledSecondOpcode := S.Second;
         Inc(Ran, S.Wait);
       end;
-      if Ahead and FFenced and not FReplaying and (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
+      if S.Memory and Ahead and FFenced and not FReplaying and (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
       begin
         HoldStep(Done, S);
         if not LiftFence(PC, S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
@@ -4576,6 +4715,12 @@ begin
     FAheadStop := TRSPAheadStop.ReadCOP0
   else
     FAheadStop := TRSPAheadStop.BreakOrRaise;
+end;
+
+class function TN64RSP.LoadStore(Op: Cardinal): Boolean;
+begin
+  // The instructions TouchesFence looks at.
+  Result := (Op shr 26) in [32, 33, 35..37, 39, 40, 41, 43, 50, 58];
 end;
 
 class function TN64RSP.JournalStep(Op, Second: Cardinal; Pair: Boolean): Boolean;
