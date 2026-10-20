@@ -22,7 +22,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.SyncObjs, N64.Types, N64.RDP, N64.Host;
+  System.SysUtils, System.Classes, System.SyncObjs, System.Diagnostics, N64.Types, N64.RDP, N64.Host;
 
 type
   TN64RDPWorker = class
@@ -84,6 +84,8 @@ type
     FEnded: Int64;
     FRoomUntil: Int64;
     FProducerNoise: Cardinal;
+    // The time the producer waited for the bands (TStopwatch ticks).
+    FWaitTime: Int64;
   protected
     // Fields written by different threads sit on different cache lines.
     FPad0: array[0..7] of Int64;
@@ -144,6 +146,9 @@ type
     property Open: Boolean read FOpen;
     // Set only while the queue is drained.
     property Stress: Boolean read FStress write FStress;
+    // Diagnostics: the emulation thread's time waiting for the bands
+    // (TStopwatch ticks).
+    property WaitTime: Int64 read FWaitTime;
   end;
 
 implementation
@@ -377,8 +382,12 @@ begin
   // Spin briefly (the bands are usually close), then sleep until a band
   // reports progress. A failed band makes no progress: raise instead.
   var Spins := 0;
+  // (Timed only when the bands are behind.)
+  var Started: Int64 := 0;
   while not Reached(Target, Value) do
   begin
+    if Started = 0 then
+      Started := TStopwatch.GetTimeStamp;
     CheckFailure;
     if Spins < SpinRounds then
     begin
@@ -394,6 +403,8 @@ begin
     end;
     FProgress.WaitFor(INFINITE);
   end;
+  if Started <> 0 then
+    Inc(FWaitTime, TStopwatch.GetTimeStamp - Started);
 end;
 
 procedure TN64RDPWorker.Reserve(Words: Integer);

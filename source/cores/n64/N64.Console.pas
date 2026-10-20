@@ -50,6 +50,14 @@ type
 
   TN64CycleCount = Int64;
 
+  // The emulation thread's waits for the other threads (diagnostics,
+  // TStopwatch ticks): the RDP bands (since the RDP worker last started)
+  // and the VI thread. Its waits for the RSP thread are in
+  // TN64RSPAheadStats.ThreadWaitTime.
+  TN64WaitStats = record
+    RDP, VI: Int64;
+  end;
+
   // RSP run-ahead counts since the console was created (diagnostics).
   TN64RSPAheadStats = record
     // Windows run and their clocks; MFC0s run ahead with a predicted value,
@@ -189,6 +197,8 @@ type
     FVINotify: Boolean;
     FVIError: string;
     FOnFrame: TN64FrameNotify;
+    // (WaitStats.VI.)
+    FVIWaitTime: Int64;
     FReg: array[0..7, 0..15] of Cardinal;
     FCPU: TN64CPU;
     FRSP: TN64RSP;
@@ -498,6 +508,7 @@ type
     property RSPAheadStats: TN64RSPAheadStats read FRSPStats;
     // The RSP thread's ID (diagnostics: 0 before its first window).
     function RSPThreadID: TThreadID;
+    function WaitStats: TN64WaitStats;
     // Diagnostics: the fences of SP DMA a window may lift once the transfer
     // is expected done: 2 (default) all, 1 only of transfers out of DMEM, 0
     // none. Any mode is exact.
@@ -2362,7 +2373,9 @@ procedure TN64Console.WaitVI;
 begin
   if not FVIBusy then
     Exit;
+  var Started := TStopwatch.GetTimeStamp;
   FVIDone.WaitFor(INFINITE);
+  Inc(FVIWaitTime, TStopwatch.GetTimeStamp - Started);
   FVIBusy := False;
   if FVIError <> '' then
     raise EN64Unsupported.Create('VI thread: ' + FVIError);
@@ -4273,6 +4286,14 @@ begin
   FRDPTiming.OnWords := nil;
   FRDPTiming.OnDataOut := nil;
   FRDPTimingStale := True;
+end;
+
+function TN64Console.WaitStats: TN64WaitStats;
+begin
+  Result.RDP := 0;
+  if FRDPWorker <> nil then
+    Result.RDP := FRDPWorker.WaitTime;
+  Result.VI := FVIWaitTime;
 end;
 
 function TN64Console.RSPThreadID: TThreadID;
