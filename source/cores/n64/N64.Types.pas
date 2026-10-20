@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils;
+  System.SysUtils, System.Math;
 
 // All guest wraparound is explicit. These routines also work with {$Q+}{$R+}.
 function Add64(A, B: UInt64): UInt64; inline;
@@ -29,6 +29,13 @@ function SAR(Value: UInt64; Count, Bits: Integer): UInt64; inline;
 procedure Multiply64(A, B: UInt64; Signed: Boolean; out Hi, Lo: UInt64); inline;
 
 procedure Divide64(A, B: UInt64; Signed: Boolean; out Hi, Lo: UInt64); inline;
+
+const
+  // RDRAM pages tracked for queued RDP work.
+  RDPPageShift = 12;
+  RDPPageCount = $800000 shr RDPPageShift;
+  RDPLineShift = 6;
+  RDPLineCount = $800000 shr RDPLineShift;
 
 type
   EN64Unsupported = class(Exception);
@@ -62,9 +69,26 @@ type
     FIMemStamps: array[0..1023] of UInt64;
     FIMemCounter: UInt64;
     FDirectMemory: Boolean;
+    // RDP lists queued to a worker thread (N64.RDPWorker). Per 4 KB RDRAM
+    // page: the number of the last queued list that may write the page
+    // (FRDPWrites) or read or write it (FRDPUses). FRDPList is the list being
+    // queued; FRDPDone the emulation thread's copy of the last list the worker
+    // has finished (it may lag, which only costs a WaitRDP call). Lists are
+    // numbered from 1; without a worker everything stays 0.
+    FRDPWrites, FRDPUses: array[0..RDPPageCount - 1] of UInt64;
+    // The same per 64-byte line, so that an access waits exactly for the
+    // last list that marked the lines it touches.
+    FRDPLineWrites, FRDPLineUses: array[0..RDPLineCount - 1] of UInt64;
+    FRDPDone, FRDPList: UInt64;
+    // FRDPList > FRDPDone, kept by the owner of the lists: while it is clear
+    // (always without a worker) the checked accessors test nothing else.
+    FRDPPending: Boolean;
     // A bus that sets FInterruptLineKnown keeps FInterruptLine equal to
     // InterruptPending at all times, so the CPU can skip the virtual call.
     FInterruptLineKnown, FInterruptLine: Boolean;
+    // Emulation thread only: returns once queued RDP work up to List can no
+    // longer change or use RDRAM. The base bus has no worker.
+    procedure WaitRDP(List: UInt64); virtual;
   public
     function Read8(Address: Cardinal): Byte; virtual; abstract;
     procedure Write8(Address: Cardinal; Value: Byte); virtual; abstract;
@@ -81,7 +105,7 @@ type
     // $800000 with FDirectMemory, otherwise 0 (no direct RDRAM).
     function RAMSize: Cardinal; inline;
     // CPU, DMA and VI accessors. Callers guarantee Address + access size <=
-    // RAMSize.
+    // RAMSize. Each first waits for queued RDP work on the bytes it touches.
     function ReadRAM8(Address: Cardinal): Byte; inline;
     function ReadRAM16(Address: Cardinal): Cardinal; inline;
     function ReadRAM32(Address: Cardinal): Cardinal; inline;
@@ -90,8 +114,11 @@ type
     // Callers guarantee Address < RAMSize.
     function ReadHiddenRAM(Address: Cardinal): Byte; inline;
     procedure WriteHiddenRAM(Address: Cardinal; Value: Byte); inline;
-    // The RDP's accessors. Same bounds as above; RDPWrite8/32 behave as
-    // WriteRAM8/32.
+    // The same waits for a byte range (any part may lie beyond RDRAM).
+    procedure SyncRDPRead(Address, Count: Cardinal);
+    procedure SyncRDPWrite(Address, Count: Cardinal);
+    // RDP accessors, without waits: the worker owns the pages of the lists
+    // it runs. Same bounds as above; RDPWrite8/32 behave as WriteRAM8/32.
     function RDPRead8(Address: Cardinal): Byte; inline;
     function RDPRead16(Address: Cardinal): Cardinal; inline;
     function RDPRead32(Address: Cardinal): Cardinal; inline;
@@ -105,6 +132,12 @@ type
     procedure RDPWrite8Hidden(Address: Cardinal; Value, Hidden: Byte); inline;
     procedure RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte); inline;
     procedure RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte); inline;
+    // Pages the list being queued may read, or write (and read). Parts of
+    // the range beyond RDRAM are ignored.
+    procedure MarkRDPRead(Address, Count: Cardinal);
+    procedure MarkRDPWrite(Address, Count: Cardinal);
+    // Whether queued lists may write part of the range (never waits).
+    function RDPWriteHazard(Address, Count: Cardinal): Boolean;
     // SP memory helpers; Offset is below $2000 and DirectMemory is set.
     // Every write to SP memory goes through WriteSP8 or SPLoaded, which keep
     // the IMEM words and their stamps up to date.
@@ -112,6 +145,9 @@ type
     procedure WriteSP8(Offset: Cardinal; Value: Byte); inline;
     function ReadSP32(Offset: Cardinal): Cardinal; inline;
     procedure IMemChanged(Offset: Cardinal);
+    // Count bytes from SP memory at Offset to Dest[Index..], and back.
+    procedure CopyFromSP(Offset: Cardinal; var Dest: array of Byte; Index, Count: Integer);
+    procedure CopyToSP(Offset: Cardinal; const Source: array of Byte; Index, Count: Integer);
     // After FSP changed as a whole (reset, boot, state load).
     procedure SPLoaded;
     // IMEM word Slot (0..1023) and the stamp of its last change.
@@ -324,42 +360,146 @@ begin
     Result := 0;
 end;
 
+procedure TN64Bus.WaitRDP(List: UInt64);
+begin
+end;
+
+// RDRAM hazards: a read waits for queued lists that may write the bytes it
+// reads, a write also for lists that may read them. The fast check is per
+// 4 KB page; SyncRDPRead/Write then wait for the last list that marked the
+// 64-byte lines touched.
+// An aligned access never crosses a line; the other ones go through the
+// range check for every page they touch.
+
 function TN64Bus.ReadRAM8(Address: Cardinal): Byte;
 begin
+  if FRDPPending and (FRDPWrites[Address shr RDPPageShift] > FRDPDone) then
+    SyncRDPRead(Address, 1);
   Result := FRAM[Address];
 end;
 
 function TN64Bus.ReadRAM16(Address: Cardinal): Cardinal;
 begin
+  if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) = $FFF)) then
+    SyncRDPRead(Address, 2);
   Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
 end;
 
 function TN64Bus.ReadRAM32(Address: Cardinal): Cardinal;
 begin
+  if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) > $FFC)) then
+    SyncRDPRead(Address, 4);
   Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
     (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3];
 end;
 
 procedure TN64Bus.WriteRAM8(Address: Cardinal; Value: Byte);
 begin
+  if FRDPPending and (FRDPUses[Address shr RDPPageShift] > FRDPDone) then
+    SyncRDPWrite(Address, 1);
   RDPWrite8(Address, Value);
 end;
 
 procedure TN64Bus.WriteRAM32(Address, Value: Cardinal);
 begin
+  if FRDPPending and ((FRDPUses[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) > $FFC)) then
+    SyncRDPWrite(Address, 4);
   RDPWrite32(Address, Value);
 end;
 
 function TN64Bus.ReadHiddenRAM(Address: Cardinal): Byte;
 begin
+  if FRDPPending and (FRDPWrites[Address shr RDPPageShift] > FRDPDone) then
+    SyncRDPRead(Address, 1);
   Result := FHiddenRAM[Address shr 1] and 3;
 end;
 
 procedure TN64Bus.WriteHiddenRAM(Address: Cardinal; Value: Byte);
 begin
+  if FRDPPending and (FRDPUses[Address shr RDPPageShift] > FRDPDone) then
+    SyncRDPWrite(Address, 1);
   FHiddenRAM[Address shr 1] := Value and 3;
 end;
 
+procedure TN64Bus.SyncRDPRead(Address, Count: Cardinal);
+begin
+  if (Count = 0) or (Address >= Cardinal(Length(FRAM))) then
+    Exit;
+  var Last := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
+  for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
+    if FRDPWrites[Page] > FRDPDone then
+    begin
+      // The latest queued writer of the lines read.
+      var List: UInt64 := 0;
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
+        Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+        if FRDPLineWrites[Line] > List then
+          List := FRDPLineWrites[Line];
+      if List > FRDPDone then
+        WaitRDP(List);
+    end;
+end;
+
+procedure TN64Bus.SyncRDPWrite(Address, Count: Cardinal);
+begin
+  if (Count = 0) or (Address >= Cardinal(Length(FRAM))) then
+    Exit;
+  var Last := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
+  for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
+    if FRDPUses[Page] > FRDPDone then
+    begin
+      var List: UInt64 := 0;
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
+        Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+        if FRDPLineUses[Line] > List then
+          List := FRDPLineUses[Line];
+      if List > FRDPDone then
+        WaitRDP(List);
+    end;
+end;
+
+function TN64Bus.RDPWriteHazard(Address, Count: Cardinal): Boolean;
+begin
+  // Whether a queued list may write any byte of the range (no waiting).
+  Result := False;
+  if (Count = 0) or (Address >= Cardinal(Length(FRAM))) then
+    Exit;
+  var Last := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
+  for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
+    if FRDPWrites[Page] > FRDPDone then
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
+        Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+        if FRDPLineWrites[Line] > FRDPDone then
+          Exit(True);
+end;
+
+procedure TN64Bus.MarkRDPRead(Address, Count: Cardinal);
+begin
+  if (Count = 0) or (Address >= Cardinal(Length(FRAM))) then
+    Exit;
+  var Last := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
+  for var Line := Address shr RDPLineShift to Last shr RDPLineShift do
+    FRDPLineUses[Line] := FRDPList;
+  for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
+    FRDPUses[Page] := FRDPList;
+end;
+
+procedure TN64Bus.MarkRDPWrite(Address, Count: Cardinal);
+begin
+  if (Count = 0) or (Address >= Cardinal(Length(FRAM))) then
+    Exit;
+  var Last := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
+  for var Line := Address shr RDPLineShift to Last shr RDPLineShift do
+  begin
+    FRDPLineWrites[Line] := FRDPList;
+    FRDPLineUses[Line] := FRDPList;
+  end;
+  for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
+  begin
+    FRDPWrites[Page] := FRDPList;
+    FRDPUses[Page] := FRDPList;
+  end;
+end;
 function TN64Bus.RDPRead8(Address: Cardinal): Byte;
 begin
   Result := FRAM[Address];
@@ -458,6 +598,25 @@ end;
 function TN64Bus.IMemStamp(Slot: Integer): UInt64;
 begin
   Result := FIMemStamps[Slot];
+end;
+
+procedure TN64Bus.CopyFromSP(Offset: Cardinal; var Dest: array of Byte; Index, Count: Integer);
+begin
+  if (Count < 0) or (Index < 0) or (Index + Count > Length(Dest)) or (UInt64(Offset) + Cardinal(Count) > Length(FSP)) then
+    raise ERangeError.Create('SP memory copy out of range');
+  if Count > 0 then
+    Move(FSP[Offset], Dest[Index], Count);
+end;
+
+procedure TN64Bus.CopyToSP(Offset: Cardinal; const Source: array of Byte; Index, Count: Integer);
+begin
+  if (Count < 0) or (Index < 0) or (Index + Count > Length(Source)) or (UInt64(Offset) + Cardinal(Count) > Length(FSP)) then
+    raise ERangeError.Create('SP memory copy out of range');
+  if Count > 0 then
+    Move(Source[Index], FSP[Offset], Count);
+  if UInt64(Offset) + Cardinal(Count) > $1000 then
+    for var Word := Max(Offset, $1000) shr 2 to (Offset + Cardinal(Count) - 1) shr 2 do
+      IMemChanged(Word * 4);
 end;
 
 function TN64Bus.ReadSP32(Offset: Cardinal): Cardinal;

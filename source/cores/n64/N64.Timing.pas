@@ -27,11 +27,27 @@ type
     FFastActive: Boolean;
     // Queued events per kind, including the fast slot.
     FKindCount: array[TN64EventKind] of Integer;
+    // RSP run-ahead: the next FAheadLeft RSP clocks of the fast slot were
+    // already executed by the console. The timeline handles them itself
+    // (Materialize), in their place in event order, exactly as the console's
+    // RSPClock handler would: the next clock is scheduled one or two PClocks
+    // later with the next sequence number. FHorizon is the clock after them.
+    FAheadLeft, FAheadDone: Integer;
+    FHorizon: UInt64;
+    FMaterialized: UInt64;
+    // Between Pop returning an event and the next AdvanceTo or failed Pop:
+    // that event is being handled, so RSP clocks after it in order are not
+    // yet due. Otherwise every RSP clock due up to Now precedes the caller.
+    FInEvent: Boolean;
     // NextDue, kept up to date by every change of the queue or the fast slot.
     FNextDue: UInt64;
     class procedure RaiseBackwards; static;
+    class procedure RaiseFull; static;
     procedure CountKinds;
     function FastFirst: Boolean; inline;
+    procedure MaterializeOne;
+    procedure MaterializeTo(Limit: UInt64);
+    procedure MaterializeCurrent;
     procedure UpdateNext; inline;
   public
     procedure Reset;
@@ -43,17 +59,71 @@ type
     procedure AdvanceTo(Tick: UInt64); inline;
     function Pop(out Event: TN64Event): Boolean;
     procedure SerializeState(State: TStateArchive);
+    // The next RSP clock, queued in the fast slot (Pending(RSPClock)).
+    function RSPDue: UInt64; inline;
+    // RSP run-ahead. SetAhead: the console executed the next Clocks RSP clocks
+    // (0 ends run-ahead). SyncAhead: the clocks among them that precede the
+    // caller are handled; returns how many of the run-ahead clocks that is.
+    // EndAhead: no further clock counts as executed (the console rewound the
+    // RSP to the current point). The handled clock count feeds the RSP phase.
+    procedure SetAhead(Clocks: Integer);
+    function SyncAhead: Integer;
+    procedure EndAhead;
+    function AheadLeft: Integer; inline;
+    function TakeMaterialized: UInt64;
     property Now: UInt64 read FNow;
   end;
 
+// The PClock after Tick at which the next RCP-clock event is due: RCP clocks
+// run at two thirds of the CPU clock (one or two PClocks apart). After any
+// tick, the following ones are exactly the PClocks T with T mod 3 <> 1.
+function NextRCPClock(Tick: UInt64): UInt64; inline;
+// RCP ticks in (A, B] (B >= A), and the Count-th tick after A (Count >= 1).
+function RCPTicksBetween(A, B: UInt64): UInt64; inline;
+function RCPTickAfter(A, Count: UInt64): UInt64;
+
 implementation
+
+function NextRCPClock(Tick: UInt64): UInt64;
+begin
+  if Tick mod 3 = 0 then
+    Result := Tick + 2
+  else
+    Result := Tick + 1;
+end;
+
+function RCPTicksBetween(A, B: UInt64): UInt64;
+begin
+  // (B - A) PClocks less those with T mod 3 = 1, of which there are
+  // (X + 2) div 3 in 0..X.
+  Result := (B - A) - ((B + 2) div 3 - (A + 2) div 3);
+end;
+
+function RCPTickAfter(A, Count: UInt64): UInt64;
+const
+  // The PClocks of the first and second tick after A, from A, by A mod 3.
+  Offsets: array[0..2, 1..2] of Byte = ((2, 3), (1, 2), (1, 3));
+begin
+  // Every three PClocks after A hold two ticks, the same way each time: the
+  // (2Q + S)-th tick (S = 1, 2) is 3Q PClocks after the S-th.
+  if Count > (High(UInt64) - A) div 2 then
+    raise ERangeError.Create('N64 guest timeline exceeds representable time');
+  var Q := (Count - 1) shr 1;
+  Result := A + Q * 3 + Offsets[A mod 3, Count - Q * 2];
+end;
 
 procedure TN64Timeline.UpdateNext;
 begin
   var Next := High(UInt64);
   if FCount > 0 then
     Next := FEvents[FCount - 1].Due;
-  if FFastActive and (FFast.Due < Next) then
+  // Run-ahead clocks need no handler: the first one that does is the horizon.
+  if FAheadLeft > 0 then
+  begin
+    if FHorizon < Next then
+      Next := FHorizon;
+  end
+  else if FFastActive and (FFast.Due < Next) then
     Next := FFast.Due;
   FNextDue := Next;
 end;
@@ -63,8 +133,98 @@ begin
   FNow := 0; FSequence := 0; FCount := 0;
   for var I := 0 to High(FEvents) do FEvents[I] := Default(TN64Event);
   FFast := Default(TN64Event); FFastActive := False;
+  FAheadLeft := 0; FAheadDone := 0; FHorizon := 0; FMaterialized := 0; FInEvent := False;
   CountKinds;
   UpdateNext;
+end;
+
+class procedure TN64Timeline.RaiseFull;
+begin
+  raise ERangeError.Create('N64 guest timeline exceeds representable time');
+end;
+
+function TN64Timeline.RSPDue: UInt64;
+begin
+  Result := FFast.Due;
+end;
+
+function TN64Timeline.AheadLeft: Integer;
+begin
+  Result := FAheadLeft;
+end;
+
+procedure TN64Timeline.SetAhead(Clocks: Integer);
+begin
+  // The fast slot holds the RSP clock that follows the one being handled.
+  if (Clocks < 0) or ((Clocks > 0) and (not FFastActive or (FFast.Kind <> TN64EventKind.RSPClock) or (FAheadLeft <> 0))) then
+    raise EInvalidOpException.Create('N64 RSP run-ahead without a queued RSP clock');
+  FAheadLeft := Clocks;
+  FAheadDone := 0;
+  FHorizon := FFast.Due;
+  if Clocks > 0 then
+    FHorizon := RCPTickAfter(FFast.Due, UInt64(Clocks));
+  UpdateNext;
+end;
+
+procedure TN64Timeline.MaterializeOne;
+begin
+  // What Pop + the RSPClock handler + ScheduleRSP do for an executed clock.
+  if (FFast.Due >= High(UInt64) - 2) or (FSequence = High(UInt64)) then
+    RaiseFull;
+  FFast.Due := NextRCPClock(FFast.Due);
+  FFast.Sequence := FSequence;
+  Inc(FSequence);
+  Dec(FAheadLeft);
+  Inc(FAheadDone);
+  Inc(FMaterialized);
+  UpdateNext;
+end;
+
+procedure TN64Timeline.MaterializeTo(Limit: UInt64);
+begin
+  // The run-ahead clocks due by Limit, at once: each would have scheduled the
+  // next tick with the next sequence number.
+  if (FAheadLeft = 0) or (FFast.Due > Limit) then
+    Exit;
+  var Count := 1 + RCPTicksBetween(FFast.Due, Limit);
+  if Count > UInt64(FAheadLeft) then
+    Count := UInt64(FAheadLeft);
+  if FSequence > High(UInt64) - Count then
+    RaiseFull;
+  FFast.Due := RCPTickAfter(FFast.Due, Count);
+  FFast.Sequence := FSequence + Count - 1;
+  Inc(FSequence, Count);
+  Dec(FAheadLeft, Integer(Count));
+  Inc(FAheadDone, Integer(Count));
+  Inc(FMaterialized, Count);
+  UpdateNext;
+end;
+
+procedure TN64Timeline.MaterializeCurrent;
+begin
+  // Outside a handler every RSP clock due by Now precedes the caller.
+  if not FInEvent then
+    MaterializeTo(FNow);
+end;
+
+function TN64Timeline.SyncAhead: Integer;
+begin
+  MaterializeCurrent;
+  Result := FAheadDone;
+end;
+
+procedure TN64Timeline.EndAhead;
+begin
+  FAheadLeft := 0;
+  FAheadDone := 0;
+  FHorizon := FFast.Due;
+  UpdateNext;
+end;
+
+function TN64Timeline.TakeMaterialized: UInt64;
+begin
+  Result := FMaterialized;
+  FMaterialized := 0;
 end;
 
 procedure TN64Timeline.CountKinds;
@@ -83,6 +243,9 @@ end;
 
 procedure TN64Timeline.Schedule(Kind: TN64EventKind; Delay: UInt64);
 begin
+  // Run-ahead RSP clocks before the caller take their sequence numbers first.
+  if FAheadLeft > 0 then
+    MaterializeCurrent;
   if (Delay >= High(UInt64) - FNow) or (FSequence = High(UInt64)) then
     raise ERangeError.Create('N64 guest timeline exceeds representable time');
   if FCount + Ord(FFastActive) = Length(FEvents) then raise ERangeError.Create('N64 event queue is full');
@@ -112,6 +275,12 @@ end;
 
 procedure TN64Timeline.Cancel(Kind: TN64EventKind);
 begin
+  if FAheadLeft > 0 then
+  begin
+    MaterializeCurrent;
+    if (Kind = TN64EventKind.RSPClock) and (FAheadLeft > 0) then
+      raise EInvalidOpException.Create('N64 RSP clock cancelled during run-ahead');
+  end;
   if FKindCount[Kind] = 0 then Exit;
   if FFastActive and (FFast.Kind = Kind) then
   begin
@@ -151,14 +320,45 @@ procedure TN64Timeline.AdvanceTo(Tick: UInt64);
 begin
   if Tick < FNow then RaiseBackwards;
   FNow := Tick;
+  FInEvent := False;
 end;
 
 function TN64Timeline.Pop(out Event: TN64Event): Boolean;
 begin
+  if FAheadLeft > 0 then
+  begin
+    // Handle the run-ahead RSP clocks that precede the first queued event:
+    // all those due before it at once, then one due with it if it was
+    // scheduled first.
+    var Limit := FNow;
+    if (FCount > 0) and (FEvents[FCount - 1].Due <= Limit) then
+      if FEvents[FCount - 1].Due = 0 then
+        Limit := 0
+      else
+        Limit := FEvents[FCount - 1].Due - 1;
+    if (FCount = 0) or (FEvents[FCount - 1].Due > 0) then
+      MaterializeTo(Limit);
+    while (FAheadLeft > 0) and (FFast.Due <= FNow) and ((FCount = 0) or (FFast.Due < FEvents[FCount - 1].Due) or
+      ((FFast.Due = FEvents[FCount - 1].Due) and (FFast.Sequence < FEvents[FCount - 1].Sequence))) do
+      MaterializeOne;
+    if FAheadLeft > 0 then
+    begin
+      // The fast slot is a run-ahead clock after the first queued event.
+      Result := (FCount > 0) and (FEvents[FCount - 1].Due <= FNow);
+      if not Result then begin Event := Default(TN64Event); FInEvent := False; Exit end;
+      Dec(FCount);
+      Event := FEvents[FCount];
+      FEvents[FCount] := Default(TN64Event);
+      Dec(FKindCount[Event.Kind]);
+      FInEvent := True;
+      UpdateNext;
+      Exit;
+    end;
+  end;
   if FastFirst then
   begin
     Result := FFast.Due <= FNow;
-    if not Result then begin Event := Default(TN64Event); Exit end;
+    if not Result then begin Event := Default(TN64Event); FInEvent := False; Exit end;
     Event := FFast;
     FFast.Due := 0; FFast.Sequence := 0; FFast.Kind := Low(TN64EventKind);
     FFastActive := False;
@@ -166,17 +366,23 @@ begin
   else
   begin
     Result := (FCount > 0) and (FEvents[FCount - 1].Due <= FNow);
-    if not Result then begin Event := Default(TN64Event); Exit end;
+    if not Result then begin Event := Default(TN64Event); FInEvent := False; Exit end;
     Dec(FCount);
     Event := FEvents[FCount];
     FEvents[FCount] := Default(TN64Event);
   end;
   Dec(FKindCount[Event.Kind]);
+  FInEvent := True;
   UpdateNext;
 end;
 
 procedure TN64Timeline.SerializeState(State: TStateArchive);
 begin
+  // The console rewinds RSP run-ahead first: no clock may be executed early.
+  if FAheadLeft > 0 then
+    MaterializeCurrent;
+  if FAheadLeft > 0 then
+    raise EInvalidOpException.Create('N64 timeline saved during RSP run-ahead');
   var Ordered: TN64EventArray;
   for var I := 0 to High(Ordered) do Ordered[I] := Default(TN64Event);
   var Total := FCount;
@@ -225,6 +431,7 @@ begin
     for var I := 0 to High(FEvents) do FEvents[I] := Default(TN64Event);
     for var I := 0 to FCount - 1 do FEvents[I] := Ordered[FCount - 1 - I];
     FFast := Default(TN64Event); FFastActive := False;
+    FAheadLeft := 0; FAheadDone := 0; FHorizon := 0; FMaterialized := 0; FInEvent := False;
     CountKinds;
     UpdateNext;
   end;

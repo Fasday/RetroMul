@@ -3,10 +3,16 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Math, N64.Types, Core.Snapshots;
+  System.SysUtils, System.Classes, System.Math, System.SyncObjs, N64.Types, Core.Snapshots;
 
 type
   TN64RDPCommandTrace = procedure(const Words: TArray<Cardinal>) of object;
+  // The two command words of each 64-bit step, as Execute reads them.
+  TN64RDPWords = procedure(W0, W1: Cardinal) of object;
+  TN64RDPWordOut = procedure(Value: Cardinal) of object;
+  TN64RDPWordIn = function: Cardinal of object;
+
+  TN64RDPGroup = class;
 
   TN64Texel = record
     C: array[0..3] of Integer; // RGBA, nine bits including signed conversion output.
@@ -33,6 +39,11 @@ type
     // the RGB dither, alpha dither from the noise, else by matrix index.
     NeedsNoise, RGBNoise, AlphaNoise: Boolean;
     AlphaDither: array[0..15] of Byte;
+    // Noise generator steps of each pixel RasterRow hands to RasterPixel,
+    // and whether a pixel with a colour image address takes one more (the
+    // alpha compare with a random threshold).
+    PixelSteps: Integer;
+    CompareStep: Boolean;
     // Blender mux selections per cycle.
     M1A, M1B, M2A, M2B: array[0..1] of Integer;
   end;
@@ -127,7 +138,45 @@ type
     FOnCommand: TN64RDPCommandTrace;
     FOnCommandCompleted: TN64RDPCommandTrace;
     FTraceWords: TArray<Cardinal>;
+    FTimingOnly: Boolean;
+    FOnWords: TN64RDPWords;
+    // Counted pixels of the current row (timing RDP).
+    FRowMinX, FRowMaxX: Integer;
+    // Texture bytes sent with the command words (timing RDP) or received
+    // with them (full RDP fed by one), four per word.
+    FOnDataOut: TN64RDPWordOut;
+    FOnDataIn: TN64RDPWordIn;
+    FDataWord: Cardinal;
+    FDataBytes: Integer;
+    // Band drawing (TN64RDPGroup): this RDP draws the rows with
+    // (Y shr 3) mod FBands = FBand of band-safe primitives; band 0 draws the
+    // other ones (a serial stretch, between barriers) alone.
+    FGroup: TN64RDPGroup;
+    FBand, FBands: Integer;
+    FSerialPrim, FInSerial, FBandDrawn: Boolean;
+    FBandLayout: array[0..1] of UInt64;
+    FBarriers: Int64;
+    // Drawing order of pixels: primitive, then row. FKey* belong to the
+    // pixels that last set the per-pixel state a snapshot keeps, so the state
+    // of several band RDPs can be merged; a row belongs to one band, so the
+    // position within the row is not needed.
+    FPrimSeq, FRowKey, FPixelKey: UInt64;
+    // FKeyMemory: the last pixel that set FMemoryColor's low byte and
+    // FMemoryCoverage; FKeyMemoryRGB: the last one that read its RGB.
+    FKeyRaster, FKeyShade, FKeyMemory, FKeyMemoryRGB, FKeyNoise: UInt64;
+    FKeyHidden: array[0..7] of UInt64;
+    function BandSafe: Boolean;
+    procedure SelectBand(Safe: Boolean);
+    function OwnsRow(Y: Integer): Boolean; inline;
+    function ReadsRDRAM: Boolean;
     procedure SetHiddenOld(Index: Integer; Value: Byte); inline;
+    procedure MergeCarried(Source: TN64RDP);
+    procedure CopyCarried(Source: TN64RDP);
+    procedure ResetBands;
+    procedure TimingLoad(SourceS, SourceT, Bits, Rows, Count: Integer);
+    procedure PutDataByte(Value: Byte);
+    procedure EndData;
+    function NextDataByte: Byte;
     procedure TraceCommand(Words: Integer);
     function FetchCommand(Address: Cardinal): Cardinal;
     function MemRead8(Address: Cardinal): Byte; inline;
@@ -145,6 +194,12 @@ type
     function Color16(V: Word): Cardinal;
     function ColorBytes: Integer; inline;
     procedure AddPixelWork(Cycle: Cardinal; BPP: Integer); inline;
+    function CoveredPixels(Lo, Hi: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer;
+      out First, Last: Integer): Integer;
+    procedure CountRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
+    procedure SkipRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
+    procedure SkipNoise(Steps: Integer);
+    procedure MarkRow(Y: Integer);
     function BlendSource(Index, Cycle: Integer): Cardinal;
     function Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
     procedure Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean = False; Depth: Integer = -1; Delta: Cardinal = 1; Coverage: Integer = 8; CoverageBit: Boolean = True);
@@ -176,14 +231,31 @@ type
     FeedNone = 0;
     FeedSync = 1; // a Full Sync completed
     FeedStop = 2; // the pipeline crashed; Execute consumes no further words
+    // Texture bytes of one load sent through OnDataOut at most; one command
+    // adds at most MaxDataWords words to the stream.
+    MaxDataBytes = 16384;
+    MaxDataWords = 1 + MaxDataBytes div 4;
   public
-    constructor Create(Bus: TN64Bus);
+    // A timing RDP (TimingOnly) runs the same command, edge and coverage code
+    // and keeps the same WorkClocks, Consumed and PipelineCrashed, but draws no
+    // pixels and loads no texels. Instead it marks the RDRAM pages a full RDP
+    // would touch for the list being queued (TN64Bus.MarkRDPRead/Write).
+    constructor Create(Bus: TN64Bus; TimingOnly: Boolean = False);
     procedure Reset;
     function Execute(Start, Finish: Cardinal; XBUS: Boolean; out Consumed: Cardinal): Boolean;
-    // Execute in two parts: BeginList at the start of each Execute call, then
-    // Feed for every word pair in order.
+    // Execute in two parts, for a worker RDP that gets the words of a timing
+    // RDP's Execute (OnWords): BeginList at the start of each Execute call,
+    // then Feed for every word pair in order.
     procedure BeginList;
     function Feed(W0, W1: Cardinal): Integer;
+    // Copies the complete state of Source (as SerializeState would).
+    procedure Assign(Source: TN64RDP);
+    // Draws only band Band of Bands from now on, with the other RDPs of
+    // Group (fed the same words, on their own threads).
+    procedure JoinGroup(Group: TN64RDPGroup; Band, Bands: Integer);
+    // For snapshots of a band RDP, whose own count covers only its rows.
+    procedure SetWorkClocks(Value: UInt64);
+    function Traced: Boolean;
     procedure SerializeState(State: TStateArchive);
     function Describe: string;
     // Deterministic RCP work estimate. Pipeline stalls/overlap remain approximate.
@@ -191,6 +263,56 @@ type
     property PipelineCrashed: Boolean read FPipelineCrashed;
     property OnCommand: TN64RDPCommandTrace read FOnCommand write FOnCommand;
     property OnCommandCompleted: TN64RDPCommandTrace read FOnCommandCompleted write FOnCommandCompleted;
+    property OnWords: TN64RDPWords read FOnWords write FOnWords;
+    // A timing RDP with OnDataOut sends each texture or TLUT load as a flag
+    // word and possibly the source bytes; the full RDP fed with its words
+    // must get them, in the same order, from OnDataIn.
+    property OnDataOut: TN64RDPWordOut read FOnDataOut write FOnDataOut;
+    property OnDataIn: TN64RDPWordIn read FOnDataIn write FOnDataIn;
+    // Words of a command still incomplete at the end of the last Execute.
+    property PendingWords: Integer read FCommandCount;
+    property TimingOnly: Boolean read FTimingOnly;
+  end;
+
+  // RDPs fed the same command stream on their own threads, each drawing one
+  // band of rows. They meet at barriers where band 0 must draw alone (a
+  // primitive that is not band-safe, a texture load straight from RDRAM) and
+  // where the RDRAM layout of the bands changes, so that every byte of RDRAM
+  // sees the same accesses, in the same order, as with a single RDP.
+  TN64RDPGroup = class
+  public const
+    BarrierSync = 0;  // all RDPs have finished everything before
+    BarrierEnter = 1; // ... and band 0 takes over the per-pixel state
+    BarrierLeave = 2; // ... and band 0 hands its state and TMEM to all
+  private const
+    SpinRounds = 4000;
+  private type
+    TSlot = record
+      Arrived: Int64;
+      Waiting: Integer;
+      Event: TEvent;
+      Pad: array[0..4] of Int64;
+    end;
+  private
+    FMembers: TArray<TN64RDP>;
+    FSlots: TArray<TSlot>;
+    FReleased: Int64;
+    FAborted: Integer;
+    function Reached(Point: Int64; Release: Boolean): Boolean;
+    procedure Wait(Member: Integer; Point: Int64; Release: Boolean);
+    procedure Wake;
+  public
+    // Members[I] draws band I of Length(Members).
+    constructor Create(const Members: array of TN64RDP);
+    destructor Destroy; override;
+    // Called by each member at the same point of the stream.
+    procedure Barrier(RDP: TN64RDP; Kind: Integer);
+    // Makes waiting members (and later barriers) raise: a member failed.
+    procedure Abort;
+    // With every member idle: the state after Reset or a state load.
+    procedure Restart;
+    // With every member idle: the latest per-pixel state of all members.
+    procedure MergeInto(Target: TN64RDP);
   end;
 
 implementation
@@ -225,16 +347,246 @@ begin
   end;
 end;
 
-constructor TN64RDP.Create(Bus: TN64Bus);
+constructor TN64RDP.Create(Bus: TN64Bus; TimingOnly: Boolean);
 begin
   inherited Create;
   FBus := Bus;
+  FTimingOnly := TimingOnly;
   Reset
+end;
+
+procedure TN64RDP.Assign(Source: TN64RDP);
+begin
+  var Stream := TMemoryStream.Create;
+  try
+    var Writer := TStateArchive.Create(Stream, False);
+    try
+      Source.SerializeState(Writer);
+    finally
+      Writer.Free;
+    end;
+    Stream.Position := 0;
+    var Reader := TStateArchive.Create(Stream, True);
+    try
+      SerializeState(Reader);
+    finally
+      Reader.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+function TN64RDP.Traced: Boolean;
+begin
+  Result := Assigned(FOnCommand) or Assigned(FOnCommandCompleted);
+end;
+
+procedure TN64RDP.JoinGroup(Group: TN64RDPGroup; Band, Bands: Integer);
+begin
+  FGroup := Group;
+  FBand := Band;
+  FBands := Bands;
+  ResetBands;
+end;
+
+procedure TN64RDP.SetWorkClocks(Value: UInt64);
+begin
+  FWorkClocks := Value;
+end;
+
+procedure TN64RDP.ResetBands;
+begin
+  FPrimSeq := 0;
+  FRowKey := 0;
+  FPixelKey := 0;
+  FKeyRaster := 0;
+  FKeyShade := 0;
+  FKeyMemory := 0;
+  FKeyMemoryRGB := 0;
+  FKeyNoise := 0;
+  for var I := 0 to High(FKeyHidden) do
+    FKeyHidden[I] := 0;
+  FSerialPrim := False;
+  FInSerial := False;
+  FBandDrawn := False;
+  FBandLayout[0] := 0;
+  FBandLayout[1] := 0;
+  FBarriers := 0;
+end;
+
+function TN64RDP.BandSafe: Boolean;
+begin
+  // Whether RDPs that each draw only their own rows of this primitive leave
+  // exactly what one RDP drawing all rows leaves: no state may pass from
+  // pixel to pixel (the previous pixel's memory colour, the hidden-bit
+  // history of byte writes), and no RDRAM byte or halfword may belong to two
+  // rows (colour rows wider than the image, Z overlapping colour, 4/8-bit
+  // pixels or odd addresses sharing halfwords). The noise generator passes
+  // from pixel to pixel too, but its steps over the other bands' rows can
+  // be counted (SkipRow).
+  Result := False;
+  var Cycle := (FOtherHi shr 20) and 3;
+  if (FColorSize < 2) or Odd(FColorAddress) or (FScissorX1 > FColorWidth) then
+    Exit;
+  // The RGB dither's noise mode reads the noise of the last pixel that took
+  // one, possibly in another band.
+  if (Cycle < 2) and (((FOtherHi shr 6) and 3) = 2) and not FMode.NeedsNoise then
+    Exit;
+  if Cycle < 2 then
+  begin
+    for var C := 0 to Integer(Cycle) do
+    begin
+      var M1A := (FOtherLo shr (30 - C * 2)) and 3;
+      var M2A := (FOtherLo shr (22 - C * 2)) and 3;
+      var M2B := (FOtherLo shr (18 - C * 2)) and 3;
+      // Without image read, the memory colour is the previous pixel's.
+      if ((FOtherLo and $40) = 0) and ((M1A = 1) or (M2A = 1)) then
+        Exit;
+      // The first of two cycles blends with the previous pixel's memory.
+      if (Cycle = 1) and (C = 0) and ((M1A = 1) or (M2A = 1) or (M2B = 1)) then
+        Exit;
+    end;
+    if (FOtherLo and $30) <> 0 then
+    begin
+      if Odd(FZAddress) then
+        Exit;
+      var ColorRow := UInt64(FColorWidth) * UInt64(ColorBytes);
+      var ColorFirst := UInt64(FColorAddress) + UInt64(FScissorY0) * ColorRow;
+      var ColorEnd := UInt64(FColorAddress) + UInt64(FScissorY1) * ColorRow;
+      var ZFirst := UInt64(FZAddress) + UInt64(FScissorY0) * UInt64(FColorWidth) * 2;
+      var ZEnd := UInt64(FZAddress) + UInt64(FScissorY1) * UInt64(FColorWidth) * 2;
+      if (ZFirst < ColorEnd) and (ColorFirst < ZEnd) then
+        Exit;
+    end;
+  end;
+  Result := True;
+end;
+
+procedure TN64RDP.SelectBand(Safe: Boolean);
+begin
+  // Barriers where band 0 starts or stops drawing alone, and where the
+  // band-safe primitives change colour image or Z buffer: rows of the
+  // different layouts may share RDRAM, so the bands must not overlap in time.
+  if not Safe then
+  begin
+    if not FInSerial then
+    begin
+      FGroup.Barrier(Self, TN64RDPGroup.BarrierEnter);
+      FInSerial := True;
+    end;
+  end
+  else
+  begin
+    var Layout0 := (UInt64(FColorAddress) shl 32) or (UInt64(FColorWidth) shl 2) or UInt64(FColorSize);
+    var Layout1 := UInt64(FZAddress);
+    if FInSerial then
+    begin
+      FGroup.Barrier(Self, TN64RDPGroup.BarrierLeave);
+      FInSerial := False;
+    end
+    else if FBandDrawn and ((Layout0 <> FBandLayout[0]) or (Layout1 <> FBandLayout[1])) then
+      FGroup.Barrier(Self, TN64RDPGroup.BarrierSync);
+    FBandLayout[0] := Layout0;
+    FBandLayout[1] := Layout1;
+    FBandDrawn := True;
+  end;
+  FSerialPrim := not Safe;
+end;
+
+function TN64RDP.OwnsRow(Y: Integer): Boolean;
+begin
+  if FBands <= 1 then
+    Result := True
+  else if FSerialPrim then
+    Result := FBand = 0
+  else
+    Result := ((Y shr 3) mod FBands) = FBand;
+end;
+
+function TN64RDP.ReadsRDRAM: Boolean;
+begin
+  // A load straight from RDRAM. With band RDPs, band 0 runs it alone (after
+  // all bands finished everything before); the others get its TMEM when the
+  // serial stretch ends.
+  Result := True;
+  if FGroup = nil then
+    Exit;
+  if not FInSerial then
+  begin
+    FGroup.Barrier(Self, TN64RDPGroup.BarrierEnter);
+    FInSerial := True;
+  end;
+  Result := FBand = 0;
 end;
 
 procedure TN64RDP.SetHiddenOld(Index: Integer; Value: Byte);
 begin
   FHiddenOld[Index] := Value;
+  FKeyHidden[Index] := FPixelKey;
+end;
+
+procedure TN64RDP.MergeCarried(Source: TN64RDP);
+begin
+  // The per-pixel state Source's pixels set later than ours.
+  if Source.FKeyRaster > FKeyRaster then
+  begin
+    FLODFraction := Source.FLODFraction;
+    FAlphaDither := Source.FAlphaDither;
+    FKeyRaster := Source.FKeyRaster;
+  end;
+  if Source.FKeyShade > FKeyShade then
+  begin
+    FShadeAlpha := Source.FShadeAlpha;
+    FKeyShade := Source.FKeyShade;
+  end;
+  // FMemoryColor's RGB passes from pixel to pixel until one reads memory.
+  if Source.FKeyMemory > FKeyMemory then
+  begin
+    FMemoryColor := (FMemoryColor and $FFFFFF00) or (Source.FMemoryColor and $FF);
+    FMemoryCoverage := Source.FMemoryCoverage;
+    FKeyMemory := Source.FKeyMemory;
+  end;
+  if Source.FKeyMemoryRGB > FKeyMemoryRGB then
+  begin
+    FMemoryColor := (Source.FMemoryColor and $FFFFFF00) or (FMemoryColor and $FF);
+    FKeyMemoryRGB := Source.FKeyMemoryRGB;
+  end;
+  // The generator's seed is the same in every band (SkipRow); the noise is
+  // the last pixel's that took it.
+  if Source.FKeyNoise > FKeyNoise then
+  begin
+    FNoise := Source.FNoise;
+    FKeyNoise := Source.FKeyNoise;
+  end;
+  for var I := 0 to High(FHiddenOld) do
+    if Source.FKeyHidden[I] > FKeyHidden[I] then
+    begin
+      FHiddenOld[I] := Source.FHiddenOld[I];
+      FKeyHidden[I] := Source.FKeyHidden[I];
+    end;
+end;
+
+procedure TN64RDP.CopyCarried(Source: TN64RDP);
+begin
+  // After band 0 drew alone: its per-pixel state, noise and TMEM (it alone
+  // ran texture loads from RDRAM meanwhile).
+  FLODFraction := Source.FLODFraction;
+  FAlphaDither := Source.FAlphaDither;
+  FKeyRaster := Source.FKeyRaster;
+  FShadeAlpha := Source.FShadeAlpha;
+  FKeyShade := Source.FKeyShade;
+  FMemoryColor := Source.FMemoryColor;
+  FMemoryCoverage := Source.FMemoryCoverage;
+  FKeyMemory := Source.FKeyMemory;
+  FKeyMemoryRGB := Source.FKeyMemoryRGB;
+  FHiddenOld := Source.FHiddenOld;
+  FKeyHidden := Source.FKeyHidden;
+  FNoiseSeed := Source.FNoiseSeed;
+  FNoise := Source.FNoise;
+  FKeyNoise := Source.FKeyNoise;
+  FTMEM := Source.FTMEM;
+  InvalidateTexels;
 end;
 
 function TexelFromRGBA(Color: Cardinal): TN64Texel; inline;
@@ -541,6 +893,7 @@ begin
   begin
     FNoiseSeed := Cardinal((UInt64(FNoiseSeed) * $343FD + $269EC3) and $FFFFFFFF);
     FNoise := (((FNoiseSeed shr 16) and 7) shl 6) or $20;
+    FKeyNoise := FPixelKey;
   end;
   if FMode.RGBNoise then
     FNoiseSeed := Cardinal((UInt64(FNoiseSeed) * $343FD + $269EC3) and $FFFFFFFF);
@@ -671,6 +1024,170 @@ begin
     Inc(FTransferBits, Cardinal(BPP * 8));
 end;
 
+procedure TN64RDP.CountRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
+begin
+  // Timing RDP in place of RasterRow's pixel loop: the pixels it would hand
+  // to Pixel and that Pixel draws (RowAddresses), counted per span.
+  // RasterRow has checked Y against the raster and the field already.
+  if (Y < FScissorY0) or (Y >= FScissorY1) then
+    Exit;
+  var BPP := ColorBytes;
+  var Room := Int64($800000) - BPP - Int64(FColorAddress);
+  if Room < 0 then
+    Exit;
+  // RowAddresses leaves exactly X = Lo..Hi of this row.
+  var Lo := Max(Max(Left, FScissorX0), 0);
+  var Hi := Min(Min(Right, FScissorX1 - 1), 1023);
+  Hi := Integer(Min(Int64(Hi), Room div BPP - Int64(Y) * FColorWidth));
+  if Lo > Hi then
+    Exit;
+  var First, Last: Integer;
+  var Count := CoveredPixels(Lo, Hi, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask, First, Last);
+  if Count = 0 then
+    Exit;
+  FRowMinX := Min(FRowMinX, First);
+  FRowMaxX := Max(FRowMaxX, Last);
+  // Pixel's clocks for each of them.
+  var Cycle := (FOtherHi shr 20) and 3;
+  if Cycle = 1 then
+    Inc(FWorkClocks, UInt64(Count) * 2)
+  else if Cycle = 0 then
+    Inc(FWorkClocks, UInt64(Count))
+  else
+    Inc(FTransferBits, UInt64(Count) * UInt64(BPP * 8));
+end;
+
+function TN64RDP.CoveredPixels(Lo, Hi: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer;
+  out First, Last: Integer): Integer;
+var
+  Starts, Ends: array[0..3] of Integer;
+begin
+  // The pixels X = Lo..Hi of a row (Lo <= Hi) that RasterRow hands to
+  // RasterPixel: all for copy and fill, otherwise those with coverage in some
+  // quarter line: inside its edges, and at an edge when its mask leaves
+  // bits. Their number, and the first and last of them.
+  First := Lo;
+  Last := Hi;
+  if FPrim.Cycle >= 2 then
+    Exit(Hi - Lo + 1);
+  Result := 0;
+  var N := 0;
+    for var Q := 0 to 3 do
+      if not FPrim.Invalid[Q] and (EdgeLo[Q] <= EdgeHi[Q]) then
+      begin
+        var S := EdgeLo[Q];
+        var E := EdgeHi[Q];
+        if S = E then
+        begin
+          if (QuarterMask[Q] and LoMask[Q] and HiMask[Q]) = 0 then
+            Continue;
+        end
+        else
+        begin
+          if (QuarterMask[Q] and LoMask[Q]) = 0 then
+            Inc(S);
+          if (QuarterMask[Q] and HiMask[Q]) = 0 then
+            Dec(E);
+        end;
+        S := Max(S, Lo);
+        E := Min(E, Hi);
+        if S > E then
+          Continue;
+        // Insert, ordered by start.
+        var I := N;
+        while (I > 0) and (Starts[I - 1] > S) do
+        begin
+          Starts[I] := Starts[I - 1];
+          Ends[I] := Ends[I - 1];
+          Dec(I);
+        end;
+        Starts[I] := S;
+        Ends[I] := E;
+        Inc(N);
+      end;
+  if N = 0 then
+    Exit;
+  // Pixels in the union of the spans; they start in order, so the last one
+  // ends furthest right.
+  var SpanStart := Starts[0];
+  var SpanEnd := Ends[0];
+  for var I := 1 to N - 1 do
+    if Starts[I] > SpanEnd then
+    begin
+      Inc(Result, SpanEnd - SpanStart + 1);
+      SpanStart := Starts[I];
+      SpanEnd := Ends[I];
+    end
+    else
+      SpanEnd := Max(SpanEnd, Ends[I]);
+  Inc(Result, SpanEnd - SpanStart + 1);
+  First := Starts[0];
+  Last := SpanEnd;
+end;
+procedure TN64RDP.SkipRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
+begin
+  // Another band draws row Y (X = Left..Right, within 0..1023): step the
+  // noise generator as its pixels would.
+  var First, Last: Integer;
+  var Steps := 0;
+  if FMode.PixelSteps > 0 then
+    Steps := CoveredPixels(Left, Right, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask, First, Last) * FMode.PixelSteps;
+  if FMode.CompareStep then
+  begin
+    RowAddresses(Y);
+    var Lo := Max(Left, FRowFirst);
+    var Hi := Min(Right, FRowLast);
+    if Lo <= Hi then
+      Inc(Steps, CoveredPixels(Lo, Hi, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask, First, Last));
+  end;
+  SkipNoise(Steps);
+end;
+
+procedure TN64RDP.SkipNoise(Steps: Integer);
+begin
+  // FNoiseSeed after Steps steps of its generator, Seed * $343FD + $269EC3
+  // modulo 2^32: the composed map Seed * Mul + Add, by squaring. All
+  // products are of numbers below 2^32.
+  var StepMul: UInt64 := $343FD;
+  var StepAdd: UInt64 := $269EC3;
+  var Mul: UInt64 := 1;
+  var Add: UInt64 := 0;
+  var N := Steps;
+  while N > 0 do
+  begin
+    if Odd(N) then
+    begin
+      Mul := (Mul * StepMul) and $FFFFFFFF;
+      Add := (Add * StepMul + StepAdd) and $FFFFFFFF;
+    end;
+    StepAdd := (StepAdd * StepMul + StepAdd) and $FFFFFFFF;
+    StepMul := (StepMul * StepMul) and $FFFFFFFF;
+    N := N shr 1;
+  end;
+  FNoiseSeed := Cardinal((Mul * FNoiseSeed + Add) and $FFFFFFFF);
+end;
+
+procedure TN64RDP.MarkRow(Y: Integer);
+begin
+  // RDRAM a full RDP may touch for the counted pixels FRowMinX..FRowMaxX of
+  // row Y: their colour bytes, and their Z halfwords when the Z buffer is
+  // used. Bytes next to a pixel that its writes also touch (the hidden bits
+  // and other byte of a shared halfword, delayed hidden writes, RDPWrite8's
+  // and RDPWrite32's look at the neighbouring byte) always share a halfword
+  // with one of its own bytes, and halfwords never straddle the 64-byte
+  // lines the marks track, so the pixels' own bytes cover them.
+  var BPP := ColorBytes;
+  var First := (Y * FColorWidth + FRowMinX) * BPP;
+  var Bytes := (FRowMaxX - FRowMinX + 1) * BPP;
+  FBus.MarkRDPWrite(Cardinal(UInt64(FColorAddress) + Cardinal(First)), Cardinal(Bytes));
+  if (((FOtherHi shr 20) and 3) < 2) and ((FOtherLo and $30) <> 0) then
+  begin
+    var Z := UInt64(FZAddress) + Cardinal((Y * FColorWidth + FRowMinX) * 2);
+    if Z < $800000 then
+      FBus.MarkRDPWrite(Cardinal(Z), Cardinal((FRowMaxX - FRowMinX + 1) * 2));
+  end;
+end;
+
 procedure TN64RDP.Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean; Depth: Integer; Delta: Cardinal; Coverage: Integer; CoverageBit: Boolean);
 const
   ZShift: array[0..7] of Integer = (6, 5, 4, 3, 2, 1, 0, 0);
@@ -756,6 +1273,9 @@ begin
   begin
     FMemoryColor := FBlend.MemoryColor;
     FMemoryCoverage := FBlend.MemoryCoverage;
+    FKeyMemory := FPixelKey;
+    if MemoryRead then
+      FKeyMemoryRGB := FPixelKey;
   end;
   var AlphaProduct := 0;
   if Alpha = 255 then
@@ -1589,6 +2109,9 @@ begin
     FMode.NeedsNoise := FMode.NeedsNoise or (((FCombineHi shr 20) and 15) = 7);
   FMode.RGBNoise := RGBMode = 2;
   FMode.AlphaNoise := AlphaMode = 2;
+  FMode.PixelSteps := Ord(FMode.NeedsNoise) + Ord(FMode.RGBNoise);
+  // Pixel's alpha compare; a fill returns before it.
+  FMode.CompareStep := (Cycle <> 3) and ((FOtherLo and 3) = 3);
   for var Index := 0 to 15 do
   begin
     var Matrix := Magic[Index];
@@ -1623,6 +2146,7 @@ function TN64RDP.Combine(Shade: Cardinal): Cardinal;
 begin
   // The pixel's texels, shade, noise and LOD fraction are in FIn.
   FShadeAlpha := Min(255, Integer(Shade and $FF) + FAlphaDither);
+  FKeyShade := FPixelKey;
   // Power-on combiner inputs select the one source on every mux leg.
   if not FHasCombine then
     Exit($FFFFFFFF);
@@ -1706,6 +2230,17 @@ begin
     Layout := 2;
   var Count := Min(Bytes, 16384);
   var Rows := Min(Height, 1024);
+  if FTimingOnly then
+  begin
+    TimingLoad(SourceS, SourceT, Bits, Rows, Count);
+    Exit;
+  end;
+  // With a timing RDP feeding this one, the source bytes may come with the
+  // command words instead of from RDRAM (see TimingLoad).
+  var Payload := Assigned(FOnDataIn) and (FOnDataIn() <> 0);
+  FDataBytes := 0;
+  if not Payload and not ReadsRDRAM then
+    Exit;
   for var Y := 0 to Rows - 1 do
   begin
     // All terms are non-negative and far below 2^31. Bytes from $800000 on
@@ -1738,7 +2273,9 @@ begin
       end
       else
         Target := Target xor RowSwap;
-      if Direct then
+      if Payload then
+        FTMEM[Target] := NextDataByte
+      else if Direct then
         FTMEM[Target] := FBus.RDPRead8(Cardinal(RowSource) + Cardinal(X))
       else
         FTMEM[Target] := MemRead8(Cardinal(RowSource + Cardinal(X)));
@@ -1746,6 +2283,94 @@ begin
   end;
 end;
 
+procedure TN64RDP.TimingLoad(SourceS, SourceT, Bits, Rows, Count: Integer);
+begin
+  // The full RDP reads Valid bytes from each row's RowSource. When no queued
+  // list may write them and they are few, they travel with the command words
+  // (flag 1, then the bytes), so the RDRAM pages stay free for the CPU.
+  // Otherwise (flag 0) the full RDP reads RDRAM itself, in order with its own
+  // writes, and the pages are marked as read.
+  var Total := 0;
+  var Hazard := False;
+  for var Y := 0 to Rows - 1 do
+  begin
+    var RowSource := UInt64(FTextureAddress) + Cardinal(((SourceT + Y) * FTextureWidth + SourceS) * Bits div 8);
+    if RowSource < $800000 then
+    begin
+      var Valid := Integer(Min(UInt64(Count), $800000 - RowSource));
+      Inc(Total, Valid);
+      if (Valid > 0) and FBus.RDPWriteHazard(Cardinal(RowSource), Cardinal(Valid)) then
+        Hazard := True;
+    end;
+  end;
+  var Payload := Assigned(FOnDataOut) and not Hazard and (Total <= MaxDataBytes);
+  if Assigned(FOnDataOut) then
+    FOnDataOut(Ord(Payload));
+  for var Y := 0 to Rows - 1 do
+  begin
+    var RowSource := UInt64(FTextureAddress) + Cardinal(((SourceT + Y) * FTextureWidth + SourceS) * Bits div 8);
+    if RowSource >= $800000 then
+      Continue;
+    var Valid := Integer(Min(UInt64(Count), $800000 - RowSource));
+    if not Payload then
+    begin
+      FBus.MarkRDPRead(Cardinal(RowSource), Cardinal(Valid));
+      Continue;
+    end;
+    // Whole words where the packing is word-aligned, bytes elsewhere.
+    var X := 0;
+    while (X < Valid) and (FDataBytes <> 0) do
+    begin
+      PutDataByte(FBus.RDPRead8(Cardinal(RowSource) + Cardinal(X)));
+      Inc(X);
+    end;
+    while X + 4 <= Valid do
+    begin
+      FOnDataOut(FBus.RDPRead32(Cardinal(RowSource) + Cardinal(X)));
+      Inc(X, 4);
+    end;
+    while X < Valid do
+    begin
+      PutDataByte(FBus.RDPRead8(Cardinal(RowSource) + Cardinal(X)));
+      Inc(X);
+    end;
+  end;
+  if Payload then
+    EndData;
+end;
+
+procedure TN64RDP.PutDataByte(Value: Byte);
+begin
+  // Four bytes per word, first byte in the high bits.
+  FDataWord := Cardinal(((UInt64(FDataWord) shl 8) or Value) and $FFFFFFFF);
+  Inc(FDataBytes);
+  if FDataBytes = 4 then
+  begin
+    FOnDataOut(FDataWord);
+    FDataWord := 0;
+    FDataBytes := 0;
+  end;
+end;
+
+procedure TN64RDP.EndData;
+begin
+  if FDataBytes > 0 then
+    FOnDataOut(Cardinal((UInt64(FDataWord) shl (8 * (4 - FDataBytes))) and $FFFFFFFF));
+  FDataWord := 0;
+  FDataBytes := 0;
+end;
+
+function TN64RDP.NextDataByte: Byte;
+begin
+  if FDataBytes = 0 then
+  begin
+    FDataWord := FOnDataIn();
+    FDataBytes := 4;
+  end;
+  Result := Byte(FDataWord shr 24);
+  FDataWord := Cardinal((UInt64(FDataWord) shl 8) and $FFFFFFFF);
+  Dec(FDataBytes);
+end;
 const
   XOffset: array[0..15] of Byte = (0, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
   YOffset: array[0..15] of Byte = (0, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0);
@@ -1835,7 +2460,8 @@ procedure TN64RDP.RowAddresses(Y: Integer);
 begin
   // The pixels of row Y (0..1023, of the drawn field) that the scissor, the
   // 1024 x 1024 raster and the end of RDRAM leave: X = FRowFirst..FRowLast.
-  // Everything that decides whether a pixel costs work clocks is here.
+  // Everything that decides whether a pixel costs work clocks is here (and
+  // in CountRow, which must agree).
   FRowBPP := ColorBytes;
   FRowFirst := 1;
   FRowLast := 0;
@@ -1877,6 +2503,8 @@ begin
   end;
   var X := StartX;
   FDelayedHidden := -1;
+  FRowMinX := 1024;
+  FRowMaxX := -1;
   // Per-quarter span edges are constant along the row.
   var EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array[0..3] of Integer;
   for var Q := 0 to 3 do
@@ -1895,43 +2523,54 @@ begin
       HiMask[Q] := $F0 shr (((Hi and 7) + 1) shr 1);
       QuarterMask[Q] := $A shr (Q and 1);
     end;
-  RowAddresses(Y);
-  // Strictly inside the span of every quarter line that has one, the mask
-  // is the same.
-  var InnerLo := -1;
-  var InnerHi := 1024;
-  var InnerMask := 0;
-  for var Q := 0 to 3 do
-    if not FPrim.Invalid[Q] and (EdgeLo[Q] <= EdgeHi[Q]) then
-    begin
-      InnerLo := Max(InnerLo, EdgeLo[Q]);
-      InnerHi := Min(InnerHi, EdgeHi[Q]);
-      InnerMask := InnerMask or (QuarterMask[Q] shl ((Q - 2) and 4));
-    end;
-  while True do
+  if FTimingOnly then
+    CountRow(Y, Left, Right, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask)
+  else if OwnsRow(Y) then
   begin
-    var Mask := InnerMask;
-    if (X <= InnerLo) or (X >= InnerHi) then
+    FRowKey := (FPrimSeq shl 21) or (UInt64(1) shl 20) or (UInt64(Y) shl 10);
+    FPixelKey := FRowKey;
+    RowAddresses(Y);
+    // Strictly inside the span of every quarter line that has one, the mask
+    // is the same.
+    var InnerLo := -1;
+    var InnerHi := 1024;
+    var InnerMask := 0;
+    for var Q := 0 to 3 do
+      if not FPrim.Invalid[Q] and (EdgeLo[Q] <= EdgeHi[Q]) then
+      begin
+        InnerLo := Max(InnerLo, EdgeLo[Q]);
+        InnerHi := Min(InnerHi, EdgeHi[Q]);
+        InnerMask := InnerMask or (QuarterMask[Q] shl ((Q - 2) and 4));
+      end;
+    while True do
     begin
-      Mask := 0;
-      for var Q := 0 to 3 do
-        if not FPrim.Invalid[Q] and (X >= EdgeLo[Q]) and (X <= EdgeHi[Q]) then
-        begin
-          var RowMask := QuarterMask[Q];
-          if X = EdgeLo[Q] then
-            RowMask := RowMask and LoMask[Q];
-          if X = EdgeHi[Q] then
-            RowMask := RowMask and HiMask[Q];
-          Mask := Mask or (RowMask shl ((Q - 2) and 4));
-        end;
+      var Mask := InnerMask;
+      if (X <= InnerLo) or (X >= InnerHi) then
+      begin
+        Mask := 0;
+        for var Q := 0 to 3 do
+          if not FPrim.Invalid[Q] and (X >= EdgeLo[Q]) and (X <= EdgeHi[Q]) then
+          begin
+            var RowMask := QuarterMask[Q];
+            if X = EdgeLo[Q] then
+              RowMask := RowMask and LoMask[Q];
+            if X = EdgeHi[Q] then
+              RowMask := RowMask and HiMask[Q];
+            Mask := Mask or (RowMask shl ((Q - 2) and 4));
+          end;
+      end;
+      var Coverage := Integer(PopCount8[Mask and $FF]);
+      if (Coverage <> 0) or (FPrim.Cycle >= 2) then
+        RasterPixel(X, Y, Mask, Coverage, Step);
+      if X = EndX then
+        Break;
+      Inc(X, Step);
     end;
-    var Coverage := Integer(PopCount8[Mask and $FF]);
-    if (Coverage <> 0) or (FPrim.Cycle >= 2) then
-      RasterPixel(X, Y, Mask, Coverage, Step);
-    if X = EndX then
-      Break;
-    Inc(X, Step);
-  end;
+  end
+  else if not FSerialPrim and ((FMode.PixelSteps > 0) or FMode.CompareStep) then
+    SkipRow(Y, Left, Right, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask);
+  if FTimingOnly and (FRowMinX <= FRowMaxX) then
+    MarkRow(Y);
   CompleteDelayedHidden;
   if (FPrim.Cycle = 3) and ((FOtherLo and $20) <> 0) and ((FOtherLo and 4) = 0) then
     FPipelineCrashed := True;
@@ -1942,6 +2581,7 @@ const
   NoTexel: TN64Texel = (C: (0, 0, 0, 0));
 begin
   // FLODFraction and FAlphaDither (Dither) are set for every pixel.
+  FKeyRaster := FPixelKey;
   if FPrim.Cycle >= 2 then
     Coverage := 8;
   var OffX := 0;
@@ -2145,10 +2785,15 @@ begin
   FPrim.Tile := (FCommand[0] shr 16) and 7;
   FPrim.MaxLevel := (FCommand[0] shr 19) and 7;
   FPrim.Cycle := (FOtherHi shr 20) and 3;
+  Inc(FPrimSeq);
   if FModeDirty or (FMode.Textured <> ((Code and 2) <> 0)) then
     DecodeMode((Code and 2) <> 0);
+  if FGroup <> nil then
+    SelectBand(BandSafe);
   if FColorSize = 1 then
   begin
+    // Ordered before every pixel of this primitive.
+    FPixelKey := FPrimSeq shl 21;
     SetHiddenOld(0, FHiddenOld[0] and 1);
     SetHiddenOld(4, FHiddenOld[4] and 1);
   end;
@@ -2354,6 +2999,9 @@ begin
       W1 := FetchCommand((Consumed + 4) and $FFFFFF);
     end;
     Inc(Consumed, 8);
+    // A worker RDP receives exactly these words, in this order.
+    if Assigned(FOnWords) then
+      FOnWords(W0, W1);
     var Status := Feed(W0, W1);
     if Status = FeedSync then
       Result := True
@@ -2364,6 +3012,8 @@ end;
 
 function TN64RDP.FetchCommand(Address: Cardinal): Cardinal;
 begin
+  // The checked accessor: command words in RDRAM may be the target of queued
+  // RDP writes.
   if UInt64(Address) + 4 <= FBus.RAMSize then
     Result := FBus.ReadRAM32(Address)
   else
@@ -2478,24 +3128,56 @@ begin
           if Count > 0 then
             Inc(FWorkClocks, Cardinal(Min(Count, 256)));
           // Entry J comes from RDRAM bytes First + 2J and First + 2J + 1, if
-          // both lie below $800000.
+          // both lie below $800000. As in LoadTexture, a timing RDP sends them
+          // with the command words unless a queued list may write them.
           var First := UInt64(FTextureAddress) + Cardinal(((TL div 4) * FTextureWidth + SL div 4) * 2);
           var Entries := Min(Count, 256);
-          for var J := 0 to Entries - 1 do
+          if FTimingOnly then
           begin
-            var Source := First + Cardinal(J * 2);
-            var V: Cardinal := 0;
-            if Source + 1 < $800000 then
-              V := (Cardinal(MemRead8(Cardinal(Source))) shl 8) or MemRead8(Cardinal(Source + 1));
-            for var K := 0 to 3 do
+            var Payload := Assigned(FOnDataOut) and ((First >= $800000) or
+              not FBus.RDPWriteHazard(Cardinal(First), Cardinal(Entries * 2)));
+            if Assigned(FOnDataOut) then
+              FOnDataOut(Ord(Payload));
+            if Payload then
             begin
-              // Quad-coordinate loading expands S before tile-size addressing.
-              // Standard TLUT tiles use size=4b; 8b/16b tiles leave sparse entries.
-              var Stride := 8 shl Min(FTiles[I].Size, 2);
-              var Address := (FTiles[I].TMEM * 8 + J * Stride + K * 2) and $FFF;
-              FTMEM[Address] := Byte(V shr 8);
-              FTMEM[(Address + 1) and $FFF] := Byte(V and $FF);
-            end;
+              for var J := 0 to Entries - 1 do
+                if First + Cardinal(J * 2) + 1 < $800000 then
+                begin
+                  PutDataByte(FBus.RDPRead8(Cardinal(First) + Cardinal(J * 2)));
+                  PutDataByte(FBus.RDPRead8(Cardinal(First) + Cardinal(J * 2) + 1));
+                end;
+              EndData;
+            end
+            else if (Entries > 0) and (First < $800000) then
+              FBus.MarkRDPRead(Cardinal(First), Cardinal(Entries * 2));
+          end
+          else
+          begin
+            var Payload := Assigned(FOnDataIn) and (FOnDataIn() <> 0);
+            FDataBytes := 0;
+            if Payload or ReadsRDRAM then
+              for var J := 0 to Entries - 1 do
+              begin
+                var Source := First + Cardinal(J * 2);
+                var V: Cardinal := 0;
+                if Source + 1 < $800000 then
+                  if Payload then
+                  begin
+                    V := Cardinal(NextDataByte) shl 8;
+                    V := V or NextDataByte;
+                  end
+                  else
+                    V := (Cardinal(MemRead8(Cardinal(Source))) shl 8) or MemRead8(Cardinal(Source + 1));
+                for var K := 0 to 3 do
+                begin
+                  // Quad-coordinate loading expands S before tile-size addressing.
+                  // Standard TLUT tiles use size=4b; 8b/16b tiles leave sparse entries.
+                  var Stride := 8 shl Min(FTiles[I].Size, 2);
+                  var Address := (FTiles[I].TMEM * 8 + J * Stride + K * 2) and $FFF;
+                  FTMEM[Address] := Byte(V shr 8);
+                  FTMEM[(Address + 1) and $FFF] := Byte(V and $FF);
+                end;
+              end;
           end;
         end
         else
@@ -2730,4 +3412,116 @@ begin
   end;
 end;
 
+{ TN64RDPGroup }
+
+constructor TN64RDPGroup.Create(const Members: array of TN64RDP);
+begin
+  inherited Create;
+  SetLength(FMembers, Length(Members));
+  SetLength(FSlots, Length(Members));
+  for var I := 0 to High(Members) do
+  begin
+    FMembers[I] := Members[I];
+    FSlots[I].Event := TEvent.Create(nil, False, False, '');
+    Members[I].JoinGroup(Self, I, Length(Members));
+  end;
+end;
+
+destructor TN64RDPGroup.Destroy;
+begin
+  for var I := 0 to High(FSlots) do
+    FSlots[I].Event.Free;
+  inherited;
+end;
+
+function TN64RDPGroup.Reached(Point: Int64; Release: Boolean): Boolean;
+begin
+  if Release then
+    Exit(TInterlocked.Read(FReleased) >= Point);
+  for var I := 0 to High(FSlots) do
+    if TInterlocked.Read(FSlots[I].Arrived) < Point then
+      Exit(False);
+  Result := True;
+end;
+
+procedure TN64RDPGroup.Wake;
+begin
+  // A waiter sets its flag before its final check; both sides use full
+  // barriers, so no wake-up is lost.
+  for var I := 0 to High(FSlots) do
+    if TInterlocked.CompareExchange(FSlots[I].Waiting, 0, 1) = 1 then
+      FSlots[I].Event.SetEvent;
+end;
+
+procedure TN64RDPGroup.Wait(Member: Integer; Point: Int64; Release: Boolean);
+begin
+  var Spins := 0;
+  while not Reached(Point, Release) do
+  begin
+    if TInterlocked.CompareExchange(FAborted, 0, 0) <> 0 then
+      raise EN64Unsupported.Create('RDP band stopped: another band failed');
+    if Spins < SpinRounds then
+    begin
+      Inc(Spins);
+      YieldProcessor;
+      Continue;
+    end;
+    TInterlocked.Exchange(FSlots[Member].Waiting, 1);
+    if Reached(Point, Release) or (TInterlocked.CompareExchange(FAborted, 0, 0) <> 0) then
+    begin
+      TInterlocked.Exchange(FSlots[Member].Waiting, 0);
+      Continue;
+    end;
+    FSlots[Member].Event.WaitFor(INFINITE);
+  end;
+end;
+
+procedure TN64RDPGroup.Barrier(RDP: TN64RDP; Kind: Integer);
+begin
+  Inc(RDP.FBarriers);
+  var Point := RDP.FBarriers;
+  TInterlocked.Exchange(FSlots[RDP.FBand].Arrived, Point);
+  Wake;
+  if RDP.FBand = 0 then
+  begin
+    // Everyone has finished all work before this point and waits.
+    Wait(0, Point, False);
+    if Kind = BarrierEnter then
+      for var I := 1 to High(FMembers) do
+        RDP.MergeCarried(FMembers[I])
+    else if Kind = BarrierLeave then
+      for var I := 1 to High(FMembers) do
+        FMembers[I].CopyCarried(RDP);
+    TInterlocked.Exchange(FReleased, Point);
+    Wake;
+  end
+  else
+    Wait(RDP.FBand, Point, True);
+  RDP.FBandDrawn := False;
+end;
+
+procedure TN64RDPGroup.Abort;
+begin
+  TInterlocked.Exchange(FAborted, 1);
+  for var I := 0 to High(FSlots) do
+    FSlots[I].Event.SetEvent;
+end;
+
+procedure TN64RDPGroup.Restart;
+begin
+  TInterlocked.Exchange(FReleased, 0);
+  for var I := 0 to High(FSlots) do
+  begin
+    TInterlocked.Exchange(FSlots[I].Arrived, 0);
+    FMembers[I].ResetBands;
+  end;
+end;
+
+procedure TN64RDPGroup.MergeInto(Target: TN64RDP);
+begin
+  for var Member in FMembers do
+    if Member <> Target then
+      Target.MergeCarried(Member);
+end;
 end.
+

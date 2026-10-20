@@ -1,0 +1,506 @@
+﻿unit N64.RDPWorker;
+
+// Full TN64RDPs on their own threads.
+//
+// The emulation thread runs a timing TN64RDP (TimingOnly): the same command,
+// edge and coverage code without pixels, so its Execute gives the exact
+// Consumed, Full Sync, WorkClocks and crash state at once. Every command word
+// pair that Execute reads is queued here (Put), and each band thread feeds
+// all of them, in order, to its own full RDP. With one band that RDP draws
+// everything; with several, each draws its band of rows (TN64RDPGroup). A
+// list is the words of one Execute call; lists are numbered from 1 in queue
+// order and complete when every band has run them.
+//
+// While a list is queued, the timing RDP marks the RDRAM the full RDPs may
+// read or write, in 64-byte lines (TN64Bus.MarkRDPRead/Write). Every other
+// access to RDRAM (CPU, RSP/PI/SI/AI DMA, VI) goes through TN64Bus's checked
+// accessors, which wait for the lists on those lines (TN64Bus.WaitRDP ->
+// WaitList). Texture and TLUT bytes that no queued list writes travel with
+// the command words instead (TN64RDP.OnDataOut), so they need no marks. Memory
+// is then the same, at the same guest time, as with a synchronous RDP.
+
+interface
+
+uses
+  System.SysUtils, System.Classes, System.SyncObjs, N64.Types, N64.RDP;
+
+type
+  TN64RDPWorker = class
+  private const
+    RingBits = 16;
+    RingSize = 1 shl RingBits;
+    RingMask = RingSize - 1;
+    // Segment header: word count, first segment of a list, last segment.
+    CountMask = $3FFFFFFF;
+    FirstFlag = $40000000;
+    LastFlag = $80000000;
+    SpinRounds = 4000;
+  private type
+    TWaitTarget = (Consumed, Done);
+
+    TBand = class(TThread)
+    private
+      FOwner: TN64RDPWorker;
+      FIndex: Integer;
+      FRDP: TN64RDP;
+      FCursor, FEnd: Int64;
+      FNoise: Cardinal;
+      function NextWord: Cardinal;
+    protected
+      procedure Execute; override;
+    public
+      constructor Create(Owner: TN64RDPWorker; Index: Integer; RDP: TN64RDP);
+    end;
+
+    // What one band thread writes, a cache line apart from the others.
+    TBandSlot = record
+      Consumed, Done: Int64;
+      Sleeping: Integer;
+      DataReady: TEvent;
+      Pad: array[0..3] of Int64;
+    end;
+  private
+    FRDPs: TArray<TN64RDP>;
+    FThreads: TArray<TBand>;
+    FSlots: TArray<TBandSlot>;
+    FGroup: TN64RDPGroup;
+    FProgress: TEvent;
+    FStress: Boolean;
+    // Single-producer ring of segments that every band reads: a header word,
+    // then command word pairs, each followed by the data words of the
+    // command it completes (TN64RDP.OnDataOut). Positions count words and
+    // never wrap.
+    FRing: array of Cardinal;
+    // Producer state (emulation thread only).
+    FWrite: Int64;
+    FHeader: Int64;
+    FWords: Cardinal;
+    FFirst: Boolean;
+    FOpen: Boolean;
+    FEnded: Int64;
+    FRoomUntil: Int64;
+    FProducerNoise: Cardinal;
+  protected
+    // Fields written by different threads sit on different cache lines.
+    FPad0: array[0..7] of Int64;
+  private
+    // Written by the producer.
+    FPublished: Int64;
+    FMainWaiting: Integer;
+  protected
+    FPad1: array[0..7] of Int64;
+  private
+    // Written by the first band thread that fails.
+    FFailed: Integer;
+    FError: string;
+    procedure Reserve(Words: Integer);
+    procedure OpenSegment;
+    procedure CloseSegment(Last: Boolean);
+    procedure Publish;
+    function MinConsumed: Int64;
+    function Reached(Target: TWaitTarget; Value: Int64): Boolean;
+    procedure WaitFor(Target: TWaitTarget; Value: Int64);
+    procedure Fail(const Message: string);
+    function Failed: Boolean;
+    class procedure Signal(var Waiting: Integer; Event: TEvent); static;
+    class function Noise(var State: Cardinal): Cardinal; static;
+    class procedure StressDelay(var State: Cardinal); static;
+  public
+    // RDP is the full RDP of band 0; Bands - 1 more are created on Bus with
+    // its state. Lists up to Completed count as complete (the first list
+    // queued is Completed + 1). Stress adds random stalls to every thread.
+    constructor Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean);
+    destructor Destroy; override;
+    // Producer side, emulation thread: BeginList, then Put for each word pair
+    // (each followed by the PutData words of its command, if any), EndList.
+    procedure BeginList;
+    procedure Put(W0, W1: Cardinal);
+    procedure PutData(Value: Cardinal);
+    procedure EndList;
+    // The number of lists completed so far.
+    function Done: Int64;
+    // Waits until list List is complete. For the open list (List above the
+    // lists ended so far) it waits until every word queued so far has run.
+    procedure WaitList(List: Int64);
+    // Waits until everything queued has run; no list may be open.
+    procedure Drain;
+    // Raises the first band's exception if one stopped on it.
+    procedure CheckFailure;
+    // With the queue drained: band 0's RDP takes the latest per-pixel state
+    // of all bands (for snapshots and synchronous use).
+    procedure MergeState;
+    // With the queue drained: every band continues from band 0's state
+    // (after band 0's RDP ran lists itself, Reset or a state load).
+    procedure Resync;
+    property Open: Boolean read FOpen;
+    // Set only while the queue is drained.
+    property Stress: Boolean read FStress write FStress;
+  end;
+
+implementation
+
+{ TN64RDPWorker.TBand }
+
+constructor TN64RDPWorker.TBand.Create(Owner: TN64RDPWorker; Index: Integer; RDP: TN64RDP);
+begin
+  FOwner := Owner;
+  FIndex := Index;
+  FRDP := RDP;
+  FNoise := Cardinal($9E3779B9 + Cardinal(Index) * 7919);
+  inherited Create(False);
+end;
+
+function TN64RDPWorker.TBand.NextWord: Cardinal;
+begin
+  // Inside Feed: the data words of the current command.
+  if FCursor >= FEnd then
+    raise EN64Unsupported.Create('RDP data words missing');
+  Result := FOwner.FRing[FCursor and RingMask];
+  Inc(FCursor);
+end;
+
+procedure TN64RDPWorker.TBand.Execute;
+begin
+  var Position: Int64 := 0;
+  while not Terminated do
+  begin
+    if (TInterlocked.Read(FOwner.FPublished) <= Position) or FOwner.Failed then
+    begin
+      // Idle (or stopped by an exception): spin a little, then sleep until
+      // the producer publishes or the thread is terminated.
+      var Spins := 0;
+      while (Spins < SpinRounds) and (TInterlocked.Read(FOwner.FPublished) <= Position) and not Terminated do
+      begin
+        Inc(Spins);
+        YieldProcessor;
+      end;
+      TInterlocked.Exchange(FOwner.FSlots[FIndex].Sleeping, 1);
+      if not Terminated and ((TInterlocked.Read(FOwner.FPublished) <= Position) or FOwner.Failed) then
+        FOwner.FSlots[FIndex].DataReady.WaitFor(INFINITE)
+      else
+        TInterlocked.Exchange(FOwner.FSlots[FIndex].Sleeping, 0);
+      Continue;
+    end;
+    if FOwner.FStress then
+      StressDelay(FNoise);
+    var Header := FOwner.FRing[Position and RingMask];
+    FCursor := Position + 1;
+    FEnd := FCursor + Int64(Header and CountMask);
+    try
+      if (Header and FirstFlag) <> 0 then
+        FRDP.BeginList;
+      FRDP.OnDataIn := NextWord;
+      while FCursor < FEnd do
+      begin
+        var W0 := FOwner.FRing[FCursor and RingMask];
+        var W1 := FOwner.FRing[(FCursor + 1) and RingMask];
+        Inc(FCursor, 2);
+        FRDP.Feed(W0, W1);
+      end;
+      FRDP.OnDataIn := nil;
+    except
+      on E: Exception do
+      begin
+        // This RDP's state is now unknown: no band runs anything more.
+        FRDP.OnDataIn := nil;
+        FOwner.Fail(E.ClassName + ': ' + E.Message);
+        Continue;
+      end;
+    end;
+    Position := FEnd;
+    // The counters move after the memory Feed wrote (full barriers).
+    TInterlocked.Exchange(FOwner.FSlots[FIndex].Consumed, Position);
+    if (Header and LastFlag) <> 0 then
+      TInterlocked.Increment(FOwner.FSlots[FIndex].Done);
+    Signal(FOwner.FMainWaiting, FOwner.FProgress);
+  end;
+end;
+
+{ TN64RDPWorker }
+
+constructor TN64RDPWorker.Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean);
+begin
+  inherited Create;
+  FStress := Stress;
+  FProducerNoise := $2545F491;
+  SetLength(FRing, RingSize);
+  FRoomUntil := RingSize;
+  FProgress := TEvent.Create(nil, False, False, '');
+  if Bands < 1 then
+    Bands := 1;
+  SetLength(FRDPs, Bands);
+  FRDPs[0] := RDP;
+  for var I := 1 to Bands - 1 do
+  begin
+    FRDPs[I] := TN64RDP.Create(Bus);
+    FRDPs[I].Assign(RDP);
+  end;
+  if Bands > 1 then
+    FGroup := TN64RDPGroup.Create(FRDPs);
+  FEnded := Completed;
+  SetLength(FSlots, Bands);
+  for var I := 0 to Bands - 1 do
+  begin
+    FSlots[I].Done := Completed;
+    FSlots[I].DataReady := TEvent.Create(nil, False, False, '');
+  end;
+  SetLength(FThreads, Bands);
+  for var I := 0 to Bands - 1 do
+    FThreads[I] := TBand.Create(Self, I, FRDPs[I]);
+end;
+
+destructor TN64RDPWorker.Destroy;
+begin
+  for var Thread in FThreads do
+    Thread.Terminate;
+  // Bands waiting at a group barrier give up as well.
+  if FGroup <> nil then
+    FGroup.Abort;
+  for var I := 0 to High(FSlots) do
+    FSlots[I].DataReady.SetEvent;
+  for var Thread in FThreads do
+    Thread.Free; // waits for Execute to return
+  for var I := 0 to High(FSlots) do
+    FSlots[I].DataReady.Free;
+  FGroup.Free;
+  for var I := 1 to High(FRDPs) do
+    FRDPs[I].Free;
+  FProgress.Free;
+  inherited;
+end;
+
+class function TN64RDPWorker.Noise(var State: Cardinal): Cardinal;
+begin
+  // xorshift32; each thread has its own state.
+  State := State xor ((State shl 13) and $FFFFFFFF);
+  State := State xor (State shr 17);
+  State := State xor ((State shl 5) and $FFFFFFFF);
+  Result := State;
+end;
+
+class procedure TN64RDPWorker.StressDelay(var State: Cardinal);
+begin
+  // Random stalls: the emulation thread sometimes runs far ahead of the
+  // bands, and sometimes finds them idle; bands drift apart.
+  case Noise(State) and 63 of
+    0:
+      Sleep(1);
+    1..4:
+      Sleep(0);
+    5..12:
+      for var I := 0 to Integer(Noise(State) and 4095) do
+        YieldProcessor;
+  end;
+end;
+
+class procedure TN64RDPWorker.Signal(var Waiting: Integer; Event: TEvent);
+begin
+  // A waiter sets its flag before its final check and both sides use full
+  // barriers, so a wake-up cannot be lost.
+  if TInterlocked.CompareExchange(Waiting, 0, 1) = 1 then
+    Event.SetEvent;
+end;
+
+procedure TN64RDPWorker.Fail(const Message: string);
+begin
+  if TInterlocked.CompareExchange(FFailed, 2, 0) = 0 then
+  begin
+    FError := Message;
+    TInterlocked.Exchange(FFailed, 1);
+  end;
+  if FGroup <> nil then
+    FGroup.Abort;
+  FProgress.SetEvent;
+end;
+
+function TN64RDPWorker.Failed: Boolean;
+begin
+  Result := TInterlocked.CompareExchange(FFailed, 0, 0) <> 0;
+end;
+
+function TN64RDPWorker.MinConsumed: Int64;
+begin
+  Result := TInterlocked.Read(FSlots[0].Consumed);
+  for var I := 1 to High(FSlots) do
+  begin
+    var Value := TInterlocked.Read(FSlots[I].Consumed);
+    if Value < Result then
+      Result := Value;
+  end;
+end;
+
+function TN64RDPWorker.Reached(Target: TWaitTarget; Value: Int64): Boolean;
+begin
+  for var I := 0 to High(FSlots) do
+    if Target = TWaitTarget.Consumed then
+    begin
+      if TInterlocked.Read(FSlots[I].Consumed) < Value then
+        Exit(False);
+    end
+    else if TInterlocked.Read(FSlots[I].Done) < Value then
+      Exit(False);
+  Result := True;
+end;
+
+procedure TN64RDPWorker.WaitFor(Target: TWaitTarget; Value: Int64);
+begin
+  // Spin briefly (the bands are usually close), then sleep until a band
+  // reports progress. A failed band makes no progress: raise instead.
+  var Spins := 0;
+  while not Reached(Target, Value) do
+  begin
+    CheckFailure;
+    if Spins < SpinRounds then
+    begin
+      Inc(Spins);
+      YieldProcessor;
+      Continue;
+    end;
+    TInterlocked.Exchange(FMainWaiting, 1);
+    if Reached(Target, Value) or Failed then
+    begin
+      TInterlocked.Exchange(FMainWaiting, 0);
+      Continue;
+    end;
+    FProgress.WaitFor(INFINITE);
+  end;
+end;
+
+procedure TN64RDPWorker.Reserve(Words: Integer);
+begin
+  // Room for Words more words; the bands free space as they all run them.
+  if FWrite + Words <= FRoomUntil then
+    Exit;
+  FRoomUntil := MinConsumed + RingSize;
+  if FWrite + Words <= FRoomUntil then
+    Exit;
+  WaitFor(TWaitTarget.Consumed, FWrite + Words - RingSize);
+  FRoomUntil := MinConsumed + RingSize;
+end;
+
+procedure TN64RDPWorker.OpenSegment;
+begin
+  Reserve(3 + TN64RDP.MaxDataWords);
+  FHeader := FWrite;
+  Inc(FWrite);
+  FWords := 0;
+end;
+
+procedure TN64RDPWorker.CloseSegment(Last: Boolean);
+begin
+  var Header := FWords;
+  if FFirst then
+    Header := Header or FirstFlag;
+  if Last then
+    Header := Header or LastFlag;
+  FRing[FHeader and RingMask] := Header;
+  FFirst := False;
+end;
+
+procedure TN64RDPWorker.Publish;
+begin
+  TInterlocked.Exchange(FPublished, FWrite);
+  for var I := 0 to High(FSlots) do
+    Signal(FSlots[I].Sleeping, FSlots[I].DataReady);
+end;
+
+procedure TN64RDPWorker.BeginList;
+begin
+  FOpen := True;
+  FFirst := True;
+  OpenSegment;
+end;
+
+procedure TN64RDPWorker.Put(W0, W1: Cardinal);
+begin
+  // Room for the pair and any data words of a command it completes: the
+  // full RDPs read those from the same segment.
+  if FWrite + 2 + TN64RDP.MaxDataWords > FRoomUntil then
+  begin
+    FRoomUntil := MinConsumed + RingSize;
+    if FWrite + 2 + TN64RDP.MaxDataWords > FRoomUntil then
+    begin
+      // A long list fills the ring: hand over what is queued (the bands
+      // cannot run an unpublished segment) and go on in a new segment.
+      CloseSegment(False);
+      Publish;
+      OpenSegment;
+    end;
+  end;
+  FRing[FWrite and RingMask] := W0;
+  FRing[(FWrite + 1) and RingMask] := W1;
+  Inc(FWrite, 2);
+  Inc(FWords, 2);
+end;
+
+procedure TN64RDPWorker.PutData(Value: Cardinal);
+begin
+  FRing[FWrite and RingMask] := Value;
+  Inc(FWrite);
+  Inc(FWords);
+end;
+
+procedure TN64RDPWorker.EndList;
+begin
+  CloseSegment(True);
+  FOpen := False;
+  Inc(FEnded);
+  Publish;
+  if FStress then
+    StressDelay(FProducerNoise);
+end;
+
+function TN64RDPWorker.Done: Int64;
+begin
+  Result := TInterlocked.Read(FSlots[0].Done);
+  for var I := 1 to High(FSlots) do
+  begin
+    var Value := TInterlocked.Read(FSlots[I].Done);
+    if Value < Result then
+      Result := Value;
+  end;
+end;
+
+procedure TN64RDPWorker.CheckFailure;
+begin
+  if TInterlocked.CompareExchange(FFailed, 0, 0) = 1 then
+    raise EN64Unsupported.Create('RDP worker: ' + FError);
+end;
+
+procedure TN64RDPWorker.WaitList(List: Int64);
+begin
+  if FOpen and (List > FEnded) then
+  begin
+    // A command word on a line that an earlier command of the same list
+    // writes: run everything queued so far, then continue the list.
+    CloseSegment(False);
+    Publish;
+    WaitFor(TWaitTarget.Consumed, FWrite);
+    OpenSegment;
+  end
+  else
+    WaitFor(TWaitTarget.Done, List);
+end;
+
+procedure TN64RDPWorker.Drain;
+begin
+  WaitFor(TWaitTarget.Consumed, FWrite);
+  CheckFailure;
+end;
+
+procedure TN64RDPWorker.MergeState;
+begin
+  if FGroup <> nil then
+    FGroup.MergeInto(FRDPs[0]);
+end;
+
+procedure TN64RDPWorker.Resync;
+begin
+  if FGroup = nil then
+    Exit;
+  for var I := 1 to High(FRDPs) do
+    FRDPs[I].Assign(FRDPs[0]);
+  FGroup.Restart;
+end;
+
+end.

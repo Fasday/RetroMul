@@ -4,10 +4,16 @@ interface
 
 uses
   System.SysUtils, System.Math, System.Classes, System.UITypes, N64.Types,
-  N64.CPU, N64.RSP, N64.RDP, N64.VI, N64.Timing, Core.Snapshots, Core.Emulation.Types;
+  N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, Core.Snapshots, Core.Emulation.Types;
 
 type
   TN64SaveType = (Auto, EEPROM4K, EEPROM16K, SRAM, FlashRAM, None);
+
+  // Threaded: the RDP draws on a worker thread (N64.RDPWorker). Synchronous:
+  // it draws inside DP command processing. Verify: threaded, but every list
+  // is waited for and its timing results compared. Stress: threaded, with
+  // random stalls of both threads. All four give the same emulation.
+  TN64RDPMode = (Threaded, Synchronous, Verify, Stress);
 
   TN64Pad = record
     Buttons: Word;
@@ -39,12 +45,25 @@ type
   end;
 
   TN64Console = class(TN64Bus)
+  private const
+    // Run-ahead window sizes in RSP clocks (StartRSPAhead): the largest
+    // bounds the cost of one rewind.
+    RSPWindowMin = 16;
+    RSPWindowMax = 65536;
   private
     FData, FPIF, FSave: TBytes;
     FReg: array[0..7, 0..15] of Cardinal;
     FCPU: TN64CPU;
     FRSP: TN64RSP;
     FRDP: TN64RDP;
+    // With a worker, FRDPTiming (a timing RDP) runs each list here for its
+    // results and FRDP draws it on the worker. FRDPTimingStale: FRDP ran a
+    // list itself, FRDPTiming must copy its state before the next one.
+    FRDPTiming: TN64RDP;
+    FRDPWorker: TN64RDPWorker;
+    FRDPMode: TN64RDPMode;
+    FRDPBands: Integer;
+    FRDPTimingStale: Boolean;
     FVI: TN64VI;
     FTimeline: TN64Timeline;
     FSPTransfer, FSPQueued: TN64SPTransfer;
@@ -54,6 +73,15 @@ type
     FVIPhase, FAIDACPhase: UInt64;
     FAIAnchorTick: UInt64;
     FRSPPhase: Integer;
+    // RSP run-ahead (see StartRSPAhead) and its test mode, which rewinds
+    // the RSP at random instruction boundaries.
+    FRSPAhead, FRSPStress: Boolean;
+    FRSPNoise: Cardinal;
+    // Clocks the next run-ahead window may take: halved towards the clocks
+    // actually kept when the CPU cut a window short, doubled after a window
+    // that was not (host heuristic; any size is exact).
+    FRSPWindow: Integer;
+    FRSPCut: Boolean;
     FLastLeft, FLastRight: SmallInt;
     FCurrentFrame: TEmulatorFrame;
     FVideoOutputEnabled: Boolean;
@@ -89,6 +117,12 @@ type
     procedure FormatControllerPaks;
     procedure AudioTick;
     procedure ProcessRDP;
+    function QueueRDP(out Consumed: Cardinal): Boolean;
+    procedure DrainRDP;
+    procedure RefreshRDP;
+    procedure SetRDPMode(Value: TN64RDPMode);
+    procedure SetRDPThreads(Value: Integer);
+    function GetRenderer: TN64RDP;
     procedure RunRSP;
     procedure FlashCommand(Value: Cardinal);
     function EEPROMSize: Integer;
@@ -103,6 +137,11 @@ type
     procedure ScheduleOutput;
     procedure ScheduleAI;
     procedure ScheduleRSP;
+    procedure StartRSPAhead;
+    procedure SyncRSP; inline;
+    procedure RewindRSP;
+    procedure FoldRSPPhase;
+    procedure StressRSP;
     procedure SPTransferBeat;
     procedure PITransferBeat;
     procedure SITransferBeat;
@@ -113,6 +152,8 @@ type
     procedure ConsumeAI;
     procedure RenderFrame(ScanoutField: Integer);
     procedure ValidateState;
+  protected
+    procedure WaitRDP(List: UInt64); override;
   public
     constructor Create(const Data: TBytes);
     destructor Destroy; override;
@@ -137,9 +178,17 @@ type
     procedure SerializeState(State: TStateArchive);
     property CPU: TN64CPU read FCPU;
     // Optional command capture is configured by diagnostics, outside guest state.
-    property Renderer: TN64RDP read FRDP;
+    // Reading it waits for queued RDP work.
+    property Renderer: TN64RDP read GetRenderer;
+    property RDPMode: TN64RDPMode read FRDPMode write SetRDPMode;
+    // Threads drawing RDP rows in bands (with a worker; 1 or more).
+    property RDPThreads: Integer read FRDPBands write SetRDPThreads;
     property FrameNumber: UInt64 read FFrame;
     property DebugOutput: string read FDebugOutput;
+    // The RSP runs ahead of the CPU up to its next COP0 access or BREAK
+    // (exact; false runs it clock by clock with the CPU).
+    property RSPRunAhead: Boolean read FRSPAhead write FRSPAhead;
+    property RSPStress: Boolean read FRSPStress write FRSPStress;
     property SaveDirty: Boolean read FSaveDirty;
     // Raw hardware diagnostics can omit host display conversion. DMA, RDP,
     // guest VI registers/IRQs and audio clocks still execute normally.
@@ -149,6 +198,44 @@ type
   end;
 
 implementation
+
+{$IFDEF MSWINDOWS}
+uses
+  Winapi.Windows;
+{$ENDIF}
+
+function PhysicalCores: Integer;
+begin
+  // Physical cores with a logical processor this process may run on.
+  Result := 0;
+  {$IFDEF MSWINDOWS}
+  var ProcessMask, SystemMask: NativeUInt;
+  var Length: DWORD := 0;
+  if GetProcessAffinityMask(GetCurrentProcess, ProcessMask, SystemMask) and
+    not GetLogicalProcessorInformation(nil, Length) and (GetLastError = ERROR_INSUFFICIENT_BUFFER) then
+  begin
+    var Items: TArray<TSystemLogicalProcessorInformation>;
+    SetLength(Items, Length div SizeOf(TSystemLogicalProcessorInformation) + 1);
+    if GetLogicalProcessorInformation(@Items[0], Length) then
+      for var I := 0 to Integer(Length div SizeOf(TSystemLogicalProcessorInformation)) - 1 do
+        if (Items[I].Relationship = RelationProcessorCore) and ((Items[I].ProcessorMask and ProcessMask) <> 0) then
+          Inc(Result);
+  end;
+  {$ENDIF}
+  // Elsewhere, or if that failed: assume two logical processors per core.
+  if Result = 0 then
+    Result := Max(1, TThread.ProcessorCount div 2);
+end;
+
+function DefaultRDPBands: Integer;
+begin
+  // One band per physical core left to them by the emulation thread, at
+  // most three. Bands beyond the free cores, or on SMT siblings of busy
+  // ones, slow the emulation thread down more than they draw: with two
+  // cores one band is fastest in GoldenEye, and three take a third of its
+  // speed (three bands on four cores lead or tie in every game measured).
+  Result := Max(1, Min(3, PhysicalCores - 1));
+end;
 
 constructor TN64Console.Create(const Data: TBytes);
 begin
@@ -198,17 +285,29 @@ begin
   FCPU := TN64CPU.Create(Self);
   FRSP := TN64RSP.Create(Self);
   FRDP := TN64RDP.Create(Self);
+  FRDPTiming := TN64RDP.Create(Self, True);
+  FRDPBands := DefaultRDPBands;
+  {$IFDEF DEBUG}
+  FRDPMode := TN64RDPMode.Verify;
+  {$ELSE}
+  FRDPMode := TN64RDPMode.Threaded;
+  {$ENDIF}
   FVI := TN64VI.Create(Self);
   FTimeline := TN64Timeline.Create;
+  FRSPAhead := True;
+  FRSPNoise := $6C078965;
+  FRSPWindow := RSPWindowMin;
   FVideoOutputEnabled := True;
   Reset;
 end;
 
 destructor TN64Console.Destroy;
 begin
+  FRDPWorker.Free; // stops the thread before the RDP goes
   FCPU.Free;
   FRSP.Free;
   FRDP.Free;
+  FRDPTiming.Free;
   FVI.Free;
   FTimeline.Free;
   inherited;
@@ -216,6 +315,7 @@ end;
 
 procedure TN64Console.Reset;
 begin
+  DrainRDP;
   for var I := 0 to High(FRAM) do
     FRAM[I] := 0;
   for var I := 0 to High(FHiddenRAM) do
@@ -279,6 +379,9 @@ begin
   FCPU.Reset;
   FRSP.Reset;
   FRDP.Reset;
+  FRDPTiming.Reset;
+  // The other band RDPs and the timing RDP follow FRDP again.
+  FRDPTimingStale := True;
   FVI.Reset;
   FReg[3, 7] := 3093;
   if FramesPerSecond = 50 then
@@ -408,6 +511,7 @@ begin
     Exit(ReadRAM8(Address));
   if (Address >= $04000000) and (Address < $04002000) then
   begin
+    SyncRSP;
     Exit(FSP[Address - $04000000]);
   end;
   if (Address >= $1FC007C0) and (Address < $1FC00800) then
@@ -438,6 +542,7 @@ begin
     WriteRAM8(Address, Value)
   else if (Address >= $04000000) and (Address < $04002000) then
   begin
+    SyncRSP;
     WriteSP8(Address - $04000000, Value)
   end
   else if (Address >= $1FC007C0) and (Address < $1FC00800) then
@@ -462,6 +567,7 @@ begin
     Exit(ReadRAM32(Address));
   if (Address >= $04000000) and (Address <= $04001FFC) then
   begin
+    SyncRSP;
     var Offset := Address - $04000000;
     Exit((Cardinal(FSP[Offset]) shl 24) or (Cardinal(FSP[Offset + 1]) shl 16) or
       (Cardinal(FSP[Offset + 2]) shl 8) or FSP[Offset + 3]);
@@ -495,6 +601,7 @@ begin
   end;
   if Address = $04080000 then
   begin
+    SyncRSP;
     Exit(FSPPC);
   end;
   if (Address >= $04100000) and (Address < $04900000) then
@@ -544,6 +651,7 @@ begin
   end;
   if (Address >= $04000000) and (Address <= $04001FFC) then
   begin
+    SyncRSP;
     var Offset := Address - $04000000;
     WriteSP8(Offset, Byte(Value shr 24));
     WriteSP8(Offset + 1, Byte((Value shr 16) and $FF));
@@ -576,12 +684,15 @@ begin
   end;
   if Address = $04080000 then
   begin
+    SyncRSP;
     FSPPC := Value and $FFC;
     FRSP.ResetPipeline;
     Exit
   end;
   if (Address >= $04040000) and (Address < $04040020) then
   begin
+    // DMA starts, halts and single-stepping change what the RSP does next.
+    SyncRSP;
     var I := (Address - $04040000) div 4;
     case I of
       0:
@@ -635,6 +746,9 @@ begin
     var I := (Address and $FFFFF) div 4;
     if I >= 16 then
       Exit;
+    // RDP lists in DMEM (XBUS) read it now.
+    if Bank = 1 then
+      SyncRSP;
     case Bank of
       1:
         case I of
@@ -1388,6 +1502,7 @@ procedure TN64Console.ScheduleRSP;
 begin
   if ((FReg[0, 4] and 1) <> 0) or FTimeline.Pending(TN64EventKind.RSPClock) then
     Exit;
+  FoldRSPPhase;
   FRSPPhase := FRSPPhase xor 1;
   // 62.5 MHz RCP versus 93.75 MHz CPU: alternate two and one CPU clocks.
   var Delay: Cardinal := 1;
@@ -1716,10 +1831,13 @@ begin
       SITransferBeat;
     TN64EventKind.RSPClock:
       begin
+        // The clocks run ahead before this one are all handled (in order).
+        FRSP.EndAhead;
         // IMEM transfers own the instruction bank until their beat completes.
         if not (FSPTransfer.Active and not FSPTransfer.Writing and ((FSPTransfer.local and $1000) <> 0)) then
           RunRSP;
         ScheduleRSP;
+        StartRSPAhead;
       end;
     TN64EventKind.DPInterrupt:
       begin
@@ -1774,9 +1892,15 @@ procedure TN64Console.RunInstructions(Count: Integer);
 begin
   if Count < 0 then
     raise EArgumentOutOfRangeException.Create('Negative N64 instruction budget');
+  // Once the RDP bands have caught up, RDRAM accesses skip their checks.
+  if FRDPPending then
+    RefreshRDP;
+
   var Remaining := Count;
   while Remaining > 0 do
   begin
+    if FRSPStress then
+      StressRSP;
     if FTimeline.NextDue <= FTimeline.Now then
       AdvanceTime(0);
     var Executed := 0;
@@ -1922,9 +2046,21 @@ end;
 
 procedure TN64Console.SerializeState(State: TStateArchive);
 begin
+  // Saved or loaded, RDRAM and the RDP state are those of a finished queue.
+  DrainRDP;
+  // Band RDPs count only their own rows' clocks; the timing RDP has them all.
+  if (FRDPWorker <> nil) and not FRDPTimingStale then
+    FRDP.SetWorkClocks(FRDPTiming.WorkClocks);
   FCPU.SerializeState(State);
+  // The RSP exactly at the current point (no clock run ahead), and its phase.
+  RewindRSP;
+  FoldRSPPhase;
   FRSP.SerializeState(State);
+  if State.Loading then
+    FRSP.EndAhead;
   FRDP.SerializeState(State);
+  if State.Loading then
+    FRDPTimingStale := True;
   FVI.SerializeState(State);
   FTimeline.SerializeState(State);
   State.Field(FHiddenRAM[0], Length(FHiddenRAM));
@@ -2149,10 +2285,25 @@ begin
   if FReg[1, 1] <= FReg[1, 2] then
     Exit;
   var Consumed: Cardinal;
-  if FRDP.Execute(FReg[1, 2], FReg[1, 1], (FReg[1, 3] and 1) <> 0, Consumed) then
+  var FullSync: Boolean;
+  var Clocks: UInt64;
+  // Command capture needs the drawing RDP on this thread.
+  if (FRDPMode <> TN64RDPMode.Synchronous) and not FRDP.Traced then
+  begin
+    FullSync := QueueRDP(Consumed);
+    Clocks := FRDPTiming.WorkClocks;
+  end
+  else
+  begin
+    DrainRDP;
+    FRDPTimingStale := True;
+    FullSync := FRDP.Execute(FReg[1, 2], FReg[1, 1], (FReg[1, 3] and 1) <> 0, Consumed);
+    Clocks := FRDP.WorkClocks;
+  end;
+  if FullSync then
   begin
     FReg[1, 3] := FReg[1, 3] or $20;
-    var Delay := (FRDP.WorkClocks * 3 + 1) div 2;
+    var Delay := (Clocks * 3 + 1) div 2;
     if Delay = 0 then
       Delay := 1;
     if not FTimeline.Pending(TN64EventKind.DPInterrupt) then
@@ -2161,9 +2312,168 @@ begin
   FReg[1, 2] := Consumed;
 end;
 
+function TN64Console.QueueRDP(out Consumed: Cardinal): Boolean;
+begin
+  if FRDPWorker = nil then
+  begin
+    // Lists are numbered in the bus (FRDPList) and in the worker alike.
+    FRDPWorker := TN64RDPWorker.Create(FRDP, Self, FRDPBands, Int64(FRDPList), FRDPMode = TN64RDPMode.Stress);
+    FRDPTiming.OnWords := FRDPWorker.Put;
+    FRDPTiming.OnDataOut := FRDPWorker.PutData;
+  end;
+  if FRDPTimingStale then
+  begin
+    // FRDP ran lists here, was reset or loaded (the bands are idle since):
+    // everything continues from its state.
+    FRDPTiming.Assign(FRDP);
+    FRDPWorker.Resync;
+    FRDPTimingStale := False;
+  end;
+  FRDPDone := UInt64(FRDPWorker.Done);
+  Inc(FRDPList);
+  FRDPPending := True;
+  FRDPWorker.BeginList;
+  try
+    Result := FRDPTiming.Execute(FReg[1, 2], FReg[1, 1], (FReg[1, 3] and 1) <> 0, Consumed);
+  finally
+    FRDPWorker.EndList;
+  end;
+  if FRDPMode = TN64RDPMode.Verify then
+  begin
+    DrainRDP;
+    // With several bands FRDP counts only its own rows' clocks.
+    if ((FRDPBands = 1) and (FRDP.WorkClocks <> FRDPTiming.WorkClocks)) or
+      (FRDP.PipelineCrashed <> FRDPTiming.PipelineCrashed) or (FRDP.PendingWords <> FRDPTiming.PendingWords) then
+      raise EN64Unsupported.CreateFmt('RDP list %d: worker clocks/crash/pending %d/%s/%d, timing %d/%s/%d',
+        [FRDPList, FRDP.WorkClocks, BoolToStr(FRDP.PipelineCrashed, True), FRDP.PendingWords,
+        FRDPTiming.WorkClocks, BoolToStr(FRDPTiming.PipelineCrashed, True), FRDPTiming.PendingWords]);
+  end;
+end;
+
+procedure TN64Console.DrainRDP;
+begin
+  if FRDPWorker = nil then
+    Exit;
+  FRDPWorker.Drain;
+  FRDPWorker.MergeState;
+  RefreshRDP;
+end;
+
+procedure TN64Console.RefreshRDP;
+begin
+  // The emulation thread's view of the completed lists (see TN64Bus).
+  if FRDPWorker = nil then
+    Exit;
+  FRDPDone := UInt64(FRDPWorker.Done);
+  FRDPPending := FRDPDone < FRDPList;
+end;
+
+procedure TN64Console.WaitRDP(List: UInt64);
+begin
+  // RDRAM access to a page of a queued list (see TN64Bus).
+  if FRDPWorker = nil then
+    Exit;
+  FRDPWorker.WaitList(Int64(List));
+  RefreshRDP;
+end;
+
+procedure TN64Console.SetRDPMode(Value: TN64RDPMode);
+begin
+  if Value = FRDPMode then
+    Exit;
+  DrainRDP;
+  FRDPMode := Value;
+  if FRDPWorker <> nil then
+    FRDPWorker.Stress := Value = TN64RDPMode.Stress;
+end;
+
+procedure TN64Console.SetRDPThreads(Value: Integer);
+begin
+  Value := Max(1, Min(16, Value));
+  if Value = FRDPBands then
+    Exit;
+  // The next list starts a worker with the new number of bands.
+  DrainRDP;
+  FreeAndNil(FRDPWorker);
+  FRDPTiming.OnWords := nil;
+  FRDPTiming.OnDataOut := nil;
+  FRDPBands := Value;
+  FRDPTimingStale := True;
+end;
+
+function TN64Console.GetRenderer: TN64RDP;
+begin
+  DrainRDP;
+  Result := FRDP;
+end;
+
 function TN64Console.RendererDescription: string;
 begin
+  DrainRDP;
   Result := FRDP.Describe
+end;
+
+procedure TN64Console.StartRSPAhead;
+
+begin
+  // After the RSP clock just handled, run the following clocks ahead of the
+  // CPU for as long as they touch nothing but the RSP and DMEM. Nothing else
+  // can see those clocks before the timeline reaches them: COP0 and BREAK
+  // stop the run (they execute in their own clock, in event order), SP DMA
+  // is idle, and every CPU access that could tell (SP memory, SP_PC, SP and
+  // DP registers) first rewinds the RSP to its own point (SyncRSP).
+  if not FRSPAhead or ((FReg[0, 4] and $21) <> 0) or FSPTransfer.Active or TraceEnabled or
+    not FTimeline.Pending(TN64EventKind.RSPClock) or (FTimeline.AheadLeft <> 0) then
+    Exit;
+  if FRSPCut then
+    FRSPCut := False
+  else
+    FRSPWindow := Min(RSPWindowMax, FRSPWindow * 2);
+  var Clocks := FRSP.RunAhead(FSPPC, FReg[0, 4], FRSPWindow);
+  if Clocks > 0 then
+    FTimeline.SetAhead(Clocks);
+end;
+
+procedure TN64Console.SyncRSP;
+begin
+  if FTimeline.AheadLeft > 0 then
+    RewindRSP;
+end;
+
+procedure TN64Console.RewindRSP;
+begin
+  // The run-ahead clocks before the caller stay; the RSP returns to the
+  // state after them and the next clock becomes an ordinary event again.
+  if FTimeline.AheadLeft = 0 then
+    Exit;
+  var Done := FTimeline.SyncAhead;
+  if FTimeline.AheadLeft > 0 then
+  begin
+    FRSP.Rewind(FSPPC, Done);
+    FTimeline.EndAhead;
+    // The clocks run ahead past this point are lost: smaller windows.
+    FRSPWindow := Max(RSPWindowMin, Min(FRSPWindow div 2, Done * 2));
+    FRSPCut := True;
+  end
+  else
+    FRSP.EndAhead;
+end;
+
+procedure TN64Console.StressRSP;
+begin
+  // Test mode: rewind the RSP before about one CPU instruction in 64.
+  FRSPNoise := FRSPNoise xor ((FRSPNoise shl 13) and $FFFFFFFF);
+  FRSPNoise := FRSPNoise xor (FRSPNoise shr 17);
+  FRSPNoise := FRSPNoise xor ((FRSPNoise shl 5) and $FFFFFFFF);
+  if (FRSPNoise and 63) = 0 then
+    SyncRSP;
+end;
+
+procedure TN64Console.FoldRSPPhase;
+begin
+  // Each RSP clock the timeline handled itself toggled the phase.
+  if (FTimeline.TakeMaterialized and 1) <> 0 then
+    FRSPPhase := FRSPPhase xor 1;
 end;
 
 procedure TN64Console.RunRSP;
