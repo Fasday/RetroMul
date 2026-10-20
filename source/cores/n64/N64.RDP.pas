@@ -531,8 +531,12 @@ begin
       var M1A := (FOtherLo shr (30 - C * 2)) and 3;
       var M2A := (FOtherLo shr (22 - C * 2)) and 3;
       var M2B := (FOtherLo shr (18 - C * 2)) and 3;
+      // The last cycle bypasses M2A without AA, force-blend or colour-on-
+      // coverage; the first of two always blends. BlendSource only reads:
+      // Pixel updates the carried state and its keys independently.
+      var SecondUsed := (C < Integer(Cycle)) or ((FOtherLo and $4088) <> 0);
       // Without image read, the memory colour is the previous pixel's.
-      if ((FOtherLo and $40) = 0) and ((M1A = 1) or (M2A = 1)) then
+      if ((FOtherLo and $40) = 0) and ((M1A = 1) or (SecondUsed and (M2A = 1))) then
         Exit(5);
       // The first of two cycles blends with the previous pixel's memory.
       if (Cycle = 1) and (C = 0) and ((M1A = 1) or (M2A = 1) or (M2B = 1)) then
