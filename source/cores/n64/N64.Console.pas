@@ -1901,7 +1901,7 @@ begin
   FRSPPhase := FRSPPhase xor 1;
   // 62.5 MHz RCP versus 93.75 MHz CPU: alternate two and one CPU clocks.
   var Delay: Cardinal := 1;
-  if FTimeline.Now mod 3 = 0 then
+  if Mod3(FTimeline.Now) = 0 then
     Delay := 2;
   FTimeline.Schedule(TN64EventKind.RSPClock, Delay);
 end;
@@ -2072,7 +2072,7 @@ begin
   end;
   // Indexed eight-byte DMA beats; bus arbitration remains a functional model.
   var Delay: Cardinal := 1;
-  if FTimeline.Now mod 3 = 0 then
+  if Mod3(FTimeline.Now) = 0 then
     Delay := 2;
   FTimeline.Schedule(TN64EventKind.SPTransfer, Delay);
 end;
@@ -2493,11 +2493,13 @@ end;
 
 procedure TN64Console.ProcessEvents(Target: UInt64);
 begin
+  // (No Pop once nothing is due: run-ahead RSP clocks it would hand over
+  // take their sequence numbers before anything else does anyway.)
   while (FTimeline.NextDue <> High(UInt64)) and (FTimeline.NextDue <= Target) do
   begin
     FTimeline.AdvanceTo(FTimeline.NextDue);
     var Event: TN64Event;
-    while FTimeline.Pop(Event) do
+    while (FTimeline.NextDue <= FTimeline.Now) and FTimeline.Pop(Event) do
       HandleEvent(Event.Kind);
   end;
   FTimeline.AdvanceTo(Target);
@@ -3248,7 +3250,7 @@ begin
     else if Beat.Due < Clock.Due then
       R.BeatFirst := False
     else
-      R.BeatFirst := (Beat.Due mod 3) <> 1;
+      R.BeatFirst := Mod3(Beat.Due) <> 1;
     R.LastBeat := Beat.Due;
     if RemainingBeats(FSPTransfer) > 1 then
       R.LastBeat := RCPTickAfter(R.LastBeat, RemainingBeats(FSPTransfer) - 1);
@@ -3554,7 +3556,7 @@ begin
   else
   begin
     R.LastBeat := Time + 11;
-    R.BeatFirst := (R.LastBeat mod 3) <> 1;
+    R.BeatFirst := Mod3(R.LastBeat) <> 1;
     if Beats > 1 then
       R.LastBeat := RCPTickAfter(R.LastBeat, Beats - 1);
   end;

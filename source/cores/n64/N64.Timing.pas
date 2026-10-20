@@ -87,15 +87,26 @@ type
 // run at two thirds of the CPU clock (one or two PClocks apart). After any
 // tick, the following ones are exactly the PClocks T with T mod 3 <> 1.
 function NextRCPClock(Tick: UInt64): UInt64; inline;
+// X mod 3, without a division.
+function Mod3(X: UInt64): Cardinal; inline;
 // RCP ticks in (A, B] (B >= A), and the Count-th tick after A (Count >= 1).
 function RCPTicksBetween(A, B: UInt64): UInt64; inline;
 function RCPTickAfter(A, Count: UInt64): UInt64;
 
 implementation
 
+function Mod3(X: UInt64): Cardinal;
+begin
+  // 2^16 = 1 (mod 3): the sum of the 16-bit parts (below 2^18), folded once
+  // more (below 65539), then the quotient by a multiply (exact below 98304).
+  var S := Cardinal(X and $FFFF) + Cardinal((X shr 16) and $FFFF) + Cardinal((X shr 32) and $FFFF) + Cardinal(X shr 48);
+  S := (S and $FFFF) + (S shr 16);
+  Result := S - 3 * ((S * $AAAB) shr 17);
+end;
+
 function NextRCPClock(Tick: UInt64): UInt64;
 begin
-  if Tick mod 3 = 0 then
+  if Mod3(Tick) = 0 then
     Result := Tick + 2
   else
     Result := Tick + 1;
@@ -104,8 +115,17 @@ end;
 function RCPTicksBetween(A, B: UInt64): UInt64;
 begin
   // (B - A) PClocks less those with T mod 3 = 1, of which there are
-  // (X + 2) div 3 in 0..X.
-  Result := (B - A) - ((B + 2) div 3 - (A + 2) div 3);
+  // (X + 2) div 3 in 0..X: with A = 3Q + R, (R + D + 2) div 3 less
+  // (R + 2) div 3 of them in (A, A + D] (a 32-bit quotient by a multiply
+  // when D is small).
+  var D := B - A;
+  if D < $80000000 then
+  begin
+    var R := Mod3(A);
+    Result := D + Cardinal(Ord(R >= 1)) - ((UInt64(Cardinal(D) + R + 2) * $AAAAAAAB) shr 33);
+  end
+  else
+    Result := D - ((B + 2) div 3 - (A + 2) div 3);
 end;
 
 function RCPTickAfter(A, Count: UInt64): UInt64;
@@ -118,7 +138,7 @@ begin
   if Count > (High(UInt64) - A) div 2 then
     raise ERangeError.Create('N64 guest timeline exceeds representable time');
   var Q := (Count - 1) shr 1;
-  Result := A + Q * 3 + Offsets[A mod 3, Count - Q * 2];
+  Result := A + Q * 3 + Offsets[Mod3(A), Count - Q * 2];
 end;
 
 procedure TN64Timeline.UpdateNext;
