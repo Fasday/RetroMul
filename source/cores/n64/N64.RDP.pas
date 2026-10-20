@@ -3140,7 +3140,8 @@ begin
       FPrim.Invalid[Q] := FPrim.Invalid[Q] or (MinorCross < MajorCross)
     else
       FPrim.Invalid[Q] := FPrim.Invalid[Q] or (MajorCross < MinorCross);
-    if Q = LoadQuarter then
+    // (The span's attributes are RasterPixel's alone: not for a timing RDP.)
+    if (Q = LoadQuarter) and not FTimingOnly then
     begin
       FPrim.UnscrX := Integer(SignedValue(SX(UInt64(ShiftRight(XMajor, 16) and $FFF), 12)));
       var Fraction := ShiftRight(XMajor, 8) and $FF;

@@ -250,11 +250,14 @@ type
     FRSPCut: Boolean;
     // The window being run ahead: FRSPRun clocks (0: none), of which the
     // first FRSPCommitted are handled. The timeline handles FRSPSegment
-    // clocks after those, up to the next clock with a predicted MFC0 (the
-    // RSP's journal entry FRSPNextCheck); that clock comes as an ordinary
-    // RSP clock event, which checks the prediction. FRSPFirstDue: when the
-    // window's first clock is due.
-    FRSPRun, FRSPCommitted, FRSPSegment, FRSPNextCheck: Integer;
+    // clocks after those, up to the next clock with a journal entry not
+    // settled (FRSPNextCheck, see SettledRSPEntry); that clock comes as an
+    // ordinary RSP clock event, which checks it. FRSPFirstDue: when the
+    // window's first clock is due. The settled writes among the entries
+    // before FRSPNextCheck from FRSPApplied on (FRSPSettledWrites of them)
+    // are still to be applied (ApplySettledRSPWrites). FRSPMustHold: a
+    // settled entry the test mode checks all the same.
+    FRSPRun, FRSPCommitted, FRSPSegment, FRSPNextCheck, FRSPApplied, FRSPSettledWrites, FRSPMustHold: Integer;
     FRSPFirstDue: UInt64;
     // SP DMA transfers completed (host side, for the window's checks), and
     // how many when the window started.
@@ -433,6 +436,8 @@ type
     function PinEmulationThread(out Cores: TArray<TN64HostCore>): Boolean;
     procedure PlaceRSPThread(out CPUs: TN64CPUSet; out Preferred: Integer);
     procedure NextRSPSegment;
+    function SettledRSPEntry(Index: Integer): Boolean;
+    procedure ApplySettledRSPWrites(Last: Integer);
     procedure CheckRSPPrediction;
     function RSPRegister(Index: Integer): Cardinal;
     function PredictRSPRead(Index, Clock: Integer; out Value: Cardinal): Boolean;
@@ -2534,6 +2539,7 @@ begin
             CheckRSPPrediction;
             Exit;
           end;
+          ApplySettledRSPWrites(FRSPCommitted);
           FRSPRun := 0;
         end;
         FRSP.EndAhead;
@@ -3365,6 +3371,10 @@ begin
   FRSPRun := Clocks;
   FRSPCommitted := 0;
   FRSPNextCheck := 0;
+  FRSPApplied := 0;
+  // (A count left by a window cut short would only cost time.)
+  FRSPSettledWrites := 0;
+  FRSPMustHold := -1;
   CountWindow(Clocks);
   NextRSPSegment;
 end;
@@ -3406,10 +3416,116 @@ begin
     Entries := Integer(Progress and $FFFFFFFF);
   end;
   var Stop := Clocks + 1;
+  // Settled entries need no clock of their own: they go with the segment.
+  while (FRSPNextCheck < Entries) and SettledRSPEntry(FRSPNextCheck) do
+  begin
+    // Test mode: now and then one checked in its clock all the same, where
+    // it must check right.
+    if FRSPStress and ((StressNoise and 3) = 0) then
+    begin
+      FRSPMustHold := FRSPNextCheck;
+      Break;
+    end;
+    if FRSPJournal[FRSPNextCheck].Write then
+      Inc(FRSPSettledWrites);
+    Inc(FRSPNextCheck);
+  end;
   if FRSPNextCheck < Entries then
     Stop := Min(Stop, FRSPJournal[FRSPNextCheck].Clock);
   FRSPSegment := Max(0, Stop - 1 - FRSPCommitted);
   FTimeline.SetAhead(FRSPSegment);
+end;
+
+function TN64Console.SettledRSPEntry(Index: Integer): Boolean;
+begin
+  // Whether journal entry Index (the next to check, its clock not yet due)
+  // checks right now and so in its own clock, where it would change
+  // nothing the CPU or a device could tell before the next entry not
+  // settled (CheckRSPPrediction): a predicted read of a register that
+  // nothing changes by then, fences lifted with their transfers complete
+  // now, or a write of a DMA address (read only by the DMA starts,
+  // applied before those, see ApplySettledRSPWrites). Until the clock,
+  // only CPU accesses that rewind the RSP first (SyncRSP), SP DMA beats
+  // (the DMA registers), the DP interrupt (DPC_STATUS) and the entries
+  // before it (settled: none of them changes a register) change the
+  // registers the RSP reads; reading the semaphore sets it.
+  var Entry := FRSPJournal[Index];
+  if Entry.Write then
+    Exit(Entry.Index in [0, 1]);
+  // Lifted fences only with their transfers complete: until then a beat
+  // may find RDRAM changed since the lift, and the RSP goes back to it
+  // (SPTransferBeat), the clocks after the lift (run with the bytes it
+  // took) included; the CPU must not have passed those (a beat may run
+  // after the CPU's batch).
+  if Entry.Lift then
+    Exit(FSPDone >= FRSPNotes[Index].Serial);
+  if (Entry.Index in [4..6]) and FSPTransfer.Active then
+  begin
+    // The transfers under way complete as their last beats run (one an RCP
+    // clock from the next one due): by the clock, unless with it.
+    var Beat: TN64Event;
+    if not FTimeline.FirstOf(TN64EventKind.SPTransfer, Beat) then
+      Exit(False);
+    var LastCurrent := Beat.Due;
+    var Beats := RemainingBeats(FSPTransfer);
+    if Beats > 1 then
+      LastCurrent := RCPTickAfter(LastCurrent, Beats - 1);
+    var LastAll := LastCurrent;
+    if FSPQueued.Active then
+      LastAll := RCPTickAfter(LastCurrent, RemainingBeats(FSPQueued));
+    var At := RSPWindowTime(Entry.Clock);
+    if (At = LastCurrent) or (At = LastAll) then
+      Exit(False);
+    var Busy := Cardinal(Ord(At < LastAll));
+    var Full := Cardinal(Ord(FSPQueued.Active and (At < LastCurrent)));
+    case Entry.Index of
+      4:
+        Exit(Entry.Value = (FReg[0, 4] and not Cardinal($C)) or (Busy shl 2) or (Full shl 3));
+      5:
+        Exit(Entry.Value = Full);
+    else
+      Exit(Entry.Value = Busy);
+    end;
+  end;
+  case Entry.Index of
+    // (A guard: a window that knows of a transfer does not predict these,
+    // PredictRSPRead.)
+    0..3:
+      if FSPTransfer.Active then
+        Exit(False);
+    7:
+      Exit(False);
+    11:
+      if FTimeline.Pending(TN64EventKind.DPInterrupt) then
+        Exit(False);
+  end;
+  Result := RSPRegister(Entry.Index) = Entry.Value;
+end;
+
+procedure TN64Console.ApplySettledRSPWrites(Last: Integer);
+begin
+  // The settled writes of the window's clocks up to Last, as Write32 would
+  // have in their clocks: before an entry is checked, as the window ends,
+  // and of the clocks a rewind keeps (the DMA starts that read them, the
+  // RSP's and the CPU's, come after those; snapshots rewind first).
+  if FRSPSettledWrites = 0 then
+  begin
+    FRSPApplied := FRSPNextCheck;
+    Exit;
+  end;
+  while (FRSPApplied < FRSPNextCheck) and (FRSPJournal[FRSPApplied].Clock <= Last) do
+  begin
+    var Entry := FRSPJournal[FRSPApplied];
+    if Entry.Write then
+    begin
+      if Entry.Index = 0 then
+        FPendingSPAddress := Entry.Value and $1FFF
+      else
+        FPendingRAMAddress := Entry.Value and $FFFFFF;
+      Dec(FRSPSettledWrites);
+    end;
+    Inc(FRSPApplied);
+  end;
 end;
 
 function TN64Console.RSPRegister(Index: Integer): Cardinal;
@@ -3469,10 +3585,16 @@ begin
   end;
   if FRSPStress then
   begin
-    // Test mode: now and then a wrong value, for the check to catch.
+    // Test mode: now and then a wrong value, for the check to catch (half
+    // of them in the eight lowest bits, where the flags are).
     var Noise := WindowNoise;
     if (Noise and 7) = 0 then
-      Value := Value xor (Cardinal(1) shl ((Noise shr 3) and 31));
+    begin
+      var Bit := (Noise shr 3) and 31;
+      if Odd(Noise shr 8) then
+        Bit := Bit and 7;
+      Value := Value xor (Cardinal(1) shl Bit);
+    end;
   end;
   Result := True;
 end;
@@ -3903,6 +4025,7 @@ begin
   var Entry := FRSPJournal[FRSPNextCheck];
   if Entry.Clock <> FRSPCommitted + 1 then
     raise EInvalidOpException.Create('N64 RSP journal out of step');
+  ApplySettledRSPWrites(FRSPCommitted);
   // Entries without a note (predicted reads, most writes) never read it.
   var Note := Default(TN64RSPNote);
   if FRSPNextCheck < Length(FRSPNotes) then
@@ -3952,6 +4075,8 @@ begin
   end
   else
     Right := RSPRegister(Entry.Index) = Entry.Value;
+  if not Right and (FRSPNextCheck = FRSPMustHold) then
+    raise EInvalidOpException.Create('N64 RSP journal entry settled wrongly');
   if Right then
   begin
     // Reading the semaphore sets it.
@@ -3960,6 +4085,7 @@ begin
     // Right: the clock stands; the window goes on.
     Inc(FRSPCommitted);
     Inc(FRSPNextCheck);
+    FRSPApplied := FRSPNextCheck;
     ScheduleRSP;
     if FRSPCommitted < FRSPRun then
       NextRSPSegment
@@ -3998,6 +4124,7 @@ begin
     Exit;
   StopAhead;
   var Keep := FRSPCommitted + FTimeline.SyncAhead;
+  ApplySettledRSPWrites(Keep);
   if Keep < FRSPRun then
   begin
     RewindRSPTo(Keep);
@@ -4168,6 +4295,9 @@ begin
   FRSPRun := High(Integer);
   FRSPCommitted := 0;
   FRSPNextCheck := 0;
+  FRSPApplied := 0;
+  FRSPSettledWrites := 0;
+  FRSPMustHold := -1;
   Inc(FRSPStats.ThreadWindows);
   FAheadPC := FSPPC;
   FAheadStatus := FReg[0, 4];
