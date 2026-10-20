@@ -421,8 +421,7 @@ type
     class procedure StepSPTransfer(var Transfer: TN64SPTransfer); static;
     procedure RewindRSPTo(Keep: Integer);
     procedure ReplayRSPBeat(Index: Integer);
-    function DMARead8(Address: Cardinal): Byte; inline;
-    procedure DMAWrite8(Address: Cardinal; Value: Byte); inline;
+
     procedure SPTransferBeat;
     procedure PITransferBeat;
     procedure SITransferBeat;
@@ -1930,24 +1929,6 @@ begin
   ScheduleAI;
 end;
 
-function TN64Console.DMARead8(Address: Cardinal): Byte;
-begin
-  // Read8 of an SP DMA beat's RDRAM byte (Address below 16 MB), without the
-  // call: RDRAM directly, the rest as Read8 has it.
-  if Address < $800000 then
-    Result := ReadRAM8(Address)
-  else
-    Result := Read8(Address);
-end;
-
-procedure TN64Console.DMAWrite8(Address: Cardinal; Value: Byte);
-begin
-  if Address < $800000 then
-    WriteRAM8(Address, Value)
-  else
-    Write8(Address, Value);
-end;
-
 procedure TN64Console.SPTransferBeat;
 begin
   if not FSPTransfer.Active then
@@ -1980,13 +1961,17 @@ begin
       end;
     end;
   end;
+  // The beat's eight bytes are aligned (SPDMA, ValidateState): one 64-byte
+  // line of SP memory and of RDRAM, without wrapping. RDRAM ends at 8 MB:
+  // the rest of the 16 MB reads 0 and ignores writes.
+  var Local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Position) and $FFF);
+  var RAM := (FSPTransfer.RAM + FSPTransfer.Position) and $FFFFFF;
+  var Bytes: UInt64 := 0;
+  if not FSPTransfer.Writing and (RAM < $800000) then
+    ReadRAMBytes(RAM, @Bytes, 8);
   if (Lifted >= 0) and not FSPTransfer.Writing then
   begin
-    var Same := True;
-    var At := (FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8;
-    for var I := 0 to 7 do
-      if DMARead8((FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF) <> FRSPDMAs[Lifted].Data[At + I] then
-        Same := False;
+    var Same := CompareMem(@Bytes, @FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8], 8);
     if FRSPStress and ((StressNoise and 63) = 0) then
       // Test mode: as if RDRAM had changed.
       Same := False;
@@ -2007,32 +1992,32 @@ begin
     FRSPBeats[FRSPBeatCount].Local := (FSPTransfer.local + FSPTransfer.Position) and $FFF;
     // Before its bytes change: the eight bytes lie in one line.
     FRSPBeats[FRSPBeatCount].Unsaved := not FRSP.LineSaved(FRSPBeats[FRSPBeatCount].Local);
-    for var I := 0 to 7 do
-      FRSPBeats[FRSPBeatCount].Old[I] := FSP[(FRSPBeats[FRSPBeatCount].Local + Cardinal(I)) and $FFF];
+    // (Old keeps DMEM exact while a rewind's replay runs, a guard: the
+    // replayed clocks never read these bytes, fenced while the transfer was
+    // pending, and every logged beat is back by the replay's end.)
+    Move(FSP[FRSPBeats[FRSPBeatCount].Local], FRSPBeats[FRSPBeatCount].Old, 8);
   end;
-  for var I := 0 to 7 do
+  // A lifted transfer's bytes as the window took them.
+  var Taken: PByte := nil;
+  if Lifted >= 0 then
+    Taken := @FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8];
+  if FSPTransfer.Writing then
   begin
-    var local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Position + Cardinal(I)) and $FFF);
-    var RAM := (FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF;
-    if Lifted >= 0 then
-    begin
-      if FSPTransfer.Writing then
-        DMAWrite8(RAM, FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8 + I])
-    end
-    else if FSPTransfer.Writing then
-      DMAWrite8(RAM, FSP[local])
-    else
-      WriteSP8(local, DMARead8(RAM));
-  end;
+    if Taken = nil then
+      Taken := @FSP[Local];
+    if RAM < $800000 then
+      WriteRAMBytes(RAM, Taken, 8);
+  end
+  else if Lifted < 0 then
+    WriteSPBytes(Local, @Bytes, 8);
   if Logged then
   begin
     // Into DMEM while the RSP runs ahead (the window kept off these bytes,
     // or wrote them itself when it lifted the transfer's fences).
-    for var I := 0 to 7 do
-      if Lifted >= 0 then
-        FRSPBeats[FRSPBeatCount].Data[I] := FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8 + I]
-      else
-        FRSPBeats[FRSPBeatCount].Data[I] := FSP[(FRSPBeats[FRSPBeatCount].Local + Cardinal(I)) and $FFF];
+    if Lifted >= 0 then
+      Move(Taken^, FRSPBeats[FRSPBeatCount].Data, 8)
+    else
+      Move(FSP[FRSPBeats[FRSPBeatCount].Local], FRSPBeats[FRSPBeatCount].Data, 8);
     FRSPBeats[FRSPBeatCount].Applied := Lifted < 0;
     Inc(FRSPBeatCount);
   end;
@@ -3597,7 +3582,8 @@ function TN64Console.AheadRDRAM(Address: Cardinal): Byte;
 begin
   // RDRAM byte Address as the transfer being lifted will find it: the lifted
   // transfers out of DMEM ahead of it (FRSPOverlap, the last first) send
-  // their bytes only later.
+  // their bytes only later. Address is within RDRAM (beyond it they write
+  // nothing and it reads 0, see LiftRSPTransfer).
   for var J := FRSPOverlapCount - 1 downto 0 do
   begin
     var K := FRSPOverlap[J];
@@ -3700,19 +3686,38 @@ begin
         end;
       end;
   end;
-  for var B := 0 to Integer(Beats) - 1 do
+  // In runs of bytes in a row in DMEM and in RDRAM (to the end of a block,
+  // of DMEM, of RDRAM, of the 16 MB the address wraps in), each read and
+  // written as a whole (every RDRAM page and DMEM line of the run checked).
+  var At := 0;
+  while At < Beats * 8 do
   begin
-    for var I := 0 to 7 do
+    var Local := (Transfer.local + Transfer.Position) and $FFF;
+    var RAM := (Transfer.RAM + Transfer.Position) and $FFFFFF;
+    var Count := Min(Transfer.Size - Transfer.Position, $1000 - Local);
+    if RAM < $800000 then
+      Count := Min(Count, $800000 - RAM)
+    else
+      Count := Min(Count, $1000000 - RAM);
+    var Into: PByte := @FRSPDMAs[Index].Data[At];
+    if Transfer.Writing then
+      Move(FSP[Local], Into^, Count)
+    else
     begin
-      var Local := (Transfer.local + Transfer.Position + Cardinal(I)) and $FFF;
-      if Transfer.Writing then
-        FRSPDMAs[Index].Data[B * 8 + I] := FSP[Local]
+      if RAM >= $800000 then
+        FillChar(Into^, Count, 0)
+      else if FRSPOverlapCount > 0 then
+        for var I := 0 to Integer(Count) - 1 do
+          FRSPDMAs[Index].Data[At + I] := AheadRDRAM(RAM + Cardinal(I))
+      else if FRSPInFlight then
+        // As RacyRAM8.
+        Move(FRAM[RAM], Into^, Count)
       else
-      begin
-        FRSPDMAs[Index].Data[B * 8 + I] := AheadRDRAM((Transfer.RAM + Transfer.Position + Cardinal(I)) and $FFFFFF);
-        FRSP.WriteAhead(Local, FRSPDMAs[Index].Data[B * 8 + I]);
-      end;
+        ReadRAMBytes(RAM, Into, Count);
+      FRSP.WriteAheadBytes(Local, Into, Count);
     end;
+    Inc(At, Integer(Count));
+    Inc(Transfer.Position, Count - 8);
     StepSPTransfer(Transfer);
   end;
   TInterlocked.Exchange(FRSPDMAs[Index].State, 2);

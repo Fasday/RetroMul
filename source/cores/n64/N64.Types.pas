@@ -133,6 +133,11 @@ type
     // Callers guarantee Address < RAMSize.
     function ReadHiddenRAM(Address: Cardinal): Byte; inline;
     procedure WriteHiddenRAM(Address: Cardinal; Value: Byte); inline;
+    // Count bytes from Address, all within RDRAM: read as ReadRAM8 reads
+    // each, written as WriteRAM8 writes each (data, hidden bits, code
+    // counts); the waits are checked once for every page of the range.
+    procedure ReadRAMBytes(Address: Cardinal; Dest: PByte; Count: Cardinal);
+    procedure WriteRAMBytes(Address: Cardinal; Source: PByte; Count: Cardinal);
     // The same waits for a byte range (any part may lie beyond RDRAM).
     procedure SyncRDPRead(Address, Count: Cardinal);
     // Copies Count bytes of RDRAM from Address (within RDRAM), with their
@@ -170,6 +175,8 @@ type
     // the IMEM words and their stamps up to date.
     function ReadSP8(Offset: Cardinal): Byte; inline;
     procedure WriteSP8(Offset: Cardinal; Value: Byte); inline;
+    // Count bytes at Offset (not past $2000), as WriteSP8 writes each.
+    procedure WriteSPBytes(Offset: Cardinal; Source: PByte; Count: Cardinal);
     // DMEM (offsets 0..$FFF; IMEM follows): direct access for the RSP's
     // vector loads and stores, which never reach IMEM.
     function DMemBytes: PByte; inline;
@@ -470,6 +477,41 @@ begin
   FHiddenRAM[Address shr 1] := Value and 3;
 end;
 
+procedure TN64Bus.ReadRAMBytes(Address: Cardinal; Dest: PByte; Count: Cardinal);
+begin
+  if Count = 0 then
+    Exit;
+  if FRDPPending then
+    for var Page := Address shr RDPPageShift to (Address + Count - 1) shr RDPPageShift do
+      if FRDPWrites[Page] > FRDPDone then
+      begin
+        SyncRDPRead(Address, Count);
+        Break;
+      end;
+  Move(FRAM[Address], Dest^, Count);
+end;
+
+procedure TN64Bus.WriteRAMBytes(Address: Cardinal; Source: PByte; Count: Cardinal);
+begin
+  if Count = 0 then
+    Exit;
+  var Last := Address + Count - 1;
+  if FRDPPending then
+    for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
+      if FRDPUses[Page] > FRDPDone then
+      begin
+        SyncRDPWrite(Address, Count);
+        Break;
+      end;
+  for var Page := Address shr 12 to Last shr 12 do
+    CodeWritten(Page shl 12);
+  Move(Source^, FRAM[Address], Count);
+  // Each halfword's hidden bits from its odd byte, as RDPWrite8 leaves them
+  // (an odd byte not written keeps its value).
+  for var Half := Address shr 1 to Last shr 1 do
+    FHiddenRAM[Half] := Byte(Ord((FRAM[(Half shl 1) or 1] and 1) <> 0) * 3);
+end;
+
 procedure TN64Bus.CopyRAMTo(Target: TN64Bus; Address, Count: Cardinal);
 begin
   if (Count = 0) or (UInt64(Address) + Count > Length(FRAM)) then
@@ -667,6 +709,16 @@ begin
   FSP[Offset] := Value;
   if Offset >= $1000 then
     IMemChanged(Offset);
+end;
+
+procedure TN64Bus.WriteSPBytes(Offset: Cardinal; Source: PByte; Count: Cardinal);
+begin
+  if Count = 0 then
+    Exit;
+  Move(Source^, FSP[Offset], Count);
+  if Offset + Count > $1000 then
+    for var Word := Max(Offset, $1000) shr 2 to (Offset + Count - 1) shr 2 do
+      IMemChanged(Word * 4);
 end;
 
 procedure TN64Bus.IMemChanged(Offset: Cardinal);

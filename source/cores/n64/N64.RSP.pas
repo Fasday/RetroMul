@@ -357,6 +357,8 @@ type
     // A write to DMEM as one of the window's clocks makes it (a rewind
     // undoes it).
     procedure WriteAhead(Offset: Cardinal; Value: Byte);
+    // The same for Count bytes at Offset (not past DMEM's end).
+    procedure WriteAheadBytes(Offset: Cardinal; Source: PByte; Count: Cardinal);
     function JournalCount: Integer; inline;
     // The journal's entries, allocated once (JournalCapacity of them).
     function Journal: PRSPJournal;
@@ -4800,6 +4802,27 @@ begin
   if not FAhead then
     raise EInvalidOpException.Create('RSP DMEM write ahead outside a window');
   DMemWrite(Offset and $FFF, Value);
+end;
+
+procedure TN64RSP.WriteAheadBytes(Offset: Cardinal; Source: PByte; Count: Cardinal);
+begin
+  if not FAhead then
+    raise EInvalidOpException.Create('RSP DMEM write ahead outside a window');
+  if Count = 0 then
+    Exit;
+  if Offset + Count > $1000 then
+    raise ERangeError.Create('RSP DMEM write ahead past DMEM');
+  // Every line the bytes touch is saved before any of them changes, as
+  // DMemWrite does: a rewind to a wrong prediction may take a path that
+  // reads them before the transfer has moved them.
+  for var Line := Offset shr 6 to (Offset + Count - 1) shr 6 do
+    if FLineRun[Line] <> FRun then
+      SaveLine(Line shl 6);
+  if FBus.DirectMemory then
+    Move(Source^, PByte(NativeUInt(FBus.DMemBytes) + Offset)^, Count)
+  else
+    for var I := 0 to Count - 1 do
+      FBus.Write8($04000000 + Offset + I, PByte(NativeUInt(Source) + I)^);
 end;
 
 procedure TN64RSP.ClearFences;
