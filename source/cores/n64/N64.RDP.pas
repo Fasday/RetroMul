@@ -374,12 +374,16 @@ type
     function Reached(Point: Int64; Release: Boolean): Boolean;
     procedure Wait(Member: Integer; Point: Int64; Release: Boolean);
     procedure Wake;
+    procedure Barrier(RDP: TN64RDP; Kind: Integer; const Work: TProc); overload;
   public
     // Members[I] draws band I of Length(Members).
     constructor Create(const Members: array of TN64RDP);
     destructor Destroy; override;
     // Called by each member at the same point of the stream.
-    procedure Barrier(RDP: TN64RDP; Kind: Integer);
+    procedure Barrier(RDP: TN64RDP; Kind: Integer); overload;
+    // The same, band 0 running Work once all have arrived, before any goes
+    // on (BarrierSync otherwise).
+    procedure Barrier(RDP: TN64RDP; const Work: TProc); overload;
     // Makes waiting members (and later barriers) raise: a member failed.
     procedure Abort;
     // With every member idle: the state after Reset or a state load.
@@ -3728,6 +3732,16 @@ end;
 
 procedure TN64RDPGroup.Barrier(RDP: TN64RDP; Kind: Integer);
 begin
+  Barrier(RDP, Kind, nil);
+end;
+
+procedure TN64RDPGroup.Barrier(RDP: TN64RDP; const Work: TProc);
+begin
+  Barrier(RDP, BarrierSync, Work);
+end;
+
+procedure TN64RDPGroup.Barrier(RDP: TN64RDP; Kind: Integer; const Work: TProc);
+begin
   Inc(RDP.FBarriers);
   var Point := RDP.FBarriers;
   TInterlocked.Exchange(FSlots[RDP.FBand].Arrived, Point);
@@ -3736,6 +3750,11 @@ begin
   begin
     // Everyone has finished all work before this point and waits.
     Wait(0, Point, False);
+    // (Before the release: no member may run anything after this point while
+    // Work runs. xbustest scene 7 sees it only now and then: the copy it
+    // makes is short.)
+    if Assigned(Work) then
+      Work();
     if Kind = BarrierEnter then
       for var I := 1 to High(FMembers) do
         RDP.MergeCarried(FMembers[I])

@@ -30,12 +30,22 @@ type
     RingBits = 16;
     RingSize = 1 shl RingBits;
     RingMask = RingSize - 1;
-    // Segment header: word count, first segment of a list, last segment.
-    CountMask = $3FFFFFFF;
+    // Segment header: word count, first segment of a list, last segment,
+    // a copy's (QueueCopy: a list of its own, no words).
+    CountMask = $1FFFFFFF;
+    CopyFlag = $20000000;
     FirstFlag = $40000000;
     LastFlag = $80000000;
     SpinRounds = 4000;
+    // Copies that may be queued at once.
+    CopySlots = 4;
   private type
+    TCopy = record
+      Target: TN64Bus;
+      Address, Count: Cardinal;
+      Ready: TEvent;
+      Pending: Integer;
+    end;
     TWaitTarget = (Consumed, Done);
 
     TBand = class(TThread)
@@ -65,6 +75,7 @@ type
     end;
   private
     FRDPs: TArray<TN64RDP>;
+    FBus: TN64Bus;
     FThreads: TArray<TBand>;
     FSlots: TArray<TBandSlot>;
     FGroup: TN64RDPGroup;
@@ -86,6 +97,10 @@ type
     FProducerNoise: Cardinal;
     // The time the producer waited for the bands (TStopwatch ticks).
     FWaitTime: Int64;
+    // The copies queued (QueueCopy), used in turn (FCopyNext the next):
+    // Pending 1 until made.
+    FCopies: array[0..CopySlots - 1] of TCopy;
+    FCopyNext: Integer;
   protected
     // Fields written by different threads sit on different cache lines.
     FPad0: array[0..7] of Int64;
@@ -107,6 +122,9 @@ type
     function Reached(Target: TWaitTarget; Value: Int64): Boolean;
     procedure WaitFor(Target: TWaitTarget; Value: Int64);
     procedure Fail(const Message: string);
+    // A band at a copy's segment: the copy, once every band is there.
+    procedure CopyAt(RDP: TN64RDP; Index: Integer);
+    procedure MakeCopy(Index: Integer);
     function Failed: Boolean;
     class procedure Signal(var Waiting: Integer; Event: TEvent); static;
     class function Noise(var State: Cardinal): Cardinal; static;
@@ -128,6 +146,11 @@ type
     procedure Put(W0, W1: Cardinal);
     procedure PutData(Value: Cardinal);
     procedure EndList;
+    // A list of its own (no list open): Count bytes of RDRAM at Address
+    // copied to Target's RDRAM (TN64Bus.CopyRAMTo) once every list queued
+    // before is complete and before any band runs one queued after; then
+    // Ready is set. At most CopySlots - 1 copies may be queued and not made.
+    procedure QueueCopy(Target: TN64Bus; Address, Count: Cardinal; Ready: TEvent);
     // The number of lists completed so far.
     function Done: Int64;
     // Waits until list List is complete. For the open list (List above the
@@ -211,17 +234,23 @@ begin
     FCursor := Position + 1;
     FEnd := FCursor + Int64(Header and CountMask);
     try
-      if (Header and FirstFlag) <> 0 then
-        FRDP.BeginList;
-      FRDP.OnDataIn := NextWord;
-      while FCursor < FEnd do
+      if (Header and CopyFlag) <> 0 then
+        // (Its one word: the copy's slot.)
+        FOwner.CopyAt(FRDP, Integer(FOwner.FRing[FCursor and RingMask]))
+      else
       begin
-        var W0 := FOwner.FRing[FCursor and RingMask];
-        var W1 := FOwner.FRing[(FCursor + 1) and RingMask];
-        Inc(FCursor, 2);
-        FRDP.Feed(W0, W1);
+        if (Header and FirstFlag) <> 0 then
+          FRDP.BeginList;
+        FRDP.OnDataIn := NextWord;
+        while FCursor < FEnd do
+        begin
+          var W0 := FOwner.FRing[FCursor and RingMask];
+          var W1 := FOwner.FRing[(FCursor + 1) and RingMask];
+          Inc(FCursor, 2);
+          FRDP.Feed(W0, W1);
+        end;
+        FRDP.OnDataIn := nil;
       end;
-      FRDP.OnDataIn := nil;
     except
       on E: Exception do
       begin
@@ -246,6 +275,7 @@ constructor TN64RDPWorker.Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Com
   const BandCPUs: TN64CPUSet; const Preferred: TArray<Integer>);
 begin
   inherited Create;
+  FBus := Bus;
   FStress := Stress;
   FProducerNoise := $2545F491;
   SetLength(FRing, RingSize);
@@ -346,6 +376,51 @@ begin
   if FGroup <> nil then
     FGroup.Abort;
   FProgress.SetEvent;
+  // (Copies waited for come no more: whoever waits goes on, the producer
+  // raises as it next looks.)
+  for var I := 0 to CopySlots - 1 do
+    if TInterlocked.Exchange(FCopies[I].Pending, 0) = 1 then
+      FCopies[I].Ready.SetEvent;
+end;
+
+procedure TN64RDPWorker.MakeCopy(Index: Integer);
+begin
+  FBus.CopyRAMTo(FCopies[Index].Target, FCopies[Index].Address, FCopies[Index].Count);
+  if TInterlocked.Exchange(FCopies[Index].Pending, 0) = 1 then
+    FCopies[Index].Ready.SetEvent;
+end;
+
+procedure TN64RDPWorker.CopyAt(RDP: TN64RDP; Index: Integer);
+begin
+  // Every band has finished the lists before (band 0 copies at the
+  // barrier, while the others wait).
+  if FGroup = nil then
+    MakeCopy(Index)
+  else
+    FGroup.Barrier(RDP,
+      procedure
+      begin
+        MakeCopy(Index);
+      end);
+end;
+
+procedure TN64RDPWorker.QueueCopy(Target: TN64Bus; Address, Count: Cardinal; Ready: TEvent);
+begin
+  var Index := FCopyNext;
+  if TInterlocked.CompareExchange(FCopies[Index].Pending, 0, 0) <> 0 then
+    raise EN64Unsupported.Create('RDP worker: too many copies queued');
+  FCopyNext := (Index + 1) mod CopySlots;
+  FCopies[Index].Target := Target;
+  FCopies[Index].Address := Address;
+  FCopies[Index].Count := Count;
+  FCopies[Index].Ready := Ready;
+  TInterlocked.Exchange(FCopies[Index].Pending, 1);
+  OpenSegment;
+  FRing[FWrite and RingMask] := Cardinal(Index);
+  Inc(FWrite);
+  FRing[FHeader and RingMask] := 1 or FirstFlag or LastFlag or CopyFlag;
+  Inc(FEnded);
+  Publish;
 end;
 
 function TN64RDPWorker.Failed: Boolean;

@@ -50,12 +50,24 @@ type
 
   TN64CycleCount = Int64;
 
+  // A field for the VI thread (TN64Console.FVISlots).
+  TN64VISlot = record
+    Bus: TN64Bus;
+    Start, Done: TEvent;
+    Registers: array[0..13] of Cardinal;
+    Frame: UInt64;
+    Notify: Boolean;
+  end;
+
   // The emulation thread's waits for the other threads (diagnostics,
   // TStopwatch ticks): the RDP bands (since the RDP worker last started)
   // and the VI thread. Its waits for the RSP thread are in
   // TN64RSPAheadStats.ThreadWaitTime.
   TN64WaitStats = record
     RDP, VI: Int64;
+    // Fields whose freshly drawn lines the RDP bands copied for the VI
+    // thread (RenderFrame).
+    VICopies: Int64;
   end;
 
   // RSP run-ahead counts since the console was created (diagnostics).
@@ -183,22 +195,22 @@ type
     end;
   private
     FData, FPIF, FSave: TBytes;
-    // VI fields rendered on a thread of their own (VIThreaded): as a field
-    // ends, its registers go to the VI thread with the RDRAM it reads copied
-    // to FVIBus; the VI (its noise and weave) is the VI thread's until
-    // WaitVI. FVIBusy: a field is being rendered.
-    FVIThreaded, FVIBusy: Boolean;
+    // VI fields rendered on a thread of their own (VIThreaded), in two slots
+    // in turn: as a field ends, its registers go to the VI thread with the
+    // RDRAM it reads copied to the slot's Bus; Start is set once that copy is
+    // made, Done once the field is rendered. The VI (its noise and weave) is
+    // the VI thread's until WaitVI. FVIBusy[S]: slot S is queued and not yet
+    // waited for; FVIPut: the slot of the next field (the older one).
+    FVIThreaded: Boolean;
+    FVIBusy: array[0..1] of Boolean;
+    FVIPut: Integer;
     FHostFloat: Boolean;
     FVIThread: TVIThread;
-    FVIBus: TN64Bus;
-    FVIStart, FVIDone: TEvent;
-    FVIRegisters: array[0..13] of Cardinal;
-    FVIFrame: UInt64;
-    FVINotify: Boolean;
+    FVISlots: array[0..1] of TN64VISlot;
     FVIError: string;
     FOnFrame: TN64FrameNotify;
-    // (WaitStats.VI.)
-    FVIWaitTime: Int64;
+    // (WaitStats.VI, VICopies.)
+    FVIWaitTime, FVICopies: Int64;
     FReg: array[0..7, 0..15] of Cardinal;
     FCPU: TN64CPU;
     FRSP: TN64RSP;
@@ -452,6 +464,7 @@ type
     procedure RenderFrame(ScanoutField: Integer; Notify: Boolean);
     procedure FrameRendered(Notify: Boolean);
     procedure WaitVI;
+    procedure WaitVISlot(Slot: Integer);
     procedure SetVIThreaded(Value: Boolean);
     procedure ValidateState;
   protected
@@ -705,13 +718,18 @@ begin
   if FVIThread <> nil then
   begin
     FVIThread.Terminate;
-    FVIStart.SetEvent;
+    for var S := 0 to 1 do
+      FVISlots[S].Start.SetEvent;
     FreeAndNil(FVIThread);
   end;
-  FVIStart.Free;
-  FVIDone.Free;
-  FVIBus.Free;
+  // (Before the VI's copies and their events: a band may be making a copy.)
   FRDPWorker.Free; // stops the thread before the RDP goes
+  for var S := 0 to 1 do
+  begin
+    FVISlots[S].Start.Free;
+    FVISlots[S].Done.Free;
+    FVISlots[S].Bus.Free;
+  end;
   StopRSPThread;
   FRSPWake.Free;
   FRSPProgress.Free;
@@ -2338,22 +2356,42 @@ begin
   Registers[4] := Cardinal((FLine and not 1) or ScanoutField);
   if FVIThreaded then
   begin
-    // The VI thread reads FVIBus until the previous field is done. It reads
-    // the RDRAM it would now, as RDP work queued so far leaves it.
-    WaitVI;
-    var Address, Count: Cardinal;
-    if TN64VI.SourceSpan(Registers, Address, Count) then
-    begin
-      SyncRDPRead(Address, Count);
-      CopyRAMTo(FVIBus, Address, Count);
-    end;
-    Move(Registers, FVIRegisters, SizeOf(Registers));
-    FVIFrame := FFrame;
-    FVINotify := Notify;
+    // The slot's bus is the VI thread's until the field before last is
+    // done. It gets the RDRAM the field reads, as RDP work queued so far
+    // leaves it.
+    var Slot := FVIPut;
+    // (Only a VI thread two fields behind is still there: xbustest scene 7
+    // does not get it that far, its CPU waiting for each copy.)
+    WaitVISlot(Slot);
+    Move(Registers, FVISlots[Slot].Registers, SizeOf(Registers));
+    FVISlots[Slot].Frame := FFrame;
+    FVISlots[Slot].Notify := Notify;
     if FVIThread = nil then
       FVIThread := TVIThread.Create(Self);
-    FVIBusy := True;
-    FVIStart.SetEvent;
+    FVIBusy[Slot] := True;
+    FVIPut := 1 - Slot;
+    var Target := FVISlots[Slot].Bus;
+    var Address, Count, First, Last: Cardinal;
+    var Span := TN64VI.SourceSpan(Registers, Address, Count);
+    if Span and (FRDPWorker <> nil) and RDPPendingRange(Address, Count, First, Last) then
+    begin
+      // RDP lists queued so far draw some lines of it: the rest is copied
+      // now, and the bands copy those lines as soon as they are done with
+      // the lists, before any list queued later, and start the VI thread.
+      // Until then writes there wait for that copy (a list of its own that
+      // reads the bytes).
+      CopyRAMTo(Target, Address, First - Address);
+      CopyRAMTo(Target, Last, Address + Count - Last);
+      Inc(FRDPList);
+      FRDPWorker.QueueCopy(Target, First, Last - First, FVISlots[Slot].Start);
+      MarkRDPRead(First, Last - First);
+      FRDPPending := True;
+      Inc(FVICopies);
+      Exit;
+    end;
+    if Span then
+      CopyRAMTo(Target, Address, Count);
+    FVISlots[Slot].Start.SetEvent;
     Exit;
   end;
   // Render returns a fresh array, so frames already handed out stay intact.
@@ -2371,12 +2409,19 @@ end;
 
 procedure TN64Console.WaitVI;
 begin
-  if not FVIBusy then
+  // Both slots, the older first (the VI thread renders them in turn).
+  WaitVISlot(FVIPut);
+  WaitVISlot(1 - FVIPut);
+end;
+
+procedure TN64Console.WaitVISlot(Slot: Integer);
+begin
+  if not FVIBusy[Slot] then
     Exit;
   var Started := TStopwatch.GetTimeStamp;
-  FVIDone.WaitFor(INFINITE);
+  FVISlots[Slot].Done.WaitFor(INFINITE);
   Inc(FVIWaitTime, TStopwatch.GetTimeStamp - Started);
-  FVIBusy := False;
+  FVIBusy[Slot] := False;
   if FVIError <> '' then
     raise EN64Unsupported.Create('VI thread: ' + FVIError);
 end;
@@ -2388,14 +2433,13 @@ begin
   WaitVI;
   if Value then
   begin
-    if FVIBus = nil then
-      FVIBus := TN64RAMBus.Create;
-    if FVIStart = nil then
-    begin
-      FVIStart := TEvent.Create(nil, False, False, '');
-      FVIDone := TEvent.Create(nil, False, False, '');
-    end;
-    FVI.Source := FVIBus;
+    for var S := 0 to 1 do
+      if FVISlots[S].Bus = nil then
+      begin
+        FVISlots[S].Bus := TN64RAMBus.Create;
+        FVISlots[S].Start := TEvent.Create(nil, False, False, '');
+        FVISlots[S].Done := TEvent.Create(nil, False, False, '');
+      end;
   end
   else
     FVI.Source := Self;
@@ -2412,21 +2456,24 @@ end;
 
 procedure TN64Console.TVIThread.Execute;
 begin
+  var Slot := 0;
   while True do
   begin
-    FOwner.FVIStart.WaitFor(INFINITE);
+    FOwner.FVISlots[Slot].Start.WaitFor(INFINITE);
     if Terminated then
       Break;
     try
-      FOwner.FVI.Render(FOwner.FVIRegisters, FOwner.FCurrentFrame.Width, FOwner.FCurrentFrame.Height,
+      FOwner.FVI.Source := FOwner.FVISlots[Slot].Bus;
+      FOwner.FVI.Render(FOwner.FVISlots[Slot].Registers, FOwner.FCurrentFrame.Width, FOwner.FCurrentFrame.Height,
         FOwner.FCurrentFrame.Pixels);
-      FOwner.FCurrentFrame.FrameNumber := FOwner.FVIFrame;
-      FOwner.FrameRendered(FOwner.FVINotify);
+      FOwner.FCurrentFrame.FrameNumber := FOwner.FVISlots[Slot].Frame;
+      FOwner.FrameRendered(FOwner.FVISlots[Slot].Notify);
     except
       on E: Exception do
         FOwner.FVIError := E.ClassName + ': ' + E.Message;
     end;
-    FOwner.FVIDone.SetEvent;
+    FOwner.FVISlots[Slot].Done.SetEvent;
+    Slot := 1 - Slot;
   end;
 end;
 
@@ -4294,6 +4341,7 @@ begin
   if FRDPWorker <> nil then
     Result.RDP := FRDPWorker.WaitTime;
   Result.VI := FVIWaitTime;
+  Result.VICopies := FVICopies;
 end;
 
 function TN64Console.RSPThreadID: TThreadID;

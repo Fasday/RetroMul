@@ -156,6 +156,11 @@ type
     // Copies Count bytes of RDRAM from Address (within RDRAM), with their
     // hidden bits, to the same place in Target (without RDP waits).
     procedure CopyRAMTo(Target: TN64Bus; Address, Count: Cardinal);
+    // The bytes of Count at Address that queued RDP lists may still write
+    // (with FRDPDone as it is): from the first to the last 64-byte line
+    // they mark, [First, Last) within the range. False: none (SyncRDPRead
+    // would not wait).
+    function RDPPendingRange(Address, Count: Cardinal; out First, Last: Cardinal): Boolean;
     procedure SyncRDPWrite(Address, Count: Cardinal);
     // RDP accessors, without waits: the worker owns the pages of the lists
     // it runs. Same bounds as above; RDPWrite8/32 behave as WriteRAM8/32.
@@ -562,6 +567,33 @@ begin
       if List > FRDPDone then
         WaitRDP(List);
     end;
+end;
+
+function TN64Bus.RDPPendingRange(Address, Count: Cardinal; out First, Last: Cardinal): Boolean;
+begin
+  Result := False;
+  First := 0;
+  Last := 0;
+  if not FRDPPending or (Count = 0) or (Address >= Cardinal(Length(FRAM))) then
+    Exit;
+  var Final := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
+  var Low := High(Cardinal);
+  var High_: Cardinal := 0;
+  for var Page := Address shr RDPPageShift to Final shr RDPPageShift do
+    if FRDPWrites[Page] > FRDPDone then
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
+        Min(Final, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+        if FRDPLineWrites[Line] > FRDPDone then
+        begin
+          if Low = High(Cardinal) then
+            Low := Line;
+          High_ := Line;
+        end;
+  if Low = High(Cardinal) then
+    Exit;
+  First := Max(Address, Low shl RDPLineShift);
+  Last := Min(Address + Count, (High_ + 1) shl RDPLineShift);
+  Result := True;
 end;
 
 procedure TN64Bus.SyncRDPWrite(Address, Count: Cardinal);
