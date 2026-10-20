@@ -1,14 +1,11 @@
 ﻿unit N64.Console;
-// Runs without range and overflow checks (every index is masked and all
-// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
-// tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
 uses
-  System.SysUtils, System.Math, System.Classes, System.SyncObjs, System.Diagnostics, System.UITypes, N64.Types,
-  N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, N64.Host, N64.SoftFloat, Core.Snapshots,
+  System.SysUtils, System.Math, System.Classes, System.SyncObjs,
+  System.Diagnostics, System.UITypes, N64.Types, N64.CPU, N64.RSP, N64.RDP,
+  N64.RDPWorker, N64.VI, N64.Timing, N64.Host, N64.SoftFloat, Core.Snapshots,
   Core.Emulation.Types;
 
 type
@@ -43,7 +40,7 @@ type
   // beats come).
   TN64RSPBeat = record
     Position: Integer;
-    Local: Cardinal;
+    local: Cardinal;
     Data, Old: array[0..7] of Byte;
     Applied, Unsaved: Boolean;
   end;
@@ -57,6 +54,8 @@ type
     Registers: array[0..13] of Cardinal;
     Frame: UInt64;
     Notify: Boolean;
+    Output: TEmulatorFrame;
+    Error: string;
   end;
 
   // The emulation thread's waits for the other threads (diagnostics,
@@ -155,44 +154,48 @@ type
   TN64FrameNotify = reference to procedure(const Frame: TEmulatorFrame);
 
   TN64Console = class(TN64Bus)
-  private const
+  private
+    const
     // Run-ahead window sizes in RSP clocks (StartRSPAhead): the largest
     // bounds the cost of one rewind.
-    RSPWindowMin = 16;
-    RSPWindowMax = 65536;
+      RSPWindowMin = 16;
+      RSPWindowMax = 65536;
     // Windows run on the RSP thread once the last one had this many clocks
     // (shorter ones cost more to hand over than they save); the thread
     // publishes its clocks in parts of AheadPart (each part costs the RSP's
     // block lookup anew and a publication: GoldenEye ran 4% faster than with
     // parts of 64, which cost the emulation thread less of a wait each).
-    RSPThreadMin = 256;
-    AheadPart = 1024;
+    // Real-time audio lets workers sleep between bursts. Keep short jobs
+    // local: repeatedly waking the RSP thread costs more than these jobs.
+      RSPThreadMin = 1024;
+      AheadPart = 1024;
     // SP DMA transfers one window may know of (the list never grows, so the
     // beats may read it while the window runs on another thread).
-    RSPMaxTransfers = 4096;
-    SpinRounds = 4000;
-  private type
+      RSPMaxTransfers = 4096;
+      SpinRounds = 4000;
+  private
+    type
     // Runs the windows the emulation thread requests (RunThreadedWindow).
-    TRSPThread = class(TThread)
-    private
-      FOwner: TN64Console;
-      FCPUs: TN64CPUSet;
-      FPreferred: Integer;
-    protected
-      procedure Execute; override;
-    public
-      constructor Create(Owner: TN64Console; const CPUs: TN64CPUSet; Preferred: Integer);
-    end;
+      TRSPThread = class(TThread)
+      private
+        FOwner: TN64Console;
+        FCPUs: TN64CPUSet;
+        FPreferred: Integer;
+      protected
+        procedure Execute; override;
+      public
+        constructor Create(Owner: TN64Console; const CPUs: TN64CPUSet; Preferred: Integer);
+      end;
 
     // Renders the VI fields RenderFrame hands it (VIThreaded).
-    TVIThread = class(TThread)
-    private
-      FOwner: TN64Console;
-    protected
-      procedure Execute; override;
-    public
-      constructor Create(Owner: TN64Console);
-    end;
+      TVIThread = class(TThread)
+      private
+        FOwner: TN64Console;
+      protected
+        procedure Execute; override;
+      public
+        constructor Create(Owner: TN64Console);
+      end;
   private
     FData, FPIF, FSave: TBytes;
     // VI fields rendered on a thread of their own (VIThreaded), in two slots
@@ -207,7 +210,6 @@ type
     FHostFloat: Boolean;
     FVIThread: TVIThread;
     FVISlots: array[0..1] of TN64VISlot;
-    FVIError: string;
     FOnFrame: TN64FrameNotify;
     // (WaitStats.VI, VICopies.)
     FVIWaitTime, FVICopies: Int64;
@@ -329,21 +331,27 @@ type
     FAheadPad0: array[0..7] of Int64;
   private
     // Written by the emulation thread.
-    [Volatile] FAheadRequest: Int64;
+    [Volatile]
+    FAheadRequest: Int64;
     FAheadBudget: Integer;
     FAheadStatus, FAheadPC: Cardinal;
-    [Volatile] FAheadStopRequest: Integer;
-    [Volatile] FAheadMainWaiting: Integer;
+    [Volatile]
+    FAheadStopRequest: Integer;
+    [Volatile]
+    FAheadMainWaiting: Integer;
   protected
     FAheadPad1: array[0..7] of Int64;
   private
     // Written by the RSP thread: the clocks (high half) and journal entries
     // (low half) published, the request finished, where the RSP ended.
-    [Volatile] FAheadProgress: Int64;
-    [Volatile] FAheadFinished: Int64;
+    [Volatile]
+    FAheadProgress: Int64;
+    [Volatile]
+    FAheadFinished: Int64;
     FAheadPCOut: Cardinal;
     FAheadError: string;
-    [Volatile] FAheadWorkerSleeping: Integer;
+    [Volatile]
+    FAheadWorkerSleeping: Integer;
   protected
     FAheadPad2: array[0..7] of Int64;
   private
@@ -470,6 +478,7 @@ type
     procedure FrameRendered(Notify: Boolean);
     procedure WaitVI;
     procedure WaitVISlot(Slot: Integer);
+    procedure CompleteVISlot(Slot: Integer);
     procedure SetVIThreaded(Value: Boolean);
     procedure ValidateState;
   protected
@@ -491,6 +500,9 @@ type
     procedure RunCycles(Cycles: Cardinal);
     procedure RunFrame;
     function GetFrame: TEmulatorFrame;
+    // Polls completed VI slots without waiting; returns the latest complete
+    // frame (possibly the same frame as the previous poll).
+    function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
     procedure SetInputs(const Inputs: TN64Pads);
     function TakeSamples: TArray<SmallInt>;
     function SaveBattery: TBytes;
@@ -559,8 +571,9 @@ implementation
 
 {$IFDEF MSWINDOWS}
 // (Diagnostics: TN64RSPAheadStats.ThreadCycles.)
-function QueryThreadCycleTime(ThreadHandle: THandle; out CycleTime: UInt64): LongBool; stdcall;
-  external 'kernel32.dll' name 'QueryThreadCycleTime';
+
+function QueryThreadCycleTime(ThreadHandle: THandle; out CycleTime: UInt64): LongBool; stdcall; external 'kernel32.dll' name 'QueryThreadCycleTime';
+
 function CurrentThreadHandle: THandle; stdcall; external 'kernel32.dll' name 'GetCurrentThread';
 {$ENDIF}
 
@@ -681,7 +694,11 @@ begin
   FRDP := TN64RDP.Create(Self);
   FRDPTiming := TN64RDP.Create(Self, True);
   FRDPDrawing := True;
-  FPlacement := True;
+  // Leave real-time scheduling to the host. Pinning the CPU/RSP to one
+  // physical core each prevents migration when another application uses
+  // that core, even while other fast cores are idle. Explicit placement
+  // remains available for controlled/offline benchmarks.
+  FPlacement := False;
   {$IFDEF DEBUG}
   FRDPMode := TN64RDPMode.Verify;
   {$ELSE}
@@ -2021,7 +2038,7 @@ begin
   // The beat's eight bytes are aligned (SPDMA, ValidateState): one 64-byte
   // line of SP memory and of RDRAM, without wrapping. RDRAM ends at 8 MB:
   // the rest of the 16 MB reads 0 and ignores writes.
-  var Local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Position) and $FFF);
+  var local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Position) and $FFF);
   var RAM := (FSPTransfer.RAM + FSPTransfer.Position) and $FFFFFF;
   var Bytes: UInt64 := 0;
   if not FSPTransfer.Writing and (RAM < $800000) then
@@ -2046,13 +2063,13 @@ begin
     if FRSPBeatCount = Length(FRSPBeats) then
       SetLength(FRSPBeats, FRSPBeatCount * 2 + 16);
     FRSPBeats[FRSPBeatCount].Position := FRSPCommitted + FTimeline.SyncAhead;
-    FRSPBeats[FRSPBeatCount].Local := (FSPTransfer.local + FSPTransfer.Position) and $FFF;
+    FRSPBeats[FRSPBeatCount].local := (FSPTransfer.local + FSPTransfer.Position) and $FFF;
     // Before its bytes change: the eight bytes lie in one line.
-    FRSPBeats[FRSPBeatCount].Unsaved := not FRSP.LineSaved(FRSPBeats[FRSPBeatCount].Local);
+    FRSPBeats[FRSPBeatCount].Unsaved := not FRSP.LineSaved(FRSPBeats[FRSPBeatCount].local);
     // (Old keeps DMEM exact while a rewind's replay runs, a guard: the
     // replayed clocks never read these bytes, fenced while the transfer was
     // pending, and every logged beat is back by the replay's end.)
-    Move(FSP[FRSPBeats[FRSPBeatCount].Local], FRSPBeats[FRSPBeatCount].Old, 8);
+    Move(FSP[FRSPBeats[FRSPBeatCount].local], FRSPBeats[FRSPBeatCount].Old, 8);
   end;
   // A lifted transfer's bytes as the window took them.
   var Taken: PByte := nil;
@@ -2061,12 +2078,12 @@ begin
   if FSPTransfer.Writing then
   begin
     if Taken = nil then
-      Taken := @FSP[Local];
+      Taken := @FSP[local];
     if RAM < $800000 then
       WriteRAMBytes(RAM, Taken, 8);
   end
   else if Lifted < 0 then
-    WriteSPBytes(Local, @Bytes, 8);
+    WriteSPBytes(local, @Bytes, 8);
   if Logged then
   begin
     // Into DMEM while the RSP runs ahead (the window kept off these bytes,
@@ -2074,7 +2091,7 @@ begin
     if Lifted >= 0 then
       Move(Taken^, FRSPBeats[FRSPBeatCount].Data, 8)
     else
-      Move(FSP[FRSPBeats[FRSPBeatCount].Local], FRSPBeats[FRSPBeatCount].Data, 8);
+      Move(FSP[FRSPBeats[FRSPBeatCount].local], FRSPBeats[FRSPBeatCount].Data, 8);
     FRSPBeats[FRSPBeatCount].Applied := Lifted < 0;
     Inc(FRSPBeatCount);
   end;
@@ -2371,6 +2388,7 @@ begin
     Move(Registers, FVISlots[Slot].Registers, SizeOf(Registers));
     FVISlots[Slot].Frame := FFrame;
     FVISlots[Slot].Notify := Notify;
+    FVISlots[Slot].Error := '';
     if FVIThread = nil then
       FVIThread := TVIThread.Create(Self);
     FVIBusy[Slot] := True;
@@ -2426,9 +2444,16 @@ begin
   var Started := TStopwatch.GetTimeStamp;
   FVISlots[Slot].Done.WaitFor(INFINITE);
   Inc(FVIWaitTime, TStopwatch.GetTimeStamp - Started);
+  CompleteVISlot(Slot);
+end;
+
+procedure TN64Console.CompleteVISlot(Slot: Integer);
+begin
   FVIBusy[Slot] := False;
-  if FVIError <> '' then
-    raise EN64Unsupported.Create('VI thread: ' + FVIError);
+  if FVISlots[Slot].Error <> '' then
+    raise EN64Unsupported.Create('VI thread: ' + FVISlots[Slot].Error);
+  if FVISlots[Slot].Output.FrameNumber >= FCurrentFrame.FrameNumber then
+    FCurrentFrame := FVISlots[Slot].Output;
 end;
 
 procedure TN64Console.SetVIThreaded(Value: Boolean);
@@ -2469,13 +2494,18 @@ begin
       Break;
     try
       FOwner.FVI.Source := FOwner.FVISlots[Slot].Bus;
-      FOwner.FVI.Render(FOwner.FVISlots[Slot].Registers, FOwner.FCurrentFrame.Width, FOwner.FCurrentFrame.Height,
-        FOwner.FCurrentFrame.Pixels);
-      FOwner.FCurrentFrame.FrameNumber := FOwner.FVISlots[Slot].Frame;
-      FOwner.FrameRendered(FOwner.FVISlots[Slot].Notify);
+      // Only this slot is written by VI. The emulation thread publishes it
+      // after observing Done, so polling never races with a new scanout.
+      FOwner.FVI.Render(FOwner.FVISlots[Slot].Registers,
+        FOwner.FVISlots[Slot].Output.Width, FOwner.FVISlots[Slot].Output.Height,
+        FOwner.FVISlots[Slot].Output.Pixels);
+      FOwner.FVISlots[Slot].Output.FrameNumber := FOwner.FVISlots[Slot].Frame;
+      FOwner.FVISlots[Slot].Output.FramesPerSecond := FOwner.FramesPerSecond;
+      if FOwner.FVISlots[Slot].Notify and Assigned(FOwner.FOnFrame) then
+        FOwner.FOnFrame(FOwner.FVISlots[Slot].Output);
     except
       on E: Exception do
-        FOwner.FVIError := E.ClassName + ': ' + E.Message;
+        FOwner.FVISlots[Slot].Error := E.ClassName + ': ' + E.Message;
     end;
     FOwner.FVISlots[Slot].Done.SetEvent;
     Slot := 1 - Slot;
@@ -2732,6 +2762,19 @@ begin
     WaitVI;
   end;
   Result := FCurrentFrame;
+end;
+
+function TN64Console.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
+begin
+  // Older first, as in WaitVI. Each Done is consumed exactly once.
+  for var I := 0 to 1 do
+  begin
+    var Slot := (FVIPut + I) mod 2;
+    if FVIBusy[Slot] and (FVISlots[Slot].Done.WaitFor(0) = wrSignaled) then
+      CompleteVISlot(Slot);
+  end;
+  Frame := FCurrentFrame;
+  Result := Length(Frame.Pixels) <> 0;
 end;
 
 procedure TN64Console.SetInputs(const Inputs: TN64Pads);
@@ -3106,9 +3149,7 @@ begin
     // With several bands FRDP counts only its own rows' clocks.
     if ((FRDPBands = 1) and (FRDP.WorkClocks <> FRDPTiming.WorkClocks)) or
       (FRDP.PipelineCrashed <> FRDPTiming.PipelineCrashed) or (FRDP.PendingWords <> FRDPTiming.PendingWords) then
-      raise EN64Unsupported.CreateFmt('RDP list %d: worker clocks/crash/pending %d/%s/%d, timing %d/%s/%d',
-        [FRDPList, FRDP.WorkClocks, BoolToStr(FRDP.PipelineCrashed, True), FRDP.PendingWords,
-        FRDPTiming.WorkClocks, BoolToStr(FRDPTiming.PipelineCrashed, True), FRDPTiming.PendingWords]);
+      raise EN64Unsupported.CreateFmt('RDP list %d: worker clocks/crash/pending %d/%s/%d, timing %d/%s/%d', [FRDPList, FRDP.WorkClocks, BoolToStr(FRDP.PipelineCrashed, True), FRDP.PendingWords, FRDPTiming.WorkClocks, BoolToStr(FRDPTiming.PipelineCrashed, True), FRDPTiming.PendingWords]);
   end;
 end;
 
@@ -3730,7 +3771,7 @@ begin
   // The window's transfers not complete at the RSP clock due at Time (no
   // earlier than the clocks asked about before): they complete in order.
   while (FRSPFirstPending < FRSPDMACount) and ((FRSPDMAs[FRSPFirstPending].LastBeat < Time) or
-    ((FRSPDMAs[FRSPFirstPending].LastBeat = Time) and FRSPDMAs[FRSPFirstPending].BeatFirst)) do
+        ((FRSPDMAs[FRSPFirstPending].LastBeat = Time) and FRSPDMAs[FRSPFirstPending].BeatFirst)) do
     Inc(FRSPFirstPending);
   Result := FRSPDMACount - FRSPFirstPending;
 end;
@@ -3945,16 +3986,16 @@ begin
   var At := 0;
   while At < Beats * 8 do
   begin
-    var Local := (Transfer.local + Transfer.Position) and $FFF;
+    var local := (Transfer.local + Transfer.Position) and $FFF;
     var RAM := (Transfer.RAM + Transfer.Position) and $FFFFFF;
-    var Count := Min(Transfer.Size - Transfer.Position, $1000 - Local);
+    var Count := Min(Transfer.Size - Transfer.Position, $1000 - local);
     if RAM < $800000 then
       Count := Min(Count, $800000 - RAM)
     else
       Count := Min(Count, $1000000 - RAM);
     var Into: PByte := @FRSPDMAs[Index].Data[At];
     if Transfer.Writing then
-      Move(FSP[Local], Into^, Count)
+      Move(FSP[local], Into^, Count)
     else
     begin
       if RAM >= $800000 then
@@ -3967,7 +4008,7 @@ begin
         Move(FRAM[RAM], Into^, Count)
       else
         ReadRAMBytes(RAM, Into, Count);
-      FRSP.WriteAheadBytes(Local, Into, Count);
+      FRSP.WriteAheadBytes(local, Into, Count);
     end;
     Inc(At, Integer(Count));
     Inc(Transfer.Position, Count - 8);
@@ -4165,11 +4206,11 @@ begin
     for var K := FRSPBeatCount - 1 downto 0 do
       if FRSPBeats[K].Applied and FRSPBeats[K].Unsaved then
         for var I := 0 to 7 do
-          WriteSP8((FRSPBeats[K].Local + Cardinal(I)) and $FFF, FRSPBeats[K].Old[I]);
+          WriteSP8((FRSPBeats[K].local + Cardinal(I)) and $FFF, FRSPBeats[K].Old[I]);
     Exit;
   end;
   for var I := 0 to 7 do
-    WriteSP8((FRSPBeats[Index].Local + Cardinal(I)) and $FFF, FRSPBeats[Index].Data[I]);
+    WriteSP8((FRSPBeats[Index].local + Cardinal(I)) and $FFF, FRSPBeats[Index].Data[I]);
 end;
 
 procedure TN64Console.StressRSP;

@@ -846,6 +846,7 @@
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.GW.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.MD.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.N64.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.N64.Playback.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.NeoGeo.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.NES.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.NGP.pas"/>

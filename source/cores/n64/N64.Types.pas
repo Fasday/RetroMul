@@ -1,8 +1,4 @@
 ﻿unit N64.Types;
-// Runs without range and overflow checks (every index is masked and all
-// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
-// tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -560,8 +556,7 @@ begin
     begin
       // The latest queued writer of the lines read.
       var List: UInt64 := 0;
-      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
-        Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
         if FRDPLineWrites[Line] > List then
           List := FRDPLineWrites[Line];
       if List > FRDPDone then
@@ -581,8 +576,7 @@ begin
   var High_: Cardinal := 0;
   for var Page := Address shr RDPPageShift to Final shr RDPPageShift do
     if FRDPWrites[Page] > FRDPDone then
-      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
-        Min(Final, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to Min(Final, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
         if FRDPLineWrites[Line] > FRDPDone then
         begin
           if Low = High(Cardinal) then
@@ -605,8 +599,7 @@ begin
     if FRDPUses[Page] > FRDPDone then
     begin
       var List: UInt64 := 0;
-      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
-        Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
         if FRDPLineUses[Line] > List then
           List := FRDPLineUses[Line];
       if List > FRDPDone then
@@ -623,8 +616,7 @@ begin
   var Last := Cardinal(Min(UInt64(Address) + Count, UInt64(Length(FRAM))) - 1);
   for var Page := Address shr RDPPageShift to Last shr RDPPageShift do
     if FRDPWrites[Page] > FRDPDone then
-      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to
-        Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
+      for var Line := Max(Address, Page shl RDPPageShift) shr RDPLineShift to Min(Last, (Page shl RDPPageShift) or $FFF) shr RDPLineShift do
         if FRDPLineWrites[Line] > FRDPDone then
           Exit(True);
 end;
@@ -656,6 +648,7 @@ begin
     FRDPUses[Page] := FRDPList;
   end;
 end;
+
 function TN64Bus.RDPRead8(Address: Cardinal): Byte;
 begin
   Result := FRAM[Address];
@@ -750,6 +743,7 @@ begin
   FHiddenRAM[Address shr 1] := HiddenHi and 3;
   FHiddenRAM[(Address shr 1) + 1] := HiddenLo and 3;
 end;
+
 function TN64Bus.ReadSP8(Offset: Cardinal): Byte;
 begin
   Result := FSP[Offset];
@@ -830,6 +824,7 @@ begin
   Result := (Cardinal(FSP[Offset]) shl 24) or (Cardinal(FSP[Offset + 1]) shl 16) or
     (Cardinal(FSP[Offset + 2]) shl 8) or FSP[Offset + 3];
 end;
+
 procedure TN64Bus.Trace(Kind: TN64TraceKind; PC, Address, Value: UInt64);
 begin
   if not Assigned(FTraceSink) then

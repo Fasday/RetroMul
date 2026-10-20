@@ -1,28 +1,32 @@
 ﻿unit N64.RSP;
-// Runs without range and overflow checks (every index is masked and all
-// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
-// tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
 uses
-  System.SysUtils, System.SyncObjs, System.Classes, System.Math, N64.Types, Core.Snapshots;
+  System.SysUtils, System.SyncObjs, System.Classes, System.Math, N64.Types,
+  Core.Snapshots;
 
 type
   // One vector register's eight lanes.
   TRSPLanes = array[0..7] of Word;
+
   PRSPLanes = ^TRSPLanes;
   // The eight lanes also as two 64-bit words (all at once: SWAR), 8-byte
   // aligned.
   // The accumulator's lanes.
+
   TRSPAccLanes = array[0..7] of Int64;
+
   PRSPAccLanes = ^TRSPAccLanes;
+
   TRSPQuadLanes = record
     case Integer of
-      0: (Lanes: TRSPLanes);
-      1: (Quads: array[0..1] of UInt64);
+      0:
+        (Lanes: TRSPLanes);
+      1:
+        (Quads: array[0..1] of UInt64);
   end;
+
   PRSPQuadLanes = ^TRSPQuadLanes;
 
   TRSPTimingInfo = record
@@ -33,7 +37,7 @@ type
   // readiness update (an instruction alone, or a pair).
   TRSPIssueMasks = record
     Flags, Sources, Vectors, ScalarWrites, VectorWrites: Cardinal;
-    External: Boolean;
+    external: Boolean;
   end;
 
   // A predecoded IMEM word; the pair entries hold for SecondOp at the next
@@ -52,6 +56,7 @@ type
   // Whether an MTC0 of Value to SP/DP register Index at clock Clock of a
   // run-ahead window may be applied later, in its own clock (the console
   // does that).
+
   TRSPDeferral = function(Index, Clock: Integer; Value: Cardinal): Boolean of object;
 
   // Why a run-ahead window ended: its clock budget, MTC0, an MFC0 without a
@@ -65,6 +70,7 @@ type
   // which they stop (the DMA they guard expected done by then; checked in
   // that clock's turn). It lifts them only if the clock then runs
   // (TN64RSP.ClockFenced).
+
   TRSPFenceLift = function(Clock: Integer): Boolean of object;
 
   // A predicted MFC0, a deferred MTC0 (Write) or lifted fences (Lift) of a
@@ -75,7 +81,9 @@ type
     Write, Lift: Boolean;
   end;
   // The journal as it lies in memory (TN64RSP.Journal).
+
   TRSPJournal = array[0..16383] of TRSPJournalEntry; // TN64RSP.JournalCapacity
+
   PRSPJournal = ^TRSPJournal;
 
   // Everything an RSP clock can change besides DMEM (run-ahead checkpoint).
@@ -128,6 +136,7 @@ type
     PC: Word;
     ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
   end;
+
   PRSPBlockStep = ^TRSPBlockStep;
 
   // The clocks RunClocks takes from an IMEM slot and pipeline state (no
@@ -139,6 +148,7 @@ type
   // (all those the clocks looked at) are compared again once IMEM changed
   // after Checked.
   PRSPBlock = ^TRSPBlock;
+
   TRSPBlock = record
     ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
     LoadHistory, SingleIssue: Byte;
@@ -166,11 +176,13 @@ type
   TRSPIssueProc = procedure(RSP: TObject; Op: Cardinal);
 
   TN64RSP = class
-  private const
-    NotDecoded = High(UInt64);
-  private class var
+  private
+    const
+      NotDecoded = High(UInt64);
+  private
+    class var
     // The issue routine of each step kind (StepKind) but 0.
-    FKindIssue: array[Byte] of Pointer;
+      FKindIssue: array[Byte] of Pointer;
   private
     FBus: TN64Bus;
     FReg: array[0..31] of Cardinal;
@@ -259,8 +271,7 @@ type
     function FindBlock(PC: Cardinal): PRSPBlock;
     function BuildBlock(PC: Cardinal): PRSPBlock;
 
-    function RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
-      var Ran: Integer): Integer;
+    function RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean; var Ran: Integer): Integer;
     function RunSteps(S: PRSPBlockStep; Mask: Byte; Room, Limit: Integer): PRSPBlockStep;
     function TouchesFence(Op: Cardinal): Boolean;
     procedure HoldStep(Done, S: PRSPBlockStep);
@@ -282,7 +293,7 @@ type
     procedure IssueLoadStore(Op, Address: Cardinal);
     class procedure Unsupported(const Kind: string; Op: Cardinal); static;
     function RunClocks(var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean): Integer;
-    class function External(Op: Cardinal): Boolean; static;
+    class function external(Op: Cardinal): Boolean; static;
     procedure AgePipeline; inline;
     procedure AgePipelineBy(Clocks: Integer); inline;
     function DMemRead(Offset: Cardinal): Byte; inline;
@@ -473,10 +484,11 @@ type
     property BlocksBuilt: Int64 read FBlocksBuilt;
     property BlocksRun: Int64 read FBlocksRun;
     property BlockClocks: Int64 read FBlockClocks;
-  public const
+  public
+    const
     // Journal entries one window may hold (the journal never grows, so the
     // console may read published entries while the window runs on).
-    JournalCapacity = 16384;
+      JournalCapacity = 16384;
   public
     // Why the last RunAhead ended.
     property AheadStop: TRSPAheadStop read FAheadStop;
@@ -582,7 +594,7 @@ begin
   if (Info.Flags and 32) = 0 then
     Masks.ScalarWrites := Info.RWrite;
   Masks.VectorWrites := Info.VWrite;
-  Masks.External := IsExternal;
+  Masks.external := IsExternal;
 end;
 
 class procedure TN64RSP.Combine(const A, B: TRSPTimingInfo; ExternalA, ExternalB: Boolean; out Masks: TRSPIssueMasks);
@@ -595,14 +607,14 @@ begin
   Masks.Vectors := Masks.Vectors or Second.Vectors;
   Masks.ScalarWrites := Masks.ScalarWrites or Second.ScalarWrites;
   Masks.VectorWrites := Masks.VectorWrites or Second.VectorWrites;
-  Masks.External := Masks.External or Second.External;
+  Masks.external := Masks.external or Second.external;
 end;
 
 procedure TN64RSP.Decode(Slot: Integer; Op: Cardinal; Stamp: UInt64);
 begin
   FDec[Slot].Op := Op;
   FDec[Slot].Info := InfoEXECUTE(Op);
-  MasksOf(FDec[Slot].Info, External(Op), FDec[Slot].Single);
+  MasksOf(FDec[Slot].Info, external(Op), FDec[Slot].Single);
   FDec[Slot].PairValid := False;
   FDecStamp[Slot] := Stamp;
 end;
@@ -613,7 +625,7 @@ begin
   var Next := (Slot + 1) and 1023;
   FDec[Slot].SecondOp := FDec[Next].Op;
   FDec[Slot].CanPair := CanPair(FDec[Slot].Info, FDec[Next].Info);
-  Combine(FDec[Slot].Info, FDec[Next].Info, FDec[Slot].Single.External, FDec[Next].Single.External, FDec[Slot].Paired);
+  Combine(FDec[Slot].Info, FDec[Next].Info, FDec[Slot].Single.external, FDec[Next].Single.external, FDec[Slot].Paired);
   FDec[Slot].PairValid := True;
 end;
 
@@ -779,7 +791,6 @@ begin
   else
     Result := $FFFF;
 end;
-
 
 function TN64RSP.VTLanes(Op: Cardinal; var Copy: TRSPQuadLanes): PRSPLanes;
 begin
@@ -1498,6 +1509,7 @@ begin
   FVCO := 0;
   FVCC := Word(Compare);
 end;
+
 procedure TN64RSP.VectorClipLow(Op: Cardinal);
 begin
   // VCL: the clip compare continuing a VCH/VCR, from VCO, VCC and VCE; all
@@ -1593,6 +1605,7 @@ begin
   FVCC := Word(Compare);
   FVCE := Word(Extension);
 end;
+
 procedure TN64RSP.VectorCR(Op: Cardinal);
 begin
   // VCR: VCC from the clip compare against VT (one's complement); VCO and
@@ -1632,6 +1645,7 @@ begin
   FVCC := Word(Compare);
   FVCE := 0;
 end;
+
 procedure TN64RSP.VectorMerge(Op: Cardinal);
 begin
   // VMRG: VS where VCC is set, else VT; clears VCO.
@@ -4278,9 +4292,9 @@ begin
       begin
         // IMEM changed under the held words: decode them as held.
         if Pair then
-          Combine(InfoEXECUTE(Op), InfoEXECUTE(Second), External(Op), External(Second), Held)
+          Combine(InfoEXECUTE(Op), InfoEXECUTE(Second), external(Op), external(Second), Held)
         else
-          MasksOf(InfoEXECUTE(Op), External(Op), Held);
+          MasksOf(InfoEXECUTE(Op), external(Op), Held);
         Masks := @Held;
       end;
     end
@@ -4367,7 +4381,7 @@ begin
         FAheadStop := TRSPAheadStop.Fence;
         Break;
       end;
-      if Masks.External and not JournalCOP0(Op, Second, Pair, FClockBase + Result + 1) then
+      if Masks.external and not JournalCOP0(Op, Second, Pair, FClockBase + Result + 1) then
       begin
         StopAtExternal(Op, Second);
         Break;
@@ -4526,7 +4540,7 @@ begin
     end;
     // Of the external instructions only a clock's one MFC0 or MTC0 (its
     // journal entry made as it runs); the others are RunClocks' business.
-    if Masks.External and not JournalStep(Op, Second, Pair) then
+    if Masks.external and not JournalStep(Op, Second, Pair) then
       Break;
     var Flags := Masks.Flags;
     var Storing := (Flags and 2) <> 0;
@@ -4599,7 +4613,7 @@ begin
     S.Checks := 0;
     if LoadStore(Op) or (Pair and LoadStore(Second)) then
       S.Checks := S.Checks or StepMemory;
-    if Masks.External then
+    if Masks.external then
       S.Checks := S.Checks or StepExternal;
     // (IssueInstruction's kinds, and a branch or jump in a delay slot, take
     // the PC as each instruction moves it. An MFC0 or MTC0, the clock's
@@ -4801,7 +4815,7 @@ begin
         end;
     // Vector loads and stores: those VectorMemory leaves to
     // VectorMemoryDirect (blocks run with direct SP memory) straight there.
-    50:
+        50:
       if ((Op shr 11) and 31) <= 4 then
         Result := 52
       else
@@ -4818,7 +4832,7 @@ procedure InitDivideTables;
 begin
   for var Index := 0 to 511 do
     ReciprocalTable[Index] := Word(Min(UInt64($FFFF), ((((UInt64(1) shl 34) div UInt64(Index + 512)) + 1) shr 8) -
-      $10000));
+          $10000));
   for var Key := 0 to 511 do
   begin
     // 1/sqrt by the largest square that fits.
@@ -5092,7 +5106,7 @@ end;
 procedure TN64RSP.IssueSUB(Op: Cardinal);
 begin
   FReg[(Op shr 11) and 31] := Cardinal((UInt64(FReg[(Op shr 21) and 31]) + UInt64($100000000) - FReg[(Op shr 16) and 31]) and
-    $FFFFFFFF);
+      $FFFFFFFF);
   FReg[0] := 0;
 end;
 
@@ -5238,8 +5252,8 @@ procedure TN64RSP.VectorStoreDirect(Op: Cardinal);
 begin
   VectorMemoryDirect(Op, True);
 end;
-function TN64RSP.RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
-  var Ran: Integer): Integer;
+
+function TN64RSP.RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean; var Ran: Integer): Integer;
 begin
   // Block B's clocks as RunClocks takes them, then those of the blocks after
   // it, up to Cycles in all (Ran so far): 0 when they ran as far as the
@@ -5345,11 +5359,11 @@ begin
         IssueKind(S.Kind, S.Arg, PC, Status, Interrupt);
         // (An MTC0 run here, not ahead, may halt the RSP: then not the
         // word paired with it, nor any clock after it.)
-        var External := (S.Checks and StepExternal) <> 0;
-        if S.Pair and (not External or ((Status and 1) = 0)) then
+        var external := (S.Checks and StepExternal) <> 0;
+        if S.Pair and (not external or ((Status and 1) = 0)) then
           IssueKind(S.SecondKind, S.SecondArg, PC, Status, Interrupt);
         Done := S;
-        if External and ((Status and $21) <> 0) then
+        if external and ((Status and $21) <> 0) then
         begin
           if (Status and $20) <> 0 then
             Status := Status or 1;
@@ -5486,6 +5500,7 @@ begin
   Inc(S);
   Result := S;
 end;
+
 procedure TN64RSP.HoldStep(Done, S: PRSPBlockStep);
 begin
   // Before block clock S (Done: the clock before it, if any) a window
@@ -5515,7 +5530,7 @@ begin
   // The window ended before the clock of Op (and Second) for its external
   // instruction: why.
   var Ext := Op;
-  if not External(Op) then
+  if not external(Op) then
     Ext := Second;
   FAheadStopIndex := Integer((Ext shr 11) and 15);
   if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 4) then
@@ -5539,14 +5554,14 @@ begin
   // nothing in the block raises. (Two never pair, no vector-unit
   // instruction being external: a guard.)
   var Access := Op;
-  if not External(Op) then
+  if not external(Op) then
     Access := Second
-  else if Pair and External(Second) then
+  else if Pair and external(Second) then
     Exit(False);
   Result := ((Access shr 26) = 16) and (((Access shr 21) and 31) in [0, 4]);
 end;
 
-class function TN64RSP.External(Op: Cardinal): Boolean;
+class function TN64RSP.external(Op: Cardinal): Boolean;
 begin
   // Instructions that may touch state outside the RSP and DMEM, or raise.
   Result := True;
@@ -5634,9 +5649,9 @@ begin
   // OnPredict or OnDefer allow (then journalled).
   Result := False;
   var Access := Op;
-  if not External(Op) then
+  if not external(Op) then
     Access := Second
-  else if Pair and External(Second) then
+  else if Pair and external(Second) then
     Exit;
   var Kind := (Access shr 21) and 31;
   if ((Access shr 26) <> 16) or not (Kind in [0, 4]) then
@@ -5654,8 +5669,7 @@ begin
       if FReplayPos >= FJournalCount then
         raise EInvalidOpException.CreateFmt('RSP rewind replay diverged from the journal: clock %d index %d write %s past its %d entries', [Clock, Index, BoolToStr(Write, True), FJournalCount])
       else
-        raise EInvalidOpException.CreateFmt('RSP rewind replay diverged from the journal: clock %d index %d write %s, entry %d of %d: clock %d index %d write %s',
-          [Clock, Index, BoolToStr(Write, True), FReplayPos, FJournalCount, FJournal[FReplayPos].Clock, FJournal[FReplayPos].Index, BoolToStr(FJournal[FReplayPos].Write, True)]);
+        raise EInvalidOpException.CreateFmt('RSP rewind replay diverged from the journal: clock %d index %d write %s, entry %d of %d: clock %d index %d write %s', [Clock, Index, BoolToStr(Write, True), FReplayPos, FJournalCount, FJournal[FReplayPos].Clock, FJournal[FReplayPos].Index, BoolToStr(FJournal[FReplayPos].Write, True)]);
     Value := FJournal[FReplayPos].Value;
     Inc(FReplayPos);
   end
@@ -5685,6 +5699,7 @@ begin
   end;
   Result := True;
 end;
+
 procedure TN64RSP.AddFence(Offset, Count: Cardinal; Reads: Boolean; Source: Byte);
 begin
   if Count = 0 then
@@ -5975,6 +5990,7 @@ begin
   FWritePending := False;
   ClearFences;
 end;
+
 procedure TN64RSP.SerializeState(State: TStateArchive);
 
   function CanonicalBoolean(const Value: Boolean): Boolean;

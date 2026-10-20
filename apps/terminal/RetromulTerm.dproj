@@ -296,6 +296,7 @@
         <DCCReference Include="..\..\source\cores\neogeo\NeoGeo.PCB.pas"/>
         <DCCReference Include="..\..\source\services\storage\Core.Storage.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.N64.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.N64.Playback.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.Types.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.CPU.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.RSP.pas"/>

@@ -1,18 +1,16 @@
 ﻿unit N64.RDP;
-// Runs without range and overflow checks (every index is masked and all
-// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
-// tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Math, System.SyncObjs, N64.Types, Core.Snapshots;
+  System.SysUtils, System.Classes, System.Math, System.SyncObjs, N64.Types,
+  Core.Snapshots;
 
 type
   TN64RDPCommandTrace = procedure(const Words: TArray<Cardinal>) of object;
   // Diagnostics: a primitive is done, with the pixels it drew (or, on a timing
   // RDP, would draw).
+
   TN64RDPPrimitiveTrace = procedure(Pixels: Int64) of object;
 
   // Diagnostics: the modes the current primitive is drawn with.
@@ -23,8 +21,11 @@ type
     Serial: Integer;
   end;
   // The two command words of each 64-bit step, as Execute reads them.
+
   TN64RDPWords = procedure(W0, W1: Cardinal) of object;
+
   TN64RDPWordOut = procedure(Value: Cardinal) of object;
+
   TN64RDPWordIn = function: Cardinal of object;
 
   TN64RDPGroup = class;
@@ -40,8 +41,10 @@ type
   // green, blue, alpha), which the decoded mux legs index as one flat array.
   TN64CombineInputs = record
     case Integer of
-      0: (Slots: array[0..15] of TN64Texel);
-      1: (Flat: array[0..63] of Integer);
+      0:
+        (Slots: array[0..15] of TN64Texel);
+      1:
+        (Flat: array[0..63] of Integer);
   end;
 
   // The modes as the drawing primitives use them, decoded by DecodeMode
@@ -232,8 +235,7 @@ type
     function Color16(V: Word): Cardinal;
     function ColorBytes: Integer; inline;
     procedure AddPixelWork(Cycle: Cardinal; BPP: Integer); inline;
-    function CoveredPixels(Lo, Hi: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer;
-      out First, Last: Integer): Integer;
+    function CoveredPixels(Lo, Hi: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer; out First, Last: Integer): Integer;
     procedure CountRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
     procedure SkipRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
     procedure SkipNoise(Steps: Integer);
@@ -264,21 +266,22 @@ type
     procedure WriteFramebuffer8(Address: Cardinal; Value: Byte);
     procedure WriteFramebuffer16(Address, Value: Cardinal);
     procedure CompleteDelayedHidden;
-  public const
+  public
+    const
     // Bands take rows in stripes of 1 shl BandRowShift in turn: narrow ones
     // share the rows of small primitives out, so the bands' work between two
     // barriers differs less (Command & Conquer, four bands, waits at the
     // barriers of primitives with carries: 8 rows 0.55-0.83 s per band in 300
     // frames, 2 rows 0.19-0.25 s; single rows slowed Resident Evil 2).
-    BandRowShift = 1;
+      BandRowShift = 1;
     // Feed results.
-    FeedNone = 0;
-    FeedSync = 1; // a Full Sync completed
-    FeedStop = 2; // the pipeline crashed; Execute consumes no further words
+      FeedNone = 0;
+      FeedSync = 1; // a Full Sync completed
+      FeedStop = 2; // the pipeline crashed; Execute consumes no further words
     // Texture bytes of one load sent through OnDataOut at most; one command
     // adds at most MaxDataWords words to the stream.
-    MaxDataBytes = 16384;
-    MaxDataWords = 1 + MaxDataBytes div 4;
+      MaxDataBytes = 16384;
+      MaxDataWords = 1 + MaxDataBytes div 4;
   public
     // A timing RDP (TimingOnly) runs the same command, edge and coverage code
     // and keeps the same WorkClocks, Consumed and PipelineCrashed, but draws no
@@ -332,26 +335,30 @@ type
   // where the RDRAM layout of the bands changes, so that every byte of RDRAM
   // sees the same accesses, in the same order, as with a single RDP.
   TN64RDPGroup = class
-  public const
-    BarrierSync = 0;  // all RDPs have finished everything before
-    BarrierEnter = 1; // ... and band 0 takes over the per-pixel state
-    BarrierLeave = 2; // ... and band 0 hands its state and TMEM to all
-  private const
-    SpinRounds = 4000;
-  private type
-    TSlot = record
-      Arrived: Int64;
-      Waiting: Integer;
-      Event: TEvent;
-      Pad: array[0..4] of Int64;
-    end;
+  public
+    const
+      BarrierSync = 0;  // all RDPs have finished everything before
+      BarrierEnter = 1; // ... and band 0 takes over the per-pixel state
+      BarrierLeave = 2; // ... and band 0 hands its state and TMEM to all
+  private
+    const
+      SpinRounds = 4000;
+  private
+    type
+      TSlot = record
+        Arrived: Int64;
+        Waiting: Integer;
+        Event: TEvent;
+        Pad: array[0..4] of Int64;
+      end;
     // A band's memory colour as a primitive with carries starts.
-    TCarryState = record
-      Color: Cardinal;
-      Coverage: Integer;
-      KeyMemory, KeyMemoryRGB: UInt64;
-      Pad: array[0..4] of Int64;
-    end;
+
+      TCarryState = record
+        Color: Cardinal;
+        Coverage: Integer;
+        KeyMemory, KeyMemoryRGB: UInt64;
+        Pad: array[0..4] of Int64;
+      end;
   private
     FMembers: TArray<TN64RDP>;
     FSlots: TArray<TSlot>;
@@ -1028,6 +1035,7 @@ begin
     FAlphaDither := FMode.AlphaDither[((Y and 3) shl 2) or (X and 3)];
   end;
 end;
+
 function EncodedDZ(V: Cardinal): Integer;
 begin
   Result := 0;
@@ -1180,8 +1188,7 @@ begin
     Inc(FTransferBits, UInt64(Count) * UInt64(BPP * 8));
 end;
 
-function TN64RDP.CoveredPixels(Lo, Hi: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer;
-  out First, Last: Integer): Integer;
+function TN64RDP.CoveredPixels(Lo, Hi: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer; out First, Last: Integer): Integer;
 var
   Starts, Ends: array[0..3] of Integer;
 begin
@@ -1195,39 +1202,39 @@ begin
     Exit(Hi - Lo + 1);
   Result := 0;
   var N := 0;
-    for var Q := 0 to 3 do
-      if not FPrim.Invalid[Q] and (EdgeLo[Q] <= EdgeHi[Q]) then
+  for var Q := 0 to 3 do
+    if not FPrim.Invalid[Q] and (EdgeLo[Q] <= EdgeHi[Q]) then
+    begin
+      var S := EdgeLo[Q];
+      var E := EdgeHi[Q];
+      if S = E then
       begin
-        var S := EdgeLo[Q];
-        var E := EdgeHi[Q];
-        if S = E then
-        begin
-          if (QuarterMask[Q] and LoMask[Q] and HiMask[Q]) = 0 then
-            Continue;
-        end
-        else
-        begin
-          if (QuarterMask[Q] and LoMask[Q]) = 0 then
-            Inc(S);
-          if (QuarterMask[Q] and HiMask[Q]) = 0 then
-            Dec(E);
-        end;
-        S := Max(S, Lo);
-        E := Min(E, Hi);
-        if S > E then
+        if (QuarterMask[Q] and LoMask[Q] and HiMask[Q]) = 0 then
           Continue;
-        // Insert, ordered by start.
-        var I := N;
-        while (I > 0) and (Starts[I - 1] > S) do
-        begin
-          Starts[I] := Starts[I - 1];
-          Ends[I] := Ends[I - 1];
-          Dec(I);
-        end;
-        Starts[I] := S;
-        Ends[I] := E;
-        Inc(N);
+      end
+      else
+      begin
+        if (QuarterMask[Q] and LoMask[Q]) = 0 then
+          Inc(S);
+        if (QuarterMask[Q] and HiMask[Q]) = 0 then
+          Dec(E);
       end;
+      S := Max(S, Lo);
+      E := Min(E, Hi);
+      if S > E then
+        Continue;
+        // Insert, ordered by start.
+      var I := N;
+      while (I > 0) and (Starts[I - 1] > S) do
+      begin
+        Starts[I] := Starts[I - 1];
+        Ends[I] := Ends[I - 1];
+        Dec(I);
+      end;
+      Starts[I] := S;
+      Ends[I] := E;
+      Inc(N);
+    end;
   if N = 0 then
     Exit;
   // Pixels in the union of the spans; they start in order, so the last one
@@ -1247,6 +1254,7 @@ begin
   First := Starts[0];
   Last := SpanEnd;
 end;
+
 procedure TN64RDP.SkipRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
 begin
   // Another band draws row Y (X = Left..Right, within 0..1023): step the
@@ -2042,6 +2050,7 @@ const
   InPrimitiveLOD = 12;
   InZero = 13;
   InTexelNext = 14;
+
 procedure TN64RDP.DecodeMode(Textured: Boolean);
 const
   Magic: array[0..15] of Byte = (0, 6, 1, 7, 4, 2, 5, 3, 3, 5, 2, 4, 7, 1, 6, 0);
@@ -2506,6 +2515,7 @@ begin
   FDataWord := Cardinal((UInt64(FDataWord) shl 8) and $FFFFFFFF);
   Dec(FDataBytes);
 end;
+
 const
   XOffset: array[0..15] of Byte = (0, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
   YOffset: array[0..15] of Byte = (0, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0);
@@ -3842,5 +3852,6 @@ begin
     if Member <> Target then
       Target.MergeCarried(Member);
 end;
+
 end.
 

@@ -4,7 +4,8 @@ interface
 
 uses
   Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles,
-  System.SyncObjs, Core.Storage, Core.Emulation, Core.Snapshots, N64.Console;
+  System.SyncObjs, Core.Storage, Core.Emulation, Core.Snapshots, N64.Console,
+  Core.N64.Playback;
 
 type
   TN64KeyMap = array[0..3, TEmulatorButton] of UInt32;
@@ -45,6 +46,7 @@ type
     FVolume: Single;
     FSaveType: TN64SaveType;
     FFrame: TEmulatorFrame;
+    FPlaybackStats: TN64PlaybackStats;
     procedure SaveBattery(Console: TN64Console);
   protected
     procedure Execute; override;
@@ -56,6 +58,7 @@ type
     procedure StopAndSave;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
     function TakeError(Audio: Boolean): string;
+    function PlaybackStats: TN64PlaybackStats;
     procedure Snapshot(const Name: string; Loading: Boolean);
   end;
 
@@ -107,8 +110,9 @@ type
 implementation
 
 uses
+  {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF}
   System.Math, System.Diagnostics, System.UITypes, Core.RomFormat,
-  Core.SavePaths, PCM.Audio;
+  Core.SavePaths;
 
 const
   KeyNames: array[TEmulatorButton] of string =
@@ -302,13 +306,93 @@ begin
 end;
 
 procedure TN64Worker.Execute;
+var
+  Console: TN64Console;
+  Audio: TN64AudioPlayback;
+  AudioFailed, HavePublished: Boolean;
+  LastPublished: UInt64;
+  Rate: TEmulationFrameRate;
+  Deadline: Double;
+  ClockGuest: UInt64;
+  RunTicks: Int64;
+
+  procedure AudioFailure(E: Exception);
+  begin
+    FLock.Acquire;
+    try FAudioError := E.Message finally FLock.Release end;
+    AudioFailed := True;
+    FreeAndNil(Audio);
+    Deadline := TStopwatch.GetTimeStamp;
+    ClockGuest := Console.GuestTick;
+  end;
+
+  procedure UpdatePlaybackStats;
+  begin
+    var Stats := Audio.Stats;
+    Stats.EmulationMS := RunTicks * (1000.0 / TStopwatch.Frequency);
+    Stats.VIWaitMS := Console.WaitStats.VI * (1000.0 / TStopwatch.Frequency);
+    Stats.RSPWaitMS := Console.RSPAheadStats.ThreadWaitTime * (1000.0 / TStopwatch.Frequency);
+    FLock.Acquire;
+    try FPlaybackStats := Stats finally FLock.Release end;
+  end;
+
+  procedure ClearAudio;
+  begin
+    if Audio = nil then Exit;
+    try
+      Audio.Clear;
+      UpdatePlaybackStats;
+    except on E: Exception do AudioFailure(E) end;
+  end;
+
+  procedure FlushAudio(Enabled: Boolean; Volume: Single);
+  begin
+    var Samples := Console.TakeSamples;
+    if not Enabled or AudioFailed then Exit;
+    try
+      if (Audio = nil) and (Length(Samples) > 0) then
+        Audio := TN64AudioPlayback.Create;
+      if Audio <> nil then
+      begin
+        Audio.Enqueue(Samples, Volume);
+        UpdatePlaybackStats;
+      end;
+    except on E: Exception do AudioFailure(E) end;
+  end;
+
+  procedure PublishFrame;
+  begin
+    var Frame: TEmulatorFrame;
+    if not Console.TryGetFrame(Frame) then Exit;
+    if HavePublished and (Frame.FrameNumber = LastPublished) then Exit;
+    HavePublished := True;
+    LastPublished := Frame.FrameNumber;
+    Frame.FramesPerSecond := Rate.Update(Frame.FrameNumber,
+      TStopwatch.GetTimeStamp, TStopwatch.Frequency);
+    FLock.Acquire;
+    try
+      FFrame := Frame;
+      FAvailable := True;
+    finally FLock.Release end;
+  end;
+
+  function Interrupted: Boolean;
+  begin
+    FLock.Acquire;
+    try Result := Terminated or FPause or FReset finally FLock.Release end;
+  end;
 begin
-  var Console: TN64Console := nil;
-  var Audio: TPCMAudio := nil;
-  var AudioFailed := False;
+  Console := nil;
+  Audio := nil;
+  AudioFailed := False;
+  HavePublished := False;
+  LastPublished := 0;
+  RunTicks := 0;
   var WasPaused := False;
   var WasEnabled := False;
-  var Rate: TEmulationFrameRate;
+  {$IFDEF MSWINDOWS}
+  var TimerSet := timeBeginPeriod(1) = TIMERR_NOERROR;
+  {$ENDIF}
   var OldMask := SetExceptionMask([exInvalidOp, exDenormalized, exZeroDivide, exOverflow, exUnderflow, exPrecision]);
   try
     try
@@ -322,7 +406,8 @@ begin
       Rate.Reset(Console.FrameNumber, TStopwatch.GetTimeStamp);
       if FStorage.Exists(FSavePath) then
         Console.LoadBattery(FStorage.ReadBytes(FSavePath));
-      var Deadline: Double := TStopwatch.GetTimeStamp;
+      Deadline := TStopwatch.GetTimeStamp;
+      ClockGuest := Console.GuestTick;
       while not Terminated do
       begin
         FSnapshots.Process(
@@ -344,8 +429,7 @@ begin
               finally
                 Candidate.Free
               end;
-              if Audio <> nil then
-                Audio.Clear;
+              if Audio <> nil then Audio.Clear;
               FLock.Acquire;
               try
                 FFrame := Console.GetFrame;
@@ -365,6 +449,8 @@ begin
               SaveSnapshotPreview(Path, Preview.Width, Preview.Height, Preview.Width, @Preview.Pixels[0], FStorage);
             end;
             Deadline := TStopwatch.GetTimeStamp;
+            ClockGuest := Console.GuestTick;
+            HavePublished := False;
             Rate.Reset(Console.FrameNumber, TStopwatch.GetTimeStamp);
           end);
         var Inputs: TN64Pads;
@@ -385,9 +471,10 @@ begin
         begin
           SaveBattery(Console);
           Console.Reset;
-          if Audio <> nil then
-            Audio.Clear;
+          ClearAudio;
           Deadline := TStopwatch.GetTimeStamp;
+          ClockGuest := Console.GuestTick;
+          HavePublished := False;
           Rate.Reset(Console.FrameNumber, TStopwatch.GetTimeStamp)
         end;
 
@@ -396,84 +483,78 @@ begin
           if not WasPaused then
           begin
             SaveBattery(Console);
-            if Audio <> nil then
-              Audio.Clear
+            ClearAudio;
           end;
           Rate.Reset(Console.FrameNumber, TStopwatch.GetTimeStamp);
           WasPaused := True;
           FWake.WaitFor(10);
           Deadline := TStopwatch.GetTimeStamp;
+          ClockGuest := Console.GuestTick;
           Continue;
         end;
 
         WasPaused := False;
+        if WasEnabled <> Enabled then
+        begin
+          if not Enabled then ClearAudio;
+          Deadline := TStopwatch.GetTimeStamp;
+          ClockGuest := Console.GuestTick;
+        end;
+        WasEnabled := Enabled;
         Console.SetInputs(Inputs);
         var StartFrame := Console.FrameNumber;
+        var AudioDue := Console.GuestTick;
+        var CheckAudio := True;
 
         // Stop/pause latency is bounded even when the ROM busy-waits forever.
         while not Terminated and (Console.FrameNumber = StartFrame) do
         begin
-          Console.RunInstructions(4096);
-          FLock.Acquire;
+          if Interrupted then Break;
+          if CheckAudio and Enabled and not AudioFailed and (Audio <> nil) then
           try
-            if FPause or FReset then
-              Break
-          finally
-            FLock.Release
+            if not Audio.CanAdvance then
+            begin
+              FlushAudio(Enabled, Volume);
+              PublishFrame;
+              FWake.WaitFor(1);
+              Continue;
+            end;
+            CheckAudio := False;
+          except on E: Exception do AudioFailure(E) end;
+          var RunStart := TStopwatch.GetTimeStamp;
+          Console.RunInstructions(4096);
+          Inc(RunTicks, TStopwatch.GetTimeStamp - RunStart);
+          // PCM reaches the device throughout the field, before any VI
+          // polling. The native queue is also the real-time clock.
+          if (Console.GuestTick - AudioDue >= 187500) or
+            (Console.FrameNumber <> StartFrame) then
+          begin
+            FlushAudio(Enabled, Volume);
+            AudioDue := Console.GuestTick;
+            CheckAudio := True;
+            PublishFrame;
           end;
         end;
 
         if Terminated then
           Break;
 
-        var Frame := Console.GetFrame;
-        Frame.FramesPerSecond := Rate.Update(Console.FrameNumber, TStopwatch.GetTimeStamp, TStopwatch.Frequency);
-        FLock.Acquire;
-        try
-          FFrame := Frame;
-          FAvailable := True
-        finally
-          FLock.Release
-        end;
-        var Samples := Console.TakeSamples;
-        if Enabled and not AudioFailed and (Length(Samples) > 0) then
-        try
-          if Audio = nil then
+        FlushAudio(Enabled, Volume);
+        PublishFrame;
+        if not Enabled or AudioFailed then
+        begin
+          // Muted/unavailable audio: pace actual guest time, preserving
+          // ordinary lateness instead of losing it on every late field.
+          var Target := Deadline + (Console.GuestTick - ClockGuest) *
+            (TStopwatch.Frequency / 93750000.0);
+          var Remaining := (Target - TStopwatch.GetTimeStamp) * 1000 / TStopwatch.Frequency;
+          if Remaining > 0 then FWake.WaitFor(Min(100, Ceil(Remaining)))
+          else if Remaining < -250 then
           begin
-            var Format: TPCMAudioFormat;
-            Format.SampleRate := 48000;
-            Format.Channels := 2;
-            Format.BlockFrames := 4096;
-            Format.BlockCount := 4;
-            Audio := TPCMAudio.Create(Format);
-          end;
-          for var i := 0 to High(Samples) do
-            Samples[i] := Round(Samples[i] * Volume);
-          Audio.Submit(Samples, Length(Samples) div 2);
-
-          if Audio.Error <> '' then
-            raise EInOutError.Create(Audio.Error);
-        except
-          on E: Exception do
-          begin
-            FLock.Acquire;
-            try
-              FAudioError := E.Message
-            finally
-              FLock.Release
-            end;
-            AudioFailed := True
+            Deadline := TStopwatch.GetTimeStamp;
+            ClockGuest := Console.GuestTick;
           end;
         end;
-        if WasEnabled and not Enabled and (Audio <> nil) then
-          Audio.Clear;
-        WasEnabled := Enabled;
-        Deadline := Deadline + TStopwatch.Frequency / Console.FramesPerSecond;
-        var Remaining := (Deadline - TStopwatch.GetTimeStamp) * 1000 / TStopwatch.Frequency;
-        if Remaining > 0 then
-          FWake.WaitFor(Min(100, Ceil(Remaining)))
-        else
-          Deadline := TStopwatch.GetTimeStamp;
       end;
     except
       on E: Exception do
@@ -503,8 +584,17 @@ begin
   finally
     Audio.Free;
     Console.Free;
-    SetExceptionMask(OldMask)
+    SetExceptionMask(OldMask);
+    {$IFDEF MSWINDOWS}
+    if TimerSet then timeEndPeriod(1);
+    {$ENDIF}
   end;
+end;
+
+function TN64Worker.PlaybackStats: TN64PlaybackStats;
+begin
+  FLock.Acquire;
+  try Result := FPlaybackStats finally FLock.Release end;
 end;
 
 constructor TN64CoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string);

@@ -1,13 +1,10 @@
 ﻿unit N64.CPU;
-// Runs without range and overflow checks (every index is masked and all
-// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
-// tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Math, N64.Types, N64.SoftFloat, Core.Snapshots;
+  System.SysUtils, System.Classes, System.Math, N64.Types, N64.SoftFloat,
+  Core.Snapshots;
 
 type
   TN64TLBEntry = record
@@ -45,6 +42,7 @@ type
     // Its first code word's index in the block.
     Index: Byte;
   end;
+
   PN64CPUStep = ^TN64CPUStep;
 
   // Steps from one physical code address, for one entry state (the hazards
@@ -55,6 +53,7 @@ type
   // are compared with RDRAM as it is entered: whatever wrote them (the CPU,
   // DMA, the RDP), it is then worked out again.
   PN64CPUBlock = ^TN64CPUBlock;
+
   TN64CPUBlock = record
     Physical: Cardinal;
     EntryLoad, EntryFP: ShortInt;
@@ -76,11 +75,12 @@ type
   end;
 
   TN64CPU = class
-  private const
-    KSeg0Base = UInt64($FFFFFFFF80000000);
-    KSeg1Base = UInt64($FFFFFFFFA0000000);
-    KSeg2Base = UInt64($FFFFFFFFC0000000);
-    TLBKeyMask = UInt64($C00000FFFFFFE000);
+  private
+    const
+      KSeg0Base = UInt64($FFFFFFFF80000000);
+      KSeg1Base = UInt64($FFFFFFFFA0000000);
+      KSeg2Base = UInt64($FFFFFFFFC0000000);
+      TLBKeyMask = UInt64($C00000FFFFFFE000);
     // FCR31 bits that keep floating point off the host (SFQuick): the
     // rounding mode (anything but nearest) and the inexact enable. The other
     // enables do not: where SFQuick gives a result, it is the same as
@@ -88,17 +88,17 @@ type
     // underflow, invalid or division by zero (GoldenEye runs with invalid
     // enabled). The inexact enable keeps it off by choice, not for
     // exactness: SFQuick's inexact is SoftFloat's, so it traps either way.
-    HostFloatOff = $83;
+      HostFloatOff = $83;
     // Block pool chunks, and how many a CPU may have (then its blocks are
     // dropped): about 19 MB in all on 64-bit hosts, 5 MB on 32-bit ones.
-    BlockChunkSize = 1024;
-    StepChunkSize = 8192;
+      BlockChunkSize = 1024;
+      StepChunkSize = 8192;
     {$IFDEF CPU64BITS}
-    MaxBlocks = 65536;
-    MaxStepChunks = 64;
+      MaxBlocks = 65536;
+      MaxStepChunks = 64;
     {$ELSE}
-    MaxBlocks = 16384;
-    MaxStepChunks = 16;
+      MaxBlocks = 16384;
+      MaxStepChunks = 16;
     {$ENDIF}
   private
     FBus: TN64Bus;
@@ -170,8 +170,7 @@ type
     function RunBlocks(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
     procedure DeviceAccess; inline;
     function FastCode(PC: UInt64; Context: Cardinal): Boolean;
-    function FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal;
-      out Cached: Boolean): Boolean; inline;
+    function FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal; out Cached: Boolean): Boolean; inline;
     function FastReady(out Context: Cardinal; out UntilCompare: UInt64): Boolean;
     function FastRun(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
     function IdleHead: Boolean; inline;
@@ -1645,8 +1644,7 @@ begin
   Result := True;
 end;
 
-function TN64CPU.FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal;
-  out Cached: Boolean): Boolean;
+function TN64CPU.FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal; out Cached: Boolean): Boolean;
 begin
   // A data access as Load or Store would make it without faulting and in
   // RDRAM: aligned, through kernel KSEG0/KSEG1 or a page translated before
@@ -1963,7 +1961,7 @@ begin
               end;
             15:
               ; // SYNC
-            16:
+              16:
               GPR[D] := HI;
             17:
               HI := A;
@@ -2217,8 +2215,7 @@ begin
   Result := PN64CPUStep(NativeUInt(B.Steps) + NativeUInt(I) * SizeOf(TN64CPUStep));
 end;
 
-function TN64CPU.FastFloat(Op: Cardinal; A, B: UInt64; out R: TSoftFloatResult; out Cycles: Cardinal;
-  out Target: Integer): Boolean;
+function TN64CPU.FastFloat(Op: Cardinal; A, B: UInt64; out R: TSoftFloatResult; out Cycles: Cardinal; out Target: Integer): Boolean;
 begin
   // Cop1's result for arithmetic or a conversion (Op, operands A and B as
   // it reads them), worked out without changing anything: False where Cop1
@@ -2564,6 +2561,7 @@ begin
       end
       else if FPF >= 8 then
         // BC1: the condition (FPreviousCondition) as it runs.
+
       else if FPF >= 4 then
         RT := T
       else
@@ -2876,7 +2874,7 @@ begin
           end;
         KindSpecial + 15:
           ; // SYNC
-        KindSpecial + 16:
+          KindSpecial + 16:
           GPR[Step.D] := HI;
         KindSpecial + 17:
           HI := A;
