@@ -38,6 +38,9 @@ type
     KSeg1Base = UInt64($FFFFFFFFA0000000);
     KSeg2Base = UInt64($FFFFFFFFC0000000);
     TLBKeyMask = UInt64($C00000FFFFFFE000);
+    // FCR31 bits that keep floating point off the host (SFQuick): every
+    // exception enable and the rounding mode (anything but nearest).
+    HostFloatOff = $F83;
   private
     FBus: TN64Bus;
     FTLBGeneration: Cardinal;
@@ -74,6 +77,8 @@ type
     // what FastReady found unchanged (all but COP0 instructions, if they do
     // not fault).
     FSlowSafe: Boolean;
+    // Floating-point results by the host where SFQuick can (HostFloat).
+    FHostFloat: Boolean;
     procedure DeviceAccess; inline;
     function FastCode(PC: UInt64; Context: Cardinal): Boolean;
     function FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal;
@@ -108,7 +113,9 @@ type
     procedure ExecuteInstruction;
     procedure Special(Op: Cardinal); inline;
     procedure Cop0(Op: Cardinal); inline;
-    procedure Cop1(Op: Cardinal); inline;
+    // Not inline: ExecuteInstruction, every instruction's slow path, does
+    // better without its bulk.
+    procedure Cop1(Op: Cardinal);
     function FPBits(Index, Format: Integer): UInt64; inline;
     procedure SetFPBits(Index, Format: Integer; Value: UInt64); inline;
     procedure Cop2(Op: Cardinal); inline;
@@ -122,6 +129,9 @@ type
     FCR31: Cardinal;
     HI, LO: UInt64;
     TLB: array[0..31] of TN64TLBEntry;
+    // Set by whoever runs the CPU, on the thread that runs it: whether its
+    // floating point suits SFQuick (SFHostReady). Exact either way.
+    property HostFloat: Boolean read FHostFloat write FHostFloat;
     constructor Create(Bus: TN64Bus);
     procedure Reset;
     procedure Step;
@@ -1374,7 +1384,9 @@ begin
         var Target := Integer(F);
         case Fn of
           0..5, 7:
-            R := SFCalculate(A, B, F, Fn, FCR31 and 3);
+            // The host only for rounding to nearest with no exception enabled.
+            if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or (Fn > 4) or not SFQuick(A, B, F, Fn, R) then
+              R := SFCalculate(A, B, F, Fn, FCR31 and 3);
           8..15, 36, 37:
             begin
               Target := 21;
@@ -1396,7 +1408,9 @@ begin
                 FOperationCycles := 2;
                 FPExceptions(0, True);
               end;
-              R := SFConvert(A, F, Target, Mode);
+              if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or (Mode <> 0) or
+                not SFQuickConvert(A, F, Target, Mode, R) then
+                R := SFConvert(A, F, Target, Mode);
               if (R.Events and sfInvalid) <> 0 then
               begin
                 FOperationCycles := 2;
@@ -1410,7 +1424,8 @@ begin
                 Target := 17;
               if (Integer(F) = Target) then
                 Fault(10);
-              R := SFConvert(A, F, Target, FCR31 and 3);
+              if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or not SFQuickConvert(A, F, Target, 0, R) then
+                R := SFConvert(A, F, Target, FCR31 and 3);
             end;
         else
           Fault(10);

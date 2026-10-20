@@ -8,7 +8,8 @@ interface
 
 uses
   System.SysUtils, System.Math, System.Classes, System.SyncObjs, System.Diagnostics, System.UITypes, N64.Types,
-  N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, N64.Host, Core.Snapshots, Core.Emulation.Types;
+  N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, N64.Host, N64.SoftFloat, Core.Snapshots,
+  Core.Emulation.Types;
 
 type
   TN64SaveType = (Auto, EEPROM4K, EEPROM16K, SRAM, FlashRAM, None);
@@ -172,6 +173,7 @@ type
     // to FVIBus; the VI (its noise and weave) is the VI thread's until
     // WaitVI. FVIBusy: a field is being rendered.
     FVIThreaded, FVIBusy: Boolean;
+    FHostFloat: Boolean;
     FVIThread: TVIThread;
     FVIBus: TN64Bus;
     FVIStart, FVIDone: TEvent;
@@ -496,6 +498,9 @@ type
     // shortly after it ends (GetFrame waits for it), the emulation goes on
     // meanwhile. Exact either way.
     property VIThreaded: Boolean read FVIThreaded write SetVIThreaded;
+    // The CPU's floating point by the host where it can, when the thread
+    // running the CPU allows (SFHostReady). On by default; exact either way.
+    property HostFloat: Boolean read FHostFloat write FHostFloat;
     // Called with the frame of every field that ends (on the VI thread when
     // VIThreaded).
     property OnFrame: TN64FrameNotify read FOnFrame write FOnFrame;
@@ -633,6 +638,7 @@ begin
   FRDPMode := TN64RDPMode.Threaded;
   {$ENDIF}
   FVI := TN64VI.Create(Self);
+  FHostFloat := True;
   // With three physical cores or more, VI fields on a thread of their own.
   SetVIThreaded(PhysicalCores >= 3);
   FTimeline := TN64Timeline.Create;
@@ -2463,6 +2469,9 @@ begin
   // Once the RDP bands have caught up, RDRAM accesses skip their checks.
   if FRDPPending then
     RefreshRDP;
+  // This thread's floating point may serve the CPU's (checked each time: the
+  // caller's thread may change).
+  FCPU.HostFloat := FHostFloat and SFHostReady;
 
   var Remaining := Count;
   while Remaining > 0 do
