@@ -12,10 +12,71 @@ type
     C: array[0..3] of Integer; // RGBA, nine bits including signed conversion output.
   end;
 
+  // Combiner inputs of the pixel being drawn: slots of four lanes (red,
+  // green, blue, alpha), which the decoded mux legs index as one flat array.
+  TN64CombineInputs = record
+    case Integer of
+      0: (Slots: array[0..15] of TN64Texel);
+      1: (Flat: array[0..63] of Integer);
+  end;
+
+  // The modes as the drawing primitives use them, decoded by DecodeMode
+  // whenever a mode, the combiner or one of its constants changed.
+  TN64RDPMode = record
+    Textured: Boolean;
+    // The first combiner cycle run: 0 in two-cycle mode, else 1.
+    FirstCycle: Integer;
+    // Flat input index of each mux leg, per combiner cycle and lane (lane 3
+    // is the alpha equation).
+    LegA, LegB, LegC, LegD: array[0..1, 0..3] of Byte;
+    // Dither: noise for the combiner or the alpha dither, a seed step for
+    // the RGB dither, alpha dither from the noise, else by matrix index.
+    NeedsNoise, RGBNoise, AlphaNoise: Boolean;
+    AlphaDither: array[0..15] of Byte;
+    // Blender mux selections per cycle.
+    M1A, M1B, M2A, M2B: array[0..1] of Integer;
+  end;
+
   TN64Tile = record
     Format, Size, Line, TMEM, Palette, SL, TL, SH, TH: Integer;
     ClampS, ClampT, MirrorS, MirrorT: Boolean;
     MaskS, MaskT, ShiftS, ShiftT: Integer;
+  end;
+
+  // Raster state of the primitive being drawn (Triangle sets it up, RasterRow
+  // and RasterPixel read it). Not serialized: primitives complete in Execute.
+  TN64Primitive = record
+    // Raw 16.16 attributes: base, dx, de, dy. Every guest add wraps at 32 bits.
+    Coeff: array[0..3, 0..7] of Int64;
+    SpanAttribute: array[0..7] of Int64;
+    Major, Minor: array[0..3] of Integer;
+    Invalid: array[0..3] of Boolean;
+    Code: Cardinal;
+    Cycle, Tile, MaxLevel, UnscrX: Integer;
+    Flip: Boolean;
+    // Per-primitive derivatives used by partially covered pixels.
+    ShadeDX, ShadeDY: array[0..3] of Int64;
+    DepthDX, DepthDY: Int64;
+    DepthDelta: Cardinal;
+    // Look-ahead memo between consecutive pixels of this primitive.
+    MemoValid, MemoTexelValid: Boolean;
+    MemoNextSA, MemoNextTA, MemoNextW: Int64;
+    MemoNextS, MemoNextT, MemoTile, MemoTexelS, MemoTexelT: Integer;
+    MemoTexel: TN64Texel;
+  end;
+
+  // Blender inputs of the pixel being written (Pixel sets them, Blend and
+  // BlendSource read them). Not serialized.
+  TN64BlendState = record
+    InputColor, BlendedColor, MemoryColor: Cardinal;
+    MemoryCoverage, BlendShiftA, BlendShiftB: Integer;
+    BlendEnabled, PreWrap: Boolean;
+  end;
+
+  // Derived from TN64Tile whenever a tile descriptor changes; not serialized.
+  TN64TileInfo = record
+    LimitS, LimitT, MaskS, MaskT: Integer;
+    ClampS, ClampT: Boolean;
   end;
 
   TN64RDP = class
@@ -23,6 +84,22 @@ type
     FBus: TN64Bus;
     FTMEM: array[0..4095] of Byte;
     FTiles: array[0..7] of TN64Tile;
+    FTileInfo: array[0..7] of TN64TileInfo;
+    FPrim: TN64Primitive;
+    FBlend: TN64BlendState;
+    FMode: TN64RDPMode;
+    FModeDirty: Boolean;
+    FIn: TN64CombineInputs;
+    // Pixels X = FRowFirst..FRowLast of the row being drawn have a colour
+    // image address, FRowBase + X * FRowBPP (see RowAddresses).
+    FRowFirst, FRowLast, FRowBPP: Integer;
+    FRowBase: Cardinal;
+    // Decoded texels by (tile, wrapped S, wrapped T). Entries from an older
+    // generation are stale: tiles, TMEM or the TLUT mode changed since.
+    FTexelGeneration: Cardinal;
+    FTexelKeys: array[0..1023] of UInt64;
+    FTexelStamps: array[0..1023] of Cardinal;
+    FTexels: array[0..1023] of TN64Texel;
     FColorAddress, FTextureAddress, FFill, FPrimitive, FEnvironment, FOtherHi, FOtherLo: Cardinal;
     FCombineHi, FCombineLo: Cardinal;
     FBlendColor, FFogColor: Cardinal;
@@ -49,21 +126,64 @@ type
     FMemoryCoverage: Integer;
     FOnCommand: TN64RDPCommandTrace;
     FOnCommandCompleted: TN64RDPCommandTrace;
+    FTraceWords: TArray<Cardinal>;
+    procedure SetHiddenOld(Index: Integer; Value: Byte); inline;
+    procedure TraceCommand(Words: Integer);
+    function FetchCommand(Address: Cardinal): Cardinal;
+    function MemRead8(Address: Cardinal): Byte; inline;
+    function MemRead32(Address: Cardinal): Cardinal; inline;
+    procedure MemWrite8(Address: Cardinal; Value: Byte); inline;
+    procedure MemWrite32(Address, Value: Cardinal); inline;
+    function MemReadHidden(Address: Cardinal): Byte; inline;
+    procedure MemWriteHidden(Address: Cardinal; Value: Byte); inline;
+    function MemRead16(Address: Cardinal): Cardinal; inline;
+    procedure MemWrite8Hidden(Address: Cardinal; Value, Hidden: Byte); inline;
+    procedure MemWrite16Hidden(Address, Value: Cardinal; Hidden: Byte); inline;
+    procedure MemWrite16HiddenBus(Address, Value: Cardinal; Hidden: Byte);
+    procedure MemWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte); inline;
+    procedure MemWrite32HiddenBus(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
     function Color16(V: Word): Cardinal;
+    function ColorBytes: Integer; inline;
+    procedure AddPixelWork(Cycle: Cardinal; BPP: Integer); inline;
+    function BlendSource(Index, Cycle: Integer): Cardinal;
+    function Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
     procedure Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean = False; Depth: Integer = -1; Delta: Cardinal = 1; Coverage: Integer = 8; CoverageBit: Boolean = True);
     function Texture(Tile: Integer; S, T: Int64; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
-    function TextureTexel(Tile, S, T: Integer): TN64Texel;
+    procedure UpdateTileInfo(Tile: Integer);
+    procedure InvalidateTexels;
+    function DecodeTexel(Tile, S, T: Integer): TN64Texel;
+    function TexelAt(Tile, S, T: Integer): TN64Texel;
     procedure LoadTexture(Tile, SL, TL, SH, TH: Integer; Block: Boolean);
-    function Combine(Texel: TN64Texel; Shade: Cardinal; Texel1, TexelNext: TN64Texel): Cardinal;
-    procedure Dither(X, Y: Integer; out RGB, Alpha: Integer);
+    function Converted(const Raw: TN64Texel): TN64Texel;
+    procedure DecodeMode(Textured: Boolean);
+    procedure Equations(Cycle: Integer; out E0, E1, E2, E3: Integer);
+    function Combine(Shade: Cardinal): Cardinal;
+    procedure Dither(X, Y: Integer);
+    function Coefficient(Base, Group, Channel: Integer): Int64;
+    function EdgeQuantise(Value: Int64): Integer;
+    function TextureDivide(Coordinate, W: Int64): Integer;
+    procedure RowAddresses(Y: Integer);
+    procedure RasterRow(Y: Integer);
+    procedure RasterPixel(X, Y, Mask, Coverage, Step: Integer);
     procedure Triangle(Code: Cardinal);
+    procedure SetCoefficient(Index: Integer; S, T: Int64);
     procedure Rectangle(Code: Cardinal);
     procedure WriteFramebuffer8(Address: Cardinal; Value: Byte);
+    procedure WriteFramebuffer16(Address, Value: Cardinal);
     procedure CompleteDelayedHidden;
+  public const
+    // Feed results.
+    FeedNone = 0;
+    FeedSync = 1; // a Full Sync completed
+    FeedStop = 2; // the pipeline crashed; Execute consumes no further words
   public
     constructor Create(Bus: TN64Bus);
     procedure Reset;
     function Execute(Start, Finish: Cardinal; XBUS: Boolean; out Consumed: Cardinal): Boolean;
+    // Execute in two parts: BeginList at the start of each Execute call, then
+    // Feed for every word pair in order.
+    procedure BeginList;
+    function Feed(W0, W1: Cardinal): Integer;
     procedure SerializeState(State: TStateArchive);
     function Describe: string;
     // Deterministic RCP work estimate. Pipeline stalls/overlap remain approximate.
@@ -77,21 +197,19 @@ implementation
 
 // Arithmetic right shift without relying on signed host shifts or unchecked casts.
 
-function FloorDiv(Value, Divisor: Int64): Int64; inline;
-begin
-  Result := Value div Divisor;
-  if (Value < 0) and (Value mod Divisor <> 0) then
-    Dec(Result);
-end;
-
 function ShiftRight(Value: Int64; Count: Integer): Int64; inline;
 begin
-  Result := FloorDiv(Value, Int64(1) shl Count);
+  // Floor division by 2^Count. For negative values not(not V shr C) rounds
+  // toward minus infinity; the logical shift only sees non-negative values.
+  if Value >= 0 then
+    Result := Value shr Count
+  else
+    Result := not ((not Value) shr Count);
 end;
 
 function WrapSigned32(Value: Int64): Int64; inline;
 begin
-  Result := SignedValue(SX(UInt64(Value and $FFFFFFFF), 32));
+  Result := Integer(Cardinal(Value and $FFFFFFFF));
 end;
 
 function Clamp9(Value: Integer): Integer; inline;
@@ -114,17 +232,35 @@ begin
   Reset
 end;
 
+procedure TN64RDP.SetHiddenOld(Index: Integer; Value: Byte);
+begin
+  FHiddenOld[Index] := Value;
+end;
+
 function TexelFromRGBA(Color: Cardinal): TN64Texel; inline;
 begin
-  for var I := 0 to 3 do
-    Result.C[I] := (Color shr ((3 - I) * 8)) and $FF;
+  Result.C[0] := (Color shr 24) and $FF;
+  Result.C[1] := (Color shr 16) and $FF;
+  Result.C[2] := (Color shr 8) and $FF;
+  Result.C[3] := Color and $FF;
+end;
+
+// TexelFromRGBA(Color16(V)) without the packed intermediate.
+function Texel5551(V: Word): TN64Texel; inline;
+begin
+  var R := (V shr 11) and 31;
+  var G := (V shr 6) and 31;
+  var B := (V shr 1) and 31;
+  Result.C[0] := (R shl 3) or (R shr 2);
+  Result.C[1] := (G shl 3) or (G shr 2);
+  Result.C[2] := (B shl 3) or (B shr 2);
+  Result.C[3] := (V and 1) * $FF;
 end;
 
 function TexelToRGBA(const Texel: TN64Texel): Cardinal; inline;
 begin
-  Result := 0;
-  for var I := 0 to 3 do
-    Result := (Result shl 8) or Cardinal(Clamp9(Texel.C[I]));
+  Result := (Cardinal(Clamp9(Texel.C[0])) shl 24) or (Cardinal(Clamp9(Texel.C[1])) shl 16) or
+    (Cardinal(Clamp9(Texel.C[2])) shl 8) or Cardinal(Clamp9(Texel.C[3]));
 end;
 
 function TN64RDP.Describe: string;
@@ -139,7 +275,10 @@ begin
   for var I := 0 to 4095 do
     FTMEM[I] := 0;
   for var I := 0 to 7 do
+  begin
     FTiles[I] := Default(TN64Tile);
+    UpdateTileInfo(I);
+  end;
   FColorAddress := 0;
   FTextureAddress := 0;
   FFill := 0;
@@ -198,6 +337,115 @@ begin
     FHiddenOld[I] := 0;
   for var I := 0 to High(FCommand) do
     FCommand[I] := 0;
+  FModeDirty := True;
+end;
+
+// RDRAM accesses bypass the virtual decoder under the TN64Bus RAM contract.
+// They use the RDP accessors, which do not wait for queued RDP work: only a
+// full RDP draws pixels, and a worker RDP owns the pages of its lists.
+
+function TN64RDP.MemRead8(Address: Cardinal): Byte;
+begin
+  if Address < FBus.RAMSize then
+    Result := FBus.RDPRead8(Address)
+  else
+    Result := FBus.Read8(Address);
+end;
+
+function TN64RDP.MemRead32(Address: Cardinal): Cardinal;
+begin
+  if UInt64(Address) + 4 <= FBus.RAMSize then
+    Result := FBus.RDPRead32(Address)
+  else
+    Result := FBus.Read32(Address);
+end;
+
+procedure TN64RDP.MemWrite8(Address: Cardinal; Value: Byte);
+begin
+  if Address < FBus.RAMSize then
+    FBus.RDPWrite8(Address, Value)
+  else
+    FBus.Write8(Address, Value);
+end;
+
+procedure TN64RDP.MemWrite32(Address, Value: Cardinal);
+begin
+  if UInt64(Address) + 4 <= FBus.RAMSize then
+    FBus.RDPWrite32(Address, Value)
+  else
+    FBus.Write32(Address, Value);
+end;
+
+function TN64RDP.MemReadHidden(Address: Cardinal): Byte;
+begin
+  if Address < FBus.RAMSize then
+    Result := FBus.RDPReadHidden(Address)
+  else
+    Result := FBus.ReadHidden(Address);
+end;
+
+procedure TN64RDP.MemWriteHidden(Address: Cardinal; Value: Byte);
+begin
+  if Address < FBus.RAMSize then
+    FBus.RDPWriteHidden(Address, Value)
+  else
+    FBus.WriteHidden(Address, Value);
+end;
+
+function TN64RDP.MemRead16(Address: Cardinal): Cardinal;
+begin
+  if UInt64(Address) + 2 <= FBus.RAMSize then
+    Result := FBus.RDPRead16(Address)
+  else
+  begin
+    Result := Cardinal(MemRead8(Address)) shl 8;
+    Result := Result or MemRead8(Address + 1);
+  end;
+end;
+
+// The MemWrite*Hidden helpers write data bytes, then the hidden bits of each
+// halfword written: the same as MemWrite8/MemWrite32 followed by MemWriteHidden.
+
+procedure TN64RDP.MemWrite8Hidden(Address: Cardinal; Value, Hidden: Byte);
+begin
+  if Address < FBus.RAMSize then
+    FBus.RDPWrite8Hidden(Address, Value, Hidden)
+  else
+  begin
+    FBus.Write8(Address, Value);
+    FBus.WriteHidden(Address, Hidden);
+  end;
+end;
+
+procedure TN64RDP.MemWrite16Hidden(Address, Value: Cardinal; Hidden: Byte);
+begin
+  if ((Address and 1) = 0) and (UInt64(Address) + 2 <= FBus.RAMSize) then
+    FBus.RDPWrite16Hidden(Address, Value, Hidden)
+  else
+    MemWrite16HiddenBus(Address, Value, Hidden);
+end;
+
+procedure TN64RDP.MemWrite16HiddenBus(Address, Value: Cardinal; Hidden: Byte);
+begin
+  // Odd or outside direct RDRAM: the two bytes may touch different halfwords.
+  MemWrite8(Address, Byte((Value shr 8) and $FF));
+  MemWrite8(Address + 1, Byte(Value and $FF));
+  MemWriteHidden(Address, Hidden);
+end;
+
+procedure TN64RDP.MemWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
+begin
+  if ((Address and 1) = 0) and (UInt64(Address) + 4 <= FBus.RAMSize) then
+    FBus.RDPWrite32Hidden(Address, Value, HiddenHi, HiddenLo)
+  else
+    MemWrite32HiddenBus(Address, Value, HiddenHi, HiddenLo);
+end;
+
+procedure TN64RDP.MemWrite32HiddenBus(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
+begin
+  MemWrite32(Address, Value);
+  MemWriteHidden(Address, HiddenHi);
+  MemWriteHidden(Address + 2, HiddenLo);
 end;
 
 function TN64RDP.Color16(V: Word): Cardinal;
@@ -217,8 +465,8 @@ begin
   if (FDelayedHidden >= 0) and (FDelayedHidden < $800000) then
   begin
     var Address := Cardinal(FDelayedHidden);
-    var Hidden := (FBus.ReadHidden(Address) and 1) or (FHiddenOld[(Address div 2) and 7] and 2);
-    FBus.WriteHidden(Address, Hidden);
+    var Hidden := (MemReadHidden(Address) and 1) or (FHiddenOld[(Address div 2) and 7] and 2);
+    MemWriteHidden(Address, Hidden);
   end;
   FDelayedHidden := -1;
 end;
@@ -227,7 +475,7 @@ procedure TN64RDP.WriteFramebuffer8(Address: Cardinal; Value: Byte);
 begin
   if Address >= $800000 then
     Exit;
-  var Hidden := FBus.ReadHidden(Address);
+  var Hidden := MemReadHidden(Address);
   var OldIndex := (Address div 2) and 7;
   if not FDrawFlip then
   begin
@@ -251,57 +499,176 @@ begin
     else
       FDelayedHidden := Integer(Address + 1);
   end;
-  FBus.Write8(Address, Value);
-  FBus.WriteHidden(Address, Hidden);
+  MemWrite8Hidden(Address, Value, Hidden);
   if Odd(Address) then
-    FHiddenOld[OldIndex] := Byte((Value and 1) * 3);
+    SetHiddenOld(OldIndex, Byte((Value and 1) * 3));
 end;
 
-procedure TN64RDP.Dither(X, Y: Integer; out RGB, Alpha: Integer);
-const
-  Magic: array[0..15] of Byte = (0, 6, 1, 7, 4, 2, 5, 3, 3, 5, 2, 4, 7, 1, 6, 0);
-  Bayer: array[0..15] of Byte = (0, 4, 1, 5, 4, 0, 5, 1, 3, 7, 2, 6, 7, 3, 6, 2);
+procedure TN64RDP.WriteFramebuffer16(Address, Value: Cardinal);
 begin
-  var Cycle := (FOtherHi shr 20) and 3;
-  var NeedsNoise := (((FCombineHi shr 5) and 15) = 7) or (((FOtherHi shr 4) and 3) = 2);
-  if Cycle = 1 then
-    NeedsNoise := NeedsNoise or (((FCombineHi shr 20) and 15) = 7);
-  if NeedsNoise then
+  if ((Address and 1) <> 0) or (UInt64(Address) + 2 > FBus.RAMSize) then
+  begin
+    if FDrawFlip then
+    begin
+      WriteFramebuffer8(Address, Byte(Value shr 8));
+      WriteFramebuffer8(Address + 1, Byte(Value and $FF))
+    end
+    else
+    begin
+      WriteFramebuffer8(Address + 1, Byte(Value and $FF));
+      WriteFramebuffer8(Address, Byte(Value shr 8))
+    end;
+    Exit;
+  end;
+  // An even halfword in RDRAM: the two WriteFramebuffer8 calls above reduce
+  // to this. Both hidden bits end up as the low data bit, and a flipped draw
+  // first completes a delayed hidden write left of this halfword.
+  if FDrawFlip then
+  begin
+    if (FDelayedHidden >= 0) and (Cardinal(FDelayedHidden) < Address) then
+      CompleteDelayedHidden;
+    FDelayedHidden := -1;
+  end;
+  var Hidden := Byte((Value and 1) * 3);
+  FBus.RDPWrite16Hidden(Address, Value, Hidden);
+  SetHiddenOld((Address div 2) and 7, Hidden);
+end;
+
+procedure TN64RDP.Dither(X, Y: Integer);
+begin
+  // The noise and the alpha dither of the pixel (DecodeMode decides which).
+  if FMode.NeedsNoise then
   begin
     FNoiseSeed := Cardinal((UInt64(FNoiseSeed) * $343FD + $269EC3) and $FFFFFFFF);
     FNoise := (((FNoiseSeed shr 16) and 7) shl 6) or $20;
   end;
-  if FScissorField then
-    Y := Y shr 1;
-  var Index := ((Y and 3) shl 2) or (X and 3);
-  var RGBMode := (FOtherHi shr 6) and 3;
-  case RGBMode of
-    0:
-      RGB := Magic[Index];
-    1:
-      RGB := Bayer[Index];
-    2:
-      begin
-        FNoiseSeed := Cardinal((UInt64(FNoiseSeed) * $343FD + $269EC3) and $FFFFFFFF);
-        RGB := (FNoiseSeed shr 16) and $7FFF;
-      end;
+  if FMode.RGBNoise then
+    FNoiseSeed := Cardinal((UInt64(FNoiseSeed) * $343FD + $269EC3) and $FFFFFFFF);
+  if FMode.AlphaNoise then
+    FAlphaDither := Integer((FNoise shr 6) and 7)
   else
-    RGB := 7
+  begin
+    if FScissorField then
+      Y := Y shr 1;
+    FAlphaDither := FMode.AlphaDither[((Y and 3) shl 2) or (X and 3)];
   end;
-  var Matrix := Integer(Magic[Index]);
-  if RGBMode in [1, 3] then
-    Matrix := Bayer[Index];
-  case (FOtherHi shr 4) and 3 of
+end;
+function EncodedDZ(V: Cardinal): Integer;
+begin
+  Result := 0;
+  V := V and $FFFF;
+  while V > 1 do
+  begin
+    V := V shr 1;
+    Inc(Result)
+  end;
+end;
+
+function BlenderDivide(Denominator, Numerator: Integer): Integer;
+begin
+  // The RDP divider is an eight-step restoring divider, not a host division.
+  var D := (Denominator shr 2) and 15;
+  var N := Numerator and $7FF;
+  var InverseD := D xor 15;
+  var Remainder := (InverseD + (N shr 8) + 1) and 7;
+  Result := 0;
+  for var K := 0 to 7 do
+  begin
+    var Bit := (N shr (7 - K)) and 1;
+    var Temp := D + Remainder * 2 + Bit;
+    if (Result and (256 shr K)) <> 0 then
+      Temp := InverseD + Remainder * 2 + Bit + 1;
+    Remainder := Temp and 7;
+    if (Temp and 16) <> 0 then
+      Result := Result or (1 shl (7 - K));
+  end;
+end;
+
+function TN64RDP.BlendSource(Index, Cycle: Integer): Cardinal;
+begin
+  case Index of
     0:
-      Alpha := Matrix;
+      if Cycle = 0 then
+        Result := FBlend.InputColor
+      else
+        Result := FBlend.BlendedColor;
     1:
-      Alpha := Matrix xor 7;
+      Result := FBlend.MemoryColor;
     2:
-      Alpha := (FNoise shr 6) and 7;
+      Result := FBlendColor;
   else
-    Alpha := 0
+    Result := FFogColor
   end;
-  FAlphaDither := Alpha;
+end;
+
+function TN64RDP.Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
+begin
+  var M1A := FMode.M1A[Cycle];
+  var M1B := FMode.M1B[Cycle];
+  var M2A := FMode.M2A[Cycle];
+  var M2B := FMode.M2B[Cycle];
+  var First := BlendSource(M1A, Cycle);
+  var Second := BlendSource(M2A, Cycle);
+  if ((FOtherLo and $80) <> 0) and not FBlend.PreWrap then
+    Exit(Second);
+  // Partial reject: the standard input/inverse-input-alpha equation bypasses blending at alpha=255.
+  var PartialReject := (M1B = 0) and (M2B = 0) and ((FBlend.InputColor and $FF) = $FF);
+  if not AlwaysBlend and (not FBlend.BlendEnabled or PartialReject) then
+    Exit(First);
+  var Alpha := Integer(FBlend.InputColor and $FF);
+  case M1B of
+    1:
+      Alpha := FFogColor and $FF;
+    2:
+      Alpha := FShadeAlpha;
+    3:
+      Alpha := 0
+  end;
+  var Beta := Alpha xor 255;
+  case M2B of
+    1:
+      Beta := FBlend.MemoryCoverage shl 5;
+    2:
+      Beta := 255;
+    3:
+      Beta := 0
+  end;
+  Alpha := Alpha shr 3;
+  Beta := Beta shr 3;
+  if M2B = 1 then
+  begin
+    Alpha := (Alpha shr FBlend.BlendShiftA) and $3C;
+    Beta := (Beta shr FBlend.BlendShiftB) or 3;
+  end;
+  Result := FBlend.InputColor and $FF;
+  for var Channel := 1 to 3 do
+  begin
+    var Value := Integer((First shr (Channel * 8)) and $FF) * Alpha +
+      Integer((Second shr (Channel * 8)) and $FF) * (Beta + 1);
+    if AlwaysBlend or ((FOtherLo and $4000) <> 0) then
+      Value := (Value shr 5) and $FF
+    else
+      Value := BlenderDivide((Alpha and $3C) + (Beta and $3C) + 4, (Value shr 2) and $7FF);
+    Result := Result or (Cardinal(Value) shl (Channel * 8));
+  end;
+end;
+
+function TN64RDP.ColorBytes: Integer;
+begin
+  // Bytes per colour image pixel; 4-bit images write whole bytes.
+  Result := 1;
+  if FColorSize >= 2 then
+    Result := 1 shl (FColorSize - 1);
+end;
+
+procedure TN64RDP.AddPixelWork(Cycle: Cardinal; BPP: Integer);
+begin
+  if Cycle = 1 then
+    Inc(FWorkClocks, 2)
+  else if Cycle = 0 then
+    Inc(FWorkClocks)
+  else
+    Inc(FTransferBits, Cardinal(BPP * 8));
 end;
 
 procedure TN64RDP.Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean; Depth: Integer; Delta: Cardinal; Coverage: Integer; CoverageBit: Boolean);
@@ -311,131 +678,15 @@ const
   Magic: array[0..15] of Byte = (0, 6, 1, 7, 4, 2, 5, 3, 3, 5, 2, 4, 7, 1, 6, 0);
   Bayer: array[0..15] of Byte = (0, 4, 1, 5, 4, 0, 5, 1, 3, 7, 2, 6, 7, 3, 6, 2);
 var
-  MemoryColor, InputColor, BlendedColor: Cardinal;
-  MemoryCoverage, DZEncode, OldDZEncode, BlendShiftA, BlendShiftB: Integer;
-  BlendEnabled, PreWrap: Boolean;
-
-  function Source(Index, Cycle: Integer): Cardinal;
-  begin
-    case Index of
-      0:
-        if Cycle = 0 then
-          Result := InputColor
-        else
-          Result := BlendedColor;
-      1:
-        Result := MemoryColor;
-      2:
-        Result := FBlendColor;
-    else
-      Result := FFogColor
-    end;
-  end;
-
-  function EncodedDZ(V: Cardinal): Integer;
-  begin
-    Result := 0;
-    V := V and $FFFF;
-    while V > 1 do
-    begin
-      V := V shr 1;
-      Inc(Result)
-    end;
-  end;
-
-  function BlenderDivide(Denominator, Numerator: Integer): Integer;
-  begin
-    // The RDP divider is an eight-step restoring divider, not a host division.
-    var D := (Denominator shr 2) and 15;
-    var N := Numerator and $7FF;
-    var InverseD := D xor 15;
-    var Remainder := (InverseD + (N shr 8) + 1) and 7;
-    Result := 0;
-    for var K := 0 to 7 do
-    begin
-      var Bit := (N shr (7 - K)) and 1;
-      var Temp := D + Remainder * 2 + Bit;
-      if (Result and (256 shr K)) <> 0 then
-        Temp := InverseD + Remainder * 2 + Bit + 1;
-      Remainder := Temp and 7;
-      if (Temp and 16) <> 0 then
-        Result := Result or (1 shl (7 - K));
-    end;
-  end;
-
-  function Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
-  begin
-    var M1A := Integer((FOtherLo shr (30 - Cycle * 2)) and 3);
-    var M1B := Integer((FOtherLo shr (26 - Cycle * 2)) and 3);
-    var M2A := Integer((FOtherLo shr (22 - Cycle * 2)) and 3);
-    var M2B := Integer((FOtherLo shr (18 - Cycle * 2)) and 3);
-    var First := Source(M1A, Cycle);
-    var Second := Source(M2A, Cycle);
-    if ((FOtherLo and $80) <> 0) and not PreWrap then
-      Exit(Second);
-    // Partial reject: the standard input/inverse-input-alpha equation bypasses blending at alpha=255.
-    var PartialReject := (M1B = 0) and (M2B = 0) and ((InputColor and $FF) = $FF);
-    if not AlwaysBlend and (not BlendEnabled or PartialReject) then
-      Exit(First);
-    var Alpha := Integer(InputColor and $FF);
-    case M1B of
-      1:
-        Alpha := FFogColor and $FF;
-      2:
-        Alpha := FShadeAlpha;
-      3:
-        Alpha := 0
-    end;
-    var Beta := Alpha xor 255;
-    case M2B of
-      1:
-        Beta := MemoryCoverage shl 5;
-      2:
-        Beta := 255;
-      3:
-        Beta := 0
-    end;
-    Alpha := Alpha shr 3;
-    Beta := Beta shr 3;
-    if M2B = 1 then
-    begin
-      Alpha := (Alpha shr BlendShiftA) and $3C;
-      Beta := (Beta shr BlendShiftB) or 3;
-    end;
-    Result := InputColor and $FF;
-    for var Channel := 1 to 3 do
-    begin
-      var Value := Integer((First shr (Channel * 8)) and $FF) * Alpha +
-        Integer((Second shr (Channel * 8)) and $FF) * (Beta + 1);
-      if AlwaysBlend or ((FOtherLo and $4000) <> 0) then
-        Value := (Value shr 5) and $FF
-      else
-        Value := BlenderDivide((Alpha and $3C) + (Beta and $3C) + 4, (Value shr 2) and $7FF);
-      Result := Result or (Cardinal(Value) shl (Channel * 8));
-    end;
-  end;
-
+  DZEncode, OldDZEncode: Integer;
 begin
-  if (X < FScissorX0) or (X >= FScissorX1) or (Y < FScissorY0) or (Y >= FScissorY1) or
-    (X < 0) or (X >= 1024) or (Y < 0) or (Y >= 1024) then
+  // Pixels outside the scissor, the raster or RDRAM are dropped.
+  if (X < FRowFirst) or (X > FRowLast) then
     Exit;
-  if FScissorField and (Odd(Y) <> FScissorOdd) then
-    Exit;
-  var BPP := 1;
-  if FColorSize >= 2 then
-    BPP := 1 shl (FColorSize - 1);
-  var Offset := Cardinal((Y * FColorWidth + X) * BPP);
-  var Address := UInt64(FColorAddress) + Offset;
-  if Address + Cardinal(BPP) > $800000 then
-    Exit;
-  var A := Cardinal(Address);
+  var BPP := FRowBPP;
+  var A := FRowBase + Cardinal(X * BPP);
   var Cycle := (FOtherHi shr 20) and 3;
-  if Cycle = 1 then
-    Inc(FWorkClocks, 2)
-  else if Cycle = 0 then
-    Inc(FWorkClocks)
-  else
-    Inc(FTransferBits, Cardinal(BPP * 8));
+  AddPixelWork(Cycle, BPP);
   if Fill then
   begin
     case FColorSize of
@@ -453,60 +704,58 @@ begin
             V := Word(FFill shr 16)
           else
             V := Word(FFill and $FFFF);
-          FBus.Write8(A, Byte(V shr 8));
-          FBus.Write8(A + 1, Byte(V and $FF));
-          FBus.WriteHidden(A, Byte((V and 1) * 3));
-          FHiddenOld[(A div 2) and 7] := Byte((V and 1) * 3);
+          MemWrite16Hidden(A, V, Byte((V and 1) * 3));
+          SetHiddenOld((A div 2) and 7, Byte((V and 1) * 3));
         end;
       3:
         begin
-          FBus.Write32(A, FFill);
-          FBus.WriteHidden(A, Byte(((FFill shr 16) and 1) * 3));
-          FBus.WriteHidden(A + 2, Byte((FFill and 1) * 3));
-          FHiddenOld[(A div 2) and 7] := Byte(((FFill shr 16) and 1) * 3);
-          FHiddenOld[((A div 2) + 1) and 7] := Byte((FFill and 1) * 3);
+          MemWrite32Hidden(A, FFill, Byte(((FFill shr 16) and 1) * 3), Byte((FFill and 1) * 3));
+          SetHiddenOld((A div 2) and 7, Byte(((FFill shr 16) and 1) * 3));
+          SetHiddenOld(((A div 2) + 1) and 7, Byte((FFill and 1) * 3));
         end;
     end;
     Exit;
   end;
-  InputColor := Color;
+  FBlend.InputColor := Color;
   var PreviousMemoryColor := FMemoryColor;
   var PreviousMemoryCoverage := FMemoryCoverage;
-  MemoryColor := (FMemoryColor and $FFFFFF00) or $E0;
-  MemoryCoverage := 7;
-  if (FOtherLo and $40) <> 0 then
+  FBlend.MemoryColor := (FMemoryColor and $FFFFFF00) or $E0;
+  FBlend.MemoryCoverage := 7;
+  // Without a read the memory colour keeps the previous pixel's RGB.
+  var MemoryRead := ((FOtherLo and $40) <> 0) and (FColorSize >= 1);
+  if MemoryRead then
   begin
     case FColorSize of
       1:
         begin
-          var V := Cardinal(FBus.Read8(A));
-          MemoryColor := (V shl 24) or (V shl 16) or (V shl 8) or $E0
+          var V := Cardinal(MemRead8(A));
+          FBlend.MemoryColor := (V shl 24) or (V shl 16) or (V shl 8) or $E0
         end;
       2:
         begin
-          var V := (Word(FBus.Read8(A)) shl 8) or FBus.Read8(A + 1);
-          MemoryColor := Color16(V) and $F8F8F800;
-          MemoryCoverage := ((V and 1) shl 2) or FBus.ReadHidden(A);
+          var V := Integer(MemRead16(A));
+          FBlend.MemoryColor := Color16(V) and $F8F8F800;
+          FBlend.MemoryCoverage := ((V and 1) shl 2) or MemReadHidden(A);
           if FColorFormat <> 0 then
           begin
             var I := Cardinal(V shr 8);
-            MemoryColor := (I shl 24) or (I shl 16) or (I shl 8);
-            MemoryCoverage := (V shr 5) and 7;
+            FBlend.MemoryColor := (I shl 24) or (I shl 16) or (I shl 8);
+            FBlend.MemoryCoverage := (V shr 5) and 7;
           end;
-          MemoryColor := MemoryColor or Cardinal(MemoryCoverage shl 5);
+          FBlend.MemoryColor := FBlend.MemoryColor or Cardinal(FBlend.MemoryCoverage shl 5);
         end;
       3:
         begin
-          MemoryColor := FBus.Read32(A);
-          MemoryCoverage := (MemoryColor shr 5) and 7
+          FBlend.MemoryColor := MemRead32(A);
+          FBlend.MemoryCoverage := (FBlend.MemoryColor shr 5) and 7
         end;
     end;
   end;
-  var Alpha := Integer(InputColor and $FF);
+  var Alpha := Integer(FBlend.InputColor and $FF);
   if Cycle < 2 then
   begin
-    FMemoryColor := MemoryColor;
-    FMemoryCoverage := MemoryCoverage
+    FMemoryColor := FBlend.MemoryColor;
+    FMemoryCoverage := FBlend.MemoryCoverage;
   end;
   var AlphaProduct := 0;
   if Alpha = 255 then
@@ -525,7 +774,7 @@ begin
     Alpha := Min(255, Alpha + FAlphaDither)
   else
     Alpha := Min(255, Alpha);
-  InputColor := (InputColor and $FFFFFF00) or Cardinal(Alpha);
+  FBlend.InputColor := (FBlend.InputColor and $FFFFFF00) or Cardinal(Alpha);
   if (FOtherLo and 1) <> 0 then
   begin
     var Threshold := Integer(FBlendColor and $FF);
@@ -549,8 +798,8 @@ begin
   end
   else if not CoverageBit then
     Exit;
-  PreWrap := ((MemoryCoverage + Coverage) and 8) <> 0;
-  BlendEnabled := ((FOtherLo and $4000) <> 0) or (((FOtherLo and 8) <> 0) and not PreWrap);
+  FBlend.PreWrap := ((FBlend.MemoryCoverage + Coverage) and 8) <> 0;
+  FBlend.BlendEnabled := ((FOtherLo and $4000) <> 0) or (((FOtherLo and 8) <> 0) and not FBlend.PreWrap);
   if (FOtherLo and 4) <> 0 then
   begin
     Depth := Integer(FPrimitiveDepth);
@@ -559,17 +808,17 @@ begin
   var ZAddress := UInt64(FZAddress) + Cardinal((Y * FColorWidth + X) * 2);
   var UseDepth := (Depth >= 0) and (ZAddress + 2 <= $800000) and (Cycle < 2);
   DZEncode := EncodedDZ(Delta);
-  BlendShiftA := 0;
-  BlendShiftB := Max(0, 15 - DZEncode);
-  if BlendShiftB > 4 then
-    BlendShiftB := 4;
+  FBlend.BlendShiftA := 0;
+  FBlend.BlendShiftB := Max(0, 15 - DZEncode);
+  if FBlend.BlendShiftB > 4 then
+    FBlend.BlendShiftB := 4;
   if UseDepth and ((FOtherLo and $10) <> 0) then
   begin
     var ZA := Cardinal(ZAddress);
-    var Stored := (Cardinal(FBus.Read8(ZA)) shl 8) or FBus.Read8(ZA + 1);
+    var Stored := MemRead16(ZA);
     var Level := (Stored shr 13) and 7;
     var OldZ := (((Stored shr 2) and $7FF) shl ZShift[Level]) + ZBase[Level];
-    OldDZEncode := Integer((Stored and 3) shl 2) or FBus.ReadHidden(ZA);
+    OldDZEncode := Integer((Stored and 3) shl 2) or MemReadHidden(ZA);
     var OldDZ := Cardinal(1) shl OldDZEncode;
     var Coplanar := False;
     if Level < 3 then
@@ -588,20 +837,20 @@ begin
     var Nearer := Coplanar or (Int64(Depth) - Tolerance <= OldZ);
     var InFront := Cardinal(Depth) < OldZ;
     var IsMax := OldZ = $3FFFF;
-    BlendShiftA := EnsureRange(DZEncode - OldDZEncode, 0, 4);
-    BlendShiftB := EnsureRange(OldDZEncode - DZEncode, 0, 4);
-    BlendEnabled := ((FOtherLo and $4000) <> 0) or (((FOtherLo and 8) <> 0) and not PreWrap and Farther);
+    FBlend.BlendShiftA := EnsureRange(DZEncode - OldDZEncode, 0, 4);
+    FBlend.BlendShiftB := EnsureRange(OldDZEncode - DZEncode, 0, 4);
+    FBlend.BlendEnabled := ((FOtherLo and $4000) <> 0) or (((FOtherLo and 8) <> 0) and not FBlend.PreWrap and Farther);
     case (FOtherLo shr 10) and 3 of
       0:
-        if not IsMax and ((PreWrap and not InFront) or (not PreWrap and not Nearer)) then
+        if not IsMax and ((FBlend.PreWrap and not InFront) or (not FBlend.PreWrap and not Nearer)) then
           Exit;
       1:
-        if InFront and Farther and PreWrap then
+        if InFront and Farther and FBlend.PreWrap then
         begin
           var Coefficient := ((OldZ shr EncodedDZ(DZ)) - (Cardinal(Depth) shr EncodedDZ(DZ))) and 15;
           Coverage := Integer((Coefficient * Cardinal(Coverage) shr 3) and 15);
         end
-        else if not IsMax and ((PreWrap and not InFront) or (not PreWrap and not Nearer)) then
+        else if not IsMax and ((FBlend.PreWrap and not InFront) or (not FBlend.PreWrap and not Nearer)) then
           Exit;
       2:
         if not InFront and not IsMax then
@@ -613,16 +862,16 @@ begin
   end;
   if Cycle < 2 then
   begin
-    BlendedColor := InputColor;
+    FBlend.BlendedColor := FBlend.InputColor;
     if Cycle = 1 then
     begin
-      var CurrentMemoryColor := MemoryColor;
-      var CurrentMemoryCoverage := MemoryCoverage;
-      MemoryColor := PreviousMemoryColor;
-      MemoryCoverage := PreviousMemoryCoverage;
-      BlendedColor := Blend(0, True);
-      MemoryColor := CurrentMemoryColor;
-      MemoryCoverage := CurrentMemoryCoverage;
+      var CurrentMemoryColor := FBlend.MemoryColor;
+      var CurrentMemoryCoverage := FBlend.MemoryCoverage;
+      FBlend.MemoryColor := PreviousMemoryColor;
+      FBlend.MemoryCoverage := PreviousMemoryCoverage;
+      FBlend.BlendedColor := Blend(0, True);
+      FBlend.MemoryColor := CurrentMemoryColor;
+      FBlend.MemoryCoverage := CurrentMemoryCoverage;
     end;
     Color := Blend(Integer(Cycle), False);
     var RGBDither := (FOtherHi shr 6) and 3;
@@ -653,8 +902,8 @@ begin
     case (FOtherLo shr 8) and 3 of
       0:
         begin
-          if BlendEnabled then
-            FinalCoverage := Coverage + MemoryCoverage
+          if FBlend.BlendEnabled then
+            FinalCoverage := Coverage + FBlend.MemoryCoverage
           else
             FinalCoverage := Coverage - 1;
           if (FinalCoverage and 8) <> 0 then
@@ -663,11 +912,11 @@ begin
             FinalCoverage := FinalCoverage and 7
         end;
       1:
-        FinalCoverage := (Coverage + MemoryCoverage) and 7;
+        FinalCoverage := (Coverage + FBlend.MemoryCoverage) and 7;
       2:
         FinalCoverage := 7;
       3:
-        FinalCoverage := MemoryCoverage;
+        FinalCoverage := FBlend.MemoryCoverage;
     end;
   if UseDepth and ((FOtherLo and $20) <> 0) then
   begin
@@ -676,13 +925,11 @@ begin
     while (Level > 0) and (Z < ZBase[Level]) do
       Dec(Level);
     var Stored := Word((Cardinal(Level) shl 13) or (((Z - ZBase[Level]) shr ZShift[Level]) shl 2) or Cardinal(DZEncode shr 2));
-    FBus.Write8(Cardinal(ZAddress), Byte(Stored shr 8));
-    FBus.Write8(Cardinal(ZAddress + 1), Byte(Stored and $FF));
-    FBus.WriteHidden(Cardinal(ZAddress), Byte(DZEncode and 3));
+    MemWrite16Hidden(Cardinal(ZAddress), Stored, Byte(DZEncode and 3));
   end;
   case FColorSize of
     0:
-      FBus.Write8(A, 0);
+      MemWrite8(A, 0);
     1:
       begin
         var V := Byte((Color shr 24) and $FF);
@@ -705,32 +952,19 @@ begin
           FinalCoverage := 0
         end;
         if Cycle = 2 then
-          if FDrawFlip then
-          begin
-            WriteFramebuffer8(A, Byte(V shr 8));
-            WriteFramebuffer8(A + 1, Byte(V and $FF))
-          end
-          else
-          begin
-            WriteFramebuffer8(A + 1, Byte(V and $FF));
-            WriteFramebuffer8(A, Byte(V shr 8))
-          end
+          WriteFramebuffer16(A, V)
         else
         begin
-          FBus.Write8(A, Byte(V shr 8));
-          FBus.Write8(A + 1, Byte(V and $FF));
-          FBus.WriteHidden(A, Byte(FinalCoverage and 3));
-          FHiddenOld[(A div 2) and 7] := Byte(FinalCoverage and 3);
+          MemWrite16Hidden(A, V, Byte(FinalCoverage and 3));
+          SetHiddenOld((A div 2) and 7, Byte(FinalCoverage and 3));
         end;
       end;
     3:
       begin
         var V := (Color and $FFFFFF00) or Cardinal(FinalCoverage shl 5);
-        FBus.Write32(A, V);
-        FBus.WriteHidden(A, Byte(((Color shr 16) and 1) * 3));
-        FBus.WriteHidden(A + 2, 0);
-        FHiddenOld[(A div 2) and 7] := Byte(((Color shr 16) and 1) * 3);
-        FHiddenOld[((A div 2) + 1) and 7] := 0;
+        MemWrite32Hidden(A, V, Byte(((Color shr 16) and 1) * 3), 0);
+        SetHiddenOld((A div 2) and 7, Byte(((Color shr 16) and 1) * 3));
+        SetHiddenOld(((A div 2) + 1) and 7, 0);
       end;
   end;
 end;
@@ -754,32 +988,105 @@ begin
   Result := Integer(Value and $FFFF);
 end;
 
-function Floor256(Value: Int64): Integer;
+function TexelFloor32(Value: Integer): Integer; inline;
 begin
-  Result := Integer(Value div 256);
-  if (Value < 0) and (Value mod 256 <> 0) then
-    Dec(Result);
+  // ShiftRight(Value, 5) for the bilinear filter: decoded texels lie in
+  // -128..255, so |Value| < 32768 and the biased sum is never negative.
+  Result := ((Value + 32768) shr 5) - 1024;
 end;
 
-function TN64RDP.TextureTexel(Tile, S, T: Integer): TN64Texel;
+function Floor256(Value: Int64): Integer;
 begin
-  var R := FTiles[Tile];
-  S := WrapCoord(S, (R.SH div 4 - R.SL div 4) and $3FF, R.MaskS, 0, R.ClampS or (R.MaskS = 0), R.MirrorS);
-  T := WrapCoord(T, (R.TH div 4 - R.TL div 4) and $3FF, R.MaskT, 0, R.ClampT or (R.MaskT = 0), R.MirrorT);
-  var Size := R.Size;
-  var Bits := 4 shl Size;
-  var Row := T and $FF;
-  var Address := Integer((Int64(R.TMEM) * 8 + Int64(Row) * R.Line * 8 + Int64(S) * Bits div 8) and $FFF);
-  if Size = 3 then
-    Address := Integer((Int64(R.TMEM) * 8 + Int64(Row) * R.Line * 8 + Int64(S) * 2) and $FFF);
-  if R.Format = 1 then
-    Address := Integer((Int64(R.TMEM) * 8 + Int64(Row) * R.Line * 8 + S) and $7FF);
+  Result := Integer(ShiftRight(Value, 8));
+end;
+
+const
+  PopCount8: array[0..255] of Byte = (
+    0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
+    1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
+    1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
+    2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
+    1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
+    2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
+    2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
+    3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7, 4, 5, 5, 6, 5, 6, 6, 7, 5, 6, 6, 7, 6, 7, 7, 8);
+
+function WrapTexel(Value, Limit, Mask: Integer; Clamp, Mirror: Boolean): Integer; inline;
+begin
+  // WrapCoord with a zero shift; Clamp is always set when Mask is zero, so
+  // the result is non-negative and below 64K before the final mask.
+  if Clamp then
+    if Value < 0 then
+      Value := 0
+    else if Value > Limit then
+      Value := Limit;
+  if Mask > 0 then
+  begin
+    var M := (1 shl Mask) - 1;
+    if Mirror and ((Value and (M + 1)) <> 0) then
+      Value := not Value;
+    Value := Value and M;
+  end;
+  Result := Value and $FFFF;
+end;
+
+procedure TN64RDP.UpdateTileInfo(Tile: Integer);
+begin
+  FTileInfo[Tile].LimitS := (FTiles[Tile].SH div 4 - FTiles[Tile].SL div 4) and $3FF;
+  FTileInfo[Tile].LimitT := (FTiles[Tile].TH div 4 - FTiles[Tile].TL div 4) and $3FF;
+  FTileInfo[Tile].MaskS := Min(FTiles[Tile].MaskS, 10);
+  FTileInfo[Tile].MaskT := Min(FTiles[Tile].MaskT, 10);
+  FTileInfo[Tile].ClampS := FTiles[Tile].ClampS or (FTiles[Tile].MaskS = 0);
+  FTileInfo[Tile].ClampT := FTiles[Tile].ClampT or (FTiles[Tile].MaskT = 0);
+  // Every tile or TMEM load command passes through here.
+  InvalidateTexels;
+end;
+
+procedure TN64RDP.InvalidateTexels;
+begin
+  if FTexelGeneration = High(Cardinal) then
+  begin
+    for var I := 0 to High(FTexelStamps) do
+      FTexelStamps[I] := 0;
+    FTexelGeneration := 1;
+  end
+  else
+    Inc(FTexelGeneration);
+end;
+
+function TN64RDP.TexelAt(Tile, S, T: Integer): TN64Texel;
+begin
+  // S, T are wrapped (0..$FFFF) and Tile is 0..7, so the key is exact.
+  var Key := (UInt64(Tile) shl 32) or (UInt64(S) shl 16) or UInt64(T);
+  var Slot := (S + T * 33 + Tile * 257) and 1023;
+  if (FTexelStamps[Slot] = FTexelGeneration) and (FTexelKeys[Slot] = Key) then
+    Exit(FTexels[Slot]);
+  Result := DecodeTexel(Tile, S, T);
+  FTexels[Slot] := Result;
+  FTexelKeys[Slot] := Key;
+  FTexelStamps[Slot] := FTexelGeneration;
+end;
+
+function TN64RDP.DecodeTexel(Tile, S, T: Integer): TN64Texel;
+begin
+  // S and T are tile coordinates already wrapped/clamped by WrapTexel.
+  var Size := FTiles[Tile].Size;
+  var Format := FTiles[Tile].Format;
+  // TMEM <= 511, Line <= 511, Row <= 255 and S < 64K: every sum fits Integer.
+  var LineBase := FTiles[Tile].TMEM * 8 + (T and $FF) * FTiles[Tile].Line * 8;
+  var Address: Integer;
+  if Format = 1 then
+    Address := (LineBase + S) and $7FF
+  else if Size = 3 then
+    Address := (LineBase + S * 2) and $FFF
+  else
+    Address := (LineBase + ((S * (4 shl Size)) shr 3)) and $FFF;
   if Odd(T) then
     Address := Address xor 4;
   var V := Cardinal(FTMEM[Address]);
   if Size >= 2 then
     V := (V shl 8) or FTMEM[(Address + 1) and $FFF];
-  if (Size = 3) and (R.Format = 0) then
+  if (Size = 3) and (Format = 0) then
   begin
     Address := Address and $7FF;
     V := (Cardinal(FTMEM[Address]) shl 24) or (Cardinal(FTMEM[(Address + 1) and $7FF]) shl 16) or
@@ -793,13 +1100,13 @@ begin
   if (FOtherHi and $8000) <> 0 then
   begin
     if Size = 0 then
-      V := Cardinal(R.Palette * 16) + V
+      V := Cardinal(FTiles[Tile].Palette * 16) + V
     else if Size >= 2 then
       V := (V shr ((Size - 1) * 8)) and $FF;
     var PA := ($800 + Integer(V and $FF) * 8 + ((Address shr 1) and 3) * 2) and $FFF;
     var Palette := (Cardinal(FTMEM[PA]) shl 8) or FTMEM[(PA + 1) and $FFF];
     if (FOtherHi and $4000) = 0 then
-      Exit(TexelFromRGBA(Color16(Word(Palette))));
+      Exit(Texel5551(Word(Palette)));
     Result.C[0] := Palette shr 8;
     Result.C[1] := Result.C[0];
     Result.C[2] := Result.C[0];
@@ -807,13 +1114,13 @@ begin
     Exit;
   end;
   Result := Default(TN64Texel);
-  case R.Format of
+  case Format of
     0:
       begin
         if Size = 3 then
           Exit(TexelFromRGBA(V));
         if Size = 2 then
-          Exit(TexelFromRGBA(Color16(Word(V))));
+          Exit(Texel5551(Word(V)));
         if Size = 0 then
           V := V * 17;
         for var I := 0 to 3 do
@@ -840,7 +1147,7 @@ begin
     2:
       begin
         if Size = 0 then
-          V := Cardinal(R.Palette * 16) + V;
+          V := Cardinal(FTiles[Tile].Palette * 16) + V;
         if Size >= 2 then
         begin
           Result.C[0] := V shr 8;
@@ -898,41 +1205,43 @@ begin
   end;
 end;
 
-function TN64RDP.Texture(Tile: Integer; S, T: Int64; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
-
-  function Converted(const Raw: TN64Texel): TN64Texel;
-  begin
-    var U := Integer(SignedValue(SX(Cardinal(Raw.C[0] and $1FF), 9)));
-    var V := Integer(SignedValue(SX(Cardinal(Raw.C[1] and $1FF), 9)));
-    var Y := Integer(SignedValue(SX(Cardinal(Raw.C[2] and $1FF), 9)));
-    Result.C[0] := (Y + Floor256(FConvert[0] * V + 128)) and $1FF;
-    Result.C[1] := (Y + Floor256(FConvert[1] * U + FConvert[2] * V + 128)) and $1FF;
-    Result.C[2] := (Y + Floor256(FConvert[3] * U + 128)) and $1FF;
-    Result.C[3] := Y and $1FF;
-  end;
-
+function TN64RDP.Converted(const Raw: TN64Texel): TN64Texel;
 begin
-  var R := FTiles[Tile];
-  S := SignedValue(SX(UInt64(S and $FFFF), 16));
-  T := SignedValue(SX(UInt64(T and $FFFF), 16));
-  if R.ShiftS <= 10 then
-    S := ShiftRight(S, R.ShiftS)
+  // YUV to RGB with the K0..K3 coefficients of SetConvert.
+  var U := Integer(SignedValue(SX(Cardinal(Raw.C[0] and $1FF), 9)));
+  var V := Integer(SignedValue(SX(Cardinal(Raw.C[1] and $1FF), 9)));
+  var Y := Integer(SignedValue(SX(Cardinal(Raw.C[2] and $1FF), 9)));
+  Result.C[0] := (Y + Floor256(FConvert[0] * V + 128)) and $1FF;
+  Result.C[1] := (Y + Floor256(FConvert[1] * U + FConvert[2] * V + 128)) and $1FF;
+  Result.C[2] := (Y + Floor256(FConvert[3] * U + 128)) and $1FF;
+  Result.C[3] := Y and $1FF;
+end;
+
+function TN64RDP.Texture(Tile: Integer; S, T: Int64; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
+begin
+  // SmallInt(Word(..)) is the explicit 16-bit sign extension used by SX(.., 16).
+  S := SmallInt(Word(S and $FFFF));
+  T := SmallInt(Word(T and $FFFF));
+  var ShiftS := FTiles[Tile].ShiftS;
+  var ShiftT := FTiles[Tile].ShiftT;
+  if ShiftS <= 10 then
+    S := ShiftRight(S, ShiftS)
   else
-    S := SignedValue(SX(UInt64((S * (1 shl (16 - R.ShiftS))) and $FFFF), 16));
-  if R.ShiftT <= 10 then
-    T := ShiftRight(T, R.ShiftT)
+    S := SmallInt(Word((S * (1 shl (16 - ShiftS))) and $FFFF));
+  if ShiftT <= 10 then
+    T := ShiftRight(T, ShiftT)
   else
-    T := SignedValue(SX(UInt64((T * (1 shl (16 - R.ShiftT))) and $FFFF), 16));
-  var MaxS := ShiftRight(S, 3) >= R.SH;
-  var MaxT := ShiftRight(T, 3) >= R.TH;
-  S := S - R.SL * 8;
-  T := T - R.TL * 8;
+    T := SmallInt(Word((T * (1 shl (16 - ShiftT))) and $FFFF));
+  var MaxS := ShiftRight(S, 3) >= FTiles[Tile].SH;
+  var MaxT := ShiftRight(T, 3) >= FTiles[Tile].TH;
+  S := S - FTiles[Tile].SL * 8;
+  T := T - FTiles[Tile].TL * 8;
   var FX := Integer(S and 31);
   var FY := Integer(T and 31);
-  if R.ClampS or (R.MaskS = 0) then
+  if FTileInfo[Tile].ClampS then
     if MaxS then
     begin
-      S := Int64((R.SH div 4 - R.SL div 4) and $3FF) * 32;
+      S := Int64(FTileInfo[Tile].LimitS) * 32;
       FX := 0
     end
     else if S < 0 then
@@ -940,10 +1249,10 @@ begin
       S := 0;
       FX := 0
     end;
-  if R.ClampT or (R.MaskT = 0) then
+  if FTileInfo[Tile].ClampT then
     if MaxT then
     begin
-      T := Int64((R.TH div 4 - R.TL div 4) and $3FF) * 32;
+      T := Int64(FTileInfo[Tile].LimitT) * 32;
       FY := 0
     end
     else if T < 0 then
@@ -953,7 +1262,18 @@ begin
     end;
   var X := Integer(ShiftRight(S, 5));
   var Y := Integer(ShiftRight(T, 5));
-  var Base := TextureTexel(Tile, X, Y);
+  // Wrap each neighbouring coordinate once, then address TMEM with TexelAt.
+  var LimitS := FTileInfo[Tile].LimitS;
+  var MaskS := FTileInfo[Tile].MaskS;
+  var WrapClampS := FTileInfo[Tile].ClampS;
+  var MirrorS := FTiles[Tile].MirrorS;
+  var LimitT := FTileInfo[Tile].LimitT;
+  var MaskT := FTileInfo[Tile].MaskT;
+  var WrapClampT := FTileInfo[Tile].ClampT;
+  var MirrorT := FTiles[Tile].MirrorT;
+  var S0 := WrapTexel(X, LimitS, MaskS, WrapClampS, MirrorS);
+  var T0 := WrapTexel(Y, LimitT, MaskT, WrapClampT, MirrorT);
+  var Base := TexelAt(Tile, S0, T0);
   if ((FOtherHi shr 20) and 3) = 2 then
     Exit(Base);
   var Bilerp := (FOtherHi and (Cardinal($800) shr Cycle)) <> 0;
@@ -961,15 +1281,18 @@ begin
   var Sample := (FOtherHi and $2000) <> 0;
   if Sample or ((FOtherHi and $8000) <> 0) then
   begin
-    var C1 := TextureTexel(Tile, X + 1, Y);
-    var C2 := TextureTexel(Tile, X, Y + 1);
-    var C3 := TextureTexel(Tile, X + 1, Y + 1);
+    var S1 := WrapTexel(X + 1, LimitS, MaskS, WrapClampS, MirrorS);
+    var T1 := WrapTexel(Y + 1, LimitT, MaskT, WrapClampT, MirrorT);
+    var C1 := TexelAt(Tile, S1, T0);
+    var C2 := TexelAt(Tile, S0, T1);
+    var C3 := TexelAt(Tile, S1, T1);
     var ChromaX := FX;
-    if R.Format = 1 then
+    if FTiles[Tile].Format = 1 then
     begin
       ChromaX := (FX shr 1) or ((X and 1) shl 4);
-      var Chroma1 := TextureTexel(Tile, X + 2, Y);
-      var Chroma3 := TextureTexel(Tile, X + 2, Y + 1);
+      var S2 := WrapTexel(X + 2, LimitS, MaskS, WrapClampS, MirrorS);
+      var Chroma1 := TexelAt(Tile, S2, T0);
+      var Chroma3 := TexelAt(Tile, S2, T1);
       C1.C[0] := Chroma1.C[0];
       C1.C[1] := Chroma1.C[1];
       C3.C[0] := Chroma3.C[0];
@@ -1016,9 +1339,9 @@ begin
       else
       begin
         if FractionX + FY >= 32 then
-          Result.C[I] := D + Integer(ShiftRight((C - D) * (32 - FractionX) + (B - D) * (32 - FY) + 16, 5))
+          Result.C[I] := D + TexelFloor32((C - D) * (32 - FractionX) + (B - D) * (32 - FY) + 16)
         else
-          Result.C[I] := A + Integer(ShiftRight((B - A) * FractionX + (C - A) * FY + 16, 5));
+          Result.C[I] := A + TexelFloor32((B - A) * FractionX + (C - A) * FY + 16);
         if ((FOtherHi and $1000) <> 0) and (FractionX = 16) and (FY = 16) then
           Result.C[I] := Integer(ShiftRight(A + B + C + D + 2, 2));
       end;
@@ -1039,137 +1362,102 @@ begin
     Result := Converted(Base);
 end;
 
-function TN64RDP.Combine(Texel: TN64Texel; Shade: Cardinal; Texel1, TexelNext: TN64Texel): Cardinal;
-var
-  CombinedRGB, Equation, Bypass: array[0..2] of Integer;
-  CombinedAlpha: Integer;
-
-  function Component(Color: Cardinal; Channel: Integer): Integer; inline;
-  begin
-    Result := (Color shr ((3 - Channel) * 8)) and $FF
-  end;
-
-  function Extended(Value: Integer): Integer; inline;
-  begin
-    Result := Value and $1FF;
-    if (Result and $180) = $180 then
-      Dec(Result, 512);
-  end;
-
-  function RGB(Index, Channel, Role: Integer): Integer;
-  begin
-    if Role = 2 then
-      case Index of
-        6:
-          Exit(FKeyScale[Channel]);
-        7:
-          Exit(CombinedAlpha);
-        8:
-          Exit(Texel.C[3]);
-        9:
-          Exit(Texel1.C[3]);
-        10:
-          Exit(Integer(FPrimitive and $FF));
-        11:
-          Exit(Integer(Shade and $FF));
-        12:
-          Exit(Integer(FEnvironment and $FF));
-        13:
-          Exit(FLODFraction);
-        14:
-          Exit(Integer(FPrimitiveLOD));
-        15:
-          Exit(FConvert[5]);
-        16..31:
-          Exit(0);
-      end;
-    case Index of
-      0:
-        Result := CombinedRGB[Channel];
-      1:
-        Result := Texel.C[Channel];
-      2:
-        Result := Texel1.C[Channel];
-      3:
-        Result := Component(FPrimitive, Channel);
-      4:
-        Result := Component(Shade, Channel);
-      5:
-        Result := Component(FEnvironment, Channel);
-      6:
-        if Role = 1 then
-          Result := FKeyCenter[Channel]
-        else
-          Result := 256;
-      7:
-        case Role of
-          0:
-            Result := Integer(FNoise);
-          1:
-            Result := FConvert[4]        else
-          Result := 0
-        end;
-    else
-      Result := 0
-    end;
-  end;
-
-  function Alpha(Index: Integer; Multiplier: Boolean): Integer;
-  begin
-    if Multiplier then
-      case Index of
-        0:
-          Exit(FLODFraction);
-        6:
-          Exit(Integer(FPrimitiveLOD));
-        7:
-          Exit(0)
-      end;
-    case Index of
-      0:
-        Result := CombinedAlpha;
-      1:
-        Result := Texel.C[3];
-      2:
-        Result := Texel1.C[3];
-      3:
-        Result := FPrimitive and $FF;
-      4:
-        Result := Shade and $FF;
-      5:
-        Result := FEnvironment and $FF;
-      6:
-        Result := 256;
-    else
-      Result := 0
-    end;
-  end;
-
+function Extend9(Value: Integer): Integer; inline;
 begin
-  FShadeAlpha := Min(255, Integer(Shade and $FF) + FAlphaDither);
-  // Power-on combiner inputs select the one source on every mux leg.
-  if not FHasCombine then
-    Exit($FFFFFFFF);
-  CombinedAlpha := 0;
-  for var I := 0 to 2 do
-    CombinedRGB[I] := 0;
-  var FirstCycle := 1;
-  if ((FOtherHi shr 20) and 3) = 1 then
-    FirstCycle := 0;
-  for var Cycle := FirstCycle to 1 do
+  // Combiner inputs: nine bits, with 0x180..0x1FF read as negative.
+  Result := Value and $1FF;
+  if (Result and $180) = $180 then
+    Dec(Result, 512);
+end;
+
+function Sign9(Value: Integer): Integer; inline;
+begin
+  Result := ((Value and $1FF) xor $100) - $100;
+end;
+
+const
+  // Combiner input slots (TN64CombineInputs.Slots). The constant ones are
+  // set by DecodeMode, the others for each pixel: the combined colour and
+  // alpha of the first cycle, the texels, the shade (lane 0 of the noise and
+  // LOD slots).
+  InCombined = 0;
+  InTexel = 1;
+  InTexel1 = 2;
+  InPrimitive = 3;
+  InShade = 4;
+  InEnvironment = 5;
+  InOne = 6;
+  InNoise = 7;
+  InKeyCenter = 8;
+  InKeyScale = 9;
+  InConvert = 10; // K4, K5
+  InLOD = 11;
+  InPrimitiveLOD = 12;
+  InZero = 13;
+  InTexelNext = 14;
+procedure TN64RDP.DecodeMode(Textured: Boolean);
+const
+  Magic: array[0..15] of Byte = (0, 6, 1, 7, 4, 2, 5, 3, 3, 5, 2, 4, 7, 1, 6, 0);
+  Bayer: array[0..15] of Byte = (0, 4, 1, 5, 4, 0, 5, 1, 3, 7, 2, 6, 7, 3, 6, 2);
+var
+  Sources: array[0..5] of Integer;
+begin
+  FModeDirty := False;
+  FMode.Textured := Textured;
+  var Cycle := (FOtherHi shr 20) and 3;
+  FMode.FirstCycle := 1;
+  if Cycle = 1 then
+    FMode.FirstCycle := 0;
+  // The constant combiner inputs.
+  for var I := 0 to 3 do
   begin
-    if (Cycle = 1) and (FirstCycle = 0) then
+    FIn.Slots[InPrimitive].C[I] := Integer((FPrimitive shr (24 - I * 8)) and $FF);
+    FIn.Slots[InEnvironment].C[I] := Integer((FEnvironment shr (24 - I * 8)) and $FF);
+    FIn.Slots[InOne].C[I] := 256;
+    FIn.Slots[InZero].C[I] := 0;
+  end;
+  for var I := 0 to 2 do
+  begin
+    FIn.Slots[InKeyCenter].C[I] := FKeyCenter[I];
+    FIn.Slots[InKeyScale].C[I] := FKeyScale[I];
+  end;
+  FIn.Slots[InConvert].C[0] := FConvert[4];
+  FIn.Slots[InConvert].C[1] := FConvert[5];
+  FIn.Slots[InPrimitiveLOD].C[0] := Integer(FPrimitiveLOD);
+  for var C := 0 to 1 do
+  begin
+    // TEXEL0 and TEXEL1 of this cycle. The second of two cycles sees TEXEL1
+    // as TEXEL0 and the next pixel's texel as TEXEL1; one cycle sees the
+    // next pixel's texel as TEXEL1. Without texture they are the shade.
+    var Texel0 := InTexel;
+    var Texel1 := InTexelNext;
+    if Cycle = 1 then
+      if C = 0 then
+        Texel1 := InTexel1
+      else
+        Texel0 := InTexel1;
+    if not Textured then
     begin
-      Texel := Texel1;
-      Texel1 := TexelNext
+      Texel0 := InShade;
+      Texel1 := InShade;
     end;
-    var A, B, C, D, AA, AB, AC, AD: Integer;
-    if Cycle = 0 then
+    // The first cycle run combines with zero.
+    var Combined := InCombined;
+    if C = FMode.FirstCycle then
+      Combined := InZero;
+    Sources[0] := Combined;
+    Sources[1] := Texel0;
+    Sources[2] := Texel1;
+    Sources[3] := InPrimitive;
+    Sources[4] := InShade;
+    Sources[5] := InEnvironment;
+    var A, B, M, D, AA, AB, AM, AD: Integer;
+    if C = 0 then
     begin
       A := (FCombineHi shr 20) and 15;
-      C := (FCombineHi shr 15) and 31;
+      M := (FCombineHi shr 15) and 31;
       AA := (FCombineHi shr 12) and 7;
-      AC := (FCombineHi shr 9) and 7;
+      AM := (FCombineHi shr 9) and 7;
       B := (FCombineLo shr 28) and 15;
       D := (FCombineLo shr 15) and 7;
       AB := (FCombineLo shr 12) and 7;
@@ -1178,41 +1466,202 @@ begin
     else
     begin
       A := (FCombineHi shr 5) and 15;
-      C := FCombineHi and 31;
+      M := FCombineHi and 31;
       AA := (FCombineLo shr 21) and 7;
-      AC := (FCombineLo shr 18) and 7;
+      AM := (FCombineLo shr 18) and 7;
       B := (FCombineLo shr 24) and 15;
       D := (FCombineLo shr 6) and 7;
       AB := (FCombineLo shr 3) and 7;
       AD := FCombineLo and 7;
     end;
-    for var Channel := 0 to 2 do
+    // RGB legs: A (sub+), B (sub-), C (multiplier), D (adder).
+    for var Lane := 0 to 2 do
     begin
-      Bypass[Channel] := RGB(A, Channel, 0);
-      var Multiplier := Integer(SignedValue(SX(Cardinal(RGB(C, Channel, 2) and $1FF), 9)));
-      Equation[Channel] := ((Extended(Bypass[Channel]) - Extended(RGB(B, Channel, 1))) * Multiplier +
-        Extended(RGB(D, Channel, 3)) * 256 + 128) and $1FFFF;
+      var Leg: Integer;
+      case A of
+        0..5:
+          Leg := Sources[A] * 4 + Lane;
+        6:
+          Leg := InOne * 4 + Lane;
+        7:
+          Leg := InNoise * 4;
+      else
+        Leg := InZero * 4;
+      end;
+      FMode.LegA[C, Lane] := Byte(Leg);
+      case B of
+        0..5:
+          Leg := Sources[B] * 4 + Lane;
+        6:
+          Leg := InKeyCenter * 4 + Lane;
+        7:
+          Leg := InConvert * 4;
+      else
+        Leg := InZero * 4;
+      end;
+      FMode.LegB[C, Lane] := Byte(Leg);
+      case M of
+        0..5:
+          Leg := Sources[M] * 4 + Lane;
+        6:
+          Leg := InKeyScale * 4 + Lane;
+        7:
+          Leg := Combined * 4 + 3;
+        8:
+          Leg := Texel0 * 4 + 3;
+        9:
+          Leg := Texel1 * 4 + 3;
+        10:
+          Leg := InPrimitive * 4 + 3;
+        11:
+          Leg := InShade * 4 + 3;
+        12:
+          Leg := InEnvironment * 4 + 3;
+        13:
+          Leg := InLOD * 4;
+        14:
+          Leg := InPrimitiveLOD * 4;
+        15:
+          Leg := InConvert * 4 + 1;
+      else
+        Leg := InZero * 4;
+      end;
+      FMode.LegC[C, Lane] := Byte(Leg);
+      case D of
+        0..5:
+          Leg := Sources[D] * 4 + Lane;
+        6:
+          Leg := InOne * 4 + Lane;
+      else
+        Leg := InZero * 4;
+      end;
+      FMode.LegD[C, Lane] := Byte(Leg);
     end;
-    var Multiplier := Integer(SignedValue(SX(Cardinal(Alpha(AC, True) and $1FF), 9)));
-    var NewAlpha := Integer(ShiftRight((Extended(Alpha(AA, False)) - Extended(Alpha(AB, False))) * Multiplier +
-        Extended(Alpha(AD, False)) * 256 + 128, 8)) and $1FF;
-    for var Channel := 0 to 2 do
-      CombinedRGB[Channel] := Equation[Channel] shr 8;
-    CombinedAlpha := NewAlpha;
+    // Alpha legs: sources 0..5 are their alpha lanes, 6 is 256 and 7 zero;
+    // the multiplier reads the LOD fraction for 0 and the primitive LOD
+    // for 6.
+    var AlphaLegs: array[0..3] of Integer;
+    AlphaLegs[0] := AA;
+    AlphaLegs[1] := AB;
+    AlphaLegs[2] := AM;
+    AlphaLegs[3] := AD;
+    for var K := 0 to 3 do
+    begin
+      var Leg: Integer;
+      case AlphaLegs[K] of
+        0..5:
+          Leg := Sources[AlphaLegs[K]] * 4 + 3;
+        6:
+          Leg := InOne * 4 + 3;
+      else
+        Leg := InZero * 4;
+      end;
+      if K = 2 then
+        case AM of
+          0:
+            Leg := InLOD * 4;
+          6:
+            Leg := InPrimitiveLOD * 4;
+        end;
+      case K of
+        0:
+          FMode.LegA[C, 3] := Byte(Leg);
+        1:
+          FMode.LegB[C, 3] := Byte(Leg);
+        2:
+          FMode.LegC[C, 3] := Byte(Leg);
+      else
+        FMode.LegD[C, 3] := Byte(Leg);
+      end;
+    end;
+    // Blender mux selections.
+    FMode.M1A[C] := Integer((FOtherLo shr (30 - C * 2)) and 3);
+    FMode.M1B[C] := Integer((FOtherLo shr (26 - C * 2)) and 3);
+    FMode.M2A[C] := Integer((FOtherLo shr (22 - C * 2)) and 3);
+    FMode.M2B[C] := Integer((FOtherLo shr (18 - C * 2)) and 3);
   end;
-  Result := 0;
-  for var Channel := 0 to 2 do
-    if (FOtherHi and $100) <> 0 then
-      Result := (Result shl 8) or Cardinal(Clamp9(Bypass[Channel]))
+  // Dither: the noise for the combiner and the alpha dither, then a seed
+  // step for the RGB dither, per pixel.
+  var AlphaMode := (FOtherHi shr 4) and 3;
+  var RGBMode := (FOtherHi shr 6) and 3;
+  FMode.NeedsNoise := (((FCombineHi shr 5) and 15) = 7) or (AlphaMode = 2);
+  if Cycle = 1 then
+    FMode.NeedsNoise := FMode.NeedsNoise or (((FCombineHi shr 20) and 15) = 7);
+  FMode.RGBNoise := RGBMode = 2;
+  FMode.AlphaNoise := AlphaMode = 2;
+  for var Index := 0 to 15 do
+  begin
+    var Matrix := Magic[Index];
+    if RGBMode in [1, 3] then
+      Matrix := Bayer[Index];
+    case AlphaMode of
+      0:
+        FMode.AlphaDither[Index] := Matrix;
+      1:
+        FMode.AlphaDither[Index] := Matrix xor 7;
     else
-      Result := (Result shl 8) or Cardinal(Clamp9(CombinedRGB[Channel]));
+      FMode.AlphaDither[Index] := 0;
+    end;
+  end;
+end;
+
+procedure TN64RDP.Equations(Cycle: Integer; out E0, E1, E2, E3: Integer);
+begin
+  // (A - B) * C + D for the four lanes of one cycle, 17 bits each; bits
+  // 8..16 are the result.
+  E0 := ((Extend9(FIn.Flat[FMode.LegA[Cycle, 0]]) - Extend9(FIn.Flat[FMode.LegB[Cycle, 0]])) *
+    Sign9(FIn.Flat[FMode.LegC[Cycle, 0]]) + Extend9(FIn.Flat[FMode.LegD[Cycle, 0]]) * 256 + 128) and $1FFFF;
+  E1 := ((Extend9(FIn.Flat[FMode.LegA[Cycle, 1]]) - Extend9(FIn.Flat[FMode.LegB[Cycle, 1]])) *
+    Sign9(FIn.Flat[FMode.LegC[Cycle, 1]]) + Extend9(FIn.Flat[FMode.LegD[Cycle, 1]]) * 256 + 128) and $1FFFF;
+  E2 := ((Extend9(FIn.Flat[FMode.LegA[Cycle, 2]]) - Extend9(FIn.Flat[FMode.LegB[Cycle, 2]])) *
+    Sign9(FIn.Flat[FMode.LegC[Cycle, 2]]) + Extend9(FIn.Flat[FMode.LegD[Cycle, 2]]) * 256 + 128) and $1FFFF;
+  E3 := ((Extend9(FIn.Flat[FMode.LegA[Cycle, 3]]) - Extend9(FIn.Flat[FMode.LegB[Cycle, 3]])) *
+    Sign9(FIn.Flat[FMode.LegC[Cycle, 3]]) + Extend9(FIn.Flat[FMode.LegD[Cycle, 3]]) * 256 + 128) and $1FFFF;
+end;
+
+function TN64RDP.Combine(Shade: Cardinal): Cardinal;
+begin
+  // The pixel's texels, shade, noise and LOD fraction are in FIn.
+  FShadeAlpha := Min(255, Integer(Shade and $FF) + FAlphaDither);
+  // Power-on combiner inputs select the one source on every mux leg.
+  if not FHasCombine then
+    Exit($FFFFFFFF);
+  if FMode.FirstCycle = 0 then
+  begin
+    // The first of two cycles: its results are the second's combined inputs.
+    var E0, E1, E2, E3: Integer;
+    Equations(0, E0, E1, E2, E3);
+    FIn.Flat[InCombined * 4] := E0 shr 8;
+    FIn.Flat[InCombined * 4 + 1] := E1 shr 8;
+    FIn.Flat[InCombined * 4 + 2] := E2 shr 8;
+    FIn.Flat[InCombined * 4 + 3] := E3 shr 8;
+  end;
+  var Equation0, Equation1, Equation2, Equation3: Integer;
+  Equations(1, Equation0, Equation1, Equation2, Equation3);
+  var CombinedAlpha := Equation3 shr 8;
+  if (FOtherHi and $100) <> 0 then
+    // The A legs themselves.
+    Result := (Cardinal(Clamp9(FIn.Flat[FMode.LegA[1, 0]])) shl 16) or
+      (Cardinal(Clamp9(FIn.Flat[FMode.LegA[1, 1]])) shl 8) or Cardinal(Clamp9(FIn.Flat[FMode.LegA[1, 2]]))
+  else
+    Result := (Cardinal(Clamp9(Equation0 shr 8)) shl 16) or (Cardinal(Clamp9(Equation1 shr 8)) shl 8) or
+      Cardinal(Clamp9(Equation2 shr 8));
   var FinalAlpha := Clamp9(CombinedAlpha);
   if ((FOtherHi and $100) <> 0) and ((FOtherLo and $2000) = 0) then
   begin
     FinalAlpha := 255;
     for var Channel := 0 to 2 do
     begin
-      var Key := Integer(SignedValue(SX(Cardinal(Equation[Channel]), 17)));
+      var Key: Integer;
+      case Channel of
+        0:
+          Key := Equation0;
+        1:
+          Key := Equation1;
+      else
+        Key := Equation2;
+      end;
+      Key := (Key xor $10000) - $10000;
       if Key > 0 then
         if (Key and 15) = 8 then
           Key := -Key + 16
@@ -1242,33 +1691,61 @@ begin
   end;
   var Bytes := ((Width * Bits + 7) div 8 + 7) and not 7;
   Inc(FWorkClocks, Cardinal(((Int64(Bytes) * Min(Height, 1024)) + 7) div 8));
-  for var Y := 0 to Min(Height, 1024) - 1 do
-    for var X := 0 to Min(Bytes, 16384) - 1 do
+  var SourceS := SL div 4;
+  var SourceT := TL div 4;
+  if Block then
+  begin
+    SourceS := SL;
+    SourceT := TL
+  end;
+  // TMEM layout: linear, RGBA32 split into low/high halves, or YUV16 split.
+  var Layout := 0;
+  if (R.Format = 0) and (R.Size = 3) then
+    Layout := 1
+  else if (R.Format = 1) and (FTextureSize = 2) then
+    Layout := 2;
+  var Count := Min(Bytes, 16384);
+  var Rows := Min(Height, 1024);
+  for var Y := 0 to Rows - 1 do
+  begin
+    // All terms are non-negative and far below 2^31. Bytes from $800000 on
+    // are not loaded; the rest of the row is a prefix of Valid bytes.
+    var RowSource := UInt64(FTextureAddress) + Cardinal(((SourceT + Y) * FTextureWidth + SourceS) * Bits div 8);
+    var Valid := 0;
+    if RowSource < $800000 then
+      Valid := Integer(Min(UInt64(Count), $800000 - RowSource));
+    var Base := R.TMEM * 8 + Y * R.Line * 8;
+    var Direct := RowSource + Cardinal(Valid) <= FBus.RAMSize;
+    // Odd rows swap 32-bit words; LoadBlock derives the row from dxt.
+    var RowSwap := 0;
+    if not Block and Odd(Y) then
+      RowSwap := 4;
+    for var X := 0 to Valid - 1 do
     begin
-      var SourceS := SL div 4;
-      var SourceT := TL div 4;
+      var Target: Integer;
+      case Layout of
+        0:
+          Target := (Base + X) and $FFF;
+        1:
+          Target := ((Base + X div 4 * 2 + X mod 2) and $7FF) or ((X div 2 and 1) * $800);
+      else
+        Target := ((Base + X div 2) and $7FF) or ((X and 1) * $800);
+      end;
       if Block then
       begin
-        SourceS := SL;
-        SourceT := TL
-      end;
-      var Source := UInt64(FTextureAddress) + Cardinal(((SourceT + Y) * FTextureWidth + SourceS) * Bits div 8 + X);
-      var Row := Y;
-      if Block then
-        Row := (X div 8 * TH) div 2048;
-      var Target := (R.TMEM * 8 + Y * R.Line * 8 + X) and $FFF;
-      if (R.Format = 0) and (R.Size = 3) then
-        Target := ((R.TMEM * 8 + Y * R.Line * 8 + X div 4 * 2 + X mod 2) and $7FF) or ((X div 2 and 1) * $800);
-      if (R.Format = 1) and (FTextureSize = 2) then
-        Target := ((R.TMEM * 8 + Y * R.Line * 8 + X div 2) and $7FF) or ((X and 1) * $800);
-      if Odd(Row) then
-        Target := Target xor 4;
-      if Source < $800000 then
-        FTMEM[Target] := FBus.Read8(Cardinal(Source));
+        if Odd((X div 8 * TH) div 2048) then
+          Target := Target xor 4;
+      end
+      else
+        Target := Target xor RowSwap;
+      if Direct then
+        FTMEM[Target] := FBus.RDPRead8(Cardinal(RowSource) + Cardinal(X))
+      else
+        FTMEM[Target] := MemRead8(Cardinal(RowSource + Cardinal(X)));
     end;
+  end;
 end;
 
-procedure TN64RDP.Triangle(Code: Cardinal);
 const
   XOffset: array[0..15] of Byte = (0, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
   YOffset: array[0..15] of Byte = (0, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0);
@@ -1282,281 +1759,372 @@ const
     $F5D, $F62, $F64, $F69, $F6C, $F70, $F73, $F76, $F79, $F7C, $F7F, $F82, $F84, $F87, $F8A, $F8C,
     $F8E, $F91, $F93, $F95, $F97, $F99, $F9B, $F9D, $F9F, $FA1, $FA3, $FA4, $FA6, $FA8, $FA9, $FAA,
     $FAC, $FAE, $FAF, $FB0, $FB2, $FB3, $FB5, $FB5, $FB7, $FB8, $FB9, $FBA, $FBC, $FBC, $FBE, $FBE);
-var
-  // Raw 16.16 attributes: base, dx, de, dy. Every guest add wraps at 32 bits.
-  Coeff: array[0..3, 0..7] of Int64;
-  SpanAttribute: array[0..7] of Int64;
-  Major, Minor: array[0..3] of Integer;
-  Invalid: array[0..3] of Boolean;
-  XH, XM, XL, DH, DM, DL: Int64;
-  YH, YM, YL, BaseY, Cycle, Tile, MaxLevel, UnscrX: Integer;
-  Flip, OffsetAttributes: Boolean;
 
-  function Coefficient(Base, Group, Channel: Integer): Int64;
-  begin
-    var Index := Channel div 2;
-    var Shift := 16 * (1 - (Channel and 1));
-    var Hi := (FCommand[Base + Group + Index] shr Shift) and $FFFF;
-    var Lo := (FCommand[Base + Group + Index + 4] shr Shift) and $FFFF;
-    Result := SignedValue(SX((Hi shl 16) or Lo, 32));
-  end;
+function TN64RDP.Coefficient(Base, Group, Channel: Integer): Int64;
+begin
+  var Index := Channel div 2;
+  var Shift := 16 * (1 - (Channel and 1));
+  var Hi := (FCommand[Base + Group + Index] shr Shift) and $FFFF;
+  var Lo := (FCommand[Base + Group + Index + 4] shr Shift) and $FFFF;
+  Result := SignedValue(SX((Hi shl 16) or Lo, 32));
+end;
 
-  function EdgeQuantise(Value: Int64): Integer;
-  begin
-    // Sticky bit retains all discarded fractional bits in the eighth-pixel edge.
-    var Raw := Cardinal(Value and $FFFFFFFF);
-    var Sticky := Ord(((Raw shr 1) and $1FFF) <> 0);
-    Result := Integer((Raw shr 13) and $1FFE) or Sticky;
-    if ((Raw and $08000000) <> 0) or ((Result < FScissorQuarterX0 * 2) and ((Raw and $04000000) = 0)) then
-      Exit(FScissorQuarterX0 * 2);
-    Result := Integer((Raw shr 13) and $3FFE) or Sticky;
-    if ((Result and $2000) <> 0) or ((Result and $1FFF) >= FScissorQuarterX1 * 2) then
-      Result := FScissorQuarterX1 * 2;
-    Result := Result and $1FFF;
-  end;
+function TN64RDP.EdgeQuantise(Value: Int64): Integer;
+begin
+  // Sticky bit retains all discarded fractional bits in the eighth-pixel edge.
+  var Raw := Cardinal(Value and $FFFFFFFF);
+  var Sticky := Ord(((Raw shr 1) and $1FFF) <> 0);
+  Result := Integer((Raw shr 13) and $1FFE) or Sticky;
+  if ((Raw and $08000000) <> 0) or ((Result < FScissorQuarterX0 * 2) and ((Raw and $04000000) = 0)) then
+    Exit(FScissorQuarterX0 * 2);
+  Result := Integer((Raw shr 13) and $3FFE) or Sticky;
+  if ((Result and $2000) <> 0) or ((Result and $1FFF) >= FScissorQuarterX1 * 2) then
+    Result := FScissorQuarterX1 * 2;
+  Result := Result and $1FFF;
+end;
 
-  function TextureDivide(Coordinate, W: Int64): Integer;
+function TN64RDP.TextureDivide(Coordinate, W: Int64): Integer;
+begin
+  var SS := SignedValue(SX(UInt64(ShiftRight(Coordinate, 16) and $FFFF), 16));
+  if (FOtherHi and $80000) = 0 then
+    Exit(Integer(SS));
+  var SW := Integer(ShiftRight(W, 16) and $FFFF);
+  if SW = 0 then
+    Exit(32767);
+  var BadW := (SW and $8000) <> 0;
+  SW := SW and $7FFF;
+  // Normalising shift: 14 minus the index of the top set bit (14 for zero).
+  var Shift := 14;
+  if SW <> 0 then
   begin
-    var SS := SignedValue(SX(UInt64(ShiftRight(Coordinate, 16) and $FFFF), 16));
-    if (FOtherHi and $80000) = 0 then
-      Exit(Integer(SS));
-    var SW := Integer(ShiftRight(W, 16) and $FFFF);
-    if SW = 0 then
-      Exit(32767);
-    var BadW := (SW and $8000) <> 0;
-    SW := SW and $7FFF;
-    var K := 1;
-    while (K <= 14) and (((SW shl K) and $8000) = 0) do
-      Inc(K);
-    var Shift := K - 1;
-    var Normal := (SW shl Shift) and $3FFF;
-    var Slope := (ReciprocalSlope[Normal shr 8] and $3FF) - 1023;
-    var Reciprocal := Integer(ShiftRight(Int64(Slope) * ((Normal and $FF) shl 2), 10)) + ReciprocalPoint[Normal shr 8];
-    Reciprocal := Reciprocal and $7FFF;
-    var Product := SS * Reciprocal;
-    var V := Product * 2;
-    if Shift <> 14 then
-      V := ShiftRight(Product, 13 - Shift);
-    if BadW then
-      V := 32767;
-    Result := Integer(EnsureRange(V, Int64(-32768), Int64(32767)));
-  end;
-
-  procedure RasterRow(Y: Integer);
-  begin
-    if FPipelineCrashed then
-      Exit;
-    var Left := 1024;
-    var Right := 0;
-    for var Q := 0 to 3 do
-      if not Invalid[Q] then
-      begin
-        Left := Min(Left, Min(Major[Q], Minor[Q]) div 8);
-        Right := Max(Right, Max(Major[Q], Minor[Q]) div 8);
-      end;
-    if (Y < 0) or (Y >= 1024) or (Left > Right) or (Left >= 1024) or (Right < 0) then
-      Exit;
-    if FScissorField and (Odd(Y) <> FScissorOdd) then
-      Exit;
-    Left := Max(Left, 0);
-    Right := Min(Right, 1023);
-    var StartX := Right;
-    var EndX := Left;
-    var Step := -1;
-    if Flip then
+    var Top := 0;
+    var Bits := SW;
+    if Bits >= $100 then
     begin
-      StartX := Left;
-      EndX := Right;
-      Step := 1
+      Bits := Bits shr 8;
+      Inc(Top, 8)
     end;
-    var X := StartX;
-    FDelayedHidden := -1;
-    while True do
+    if Bits >= $10 then
     begin
-      var Mask := 0;
+      Bits := Bits shr 4;
+      Inc(Top, 4)
+    end;
+    if Bits >= 4 then
+    begin
+      Bits := Bits shr 2;
+      Inc(Top, 2)
+    end;
+    if Bits >= 2 then
+      Inc(Top);
+    Shift := 14 - Top;
+  end;
+  var Normal := (SW shl Shift) and $3FFF;
+  var Slope := (ReciprocalSlope[Normal shr 8] and $3FF) - 1023;
+  var Reciprocal := Integer(ShiftRight(Int64(Slope) * ((Normal and $FF) shl 2), 10)) + ReciprocalPoint[Normal shr 8];
+  Reciprocal := Reciprocal and $7FFF;
+  var Product := SS * Reciprocal;
+  var V := Product * 2;
+  if Shift <> 14 then
+    V := ShiftRight(Product, 13 - Shift);
+  if BadW then
+    V := 32767;
+  Result := Integer(EnsureRange(V, Int64(-32768), Int64(32767)));
+end;
+
+procedure TN64RDP.RowAddresses(Y: Integer);
+begin
+  // The pixels of row Y (0..1023, of the drawn field) that the scissor, the
+  // 1024 x 1024 raster and the end of RDRAM leave: X = FRowFirst..FRowLast.
+  // Everything that decides whether a pixel costs work clocks is here.
+  FRowBPP := ColorBytes;
+  FRowFirst := 1;
+  FRowLast := 0;
+  FRowBase := 0;
+  var Room := Int64($800000) - FRowBPP - Int64(FColorAddress);
+  if (Y < FScissorY0) or (Y >= FScissorY1) or (Room < 0) then
+    Exit;
+  FRowFirst := Max(FScissorX0, 0);
+  FRowLast := Integer(Min(Int64(Min(FScissorX1 - 1, 1023)), Room div FRowBPP - Int64(Y) * FColorWidth));
+  FRowBase := Cardinal(UInt64(FColorAddress) + Cardinal(Y * FColorWidth * FRowBPP));
+end;
+
+procedure TN64RDP.RasterRow(Y: Integer);
+begin
+  if FPipelineCrashed then
+    Exit;
+  var Left := 1024;
+  var Right := 0;
+  for var Q := 0 to 3 do
+    if not FPrim.Invalid[Q] then
+    begin
+      Left := Min(Left, Min(FPrim.Major[Q], FPrim.Minor[Q]) div 8);
+      Right := Max(Right, Max(FPrim.Major[Q], FPrim.Minor[Q]) div 8);
+    end;
+  if (Y < 0) or (Y >= 1024) or (Left > Right) or (Left >= 1024) or (Right < 0) then
+    Exit;
+  if FScissorField and (Odd(Y) <> FScissorOdd) then
+    Exit;
+  Left := Max(Left, 0);
+  Right := Min(Right, 1023);
+  var StartX := Right;
+  var EndX := Left;
+  var Step := -1;
+  if FPrim.Flip then
+  begin
+    StartX := Left;
+    EndX := Right;
+    Step := 1
+  end;
+  var X := StartX;
+  FDelayedHidden := -1;
+  // Per-quarter span edges are constant along the row.
+  var EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array[0..3] of Integer;
+  for var Q := 0 to 3 do
+    if not FPrim.Invalid[Q] then
+    begin
+      var Lo := FPrim.Minor[Q];
+      var Hi := FPrim.Major[Q];
+      if FPrim.Flip then
+      begin
+        Lo := FPrim.Major[Q];
+        Hi := FPrim.Minor[Q]
+      end;
+      EdgeLo[Q] := Lo div 8;
+      EdgeHi[Q] := Hi div 8;
+      LoMask[Q] := $F shr (((Lo and 7) + 1) shr 1);
+      HiMask[Q] := $F0 shr (((Hi and 7) + 1) shr 1);
+      QuarterMask[Q] := $A shr (Q and 1);
+    end;
+  RowAddresses(Y);
+  // Strictly inside the span of every quarter line that has one, the mask
+  // is the same.
+  var InnerLo := -1;
+  var InnerHi := 1024;
+  var InnerMask := 0;
+  for var Q := 0 to 3 do
+    if not FPrim.Invalid[Q] and (EdgeLo[Q] <= EdgeHi[Q]) then
+    begin
+      InnerLo := Max(InnerLo, EdgeLo[Q]);
+      InnerHi := Min(InnerHi, EdgeHi[Q]);
+      InnerMask := InnerMask or (QuarterMask[Q] shl ((Q - 2) and 4));
+    end;
+  while True do
+  begin
+    var Mask := InnerMask;
+    if (X <= InnerLo) or (X >= InnerHi) then
+    begin
+      Mask := 0;
       for var Q := 0 to 3 do
-        if not Invalid[Q] then
+        if not FPrim.Invalid[Q] and (X >= EdgeLo[Q]) and (X <= EdgeHi[Q]) then
         begin
-          var Lo := Minor[Q];
-          var Hi := Major[Q];
-          if Flip then
-          begin
-            Lo := Major[Q];
-            Hi := Minor[Q]
-          end;
-          var FMask := $A shr (Q and 1);
-          var RowMask := FMask;
-          if X < Lo div 8 then
-            RowMask := 0
-          else if X = Lo div 8 then
-            RowMask := RowMask and ($F shr (((Lo and 7) + 1) shr 1));
-          if X > Hi div 8 then
-            RowMask := 0
-          else if X = Hi div 8 then
-            RowMask := RowMask and ($F0 shr (((Hi and 7) + 1) shr 1));
+          var RowMask := QuarterMask[Q];
+          if X = EdgeLo[Q] then
+            RowMask := RowMask and LoMask[Q];
+          if X = EdgeHi[Q] then
+            RowMask := RowMask and HiMask[Q];
           Mask := Mask or (RowMask shl ((Q - 2) and 4));
         end;
-      var Coverage := 0;
-      for var Bit := 0 to 7 do
-        Inc(Coverage, (Mask shr Bit) and 1);
-      if (Coverage <> 0) or (Cycle >= 2) then
-      begin
-        if Cycle >= 2 then
-          Coverage := 8;
-        var OffX := 0;
-        var OffY := 0;
-        if Coverage <> 8 then
-        begin
-          var Expanded := (Mask and 5) or ((Mask and $5A) shl 4) or ((Mask and $A0) shl 8);
-          var YMask := 0;
-          for var Q := 0 to 3 do
-            if (Expanded and ($F000 shr (Q * 4))) <> 0 then
-              YMask := YMask or (1 shl Q);
-          OffY := YOffset[YMask];
-          OffX := XOffset[(Expanded shr ((OffY xor 3) * 4)) and 15];
-        end;
-        var Attributes: array[0..7] of Int64;
-        for var I := 0 to 7 do
-          Attributes[I] := WrapSigned32(SpanAttribute[I] + Coeff[1, I] * (X - UnscrX));
-        var Shade: Cardinal := 0;
-        if (Code and 4) <> 0 then
-        begin
-          Shade := 0;
-          for var I := 0 to 3 do
-          begin
-            var V := ShiftRight(Attributes[I], 14);
-            if Coverage = 8 then
-              V := ShiftRight(V, 2)
-            else
-            begin
-              var DX := SignedValue(SX(UInt64(ShiftRight(Coeff[1, I], 14) and $1FFF), 13));
-              var DY := SignedValue(SX(UInt64(ShiftRight(Coeff[3, I], 14) and $1FFF), 13));
-              V := ShiftRight(V * 4 + OffX * DX + OffY * DY, 4);
-            end;
-            Shade := (Shade shl 8) or Cardinal(Clamp9(Integer(V and $1FF)));
-          end;
-        end;
-        var Texel := TexelFromRGBA(Shade);
-        var Texel1 := Texel;
-        var TexelNext := Texel;
-        FLODFraction := 0;
-        if (Code and 2) <> 0 then
-        begin
-          var S := TextureDivide(Attributes[4], Attributes[6]);
-          var T := TextureDivide(Attributes[5], Attributes[6]);
-          var NextS := TextureDivide(WrapSigned32(Attributes[4] + Coeff[1, 4] * Step), WrapSigned32(Attributes[6] + Coeff[1, 6] * Step));
-          var NextT := TextureDivide(WrapSigned32(Attributes[5] + Coeff[1, 5] * Step), WrapSigned32(Attributes[6] + Coeff[1, 6] * Step));
-          var Lod := Max(Abs(NextS - S), Abs(NextT - T));
-          var NextYS := TextureDivide(WrapSigned32(Attributes[4] + (Coeff[3, 4] and not Int64($7FFF))),
-            WrapSigned32(Attributes[6] + (Coeff[3, 6] and not Int64($7FFF))));
-          var NextYT := TextureDivide(WrapSigned32(Attributes[5] + (Coeff[3, 5] and not Int64($7FFF))),
-            WrapSigned32(Attributes[6] + (Coeff[3, 6] and not Int64($7FFF))));
-          Lod := Max(Lod, Max(Abs(NextYS - S), Abs(NextYT - T)));
-          var Level := 0;
-          var Magnify := Lod < 32;
-          Lod := Max(Lod, FMinLevel);
-          while (Level < 7) and (Lod >= (64 shl Level)) do
-            Inc(Level);
-          var Distant := (Level >= MaxLevel) or (Lod >= $4000);
-          if Lod < 32 then
-            FLODFraction := Lod * 8
-          else
-            FLODFraction := ((Lod shl 3) shr Level) and $FF;
-          if ((FOtherHi and $60000) = 0) then
-            if Distant then
-              FLODFraction := 255
-            else if Magnify then
-              FLODFraction := 0;
-          if ((FOtherHi and $40000) <> 0) and Magnify then
-            FLODFraction := FLODFraction or $100;
-          Level := Min(Level, MaxLevel);
-          // With LOD disabled, one-cycle lookahead keeps the primitive tile;
-          // two-cycle TEXEL1 reads the adjacent tile. LOD may replace either.
-          var Tile0 := Tile;
-          var Tile1 := Tile;
-          if Cycle = 1 then
-            Tile1 := (Tile + 1) and 7;
-          if (FOtherHi and $10000) <> 0 then
-          begin
-            Tile0 := (Tile + Level) and 7;
-            Tile1 := (Tile0 + 1) and 7;
-            if (FOtherHi and $20000) <> 0 then
-            begin
-              if not Magnify then
-                Tile0 := (Tile0 + 1) and 7;
-              if Distant then
-                Tile1 := Tile0
-              else
-                Tile1 := (Tile0 + 1) and 7;
-            end
-            else if Distant or (Magnify and ((FOtherHi and $40000) = 0)) then
-              Tile1 := Tile0;
-          end;
-          Texel := Texture(Tile0, S, T, 0, Default(TN64Texel));
-          Texel1 := Texture(Tile1, S, T, 1, Texel);
-          TexelNext := Texture(Tile0, NextS, NextT, 0, Default(TN64Texel));
-          if Cycle = 0 then
-            Texel1 := TexelNext;
-          if not FHasCombine then
-            Shade := TexelToRGBA(Texel);
-        end;
-        var Depth := -1;
-        var Delta: Cardinal := 1;
-        if (Code and 1) <> 0 then
-        begin
-          var Z := ShiftRight(Attributes[7], 10) and $3FFFFF;
-          if Coverage = 8 then
-            Z := ShiftRight(Z, 3)
-          else
-            Z := ShiftRight(Z * 4 + OffX * ShiftRight(Coeff[1, 7], 10) +
-              OffY * ShiftRight(Coeff[3, 7], 10), 5);
-          case (Z and $60000) shr 17 of
-            2:
-              Depth := $3FFFF;
-            3:
-              Depth := 0           else
-            Depth := Integer(Z and $3FFFF)
-          end;
-          var DX := Integer(ShiftRight(Coeff[1, 7], 16) and $FFFF);
-          var DY := Integer(ShiftRight(Coeff[3, 7], 16) and $FFFF);
-          if (DX and $8000) <> 0 then
-            DX := (DX xor $FFFF) and $7FFF;
-          if (DY and $8000) <> 0 then
-            DY := (DY xor $FFFF) and $7FFF;
-          Delta := Cardinal(DX + DY);
-          if (Delta and $C000) <> 0 then
-            Delta := $8000
-          else if Delta = 0 then
-            Delta := 1
-          else if Delta = 1 then
-            Delta := 3
-          else
-          begin
-            var Bit := Cardinal($2000);
-            while (Bit > 0) and ((Delta and Bit) = 0) do
-              Bit := Bit shr 1;
-            Delta := Bit shl 1;
-          end;
-        end;
-        var RGBDither, AlphaDither: Integer;
-        Dither(X, Y, RGBDither, AlphaDither);
-        if Cycle = 3 then
-          Pixel(X, Y, FFill, True)
-        else if Cycle = 2 then
-          Pixel(X, Y, TexelToRGBA(Texel), False, -1, 1, 8, True)
-        else
-          Pixel(X, Y, Combine(Texel, Shade, Texel1, TexelNext), False, Depth, Delta, Coverage, (Mask and $80) <> 0);
-      end;
-      if X = EndX then
-        Break;
-      Inc(X, Step);
     end;
-    CompleteDelayedHidden;
-    if (Cycle = 3) and ((FOtherLo and $20) <> 0) and ((FOtherLo and 4) = 0) then
-      FPipelineCrashed := True;
+    var Coverage := Integer(PopCount8[Mask and $FF]);
+    if (Coverage <> 0) or (FPrim.Cycle >= 2) then
+      RasterPixel(X, Y, Mask, Coverage, Step);
+    if X = EndX then
+      Break;
+    Inc(X, Step);
   end;
+  CompleteDelayedHidden;
+  if (FPrim.Cycle = 3) and ((FOtherLo and $20) <> 0) and ((FOtherLo and 4) = 0) then
+    FPipelineCrashed := True;
+end;
 
+procedure TN64RDP.RasterPixel(X, Y, Mask, Coverage, Step: Integer);
+const
+  NoTexel: TN64Texel = (C: (0, 0, 0, 0));
 begin
+  // FLODFraction and FAlphaDither (Dither) are set for every pixel.
+  if FPrim.Cycle >= 2 then
+    Coverage := 8;
+  var OffX := 0;
+  var OffY := 0;
+  if Coverage <> 8 then
+  begin
+    var Expanded := (Mask and 5) or ((Mask and $5A) shl 4) or ((Mask and $A0) shl 8);
+    var YMask := 0;
+    for var Q := 0 to 3 do
+      if (Expanded and ($F000 shr (Q * 4))) <> 0 then
+        YMask := YMask or (1 shl Q);
+    OffY := YOffset[YMask];
+    OffX := XOffset[(Expanded shr ((OffY xor 3) * 4)) and 15];
+  end;
+  // Only the attribute groups present in this primitive are ever read.
+  var Attributes: array[0..7] of Int64;
+  var SpanX := X - FPrim.UnscrX;
+  if (FPrim.Code and 4) <> 0 then
+    for var I := 0 to 3 do
+      Attributes[I] := WrapSigned32(FPrim.SpanAttribute[I] + FPrim.Coeff[1, I] * SpanX);
+  if (FPrim.Code and 2) <> 0 then
+    for var I := 4 to 6 do
+      Attributes[I] := WrapSigned32(FPrim.SpanAttribute[I] + FPrim.Coeff[1, I] * SpanX);
+  if (FPrim.Code and 1) <> 0 then
+    Attributes[7] := WrapSigned32(FPrim.SpanAttribute[7] + FPrim.Coeff[1, 7] * SpanX);
+  var Shade: Cardinal := 0;
+  if (FPrim.Code and 4) <> 0 then
+  begin
+    Shade := 0;
+    for var I := 0 to 3 do
+    begin
+      var V := ShiftRight(Attributes[I], 14);
+      if Coverage = 8 then
+        V := ShiftRight(V, 2)
+      else
+        V := ShiftRight(V * 4 + OffX * FPrim.ShadeDX[I] + OffY * FPrim.ShadeDY[I], 4);
+      Shade := (Shade shl 8) or Cardinal(Clamp9(Integer(V and $1FF)));
+    end;
+  end;
+  // Without texture the combiner's texels are the shade (DecodeMode), and
+  // so is a copied pixel.
+  FLODFraction := 0;
+  if (FPrim.Code and 2) <> 0 then
+  begin
+    // TextureDivide and Texture(.., 0, Default) are pure within a
+    // primitive. The previous pixel's look-ahead (NextS/NextT and
+    // TexelNext) usually equals this pixel's sample: reuse it on a
+    // match of all arguments.
+    var S, T: Integer;
+    if FPrim.MemoValid and (Attributes[4] = FPrim.MemoNextSA) and (Attributes[6] = FPrim.MemoNextW) then
+      S := FPrim.MemoNextS
+    else
+      S := TextureDivide(Attributes[4], Attributes[6]);
+    if FPrim.MemoValid and (Attributes[5] = FPrim.MemoNextTA) and (Attributes[6] = FPrim.MemoNextW) then
+      T := FPrim.MemoNextT
+    else
+      T := TextureDivide(Attributes[5], Attributes[6]);
+    FPrim.MemoNextSA := WrapSigned32(Attributes[4] + FPrim.Coeff[1, 4] * Step);
+    FPrim.MemoNextTA := WrapSigned32(Attributes[5] + FPrim.Coeff[1, 5] * Step);
+    FPrim.MemoNextW := WrapSigned32(Attributes[6] + FPrim.Coeff[1, 6] * Step);
+    var NextS := TextureDivide(FPrim.MemoNextSA, FPrim.MemoNextW);
+    var NextT := TextureDivide(FPrim.MemoNextTA, FPrim.MemoNextW);
+    FPrim.MemoNextS := NextS;
+    FPrim.MemoNextT := NextT;
+    FPrim.MemoValid := True;
+    var Lod := Max(Abs(NextS - S), Abs(NextT - T));
+    var NextYS := TextureDivide(WrapSigned32(Attributes[4] + (FPrim.Coeff[3, 4] and not Int64($7FFF))),
+      WrapSigned32(Attributes[6] + (FPrim.Coeff[3, 6] and not Int64($7FFF))));
+    var NextYT := TextureDivide(WrapSigned32(Attributes[5] + (FPrim.Coeff[3, 5] and not Int64($7FFF))),
+      WrapSigned32(Attributes[6] + (FPrim.Coeff[3, 6] and not Int64($7FFF))));
+    Lod := Max(Lod, Max(Abs(NextYS - S), Abs(NextYT - T)));
+    var Level := 0;
+    var Magnify := Lod < 32;
+    Lod := Max(Lod, FMinLevel);
+    while (Level < 7) and (Lod >= (64 shl Level)) do
+      Inc(Level);
+    var Distant := (Level >= FPrim.MaxLevel) or (Lod >= $4000);
+    if Lod < 32 then
+      FLODFraction := Lod * 8
+    else
+      FLODFraction := ((Lod shl 3) shr Level) and $FF;
+    if ((FOtherHi and $60000) = 0) then
+      if Distant then
+        FLODFraction := 255
+      else if Magnify then
+        FLODFraction := 0;
+    if ((FOtherHi and $40000) <> 0) and Magnify then
+      FLODFraction := FLODFraction or $100;
+    Level := Min(Level, FPrim.MaxLevel);
+    // With LOD disabled, one-cycle lookahead keeps the primitive tile;
+    // two-cycle TEXEL1 reads the adjacent tile. LOD may replace either.
+    var Tile0 := FPrim.Tile;
+    var Tile1 := FPrim.Tile;
+    if FPrim.Cycle = 1 then
+      Tile1 := (FPrim.Tile + 1) and 7;
+    if (FOtherHi and $10000) <> 0 then
+    begin
+      Tile0 := (FPrim.Tile + Level) and 7;
+      Tile1 := (Tile0 + 1) and 7;
+      if (FOtherHi and $20000) <> 0 then
+      begin
+        if not Magnify then
+          Tile0 := (Tile0 + 1) and 7;
+        if Distant then
+          Tile1 := Tile0
+        else
+          Tile1 := (Tile0 + 1) and 7;
+      end
+      else if Distant or (Magnify and ((FOtherHi and $40000) = 0)) then
+        Tile1 := Tile0;
+    end;
+    // Texture lookups are pure. One-cycle mode replaces TEXEL1 with the
+    // next pixel's texel; copy/fill modes read only TEXEL0.
+    if FPrim.MemoTexelValid and (Tile0 = FPrim.MemoTile) and (S = FPrim.MemoTexelS) and (T = FPrim.MemoTexelT) then
+      FIn.Slots[InTexel] := FPrim.MemoTexel
+    else
+      FIn.Slots[InTexel] := Texture(Tile0, S, T, 0, NoTexel);
+    FPrim.MemoTexelValid := False;
+    if FPrim.Cycle = 1 then
+      FIn.Slots[InTexel1] := Texture(Tile1, S, T, 1, FIn.Slots[InTexel]);
+    if FPrim.Cycle <= 1 then
+    begin
+      FIn.Slots[InTexelNext] := Texture(Tile0, NextS, NextT, 0, NoTexel);
+      // Lane by lane: copying the whole texel right after its lanes were
+      // stored one by one would stall on store forwarding.
+      for var I := 0 to 3 do
+        FPrim.MemoTexel.C[I] := FIn.Slots[InTexelNext].C[I];
+      FPrim.MemoTile := Tile0;
+      FPrim.MemoTexelS := NextS;
+      FPrim.MemoTexelT := NextT;
+      FPrim.MemoTexelValid := True;
+    end;
+    if not FHasCombine then
+      Shade := TexelToRGBA(FIn.Slots[InTexel]);
+  end;
+  var Depth := -1;
+  var Delta: Cardinal := 1;
+  if (FPrim.Code and 1) <> 0 then
+  begin
+    var Z := ShiftRight(Attributes[7], 10) and $3FFFFF;
+    if Coverage = 8 then
+      Z := ShiftRight(Z, 3)
+    else
+      Z := ShiftRight(Z * 4 + OffX * FPrim.DepthDX + OffY * FPrim.DepthDY, 5);
+    case (Z and $60000) shr 17 of
+      2:
+        Depth := $3FFFF;
+      3:
+        Depth := 0
+    else
+      Depth := Integer(Z and $3FFFF)
+    end;
+    Delta := FPrim.DepthDelta;
+  end;
+  Dither(X, Y);
+  if FPrim.Cycle = 3 then
+    Pixel(X, Y, FFill, True)
+  else if FPrim.Cycle = 2 then
+  begin
+    if (FPrim.Code and 2) <> 0 then
+      Shade := TexelToRGBA(FIn.Slots[InTexel]);
+    Pixel(X, Y, Shade, False, -1, 1, 8, True);
+  end
+  else
+  begin
+    if FHasCombine then
+      for var I := 0 to 3 do
+        FIn.Slots[InShade].C[I] := Integer((Shade shr (24 - I * 8)) and $FF);
+    FIn.Slots[InNoise].C[0] := Integer(FNoise);
+    FIn.Slots[InLOD].C[0] := FLODFraction;
+    Pixel(X, Y, Combine(Shade), False, Depth, Delta, Coverage, (Mask and $80) <> 0);
+  end;
+end;
+
+procedure TN64RDP.Triangle(Code: Cardinal);
+var
+  XH, XM, XL, DH, DM, DL: Int64;
+  YH, YM, YL, BaseY: Integer;
+  OffsetAttributes: Boolean;
+begin
+  // Per-primitive raster state lives in FPrim: nested routines would keep
+  // the raster loop's variables in this frame, in memory.
+  FPrim.Code := Code;
   YL := Integer(SignedValue(SX(FCommand[0] and $3FFF, 14)));
   if FPipelineCrashed then
     Exit;
@@ -1572,24 +2140,26 @@ begin
   DH := SignedValue(SX(FCommand[5], 30));
   XM := SignedValue(SX(FCommand[6], 28));
   DM := SignedValue(SX(FCommand[7], 30));
-  Flip := (FCommand[0] and $800000) <> 0;
-  FDrawFlip := Flip;
-  Tile := (FCommand[0] shr 16) and 7;
-  MaxLevel := (FCommand[0] shr 19) and 7;
-  Cycle := (FOtherHi shr 20) and 3;
+  FPrim.Flip := (FCommand[0] and $800000) <> 0;
+  FDrawFlip := FPrim.Flip;
+  FPrim.Tile := (FCommand[0] shr 16) and 7;
+  FPrim.MaxLevel := (FCommand[0] shr 19) and 7;
+  FPrim.Cycle := (FOtherHi shr 20) and 3;
+  if FModeDirty or (FMode.Textured <> ((Code and 2) <> 0)) then
+    DecodeMode((Code and 2) <> 0);
   if FColorSize = 1 then
   begin
-    FHiddenOld[0] := FHiddenOld[0] and 1;
-    FHiddenOld[4] := FHiddenOld[4] and 1
+    SetHiddenOld(0, FHiddenOld[0] and 1);
+    SetHiddenOld(4, FHiddenOld[4] and 1);
   end;
-  if ((Cycle = 2) and (FColorSize = 3)) or ((Cycle = 3) and ((FColorSize = 0) or ((FOtherLo and $50) <> 0))) then
+  if ((FPrim.Cycle = 2) and (FColorSize = 3)) or ((FPrim.Cycle = 3) and ((FColorSize = 0) or ((FOtherLo and $50) <> 0))) then
   begin
     FPipelineCrashed := True;
     Exit
   end;
   for var Group := 0 to 3 do
     for var I := 0 to 7 do
-      Coeff[Group, I] := 0;
+      FPrim.Coeff[Group, I] := 0;
   var ShadeBase := 8;
   var TextureBase := ShadeBase;
   if (Code and 4) <> 0 then
@@ -1610,19 +2180,50 @@ begin
     end;
     if (Code and 4) <> 0 then
       for var I := 0 to 3 do
-        Coeff[Group, I] := Coefficient(ShadeBase, Index, I);
+        FPrim.Coeff[Group, I] := Coefficient(ShadeBase, Index, I);
     if (Code and 2) <> 0 then
       for var I := 0 to 2 do
-        Coeff[Group, I + 4] := Coefficient(TextureBase, Index, I);
+        FPrim.Coeff[Group, I + 4] := Coefficient(TextureBase, Index, I);
     if (Code and 1) <> 0 then
-      Coeff[Group, 7] := SignedValue(SX(FCommand[ZBase + Group], 32));
+      FPrim.Coeff[Group, 7] := SignedValue(SX(FCommand[ZBase + Group], 32));
   end;
   for var I := 0 to 6 do
-    Coeff[1, I] := Coeff[1, I] and not Int64(31);
+    FPrim.Coeff[1, I] := FPrim.Coeff[1, I] and not Int64(31);
+  for var I := 0 to 3 do
+  begin
+    FPrim.ShadeDX[I] := SignedValue(SX(UInt64(ShiftRight(FPrim.Coeff[1, I], 14) and $1FFF), 13));
+    FPrim.ShadeDY[I] := SignedValue(SX(UInt64(ShiftRight(FPrim.Coeff[3, I], 14) and $1FFF), 13));
+  end;
+  FPrim.DepthDX := ShiftRight(FPrim.Coeff[1, 7], 10);
+  FPrim.DepthDY := ShiftRight(FPrim.Coeff[3, 7], 10);
+  FPrim.MemoValid := False;
+  FPrim.MemoTexelValid := False;
+  begin
+    var DX := Integer(ShiftRight(FPrim.Coeff[1, 7], 16) and $FFFF);
+    var DY := Integer(ShiftRight(FPrim.Coeff[3, 7], 16) and $FFFF);
+    if (DX and $8000) <> 0 then
+      DX := (DX xor $FFFF) and $7FFF;
+    if (DY and $8000) <> 0 then
+      DY := (DY xor $FFFF) and $7FFF;
+    FPrim.DepthDelta := Cardinal(DX + DY);
+    if (FPrim.DepthDelta and $C000) <> 0 then
+      FPrim.DepthDelta := $8000
+    else if FPrim.DepthDelta = 0 then
+      FPrim.DepthDelta := 1
+    else if FPrim.DepthDelta = 1 then
+      FPrim.DepthDelta := 3
+    else
+    begin
+      var Bit := Cardinal($2000);
+      while (Bit > 0) and ((FPrim.DepthDelta and Bit) = 0) do
+        Bit := Bit shr 1;
+      FPrim.DepthDelta := Bit shl 1;
+    end;
+  end;
   BaseY := Integer(ShiftRight(YH, 2));
   var QuarterStart := BaseY * 4;
   var LastQuarter := Min(YL, FScissorQuarterY1) - 1;
-  OffsetAttributes := not (((FCommand[5] and $80000000) <> 0) xor Flip);
+  OffsetAttributes := not (((FCommand[5] and $80000000) <> 0) xor FPrim.Flip);
   var LoadQuarter := 0;
   if OffsetAttributes then
     LoadQuarter := 3;
@@ -1631,7 +2232,7 @@ begin
   var MajorStep := ShiftRight(DH, 2) and not Int64(1);
   var MinorStep := ShiftRight(DM, 2) and not Int64(1);
   for var Q := 0 to 3 do
-    Invalid[Q] := True;
+    FPrim.Invalid[Q] := True;
   for var Quarter := QuarterStart to (LastQuarter or 3) do
   begin
     var Q := Quarter and 3;
@@ -1641,31 +2242,31 @@ begin
       XMinor := XL and not Int64(1);
       MinorStep := ShiftRight(DL, 2) and not Int64(1)
     end;
-    Major[Q] := EdgeQuantise(XMajor);
-    Minor[Q] := EdgeQuantise(XMinor);
-    Invalid[Q] := (Quarter < Max(YH, FScissorQuarterY0)) or (Quarter > LastQuarter);
+    FPrim.Major[Q] := EdgeQuantise(XMajor);
+    FPrim.Minor[Q] := EdgeQuantise(XMinor);
+    FPrim.Invalid[Q] := (Quarter < Max(YH, FScissorQuarterY0)) or (Quarter > LastQuarter);
     var MajorCross := (Cardinal(XMajor and $FFFFFFFF) xor $08000000) and $0FFFC000;
     var MinorCross := (Cardinal(XMinor and $FFFFFFFF) xor $08000000) and $0FFFC000;
-    if Flip then
-      Invalid[Q] := Invalid[Q] or (MinorCross < MajorCross)
+    if FPrim.Flip then
+      FPrim.Invalid[Q] := FPrim.Invalid[Q] or (MinorCross < MajorCross)
     else
-      Invalid[Q] := Invalid[Q] or (MajorCross < MinorCross);
+      FPrim.Invalid[Q] := FPrim.Invalid[Q] or (MajorCross < MinorCross);
     if Q = LoadQuarter then
     begin
-      UnscrX := Integer(SignedValue(SX(UInt64(ShiftRight(XMajor, 16) and $FFF), 12)));
+      FPrim.UnscrX := Integer(SignedValue(SX(UInt64(ShiftRight(XMajor, 16) and $FFF), 12)));
       var Fraction := ShiftRight(XMajor, 8) and $FF;
       for var I := 0 to 7 do
       begin
-        var DE := Coeff[2, I] and not Int64($1FF);
-        var DY := Coeff[3, I] and not Int64($1FF);
+        var DE := FPrim.Coeff[2, I] and not Int64($1FF);
+        var DY := FPrim.Coeff[3, I] and not Int64($1FF);
         var Offset: Int64 := 0;
         if OffsetAttributes then
           Offset := DE - ShiftRight(DE, 2) - DY + ShiftRight(DY, 2);
-        var DX := ShiftRight(Coeff[1, I], 8) and not Int64(1);
-        if Cycle = 2 then
+        var DX := ShiftRight(FPrim.Coeff[1, I], 8) and not Int64(1);
+        if FPrim.Cycle = 2 then
           DX := 0;
-        var Base := WrapSigned32(Coeff[0, I] + Coeff[2, I] * (Y - BaseY));
-        SpanAttribute[I] := WrapSigned32((Base and not Int64($1FF)) + Offset - Fraction * DX) and not Int64($3FF);
+        var Base := WrapSigned32(FPrim.Coeff[0, I] + FPrim.Coeff[2, I] * (Y - BaseY));
+        FPrim.SpanAttribute[I] := WrapSigned32((Base and not Int64($1FF)) + Offset - Fraction * DX) and not Int64($3FF);
       end;
     end;
     if Q = 3 then
@@ -1675,16 +2276,15 @@ begin
   end;
 end;
 
+procedure TN64RDP.SetCoefficient(Index: Integer; S, T: Int64);
+begin
+  var SR := Cardinal(S and $FFFFFFFF);
+  var TR := Cardinal(T and $FFFFFFFF);
+  FCommand[Index] := (SR and $FFFF0000) or (TR shr 16);
+  FCommand[Index + 4] := ((SR and $FFFF) shl 16) or (TR and $FFFF);
+end;
+
 procedure TN64RDP.Rectangle(Code: Cardinal);
-
-  procedure SetCoefficient(Index: Integer; S, T: Int64);
-  begin
-    var SR := Cardinal(S and $FFFFFFFF);
-    var TR := Cardinal(T and $FFFFFFFF);
-    FCommand[Index] := (SR and $FFFF0000) or (TR shr 16);
-    FCommand[Index + 4] := ((SR and $FFFF) shl 16) or (TR and $FFFF);
-  end;
-
 begin
   var A := FCommand[0];
   var B := FCommand[1];
@@ -1732,16 +2332,9 @@ begin
 end;
 
 function TN64RDP.Execute(Start, Finish: Cardinal; XBUS: Boolean; out Consumed: Cardinal): Boolean;
-
-  function WordAt(Address: Cardinal): Cardinal;
-  begin
-    Result := FCommand[Address div 4];
-  end;
-
 begin
   Result := False;
-  FWorkClocks := 0;
-  FTransferBits := 0;
+  BeginList;
   Consumed := Start;
   if FPipelineCrashed then
     Exit;
@@ -1749,213 +2342,262 @@ begin
     raise EReadError.Create('Invalid RDP command range');
   while UInt64(Consumed) + 8 <= Finish do
   begin
-    for var I := 0 to 1 do
+    var W0, W1: Cardinal;
+    if XBUS then
     begin
-      var Address := Consumed + Cardinal(I * 4);
-      if XBUS then
-        FCommand[FCommandCount] := FBus.Read32($04000000 + (Address and $FFF))
-      else
-        FCommand[FCommandCount] := FBus.Read32(Address and $FFFFFF);
-      Inc(FCommandCount);
+      W0 := FetchCommand($04000000 + (Consumed and $FFF));
+      W1 := FetchCommand($04000000 + ((Consumed + 4) and $FFF));
+    end
+    else
+    begin
+      W0 := FetchCommand(Consumed and $FFFFFF);
+      W1 := FetchCommand((Consumed + 4) and $FFFFFF);
     end;
     Inc(Consumed, 8);
-    if FCommandCount < 2 then
-      Continue;
-    var A := WordAt(0);
-    var B := WordAt(4);
-    var Code := (A shr 24) and 63;
-    var Words := 2;
-    if Code in [8..15] then
-    begin
-      Words := 8;
-      if (Code and 4) <> 0 then
-        Inc(Words, 16);
-      if (Code and 2) <> 0 then
-        Inc(Words, 16);
-      if (Code and 1) <> 0 then
-        Inc(Words, 4);
-    end
-    else if Code in [36, 37] then
-      Words := 4;
-    if FCommandCount < Words then
-      Continue;
-    var TraceWords: TArray<Cardinal>;
-    if Assigned(FOnCommand) or Assigned(FOnCommandCompleted) then
-    begin
-      SetLength(TraceWords, Words);
-      for var I := 0 to Words - 1 do
-        TraceWords[I] := FCommand[I];
-      if Assigned(FOnCommand) then
-        FOnCommand(TraceWords);
-    end;
-    Inc(FWorkClocks, Cardinal(Words div 2));
-    case Code of
-      0, 38, 39, 40, 41:
-        if Code = 41 then
-          Result := True;
-      45:
+    var Status := Feed(W0, W1);
+    if Status = FeedSync then
+      Result := True
+    else if Status = FeedStop then
+      Break;
+  end;
+end;
+
+function TN64RDP.FetchCommand(Address: Cardinal): Cardinal;
+begin
+  if UInt64(Address) + 4 <= FBus.RAMSize then
+    Result := FBus.ReadRAM32(Address)
+  else
+    Result := FBus.Read32(Address);
+end;
+
+procedure TN64RDP.BeginList;
+begin
+  FWorkClocks := 0;
+  FTransferBits := 0;
+end;
+
+function TN64RDP.Feed(W0, W1: Cardinal): Integer;
+begin
+  Result := FeedNone;
+  FCommand[FCommandCount] := W0;
+  FCommand[FCommandCount + 1] := W1;
+  Inc(FCommandCount, 2);
+  var A := FCommand[0];
+  var B := FCommand[1];
+  var Code := (A shr 24) and 63;
+  var Words := 2;
+  if Code in [8..15] then
+  begin
+    Words := 8;
+    if (Code and 4) <> 0 then
+      Inc(Words, 16);
+    if (Code and 2) <> 0 then
+      Inc(Words, 16);
+    if (Code and 1) <> 0 then
+      Inc(Words, 4);
+  end
+  else if Code in [36, 37] then
+    Words := 4;
+  if FCommandCount < Words then
+    Exit;
+  // Trace words live in a field: a managed local here would give Feed an
+  // implicit try/finally and keep all of its variables in memory.
+  if Assigned(FOnCommand) or Assigned(FOnCommandCompleted) then
+    TraceCommand(Words);
+  Inc(FWorkClocks, Cardinal(Words div 2));
+  case Code of
+    0, 38, 39, 40, 41:
+      if Code = 41 then
+        Result := FeedSync;
+    45:
+      begin
+        FScissorQuarterX0 := (A shr 12) and $FFF;
+        FScissorQuarterY0 := A and $FFF;
+        FScissorQuarterX1 := (B shr 12) and $FFF;
+        FScissorQuarterY1 := B and $FFF;
+        FScissorX0 := FScissorQuarterX0 div 4;
+        FScissorY0 := FScissorQuarterY0 div 4;
+        FScissorX1 := (FScissorQuarterX1 + 3) div 4;
+        FScissorY1 := (FScissorQuarterY1 + 3) div 4;
+        FScissorField := (B and $02000000) <> 0;
+        FScissorOdd := (B and $01000000) <> 0;
+      end;
+    47:
+      begin
+        FOtherHi := A and $FFFFFF;
+        FOtherLo := B;
+        FModeDirty := True;
+        InvalidateTexels; // TLUT enable/type select the texel decode.
+      end;
+    53:
+      begin
+        var I := (B shr 24) and 7;
+        FTiles[I].Format := (A shr 21) and 7;
+        FTiles[I].Size := (A shr 19) and 3;
+        FTiles[I].Line := (A shr 9) and $1FF;
+        FTiles[I].TMEM := A and $1FF;
+        FTiles[I].Palette := (B shr 20) and 15;
+        FTiles[I].ClampT := (B and $80000) <> 0;
+        FTiles[I].MirrorT := (B and $40000) <> 0;
+        FTiles[I].MaskT := (B shr 14) and 15;
+        FTiles[I].ShiftT := (B shr 10) and 15;
+        FTiles[I].ClampS := (B and $200) <> 0;
+        FTiles[I].MirrorS := (B and $100) <> 0;
+        FTiles[I].MaskS := (B shr 4) and 15;
+        FTiles[I].ShiftS := B and 15;
+        UpdateTileInfo(I);
+      end;
+    50, 51, 52, 48:
+      begin
+        var I := (B shr 24) and 7;
+        var SL := Integer((A shr 12) and $FFF);
+        var TL := Integer(A and $FFF);
+        var SH := Integer((B shr 12) and $FFF);
+        var TH := Integer(B and $FFF);
+        FTiles[I].SL := SL;
+        FTiles[I].TL := TL;
+        FTiles[I].SH := SH;
+        FTiles[I].TH := TH;
+        UpdateTileInfo(I);
+        if Code = 50 then
         begin
-          FScissorQuarterX0 := (A shr 12) and $FFF;
-          FScissorQuarterY0 := A and $FFF;
-          FScissorQuarterX1 := (B shr 12) and $FFF;
-          FScissorQuarterY1 := B and $FFF;
-          FScissorX0 := FScissorQuarterX0 div 4;
-          FScissorY0 := FScissorQuarterY0 div 4;
-          FScissorX1 := (FScissorQuarterX1 + 3) div 4;
-          FScissorY1 := (FScissorQuarterY1 + 3) div 4;
-          FScissorField := (B and $02000000) <> 0;
-          FScissorOdd := (B and $01000000) <> 0;
-        end;
-      47:
-        begin
-          FOtherHi := A and $FFFFFF;
-          FOtherLo := B
-        end;
-      53:
-        begin
-          var I := (B shr 24) and 7;
-          FTiles[I].Format := (A shr 21) and 7;
-          FTiles[I].Size := (A shr 19) and 3;
-          FTiles[I].Line := (A shr 9) and $1FF;
-          FTiles[I].TMEM := A and $1FF;
-          FTiles[I].Palette := (B shr 20) and 15;
-          FTiles[I].ClampT := (B and $80000) <> 0;
-          FTiles[I].MirrorT := (B and $40000) <> 0;
-          FTiles[I].MaskT := (B shr 14) and 15;
-          FTiles[I].ShiftT := (B shr 10) and 15;
-          FTiles[I].ClampS := (B and $200) <> 0;
-          FTiles[I].MirrorS := (B and $100) <> 0;
-          FTiles[I].MaskS := (B shr 4) and 15;
-          FTiles[I].ShiftS := B and 15;
-        end;
-      50, 51, 52, 48:
-        begin
-          var I := (B shr 24) and 7;
-          var SL := Integer((A shr 12) and $FFF);
-          var TL := Integer(A and $FFF);
-          var SH := Integer((B shr 12) and $FFF);
-          var TH := Integer(B and $FFF);
           FTiles[I].SL := SL;
           FTiles[I].TL := TL;
           FTiles[I].SH := SH;
-          FTiles[I].TH := TH;
-          if Code = 50 then
-          begin
-            FTiles[I].SL := SL;
-            FTiles[I].TL := TL;
-            FTiles[I].SH := SH;
-            FTiles[I].TH := TH
-          end
-          else if Code = 48 then
-          begin
-            if FTextureSize = 0 then
-            begin
-              FPipelineCrashed := True;
-              FCommandCount := 0;
-              Break
-            end;
-            var Count := ((SH div 4) - (SL div 4) + 1) and $FFF;
-            if Count > 0 then
-              Inc(FWorkClocks, Cardinal(Min(Count, 256)));
-            for var J := 0 to Min(Count, 256) - 1 do
-            begin
-              var Source := UInt64(FTextureAddress) + Cardinal(((TL div 4) * FTextureWidth + SL div 4 + J) * 2);
-              var V: Cardinal := 0;
-              if Source + 1 < $800000 then
-                V := (Cardinal(FBus.Read8(Cardinal(Source))) shl 8) or FBus.Read8(Cardinal(Source + 1));
-              for var K := 0 to 3 do
-              begin
-                // Quad-coordinate loading expands S before tile-size addressing.
-                // Standard TLUT tiles use size=4b; 8b/16b tiles leave sparse entries.
-                var Stride := 8 shl Min(FTiles[I].Size, 2);
-                var Address := (FTiles[I].TMEM * 8 + J * Stride + K * 2) and $FFF;
-                FTMEM[Address] := Byte(V shr 8);
-                FTMEM[(Address + 1) and $FFF] := Byte(V and $FF);
-              end;
-            end;
-          end
-          else
-            LoadTexture(I, SL, TL, SH, TH, Code = 51);
-        end;
-      54, 36, 37:
-        Rectangle(Code);
-      55:
-        FFill := B;
-      56:
-        FFogColor := B;
-      57:
-        FBlendColor := B;
-      58:
+          FTiles[I].TH := TH
+        end
+        else if Code = 48 then
         begin
-          FPrimitive := B;
-          FPrimitiveLOD := A and $FF;
-          FMinLevel := (A shr 8) and 31;
-        end;
-      59:
+          if FTextureSize = 0 then
+          begin
+            FPipelineCrashed := True;
+            FCommandCount := 0;
+            Exit(FeedStop)
+          end;
+          var Count := ((SH div 4) - (SL div 4) + 1) and $FFF;
+          if Count > 0 then
+            Inc(FWorkClocks, Cardinal(Min(Count, 256)));
+          // Entry J comes from RDRAM bytes First + 2J and First + 2J + 1, if
+          // both lie below $800000.
+          var First := UInt64(FTextureAddress) + Cardinal(((TL div 4) * FTextureWidth + SL div 4) * 2);
+          var Entries := Min(Count, 256);
+          for var J := 0 to Entries - 1 do
+          begin
+            var Source := First + Cardinal(J * 2);
+            var V: Cardinal := 0;
+            if Source + 1 < $800000 then
+              V := (Cardinal(MemRead8(Cardinal(Source))) shl 8) or MemRead8(Cardinal(Source + 1));
+            for var K := 0 to 3 do
+            begin
+              // Quad-coordinate loading expands S before tile-size addressing.
+              // Standard TLUT tiles use size=4b; 8b/16b tiles leave sparse entries.
+              var Stride := 8 shl Min(FTiles[I].Size, 2);
+              var Address := (FTiles[I].TMEM * 8 + J * Stride + K * 2) and $FFF;
+              FTMEM[Address] := Byte(V shr 8);
+              FTMEM[(Address + 1) and $FFF] := Byte(V and $FF);
+            end;
+          end;
+        end
+        else
+          LoadTexture(I, SL, TL, SH, TH, Code = 51);
+      end;
+    54, 36, 37:
+      Rectangle(Code);
+    55:
+      FFill := B;
+    56:
+      FFogColor := B;
+    57:
+      FBlendColor := B;
+    58:
+      begin
+        FPrimitive := B;
+        FPrimitiveLOD := A and $FF;
+        FMinLevel := (A shr 8) and 31;
+        FModeDirty := True;
+      end;
+    59:
+      begin
         FEnvironment := B;
-      61:
-        begin
-          FTextureFormat := (A shr 21) and 7;
-          FTextureSize := (A shr 19) and 3;
-          FTextureWidth := (A and $3FF) + 1;
-          FTextureAddress := B and $FFFFFF
-        end;
-      63:
-        begin
-          FColorSize := (A shr 19) and 3;
-          FColorFormat := (A shr 21) and 7;
-          FColorWidth := (A and $3FF) + 1;
-          FColorAddress := B and $FFFFFF
-        end;
-      60:
-        begin
-          FCombineHi := A and $FFFFFF;
-          FCombineLo := B;
-          FHasCombine := True
-        end;
-      46:
-        begin
-          FPrimitiveDepth := ((B shr 16) and $7FFF) * 8;
-          FPrimitiveDelta := B and $FFFF
-        end;
-      62:
-        FZAddress := B and $FFFFFF;
-      44:
-        begin
-          FConvert[0] := Integer(SignedValue(SX((A shr 13) and $1FF, 9))) * 2 + 1;
-          FConvert[1] := Integer(SignedValue(SX((A shr 4) and $1FF, 9))) * 2 + 1;
-          FConvert[2] := Integer(SignedValue(SX(((A and 15) shl 5) or (B shr 27), 9))) * 2 + 1;
-          FConvert[3] := Integer(SignedValue(SX((B shr 18) and $1FF, 9))) * 2 + 1;
-          FConvert[4] := (B shr 9) and $1FF;
-          FConvert[5] := B and $1FF;
-        end;
-      42:
-        begin
-          FKeyWidth[1] := (A shr 12) and $FFF;
-          FKeyWidth[2] := A and $FFF;
-          FKeyCenter[1] := (B shr 24) and $FF;
-          FKeyScale[1] := (B shr 16) and $FF;
-          FKeyCenter[2] := (B shr 8) and $FF;
-          FKeyScale[2] := B and $FF;
-        end;
-      43:
-        begin
-          FKeyWidth[0] := (B shr 16) and $FFF;
-          FKeyCenter[0] := (B shr 8) and $FF;
-          FKeyScale[0] := B and $FF;
-        end;
-      8..15:
-        Triangle(Code);
-    else
-      raise EN64Unsupported.CreateFmt('RDP opcode %2.2x is not implemented', [Code]);
-    end;
-    // Fill/copy memory writes use a 64-bit bus per RCP clock at peak throughput.
-    Inc(FWorkClocks, (FTransferBits + 63) div 64);
-    FTransferBits := 0;
-    FCommandCount := 0;
-    if Assigned(FOnCommandCompleted) then
-      FOnCommandCompleted(TraceWords);
+        FModeDirty := True;
+      end;
+    61:
+      begin
+        FTextureFormat := (A shr 21) and 7;
+        FTextureSize := (A shr 19) and 3;
+        FTextureWidth := (A and $3FF) + 1;
+        FTextureAddress := B and $FFFFFF
+      end;
+    63:
+      begin
+        FColorSize := (A shr 19) and 3;
+        FColorFormat := (A shr 21) and 7;
+        FColorWidth := (A and $3FF) + 1;
+        FColorAddress := B and $FFFFFF
+      end;
+    60:
+      begin
+        FCombineHi := A and $FFFFFF;
+        FCombineLo := B;
+        FHasCombine := True;
+        FModeDirty := True;
+      end;
+    46:
+      begin
+        FPrimitiveDepth := ((B shr 16) and $7FFF) * 8;
+        FPrimitiveDelta := B and $FFFF
+      end;
+    62:
+      FZAddress := B and $FFFFFF;
+    44:
+      begin
+        FConvert[0] := Integer(SignedValue(SX((A shr 13) and $1FF, 9))) * 2 + 1;
+        FConvert[1] := Integer(SignedValue(SX((A shr 4) and $1FF, 9))) * 2 + 1;
+        FConvert[2] := Integer(SignedValue(SX(((A and 15) shl 5) or (B shr 27), 9))) * 2 + 1;
+        FConvert[3] := Integer(SignedValue(SX((B shr 18) and $1FF, 9))) * 2 + 1;
+        FConvert[4] := (B shr 9) and $1FF;
+        FConvert[5] := B and $1FF;
+        FModeDirty := True;
+      end;
+    42:
+      begin
+        FKeyWidth[1] := (A shr 12) and $FFF;
+        FKeyWidth[2] := A and $FFF;
+        FKeyCenter[1] := (B shr 24) and $FF;
+        FKeyScale[1] := (B shr 16) and $FF;
+        FKeyCenter[2] := (B shr 8) and $FF;
+        FKeyScale[2] := B and $FF;
+        FModeDirty := True;
+      end;
+    43:
+      begin
+        FKeyWidth[0] := (B shr 16) and $FFF;
+        FKeyCenter[0] := (B shr 8) and $FF;
+        FKeyScale[0] := B and $FF;
+        FModeDirty := True;
+      end;
+    8..15:
+      Triangle(Code);
+  else
+    raise EN64Unsupported.CreateFmt('RDP opcode %2.2x is not implemented', [Code]);
   end;
+  // Fill/copy memory writes use a 64-bit bus per RCP clock at peak throughput.
+  Inc(FWorkClocks, (FTransferBits + 63) div 64);
+  FTransferBits := 0;
+  FCommandCount := 0;
+  if Assigned(FOnCommandCompleted) then
+    FOnCommandCompleted(FTraceWords);
+end;
+
+procedure TN64RDP.TraceCommand(Words: Integer);
+begin
+  // Snapshot of the command before execution (Rectangle rewrites FCommand).
+  FTraceWords := nil;
+  SetLength(FTraceWords, Words);
+  for var I := 0 to Words - 1 do
+    FTraceWords[I] := FCommand[I];
+  if Assigned(FOnCommand) then
+    FOnCommand(FTraceWords);
 end;
 
 procedure TN64RDP.SerializeState(State: TStateArchive);
@@ -2082,8 +2724,10 @@ begin
         (FTiles[I].MaskS < 0) or (FTiles[I].MaskS > 15) or (FTiles[I].MaskT < 0) or (FTiles[I].MaskT > 15) or
         (FTiles[I].ShiftS < 0) or (FTiles[I].ShiftS > 15) or (FTiles[I].ShiftT < 0) or (FTiles[I].ShiftT > 15) then
         raise EReadError.Create('Invalid RDP tile snapshot');
+    for var I := 0 to 7 do
+      UpdateTileInfo(I);
+    FModeDirty := True;
   end;
 end;
 
 end.
-
