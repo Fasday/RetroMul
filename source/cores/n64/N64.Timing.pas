@@ -55,6 +55,8 @@ type
     procedure Cancel(Kind: TN64EventKind);
     function Pending(Kind: TN64EventKind): Boolean; inline;
     function Count(Kind: TN64EventKind): Integer; inline;
+    // The first queued event of Kind in handling order (False: none).
+    function FirstOf(Kind: TN64EventKind; out Event: TN64Event): Boolean;
     function NextDue: UInt64; inline;
     procedure AdvanceTo(Tick: UInt64); inline;
     function Pop(out Event: TN64Event): Boolean;
@@ -304,6 +306,24 @@ end;
 function TN64Timeline.Count(Kind: TN64EventKind): Integer;
 begin
   Result := FKindCount[Kind];
+end;
+
+function TN64Timeline.FirstOf(Kind: TN64EventKind; out Event: TN64Event): Boolean;
+begin
+  Event := Default(TN64Event);
+  Result := False;
+  if FFastActive and (FFast.Kind = Kind) then
+  begin
+    Event := FFast;
+    Result := True;
+  end;
+  for var I := 0 to FCount - 1 do
+    if (FEvents[I].Kind = Kind) and (not Result or (FEvents[I].Due < Event.Due) or
+      ((FEvents[I].Due = Event.Due) and (FEvents[I].Sequence < Event.Sequence))) then
+    begin
+      Event := FEvents[I];
+      Result := True;
+    end;
 end;
 
 function TN64Timeline.NextDue: UInt64;

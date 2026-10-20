@@ -1,9 +1,13 @@
 ﻿unit N64.RSP;
+// The interpreter runs without range and overflow checks (every index is
+// masked and all guest arithmetic wraps explicitly); N64_CHECKED builds them
+// in, for the tests.
+{$IFNDEF N64_CHECKED}{$Q-}{$R-}{$ENDIF}
 
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Math, N64.Types, Core.Snapshots;
+  System.SysUtils, System.SyncObjs, System.Classes, System.Math, N64.Types, Core.Snapshots;
 
 type
   // One vector register's eight lanes.
@@ -30,11 +34,43 @@ type
     Single, Paired: TRSPIssueMasks;
   end;
 
+  // The value an MFC0 of SP/DP register Index (0..15) reads at clock Clock
+  // of a run-ahead window (1 = the first): False if it cannot be known yet.
+  TRSPPrediction = function(Index, Clock: Integer; out Value: Cardinal): Boolean of object;
+  // Whether an MTC0 of Value to SP/DP register Index at clock Clock of a
+  // run-ahead window may be applied later, in its own clock (the console
+  // does that).
+  TRSPDeferral = function(Index, Clock: Integer; Value: Cardinal): Boolean of object;
+
+  // Why a run-ahead window ended: its clock budget, MTC0, an MFC0 without a
+  // prediction, BREAK or another instruction that may raise, a halt.
+  // a DMEM access to a fenced line.
+  TRSPAheadStop = (Budget, WriteCOP0, ReadCOP0, BreakOrRaise, Halt, Fence);
+
+  // Called by Rewind before it runs clock Stops[Index] + 1 again.
+  TRSPReplayStop = procedure(Index: Integer) of object;
+  // Whether the console lifts fences for clock Clock of a run-ahead window,
+  // which they stop (the DMA they guard expected done by then; checked in
+  // that clock's turn). It lifts them only if the clock then runs
+  // (TN64RSP.ClockFenced).
+  TRSPFenceLift = function(Clock: Integer): Boolean of object;
+
+  // A predicted MFC0, a deferred MTC0 (Write) or lifted fences (Lift) of a
+  // run-ahead window.
+  TRSPJournalEntry = record
+    Clock, Index: Integer;
+    Value: Cardinal;
+    Write, Lift: Boolean;
+  end;
+  // The journal as it lies in memory (TN64RSP.Journal).
+  TRSPJournal = array[0..16383] of TRSPJournalEntry; // TN64RSP.JournalCapacity
+  PRSPJournal = ^TRSPJournal;
+
   // Everything an RSP clock can change besides DMEM (run-ahead checkpoint).
   TRSPCheckpoint = record
     Reg: array[0..31] of Cardinal;
     Vec: array[0..31, 0..7] of Word;
-    AccHi, AccMid, AccLo: array[0..7] of Word;
+    Acc: array[0..7] of Int64;
     VCO, VCC, VCE: Word;
     NextPC, PC: Cardinal;
     Branch, DivisionHigh: Boolean;
@@ -61,9 +97,8 @@ type
     FBus: TN64Bus;
     FReg: array[0..31] of Cardinal;
     FVec: array[0..31, 0..7] of Word;
-    // The 48-bit accumulator lanes in three slices (bits 32..47, 16..31,
-    // 0..15). FAcc is their snapshot form (sign-extended).
-    FAccHi, FAccMid, FAccLo: array[0..7] of Word;
+    // The 48-bit accumulator lanes, sign-extended (also their snapshot
+    // form). The slices: bits 32..47 (AccHi), 16..31 (AccMid), 0..15 (AccLo).
     FAcc: array[0..7] of Int64;
     // Flag registers as lane masks: bit I (and I + 8) for lane I.
     FVCO, FVCC, FVCE: Word;
@@ -99,10 +134,41 @@ type
     FAhead, FCheckpointed: Boolean;
     FCheckpoint: TRSPCheckpoint;
     FRun: Cardinal;
+    // NewRun has started the next run (RunAhead does not again).
+    FRunFresh: Boolean;
     FLineRun: array[0..63] of Cardinal;
     FLineBackup: array[0..4095] of Byte;
+    // The window's predicted MFC0s and deferred MTC0s, in clock order
+    // (FJournalCount used); a rewind replays them from FReplayPos on.
+    // FReadPending: the MFC0 of the clock being issued reads FReadValue;
+    // FWritePending: its MTC0 is left to the console.
+    FPredict: TRSPPrediction;
+    FDefer: TRSPDeferral;
+    FLift: TRSPFenceLift;
+    FJournal: TArray<TRSPJournalEntry>;
+    FJournalCount, FReplayPos: Integer;
+    FReplaying, FReadPending, FWritePending: Boolean;
+    FReadValue: Cardinal;
+    // Window clocks before the current RunClocks call (a replay runs in
+    // parts).
+    FClockBase: Integer;
+    // Clocks the window being run has run so far (RunAhead, ContinueAhead).
+    FAheadClocks: Integer;
+    FAheadStop: TRSPAheadStop;
+    // 8-byte groups of DMEM a run-ahead window must not read (bit 0) or
+    // write (bit 1): DMA or the RDP uses them meanwhile.
+    FFence: array[0..511] of Byte;
+    FFenced: Boolean;
+    FAheadStopIndex: Integer;
+    // The instructions of the clock a fence stops (for ClockFenced).
+    FFencedOp, FFencedSecond: Cardinal;
+    FFencedPair: Boolean;
+    function TouchesFence(Op: Cardinal): Boolean;
     procedure SaveCheckpoint(PC: Cardinal);
     procedure SaveLine(Offset: Cardinal);
+    function JournalCOP0(Op, Second: Cardinal; Pair: Boolean; Clock: Integer): Boolean;
+    function LiftFence(PC, Op, Second: Cardinal; Pair: Boolean; Clock: Integer): Boolean;
+    procedure AddJournal(Clock, Index: Integer; Value: Cardinal; Write, Lift: Boolean);
     procedure Decode(Slot: Integer; Op: Cardinal; Stamp: UInt64);
     procedure DecodePair(Slot: Integer);
     function DecodedSlot(Slot: Integer): Integer; inline;
@@ -129,9 +195,12 @@ type
     function InfoSWC2(Op: Cardinal): TRSPTimingInfo;
     function CanPair(const A, B: TRSPTimingInfo): Boolean;
     procedure IssueInstruction(Op: Cardinal; var PC, Status, Interrupt: Cardinal);
-    function AccOf(I: Integer): Int64; inline;
-    function AccBits(I: Integer): Int64; inline;
+    procedure Issue(Op: Cardinal; var PC, Status, Interrupt: Cardinal); inline;
+    function AccHi(I: Integer): Word; inline;
+    function AccMid(I: Integer): Word; inline;
+    function AccLo(I: Integer): Word; inline;
     procedure SetAcc(I: Integer; Value: Int64); inline;
+    procedure SetAccLo(I: Integer; Value: Word); inline;
     procedure SelectVT(T, E: Integer; out VT: TRSPLanes); inline;
     procedure VectorOp(Op: Cardinal);
     procedure VectorMulFrac(Op: Cardinal);
@@ -162,13 +231,64 @@ type
     // stalled clock returns to the console before another instruction executes.
     function ExecuteCycles(var PC, Status, Interrupt: Cardinal; Cycles: Integer): Integer;
     // Run-ahead. RunAhead executes up to Cycles clocks for as long as they
-    // touch nothing outside the RSP but DMEM (no COP0, no BREAK, nothing that
-    // raises) and returns how many it ran; Status is not changed (it must not
-    // halt or single-step). Rewind returns to the state before them and runs
-    // Keep of them again. EndAhead keeps them all.
+    // touch nothing outside the RSP but DMEM (no MTC0, no BREAK, nothing that
+    // raises; an MFC0 only with a value from OnPredict, an MTC0 only if
+    // OnDefer leaves it to the console; both go into the journal) and returns
+    // how many it ran; Status is not changed (it must not halt or
+    // single-step). Rewind returns to the state before them and runs Keep of
+    // them again, with the journal's values for their MFC0s (and without
+    // their MTC0s). EndAhead keeps them all. Both empty the journal.
     function RunAhead(var PC: Cardinal; Status: Cardinal; Cycles: Integer): Integer;
-    procedure Rewind(var PC: Cardinal; Keep: Integer);
+    // Starts the run of the next window now (RunAhead does it otherwise), so
+    // that LineSaved can tell its saved lines while it runs elsewhere.
+    procedure NewRun;
+    // Whether the window being run has saved the 64-byte DMEM line at Offset
+    // (before its first write to it). Safe on another thread: True means the
+    // copy is complete.
+    function LineSaved(Offset: Cardinal): Boolean;
+    // Up to Cycles more clocks of the window RunAhead started (after it ran
+    // all its clocks): one window run in parts, exactly as in one.
+    function ContinueAhead(var PC: Cardinal; Status: Cardinal; Cycles: Integer): Integer;
+    procedure Rewind(var PC: Cardinal; Keep: Integer); overload;
+    // The same, calling OnStop(I) after the first Stops[I] clocks (in
+    // ascending order, at most Keep): for outside writes to DMEM made while
+    // the window ran, at their place among its clocks. OnStop(-1) comes after
+    // the saved lines are restored, before the clocks run again.
+    procedure Rewind(var PC: Cardinal; Keep: Integer; const Stops: array of Integer; OnStop: TRSPReplayStop); overload;
     procedure EndAhead;
+    // Fences the 8-byte groups of Count bytes from Offset (wrapping in DMEM)
+    // for the window being run, or the next one: for writes, and with Reads
+    // also for reads. EndAhead lifts every fence.
+    procedure AddFence(Offset, Count: Cardinal; Reads: Boolean; Source: Byte = 0);
+    // Whether the window being run wrote DMEM lines of Count bytes from
+    // Offset (wrapping in DMEM).
+    function WroteAhead(Offset, Count: Cardinal): Boolean;
+    // Whether a fence keeps the window from reading any of Count bytes from
+    // Offset (wrapping in DMEM).
+    function ReadFenced(Offset, Count: Cardinal): Boolean;
+    // Lifts every fence (the window goes on).
+    procedure ClearFences;
+    // During OnLift: whether the clock is still stopped by a fence.
+    function ClockFenced: Boolean;
+    // A write to DMEM as one of the window's clocks makes it (a rewind
+    // undoes it).
+    procedure WriteAhead(Offset: Cardinal; Value: Byte);
+    function JournalCount: Integer; inline;
+    // The journal's entries, allocated once (JournalCapacity of them).
+    function Journal: PRSPJournal;
+    function JournalEntry(I: Integer): TRSPJournalEntry; inline;
+    property OnPredict: TRSPPrediction read FPredict write FPredict;
+    property OnDefer: TRSPDeferral read FDefer write FDefer;
+    property OnLift: TRSPFenceLift read FLift write FLift;
+  public const
+    // Journal entries one window may hold (the journal never grows, so the
+    // console may read published entries while the window runs on).
+    JournalCapacity = 16384;
+  public
+    // Why the last RunAhead ended.
+    property AheadStop: TRSPAheadStop read FAheadStop;
+    // The SP/DP register (0..15) of the COP0 access that ended it.
+    property AheadStopIndex: Integer read FAheadStopIndex;
     procedure SerializeState(State: TStateArchive);
   end;
 
@@ -178,6 +298,7 @@ constructor TN64RSP.Create(Bus: TN64Bus);
 begin
   inherited Create;
   FBus := Bus;
+  SetLength(FJournal, JournalCapacity);
   for var I := 0 to High(FDecStamp) do
     FDecStamp[I] := NotDecoded;
   Reset
@@ -192,12 +313,7 @@ begin
       FVec[I, J] := 0
   end;
   for var I := 0 to 7 do
-  begin
     FAcc[I] := 0;
-    FAccHi[I] := 0;
-    FAccMid[I] := 0;
-    FAccLo[I] := 0;
-  end;
   FVCO := 0;
   FVCC := 0;
   FVCE := 0;
@@ -383,62 +499,55 @@ begin
   Result := W16(EnsureRange(Value, Int64(-32768), Int64(32767)))
 end;
 
-function ClampMid(Hi, Mid: Word): Word; inline;
+function TN64RSP.AccHi(I: Integer): Word;
 begin
-  // The accumulator's bits 16..47 as a signed value, clamped to 16 bits.
-  if Hi = 0 then
-  begin
-    if Mid < $8000 then
-      Result := Mid
-    else
-      Result := $7FFF;
-  end
-  else if Hi = $FFFF then
-  begin
-    if Mid >= $8000 then
-      Result := Mid
-    else
-      Result := $8000;
-  end
-  else if Hi < $8000 then
-    Result := $7FFF
-  else
-    Result := $8000;
+  Result := Word((FAcc[I] shr 32) and $FFFF);
 end;
 
-function ClampLow(Hi, Mid, Lo: Word): Word; inline;
+function TN64RSP.AccMid(I: Integer): Word;
 begin
-  // VMADL/VMADN: the low half when the accumulator fits 32 signed bits,
-  // else 0 below and $FFFF above.
-  if ((Hi = 0) and (Mid < $8000)) or ((Hi = $FFFF) and (Mid >= $8000)) then
-    Result := Lo
-  else if Hi < $8000 then
-    Result := $FFFF
-  else
-    Result := 0;
+  Result := Word((FAcc[I] shr 16) and $FFFF);
 end;
 
-function TN64RSP.AccOf(I: Integer): Int64;
+function TN64RSP.AccLo(I: Integer): Word;
 begin
-  // The 48-bit accumulator lane, sign-extended.
-  Result := Int64((UInt64(FAccHi[I]) shl 32) or (UInt64(FAccMid[I]) shl 16) or FAccLo[I]);
-  if FAccHi[I] >= $8000 then
-    Dec(Result, Int64($1000000000000));
-end;
-
-function TN64RSP.AccBits(I: Integer): Int64;
-begin
-  // The lane's 48 bits as they are (not sign-extended): enough for a sum
-  // that SetAcc wraps at 48 bits again.
-  Result := Int64((UInt64(FAccHi[I]) shl 32) or (UInt64(FAccMid[I]) shl 16) or FAccLo[I]);
+  Result := Word(FAcc[I] and $FFFF);
 end;
 
 procedure TN64RSP.SetAcc(I: Integer; Value: Int64);
 begin
-  // Keeps the low 48 bits (the guest's accumulator wraps there).
-  FAccLo[I] := Word(Value and $FFFF);
-  FAccMid[I] := Word((Value shr 16) and $FFFF);
-  FAccHi[I] := Word((Value shr 32) and $FFFF);
+  // Keeps the low 48 bits (the guest's accumulator wraps there), sign-
+  // extended: a sum of a lane and a product needs no other wrapping.
+  FAcc[I] := ((Value and $FFFFFFFFFFFF) xor $800000000000) - $800000000000;
+end;
+
+procedure TN64RSP.SetAccLo(I: Integer; Value: Word);
+begin
+  // The low slice only (bit 47, the sign, stays).
+  FAcc[I] := (FAcc[I] and not Int64($FFFF)) or Value;
+end;
+
+function AccClampMid(Acc: Int64): Word; inline;
+begin
+  // The accumulator's bits 16..47 as a signed value, clamped to 16 bits.
+  if Acc >= $80000000 then
+    Result := $7FFF
+  else if Acc < -Int64($80000000) then
+    Result := $8000
+  else
+    Result := Word((Acc shr 16) and $FFFF);
+end;
+
+function AccClampLow(Acc: Int64): Word; inline;
+begin
+  // VMADL/VMADN: the low slice when the accumulator fits 32 signed bits,
+  // else 0 below and $FFFF above.
+  if Acc >= $80000000 then
+    Result := $FFFF
+  else if Acc < -Int64($80000000) then
+    Result := 0
+  else
+    Result := Word(Acc and $FFFF);
 end;
 
 procedure TN64RSP.SelectVT(T, E: Integer; out VT: TRSPLanes);
@@ -505,15 +614,16 @@ begin
     if Fn < 8 then
       SetAcc(I, V + $8000)
     else
-      SetAcc(I, AccBits(I) + V);
+      SetAcc(I, FAcc[I] + V);
+    var Acc := FAcc[I];
     if (Fn and 1) = 0 then
-      FVec[D, I] := ClampMid(FAccHi[I], FAccMid[I])
-    else if FAccHi[I] >= $8000 then
+      FVec[D, I] := AccClampMid(Acc)
+    else if Acc < 0 then
       FVec[D, I] := 0
-    else if (FAccHi[I] <> 0) or (FAccMid[I] >= $8000) then
+    else if Acc >= $80000000 then
       FVec[D, I] := $FFFF
     else
-      FVec[D, I] := FAccMid[I];
+      FVec[D, I] := Word((Acc shr 16) and $FFFF);
   end;
 end;
 
@@ -530,9 +640,9 @@ begin
     var V := Int64(S16(VT[I]));
     if (S and 1) <> 0 then
       V := V * 65536;
-    if (FAccHi[I] >= $8000) = Negative then
-      SetAcc(I, AccBits(I) + V);
-    FVec[D, I] := ClampMid(FAccHi[I], FAccMid[I]);
+    if (FAcc[I] < 0) = Negative then
+      SetAcc(I, FAcc[I] + V);
+    FVec[D, I] := AccClampMid(FAcc[I]);
   end;
 end;
 
@@ -550,12 +660,12 @@ begin
     if Accumulate then
     begin
       // ACC bits 16..47, signed.
-      V := Int64(Integer((Cardinal(FAccHi[I]) shl 16) or FAccMid[I]));
+      V := Int64(Integer(Cardinal((FAcc[I] shr 16) and $FFFFFFFF)));
       if (V < -32) and ((V and 32) = 0) then
         Inc(V, 32)
       else if (V > 32) and ((V and 32) = 0) then
         Dec(V, 32);
-      SetAcc(I, V * 65536 + FAccLo[I]);
+      SetAcc(I, V * 65536 + AccLo(I));
     end
     else
     begin
@@ -584,58 +694,53 @@ begin
       for var I := 0 to 7 do
       begin
         var V := Word(((Cardinal(FVec[S, I]) * VT[I]) shr 16) and $FFFF);
-        FAccLo[I] := V;
-        FAccMid[I] := 0;
-        FAccHi[I] := 0;
+        FAcc[I] := V;
         FVec[D, I] := V;
       end;
     5:
+      // The products fit the accumulator as they are.
       for var I := 0 to 7 do
       begin
-        SetAcc(I, Int64(S16(FVec[S, I])) * VT[I]);
-        FVec[D, I] := ClampMid(FAccHi[I], FAccMid[I]);
+        FAcc[I] := Int64(S16(FVec[S, I])) * VT[I];
+        FVec[D, I] := AccClampMid(FAcc[I]);
       end;
     6:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, Int64(FVec[S, I]) * S16(VT[I]));
-        FVec[D, I] := FAccLo[I];
+        FAcc[I] := Int64(FVec[S, I]) * S16(VT[I]);
+        FVec[D, I] := Word(FAcc[I] and $FFFF);
       end;
     7:
       for var I := 0 to 7 do
       begin
         var P := S16(FVec[S, I]) * S16(VT[I]);
-        FAccLo[I] := 0;
-        FAccMid[I] := Word(P and $FFFF);
-        FAccHi[I] := Word((Int64(P) shr 16) and $FFFF);
+        FAcc[I] := Int64(P) * 65536;
         FVec[D, I] := ClampSigned(P);
       end;
     12:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, AccBits(I) + ((Cardinal(FVec[S, I]) * VT[I]) shr 16));
-        FVec[D, I] := ClampLow(FAccHi[I], FAccMid[I], FAccLo[I]);
+        SetAcc(I, FAcc[I] + ((Cardinal(FVec[S, I]) * VT[I]) shr 16));
+        FVec[D, I] := AccClampLow(FAcc[I]);
       end;
     13:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, AccBits(I) + Int64(S16(FVec[S, I])) * VT[I]);
-        FVec[D, I] := ClampMid(FAccHi[I], FAccMid[I]);
+        SetAcc(I, FAcc[I] + Int64(S16(FVec[S, I])) * VT[I]);
+        FVec[D, I] := AccClampMid(FAcc[I]);
       end;
     14:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, AccBits(I) + Int64(FVec[S, I]) * S16(VT[I]));
-        FVec[D, I] := ClampLow(FAccHi[I], FAccMid[I], FAccLo[I]);
+        SetAcc(I, FAcc[I] + Int64(FVec[S, I]) * S16(VT[I]));
+        FVec[D, I] := AccClampLow(FAcc[I]);
       end;
   else
+    // VMADH changes bits 16..47 only (a 32-bit sum, wrapped).
     for var I := 0 to 7 do
     begin
-      // VMADH changes bits 16..47 only: a 32-bit sum, wrapped.
-      var Sum := ((Int64(FAccHi[I]) shl 16) or FAccMid[I]) + S16(FVec[S, I]) * S16(VT[I]);
-      FAccMid[I] := Word(Sum and $FFFF);
-      FAccHi[I] := Word((Sum shr 16) and $FFFF);
-      FVec[D, I] := ClampMid(FAccHi[I], FAccMid[I]);
+      SetAcc(I, FAcc[I] + Int64(S16(FVec[S, I]) * S16(VT[I])) * 65536);
+      FVec[D, I] := AccClampMid(FAcc[I]);
     end;
   end;
 end;
@@ -655,7 +760,7 @@ begin
       V := S16(FVec[S, I]) - S16(VT[I]) - Integer((FVCO shr I) and 1)
     else
       V := S16(FVec[S, I]) + S16(VT[I]) + Integer((FVCO shr I) and 1);
-    FAccLo[I] := Word(V and $FFFF);
+    SetAccLo(I, Word(V and $FFFF));
     FVec[D, I] := ClampSigned(V);
   end;
   FVCO := 0;
@@ -676,7 +781,7 @@ begin
       V := -S16(VT[I])
     else if A > 0 then
       V := S16(VT[I]);
-    FAccLo[I] := Word(V and $FFFF);
+    SetAccLo(I, Word(V and $FFFF));
     FVec[D, I] := ClampSigned(V);
   end;
 end;
@@ -706,7 +811,7 @@ begin
       if V <> 0 then
         Carry := Carry or (Cardinal(1) shl (I + 8));
     end;
-    FAccLo[I] := Word(V and $FFFF);
+    SetAccLo(I, Word(V and $FFFF));
     FVec[D, I] := Word(V and $FFFF);
   end;
   FVCO := Word(Carry);
@@ -719,11 +824,11 @@ begin
   for var I := 0 to 7 do
     case (Op shr 21) and 15 of
       8:
-        FVec[D, I] := FAccHi[I];
+        FVec[D, I] := AccHi(I);
       9:
-        FVec[D, I] := FAccMid[I];
+        FVec[D, I] := AccMid(I);
       10:
-        FVec[D, I] := FAccLo[I];
+        FVec[D, I] := AccLo(I);
     else
       FVec[D, I] := 0;
     end;
@@ -763,7 +868,7 @@ begin
     end
     else
       R := VT[I];
-    FAccLo[I] := R;
+    SetAccLo(I, R);
     FVec[D, I] := R;
   end;
   FVCO := 0;
@@ -807,7 +912,7 @@ begin
       Compare := Compare or (Cardinal(1) shl I);
     if HighFlag then
       Compare := Compare or (Cardinal(1) shl (I + 8));
-    FAccLo[I] := R;
+    SetAccLo(I, R);
     FVec[D, I] := R;
   end;
   FVCO := 0;
@@ -874,7 +979,7 @@ begin
       Compare := Compare or (Cardinal(1) shl I);
     if HighFlag then
       Compare := Compare or (Cardinal(1) shl (I + 8));
-    FAccLo[I] := R;
+    SetAccLo(I, R);
     FVec[D, I] := R;
   end;
   FVCO := Word(Carry);
@@ -894,7 +999,7 @@ begin
     var R := VT[I];
     if ((FVCC shr I) and 1) <> 0 then
       R := FVec[S, I];
-    FAccLo[I] := R;
+    SetAccLo(I, R);
     FVec[D, I] := R;
   end;
   FVCO := 0;
@@ -925,7 +1030,7 @@ begin
     else
       R := (FVec[S, I] xor VT[I]) xor $FFFF;
     end;
-    FAccLo[I] := R;
+    SetAccLo(I, R);
     FVec[D, I] := R;
   end;
 end;
@@ -939,7 +1044,7 @@ begin
   var D := (Op shr 6) and 31;
   for var I := 0 to 7 do
   begin
-    FAccLo[I] := Word((S16(FVec[S, I]) + S16(VT[I])) and $FFFF);
+    SetAccLo(I, Word((S16(FVec[S, I]) + S16(VT[I])) and $FFFF));
     FVec[D, I] := 0;
   end;
 end;
@@ -958,7 +1063,7 @@ begin
   // The scalar divider always takes the raw E&7 lane of VT.
   var Source := FVec[T, E and 7];
   for var I := 0 to 7 do
-    FAccLo[I] := VT[I];
+    SetAccLo(I, VT[I]);
   if Fn = 51 then
     FVec[D, DE] := VT[DE]
   else if Fn in [50, 54] then
@@ -1163,10 +1268,21 @@ begin
         FVec[V, I] := Word(DMemRead((((Address and $FF8) + Cardinal(Position)) and $FFF))) shl (8 - Ord(Kind = 7));
       end;
   end
-  else if FBus.DirectMemory and not FAhead then
+  else if FBus.DirectMemory then
   begin
     // The same bytes, a whole element at a time where an element's two
-    // bytes are both moved.
+    // bytes are both moved. Run ahead, a store first saves the lines it
+    // writes, as DMemWrite would before its first byte in each (at most 16
+    // bytes: the line of the first and of the last).
+    if Writing and FAhead and (Size > 0) then
+    begin
+      var First := Address and $FFF;
+      var Last := (Address + Cardinal(Size) - 1) and $FFF;
+      if FLineRun[First shr 6] <> FRun then
+        SaveLine(First);
+      if FLineRun[Last shr 6] <> FRun then
+        SaveLine(Last);
+    end;
     var I := 0;
     while I < Size do
     begin
@@ -2996,9 +3112,22 @@ begin
     IOAddress := $04100000 + (IOIndex - 8) * 4;
   if S = 0 then
   begin
-    FReg[T] := FBus.Read32(IOAddress);
+    if FReadPending then
+    begin
+      // Run ahead: the predicted (or, replayed, journalled) value.
+      FReg[T] := FReadValue;
+      FReadPending := False;
+    end
+    else
+      FReg[T] := FBus.Read32(IOAddress);
     if FBus.TraceEnabled then
       FBus.Trace(TN64TraceKind.MMIORead, $04001000 + Current, IOAddress, FReg[T]);
+  end
+  else if (S = 4) and FWritePending then
+  begin
+    // Run ahead: the console applies it in its own clock (or, replayed,
+    // has applied it already).
+    FWritePending := False;
   end
   else if S = 4 then
   begin
@@ -3077,6 +3206,7 @@ begin
       DMemWrite(((Address + Cardinal(I)) and $FFF), Byte((B shr ((Size - 1 - I) * 8)) and $FF));
   end;
 end;
+
 procedure TN64RSP.IssueInstruction(Op: Cardinal; var PC, Status, Interrupt: Cardinal);
 begin
   if FBus.TraceEnabled then
@@ -3217,6 +3347,32 @@ begin
   FReg[0] := 0;
 end;
 
+procedure TN64RSP.Issue(Op: Cardinal; var PC, Status, Interrupt: Cardinal);
+begin
+  // Vector instructions straight to their unit (nothing of the scalar
+  // decode in IssueInstruction concerns them); traced, all go through it.
+  if not FBus.TraceEnabled then
+    case Op shr 26 of
+      18, 50, 58:
+        if ((Op shr 26) <> 18) or (((Op shr 21) and 31) >= 16) then
+        begin
+          if FBranch then
+          begin
+            PC := FNextPC;
+            FBranch := False
+          end
+          else
+            PC := (PC + 4) and $FFC;
+          if (Op shr 26) = 18 then
+            VectorOp(Op)
+          else
+            VectorMemory(Op, (Op shr 26) = 58);
+          Exit;
+        end;
+    end;
+  IssueInstruction(Op, PC, Status, Interrupt);
+end;
+
 function TN64RSP.RunClocks(var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean): Integer;
 begin
   // Ahead: stop before the first clock that is not free (see RunAhead); the
@@ -3240,7 +3396,9 @@ begin
     var Stalled := FHasStalledOpcode and (FStalledPC = PC);
     var Op, Second: Cardinal;
     var Pair: Boolean;
-    var Masks: TRSPIssueMasks;
+    // The clock's masks, where they are kept (Held: decoded here).
+    var Masks: ^TRSPIssueMasks;
+    var Held: TRSPIssueMasks;
     var FirstSlot := Integer((PC shr 2) and 1023);
     var SecondSlot := Integer(((PC shr 2) + 1) and 1023);
     if Stalled and FStallKnown and (FStallOp = FStalledOpcode) and (FStallSecond = FStalledSecondOpcode) and
@@ -3250,7 +3408,7 @@ begin
       Op := FStalledOpcode;
       Second := FStalledSecondOpcode;
       Pair := FHasStalledSecondOpcode;
-      Masks := FStallMasks;
+      Masks := @FStallMasks;
     end
     else if Stalled then
     begin
@@ -3263,19 +3421,23 @@ begin
       if (FDec[FirstSlot].Op = Op) and (not Pair or (FDec[SecondSlot].Op = Second)) then
       begin
         if not Pair then
-          Masks := FDec[FirstSlot].Single
+          Masks := @FDec[FirstSlot].Single
         else
         begin
           if not FDec[FirstSlot].PairValid or (FDec[FirstSlot].SecondOp <> Second) then
             DecodePair(FirstSlot);
-          Masks := FDec[FirstSlot].Paired;
+          Masks := @FDec[FirstSlot].Paired;
         end;
       end
-      else if Pair then
-        // IMEM changed under the held words: decode them as held.
-        Combine(InfoEXECUTE(Op), InfoEXECUTE(Second), External(Op), External(Second), Masks)
       else
-        MasksOf(InfoEXECUTE(Op), External(Op), Masks);
+      begin
+        // IMEM changed under the held words: decode them as held.
+        if Pair then
+          Combine(InfoEXECUTE(Op), InfoEXECUTE(Second), External(Op), External(Second), Held)
+        else
+          MasksOf(InfoEXECUTE(Op), External(Op), Held);
+        Masks := @Held;
+      end;
     end
     else
     begin
@@ -3293,9 +3455,9 @@ begin
         Second := FDec[SecondSlot].Op;
       end;
       if Pair then
-        Masks := FDec[FirstSlot].Paired
+        Masks := @FDec[FirstSlot].Paired
       else
-        Masks := FDec[FirstSlot].Single;
+        Masks := @FDec[FirstSlot].Single;
     end;
     var Flags := Masks.Flags;
     var ScalarWrites := Masks.ScalarWrites;
@@ -3306,8 +3468,27 @@ begin
       ((Masks.Sources and (FScalarLo or FScalarHi)) <> 0) or ((Masks.Vectors and (FVectorLo or FVectorHi)) <> 0);
     if Ahead then
     begin
-      if not Hazard and Masks.External then
+      // A replay re-runs clocks that already ran, with the fences set later.
+      if FFenced and not FReplaying and not Hazard and (TouchesFence(Op) or (Pair and TouchesFence(Second))) and
+        not LiftFence(PC, Op, Second, Pair, FClockBase + Result + 1) then
+      begin
+        FAheadStop := TRSPAheadStop.Fence;
         Break;
+      end;
+      if not Hazard and Masks.External and not JournalCOP0(Op, Second, Pair, FClockBase + Result + 1) then
+      begin
+        var Ext := Op;
+        if not External(Op) then
+          Ext := Second;
+        FAheadStopIndex := Integer((Ext shr 11) and 15);
+        if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 4) then
+          FAheadStop := TRSPAheadStop.WriteCOP0
+        else if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 0) then
+          FAheadStop := TRSPAheadStop.ReadCOP0
+        else
+          FAheadStop := TRSPAheadStop.BreakOrRaise;
+        Break;
+      end;
       if not FCheckpointed then
         SaveCheckpoint(PC);
     end;
@@ -3318,7 +3499,7 @@ begin
       FHasStalledOpcode := True;
       FStalledSecondOpcode := Second;
       FHasStalledSecondOpcode := Pair;
-      FStallMasks := Masks;
+      FStallMasks := Masks^;
       FStallOp := Op;
       FStallSecond := Second;
       FStallPair := Pair;
@@ -3330,9 +3511,9 @@ begin
     FHasStalledOpcode := False;
     FHasStalledSecondOpcode := False;
     var DelaySlot := FBranch;
-    IssueInstruction(Op, PC, Status, Interrupt);
+    Issue(Op, PC, Status, Interrupt);
     if Pair and ((Status and 1) = 0) then
-      IssueInstruction(Second, PC, Status, Interrupt);
+      Issue(Second, PC, Status, Interrupt);
     AgePipeline;
     // Scalar results become ready after two clocks, vector results after three.
     ScalarWrites := ScalarWrites and not Cardinal(1);
@@ -3383,9 +3564,7 @@ begin
   // Same element types and bounds: plain copies.
   Move(FReg, FCheckpoint.Reg, SizeOf(FReg));
   Move(FVec, FCheckpoint.Vec, SizeOf(FVec));
-  Move(FAccHi, FCheckpoint.AccHi, SizeOf(FAccHi));
-  Move(FAccMid, FCheckpoint.AccMid, SizeOf(FAccMid));
-  Move(FAccLo, FCheckpoint.AccLo, SizeOf(FAccLo));
+  Move(FAcc, FCheckpoint.Acc, SizeOf(FAcc));
   FCheckpoint.VCO := FVCO;
   FCheckpoint.VCC := FVCC;
   FCheckpoint.VCE := FVCE;
@@ -3408,14 +3587,6 @@ begin
   FCheckpoint.StalledPC := FStalledPC;
   FCheckpoint.HasStalledOpcode := FHasStalledOpcode;
   FCheckpointed := True;
-  // A new run: no DMEM line saved yet.
-  if FRun = High(Cardinal) then
-  begin
-    for var I := 0 to High(FLineRun) do
-      FLineRun[I] := 0;
-    FRun := 0;
-  end;
-  Inc(FRun);
   FAhead := True;
 end;
 
@@ -3428,22 +3599,282 @@ begin
   else
     for var I := 0 to 63 do
       FLineBackup[Line + Cardinal(I)] := DMemRead(Line + Cardinal(I));
-  FLineRun[Offset shr 6] := FRun;
+  // After the copy (full barrier), for LineSaved on another thread.
+  TInterlocked.Exchange(Integer(FLineRun[Offset shr 6]), Integer(FRun));
+end;
+
+procedure TN64RSP.NewRun;
+begin
+  // A new run: no DMEM line saved yet.
+  if FRun = High(Cardinal) then
+  begin
+    for var I := 0 to High(FLineRun) do
+      FLineRun[I] := 0;
+    FRun := 0;
+  end;
+  Inc(FRun);
+  FRunFresh := True;
+end;
+
+function TN64RSP.LineSaved(Offset: Cardinal): Boolean;
+begin
+  Result := Cardinal(TInterlocked.CompareExchange(Integer(FLineRun[(Offset and $FFF) shr 6]), 0, 0)) = FRun;
+end;
+
+function TN64RSP.JournalCOP0(Op, Second: Cardinal; Pair: Boolean; Clock: Integer): Boolean;
+begin
+  // A clock that issues an external instruction runs ahead only if that is
+  // its one external instruction and an MFC0 whose value is known or an
+  // MTC0 the console applies later: from the journal in a replay, else as
+  // OnPredict or OnDefer allow (then journalled).
+  Result := False;
+  var Access := Op;
+  if not External(Op) then
+    Access := Second
+  else if Pair and External(Second) then
+    Exit;
+  var Kind := (Access shr 21) and 31;
+  if ((Access shr 26) <> 16) or not (Kind in [0, 4]) then
+    Exit;
+  var Index := Integer((Access shr 11) and 15);
+  var Write := Kind = 4;
+  var Value: Cardinal := 0;
+  if FReplaying then
+  begin
+    // Lifted fences are not checked in a replay.
+    while (FReplayPos < FJournalCount) and FJournal[FReplayPos].Lift do
+      Inc(FReplayPos);
+    if (FReplayPos >= FJournalCount) or (FJournal[FReplayPos].Clock <> Clock) or (FJournal[FReplayPos].Index <> Index) or
+      (FJournal[FReplayPos].Write <> Write) then
+      if FReplayPos >= FJournalCount then
+        raise EInvalidOpException.CreateFmt('RSP rewind replay diverged from the journal: clock %d index %d write %s past its %d entries', [Clock, Index, BoolToStr(Write, True), FJournalCount])
+      else
+        raise EInvalidOpException.CreateFmt('RSP rewind replay diverged from the journal: clock %d index %d write %s, entry %d of %d: clock %d index %d write %s',
+          [Clock, Index, BoolToStr(Write, True), FReplayPos, FJournalCount, FJournal[FReplayPos].Clock, FJournal[FReplayPos].Index, BoolToStr(FJournal[FReplayPos].Write, True)]);
+    Value := FJournal[FReplayPos].Value;
+    Inc(FReplayPos);
+  end
+  else
+  begin
+    // A full journal ends the window (room for a lift entry and this one).
+    if FJournalCount >= JournalCapacity - 2 then
+      Exit;
+    if Write then
+    begin
+      // The MTC0 is its clock's one scalar-unit instruction: its source
+      // register holds the value it writes.
+      Value := FReg[(Access shr 16) and 31];
+      if not Assigned(FDefer) or not FDefer(Index, Clock, Value) then
+        Exit;
+    end
+    else if not Assigned(FPredict) or not FPredict(Index, Clock, Value) then
+      Exit;
+    AddJournal(Clock, Index, Value, Write, False);
+  end;
+  if Write then
+    FWritePending := True
+  else
+  begin
+    FReadValue := Value;
+    FReadPending := True;
+  end;
+  Result := True;
+end;
+procedure TN64RSP.AddFence(Offset, Count: Cardinal; Reads: Boolean; Source: Byte);
+begin
+  if Count = 0 then
+    Exit;
+  var Flags: Byte := 2 or (Source shl 2);
+  if Reads then
+    Flags := Flags or 1;
+  for var Group := Integer(Offset shr 3) to Integer((Offset + Count - 1) shr 3) do
+    FFence[Group and 511] := FFence[Group and 511] or Flags;
+  FFenced := True;
+end;
+
+function TN64RSP.WroteAhead(Offset, Count: Cardinal): Boolean;
+begin
+  Result := False;
+  if not FAhead or (Count = 0) then
+    Exit;
+  for var Line := Integer(Offset shr 6) to Integer((Offset + Count - 1) shr 6) do
+    if FLineRun[Line and 63] = FRun then
+      Exit(True);
+end;
+
+function TN64RSP.ReadFenced(Offset, Count: Cardinal): Boolean;
+begin
+  Result := False;
+  if not FFenced or (Count = 0) then
+    Exit;
+  for var Group := Integer(Offset shr 3) to Integer((Offset + Count - 1) shr 3) do
+    if (FFence[Group and 511] and 1) <> 0 then
+      Exit(True);
+end;
+
+function TN64RSP.TouchesFence(Op: Cardinal): Boolean;
+begin
+  // Whether a scalar or vector load or store may touch a fenced line: the
+  // exact bytes of a scalar access; for a vector one, 32 bytes around its
+  // address that hold every byte any form touches. A
+  // load/store is the scalar unit's instruction of its clock, so the base
+  // register is as before the clock.
+  var Code := Op shr 26;
+  var Address, Last: Cardinal;
+  var Writing: Boolean;
+  case Code of
+    32, 33, 35..37, 39, 40, 41, 43:
+      begin
+        Address := ((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF;
+        var Size: Cardinal := 1;
+        if Code in [33, 37, 41] then
+          Size := 2
+        else if Code in [35, 39, 43] then
+          Size := 4;
+        Last := Address + Size - 1;
+        Writing := Code >= 40;
+      end;
+    50, 58:
+      begin
+        var Kind := (Op shr 11) and 31;
+        var Size: Integer := 16;
+        if Kind <= 3 then
+          Size := 1 shl Kind
+        else if Kind in [6, 7] then
+          Size := 8;
+        var Offset := Integer(SignedValue(SX(Op and 127, 7)));
+        // From 16 bytes below (LRV/SRV) to 16 above the 8-byte group.
+        Address := Cardinal(Add64(FReg[(Op shr 21) and 31], SX(UInt64((Int64(Offset) * Size) and $FFFFFFFF), 32)) and $FF0);
+        Last := Address + 31;
+        Writing := Code = 58;
+      end;
+  else
+    Exit(False);
+  end;
+  var Flags: Byte := 1;
+  if Writing then
+    Flags := 2;
+  for var Group := Integer(Address shr 3) to Integer(Last shr 3) do
+    if (FFence[Group and 511] and Flags) <> 0 then
+    begin
+      FAheadStopIndex := Flags or (FFence[Group and 511] and not Cardinal(3));
+      Exit(True);
+    end;
+  Result := False;
+end;
+
+procedure TN64RSP.AddJournal(Clock, Index: Integer; Value: Cardinal; Write, Lift: Boolean);
+begin
+  if FJournalCount >= JournalCapacity then
+    raise EInvalidOpException.Create('RSP journal full');
+  FJournal[FJournalCount].Clock := Clock;
+  FJournal[FJournalCount].Index := Index;
+  FJournal[FJournalCount].Value := Value;
+  FJournal[FJournalCount].Write := Write;
+  FJournal[FJournalCount].Lift := Lift;
+  Inc(FJournalCount);
+end;
+
+function TN64RSP.LiftFence(PC, Op, Second: Cardinal; Pair: Boolean; Clock: Integer): Boolean;
+begin
+  // A clock stopped by a fence: the console may lift the fences of DMA it
+  // expects done by then (writing DMEM through WriteAhead, hence the
+  // checkpoint first).
+  Result := False;
+  if not Assigned(FLift) or (FJournalCount >= JournalCapacity - 2) then
+    Exit;
+  if not FCheckpointed then
+    SaveCheckpoint(PC);
+  FFencedOp := Op;
+  FFencedSecond := Second;
+  FFencedPair := Pair;
+  if not FLift(Clock) then
+    Exit;
+  if ClockFenced then
+    raise EInvalidOpException.Create('RSP clock still fenced after a lift');
+  AddJournal(Clock, -1, 0, False, True);
+  Result := True;
+end;
+
+function TN64RSP.ClockFenced: Boolean;
+begin
+  Result := FFenced and (TouchesFence(FFencedOp) or (FFencedPair and TouchesFence(FFencedSecond)));
+end;
+
+procedure TN64RSP.WriteAhead(Offset: Cardinal; Value: Byte);
+begin
+  if not FAhead then
+    raise EInvalidOpException.Create('RSP DMEM write ahead outside a window');
+  DMemWrite(Offset and $FFF, Value);
+end;
+
+procedure TN64RSP.ClearFences;
+begin
+  if FFenced then
+  begin
+    FillChar(FFence, SizeOf(FFence), 0);
+    FFenced := False;
+  end;
+end;
+
+function TN64RSP.Journal: PRSPJournal;
+begin
+  Result := PRSPJournal(@FJournal[0]);
+end;
+
+function TN64RSP.JournalCount: Integer;
+begin
+  Result := FJournalCount;
+end;
+
+function TN64RSP.JournalEntry(I: Integer): TRSPJournalEntry;
+begin
+  Result := FJournal[I];
 end;
 
 function TN64RSP.RunAhead(var PC: Cardinal; Status: Cardinal; Cycles: Integer): Integer;
 begin
   if (Status and $21) <> 0 then
     raise EInvalidOpException.Create('RSP run-ahead while halted or single-stepping');
-  EndAhead;
+  // The fences set for this window stay.
+  if not FRunFresh then
+    NewRun;
+  FRunFresh := False;
+  FAhead := False;
+  FCheckpointed := False;
+  FJournalCount := 0;
+  FReadPending := False;
+  FWritePending := False;
   var Interrupt: Cardinal := 0;
+  FAheadStop := TRSPAheadStop.Budget;
+  FClockBase := 0;
   Result := RunClocks(PC, Status, Interrupt, Cycles, True);
+  FAheadClocks := Result;
+  if (FAheadStop = TRSPAheadStop.Budget) and (Result < Cycles) then
+    FAheadStop := TRSPAheadStop.Halt;
   // Without a clock run nothing was saved or changed.
   if Result = 0 then
     EndAhead;
 end;
 
+function TN64RSP.ContinueAhead(var PC: Cardinal; Status: Cardinal; Cycles: Integer): Integer;
+begin
+  if not FAhead or (FAheadStop <> TRSPAheadStop.Budget) then
+    raise EInvalidOpException.Create('RSP window continued after it stopped');
+  var Interrupt: Cardinal := 0;
+  FClockBase := FAheadClocks;
+  Result := RunClocks(PC, Status, Interrupt, Cycles, True);
+  Inc(FAheadClocks, Result);
+  if (FAheadStop = TRSPAheadStop.Budget) and (Result < Cycles) then
+    FAheadStop := TRSPAheadStop.Halt;
+end;
+
 procedure TN64RSP.Rewind(var PC: Cardinal; Keep: Integer);
+begin
+  Rewind(PC, Keep, [], nil);
+end;
+
+procedure TN64RSP.Rewind(var PC: Cardinal; Keep: Integer; const Stops: array of Integer; OnStop: TRSPReplayStop);
 begin
   if not FCheckpointed then
     raise EInvalidOpException.Create('RSP rewind without a checkpoint');
@@ -3457,9 +3888,7 @@ begin
           DMemWrite(Cardinal(I), FLineBackup[I]);
   Move(FCheckpoint.Reg, FReg, SizeOf(FReg));
   Move(FCheckpoint.Vec, FVec, SizeOf(FVec));
-  Move(FCheckpoint.AccHi, FAccHi, SizeOf(FAccHi));
-  Move(FCheckpoint.AccMid, FAccMid, SizeOf(FAccMid));
-  Move(FCheckpoint.AccLo, FAccLo, SizeOf(FAccLo));
+  Move(FCheckpoint.Acc, FAcc, SizeOf(FAcc));
   FVCO := FCheckpoint.VCO;
   FVCC := FCheckpoint.VCC;
   FVCE := FCheckpoint.VCE;
@@ -3482,11 +3911,32 @@ begin
   FStalledPC := FCheckpoint.StalledPC;
   FHasStalledOpcode := FCheckpoint.HasStalledOpcode;
   FCheckpointed := False;
-  // The same free clocks again, up to the current point.
+  if Assigned(OnStop) then
+    OnStop(-1);
+  // The same free clocks again, up to the current point, with the reads
+  // of the journal (all of them verified by then).
   var Status: Cardinal := 0;
   var Interrupt: Cardinal := 0;
-  if RunClocks(PC, Status, Interrupt, Keep, True) <> Keep then
-    raise EInvalidOpException.Create('RSP rewind replay diverged');
+  FReplaying := True;
+  FReplayPos := 0;
+  try
+    var Done := 0;
+    for var I := 0 to High(Stops) do
+    begin
+      if (Stops[I] < Done) or (Stops[I] > Keep) then
+        raise EInvalidOpException.Create('RSP rewind stops out of order');
+      FClockBase := Done;
+      if RunClocks(PC, Status, Interrupt, Stops[I] - Done, True) <> Stops[I] - Done then
+        raise EInvalidOpException.Create('RSP rewind replay diverged');
+      Done := Stops[I];
+      OnStop(I);
+    end;
+    FClockBase := Done;
+    if RunClocks(PC, Status, Interrupt, Keep - Done, True) <> Keep - Done then
+      raise EInvalidOpException.Create('RSP rewind replay diverged');
+  finally
+    FReplaying := False;
+  end;
   EndAhead;
 end;
 
@@ -3494,6 +3944,10 @@ procedure TN64RSP.EndAhead;
 begin
   FAhead := False;
   FCheckpointed := False;
+  FJournalCount := 0;
+  FReadPending := False;
+  FWritePending := False;
+  ClearFences;
 end;
 procedure TN64RSP.SerializeState(State: TStateArchive);
 
@@ -3507,11 +3961,7 @@ procedure TN64RSP.SerializeState(State: TStateArchive);
 
 begin
   if not State.Loading then
-  begin
     PlanesToArrays;
-    for var I := 0 to 7 do
-      FAcc[I] := AccOf(I);
-  end;
   State.Field(FReg, SizeOf(FReg));
   State.Field(FVec, SizeOf(FVec));
   State.Field(FAcc, SizeOf(FAcc));
@@ -3554,8 +4004,6 @@ begin
     for var I := 0 to 7 do
       if (FAcc[I] < -140737488355328) or (FAcc[I] > 140737488355327) then
         raise EReadError.Create('Invalid RSP accumulator');
-    for var I := 0 to 7 do
-      SetAcc(I, FAcc[I]);
     ArraysToPlanes;
   end;
 end;

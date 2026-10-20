@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.Math, System.Classes, System.UITypes, N64.Types,
+  System.SysUtils, System.Math, System.Classes, System.SyncObjs, System.Diagnostics, System.UITypes, N64.Types,
   N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, N64.Host, Core.Snapshots, Core.Emulation.Types;
 
 type
@@ -14,6 +14,62 @@ type
   // is waited for and its timing results compared. Stress: threaded, with
   // random stalls of both threads. All four give the same emulation.
   TN64RDPMode = (Threaded, Synchronous, Verify, Stress);
+
+  // What a run-ahead window assumed for a journal entry, checked in its
+  // clock: for a deferred DPC_END write, where its list starts (CURRENT, or
+  // START if pending) and whether XBUS was set; for a deferred DMA start,
+  // whether a transfer was active and one queued (the queue then ignores
+  // it); for lifted fences, the SP DMA transfers completed by then.
+  // (For a DMA start, From and RAM are the SP and RDRAM addresses it uses.)
+  // For a DPC_END write with XBUS, the list's XBusCount bytes in DMEM as the
+  // RDP reads them then, from XBusAt of the window's copies (none if 0).
+  TN64RSPNote = record
+    From, RAM: Cardinal;
+    XBus, Busy, Full: Boolean;
+    Serial: Int64;
+    XBusAt, XBusCount: Integer;
+  end;
+
+  // An SP DMA beat into DMEM while the RSP ran ahead: its eight bytes from
+  // Local (wrapping in DMEM), after Position of the window's clocks, and
+  // the bytes it replaced if it wrote them (Applied; else the window had).
+  // Unsaved: the window had not saved the line yet, so its saved copy may
+  // hold this beat's bytes (a window on the RSP thread saves lines as the
+  // beats come).
+  TN64RSPBeat = record
+    Position: Integer;
+    Local: Cardinal;
+    Data, Old: array[0..7] of Byte;
+    Applied, Unsaved: Boolean;
+  end;
+
+  // RSP run-ahead counts since the console was created (diagnostics).
+  TN64RSPAheadStats = record
+    // Windows run and their clocks; MFC0s run ahead with a predicted value,
+    // and those whose value turned out different (rewound and run again);
+    // windows a CPU access cut short, and the clocks they had run past it.
+    Windows, Clocks, Predictions, Mispredictions, Cuts, CutClocks: Int64;
+    // MTC0s run ahead and applied in their own clock.
+    Deferred: Int64;
+    // Fences lifted before their DMA was done; those whose DMA was not
+    // complete by then after all; beats into DMEM whose RDRAM bytes changed
+    // after they were read in advance.
+    Lifts, LiftsWrong, BeatsChanged: Int64;
+    // Windows run on the RSP thread, and the times this thread waited for
+    // it.
+    ThreadWindows, ThreadWaits: Int64;
+    // Time (TStopwatch ticks) windows ran (on the RSP thread or here), and
+    // this thread waited for the RSP thread.
+    WindowTime, ThreadWaitTime: Int64;
+    // Windows by how they ended (TRSPAheadStop).
+    Stops: array[TRSPAheadStop] of Int64;
+    // Windows ended by an MTC0 or MFC0, by SP/DP register.
+    StopWrites, StopReads: array[0..15] of Int64;
+    // Windows ended at a fence: [read 1 / write 2, SP DMA done by then].
+    FenceStops: array[1..2, Boolean] of Int64;
+    // [read 1 / write 2, source: in 1, out 2, XBUS 4 (or several)].
+    FenceSources: array[1..2, 0..7] of Int64;
+  end;
 
   TN64Pad = record
     Buttons: Word;
@@ -26,6 +82,27 @@ type
   TN64SPTransfer = record
     Active, Writing: Boolean;
     local, RAM, Size, Blocks, Skip, Position, Control: Cardinal;
+  end;
+
+  // An SP DMA transfer as a run-ahead window models it: Transfer as it is
+  // when the window starts or starts it, Serial the count of completed
+  // transfers once it completes, LastBeat when its last beat is due and
+  // BeatFirst whether a beat precedes an RSP clock due with it. Lifted: the
+  // window no longer keeps off its DMEM bytes, which Data holds in beat
+  // order (into DMEM: read from RDRAM in advance and written by the window,
+  // each beat checks RDRAM still holds them; out of DMEM: taken in advance,
+  // the beats send them); Taken: the bytes the beats have had.
+  // State: 0 free, 1 a beat of it is being run (emulation thread), 3 being
+  // lifted, 2 lifted (by the thread running the window; the beats then use
+  // Data). Beats: the beats run of it since Transfer's view; Data covers
+  // those from DataFirst on (the ones not run when it was lifted).
+  TN64RSPTransfer = record
+    Transfer: TN64SPTransfer;
+    Serial: Int64;
+    LastBeat: UInt64;
+    BeatFirst: Boolean;
+    State, Beats, DataFirst: Integer;
+    Data: TBytes;
   end;
 
   TN64PITransfer = record
@@ -50,6 +127,27 @@ type
     // bounds the cost of one rewind.
     RSPWindowMin = 16;
     RSPWindowMax = 65536;
+    // Windows run on the RSP thread once the last one had this many clocks
+    // (shorter ones cost more to hand over than they save); the thread
+    // publishes its clocks in parts of AheadPart.
+    RSPThreadMin = 256;
+    AheadPart = 64;
+    // SP DMA transfers one window may know of (the list never grows, so the
+    // beats may read it while the window runs on another thread).
+    RSPMaxTransfers = 4096;
+    SpinRounds = 4000;
+  private type
+    // Runs the windows the emulation thread requests (RunThreadedWindow).
+    TRSPThread = class(TThread)
+    private
+      FOwner: TN64Console;
+      FCPUs: TN64CPUSet;
+      FPreferred: Integer;
+    protected
+      procedure Execute; override;
+    public
+      constructor Create(Owner: TN64Console; const CPUs: TN64CPUSet; Preferred: Integer);
+    end;
   private
     FData, FPIF, FSave: TBytes;
     FReg: array[0..7, 0..15] of Cardinal;
@@ -89,6 +187,105 @@ type
     // that was not (host heuristic; any size is exact).
     FRSPWindow: Integer;
     FRSPCut: Boolean;
+    // The window being run ahead: FRSPRun clocks (0: none), of which the
+    // first FRSPCommitted are handled. The timeline handles FRSPSegment
+    // clocks after those, up to the next clock with a predicted MFC0 (the
+    // RSP's journal entry FRSPNextCheck); that clock comes as an ordinary
+    // RSP clock event, which checks the prediction. FRSPFirstDue: when the
+    // window's first clock is due.
+    FRSPRun, FRSPCommitted, FRSPSegment, FRSPNextCheck: Integer;
+    FRSPFirstDue: UInt64;
+    // SP DMA transfers completed (host side, for the window's checks), and
+    // how many when the window started.
+    FSPDone, FRSPDoneBase: Int64;
+    // A deferred write is being applied.
+    FRSPApplying: Boolean;
+    // While a deferred kick is applied: the list's copy (FXBusCount bytes of
+    // FRSPXBusData from FXBusAt) holds DMEM from FXBusStart on, for the RDP.
+    FXBusAt, FXBusCount: Integer;
+    FXBusStart: Cardinal;
+    // By journal entry: what the window assumed (see TN64RSPNote).
+    FRSPNotes: TArray<TN64RSPNote>;
+    // What the window's callbacks know of the queued DP interrupt and RSP
+    // clock when it starts (nothing else moves the timeline meanwhile).
+    FRSPDP, FRSPFirstClock: TN64Event;
+    FRSPHasDP, FRSPHasFirstClock: Boolean;
+    // The RSP's journal (allocated once by it), read here without touching
+    // the RSP's own fields.
+    FRSPJournal: PRSPJournal;
+    // A window run on the RSP thread (RSPThreaded): in flight while
+    // FRSPInFlight, the timeline taking its clocks as they are published
+    // (AdvanceThreadedWindow). FRSPLastWindow: the last window's clocks.
+    FRSPThreaded, FRSPInFlight: Boolean;
+    FRSPLastWindow: Integer;
+    FRSPThread: TRSPThread;
+    FRSPWake, FRSPProgress: TEvent;
+  protected
+    // The window's own state, which its callbacks change while it runs (on
+    // the RSP thread, apart from what this thread writes).
+    FWindowPad0: array[0..7] of Int64;
+  private
+    // The SP and DP registers (as RSPRegister) as the window's clocks will
+    // find them: from the state at its start, its own deferred writes up to
+    // journal entry FRSPShadowPos, and the RDP assumed to run each list it
+    // kicks to the end without a Full Sync (checked like any prediction).
+    FRSPShadow: array[0..15] of Cardinal;
+    FRSPShadowPos: Integer;
+    // The SP DMA transfers the window's clocks find, in order (FRSPDMACount
+    // used; while there are any, SP_MEM/DRAM_ADDR and the lengths are not
+    // predicted), the first FRSPLifted of them lifted, and the addresses for
+    // the next one.
+    FRSPDMAs: TArray<TN64RSPTransfer>;
+    // FRSPFirstPending: those before it are complete at every clock asked
+    // about since (the window asks in clock order).
+    FRSPDMACount, FRSPLifted, FRSPFirstPending: Integer;
+    // During LiftRSPTransfer: the lifted transfers out of DMEM whose RDRAM
+    // bytes may overlap the transfer's (FRSPOverlapCount used).
+    FRSPOverlap: TArray<Integer>;
+    FRSPOverlapCount: Integer;
+    // Which fences a window may lift (RSPLiftMode).
+    FRSPLiftMode: Integer;
+    FRSPDMAPending: array[0..1] of Cardinal;
+    // The window's fences for RDP lists kicked with XBUS: offset and count
+    // pairs (FRSPXBusCount pairs used).
+    FRSPXBus: TArray<Cardinal>;
+    FRSPXBusCount: Integer;
+    // Copies of RDP lists kicked with XBUS (FRSPXBusUsed bytes used; never
+    // grown, so they can be read while the window runs on).
+    FRSPXBusData: TBytes;
+    FRSPXBusUsed: Integer;
+    FRSPWorkerNoise: Cardinal;
+    // Fences the window lifted (added to FRSPStats as it ends).
+    FRSPWindowLifts: Int64;
+  protected
+    // The handshake with the RSP thread, each side's fields on their own
+    // cache lines.
+    FAheadPad0: array[0..7] of Int64;
+  private
+    // Written by the emulation thread.
+    [Volatile] FAheadRequest: Int64;
+    FAheadBudget: Integer;
+    FAheadStatus, FAheadPC: Cardinal;
+    [Volatile] FAheadStopRequest: Integer;
+    [Volatile] FAheadMainWaiting: Integer;
+  protected
+    FAheadPad1: array[0..7] of Int64;
+  private
+    // Written by the RSP thread: the clocks (high half) and journal entries
+    // (low half) published, the request finished, where the RSP ended.
+    [Volatile] FAheadProgress: Int64;
+    [Volatile] FAheadFinished: Int64;
+    FAheadPCOut: Cardinal;
+    FAheadError: string;
+    [Volatile] FAheadWorkerSleeping: Integer;
+  protected
+    FAheadPad2: array[0..7] of Int64;
+  private
+    // The SP DMA beats into DMEM since the window started (FRSPBeatCount
+    // used): a rewind replays the window's clocks with them in place.
+    FRSPBeats: TArray<TN64RSPBeat>;
+    FRSPBeatCount: Integer;
+    FRSPStats: TN64RSPAheadStats;
     FLastLeft, FLastRight: SmallInt;
     FCurrentFrame: TEmulatorFrame;
     FVideoOutputEnabled: Boolean;
@@ -153,6 +350,43 @@ type
     procedure RewindRSP;
     procedure FoldRSPPhase;
     procedure StressRSP;
+    function StressNoise: Cardinal;
+    function WindowNoise: Cardinal;
+    procedure CountWindow(Clocks: Integer);
+    procedure BeginThreadedWindow;
+    procedure RunThreadedWindow;
+    procedure PublishAhead(Clocks: Integer);
+    function AdvanceThreadedWindow: Boolean;
+    procedure WaitAhead(Need: Integer);
+    procedure StopAhead;
+    procedure EndThreadedWindow;
+    function RacyRAM8(Address: Cardinal): Byte; inline;
+    function XBusRead32(Offset: Cardinal): Cardinal;
+    procedure StressPause;
+    procedure StopRSPThread;
+    procedure SetRSPThreaded(Value: Boolean);
+    function PinEmulationThread(out Cores: TArray<TN64HostCore>): Boolean;
+    procedure PlaceRSPThread(out CPUs: TN64CPUSet; out Preferred: Integer);
+    procedure NextRSPSegment;
+    procedure CheckRSPPrediction;
+    function RSPRegister(Index: Integer): Cardinal;
+    function PredictRSPRead(Index, Clock: Integer; out Value: Cardinal): Boolean;
+    function DeferRSPWrite(Index, Clock: Integer; Value: Cardinal): Boolean;
+    procedure UpdateRSPShadow;
+    function RSPWindowTime(Clock: Integer): UInt64;
+    function NewRSPNote: Integer;
+    function RSPPendingAt(Time: UInt64): Integer;
+    procedure AddRSPTransfer(const Transfer: TN64SPTransfer; Time: UInt64);
+    procedure FenceRSPTransfer(const Transfer: TN64SPTransfer);
+    procedure RefenceRSP;
+    function LiftRSPFences(Clock: Integer): Boolean;
+    procedure LiftRSPTransfer(Index: Integer);
+    function AheadRDRAM(Address: Cardinal): Byte;
+    class procedure RAMSpan(const Transfer: TN64SPTransfer; out Start, Count: Cardinal); static;
+    class function RemainingBeats(const Transfer: TN64SPTransfer): Cardinal; static;
+    class procedure StepSPTransfer(var Transfer: TN64SPTransfer); static;
+    procedure RewindRSPTo(Keep: Integer);
+    procedure ReplayRSPBeat(Index: Integer);
     procedure SPTransferBeat;
     procedure PITransferBeat;
     procedure SITransferBeat;
@@ -208,10 +442,20 @@ type
     property TimingRDP: TN64RDP read FRDPTiming;
     property FrameNumber: UInt64 read FFrame;
     property DebugOutput: string read FDebugOutput;
-    // The RSP runs ahead of the CPU up to its next COP0 access or BREAK
-    // (exact; false runs it clock by clock with the CPU).
+    // The RSP runs ahead of the CPU up to its next MTC0, BREAK or an MFC0
+    // whose value is not known yet (exact; false runs it clock by clock with
+    // the CPU).
     property RSPRunAhead: Boolean read FRSPAhead write FRSPAhead;
     property RSPStress: Boolean read FRSPStress write FRSPStress;
+    property RSPAheadStats: TN64RSPAheadStats read FRSPStats;
+    // Diagnostics: the fences of SP DMA a window may lift once the transfer
+    // is expected done: 2 (default) all, 1 only of transfers out of DMEM, 0
+    // none. Any mode is exact.
+    property RSPLiftMode: Integer read FRSPLiftMode write FRSPLiftMode;
+    // Run-ahead windows on a thread of their own while this thread goes on
+    // (long windows only; exact either way). On by default with three
+    // physical cores or more.
+    property RSPThreaded: Boolean read FRSPThreaded write SetRSPThreaded;
     property SaveDirty: Boolean read FSaveDirty;
     // Raw hardware diagnostics can omit host display conversion. DMA, RDP,
     // guest VI registers/IRQs and audio clocks still execute normally.
@@ -229,6 +473,28 @@ begin
   Result := Length(HostCores);
   if Result = 0 then
     Result := Max(1, TThread.ProcessorCount div 2);
+end;
+
+// The handshake with the RSP thread: its counters and flags are read plainly
+// where a plain read is atomic and ordered with the reads after it (x64),
+// else through TInterlocked. Spinning on plain reads keeps the writer's
+// cache line shared.
+function SharedRead(const [ref] Value: Int64): Int64; overload; inline;
+begin
+  {$IFDEF CPUX64}
+  Result := Value;
+  {$ELSE}
+  Result := TInterlocked.Read(PInt64(@Value)^);
+  {$ENDIF}
+end;
+
+function SharedRead(const [ref] Value: Integer): Integer; overload; inline;
+begin
+  {$IFDEF CPUX64}
+  Result := Value;
+  {$ELSE}
+  Result := TInterlocked.CompareExchange(PInteger(@Value)^, 0, 0);
+  {$ENDIF}
 end;
 
 function DefaultRDPBands: Integer;
@@ -303,6 +569,21 @@ begin
   FRSPAhead := True;
   FRSPNoise := $6C078965;
   FRSPWindow := RSPWindowMin;
+  FRSP.OnPredict := PredictRSPRead;
+  FRSP.OnDefer := DeferRSPWrite;
+  FRSP.OnLift := LiftRSPFences;
+  FRSPLiftMode := 2;
+  // With a core for the emulation thread, one for the RSP thread and one
+  // for the RDP bands.
+  FRSPThreaded := PhysicalCores >= 3;
+  // Read by the emulation thread while the RSP thread adds to them.
+  SetLength(FRSPNotes, TN64RSP.JournalCapacity);
+  FRSPJournal := FRSP.Journal;
+  SetLength(FRSPDMAs, RSPMaxTransfers);
+  SetLength(FRSPXBusData, 65536);
+  FRSPWake := TEvent.Create(nil, False, False, '');
+  FRSPProgress := TEvent.Create(nil, False, False, '');
+  FRSPWorkerNoise := $1F123BB5;
   FVideoOutputEnabled := True;
   Reset;
 end;
@@ -310,6 +591,9 @@ end;
 destructor TN64Console.Destroy;
 begin
   FRDPWorker.Free; // stops the thread before the RDP goes
+  StopRSPThread;
+  FRSPWake.Free;
+  FRSPProgress.Free;
   UnplaceThreads;
   FCPU.Free;
   FRSP.Free;
@@ -323,6 +607,9 @@ end;
 procedure TN64Console.Reset;
 begin
   DrainRDP;
+  // A window on the RSP thread ends; the RSP is reset anyway.
+  StopAhead;
+  FRSP.EndAhead;
   for var I := 0 to High(FRAM) do
     FRAM[I] := 0;
   for var I := 0 to High(FHiddenRAM) do
@@ -338,6 +625,8 @@ begin
   FAIDACPhase := 0;
   FAIAnchorTick := 0;
   FRSPPhase := 0;
+  FRSPRun := 0;
+  FSPDone := 0;
   FLastLeft := 0;
   FLastRight := 0;
   FCurrentFrame := Default(TEmulatorFrame);
@@ -576,6 +865,8 @@ begin
   begin
     SyncRSP;
     var Offset := Address - $04000000;
+    if FXBusCount > 0 then
+      Exit(XBusRead32(Offset));
     Exit((Cardinal(FSP[Offset]) shl 24) or (Cardinal(FSP[Offset + 1]) shl 16) or
       (Cardinal(FSP[Offset + 2]) shl 8) or FSP[Offset + 3]);
   end;
@@ -1551,14 +1842,98 @@ procedure TN64Console.SPTransferBeat;
 begin
   if not FSPTransfer.Active then
     Exit;
+  // A transfer whose fences the window lifted moves the bytes it took then
+  // (LiftRSPTransfer); into DMEM, only if RDRAM still holds them, else the
+  // RSP goes back to this point first and the beat is an ordinary one.
+  // A transfer of the window being run: while a beat of it runs here, a
+  // window on the RSP thread cannot lift it (State 1).
+  var Lifted := -1;
+  var Window := -1;
+  var Shared := FRSPInFlight;
+  if FRSPRun > 0 then
+  begin
+    var I := Integer(FSPDone - FRSPDoneBase);
+    if (I >= 0) and (I < FRSPDMACount) then
+    begin
+      Window := I;
+      if not Shared then
+      begin
+        if FRSPDMAs[I].State <> 0 then
+          Lifted := I;
+      end
+      else if TInterlocked.CompareExchange(FRSPDMAs[I].State, 1, 0) <> 0 then
+      begin
+        // Lifted, or being lifted: then its Data is complete shortly.
+        while TInterlocked.CompareExchange(FRSPDMAs[I].State, 2, 2) <> 2 do
+          YieldProcessor;
+        Lifted := I;
+      end;
+    end;
+  end;
+  if (Lifted >= 0) and not FSPTransfer.Writing then
+  begin
+    var Same := True;
+    var At := (FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8;
+    for var I := 0 to 7 do
+      if Read8((FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF) <> FRSPDMAs[Lifted].Data[At + I] then
+        Same := False;
+    if FRSPStress and ((StressNoise and 63) = 0) then
+      // Test mode: as if RDRAM had changed.
+      Same := False;
+    if not Same then
+    begin
+      Inc(FRSPStats.BeatsChanged);
+      RewindRSP;
+      Lifted := -1;
+      Window := -1;
+    end;
+  end;
+  var Logged := (FRSPRun > 0) and not FSPTransfer.Writing;
+  if Logged then
+  begin
+    if FRSPBeatCount = Length(FRSPBeats) then
+      SetLength(FRSPBeats, FRSPBeatCount * 2 + 16);
+    FRSPBeats[FRSPBeatCount].Position := FRSPCommitted + FTimeline.SyncAhead;
+    FRSPBeats[FRSPBeatCount].Local := (FSPTransfer.local + FSPTransfer.Position) and $FFF;
+    // Before its bytes change: the eight bytes lie in one line.
+    FRSPBeats[FRSPBeatCount].Unsaved := not FRSP.LineSaved(FRSPBeats[FRSPBeatCount].Local);
+    for var I := 0 to 7 do
+      FRSPBeats[FRSPBeatCount].Old[I] := FSP[(FRSPBeats[FRSPBeatCount].Local + Cardinal(I)) and $FFF];
+  end;
   for var I := 0 to 7 do
   begin
     var local := (FSPTransfer.local and $1000) or ((FSPTransfer.local + FSPTransfer.Position + Cardinal(I)) and $FFF);
     var RAM := (FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF;
-    if FSPTransfer.Writing then
+    if Lifted >= 0 then
+    begin
+      if FSPTransfer.Writing then
+        Write8(RAM, FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8 + I])
+    end
+    else if FSPTransfer.Writing then
       Write8(RAM, FSP[local])
     else
       WriteSP8(local, Read8(RAM));
+  end;
+  if Logged then
+  begin
+    // Into DMEM while the RSP runs ahead (the window kept off these bytes,
+    // or wrote them itself when it lifted the transfer's fences).
+    for var I := 0 to 7 do
+      if Lifted >= 0 then
+        FRSPBeats[FRSPBeatCount].Data[I] := FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8 + I]
+      else
+        FRSPBeats[FRSPBeatCount].Data[I] := FSP[(FRSPBeats[FRSPBeatCount].Local + Cardinal(I)) and $FFF];
+    FRSPBeats[FRSPBeatCount].Applied := Lifted < 0;
+    Inc(FRSPBeatCount);
+  end;
+  if (Window >= 0) and not Shared then
+    Inc(FRSPDMAs[Window].Beats)
+  else if Window >= 0 then
+  begin
+    // Counted before the transfer is free again.
+    TInterlocked.Increment(FRSPDMAs[Window].Beats);
+    if Lifted < 0 then
+      TInterlocked.Exchange(FRSPDMAs[Window].State, 0);
   end;
   Inc(FSPTransfer.Position, 8);
   if FSPTransfer.Position = FSPTransfer.Size then
@@ -1578,6 +1953,7 @@ begin
     FReg[0, 3] := FReg[0, 2];
     if TraceEnabled then
       Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04040000, FSPTransfer.RAM);
+    Inc(FSPDone);
     FSPTransfer := FSPQueued;
     FSPQueued := Default(TN64SPTransfer);
     FReg[0, 5] := 0;
@@ -1838,7 +2214,25 @@ begin
       SITransferBeat;
     TN64EventKind.RSPClock:
       begin
-        // The clocks run ahead before this one are all handled (in order).
+        // The window's clocks before this one are all handled (in order).
+        if FRSPRun > 0 then
+        begin
+          Inc(FRSPCommitted, FRSPSegment);
+          if FRSPInFlight then
+          begin
+            // The RSP thread ran this clock (checked or taken as it is), or
+            // the window ended before it.
+            if AdvanceThreadedWindow then
+              Exit;
+          end
+          else if FRSPCommitted < FRSPRun then
+          begin
+            // The RSP ran this clock ahead with a predicted MFC0.
+            CheckRSPPrediction;
+            Exit;
+          end;
+          FRSPRun := 0;
+        end;
         FRSP.EndAhead;
         // IMEM transfers own the instruction bank until their beat completes.
         if not (FSPTransfer.Active and not FSPTransfer.Writing and ((FSPTransfer.local and $1000) <> 0)) then
@@ -2429,11 +2823,37 @@ begin
   // each preferring one of the next fastest cores. Bands pinned one to a core
   // run a few percent faster on an idle machine, but cannot move away from
   // other programs.
+  // With an RSP thread, that has the second fastest core to itself as well
+  // (where there are cores left for the bands).
   BandCPUs.Clear;
   Preferred := nil;
+  var Cores: TArray<TN64HostCore>;
+  if not PinEmulationThread(Cores) then
+    Exit;
+  var First := 1;
+  if FRSPThreaded and (Length(Cores) >= 3) then
+    First := 2;
+  for var C := First to High(Cores) do
+    for var W := 0 to High(BandCPUs.Bits) do
+      BandCPUs.Bits[W] := BandCPUs.Bits[W] or Cores[C].CPUs.Bits[W];
+  SetLength(Preferred, FRDPBands);
+  for var I := 0 to FRDPBands - 1 do
+  begin
+    var Core := Cores[First + I mod (Length(Cores) - First)];
+    Preferred[I] := 0;
+    while not Core.CPUs.Contains(Preferred[I]) do
+      Inc(Preferred[I]);
+  end;
+end;
+
+function TN64Console.PinEmulationThread(out Cores: TArray<TN64HostCore>): Boolean;
+begin
+  // This thread on the fastest core (the one it runs on, among equals), once.
+  Result := False;
+  Cores := nil;
   if not FPlacement then
     Exit;
-  var Cores := HostCores;
+  Cores := HostCores;
   if Length(Cores) < 2 then
     Exit;
   if not FPinned then
@@ -2445,17 +2865,28 @@ begin
     FPinnedThread := TThread.CurrentThread.ThreadID;
     FUnpinned := Previous;
   end;
-  for var C := 1 to High(Cores) do
-    for var W := 0 to High(BandCPUs.Bits) do
-      BandCPUs.Bits[W] := BandCPUs.Bits[W] or Cores[C].CPUs.Bits[W];
-  SetLength(Preferred, FRDPBands);
-  for var I := 0 to FRDPBands - 1 do
-  begin
-    var Core := Cores[1 + I mod (Length(Cores) - 1)];
-    Preferred[I] := 0;
-    while not Core.CPUs.Contains(Preferred[I]) do
-      Inc(Preferred[I]);
-  end;
+  Result := True;
+end;
+
+procedure TN64Console.PlaceRSPThread(out CPUs: TN64CPUSet; out Preferred: Integer);
+begin
+  // The RSP thread on the second fastest core, which the RDP bands leave to
+  // it where there are more (PlaceThreads): sharing a core with a band costs
+  // it a third of its speed.
+  CPUs.Clear;
+  Preferred := -1;
+  var Cores: TArray<TN64HostCore>;
+  if not PinEmulationThread(Cores) then
+    Exit;
+  if Length(Cores) >= 3 then
+    CPUs := Cores[1].CPUs
+  else
+    for var C := 1 to High(Cores) do
+      for var W := 0 to High(CPUs.Bits) do
+        CPUs.Bits[W] := CPUs.Bits[W] or Cores[C].CPUs.Bits[W];
+  Preferred := 0;
+  while not Cores[1].CPUs.Contains(Preferred) do
+    Inc(Preferred);
 end;
 
 procedure TN64Console.UnplaceThreads;
@@ -2480,6 +2911,8 @@ begin
   FRDPTiming.OnDataOut := nil;
   FRDPTimingStale := True;
   FPlacement := Value;
+  // The next threaded window starts an RSP thread placed accordingly.
+  StopRSPThread;
   if not Value then
     UnplaceThreads;
 end;
@@ -2509,29 +2942,690 @@ begin
 end;
 
 procedure TN64Console.StartRSPAhead;
-
 begin
   // After the RSP clock just handled, run the following clocks ahead of the
   // CPU for as long as they touch nothing but the RSP and DMEM. Nothing else
-  // can see those clocks before the timeline reaches them: COP0 and BREAK
-  // stop the run (they execute in their own clock, in event order), SP DMA
-  // is idle, and every CPU access that could tell (SP memory, SP_PC, SP and
+  // can see those clocks before the timeline reaches them: BREAK stops the
+  // run, an MFC0 runs ahead only with a value the timeline predicts and an
+  // MTC0 only if its effects can wait for its clock (both journalled and
+  // handled in their own clock, in event order), the clocks keep off the
+  // DMEM bytes SP DMA or an RDP list kicked with XBUS uses meanwhile
+  // (fences), and every CPU access that could tell (SP memory, SP_PC, SP and
   // DP registers) first rewinds the RSP to its own point (SyncRSP).
-  if not FRSPAhead or ((FReg[0, 4] and $21) <> 0) or FSPTransfer.Active or TraceEnabled or
-    not FTimeline.Pending(TN64EventKind.RSPClock) or (FTimeline.AheadLeft <> 0) then
+  if not FRSPAhead or ((FReg[0, 4] and $21) <> 0) or TraceEnabled or
+    not FTimeline.Pending(TN64EventKind.RSPClock) or (FTimeline.AheadLeft <> 0) or (FRSPRun <> 0) then
     Exit;
+  // SP DMA under way: the window keeps off its DMEM bytes (fences); not
+  // with IMEM, whose transfers also stop the RSP.
+  if (FSPTransfer.Active and ((FSPTransfer.local and $1000) <> 0)) or
+    (FSPQueued.Active and ((FSPQueued.local and $1000) <> 0)) then
+    Exit;
+  FRSPDMACount := 0;
+  FRSPLifted := 0;
+  FRSPFirstPending := 0;
+  FRSPXBusCount := 0;
+  FRSPXBusUsed := 0;
+  FRSPDMAPending[0] := FPendingSPAddress;
+  FRSPDMAPending[1] := FPendingRAMAddress;
+  if FSPTransfer.Active then
+  begin
+    var Beat, Clock: TN64Event;
+    if not FTimeline.FirstOf(TN64EventKind.SPTransfer, Beat) or not FTimeline.FirstOf(TN64EventKind.RSPClock, Clock) then
+      raise EInvalidOpException.Create('N64 SP DMA or RSP clock not queued');
+    // Every event reschedules itself as it is handled, so a beat and an RSP
+    // clock due together keep the order of the first time they were: at the
+    // next clock by sequence, else the clock first if the beat is due now
+    // (it then reschedules after the clock did), else the beat first unless
+    // it is the first beat, off the RCP clock (the next one then follows it).
+    var R := Default(TN64RSPTransfer);
+    R.Transfer := FSPTransfer;
+    R.Serial := FSPDone + 1;
+    R.LastBeat := 0;
+    if Beat.Due = Clock.Due then
+      R.BeatFirst := Beat.Sequence < Clock.Sequence
+    else if Beat.Due < Clock.Due then
+      R.BeatFirst := False
+    else
+      R.BeatFirst := (Beat.Due mod 3) <> 1;
+    R.LastBeat := Beat.Due;
+    if RemainingBeats(FSPTransfer) > 1 then
+      R.LastBeat := RCPTickAfter(R.LastBeat, RemainingBeats(FSPTransfer) - 1);
+    FRSPDoneBase := FSPDone;
+    FRSPDMAs[0] := R;
+    FRSPDMACount := 1;
+    if FSPQueued.Active then
+      AddRSPTransfer(FSPQueued, 0);
+  end;
+  FRSPDoneBase := FSPDone;
+  RefenceRSP;
   if FRSPCut then
     FRSPCut := False
   else
     FRSPWindow := Min(RSPWindowMax, FRSPWindow * 2);
+  FRSPFirstDue := FTimeline.RSPDue;
+  FRSPBeatCount := 0;
+  for var I := 0 to 15 do
+    FRSPShadow[I] := RSPRegister(I);
+  FRSPShadowPos := 0;
+  FRSPHasDP := FTimeline.FirstOf(TN64EventKind.DPInterrupt, FRSPDP);
+  FRSPHasFirstClock := FTimeline.FirstOf(TN64EventKind.RSPClock, FRSPFirstClock);
+  // In the test mode, also one short window in four.
+  if FRSPThreaded and ((FRSPLastWindow >= RSPThreadMin) or (FRSPStress and ((StressNoise and 3) = 0))) then
+  begin
+    BeginThreadedWindow;
+    Exit;
+  end;
+  var Started := TStopwatch.GetTimeStamp;
   var Clocks := FRSP.RunAhead(FSPPC, FReg[0, 4], FRSPWindow);
-  if Clocks > 0 then
-    FTimeline.SetAhead(Clocks);
+  Inc(FRSPStats.WindowTime, TStopwatch.GetTimeStamp - Started);
+  FRSPLastWindow := Clocks;
+  if Clocks = 0 then
+    Exit;
+  FRSPRun := Clocks;
+  FRSPCommitted := 0;
+  FRSPNextCheck := 0;
+  CountWindow(Clocks);
+  NextRSPSegment;
+end;
+
+procedure TN64Console.CountWindow(Clocks: Integer);
+begin
+  Inc(FRSPStats.Lifts, FRSPWindowLifts);
+  FRSPWindowLifts := 0;
+  Inc(FRSPStats.Windows);
+  Inc(FRSPStats.Clocks, Clocks);
+  for var I := 0 to FRSP.JournalCount - 1 do
+    if FRSP.JournalEntry(I).Write then
+      Inc(FRSPStats.Deferred)
+    else
+      Inc(FRSPStats.Predictions);
+  Inc(FRSPStats.Stops[FRSP.AheadStop]);
+  if FRSP.AheadStop = TRSPAheadStop.WriteCOP0 then
+    Inc(FRSPStats.StopWrites[FRSP.AheadStopIndex])
+  else if FRSP.AheadStop = TRSPAheadStop.ReadCOP0 then
+    Inc(FRSPStats.StopReads[FRSP.AheadStopIndex])
+  else if FRSP.AheadStop = TRSPAheadStop.Fence then
+  begin
+    Inc(FRSPStats.FenceStops[FRSP.AheadStopIndex and 3, RSPPendingAt(RSPWindowTime(Clocks + 1)) = 0]);
+    Inc(FRSPStats.FenceSources[FRSP.AheadStopIndex and 3, (FRSP.AheadStopIndex shr 2) and 7]);
+  end;
+end;
+
+procedure TN64Console.NextRSPSegment;
+begin
+  // The timeline handles the clocks up to the next one with a journal entry,
+  // or to the window's end (for a window on the RSP thread: as far as it has
+  // published).
+  var Clocks := FRSPRun;
+  var Entries := FRSP.JournalCount;
+  if FRSPInFlight then
+  begin
+    var Progress := SharedRead(FAheadProgress);
+    Clocks := Integer(Progress shr 32);
+    Entries := Integer(Progress and $FFFFFFFF);
+  end;
+  var Stop := Clocks + 1;
+  if FRSPNextCheck < Entries then
+    Stop := Min(Stop, FRSPJournal[FRSPNextCheck].Clock);
+  FRSPSegment := Max(0, Stop - 1 - FRSPCommitted);
+  FTimeline.SetAhead(FRSPSegment);
+end;
+
+function TN64Console.RSPRegister(Index: Integer): Cardinal;
+begin
+  // What an MFC0 of SP/DP register Index reads (the semaphore aside, which
+  // reading also sets).
+  if Index < 8 then
+    Result := FReg[0, Index]
+  else
+    Result := FReg[1, Index - 8];
+end;
+
+function TN64Console.PredictRSPRead(Index, Clock: Integer; out Value: Cardinal): Boolean;
+begin
+  // The value an MFC0 at clock Clock of the window being run will read,
+  // from the state now, the window's own deferred writes and the events
+  // due before it: besides CPU writes (which rewind the RSP first) only SP
+  // DMA, the RDP and the DP interrupt change these registers. False if the
+  // value is not known (the window ends there). Checked in its clock.
+  Result := False;
+  Value := 0;
+  UpdateRSPShadow;
+  Value := FRSPShadow[Index];
+  if (Index <= 6) and (FRSPDMACount > 0) then
+  begin
+    // The DMA registers move with the transfers; the busy and full flags
+    // follow from when their last beats are due.
+    if Index <= 3 then
+      Exit;
+    var Pending := RSPPendingAt(RSPWindowTime(Clock));
+    case Index of
+      4:
+        Value := (Value and not Cardinal($C)) or (Cardinal(Ord(Pending >= 1)) shl 2) or (Cardinal(Ord(Pending >= 2)) shl 3);
+      5:
+        Value := Ord(Pending >= 2);
+      6:
+        Value := Ord(Pending >= 1);
+    end;
+  end;
+  // Reading the semaphore sets it (in its own clock, see CheckRSPPrediction).
+  if Index = 7 then
+    FRSPShadow[7] := 1;
+  if Index = 11 then
+  begin
+    // DPC_STATUS: the DP interrupt event clears bit 5. Due with the clock,
+    // it comes first unless the clock is the one queued before it (the
+    // window's other clocks are scheduled later).
+    if FRSPHasDP then
+    begin
+      var At := RSPWindowTime(Clock);
+      var Before := FRSPDP.Due < At;
+      if FRSPDP.Due = At then
+        Before := (Clock > 1) or not FRSPHasFirstClock or (FRSPDP.Sequence < FRSPFirstClock.Sequence);
+      if Before then
+        Value := Value and not Cardinal($20);
+    end;
+  end;
+  if FRSPStress then
+  begin
+    // Test mode: now and then a wrong value, for the check to catch.
+    var Noise := WindowNoise;
+    if (Noise and 7) = 0 then
+      Value := Value xor (Cardinal(1) shl ((Noise shr 3) and 31));
+  end;
+  Result := True;
+end;
+
+function TN64Console.DeferRSPWrite(Index, Clock: Integer; Value: Cardinal): Boolean;
+begin
+  // MTC0s whose effects can wait for their own clock, the window after them
+  // seeing them only through predicted reads (the shadow registers): the
+  // DMA addresses, a DMA out of DMEM (the window then keeps from writing its
+  // bytes), the semaphore, DPC_START and DPC_END (with XBUS the RDP reads the
+  // list from DMEM at the kick: the window must not write those bytes after
+  // it).
+  UpdateRSPShadow;
+  case Index of
+    0, 1, 7, 8, 9:
+      Result := True;
+    2, 3:
+      begin
+        // A DMA start, applied at its clock (checked then: the transfers it
+        // finds and its addresses). Started or queued, the window keeps off
+        // its bytes from then on; ignored by a full queue, it is not.
+        Result := False;
+        var Time := RSPWindowTime(Clock);
+        var Pending := RSPPendingAt(Time);
+        var Transfer := Default(TN64SPTransfer);
+        Transfer.Active := True;
+        Transfer.Writing := Index = 3;
+        Transfer.Size := ((Value and $FFF) or 7) + 1;
+        Transfer.Blocks := ((Value shr 12) and $FF) + 1;
+        Transfer.Skip := (Value shr 20) and $FF8;
+        Transfer.Control := Value;
+        Transfer.local := FRSPDMAPending[0] and $1FF8;
+        Transfer.RAM := FRSPDMAPending[1] and $FFFFF8;
+        if (Pending < 2) and (((Transfer.local and $1000) <> 0) or (FRSPDMACount = Length(FRSPDMAs))) then
+          Exit;
+        var N := NewRSPNote;
+        FRSPNotes[N].From := FRSPDMAPending[0];
+        FRSPNotes[N].RAM := FRSPDMAPending[1];
+        FRSPNotes[N].Busy := Pending >= 1;
+        FRSPNotes[N].Full := Pending >= 2;
+        if FRSPStress and ((WindowNoise and 7) = 0) then
+          // Test mode: a wrong guess, for the check to catch.
+          FRSPNotes[N].Full := not FRSPNotes[N].Full;
+        if Pending < 2 then
+        begin
+          AddRSPTransfer(Transfer, Time);
+          FenceRSPTransfer(Transfer);
+        end;
+        Result := True;
+      end;
+  else
+    Result := False;
+  end;
+  if Index = 9 then
+  begin
+    // The list's words that the kick runs: from CURRENT (START if a new one
+    // is pending) up to the new END, below which it stops. The start is a
+    // prediction, checked when the kick is applied (CheckRSPPrediction).
+    var Current := FRSPShadow[10];
+    if (FRSPShadow[11] and $400) <> 0 then
+      Current := FRSPShadow[8];
+    if FRSPStress and ((WindowNoise and 7) = 0) then
+      Current := Current xor 8;
+    var N := NewRSPNote;
+    FRSPNotes[N].From := Current;
+    FRSPNotes[N].XBus := (FRSPShadow[11] and 1) <> 0;
+    var Finish := Value and $FFFFF8;
+    var Start := Current and $FFF;
+    var Count: Cardinal := 0;
+    if Finish > Current then
+      Count := Cardinal(Min(UInt64(Finish - Current), UInt64($1000)));
+    if FRSPNotes[N].XBus and (Count > 0) and not FRSP.ReadFenced(Start, Count) and
+      (FRSPXBusUsed + Integer(Count) <= Length(FRSPXBusData)) then
+    begin
+      // The RDP reads the list at the kick: its bytes as they are now go with
+      // it (CheckRSPPrediction), and the window may write them meanwhile.
+      for var I := 0 to Integer(Count) - 1 do
+        FRSPXBusData[FRSPXBusUsed + I] := FSP[(Start + Cardinal(I)) and $FFF];
+      FRSPNotes[N].XBusAt := FRSPXBusUsed;
+      FRSPNotes[N].XBusCount := Integer(Count);
+      Inc(FRSPXBusUsed, Integer(Count));
+    end
+    else if FRSPNotes[N].XBus and (Finish > Current) then
+    begin
+      // (Bytes DMA has yet to write, or no room: it keeps off them.)
+      if 2 * FRSPXBusCount + 2 > Length(FRSPXBus) then
+        SetLength(FRSPXBus, 4 * FRSPXBusCount + 16);
+      FRSPXBus[2 * FRSPXBusCount] := Current and $FFF;
+      FRSPXBus[2 * FRSPXBusCount + 1] := Cardinal(Min(UInt64(Finish - Current), UInt64($1000)));
+      FRSP.AddFence(FRSPXBus[2 * FRSPXBusCount], FRSPXBus[2 * FRSPXBusCount + 1], False, 4);
+      Inc(FRSPXBusCount);
+    end;
+  end;
+end;
+
+function TN64Console.RSPWindowTime(Clock: Integer): UInt64;
+begin
+  // When clock Clock (1 = the first) of the window being run is due.
+  Result := FRSPFirstDue;
+  if Clock > 1 then
+    Result := RCPTickAfter(FRSPFirstDue, UInt64(Clock - 1));
+end;
+
+function TN64Console.NewRSPNote: Integer;
+begin
+  // The note of the journal entry the window's clock now being run adds.
+  Result := FRSP.JournalCount;
+  FRSPNotes[Result] := Default(TN64RSPNote);
+end;
+
+class function TN64Console.RemainingBeats(const Transfer: TN64SPTransfer): Cardinal;
+begin
+  Result := ((Transfer.Size - Transfer.Position) + (Transfer.Blocks - 1) * Transfer.Size) div 8;
+end;
+
+class procedure TN64Console.StepSPTransfer(var Transfer: TN64SPTransfer);
+begin
+  // The addresses after one beat, as SPTransferBeat moves them.
+  Inc(Transfer.Position, 8);
+  if Transfer.Position = Transfer.Size then
+  begin
+    Transfer.local := (Transfer.local and $1000) or ((Transfer.local + Transfer.Size) and $FFF);
+    Transfer.RAM := (Transfer.RAM + Transfer.Size) and $FFFFFF;
+    Dec(Transfer.Blocks);
+    Transfer.Position := 0;
+    if Transfer.Blocks > 0 then
+      Transfer.RAM := (Transfer.RAM + Transfer.Skip) and $FFFFFF;
+  end;
+end;
+
+function TN64Console.RSPPendingAt(Time: UInt64): Integer;
+begin
+  // The window's transfers not complete at the RSP clock due at Time (no
+  // earlier than the clocks asked about before): they complete in order.
+  while (FRSPFirstPending < FRSPDMACount) and ((FRSPDMAs[FRSPFirstPending].LastBeat < Time) or
+    ((FRSPDMAs[FRSPFirstPending].LastBeat = Time) and FRSPDMAs[FRSPFirstPending].BeatFirst)) do
+    Inc(FRSPFirstPending);
+  Result := FRSPDMACount - FRSPFirstPending;
+end;
+
+procedure TN64Console.AddRSPTransfer(const Transfer: TN64SPTransfer; Time: UInt64);
+begin
+  // A transfer queued when the window starts (Time 0), or started or queued
+  // by a write at Time: its beats follow the previous transfer's last one on
+  // the next RCP clocks, keeping its order against the RSP clocks, or begin
+  // 11 PClocks after the write (SPDMA); the clocks due with later beats were
+  // scheduled after it, unless it is off the RCP clock (then the next beat is
+  // scheduled after them).
+  var R := Default(TN64RSPTransfer);
+  R.Transfer := Transfer;
+  R.Serial := FRSPDoneBase + FRSPDMACount + 1;
+  var Beats := RemainingBeats(Transfer);
+  if (Time = 0) or (RSPPendingAt(Time) > 0) then
+  begin
+    R.LastBeat := RCPTickAfter(FRSPDMAs[FRSPDMACount - 1].LastBeat, Beats);
+    R.BeatFirst := FRSPDMAs[FRSPDMACount - 1].BeatFirst;
+  end
+  else
+  begin
+    R.LastBeat := Time + 11;
+    R.BeatFirst := (R.LastBeat mod 3) <> 1;
+    if Beats > 1 then
+      R.LastBeat := RCPTickAfter(R.LastBeat, Beats - 1);
+  end;
+  if FRSPDMACount = Length(FRSPDMAs) then
+    raise EInvalidOpException.Create('N64 RSP window knows too many transfers');
+  FRSPDMAs[FRSPDMACount] := R;
+  // Published with the clock that adds it (full barrier there).
+  Inc(FRSPDMACount);
+end;
+
+procedure TN64Console.FenceRSPTransfer(const Transfer: TN64SPTransfer);
+begin
+  // Keeps the window off the DMEM bytes a transfer has yet to move: into
+  // DMEM neither read nor written, out of DMEM not written. (A rewind puts
+  // the bytes it writes back between the clocks again, see RewindRSPTo.)
+  var Start := ((Transfer.local and $FFF) + Transfer.Position) and $FFF;
+  var Count := Cardinal(Transfer.Blocks) * Transfer.Size - Transfer.Position;
+  if Count > $1000 then
+    Count := $1000;
+  FRSP.AddFence(Start, Count, not Transfer.Writing, 1 + Ord(Transfer.Writing));
+end;
+
+procedure TN64Console.RefenceRSP;
+begin
+  // The fences of the transfers not lifted and of the XBUS lists.
+  FRSP.ClearFences;
+  for var I := FRSPLifted to FRSPDMACount - 1 do
+    FenceRSPTransfer(FRSPDMAs[I].Transfer);
+  for var I := 0 to FRSPXBusCount - 1 do
+    FRSP.AddFence(FRSPXBus[2 * I], FRSPXBus[2 * I + 1], False, 4);
+end;
+
+function TN64Console.LiftRSPFences(Clock: Integer): Boolean;
+begin
+  // Clock is fenced. Transfers expected complete by then no longer need
+  // their fences: their bytes are taken now instead (LiftRSPTransfer), and
+  // the clock's turn checks that they did complete (CheckRSPPrediction).
+  // Lifted only if the clock then runs.
+  Result := False;
+  var Time := RSPWindowTime(Clock);
+  var Done := FRSPLifted;
+  while (Done < FRSPDMACount) and (FRSPLiftMode > 0) and (FRSPDMAs[Done].Transfer.Writing or (FRSPLiftMode > 1)) and ((FRSPDMAs[Done].LastBeat < Time) or
+    ((FRSPDMAs[Done].LastBeat = Time) and FRSPDMAs[Done].BeatFirst)) do
+    Inc(Done);
+  if Done = FRSPLifted then
+    Exit;
+  var Before := FRSPLifted;
+  FRSPLifted := Done;
+  RefenceRSP;
+  if FRSP.ClockFenced then
+  begin
+    FRSPLifted := Before;
+    RefenceRSP;
+    Exit;
+  end;
+  // In order: a transfer out of DMEM sends what the ones before it left.
+  for var I := Before to Done - 1 do
+    LiftRSPTransfer(I);
+  var N := NewRSPNote;
+  FRSPNotes[N].Serial := FRSPDMAs[Done - 1].Serial;
+  if FRSPStress and ((WindowNoise and 7) = 0) then
+    // Test mode: demand one more, which may not be complete yet.
+    Inc(FRSPNotes[N].Serial);
+  Inc(FRSPWindowLifts);
+  Result := True;
+end;
+
+class procedure TN64Console.RAMSpan(const Transfer: TN64SPTransfer; out Start, Count: Cardinal);
+begin
+  // The RDRAM bytes a transfer has yet to move lie in Count bytes from
+  // Start (wrapping at 16 MB).
+  Start := (Transfer.RAM + Transfer.Position) and $FFFFFF;
+  Count := (Transfer.Size - Transfer.Position) + (Transfer.Blocks - 1) * (Transfer.Size + Transfer.Skip);
+end;
+
+function TN64Console.AheadRDRAM(Address: Cardinal): Byte;
+begin
+  // RDRAM byte Address as the transfer being lifted will find it: the lifted
+  // transfers out of DMEM ahead of it (FRSPOverlap, the last first) send
+  // their bytes only later.
+  for var J := FRSPOverlapCount - 1 downto 0 do
+  begin
+    var K := FRSPOverlap[J];
+    var T := FRSPDMAs[K].Transfer;
+    for var B := 1 to FRSPDMAs[K].DataFirst do
+      StepSPTransfer(T);
+    var Offset := 0;
+    while T.Blocks > 0 do
+    begin
+      var Count := T.Size - T.Position;
+      var Into := (Address + $1000000 - ((T.RAM + T.Position) and $FFFFFF)) and $FFFFFF;
+      if Into < Count then
+        Exit(FRSPDMAs[K].Data[Offset + Integer(Into)]);
+      Inc(Offset, Count);
+      T.RAM := (T.RAM + T.Size) and $FFFFFF;
+      Dec(T.Blocks);
+      T.Position := 0;
+      if T.Blocks > 0 then
+        T.RAM := (T.RAM + T.Skip) and $FFFFFF;
+    end;
+  end;
+  if FRSPInFlight then
+    Result := RacyRAM8(Address)
+  else
+    Result := Read8(Address);
+end;
+
+function TN64Console.XBusRead32(Offset: Cardinal): Cardinal;
+begin
+  // The RDP reading a list kicked by a window's deferred DPC_END write: its
+  // bytes as they were at the kick (the window may have written them since).
+  Result := 0;
+  for var I := Cardinal(0) to 3 do
+  begin
+    var At := Offset + I;
+    var Into := (At + $1000 - FXBusStart) and $FFF;
+    var B: Byte;
+    if (At < $1000) and (Into < Cardinal(FXBusCount)) then
+      B := FRSPXBusData[FXBusAt + Integer(Into)]
+    else
+      B := FSP[At];
+    Result := (Result shl 8) or B;
+  end;
+end;
+
+function TN64Console.RacyRAM8(Address: Cardinal): Byte;
+begin
+  // RSP thread: RDRAM as Read8 reads it for an SP DMA address, without
+  // waiting for queued RDP work and while other threads write it. Only for
+  // lifted transfers into DMEM, whose every beat checks its bytes again.
+  if Address < $800000 then
+    Result := FRAM[Address]
+  else
+    Result := 0;
+end;
+
+procedure TN64Console.LiftRSPTransfer(Index: Integer);
+begin
+  // The bytes the transfer has yet to move, in beat order: into DMEM from
+  // RDRAM as it will be (AheadRDRAM), written to DMEM as by the window (each
+  // beat then checks RDRAM holds them); out of DMEM as it is now (the window
+  // has not written them since the transfer started), for the beats to send.
+  // First the transfer is taken from the beats (State 3, not while one of
+  // them runs; 2 once Data is complete): the ones run so far moved their
+  // bytes themselves.
+  while TInterlocked.CompareExchange(FRSPDMAs[Index].State, 3, 0) <> 0 do
+    YieldProcessor;
+  var Transfer := FRSPDMAs[Index].Transfer;
+  var Done := TInterlocked.CompareExchange(FRSPDMAs[Index].Beats, 0, 0);
+  FRSPDMAs[Index].DataFirst := Done;
+  var Beats := Integer(RemainingBeats(Transfer)) - Done;
+  if Beats <= 0 then
+  begin
+    // All its beats have run.
+    FRSPDMAs[Index].Data := nil;
+    TInterlocked.Exchange(FRSPDMAs[Index].State, 2);
+    Exit;
+  end;
+  for var B := 1 to Done do
+    StepSPTransfer(Transfer);
+  SetLength(FRSPDMAs[Index].Data, Beats * 8);
+  FRSPOverlapCount := 0;
+  if not Transfer.Writing then
+  begin
+    // The lifted transfers out of DMEM ahead of it that may write its RDRAM
+    // bytes (circular ranges overlap if either starts inside the other).
+    var Start, Count: Cardinal;
+    RAMSpan(Transfer, Start, Count);
+    for var K := 0 to Index - 1 do
+      if FRSPDMAs[K].Transfer.Writing then
+      begin
+        var Other, Length_: Cardinal;
+        RAMSpan(FRSPDMAs[K].Transfer, Other, Length_);
+        if (((Other + $1000000 - Start) and $FFFFFF) < Count) or (((Start + $1000000 - Other) and $FFFFFF) < Length_) then
+        begin
+          if FRSPOverlapCount = System.Length(FRSPOverlap) then
+            SetLength(FRSPOverlap, FRSPOverlapCount * 2 + 8);
+          FRSPOverlap[FRSPOverlapCount] := K;
+          Inc(FRSPOverlapCount);
+        end;
+      end;
+  end;
+  for var B := 0 to Integer(Beats) - 1 do
+  begin
+    for var I := 0 to 7 do
+    begin
+      var Local := (Transfer.local + Transfer.Position + Cardinal(I)) and $FFF;
+      if Transfer.Writing then
+        FRSPDMAs[Index].Data[B * 8 + I] := FSP[Local]
+      else
+      begin
+        FRSPDMAs[Index].Data[B * 8 + I] := AheadRDRAM((Transfer.RAM + Transfer.Position + Cardinal(I)) and $FFFFFF);
+        FRSP.WriteAhead(Local, FRSPDMAs[Index].Data[B * 8 + I]);
+      end;
+    end;
+    StepSPTransfer(Transfer);
+  end;
+  TInterlocked.Exchange(FRSPDMAs[Index].State, 2);
+end;
+
+procedure TN64Console.UpdateRSPShadow;
+begin
+  // The effects of the window's deferred writes journalled since the last
+  // update, as Write32 will apply them.
+  while FRSPShadowPos < FRSP.JournalCount do
+  begin
+    var Entry := FRSP.JournalEntry(FRSPShadowPos);
+    Inc(FRSPShadowPos);
+    if not Entry.Write then
+      Continue;
+    var V := Entry.Value;
+    case Entry.Index of
+      0:
+        FRSPDMAPending[0] := V and $1FFF;
+      1:
+        FRSPDMAPending[1] := V and $FFFFFF;
+      7:
+        FRSPShadow[7] := 0;
+      8:
+        if (FRSPShadow[11] and $400) = 0 then
+        begin
+          FRSPShadow[8] := V and $FFFFF8;
+          FRSPShadow[11] := FRSPShadow[11] or $400;
+        end;
+      9:
+        begin
+          FRSPShadow[9] := V and $FFFFF8;
+          if (FRSPShadow[11] and $400) <> 0 then
+          begin
+            FRSPShadow[10] := FRSPShadow[8];
+            FRSPShadow[11] := FRSPShadow[11] and not $400;
+          end;
+          // The list assumed to run to its end, without a Full Sync.
+          if ((FRSPShadow[11] and 2) = 0) and (FRSPShadow[9] > FRSPShadow[10]) then
+            FRSPShadow[10] := FRSPShadow[9];
+        end;
+    end;
+  end;
+end;
+
+procedure TN64Console.CheckRSPPrediction;
+begin
+  // The RSP clock now due ran ahead with a journal entry: with every event
+  // before it handled, a predicted MFC0 reads what the register holds now,
+  // a deferred MTC0 takes effect now if what the window assumed about it
+  // holds, and lifted fences need their transfers complete.
+  var Entry := FRSPJournal[FRSPNextCheck];
+  if Entry.Clock <> FRSPCommitted + 1 then
+    raise EInvalidOpException.Create('N64 RSP journal out of step');
+  // Entries without a note (predicted reads, most writes) never read it.
+  var Note := Default(TN64RSPNote);
+  if FRSPNextCheck < Length(FRSPNotes) then
+    Note := FRSPNotes[FRSPNextCheck];
+  var Right: Boolean;
+  if Entry.Lift then
+  begin
+    Right := FSPDone >= Note.Serial;
+    if not Right then
+      Inc(FRSPStats.LiftsWrong);
+  end
+  else if Entry.Write then
+  begin
+    Right := True;
+    if Entry.Index = 9 then
+    begin
+      // A kick: the window kept off the list where it predicted it.
+      var From := FReg[1, 2];
+      if (FReg[1, 3] and $400) <> 0 then
+        From := FReg[1, 0];
+      Right := (From = Note.From) and (((FReg[1, 3] and 1) <> 0) = Note.XBus);
+    end
+    else if Entry.Index in [2, 3] then
+      // A DMA start: the transfers and the addresses it finds.
+      Right := (FSPTransfer.Active = Note.Busy) and (FSPQueued.Active = Note.Full) and
+        (FPendingSPAddress = Note.From) and (FPendingRAMAddress = Note.RAM);
+    if Right then
+    begin
+      // A deferred MTC0 takes effect now, as in its own clock.
+      var Address := $04040000 + Cardinal(Entry.Index) * 4;
+      if Entry.Index >= 8 then
+        Address := $04100000 + Cardinal(Entry.Index - 8) * 4;
+      FRSPApplying := True;
+      if (Entry.Index = 9) and (Note.XBusCount > 0) then
+      begin
+        FXBusAt := Note.XBusAt;
+        FXBusStart := Note.From and $FFF;
+        FXBusCount := Note.XBusCount;
+      end;
+      try
+        Write32(Address, Entry.Value);
+      finally
+        FRSPApplying := False;
+        FXBusCount := 0;
+      end;
+    end;
+  end
+  else
+    Right := RSPRegister(Entry.Index) = Entry.Value;
+  if Right then
+  begin
+    // Reading the semaphore sets it.
+    if not Entry.Write and not Entry.Lift and (Entry.Index = 7) then
+      FReg[0, 7] := 1;
+    // Right: the clock stands; the window goes on.
+    Inc(FRSPCommitted);
+    Inc(FRSPNextCheck);
+    ScheduleRSP;
+    if FRSPCommitted < FRSPRun then
+      NextRSPSegment
+    else
+    begin
+      FRSPRun := 0;
+      FRSP.EndAhead;
+      StartRSPAhead;
+    end;
+    Exit;
+  end;
+  // Wrong: back to the state before this clock, which then runs for real.
+  Inc(FRSPStats.Mispredictions);
+  StopAhead;
+  RewindRSPTo(FRSPCommitted);
+  FRSPWindow := Max(RSPWindowMin, Min(FRSPWindow div 2, FRSPCommitted * 2));
+  FRSPCut := True;
+  FRSPRun := 0;
+  RunRSP;
+  ScheduleRSP;
+  StartRSPAhead;
 end;
 
 procedure TN64Console.SyncRSP;
 begin
-  if FTimeline.AheadLeft > 0 then
+  // The window's own deferred writes need no rewind.
+  if (FRSPRun > 0) and not FRSPApplying then
     RewindRSP;
 end;
 
@@ -2539,29 +3633,71 @@ procedure TN64Console.RewindRSP;
 begin
   // The run-ahead clocks before the caller stay; the RSP returns to the
   // state after them and the next clock becomes an ordinary event again.
-  if FTimeline.AheadLeft = 0 then
+  if FRSPRun = 0 then
     Exit;
-  var Done := FTimeline.SyncAhead;
-  if FTimeline.AheadLeft > 0 then
+  StopAhead;
+  var Keep := FRSPCommitted + FTimeline.SyncAhead;
+  if Keep < FRSPRun then
   begin
-    FRSP.Rewind(FSPPC, Done);
-    FTimeline.EndAhead;
+    RewindRSPTo(Keep);
+    Inc(FRSPStats.Cuts);
+    Inc(FRSPStats.CutClocks, FRSPRun - Keep);
     // The clocks run ahead past this point are lost: smaller windows.
-    FRSPWindow := Max(RSPWindowMin, Min(FRSPWindow div 2, Done * 2));
+    FRSPWindow := Max(RSPWindowMin, Min(FRSPWindow div 2, Keep * 2));
     FRSPCut := True;
   end
   else
     FRSP.EndAhead;
+  FTimeline.EndAhead;
+  FRSPRun := 0;
+end;
+
+procedure TN64Console.RewindRSPTo(Keep: Integer);
+begin
+  // Back to the window's first Keep clocks, with the DMA beats into DMEM
+  // that came between them: undone (the window's clocks before them may
+  // have read the bytes they replaced), then done again in place
+  // (ReplayRSPBeat).
+  var Stops: TArray<Integer>;
+  SetLength(Stops, FRSPBeatCount);
+  for var I := 0 to FRSPBeatCount - 1 do
+    Stops[I] := FRSPBeats[I].Position;
+  FRSP.Rewind(FSPPC, Keep, Stops, ReplayRSPBeat);
+  FRSPBeatCount := 0;
+end;
+
+procedure TN64Console.ReplayRSPBeat(Index: Integer);
+begin
+  if Index < 0 then
+  begin
+    // The saved lines are back as the window found them, but for beats
+    // that came before a line was saved: those are undone, latest first. In
+    // a line saved before, the saved copy is right (and the bytes the window
+    // wrote since are its own, to be written again).
+    for var K := FRSPBeatCount - 1 downto 0 do
+      if FRSPBeats[K].Applied and FRSPBeats[K].Unsaved then
+        for var I := 0 to 7 do
+          WriteSP8((FRSPBeats[K].Local + Cardinal(I)) and $FFF, FRSPBeats[K].Old[I]);
+    Exit;
+  end;
+  for var I := 0 to 7 do
+    WriteSP8((FRSPBeats[Index].Local + Cardinal(I)) and $FFF, FRSPBeats[Index].Data[I]);
 end;
 
 procedure TN64Console.StressRSP;
 begin
   // Test mode: rewind the RSP before about one CPU instruction in 64.
+  if (StressNoise and 63) = 0 then
+    SyncRSP;
+end;
+
+function TN64Console.StressNoise: Cardinal;
+begin
+  // xorshift32 for the test modes.
   FRSPNoise := FRSPNoise xor ((FRSPNoise shl 13) and $FFFFFFFF);
   FRSPNoise := FRSPNoise xor (FRSPNoise shr 17);
   FRSPNoise := FRSPNoise xor ((FRSPNoise shl 5) and $FFFFFFFF);
-  if (FRSPNoise and 63) = 0 then
-    SyncRSP;
+  Result := FRSPNoise;
 end;
 
 procedure TN64Console.FoldRSPPhase;
@@ -2569,6 +3705,264 @@ begin
   // Each RSP clock the timeline handled itself toggled the phase.
   if (FTimeline.TakeMaterialized and 1) <> 0 then
     FRSPPhase := FRSPPhase xor 1;
+end;
+
+function TN64Console.WindowNoise: Cardinal;
+begin
+  // Test-mode noise for the window's callbacks; on the RSP thread its own.
+  if not FRSPInFlight then
+    Exit(StressNoise);
+  FRSPWorkerNoise := FRSPWorkerNoise xor ((FRSPWorkerNoise shl 13) and $FFFFFFFF);
+  FRSPWorkerNoise := FRSPWorkerNoise xor (FRSPWorkerNoise shr 17);
+  FRSPWorkerNoise := FRSPWorkerNoise xor ((FRSPWorkerNoise shl 5) and $FFFFFFFF);
+  Result := FRSPWorkerNoise;
+end;
+
+procedure TN64Console.StressPause;
+begin
+  // RSP thread, test mode: random stalls, so that the emulation thread
+  // sometimes catches up and sometimes finds the window far ahead.
+  case WindowNoise and 63 of
+    0..4:
+      TThread.Yield;
+    5..12:
+      for var I := 0 to Integer(WindowNoise and 4095) do
+        YieldProcessor;
+  end;
+end;
+
+{ TN64Console.TRSPThread }
+
+constructor TN64Console.TRSPThread.Create(Owner: TN64Console; const CPUs: TN64CPUSet; Preferred: Integer);
+begin
+  FOwner := Owner;
+  FCPUs := CPUs;
+  FPreferred := Preferred;
+  inherited Create(False);
+end;
+
+procedure TN64Console.TRSPThread.Execute;
+begin
+  if not FCPUs.IsEmpty then
+  begin
+    var Previous: TN64CPUSet;
+    PinCurrentThread(FCPUs, Previous);
+  end;
+  if FPreferred >= 0 then
+    PreferProcessor(FPreferred);
+  var Served: Int64 := 0;
+  while not Terminated do
+  begin
+    if SharedRead(FOwner.FAheadRequest) <= Served then
+    begin
+      // Idle: spin a little, then sleep until a request or termination. The
+      // flag is set before the last check, so a wake-up cannot be lost.
+      var Spins := 0;
+      while (Spins < SpinRounds) and (SharedRead(FOwner.FAheadRequest) <= Served) and not Terminated do
+      begin
+        Inc(Spins);
+        YieldProcessor;
+      end;
+      TInterlocked.Exchange(FOwner.FAheadWorkerSleeping, 1);
+      if not Terminated and (SharedRead(FOwner.FAheadRequest) <= Served) then
+        FOwner.FRSPWake.WaitFor(INFINITE)
+      else
+        TInterlocked.Exchange(FOwner.FAheadWorkerSleeping, 0);
+      Continue;
+    end;
+    Served := TInterlocked.Read(FOwner.FAheadRequest);
+    var Started := TStopwatch.GetTimeStamp;
+    FOwner.RunThreadedWindow;
+    Inc(FOwner.FRSPStats.WindowTime, TStopwatch.GetTimeStamp - Started);
+    TInterlocked.Exchange(FOwner.FAheadFinished, Served);
+    if (SharedRead(FOwner.FAheadMainWaiting) <> 0) and (TInterlocked.CompareExchange(FOwner.FAheadMainWaiting, 0, 1) = 1) then
+      FOwner.FRSPProgress.SetEvent;
+  end;
+end;
+
+procedure TN64Console.BeginThreadedWindow;
+begin
+  // The window runs on the RSP thread while this thread goes on; the
+  // timeline takes its clocks as they are published (NextRSPSegment), each
+  // segment's end coming as an RSP clock event (AdvanceThreadedWindow).
+  // What the window's callbacks read is the window's own state, set up by
+  // StartRSPAhead, RDRAM (RacyRAM8) and the transfers' State and Beats.
+  if FRSPThread = nil then
+  begin
+    var CPUs: TN64CPUSet;
+    var Preferred: Integer;
+    PlaceRSPThread(CPUs, Preferred);
+    FRSPThread := TRSPThread.Create(Self, CPUs, Preferred);
+  end;
+  FRSPInFlight := True;
+  FRSPRun := High(Integer);
+  FRSPCommitted := 0;
+  FRSPNextCheck := 0;
+  Inc(FRSPStats.ThreadWindows);
+  FAheadPC := FSPPC;
+  FAheadStatus := FReg[0, 4];
+  FAheadBudget := FRSPWindow;
+  FAheadError := '';
+  // The run is known here, for the beats (LineSaved).
+  FRSP.NewRun;
+  TInterlocked.Exchange(FAheadStopRequest, 0);
+  TInterlocked.Exchange(FAheadProgress, 0);
+  TInterlocked.Increment(FAheadRequest);
+  if (SharedRead(FAheadWorkerSleeping) <> 0) and (TInterlocked.CompareExchange(FAheadWorkerSleeping, 0, 1) = 1) then
+    FRSPWake.SetEvent;
+  NextRSPSegment;
+end;
+
+procedure TN64Console.RunThreadedWindow;
+begin
+  // RSP thread: the requested window, in parts, each published as it ends
+  // (a window run in parts is the same as one run at once).
+  var PC := FAheadPC;
+  var Status := FAheadStatus;
+  var Budget := FAheadBudget;
+  var Done := 0;
+  try
+    var Part := Min(AheadPart, Budget);
+    var Ran := FRSP.RunAhead(PC, Status, Part);
+    Done := Ran;
+    while (Ran = Part) and (Done < Budget) and (FRSP.AheadStop = TRSPAheadStop.Budget) and
+      (SharedRead(FAheadStopRequest) = 0) do
+    begin
+      PublishAhead(Done);
+      if FRSPStress then
+        StressPause;
+      Part := Min(AheadPart, Budget - Done);
+      Ran := FRSP.ContinueAhead(PC, Status, Part);
+      Inc(Done, Ran);
+    end;
+  except
+    on E: Exception do
+      FAheadError := E.ClassName + ': ' + E.Message;
+  end;
+  FAheadPCOut := PC;
+  PublishAhead(Done);
+end;
+
+procedure TN64Console.PublishAhead(Clocks: Integer);
+begin
+  // RSP thread: the window's first Clocks clocks and the journal entries so
+  // far are final (full barrier: after everything they wrote).
+  TInterlocked.Exchange(FAheadProgress, (Int64(Clocks) shl 32) or Int64(FRSP.JournalCount));
+  // (Its flag read after the full barrier above.)
+  if (SharedRead(FAheadMainWaiting) <> 0) and (TInterlocked.CompareExchange(FAheadMainWaiting, 0, 1) = 1) then
+    FRSPProgress.SetEvent;
+end;
+
+function TN64Console.AdvanceThreadedWindow: Boolean;
+begin
+  // The window's clock FRSPCommitted + 1 is due, the clocks before it
+  // handled. True: the RSP thread ran it, and it is handled here (checked
+  // with its journal entry, or taken as the timeline takes run-ahead
+  // clocks). False: the window ended before it (the RSP thread is idle).
+  var Need := FRSPCommitted + 1;
+  while True do
+  begin
+    var Progress := SharedRead(FAheadProgress);
+    if Need <= Integer(Progress shr 32) then
+    begin
+      if (FRSPNextCheck < Integer(Progress and $FFFFFFFF)) and (FRSPJournal[FRSPNextCheck].Clock = Need) then
+        CheckRSPPrediction
+      else
+      begin
+        Inc(FRSPCommitted);
+        ScheduleRSP;
+        NextRSPSegment;
+      end;
+      Exit(True);
+    end;
+    if SharedRead(FAheadFinished) = FAheadRequest then
+    begin
+      // Final now: published before it finished.
+      if Need <= Integer(SharedRead(FAheadProgress) shr 32) then
+        Continue;
+      EndThreadedWindow;
+      Exit(False);
+    end;
+    WaitAhead(Need);
+  end;
+end;
+
+procedure TN64Console.WaitAhead(Need: Integer);
+begin
+  // Until the RSP thread has published clock Need or finished.
+  Inc(FRSPStats.ThreadWaits);
+  var Started := TStopwatch.GetTimeStamp;
+  var Spins := 0;
+  while (Integer(SharedRead(FAheadProgress) shr 32) < Need) and (SharedRead(FAheadFinished) <> FAheadRequest) do
+  begin
+    if Spins < SpinRounds then
+    begin
+      Inc(Spins);
+      YieldProcessor;
+      Continue;
+    end;
+    TInterlocked.Exchange(FAheadMainWaiting, 1);
+    if (Integer(SharedRead(FAheadProgress) shr 32) >= Need) or (SharedRead(FAheadFinished) = FAheadRequest) then
+    begin
+      TInterlocked.Exchange(FAheadMainWaiting, 0);
+      Break;
+    end;
+    FRSPProgress.WaitFor(INFINITE);
+  end;
+  Inc(FRSPStats.ThreadWaitTime, TStopwatch.GetTimeStamp - Started);
+end;
+
+procedure TN64Console.StopAhead;
+begin
+  // Ends the window on the RSP thread where it is now: the timeline has
+  // taken at most what it published. Then it is as a window run here.
+  if not FRSPInFlight then
+    Exit;
+  TInterlocked.Exchange(FAheadStopRequest, 1);
+  WaitAhead(High(Integer));
+  EndThreadedWindow;
+end;
+
+procedure TN64Console.EndThreadedWindow;
+begin
+  // The RSP thread finished the window (and waits for the next request):
+  // its length, and where the RSP got.
+  var Clocks := Integer(SharedRead(FAheadProgress) shr 32);
+  FRSPInFlight := False;
+  FRSPRun := Clocks;
+  FRSPLastWindow := Clocks;
+  FSPPC := FAheadPCOut;
+  if FAheadError <> '' then
+    raise EN64Unsupported.Create('RSP thread: ' + FAheadError);
+  if Clocks > 0 then
+    CountWindow(Clocks);
+end;
+
+procedure TN64Console.StopRSPThread;
+begin
+  // Ends the window it runs, then the thread.
+  StopAhead;
+  if FRSPThread = nil then
+    Exit;
+  FRSPThread.Terminate;
+  FRSPWake.SetEvent;
+  FreeAndNil(FRSPThread); // waits for Execute to return
+end;
+
+procedure TN64Console.SetRSPThreaded(Value: Boolean);
+begin
+  if Value = FRSPThreaded then
+    Exit;
+  SyncRSP;
+  FRSPThreaded := Value;
+  if not Value then
+    StopRSPThread;
+  // The bands are placed anew (PlaceThreads) as the next list starts.
+  DrainRDP;
+  FreeAndNil(FRDPWorker);
+  FRDPTiming.OnWords := nil;
+  FRDPTiming.OnDataOut := nil;
+  FRDPTimingStale := True;
 end;
 
 procedure TN64Console.RunRSP;

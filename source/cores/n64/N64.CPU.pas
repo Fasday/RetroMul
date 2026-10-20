@@ -1,4 +1,8 @@
 ﻿unit N64.CPU;
+// The interpreter runs without range and overflow checks (every index is
+// masked and all guest arithmetic wraps explicitly); N64_CHECKED builds them
+// in, for the tests.
+{$IFNDEF N64_CHECKED}{$Q-}{$R-}{$ENDIF}
 
 interface
 
