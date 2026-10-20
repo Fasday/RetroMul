@@ -172,6 +172,8 @@ type
     // IMEM word Slot (0..1023) and the stamp of its last change.
     function IMemWord(Slot: Integer): Cardinal; inline;
     function IMemStamp(Slot: Integer): UInt64; inline;
+    // The stamp of the last change to any IMEM word.
+    function IMemCounter: UInt64; inline;
     function InterruptLine: Boolean; inline;
     property DirectMemory: Boolean read FDirectMemory;
     property TraceEnabled: Boolean read FTraceEnabled;
@@ -647,6 +649,11 @@ end;
 function TN64Bus.IMemStamp(Slot: Integer): UInt64;
 begin
   Result := FIMemStamps[Slot];
+end;
+
+function TN64Bus.IMemCounter: UInt64;
+begin
+  Result := FIMemCounter;
 end;
 
 procedure TN64Bus.CopyFromSP(Offset: Cardinal; var Dest: array of Byte; Index, Count: Integer);

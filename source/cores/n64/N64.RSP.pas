@@ -85,6 +85,36 @@ type
     HasStalledOpcode: Boolean;
   end;
 
+  // One clock of a block: the words it issues (Second also unpaired: a
+  // stall holds it), the clocks it stalls first and the pipeline after it.
+  TRSPBlockStep = record
+    Op, Second: Cardinal;
+    ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
+    Wait, LoadHistory, SingleIssue: Byte;
+    Pair: Boolean;
+  end;
+  PRSPBlockStep = ^TRSPBlockStep;
+
+  // The clocks RunClocks takes from an IMEM slot and pipeline state (no
+  // branch, stall or bubble pending, not single-stepping), worked out once:
+  // up to the delay slot of the first branch, or before the first clock
+  // with an external instruction. Which words issue, paired or not, and the
+  // stalls depend on nothing else. Its Words IMEM words from the slot on
+  // (all those the clocks looked at) are compared again once IMEM changed
+  // after Checked.
+  TRSPBlock = record
+    ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
+    LoadHistory, SingleIssue: Byte;
+    Count, First, Words, FirstWord: Integer;
+    Checked: UInt64;
+    // The next block from the same slot, or -1.
+    Next: Integer;
+  end;
+  PRSPBlock = ^TRSPBlock;
+
+  // After a block's clocks (tests): Clocks run so far in this call.
+  TRSPBlockDone = procedure(Clocks: Integer) of object;
+
   TN64RSP = class
   private const
     NotDecoded = High(UInt64);
@@ -164,6 +194,22 @@ type
     // The instructions of the clock a fence stops (for ClockFenced).
     FFencedOp, FFencedSecond: Cardinal;
     FFencedPair: Boolean;
+    // Blocks (TRSPBlock), chained per IMEM slot from FBlockHead; their steps
+    // and words in pools, all dropped when one is full.
+    FUseBlocks: Boolean;
+    FBlockHead: array[0..1023] of Integer;
+    FBlocks: TArray<TRSPBlock>;
+    FBlockSteps: TArray<TRSPBlockStep>;
+    FBlockWords: TArray<Cardinal>;
+    FBlockCount, FStepCount, FWordCount: Integer;
+    FBlocksBuilt, FBlocksRun, FBlockClocks: Int64;
+    FOnBlock: TRSPBlockDone;
+    procedure ClearBlocks;
+    function FindBlock(PC: Cardinal): PRSPBlock;
+    function BuildBlock(PC: Cardinal): PRSPBlock;
+    function RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
+      var Ran: Integer): Integer;
+    procedure IssueUntraced(Op: Cardinal; var PC, Status, Interrupt: Cardinal); inline;
     function TouchesFence(Op: Cardinal): Boolean;
     procedure SaveCheckpoint(PC: Cardinal);
     procedure SaveLine(Offset: Cardinal);
@@ -284,6 +330,15 @@ type
     property OnPredict: TRSPPrediction read FPredict write FPredict;
     property OnDefer: TRSPDeferral read FDefer write FDefer;
     property OnLift: TRSPFenceLift read FLift write FLift;
+    // Whether clocks run from blocks where they can (on by default; the
+    // same clocks either way).
+    property UseBlocks: Boolean read FUseBlocks write FUseBlocks;
+    property OnBlock: TRSPBlockDone read FOnBlock write FOnBlock;
+    // Blocks worked out, and run (each time a clock loop took one), with the
+    // clocks they took.
+    property BlocksBuilt: Int64 read FBlocksBuilt;
+    property BlocksRun: Int64 read FBlocksRun;
+    property BlockClocks: Int64 read FBlockClocks;
   public const
     // Journal entries one window may hold (the journal never grows, so the
     // console may read published entries while the window runs on).
@@ -305,6 +360,8 @@ begin
   SetLength(FJournal, JournalCapacity);
   for var I := 0 to High(FDecStamp) do
     FDecStamp[I] := NotDecoded;
+  FUseBlocks := True;
+  ClearBlocks;
   Reset
 end;
 
@@ -3529,6 +3586,27 @@ begin
     // A stalled opcode only counts at its own PC. Both outcomes below set
     // FHasStalledOpcode/FHasStalledSecondOpcode, so a stale one is dropped.
     var Stalled := FHasStalledOpcode and (FStalledPC = PC);
+    if FUseBlocks and not Stalled and not FBranch and ((Status and $20) = 0) and (FCheckpointed or not Ahead) and
+      FBus.DirectMemory and not FBus.TraceEnabled then
+    begin
+      // The clocks from here worked out before: run them as they are.
+      var Block := FindBlock(PC);
+      if Block.Count > 0 then
+      begin
+        var Before := Result;
+        var Outcome := RunBlock(Block, PC, Status, Interrupt, Cycles, Ahead, Result);
+        Inc(FBlocksRun);
+        Inc(FBlockClocks, Result - Before);
+        if Assigned(FOnBlock) then
+          FOnBlock(Result);
+        if Outcome = 2 then
+          Break;
+        if Outcome = 0 then
+          Continue;
+        // A stall longer than the budget left: the clock below takes it (no
+        // stall is held after a block's clocks).
+      end;
+    end;
     var Op, Second: Cardinal;
     var Pair: Boolean;
     // The clock's masks, where they are kept (Held: decoded here).
@@ -3705,6 +3783,312 @@ end;
 function TN64RSP.ExecuteCycles(var PC, Status, Interrupt: Cardinal; Cycles: Integer): Integer;
 begin
   Result := RunClocks(PC, Status, Interrupt, Cycles, False);
+end;
+
+procedure TN64RSP.ClearBlocks;
+begin
+  for var I := 0 to High(FBlockHead) do
+    FBlockHead[I] := -1;
+  FBlockCount := 0;
+  FStepCount := 0;
+  FWordCount := 0;
+end;
+
+function TN64RSP.FindBlock(PC: Cardinal): PRSPBlock;
+begin
+  // The block from PC's slot and the pipeline as it is, worked out if new.
+  // One whose IMEM changed after it was checked counts if its words are the
+  // same again (code that comes back).
+  var Counter := FBus.IMemCounter;
+  var Slot := Integer((PC shr 2) and 1023);
+  var Index := FBlockHead[Slot];
+  while Index >= 0 do
+  begin
+    Result := @FBlocks[Index];
+    if (Result.ScalarLo = FScalarLo) and (Result.ScalarHi = FScalarHi) and (Result.VectorLo = FVectorLo) and
+      (Result.VectorHi = FVectorHi) and (Result.LoadHistory = FLoadHistory) and (Result.SingleIssue = FSingleIssue) then
+    begin
+      if Result.Checked = Counter then
+        Exit;
+      var Same := True;
+      for var I := 0 to Result.Words - 1 do
+        if FBus.IMemWord((Slot + I) and 1023) <> FBlockWords[Result.FirstWord + I] then
+        begin
+          Same := False;
+          Break;
+        end;
+      if Same then
+      begin
+        Result.Checked := Counter;
+        Exit;
+      end;
+    end;
+    Index := Result.Next;
+  end;
+  Result := BuildBlock(PC);
+end;
+
+function TN64RSP.BuildBlock(PC: Cardinal): PRSPBlock;
+const
+  // At most this many steps in a block (the pools keep room for one).
+  MaxSteps = 64;
+begin
+  // The clocks RunClocks takes from PC and the pipeline as it is, without
+  // issuing anything: the same decode, pairing, stalls and readiness.
+  if FBlocks = nil then
+  begin
+    SetLength(FBlocks, 2048);
+    SetLength(FBlockSteps, 32768);
+    SetLength(FBlockWords, 65536);
+  end;
+  if (FBlockCount >= Length(FBlocks)) or (FStepCount + MaxSteps > Length(FBlockSteps)) or
+    (FWordCount + 2 * MaxSteps + 1 > Length(FBlockWords)) then
+    ClearBlocks;
+  Inc(FBlocksBuilt);
+  var Start := Integer((PC shr 2) and 1023);
+  Result := @FBlocks[FBlockCount];
+  Result.ScalarLo := FScalarLo;
+  Result.ScalarHi := FScalarHi;
+  Result.VectorLo := FVectorLo;
+  Result.VectorHi := FVectorHi;
+  Result.LoadHistory := FLoadHistory;
+  Result.SingleIssue := FSingleIssue;
+  Result.First := FStepCount;
+  Result.FirstWord := FWordCount;
+  Result.Checked := FBus.IMemCounter;
+  Result.Next := FBlockHead[Start];
+  FBlockHead[Start] := FBlockCount;
+  Inc(FBlockCount);
+  var SLo := FScalarLo;
+  var SHi := FScalarHi;
+  var VLo := FVectorLo;
+  var VHi := FVectorHi;
+  var LoadHistory := FLoadHistory;
+  var SingleIssue := FSingleIssue;
+  var Count := 0;
+  // Words looked at from Start on.
+  var Words := 0;
+  var Branched := False;
+  while Count < MaxSteps do
+  begin
+    var Slot := Integer((PC shr 2) and 1023);
+    var NextSlot := (Slot + 1) and 1023;
+    DecodedSlot(Slot);
+    Words := Max(Words, ((Slot - Start) and 1023) + 1);
+    var Op := FDec[Slot].Op;
+    var Second: Cardinal := 0;
+    var Pair := False;
+    var Masks: ^TRSPIssueMasks := @FDec[Slot].Single;
+    if (SingleIssue = 0) and ((FDec[Slot].Info.Flags and 4) = 0) then
+    begin
+      DecodedSlot(NextSlot);
+      Words := Max(Words, ((NextSlot - Start) and 1023) + 1);
+      if not FDec[Slot].PairValid or (FDec[Slot].SecondOp <> FDec[NextSlot].Op) then
+        DecodePair(Slot);
+      Pair := FDec[Slot].CanPair;
+      Second := FDec[NextSlot].Op;
+      if Pair then
+        Masks := @FDec[Slot].Paired;
+    end;
+    // An external instruction is RunClocks' own business (journal, stops).
+    if Masks.External then
+      Break;
+    var Flags := Masks.Flags;
+    var Storing := (Flags and 2) <> 0;
+    var Wait := 0;
+    if (Storing and ((LoadHistory and 2) <> 0)) or ((Masks.Sources and (SLo or SHi)) <> 0) or
+      ((Masks.Vectors and (VLo or VHi)) <> 0) then
+    begin
+      var Sources := Masks.Sources;
+      var Vectors := Masks.Vectors;
+      if (Sources and SHi) <> 0 then
+        Wait := 2 + Ord((Sources and SHi and SLo) <> 0)
+      else if (Sources and SLo) <> 0 then
+        Wait := 1;
+      if (Vectors and VHi) <> 0 then
+        Wait := Max(Wait, 2 + Ord((Vectors and VHi and VLo) <> 0))
+      else if ((Vectors and VLo) <> 0) and (Wait = 0) then
+        Wait := 1;
+      if Wait = 0 then
+        Wait := 1;
+      if (Wait = 1) and Storing and ((LoadHistory and 1) <> 0) then
+        Wait := 2;
+      if Wait = 1 then
+      begin
+        var Lo := SLo;
+        SLo := SHi and not Lo;
+        SHi := SHi and Lo;
+        Lo := VLo;
+        VLo := VHi and not Lo;
+        VHi := VHi and Lo;
+        LoadHistory := (LoadHistory shl 1) and 3;
+      end
+      else if Wait = 2 then
+      begin
+        SLo := SHi and SLo;
+        SHi := 0;
+        VLo := VHi and VLo;
+        VHi := 0;
+        LoadHistory := 0;
+      end
+      else
+      begin
+        SLo := 0;
+        SHi := 0;
+        VLo := 0;
+        VHi := 0;
+        LoadHistory := 0;
+      end;
+    end;
+    var S: PRSPBlockStep := @FBlockSteps[FStepCount + Count];
+    S.Op := Op;
+    S.Second := Second;
+    S.Pair := Pair;
+    S.Wait := Wait;
+    // The issue clock.
+    var Lo := SLo;
+    SLo := SHi and not Lo;
+    SHi := SHi and Lo;
+    Lo := VLo;
+    VLo := VHi and not Lo;
+    VHi := VHi and Lo;
+    LoadHistory := (LoadHistory shl 1) and 3;
+    var ScalarWrites := Masks.ScalarWrites and not Cardinal(1);
+    SHi := SHi or ScalarWrites;
+    SLo := SLo and not ScalarWrites;
+    VHi := VHi or Masks.VectorWrites;
+    VLo := VLo or Masks.VectorWrites;
+    if (Flags and 1) <> 0 then
+      LoadHistory := LoadHistory or 1;
+    SingleIssue := Byte(Ord((Flags and 4) <> 0));
+    S.ScalarLo := SLo;
+    S.ScalarHi := SHi;
+    S.VectorLo := VLo;
+    S.VectorHi := VHi;
+    S.LoadHistory := LoadHistory;
+    S.SingleIssue := SingleIssue;
+    Inc(Count);
+    // A branch's delay slot is the last clock: where the branch goes is
+    // only known as it runs.
+    if Branched then
+      Break;
+    Branched := (Flags and 4) <> 0;
+    PC := (PC + 4 + 4 * Cardinal(Ord(Pair))) and $FFC;
+  end;
+  for var I := 0 to Words - 1 do
+    FBlockWords[FWordCount + I] := FDec[(Start + I) and 1023].Op;
+  Result.Words := Words;
+  Inc(FWordCount, Words);
+  Result.Count := Count;
+  Inc(FStepCount, Count);
+end;
+
+procedure TN64RSP.IssueUntraced(Op: Cardinal; var PC, Status, Interrupt: Cardinal);
+begin
+  // Issue without tracing.
+  case Op shr 26 of
+    18, 50, 58:
+      if ((Op shr 26) <> 18) or (((Op shr 21) and 31) >= 16) then
+      begin
+        if FBranch then
+        begin
+          PC := FNextPC;
+          FBranch := False
+        end
+        else
+          PC := (PC + 4) and $FFC;
+        if (Op shr 26) = 18 then
+          VectorOp(Op)
+        else
+          VectorMemory(Op, (Op shr 26) = 58);
+        Exit;
+      end;
+  end;
+  IssueInstruction(Op, PC, Status, Interrupt);
+end;
+
+function TN64RSP.RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
+  var Ran: Integer): Integer;
+begin
+  // Block B's clocks as RunClocks takes them, up to Cycles in all (Ran so
+  // far): 0 when they ran (all, or as many as the budget allows), 1 before
+  // a stall longer than the budget left (RunClocks takes that clock), 2 when
+  // a fence stopped the window (FAheadStop). The pipeline is set after the
+  // last clock run, and before a fence as RunClocks leaves it there.
+  Result := 0;
+  var S: PRSPBlockStep := @FBlockSteps[B.First];
+  var Last: PRSPBlockStep := @FBlockSteps[B.First + B.Count - 1];
+  var Done: PRSPBlockStep := nil;
+  // A branch is pending only before the last clock (its delay slot).
+  var DelaySlot := False;
+  while True do
+  begin
+    if S.Wait > 0 then
+    begin
+      if S.Wait >= Cycles - Ran then
+      begin
+        Result := 1;
+        Break;
+      end;
+      FStalledOpcode := S.Op;
+      FStalledPC := PC;
+      FStalledSecondOpcode := S.Second;
+      Inc(Ran, S.Wait);
+    end;
+    if Ahead and FFenced and not FReplaying and (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
+    begin
+      // The pipeline after the stall, the words held.
+      if Done <> nil then
+      begin
+        FScalarLo := Done.ScalarLo;
+        FScalarHi := Done.ScalarHi;
+        FVectorLo := Done.VectorLo;
+        FVectorHi := Done.VectorHi;
+        FLoadHistory := Done.LoadHistory;
+        FSingleIssue := Done.SingleIssue;
+        FHasStalledOpcode := False;
+        FHasStalledSecondOpcode := False;
+      end;
+      if S.Wait > 0 then
+      begin
+        AgePipelineBy(S.Wait);
+        FHasStalledOpcode := True;
+        FHasStalledSecondOpcode := S.Pair;
+      end;
+      if not LiftFence(PC, S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
+      begin
+        FAheadStop := TRSPAheadStop.Fence;
+        Exit(2);
+      end;
+    end;
+    if S = Last then
+      DelaySlot := FBranch;
+    IssueUntraced(S.Op, PC, Status, Interrupt);
+    if S.Pair then
+      IssueUntraced(S.Second, PC, Status, Interrupt);
+    Inc(Ran);
+    Done := S;
+    if (S = Last) or (Ran >= Cycles) then
+      Break;
+    Inc(S);
+  end;
+  if Done <> nil then
+  begin
+    FScalarLo := Done.ScalarLo;
+    FScalarHi := Done.ScalarHi;
+    FVectorLo := Done.VectorLo;
+    FVectorHi := Done.VectorHi;
+    FLoadHistory := Done.LoadHistory;
+    FSingleIssue := Done.SingleIssue;
+    FHasStalledOpcode := False;
+    FHasStalledSecondOpcode := False;
+    if DelaySlot then
+    begin
+      FBranchBubble := 1;
+      if (PC and 4) <> 0 then
+        FSingleIssue := 1;
+    end;
+  end;
 end;
 
 class function TN64RSP.External(Op: Cardinal): Boolean;

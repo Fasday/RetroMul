@@ -492,6 +492,8 @@ type
     // is expected done: 2 (default) all, 1 only of transfers out of DMEM, 0
     // none. Any mode is exact.
     property RSPLiftMode: Integer read FRSPLiftMode write FRSPLiftMode;
+    // Diagnostics: the RSP itself (UseBlocks, block statistics).
+    property RSP: TN64RSP read FRSP;
     // Run-ahead windows on a thread of their own while this thread goes on
     // (long windows only; exact either way). On by default with three
     // physical cores or more.
