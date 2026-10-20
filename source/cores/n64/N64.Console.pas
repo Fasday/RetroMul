@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Math, System.Classes, System.UITypes, N64.Types,
-  N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, Core.Snapshots, Core.Emulation.Types;
+  N64.CPU, N64.RSP, N64.RDP, N64.RDPWorker, N64.VI, N64.Timing, N64.Host, Core.Snapshots, Core.Emulation.Types;
 
 type
   TN64SaveType = (Auto, EEPROM4K, EEPROM16K, SRAM, FlashRAM, None);
@@ -64,6 +64,13 @@ type
     FRDPMode: TN64RDPMode;
     FRDPBands: Integer;
     FRDPTimingStale: Boolean;
+    // Diagnostics: False runs only the timing RDP (no pixels drawn).
+    FRDPDrawing: Boolean;
+    // Thread placement (see PlaceThreads): enabled, and the emulation thread
+    // pinned (FPinnedThread) with what it could run on before.
+    FPlacement, FPinned: Boolean;
+    FPinnedThread: TThreadID;
+    FUnpinned: TN64CPUSet;
     FVI: TN64VI;
     FTimeline: TN64Timeline;
     FSPTransfer, FSPQueued: TN64SPTransfer;
@@ -122,6 +129,10 @@ type
     procedure RefreshRDP;
     procedure SetRDPMode(Value: TN64RDPMode);
     procedure SetRDPThreads(Value: Integer);
+    procedure SetRDPDrawing(Value: Boolean);
+    procedure PlaceThreads(out BandCPUs: TN64CPUSet; out Preferred: TArray<Integer>);
+    procedure UnplaceThreads;
+    procedure SetPlacement(Value: Boolean);
     function GetRenderer: TN64RDP;
     procedure RunRSP;
     procedure FlashCommand(Value: Cardinal);
@@ -183,6 +194,18 @@ type
     property RDPMode: TN64RDPMode read FRDPMode write SetRDPMode;
     // Threads drawing RDP rows in bands (with a worker; 1 or more).
     property RDPThreads: Integer read FRDPBands write SetRDPThreads;
+    // Diagnostics: False runs only the timing RDP on this thread: every DP
+    // register, interrupt and timing as before, but no pixel is drawn (the
+    // guest then sees stale images). Not to be switched back on.
+    property RDPDrawing: Boolean read FRDPDrawing write SetRDPDrawing;
+    // The emulation thread on a core of its own (the fastest), each RDP band
+    // on another: threads sharing a core (SMT) or on slow cores slow the
+    // emulation thread down. Set when the RDP worker starts; the emulation
+    // thread's previous affinity returns when this is switched off or the
+    // console is destroyed on that thread. No effect on the emulation.
+    property ThreadPlacement: Boolean read FPlacement write SetPlacement;
+    // Diagnostics: the timing RDP (its OnPrimitive, ModeWords, LoadStats).
+    property TimingRDP: TN64RDP read FRDPTiming;
     property FrameNumber: UInt64 read FFrame;
     property DebugOutput: string read FDebugOutput;
     // The RSP runs ahead of the CPU up to its next COP0 access or BREAK
@@ -199,30 +222,11 @@ type
 
 implementation
 
-{$IFDEF MSWINDOWS}
-uses
-  Winapi.Windows;
-{$ENDIF}
-
 function PhysicalCores: Integer;
 begin
-  // Physical cores with a logical processor this process may run on.
-  Result := 0;
-  {$IFDEF MSWINDOWS}
-  var ProcessMask, SystemMask: NativeUInt;
-  var Length: DWORD := 0;
-  if GetProcessAffinityMask(GetCurrentProcess, ProcessMask, SystemMask) and
-    not GetLogicalProcessorInformation(nil, Length) and (GetLastError = ERROR_INSUFFICIENT_BUFFER) then
-  begin
-    var Items: TArray<TSystemLogicalProcessorInformation>;
-    SetLength(Items, Length div SizeOf(TSystemLogicalProcessorInformation) + 1);
-    if GetLogicalProcessorInformation(@Items[0], Length) then
-      for var I := 0 to Integer(Length div SizeOf(TSystemLogicalProcessorInformation)) - 1 do
-        if (Items[I].Relationship = RelationProcessorCore) and ((Items[I].ProcessorMask and ProcessMask) <> 0) then
-          Inc(Result);
-  end;
-  {$ENDIF}
-  // Elsewhere, or if that failed: assume two logical processors per core.
+  // Physical cores this process may run on (N64.Host); where unknown,
+  // assume two logical processors per core.
+  Result := Length(HostCores);
   if Result = 0 then
     Result := Max(1, TThread.ProcessorCount div 2);
 end;
@@ -287,6 +291,8 @@ begin
   FRDP := TN64RDP.Create(Self);
   FRDPTiming := TN64RDP.Create(Self, True);
   FRDPBands := DefaultRDPBands;
+  FRDPDrawing := True;
+  FPlacement := True;
   {$IFDEF DEBUG}
   FRDPMode := TN64RDPMode.Verify;
   {$ELSE}
@@ -304,6 +310,7 @@ end;
 destructor TN64Console.Destroy;
 begin
   FRDPWorker.Free; // stops the thread before the RDP goes
+  UnplaceThreads;
   FCPU.Free;
   FRSP.Free;
   FRDP.Free;
@@ -2287,8 +2294,18 @@ begin
   var Consumed: Cardinal;
   var FullSync: Boolean;
   var Clocks: UInt64;
+  if not FRDPDrawing then
+  begin
+    if FRDPTimingStale then
+    begin
+      FRDPTiming.Assign(FRDP);
+      FRDPTimingStale := False;
+    end;
+    FullSync := FRDPTiming.Execute(FReg[1, 2], FReg[1, 1], (FReg[1, 3] and 1) <> 0, Consumed);
+    Clocks := FRDPTiming.WorkClocks;
+  end
   // Command capture needs the drawing RDP on this thread.
-  if (FRDPMode <> TN64RDPMode.Synchronous) and not FRDP.Traced then
+  else if (FRDPMode <> TN64RDPMode.Synchronous) and not FRDP.Traced then
   begin
     FullSync := QueueRDP(Consumed);
     Clocks := FRDPTiming.WorkClocks;
@@ -2317,7 +2334,11 @@ begin
   if FRDPWorker = nil then
   begin
     // Lists are numbered in the bus (FRDPList) and in the worker alike.
-    FRDPWorker := TN64RDPWorker.Create(FRDP, Self, FRDPBands, Int64(FRDPList), FRDPMode = TN64RDPMode.Stress);
+    var BandCPUs: TN64CPUSet;
+    var Preferred: TArray<Integer>;
+    PlaceThreads(BandCPUs, Preferred);
+    FRDPWorker := TN64RDPWorker.Create(FRDP, Self, FRDPBands, Int64(FRDPList), FRDPMode = TN64RDPMode.Stress,
+      BandCPUs, Preferred);
     FRDPTiming.OnWords := FRDPWorker.Put;
     FRDPTiming.OnDataOut := FRDPWorker.PutData;
   end;
@@ -2399,6 +2420,80 @@ begin
   FRDPTiming.OnDataOut := nil;
   FRDPBands := Value;
   FRDPTimingStale := True;
+end;
+
+procedure TN64Console.PlaceThreads(out BandCPUs: TN64CPUSet; out Preferred: TArray<Integer>);
+begin
+  // On the emulation thread, as the RDP worker starts: this thread on the
+  // fastest core (the one it runs on, among equals); the bands anywhere else,
+  // each preferring one of the next fastest cores. Bands pinned one to a core
+  // run a few percent faster on an idle machine, but cannot move away from
+  // other programs.
+  BandCPUs.Clear;
+  Preferred := nil;
+  if not FPlacement then
+    Exit;
+  var Cores := HostCores;
+  if Length(Cores) < 2 then
+    Exit;
+  if not FPinned then
+  begin
+    var Previous: TN64CPUSet;
+    if not PinCurrentThread(Cores[0].CPUs, Previous) then
+      Exit;
+    FPinned := True;
+    FPinnedThread := TThread.CurrentThread.ThreadID;
+    FUnpinned := Previous;
+  end;
+  for var C := 1 to High(Cores) do
+    for var W := 0 to High(BandCPUs.Bits) do
+      BandCPUs.Bits[W] := BandCPUs.Bits[W] or Cores[C].CPUs.Bits[W];
+  SetLength(Preferred, FRDPBands);
+  for var I := 0 to FRDPBands - 1 do
+  begin
+    var Core := Cores[1 + I mod (Length(Cores) - 1)];
+    Preferred[I] := 0;
+    while not Core.CPUs.Contains(Preferred[I]) do
+      Inc(Preferred[I]);
+  end;
+end;
+
+procedure TN64Console.UnplaceThreads;
+begin
+  // Only the pinned thread can be given its affinity back.
+  if FPinned and (TThread.CurrentThread.ThreadID = FPinnedThread) then
+  begin
+    var Ignored: TN64CPUSet;
+    PinCurrentThread(FUnpinned, Ignored);
+    FPinned := False;
+  end;
+end;
+
+procedure TN64Console.SetPlacement(Value: Boolean);
+begin
+  if Value = FPlacement then
+    Exit;
+  // The next list starts a worker placed accordingly.
+  DrainRDP;
+  FreeAndNil(FRDPWorker);
+  FRDPTiming.OnWords := nil;
+  FRDPTiming.OnDataOut := nil;
+  FRDPTimingStale := True;
+  FPlacement := Value;
+  if not Value then
+    UnplaceThreads;
+end;
+
+procedure TN64Console.SetRDPDrawing(Value: Boolean);
+begin
+  if Value = FRDPDrawing then
+    Exit;
+  DrainRDP;
+  FreeAndNil(FRDPWorker);
+  FRDPTiming.OnWords := nil;
+  FRDPTiming.OnDataOut := nil;
+  FRDPTimingStale := True;
+  FRDPDrawing := Value;
 end;
 
 function TN64Console.GetRenderer: TN64RDP;

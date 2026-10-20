@@ -22,7 +22,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.SyncObjs, N64.Types, N64.RDP;
+  System.SysUtils, System.Classes, System.SyncObjs, N64.Types, N64.RDP, N64.Host;
 
 type
   TN64RDPWorker = class
@@ -45,11 +45,15 @@ type
       FRDP: TN64RDP;
       FCursor, FEnd: Int64;
       FNoise: Cardinal;
+      // The logical processors this band may run on (empty: anywhere), and
+      // the one it prefers (-1: none).
+      FCPUs: TN64CPUSet;
+      FPreferred: Integer;
       function NextWord: Cardinal;
     protected
       procedure Execute; override;
     public
-      constructor Create(Owner: TN64RDPWorker; Index: Integer; RDP: TN64RDP);
+      constructor Create(Owner: TN64RDPWorker; Index: Integer; RDP: TN64RDP; const CPUs: TN64CPUSet; Preferred: Integer);
     end;
 
     // What one band thread writes, a cache line apart from the others.
@@ -109,7 +113,12 @@ type
     // RDP is the full RDP of band 0; Bands - 1 more are created on Bus with
     // its state. Lists up to Completed count as complete (the first list
     // queued is Completed + 1). Stress adds random stalls to every thread.
-    constructor Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean);
+    // The bands run on the logical processors BandCPUs (if not empty), band
+    // I preferably on Preferred[I] (if given).
+    constructor Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean;
+      const BandCPUs: TN64CPUSet; const Preferred: TArray<Integer>); overload;
+    // The same, the bands placed by the scheduler.
+    constructor Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean); overload;
     destructor Destroy; override;
     // Producer side, emulation thread: BeginList, then Put for each word pair
     // (each followed by the PutData words of its command, if any), EndList.
@@ -141,11 +150,14 @@ implementation
 
 { TN64RDPWorker.TBand }
 
-constructor TN64RDPWorker.TBand.Create(Owner: TN64RDPWorker; Index: Integer; RDP: TN64RDP);
+constructor TN64RDPWorker.TBand.Create(Owner: TN64RDPWorker; Index: Integer; RDP: TN64RDP; const CPUs: TN64CPUSet;
+  Preferred: Integer);
 begin
   FOwner := Owner;
   FIndex := Index;
   FRDP := RDP;
+  FCPUs := CPUs;
+  FPreferred := Preferred;
   FNoise := Cardinal($9E3779B9 + Cardinal(Index) * 7919);
   inherited Create(False);
 end;
@@ -161,6 +173,13 @@ end;
 
 procedure TN64RDPWorker.TBand.Execute;
 begin
+  if not FCPUs.IsEmpty then
+  begin
+    var Previous: TN64CPUSet;
+    PinCurrentThread(FCPUs, Previous);
+  end;
+  if FPreferred >= 0 then
+    PreferProcessor(FPreferred);
   var Position: Int64 := 0;
   while not Terminated do
   begin
@@ -218,7 +237,8 @@ end;
 
 { TN64RDPWorker }
 
-constructor TN64RDPWorker.Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean);
+constructor TN64RDPWorker.Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean;
+  const BandCPUs: TN64CPUSet; const Preferred: TArray<Integer>);
 begin
   inherited Create;
   FStress := Stress;
@@ -246,7 +266,17 @@ begin
   end;
   SetLength(FThreads, Bands);
   for var I := 0 to Bands - 1 do
-    FThreads[I] := TBand.Create(Self, I, FRDPs[I]);
+  begin
+    var Prefer := -1;
+    if I < Length(Preferred) then
+      Prefer := Preferred[I];
+    FThreads[I] := TBand.Create(Self, I, FRDPs[I], BandCPUs, Prefer);
+  end;
+end;
+
+constructor TN64RDPWorker.Create(RDP: TN64RDP; Bus: TN64Bus; Bands: Integer; Completed: Int64; Stress: Boolean);
+begin
+  Create(RDP, Bus, Bands, Completed, Stress, Default(TN64CPUSet), nil);
 end;
 
 destructor TN64RDPWorker.Destroy;

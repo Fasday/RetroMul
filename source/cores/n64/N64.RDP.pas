@@ -7,6 +7,17 @@ uses
 
 type
   TN64RDPCommandTrace = procedure(const Words: TArray<Cardinal>) of object;
+  // Diagnostics: a primitive is done, with the pixels it drew (or, on a timing
+  // RDP, would draw).
+  TN64RDPPrimitiveTrace = procedure(Pixels: Int64) of object;
+
+  // Diagnostics: the modes the current primitive is drawn with.
+  TN64RDPModeWords = record
+    Code, Cycle, Tile, TileFormat, TileSize, ColorSize, ColorFormat: Integer;
+    CombineHi, CombineLo, OtherHi, OtherLo: Cardinal;
+    // TN64RDP.SerialReason.
+    Serial: Integer;
+  end;
   // The two command words of each 64-bit step, as Execute reads them.
   TN64RDPWords = procedure(W0, W1: Cardinal) of object;
   TN64RDPWordOut = procedure(Value: Cardinal) of object;
@@ -140,6 +151,11 @@ type
     FTraceWords: TArray<Cardinal>;
     FTimingOnly: Boolean;
     FOnWords: TN64RDPWords;
+    // Diagnostics: OnPrimitive, the pixels counted for the current primitive
+    // (timing RDP), and texture/TLUT loads by how their bytes travel.
+    FOnPrimitive: TN64RDPPrimitiveTrace;
+    FPrimPixels: Int64;
+    FLoadStats: array[0..3] of Int64;
     // Counted pixels of the current row (timing RDP).
     FRowMinX, FRowMaxX: Integer;
     // Texture bytes sent with the command words (timing RDP) or received
@@ -165,7 +181,7 @@ type
     // FMemoryCoverage; FKeyMemoryRGB: the last one that read its RGB.
     FKeyRaster, FKeyShade, FKeyMemory, FKeyMemoryRGB, FKeyNoise: UInt64;
     FKeyHidden: array[0..7] of UInt64;
-    function BandSafe: Boolean;
+    function BandSafe: Boolean; inline;
     procedure SelectBand(Safe: Boolean);
     function OwnsRow(Y: Integer): Boolean; inline;
     function ReadsRDRAM: Boolean;
@@ -272,6 +288,14 @@ type
     // Words of a command still incomplete at the end of the last Execute.
     property PendingWords: Integer read FCommandCount;
     property TimingOnly: Boolean read FTimingOnly;
+    // Diagnostics (see the types). A timing RDP counts the pixels of each
+    // primitive. Load statistics: [0] bytes sent with the command words, [1]
+    // read by the drawing RDP as a queued list may write them, [2] read by
+    // the drawing RDP as too many, [3] no drawing RDP fed by this one.
+    property OnPrimitive: TN64RDPPrimitiveTrace read FOnPrimitive write FOnPrimitive;
+    function ModeWords: TN64RDPModeWords;
+    function SerialReason: Integer;
+    function LoadStats(Kind: Integer): Int64;
   end;
 
   // RDPs fed the same command stream on their own threads, each drawing one
@@ -417,22 +441,30 @@ end;
 
 function TN64RDP.BandSafe: Boolean;
 begin
+  Result := SerialReason = 0;
+end;
+
+function TN64RDP.SerialReason: Integer;
+begin
   // Whether RDPs that each draw only their own rows of this primitive leave
-  // exactly what one RDP drawing all rows leaves: no state may pass from
-  // pixel to pixel (the previous pixel's memory colour, the hidden-bit
-  // history of byte writes), and no RDRAM byte or halfword may belong to two
-  // rows (colour rows wider than the image, Z overlapping colour, 4/8-bit
-  // pixels or odd addresses sharing halfwords). The noise generator passes
-  // from pixel to pixel too, but its steps over the other bands' rows can
-  // be counted (SkipRow).
-  Result := False;
+  // exactly what one RDP drawing all rows leaves (0), or why not: no state
+  // may pass from pixel to pixel (the previous pixel's memory colour, the
+  // hidden-bit history of byte writes), and no RDRAM byte or halfword may
+  // belong to two rows (colour rows wider than the image, Z overlapping
+  // colour, 4/8-bit pixels or odd addresses sharing halfwords). The noise
+  // generator passes from pixel to pixel too, but its steps over the other
+  // bands' rows can be counted (SkipRow).
   var Cycle := (FOtherHi shr 20) and 3;
-  if (FColorSize < 2) or Odd(FColorAddress) or (FScissorX1 > FColorWidth) then
-    Exit;
+  if FColorSize < 2 then
+    Exit(1);
+  if Odd(FColorAddress) then
+    Exit(2);
+  if FScissorX1 > FColorWidth then
+    Exit(3);
   // The RGB dither's noise mode reads the noise of the last pixel that took
   // one, possibly in another band.
   if (Cycle < 2) and (((FOtherHi shr 6) and 3) = 2) and not FMode.NeedsNoise then
-    Exit;
+    Exit(4);
   if Cycle < 2 then
   begin
     for var C := 0 to Integer(Cycle) do
@@ -442,25 +474,46 @@ begin
       var M2B := (FOtherLo shr (18 - C * 2)) and 3;
       // Without image read, the memory colour is the previous pixel's.
       if ((FOtherLo and $40) = 0) and ((M1A = 1) or (M2A = 1)) then
-        Exit;
+        Exit(5);
       // The first of two cycles blends with the previous pixel's memory.
       if (Cycle = 1) and (C = 0) and ((M1A = 1) or (M2A = 1) or (M2B = 1)) then
-        Exit;
+        Exit(6);
     end;
     if (FOtherLo and $30) <> 0 then
     begin
       if Odd(FZAddress) then
-        Exit;
+        Exit(7);
       var ColorRow := UInt64(FColorWidth) * UInt64(ColorBytes);
       var ColorFirst := UInt64(FColorAddress) + UInt64(FScissorY0) * ColorRow;
       var ColorEnd := UInt64(FColorAddress) + UInt64(FScissorY1) * ColorRow;
       var ZFirst := UInt64(FZAddress) + UInt64(FScissorY0) * UInt64(FColorWidth) * 2;
       var ZEnd := UInt64(FZAddress) + UInt64(FScissorY1) * UInt64(FColorWidth) * 2;
       if (ZFirst < ColorEnd) and (ColorFirst < ZEnd) then
-        Exit;
+        Exit(8);
     end;
   end;
-  Result := True;
+  Result := 0;
+end;
+
+function TN64RDP.ModeWords: TN64RDPModeWords;
+begin
+  Result.Code := Integer(FPrim.Code);
+  Result.Cycle := Integer((FOtherHi shr 20) and 3);
+  Result.Tile := FPrim.Tile;
+  Result.TileFormat := FTiles[FPrim.Tile].Format;
+  Result.TileSize := FTiles[FPrim.Tile].Size;
+  Result.ColorSize := FColorSize;
+  Result.ColorFormat := FColorFormat;
+  Result.CombineHi := FCombineHi;
+  Result.CombineLo := FCombineLo;
+  Result.OtherHi := FOtherHi;
+  Result.OtherLo := FOtherLo;
+  Result.Serial := SerialReason;
+end;
+
+function TN64RDP.LoadStats(Kind: Integer): Int64;
+begin
+  Result := FLoadStats[Kind];
 end;
 
 procedure TN64RDP.SelectBand(Safe: Boolean);
@@ -1047,6 +1100,7 @@ begin
     Exit;
   FRowMinX := Min(FRowMinX, First);
   FRowMaxX := Max(FRowMaxX, Last);
+  Inc(FPrimPixels, Count);
   // Pixel's clocks for each of them.
   var Cycle := (FOtherHi shr 20) and 3;
   if Cycle = 1 then
@@ -2304,6 +2358,14 @@ begin
     end;
   end;
   var Payload := Assigned(FOnDataOut) and not Hazard and (Total <= MaxDataBytes);
+  if Payload then
+    Inc(FLoadStats[0])
+  else if not Assigned(FOnDataOut) then
+    Inc(FLoadStats[3])
+  else if Hazard then
+    Inc(FLoadStats[1])
+  else
+    Inc(FLoadStats[2]);
   if Assigned(FOnDataOut) then
     FOnDataOut(Ord(Payload));
   for var Y := 0 to Rows - 1 do
@@ -2765,6 +2827,7 @@ begin
   // Per-primitive raster state lives in FPrim: nested routines would keep
   // the raster loop's variables in this frame, in memory.
   FPrim.Code := Code;
+  FPrimPixels := 0;
   YL := Integer(SignedValue(SX(FCommand[0] and $3FFF, 14)));
   if FPipelineCrashed then
     Exit;
@@ -2919,6 +2982,8 @@ begin
     XMajor := WrapSigned32(XMajor + MajorStep);
     XMinor := WrapSigned32(XMinor + MinorStep);
   end;
+  if Assigned(FOnPrimitive) then
+    FOnPrimitive(FPrimPixels);
 end;
 
 procedure TN64RDP.SetCoefficient(Index: Integer; S, T: Int64);
@@ -3136,6 +3201,12 @@ begin
           begin
             var Payload := Assigned(FOnDataOut) and ((First >= $800000) or
               not FBus.RDPWriteHazard(Cardinal(First), Cardinal(Entries * 2)));
+            if Payload then
+              Inc(FLoadStats[0])
+            else if Assigned(FOnDataOut) then
+              Inc(FLoadStats[1])
+            else
+              Inc(FLoadStats[3]);
             if Assigned(FOnDataOut) then
               FOnDataOut(Ord(Payload));
             if Payload then
