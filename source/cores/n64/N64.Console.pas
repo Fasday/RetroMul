@@ -421,6 +421,8 @@ type
     class procedure StepSPTransfer(var Transfer: TN64SPTransfer); static;
     procedure RewindRSPTo(Keep: Integer);
     procedure ReplayRSPBeat(Index: Integer);
+    function DMARead8(Address: Cardinal): Byte; inline;
+    procedure DMAWrite8(Address: Cardinal; Value: Byte); inline;
     procedure SPTransferBeat;
     procedure PITransferBeat;
     procedure SITransferBeat;
@@ -1925,6 +1927,24 @@ begin
   ScheduleAI;
 end;
 
+function TN64Console.DMARead8(Address: Cardinal): Byte;
+begin
+  // Read8 of an SP DMA beat's RDRAM byte (Address below 16 MB), without the
+  // call: RDRAM directly, the rest as Read8 has it.
+  if Address < $800000 then
+    Result := ReadRAM8(Address)
+  else
+    Result := Read8(Address);
+end;
+
+procedure TN64Console.DMAWrite8(Address: Cardinal; Value: Byte);
+begin
+  if Address < $800000 then
+    WriteRAM8(Address, Value)
+  else
+    Write8(Address, Value);
+end;
+
 procedure TN64Console.SPTransferBeat;
 begin
   if not FSPTransfer.Active then
@@ -1962,7 +1982,7 @@ begin
     var Same := True;
     var At := (FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8;
     for var I := 0 to 7 do
-      if Read8((FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF) <> FRSPDMAs[Lifted].Data[At + I] then
+      if DMARead8((FSPTransfer.RAM + FSPTransfer.Position + Cardinal(I)) and $FFFFFF) <> FRSPDMAs[Lifted].Data[At + I] then
         Same := False;
     if FRSPStress and ((StressNoise and 63) = 0) then
       // Test mode: as if RDRAM had changed.
@@ -1994,12 +2014,12 @@ begin
     if Lifted >= 0 then
     begin
       if FSPTransfer.Writing then
-        Write8(RAM, FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8 + I])
+        DMAWrite8(RAM, FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8 + I])
     end
     else if FSPTransfer.Writing then
-      Write8(RAM, FSP[local])
+      DMAWrite8(RAM, FSP[local])
     else
-      WriteSP8(local, Read8(RAM));
+      WriteSP8(local, DMARead8(RAM));
   end;
   if Logged then
   begin
