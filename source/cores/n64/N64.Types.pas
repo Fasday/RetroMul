@@ -93,6 +93,12 @@ type
     // FRDPList > FRDPDone, kept by the owner of the lists: while it is clear
     // (always without a worker) the checked accessors test nothing else.
     FRDPPending: Boolean;
+    // SP DMA transfers not complete (their beats may wait while the CPU runs
+    // on, see TN64Console): per 4 KB RDRAM page the number of the last one
+    // that writes it (FSPWrites) or reads it (FSPReads), transfers counted
+    // from 1; FSPDoneCount: those complete; FSPMarked: the last one marked.
+    FSPWrites, FSPReads: array[0..RDPPageCount - 1] of Int64;
+    FSPDoneCount, FSPMarked: Int64;
     // A bus that sets FInterruptLineKnown keeps FInterruptLine equal to
     // InterruptPending at all times, so the CPU can skip the virtual call.
     FInterruptLineKnown, FInterruptLine: Boolean;
@@ -129,6 +135,11 @@ type
     // RDP work queued now (which stays so until more is queued), and a word
     // of RDRAM read without the wait (after that).
     function RDPReadClean(Address: Cardinal): Boolean; inline;
+    // Whether the CPU reading (writing) RDRAM at Address must first let the
+    // SP DMA beats due by then run (TN64CPU.DeviceAccess): a transfer not
+    // complete writes the page (or, for a write, reads it).
+    function SPReadHazard(Address: Cardinal): Boolean; inline;
+    function SPWriteHazard(Address: Cardinal): Boolean; inline;
     function PlainRAM32(Address: Cardinal): Cardinal; inline;
     // Callers guarantee Address < RAMSize.
     function ReadHiddenRAM(Address: Cardinal): Byte; inline;
@@ -432,6 +443,17 @@ end;
 function TN64Bus.RDPReadClean(Address: Cardinal): Boolean;
 begin
   Result := not FRDPPending or (FRDPWrites[Address shr RDPPageShift] <= FRDPDone);
+end;
+
+function TN64Bus.SPReadHazard(Address: Cardinal): Boolean;
+begin
+  Result := (FSPMarked > FSPDoneCount) and (FSPWrites[Address shr RDPPageShift] > FSPDoneCount);
+end;
+
+function TN64Bus.SPWriteHazard(Address: Cardinal): Boolean;
+begin
+  Result := (FSPMarked > FSPDoneCount) and ((FSPWrites[Address shr RDPPageShift] > FSPDoneCount) or
+    (FSPReads[Address shr RDPPageShift] > FSPDoneCount));
 end;
 
 function TN64Bus.PlainRAM32(Address: Cardinal): Cardinal;

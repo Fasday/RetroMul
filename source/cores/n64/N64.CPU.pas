@@ -866,15 +866,24 @@ begin
   // Aligned kernel KSEG0/KSEG1 code in RDRAM, aligned code in the mapped
   // RDRAM page fetched last; Load handles everything else (an instruction
   // fetch has none of its data-access side effects).
+  // (SP DMA beats that may have waited and would write the code run first.)
   var Address := FPC;
   if (Address >= KSeg0Base) and (Address < KSeg2Base) and ((Address and 3) = 0) and KernelMode and
     ((Address and $1FFFFFFF) + 4 <= FBus.RAMSize) then
+  begin
+    if FBus.SPReadHazard(Cardinal(Address and $1FFFFFFF)) then
+      DeviceAccess;
     Exit(FBus.ReadRAM32(Cardinal(Address and $1FFFFFFF)));
+  end;
   if (Address and 3) = 0 then
   begin
     if FCodeValid and ((Address shr 12) = FCodePage) and (FCodeGeneration = FTLBGeneration) and
       (FCodeContext = PageContext) then
+    begin
+      if FBus.SPReadHazard(FCodePhysical) then
+        DeviceAccess;
       Exit(FBus.ReadRAM32(FCodePhysical or Cardinal(Address and $FFF)));
+    end;
     // Translate faults just as Load's would.
     var Physical := Translate(Address, False);
     if Physical + 4 <= FBus.RAMSize then
@@ -888,6 +897,8 @@ begin
         FCodeContext := PageContext;
         FCodeValid := True;
       end;
+      if FBus.SPReadHazard(Cardinal(Physical)) then
+        DeviceAccess;
       Exit(FBus.ReadRAM32(Cardinal(Physical)));
     end;
   end;
@@ -905,9 +916,12 @@ begin
   if Physical > $FFFFFFFF then
     Exit(0);
   // RDRAM reads have no side effects and are outside the traced MMIO window.
+  // (SP DMA beats that may have waited and touch the page run first.)
   if Physical + Cardinal(Size) <= FBus.RAMSize then
   begin
     var P := Cardinal(Physical);
+    if FBus.SPReadHazard(P) then
+      DeviceAccess;
     case Size of
       1:
         Exit(FBus.ReadRAM8(P));
@@ -947,6 +961,8 @@ begin
   if Physical + Cardinal(Size) <= FBus.RAMSize then
   begin
     var P := Cardinal(Physical);
+    if FBus.SPWriteHazard(P) then
+      DeviceAccess;
     case Size of
       1:
         FBus.WriteRAM8(P, Byte(Value and $FF));
@@ -1659,6 +1675,15 @@ begin
   if P + Cardinal(Size) > FBus.RAMSize then
     Exit;
   Physical := Cardinal(P);
+  // Not where SP DMA beats that may have waited touch the page (Load and
+  // Store run them first).
+  if Writing then
+  begin
+    if FBus.SPWriteHazard(Physical) then
+      Exit;
+  end
+  else if FBus.SPReadHazard(Physical) then
+    Exit;
   Result := True;
 end;
 
@@ -1744,6 +1769,10 @@ begin
         Break;
       CodeClean := False;
     end;
+    // Not on a page SP DMA beats that may have waited write (Fetch runs
+    // them first).
+    if not CodeClean and FBus.SPReadHazard(FFastCodePhysical) then
+      Break;
     var Op: Cardinal;
     if CodeClean then
       Op := FBus.PlainRAM32(FFastCodePhysical or Cardinal(PC and $FFF))
@@ -2685,6 +2714,10 @@ begin
     end;
     if not CodeClean then
     begin
+      // Not on a page SP DMA beats that may have waited write (Fetch runs
+      // them first): neither block nor FastRun.
+      if FBus.SPReadHazard(FFastCodePhysical) then
+        Break;
       CodeClean := FBus.RDPReadClean(FFastCodePhysical);
       if not CodeClean then
       begin

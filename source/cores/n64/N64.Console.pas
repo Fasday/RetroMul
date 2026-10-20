@@ -347,6 +347,8 @@ type
     procedure UpdateInterruptLine;
     procedure AppendDebugOutput(Count: Cardinal);
     procedure SPDMA(Writing: Boolean; Value: Cardinal);
+    procedure MarkSPTransfer(const Transfer: TN64SPTransfer; Number: Int64);
+    procedure MarkSPTransfers;
     procedure PIDMA(Writing: Boolean; Value: Cardinal);
     procedure SIDMA(Writing: Boolean);
     procedure PIFCommand;
@@ -718,6 +720,7 @@ begin
   FRSPPhase := 0;
   FRSPRun := 0;
   FSPDone := 0;
+  MarkSPTransfers;
   FLastLeft := 0;
   FLastRight := 0;
   FCurrentFrame := Default(TEmulatorFrame);
@@ -1344,6 +1347,7 @@ begin
   Transfer.Control := Value;
   Transfer.local := FPendingSPAddress and $1FF8;
   Transfer.RAM := FPendingRAMAddress and $FFFFF8;
+  MarkSPTransfer(Transfer, FSPDone + 1 + Ord(FSPTransfer.Active));
   if FSPTransfer.Active then
   begin
     FSPQueued := Transfer;
@@ -2049,6 +2053,7 @@ begin
     if TraceEnabled then
       Trace(TN64TraceKind.DMAComplete, FCPU.PC, $04040000, FSPTransfer.RAM);
     Inc(FSPDone);
+    FSPDoneCount := FSPDone;
     FSPTransfer := FSPQueued;
     FSPQueued := Default(TN64SPTransfer);
     FReg[0, 5] := 0;
@@ -2068,6 +2073,44 @@ begin
   if FTimeline.Now mod 3 = 0 then
     Delay := 2;
   FTimeline.Schedule(TN64EventKind.SPTransfer, Delay);
+end;
+
+procedure TN64Console.MarkSPTransfer(const Transfer: TN64SPTransfer; Number: Int64);
+begin
+  // Transfer (the Number-th, counting completed ones) marks the RDRAM pages
+  // of the bytes it has yet to move and the skips between its blocks (the
+  // address wrapping in 16 MB; beyond 8 MB there are none) until it
+  // completes.
+  var Start, Count: Cardinal;
+  RAMSpan(Transfer, Start, Count);
+  var At := Start;
+  while Count > 0 do
+  begin
+    var Piece := Min(Count, $1000000 - At);
+    if At < $800000 then
+      for var Page := At shr RDPPageShift to (Min(At + Piece, Cardinal($800000)) - 1) shr RDPPageShift do
+        if Transfer.Writing then
+          FSPWrites[Page] := Number
+        else
+          FSPReads[Page] := Number;
+    Dec(Count, Piece);
+    At := (At + Piece) and $FFFFFF;
+  end;
+  if Number > FSPMarked then
+    FSPMarked := Number;
+end;
+
+procedure TN64Console.MarkSPTransfers;
+begin
+  // The marks anew (reset, a state loaded): the transfers not complete.
+  FillChar(FSPWrites, SizeOf(FSPWrites), 0);
+  FillChar(FSPReads, SizeOf(FSPReads), 0);
+  FSPDoneCount := FSPDone;
+  FSPMarked := FSPDone;
+  if FSPTransfer.Active then
+    MarkSPTransfer(FSPTransfer, FSPDone + 1);
+  if FSPQueued.Active then
+    MarkSPTransfer(FSPQueued, FSPDone + 2);
 end;
 
 procedure TN64Console.PreparePIBlock;
@@ -2502,10 +2545,14 @@ begin
     begin
       // Instructions up to the next event (or a device access) in one go:
       // time passes as after each of them (SyncDevice sets it for an access).
+      // SP DMA beats due meanwhile wait: nothing the instructions do can tell
+      // (RDRAM pages a transfer not complete touches are as devices to them,
+      // TN64Bus.SPReadHazard), and they run after the batch, in their places
+      // among the events, as they would have before it went on.
       var Start := FTimeline.Now;
       FBatchStart := Start;
       var Cycles: UInt64;
-      Executed := FCPU.RunBatch(Remaining, FTimeline.NextDue - Start, Cycles);
+      Executed := FCPU.RunBatch(Remaining, FTimeline.NextHard - Start, Cycles);
       AdvanceTime(Cardinal(Start + Cycles - FTimeline.Now));
       Dec(Remaining, Executed);
       Continue;
@@ -2560,7 +2607,9 @@ end;
 
 procedure TN64Console.SyncDevice(Elapsed: UInt64);
 begin
-  FTimeline.AdvanceTo(FBatchStart + Elapsed);
+  // The SP DMA beats the batch ran past (the only events due within it)
+  // first, in their places in time.
+  ProcessEvents(FBatchStart + Elapsed);
 end;
 
 procedure TN64Console.RunCycles(Cycles: Cardinal);
@@ -2756,6 +2805,7 @@ begin
       (FFlashOffset > $FFFF * 128) or ((FFlashOffset and 127) <> 0) then
       raise EReadError.Create('Invalid N64 cartridge snapshot');
     ValidateState;
+    MarkSPTransfers;
   end;
 end;
 

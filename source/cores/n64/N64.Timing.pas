@@ -42,8 +42,9 @@ type
     // that event is being handled, so RSP clocks after it in order are not
     // yet due. Otherwise every RSP clock due up to Now precedes the caller.
     FInEvent: Boolean;
-    // NextDue, kept up to date by every change of the queue or the fast slot.
-    FNextDue: UInt64;
+    // NextDue, kept up to date by every change of the queue or the fast slot;
+    // FNextHard likewise, SP DMA beats aside.
+    FNextDue, FNextHard: UInt64;
     class procedure RaiseBackwards; static;
     class procedure RaiseFull; static;
     procedure CountKinds;
@@ -61,6 +62,9 @@ type
     // The first queued event of Kind in handling order (False: none).
     function FirstOf(Kind: TN64EventKind; out Event: TN64Event): Boolean;
     function NextDue: UInt64; inline;
+    // The next event due other than an SP DMA beat (those may wait: the
+    // console runs them when anything could tell).
+    function NextHard: UInt64; inline;
     procedure AdvanceTo(Tick: UInt64); inline;
     function Pop(out Event: TN64Event): Boolean;
     procedure SerializeState(State: TStateArchive);
@@ -122,15 +126,29 @@ begin
   var Next := High(UInt64);
   if FCount > 0 then
     Next := FEvents[FCount - 1].Due;
+  var Hard := High(UInt64);
+  var I := FCount - 1;
+  while (I >= 0) and (FEvents[I].Kind = TN64EventKind.SPTransfer) do
+    Dec(I);
+  if I >= 0 then
+    Hard := FEvents[I].Due;
   // Run-ahead clocks need no handler: the first one that does is the horizon.
   if FAheadLeft > 0 then
   begin
     if FHorizon < Next then
       Next := FHorizon;
+    if FHorizon < Hard then
+      Hard := FHorizon;
   end
-  else if FFastActive and (FFast.Due < Next) then
-    Next := FFast.Due;
+  else if FFastActive then
+  begin
+    if FFast.Due < Next then
+      Next := FFast.Due;
+    if FFast.Due < Hard then
+      Hard := FFast.Due;
+  end;
   FNextDue := Next;
+  FNextHard := Hard;
 end;
 
 procedure TN64Timeline.Reset;
@@ -332,6 +350,11 @@ end;
 function TN64Timeline.NextDue: UInt64;
 begin
   Result := FNextDue;
+end;
+
+function TN64Timeline.NextHard: UInt64;
+begin
+  Result := FNextHard;
 end;
 
 class procedure TN64Timeline.RaiseBackwards;
