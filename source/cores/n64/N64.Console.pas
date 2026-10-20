@@ -1667,16 +1667,11 @@ end;
 procedure TN64Console.RenderFrame(ScanoutField: Integer);
 begin
   var Registers: array[0..13] of Cardinal;
-  var Pixels: TArray<Cardinal>;
-  var Colours: TArray<TAlphaColor>;
   for var I := 0 to 13 do
     Registers[I] := FReg[3, I];
   Registers[4] := Cardinal((FLine and not 1) or ScanoutField);
-  FVI.Render(Registers, FCurrentFrame.Width, FCurrentFrame.Height, Pixels);
-  SetLength(Colours, Length(Pixels));
-  for var I := 0 to High(Pixels) do
-    Colours[I] := TAlphaColor(Pixels[I]);
-  FCurrentFrame.Pixels := Colours;
+  // Render returns a fresh array, so frames already handed out stay intact.
+  FVI.Render(Registers, FCurrentFrame.Width, FCurrentFrame.Height, FCurrentFrame.Pixels);
   FCurrentFrame.FrameNumber := FFrame;
   FCurrentFrame.FramesPerSecond := FramesPerSecond;
 end;
