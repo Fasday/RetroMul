@@ -29,6 +29,9 @@ type
 
   TN64RDPGroup = class;
 
+  // Per quarter line of a row.
+  TN64Quarters = array[0..3] of Integer;
+
   TN64Texel = record
     C: array[0..3] of Integer; // RGBA, nine bits including signed conversion output.
   end;
@@ -176,6 +179,16 @@ type
     FSerialPrim, FInSerial, FBandDrawn: Boolean;
     FBandLayout: array[0..1] of UInt64;
     FBarriers: Int64;
+    // A band primitive whose rows hand the memory colour on (its first of
+    // two cycles blends with the previous pixel's): the first of its rows
+    // (from 0), how many such primitives came before (they use the group's
+    // carry buffers in turn), and the memory colour before its first pixel
+    // (the latest of every band's).
+    FCarryPrim: Boolean;
+    FCarryFirst: Integer;
+    FCarrySeq: Int64;
+    FCarryColor: Cardinal;
+    FCarryCoverage: Integer;
     // Drawing order of pixels: primitive, then row. FKey* belong to the
     // pixels that last set the per-pixel state a snapshot keeps, so the state
     // of several band RDPs can be merged; a row belongs to one band, so the
@@ -185,8 +198,13 @@ type
     // FMemoryCoverage; FKeyMemoryRGB: the last one that read its RGB.
     FKeyRaster, FKeyShade, FKeyMemory, FKeyMemoryRGB, FKeyNoise: UInt64;
     FKeyHidden: array[0..7] of UInt64;
-    function BandSafe: Boolean; inline;
+    function BandReason(Carry: Boolean): Integer;
     procedure SelectBand(Safe: Boolean);
+    procedure CarryRow(Y: Integer);
+    procedure LoadCarry(Y: Integer);
+    procedure ReadMemoryState(A: Cardinal; var Color: Cardinal; var Coverage: Integer); inline;
+    function RowSpan(Y: Integer; out Left, Right: Integer): Boolean; inline;
+    procedure RowEdges(out EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: TN64Quarters);
     function OwnsRow(Y: Integer): Boolean; inline;
     function ReadsRDRAM: Boolean;
     procedure SetHiddenOld(Index: Integer; Value: Byte); inline;
@@ -321,11 +339,32 @@ type
       Event: TEvent;
       Pad: array[0..4] of Int64;
     end;
+    // A band's memory colour as a primitive with carries starts.
+    TCarryState = record
+      Color: Cardinal;
+      Coverage: Integer;
+      KeyMemory, KeyMemoryRGB: UInt64;
+      Pad: array[0..4] of Int64;
+    end;
   private
     FMembers: TArray<TN64RDP>;
     FSlots: TArray<TSlot>;
+    // Carries of the band primitives whose rows hand the memory colour on,
+    // in two buffers that such primitives use in turn (the bands meet at
+    // each one, so no band gets two ahead): per row, whether a pixel of it
+    // reads memory and what the last one reads; per band, its state.
+    FCarryValid: array[0..1, 0..1023] of Boolean;
+    FCarryColor: array[0..1, 0..1023] of Cardinal;
+    FCarryCoverage: array[0..1, 0..1023] of Byte;
+    FCarryStates: array[0..1] of TArray<TCarryState>;
     FReleased: Int64;
     FAborted: Integer;
+    procedure SetCarry(Seq: Int64; Y: Integer; Valid: Boolean; Color: Cardinal; Coverage: Integer); inline;
+    function CarryValid(Seq: Int64; Y: Integer): Boolean; inline;
+    procedure GetCarry(Seq: Int64; Y: Integer; var Color: Cardinal; var Coverage: Integer); inline;
+    // Each band, once its rows' carries are set: publishes its memory
+    // colour, meets the others, and gets the latest of all bands'.
+    procedure CarryBarrier(RDP: TN64RDP; out Color: Cardinal; out Coverage: Integer);
     function Reached(Point: Int64; Release: Boolean): Boolean;
     procedure Wait(Member: Integer; Point: Int64; Release: Boolean);
     procedure Wake;
@@ -437,18 +476,20 @@ begin
     FKeyHidden[I] := 0;
   FSerialPrim := False;
   FInSerial := False;
+  FCarryPrim := False;
+  FCarrySeq := 0;
   FBandDrawn := False;
   FBandLayout[0] := 0;
   FBandLayout[1] := 0;
   FBarriers := 0;
 end;
 
-function TN64RDP.BandSafe: Boolean;
+function TN64RDP.SerialReason: Integer;
 begin
-  Result := SerialReason = 0;
+  Result := BandReason(True);
 end;
 
-function TN64RDP.SerialReason: Integer;
+function TN64RDP.BandReason(Carry: Boolean): Integer;
 begin
   // Whether RDPs that each draw only their own rows of this primitive leave
   // exactly what one RDP drawing all rows leaves (0), or why not: no state
@@ -457,8 +498,12 @@ begin
   // belong to two rows (colour rows wider than the image, Z overlapping
   // colour, 4/8-bit pixels or odd addresses sharing halfwords). The noise
   // generator passes from pixel to pixel too, but its steps over the other
-  // bands' rows can be counted (SkipRow).
+  // bands' rows can be counted (SkipRow). With Carry, a first of two cycles
+  // that blends with the previous pixel's memory colour, read from memory,
+  // is no reason (9 unless another one is): what the last pixel of a row
+  // reads is found before any band draws (CarryRow).
   var Cycle := (FOtherHi shr 20) and 3;
+  var Carried := False;
   if FColorSize < 2 then
     Exit(1);
   if Odd(FColorAddress) then
@@ -481,7 +526,11 @@ begin
         Exit(5);
       // The first of two cycles blends with the previous pixel's memory.
       if (Cycle = 1) and (C = 0) and ((M1A = 1) or (M2A = 1) or (M2B = 1)) then
-        Exit(6);
+      begin
+        if not Carry or ((FOtherLo and $40) = 0) then
+          Exit(6);
+        Carried := True;
+      end;
     end;
     if (FOtherLo and $30) <> 0 then
     begin
@@ -496,6 +545,8 @@ begin
         Exit(8);
     end;
   end;
+  if Carried then
+    Exit(9);
   Result := 0;
 end;
 
@@ -1246,6 +1297,36 @@ begin
   end;
 end;
 
+procedure TN64RDP.ReadMemoryState(A: Cardinal; var Color: Cardinal; var Coverage: Integer);
+begin
+  // The memory colour and coverage the blender reads at A (an image read).
+  case FColorSize of
+    1:
+      begin
+        var V := Cardinal(MemRead8(A));
+        Color := (V shl 24) or (V shl 16) or (V shl 8) or $E0
+      end;
+    2:
+      begin
+        var V := Integer(MemRead16(A));
+        Color := Color16(V) and $F8F8F800;
+        Coverage := ((V and 1) shl 2) or MemReadHidden(A);
+        if FColorFormat <> 0 then
+        begin
+          var I := Cardinal(V shr 8);
+          Color := (I shl 24) or (I shl 16) or (I shl 8);
+          Coverage := (V shr 5) and 7;
+        end;
+        Color := Color or Cardinal(Coverage shl 5);
+      end;
+    3:
+      begin
+        Color := MemRead32(A);
+        Coverage := (Color shr 5) and 7
+      end;
+  end;
+end;
+
 procedure TN64RDP.Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean; Depth: Integer; Delta: Cardinal; Coverage: Integer; CoverageBit: Boolean);
 const
   ZShift: array[0..7] of Integer = (6, 5, 4, 3, 2, 1, 0, 0);
@@ -1299,33 +1380,7 @@ begin
   // Without a read the memory colour keeps the previous pixel's RGB.
   var MemoryRead := ((FOtherLo and $40) <> 0) and (FColorSize >= 1);
   if MemoryRead then
-  begin
-    case FColorSize of
-      1:
-        begin
-          var V := Cardinal(MemRead8(A));
-          FBlend.MemoryColor := (V shl 24) or (V shl 16) or (V shl 8) or $E0
-        end;
-      2:
-        begin
-          var V := Integer(MemRead16(A));
-          FBlend.MemoryColor := Color16(V) and $F8F8F800;
-          FBlend.MemoryCoverage := ((V and 1) shl 2) or MemReadHidden(A);
-          if FColorFormat <> 0 then
-          begin
-            var I := Cardinal(V shr 8);
-            FBlend.MemoryColor := (I shl 24) or (I shl 16) or (I shl 8);
-            FBlend.MemoryCoverage := (V shr 5) and 7;
-          end;
-          FBlend.MemoryColor := FBlend.MemoryColor or Cardinal(FBlend.MemoryCoverage shl 5);
-        end;
-      3:
-        begin
-          FBlend.MemoryColor := MemRead32(A);
-          FBlend.MemoryCoverage := (FBlend.MemoryColor shr 5) and 7
-        end;
-    end;
-  end;
+    ReadMemoryState(A, FBlend.MemoryColor, FBlend.MemoryCoverage);
   var Alpha := Integer(FBlend.InputColor and $FF);
   if Cycle < 2 then
   begin
@@ -2540,12 +2595,14 @@ begin
   FRowBase := Cardinal(UInt64(FColorAddress) + Cardinal(Y * FColorWidth * FRowBPP));
 end;
 
-procedure TN64RDP.RasterRow(Y: Integer);
+function TN64RDP.RowSpan(Y: Integer; out Left, Right: Integer): Boolean;
 begin
+  // Whether RasterRow draws row Y, of pixels X = Left..Right (0..1023).
+  Result := False;
+  Left := 1024;
+  Right := 0;
   if FPipelineCrashed then
     Exit;
-  var Left := 1024;
-  var Right := 0;
   for var Q := 0 to 3 do
     if not FPrim.Invalid[Q] then
     begin
@@ -2558,21 +2615,12 @@ begin
     Exit;
   Left := Max(Left, 0);
   Right := Min(Right, 1023);
-  var StartX := Right;
-  var EndX := Left;
-  var Step := -1;
-  if FPrim.Flip then
-  begin
-    StartX := Left;
-    EndX := Right;
-    Step := 1
-  end;
-  var X := StartX;
-  FDelayedHidden := -1;
-  FRowMinX := 1024;
-  FRowMaxX := -1;
+  Result := True;
+end;
+
+procedure TN64RDP.RowEdges(out EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: TN64Quarters);
+begin
   // Per-quarter span edges are constant along the row.
-  var EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array[0..3] of Integer;
   for var Q := 0 to 3 do
     if not FPrim.Invalid[Q] then
     begin
@@ -2589,12 +2637,90 @@ begin
       HiMask[Q] := $F0 shr (((Hi and 7) + 1) shr 1);
       QuarterMask[Q] := $A shr (Q and 1);
     end;
+end;
+
+procedure TN64RDP.CarryRow(Y: Integer);
+begin
+  // Before a band draws a primitive whose rows hand the memory colour on:
+  // whether a pixel of this band's row Y reads memory, and what the last one
+  // (in drawing order) reads, as it is before the primitive. Pixel reads
+  // memory for each pixel RasterRow hands to RasterPixel within
+  // FRowFirst..FRowLast, and no other pixel of the primitive writes it.
+  if (Y < 0) or (Y > 1023) or not OwnsRow(Y) then
+    Exit;
+  var Valid := False;
+  var Color: Cardinal := 0;
+  var Coverage := 0;
+  var Left, Right: Integer;
+  if RowSpan(Y, Left, Right) then
+  begin
+    var EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: TN64Quarters;
+    RowEdges(EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask);
+    RowAddresses(Y);
+    var Lo := Max(Left, FRowFirst);
+    var Hi := Min(Right, FRowLast);
+    var First, Last: Integer;
+    if (Lo <= Hi) and (CoveredPixels(Lo, Hi, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask, First, Last) > 0) then
+    begin
+      var X := First;
+      if FPrim.Flip then
+        X := Last;
+      Coverage := 7;
+      ReadMemoryState(FRowBase + Cardinal(X * FRowBPP), Color, Coverage);
+      Valid := True;
+    end;
+  end;
+  FGroup.SetCarry(FCarrySeq, Y, Valid, Color, Coverage);
+end;
+
+procedure TN64RDP.LoadCarry(Y: Integer);
+begin
+  // Before the first pixel of row Y of such a primitive (one of this band's):
+  // the memory colour the pixel before it left, unless this band drew that
+  // one. That is the last of an earlier row with one that reads memory, or
+  // the latest before the primitive.
+  if not FGroup.CarryValid(FCarrySeq, Y) then
+    Exit;
+  var P := Y - 1;
+  while (P >= FCarryFirst) and not FGroup.CarryValid(FCarrySeq, P) do
+    Dec(P);
+  if P < FCarryFirst then
+  begin
+    FMemoryColor := FCarryColor;
+    FMemoryCoverage := FCarryCoverage;
+  end
+  else if ((P shr 3) mod FBands) <> FBand then
+    FGroup.GetCarry(FCarrySeq, P, FMemoryColor, FMemoryCoverage);
+end;
+
+procedure TN64RDP.RasterRow(Y: Integer);
+begin
+  var Left, Right: Integer;
+  if not RowSpan(Y, Left, Right) then
+    Exit;
+  var StartX := Right;
+  var EndX := Left;
+  var Step := -1;
+  if FPrim.Flip then
+  begin
+    StartX := Left;
+    EndX := Right;
+    Step := 1
+  end;
+  var X := StartX;
+  FDelayedHidden := -1;
+  FRowMinX := 1024;
+  FRowMaxX := -1;
+  var EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: TN64Quarters;
+  RowEdges(EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask);
   if FTimingOnly then
     CountRow(Y, Left, Right, EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask)
   else if OwnsRow(Y) then
   begin
     FRowKey := (FPrimSeq shl 21) or (UInt64(1) shl 20) or (UInt64(Y) shl 10);
     FPixelKey := FRowKey;
+    if FCarryPrim then
+      LoadCarry(Y);
     RowAddresses(Y);
     // Strictly inside the span of every quarter line that has one, the mask
     // is the same.
@@ -2855,8 +2981,13 @@ begin
   Inc(FPrimSeq);
   if FModeDirty or (FMode.Textured <> ((Code and 2) <> 0)) then
     DecodeMode((Code and 2) <> 0);
+  FCarryPrim := False;
   if FGroup <> nil then
-    SelectBand(BandSafe);
+  begin
+    var Reason := BandReason(True);
+    SelectBand(Reason in [0, 9]);
+    FCarryPrim := Reason = 9;
+  end;
   if FColorSize = 1 then
   begin
     // Ordered before every pixel of this primitive.
@@ -2943,6 +3074,42 @@ begin
   var XMinor := XM and not Int64(1);
   var MajorStep := ShiftRight(DH, 2) and not Int64(1);
   var MinorStep := ShiftRight(DM, 2) and not Int64(1);
+  if FCarryPrim then
+  begin
+    // Rows that hand the memory colour on: first every band finds what its
+    // rows' last pixels read, by the same edges (CarryRow); then they all
+    // draw, each taking the colour an earlier row left (LoadCarry).
+    Inc(FCarrySeq);
+    FCarryFirst := Max(0, Integer(ShiftRight(QuarterStart, 2)));
+    var CarryMajor := XMajor;
+    var CarryMinor := XMinor;
+    var CarryMinorStep := MinorStep;
+    for var Q := 0 to 3 do
+      FPrim.Invalid[Q] := True;
+    for var Quarter := QuarterStart to (LastQuarter or 3) do
+    begin
+      var Q := Quarter and 3;
+      if Quarter = YM then
+      begin
+        CarryMinor := XL and not Int64(1);
+        CarryMinorStep := ShiftRight(DL, 2) and not Int64(1)
+      end;
+      FPrim.Major[Q] := EdgeQuantise(CarryMajor);
+      FPrim.Minor[Q] := EdgeQuantise(CarryMinor);
+      FPrim.Invalid[Q] := (Quarter < Max(YH, FScissorQuarterY0)) or (Quarter > LastQuarter);
+      var MajorCross := (Cardinal(CarryMajor and $FFFFFFFF) xor $08000000) and $0FFFC000;
+      var MinorCross := (Cardinal(CarryMinor and $FFFFFFFF) xor $08000000) and $0FFFC000;
+      if FPrim.Flip then
+        FPrim.Invalid[Q] := FPrim.Invalid[Q] or (MinorCross < MajorCross)
+      else
+        FPrim.Invalid[Q] := FPrim.Invalid[Q] or (MajorCross < MinorCross);
+      if Q = 3 then
+        CarryRow(Integer(ShiftRight(Quarter, 2)));
+      CarryMajor := WrapSigned32(CarryMajor + MajorStep);
+      CarryMinor := WrapSigned32(CarryMinor + CarryMinorStep);
+    end;
+    FGroup.CarryBarrier(Self, FCarryColor, FCarryCoverage);
+  end;
   for var Q := 0 to 3 do
     FPrim.Invalid[Q] := True;
   for var Quarter := QuarterStart to (LastQuarter or 3) do
@@ -3494,6 +3661,8 @@ begin
   inherited Create;
   SetLength(FMembers, Length(Members));
   SetLength(FSlots, Length(Members));
+  SetLength(FCarryStates[0], Length(Members));
+  SetLength(FCarryStates[1], Length(Members));
   for var I := 0 to High(Members) do
   begin
     FMembers[I] := Members[I];
@@ -3573,6 +3742,51 @@ begin
   else
     Wait(RDP.FBand, Point, True);
   RDP.FBandDrawn := False;
+end;
+
+procedure TN64RDPGroup.SetCarry(Seq: Int64; Y: Integer; Valid: Boolean; Color: Cardinal; Coverage: Integer);
+begin
+  var B := Integer(Seq and 1);
+  FCarryValid[B, Y] := Valid;
+  FCarryColor[B, Y] := Color;
+  FCarryCoverage[B, Y] := Byte(Coverage and 7);
+end;
+
+function TN64RDPGroup.CarryValid(Seq: Int64; Y: Integer): Boolean;
+begin
+  Result := FCarryValid[Integer(Seq and 1), Y];
+end;
+
+procedure TN64RDPGroup.GetCarry(Seq: Int64; Y: Integer; var Color: Cardinal; var Coverage: Integer);
+begin
+  var B := Integer(Seq and 1);
+  Color := FCarryColor[B, Y];
+  Coverage := FCarryCoverage[B, Y];
+end;
+
+procedure TN64RDPGroup.CarryBarrier(RDP: TN64RDP; out Color: Cardinal; out Coverage: Integer);
+begin
+  // As MergeCarried: the low byte and coverage of the band that set them
+  // last, the RGB of the one that read memory last.
+  var B := Integer(RDP.FCarrySeq and 1);
+  FCarryStates[B, RDP.FBand].Color := RDP.FMemoryColor;
+  FCarryStates[B, RDP.FBand].Coverage := RDP.FMemoryCoverage;
+  FCarryStates[B, RDP.FBand].KeyMemory := RDP.FKeyMemory;
+  FCarryStates[B, RDP.FBand].KeyMemoryRGB := RDP.FKeyMemoryRGB;
+  Barrier(RDP, BarrierSync);
+  // The bands draw this primitive's rows from now on.
+  RDP.FBandDrawn := True;
+  var Low := RDP.FBand;
+  var RGB := RDP.FBand;
+  for var I := 0 to High(FMembers) do
+  begin
+    if FCarryStates[B, I].KeyMemory > FCarryStates[B, Low].KeyMemory then
+      Low := I;
+    if FCarryStates[B, I].KeyMemoryRGB > FCarryStates[B, RGB].KeyMemoryRGB then
+      RGB := I;
+  end;
+  Color := (FCarryStates[B, RGB].Color and $FFFFFF00) or (FCarryStates[B, Low].Color and $FF);
+  Coverage := FCarryStates[B, Low].Coverage;
 end;
 
 procedure TN64RDPGroup.Abort;
