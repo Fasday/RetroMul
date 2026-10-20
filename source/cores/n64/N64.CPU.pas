@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, N64.Types, N64.SoftFloat, Core.Snapshots;
+  System.SysUtils, System.Classes, System.Math, N64.Types, N64.SoftFloat, Core.Snapshots;
 
 type
   TN64TLBEntry = record
@@ -11,9 +11,42 @@ type
     EntryHi: UInt64;
   end;
 
+  // Memoized first-match TLB search. Matching depends only on address bits
+  // 13..39 and 62..63, the current ASID and the TLB contents (Generation).
+  TN64TLBLookup = record
+    Key: UInt64;
+    ASID, Generation: Cardinal;
+    Index: Integer;
+  end;
+
+  // A successful address translation of one 4 KB virtual page, valid while
+  // the TLB generation and the context (Status mode bits and ASID) match.
+  TN64PageEntry = record
+    Page: UInt64;
+    Physical: UInt64;
+    Context, Generation: Cardinal;
+    ReadOK, WriteOK, Cached: Boolean;
+  end;
+
   TN64CPU = class
+  private const
+    KSeg0Base = UInt64($FFFFFFFF80000000);
+    KSeg1Base = UInt64($FFFFFFFFA0000000);
+    KSeg2Base = UInt64($FFFFFFFFC0000000);
+    TLBKeyMask = UInt64($C00000FFFFFFE000);
   private
     FBus: TN64Bus;
+    FTLBGeneration: Cardinal;
+    FTLBLookups: array[0..63] of TN64TLBLookup;
+    FPages: array[0..1023] of TN64PageEntry;
+    // The 4 KB virtual page of the last instruction fetched through the TLB
+    // from RDRAM, and its physical base: valid while FCodeValid and the TLB
+    // generation and the context are unchanged.
+    FCodePage: UInt64;
+    FCodePhysical, FCodeGeneration, FCodeContext: Cardinal;
+    FCodeValid: Boolean;
+    // Idle loop most recently validated by IdleLimit (physical, both words).
+    FIdlePhysical, FIdleBranch, FIdleSlot: Cardinal;
     FPC, FNextPC, FInstructionPC: UInt64;
     FCyclesConsumed: Cardinal;
     FOperationCycles: Cardinal;
@@ -25,16 +58,29 @@ type
     FLLAddress: UInt64;
     FCountHalf: Integer;
     procedure SetPCExact(Value: UInt64); inline;
-    procedure ApplyInterlocks(Op: Cardinal);
+    procedure ApplyStalls(Op: Cardinal);
+    procedure ApplyInterlocks(Op: Cardinal); inline;
+    function KernelMode: Boolean; inline;
+    function FindTLB(Address: UInt64): Integer;
+    function CachedAddressSlow(Address: UInt64): Boolean;
     function CachedAddress(Address: UInt64): Boolean; inline;
     function FPRegister(Index: Integer): Integer; inline;
     function GetIdleInstructionClocks: Cardinal; inline;
+    function GetIdleCandidate: Boolean; inline;
     function FPClocks(A, B: UInt64; Format, Fn: Integer): Cardinal;
+    function TranslateSlow(Address: UInt64; Writing: Boolean): UInt64;
+    function TranslateMapped(Address: UInt64; Writing: Boolean): UInt64;
+    function PageContext: Cardinal; inline;
+    function PageSlot(Page: UInt64): Integer; inline;
+    function KernelFetchAddress(Address: UInt64; out Physical: Cardinal): Boolean;
     function Translate(Address: UInt64; Writing: Boolean): UInt64; inline;
-    function Load(Address: UInt64; Size: Integer; Aligned: Boolean = True): UInt64; inline;
-    procedure Store(Address: UInt64; Size: Integer; Value: UInt64; Aligned: Boolean = True); inline;
+    function TranslateData(Address: UInt64; Writing: Boolean; out Cached: Boolean): UInt64;
+    function Fetch: Cardinal; inline;
+    function Load(Address: UInt64; Size: Integer): UInt64;
+    procedure Store(Address: UInt64; Size: Integer; Value: UInt64);
     procedure Fault(Code: Integer; Address: UInt64 = 0; Refill: Boolean = False; Cop: Integer = 0);
     procedure Branch(Taken, Likely: Boolean; Target: UInt64); inline;
+    procedure ExecuteInstruction;
     procedure Special(Op: Cardinal); inline;
     procedure Cop0(Op: Cardinal); inline;
     procedure Cop1(Op: Cardinal); inline;
@@ -42,6 +88,7 @@ type
     procedure SetFPBits(Index, Format: Integer; Value: UInt64); inline;
     procedure Cop2(Op: Cardinal); inline;
     procedure AdvanceClocks(Clocks: Cardinal); inline;
+    procedure AdvanceCount(Clocks: Cardinal);
     procedure FPExceptions(Events: Cardinal; Unimplemented: Boolean = False); inline;
   public
     GPR: array[0..31] of UInt64;
@@ -54,11 +101,23 @@ type
     procedure Reset;
     procedure Step;
     function SkipIdle(MaxInstructions: Integer): Integer;
+    // Idle-loop fast-forward across device events. IdleLimit validates the
+    // loop at its head; ApplyIdle then stands for Count single steps, with
+    // Pending the MI interrupt line seen by the last of them. The caller
+    // stops when IdleWouldInterrupt or not IdleCodeIntact after an event.
+    function IdleLimit: Integer;
+    function IdleCodeIntact: Boolean;
+    function IdleWouldInterrupt(Pending: Boolean): Boolean;
+    procedure ApplyIdle(Count: Integer; Pending: Boolean);
     procedure SerializeState(State: TStateArchive);
     procedure SetPC(Value: UInt64);
+    // Call after writing TLB entries directly instead of through TLBWI/TLBWR.
+    procedure InvalidateTLBCache;
     property PC: UInt64 read FPC write SetPC;
     property CyclesConsumed: Cardinal read FCyclesConsumed;
     property IdleInstructionClocks: Cardinal read GetIdleInstructionClocks;
+    // False when SkipIdle would certainly decline: it only examines delay slots.
+    property IdleCandidate: Boolean read GetIdleCandidate;
   end;
 
 implementation
@@ -89,6 +148,115 @@ begin
   FDelay := False;
 end;
 
+procedure TN64CPU.AdvanceClocks(Clocks: Cardinal);
+begin
+  // COUNT runs at half the PClock; an odd half-tick needs no compare check.
+  if (Clocks = 1) and (FCountHalf = 0) then
+  begin
+    FCountHalf := 1;
+    CP0[9] := CP0[9] and $FFFFFFFF;
+  end
+  else
+    AdvanceCount(Clocks);
+end;
+
+procedure TN64CPU.AdvanceCount(Clocks: Cardinal);
+begin
+  var Total := UInt64(Clocks) + Cardinal(FCountHalf);
+  var Ticks := Total div 2;
+  FCountHalf := Integer(Total and 1);
+  var OldCount := CP0[9] and $FFFFFFFF;
+  var Distance := (UInt64(CP0[11] and $FFFFFFFF) + UInt64($100000000) - OldCount) and $FFFFFFFF;
+  if Distance = 0 then
+    Distance := $100000000;
+  if Ticks >= Distance then
+    CP0[13] := CP0[13] or $8000;
+  CP0[9] := (OldCount + Ticks) and $FFFFFFFF;
+end;
+
+procedure TN64CPU.InvalidateTLBCache;
+begin
+  FCodeValid := False;
+  if FTLBGeneration = High(Cardinal) then
+  begin
+    for var I := 0 to High(FTLBLookups) do
+      FTLBLookups[I] := Default(TN64TLBLookup);
+    for var I := 0 to High(FPages) do
+      FPages[I] := Default(TN64PageEntry);
+    FTLBGeneration := 1;
+  end
+  else
+    Inc(FTLBGeneration);
+end;
+
+function TN64CPU.PageContext: Cardinal;
+begin
+  // Everything besides the TLB that TranslateSlow and CachedAddressSlow read:
+  // Status EXL, ERL, KSU, UX, SX, KX, and the current ASID.
+  Result := Cardinal(CP0[12] and $FE) or (Cardinal(CP0[10] and $FF) shl 8);
+end;
+
+function TN64CPU.PageSlot(Page: UInt64): Integer;
+begin
+  Result := Integer((Page xor (Page shr 10)) and High(FPages));
+end;
+
+function TN64CPU.TranslateMapped(Address: UInt64; Writing: Boolean): UInt64;
+begin
+  // A minimum TLB page is 4 KB, so a 4 KB virtual page translates as one
+  // block. Only successful translations are kept; faults take the full path.
+  var Page := Address shr 12;
+  var Slot := PageSlot(Page);
+  var Context := PageContext;
+  if (FPages[Slot].Page = Page) and (FPages[Slot].Generation = FTLBGeneration) and
+    (FPages[Slot].Context = Context) and (FPages[Slot].WriteOK or (not Writing and FPages[Slot].ReadOK)) then
+    Exit(FPages[Slot].Physical or (Address and $FFF));
+  Result := TranslateSlow(Address, Writing);
+  var Same := (FPages[Slot].Page = Page) and (FPages[Slot].Generation = FTLBGeneration) and
+    (FPages[Slot].Context = Context);
+  FPages[Slot].Page := Page;
+  FPages[Slot].Generation := FTLBGeneration;
+  FPages[Slot].Context := Context;
+  FPages[Slot].Physical := Result and not UInt64($FFF);
+  // A write that translates can read too; a read says nothing about writing.
+  FPages[Slot].WriteOK := Writing or (Same and FPages[Slot].WriteOK);
+  FPages[Slot].ReadOK := True;
+  FPages[Slot].Cached := CachedAddressSlow(Address);
+end;
+
+function TN64CPU.KernelMode: Boolean;
+begin
+  // Matches Translate's mode decode: EXL/ERL or KSU=0 select kernel mode.
+  Result := ((CP0[12] and 6) <> 0) or ((CP0[12] and $18) = 0);
+end;
+
+function TN64CPU.FindTLB(Address: UInt64): Integer;
+begin
+  var Key := Address and TLBKeyMask;
+  var ASID := Cardinal(CP0[10] and $FF);
+  var Slot := Integer((Key shr 13) and High(FTLBLookups));
+  if (FTLBLookups[Slot].Generation = FTLBGeneration) and (FTLBLookups[Slot].Key = Key) and
+    (FTLBLookups[Slot].ASID = ASID) then
+    Exit(FTLBLookups[Slot].Index);
+  Result := -1;
+  for var I := 0 to 31 do
+  begin
+    var Mask := UInt64(TLB[I].Mask or $1FFF);
+    var MatchMask: UInt64 := TLBKeyMask and not Mask;
+    if ((Address and MatchMask) = (TLB[I].EntryHi and MatchMask)) and
+      (((TLB[I].Lo0 and TLB[I].Lo1 and 1) <> 0) or
+      ((TLB[I].EntryHi and $FF) = ASID)) then
+    begin
+      Result := I;
+      Break;
+    end;
+  end;
+  FTLBLookups[Slot].Key := Key;
+  FTLBLookups[Slot].ASID := ASID;
+  FTLBLookups[Slot].Generation := FTLBGeneration;
+  FTLBLookups[Slot].Index := Result;
+end;
+
 procedure TN64CPU.Reset;
 begin
   for var I := 0 to 31 do
@@ -98,6 +266,7 @@ begin
     FPR[I] := 0;
     TLB[I] := Default(TN64TLBEntry);
   end;
+  InvalidateTLBCache;
   HI := 0;
   LO := 0;
   FCR31 := 0;
@@ -190,7 +359,40 @@ begin
   raise EGuestFault.Create('');
 end;
 
+function TN64CPU.TranslateData(Address: UInt64; Writing: Boolean; out Cached: Boolean): UInt64;
+begin
+  // Translate and CachedAddress in one page lookup: a mapped translation
+  // leaves its page's entry in this context, which is what CachedAddress
+  // reads.
+  if (Address >= KSeg0Base) and (Address < KSeg2Base) then
+  begin
+    Cached := Address < KSeg1Base;
+    if KernelMode then
+      Exit(Address and $1FFFFFFF);
+    Exit(TranslateMapped(Address, Writing));
+  end;
+  var Page := Address shr 12;
+  var Slot := PageSlot(Page);
+  if (FPages[Slot].Page = Page) and (FPages[Slot].Generation = FTLBGeneration) and
+    (FPages[Slot].Context = PageContext) and (FPages[Slot].WriteOK or (not Writing and FPages[Slot].ReadOK)) then
+  begin
+    Cached := FPages[Slot].Cached;
+    Exit(FPages[Slot].Physical or (Address and $FFF));
+  end;
+  Result := TranslateMapped(Address, Writing);
+  Cached := FPages[Slot].Cached;
+end;
+
 function TN64CPU.Translate(Address: UInt64; Writing: Boolean): UInt64;
+begin
+  // Kernel KSEG0/KSEG1 is unmapped; every other case takes the full decoder.
+  if (Address >= KSeg0Base) and (Address < KSeg2Base) and KernelMode then
+    Result := Address and $1FFFFFFF
+  else
+    Result := TranslateMapped(Address, Writing);
+end;
+
+function TN64CPU.TranslateSlow(Address: UInt64; Writing: Boolean): UInt64;
 begin
   var Status := CP0[12];
   var Mode := Integer((Status shr 3) and 3);
@@ -235,27 +437,22 @@ begin
       Fault(5, Address)
     else
       Fault(4, Address);
-  for var I := 0 to 31 do
+  var I := FindTLB(Address);
+  if I >= 0 then
   begin
     var Mask := UInt64(TLB[I].Mask or $1FFF);
-    var MatchMask: UInt64 := $C00000FFFFFFE000 and not Mask;
-    if ((Address and MatchMask) = (TLB[I].EntryHi and MatchMask)) and
-      (((TLB[I].Lo0 and TLB[I].Lo1 and 1) <> 0) or
-      ((TLB[I].EntryHi and $FF) = (CP0[10] and $FF))) then
-    begin
-      var HalfMask := (Mask shr 1) + 1;
-      var L := TLB[I].Lo0;
-      if (Address and HalfMask) <> 0 then
-        L := TLB[I].Lo1;
-      if (L and 2) = 0 then
-        if Writing then
-          Fault(3, Address)
-        else
-          Fault(2, Address);
-      if Writing and ((L and 4) = 0) then
-        Fault(1, Address);
-      Exit(((UInt64(L shr 6) shl 12) and not (HalfMask - 1)) or (Address and (HalfMask - 1)));
-    end;
+    var HalfMask := (Mask shr 1) + 1;
+    var L := TLB[I].Lo0;
+    if (Address and HalfMask) <> 0 then
+      L := TLB[I].Lo1;
+    if (L and 2) = 0 then
+      if Writing then
+        Fault(3, Address)
+      else
+        Fault(2, Address);
+    if Writing and ((L and 4) = 0) then
+      Fault(1, Address);
+    Exit(((UInt64(L shr 6) shl 12) and not (HalfMask - 1)) or (Address and (HalfMask - 1)));
   end;
   if Writing then
     Fault(3, Address, True)
@@ -276,7 +473,30 @@ begin
   Result := 1;
 end;
 
+function TN64CPU.GetIdleCandidate: Boolean;
+begin
+  Result := FInDelay and not FDelay;
+end;
+
 function TN64CPU.CachedAddress(Address: UInt64): Boolean;
+begin
+  // KSEG0 is cached and KSEG1 uncached in every mode (see CachedAddressSlow).
+  if (Address >= KSeg0Base) and (Address < KSeg2Base) then
+    Result := Address < KSeg1Base
+  else
+  begin
+    // A page translated in this context knows its cache attribute.
+    var Page := Address shr 12;
+    var Slot := PageSlot(Page);
+    if (FPages[Slot].Page = Page) and (FPages[Slot].Generation = FTLBGeneration) and
+      (FPages[Slot].Context = PageContext) then
+      Result := FPages[Slot].Cached
+    else
+      Result := CachedAddressSlow(Address);
+  end;
+end;
+
+function TN64CPU.CachedAddressSlow(Address: UInt64): Boolean;
 begin
   Result := False;
   if Address = SX(Address, 32) then
@@ -291,23 +511,34 @@ begin
   end
   else if (Address shr 62) = 2 then
     Exit(((Address shr 59) and 7) <> 2);
-  for var I := 0 to 31 do
+  var I := FindTLB(Address);
+  if I >= 0 then
   begin
     var Mask := UInt64(TLB[I].Mask or $1FFF);
-    var MatchMask: UInt64 := $C00000FFFFFFE000 and not Mask;
-    if ((Address and MatchMask) = (TLB[I].EntryHi and MatchMask)) and
-      (((TLB[I].Lo0 and TLB[I].Lo1 and 1) <> 0) or
-      ((TLB[I].EntryHi and $FF) = (CP0[10] and $FF))) then
-    begin
-      var L := TLB[I].Lo0;
-      if (Address and ((Mask shr 1) + 1)) <> 0 then
-        L := TLB[I].Lo1;
-      Exit(((L shr 3) and 7) <> 2);
-    end;
+    var L := TLB[I].Lo0;
+    if (Address and ((Mask shr 1) + 1)) <> 0 then
+      L := TLB[I].Lo1;
+    Result := ((L shr 3) and 7) <> 2;
   end;
 end;
 
-procedure TN64CPU.ApplyInterlocks(Op: Cardinal);
+const
+  // ApplyStalls: the registers an instruction reads (bit 0 rs, bit 1 rt,
+  // bit 3 the FP register named by rt) and whether it accesses memory
+  // (bit 2); by opcode, and SPECIAL by function. COP0, COP1 and COP2 are
+  // decoded in ApplyStalls.
+  OpReads: array[0..63] of Byte = (
+    0, 1, 0, 0, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+    0, 0, 0, 0, 3, 3, 1, 1, 1, 1, 7, 7, 0, 0, 0, 0,
+    5, 5, 7, 5, 5, 5, 7, 5, 7, 7, 7, 7, 7, 7, 7, 0,
+    5, 5, 5, 5, 5, 5, 5, 5, 7, 13, 5, 5, 7, 13, 5, 5);
+  SpecialReads: array[0..63] of Byte = (
+    2, 0, 2, 2, 3, 0, 3, 3, 1, 1, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 1, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 0, 2, 0, 2, 2, 2, 0, 2, 2);
+
+procedure TN64CPU.ApplyStalls(Op: Cardinal);
 begin
   var Code := Op shr 26;
   var S := Integer((Op shr 21) and 31);
@@ -317,32 +548,19 @@ begin
   var RT := -1;
   var FS := -1;
   var FT := -1;
-  var Memory := Code in [26, 27, 32..46, 48..63];
+  var Reads: Byte;
   case Code of
     0:
-      case Fn of
-        0, 2, 3, 56, 58, 59, 60, 62, 63:
-          RT := T;
-        8, 9, 17, 19:
-          RS := S;
-        4, 6, 7, 20, 22..27, 28..47, 48..54:
-          begin
-            RS := S;
-            RT := T;
-          end;
-      end;
-    1, 6, 7, 8..14, 22..27:
-      RS := S;
-    4, 5, 20, 21:
-      begin
-        RS := S;
-        RT := T;
-      end;
+      Reads := SpecialReads[Fn];
     16, 18:
-      if S in [4..6] then
-        RT := T;
+      begin
+        Reads := 0;
+        if S in [4..6] then
+          RT := T;
+      end;
     17:
       begin
+        Reads := 0;
         if S in [4..6] then
           RT := T;
         if S in [0, 1] then
@@ -354,19 +572,16 @@ begin
             FT := FPRegister(T);
         end;
       end;
-    32..46, 48..63:
-      begin
-        RS := S;
-        if Code in [40..46, 56, 60] then
-          RT := T;
-        if Code in [34, 38] then
-          RT := T; // Merge word loads also consume rt.
-        if Code in [57, 61] then
-          FS := FPRegister(T);
-      end;
+  else
+    Reads := OpReads[Code];
   end;
-  if Code in [26, 27] then
+  if (Reads and 1) <> 0 then
+    RS := S;
+  if (Reads and 2) <> 0 then
     RT := T;
+  if (Reads and 8) <> 0 then
+    FS := FPRegister(T);
+  var Memory := (Reads and 4) <> 0;
   if ((FPreviousLoad >= 0) and ((FPreviousLoad = RS) or (FPreviousLoad = RT) or
     (FPreviousLoad = FS) or (FPreviousLoad = FT))) then
     Inc(FCyclesConsumed);
@@ -377,37 +592,74 @@ begin
     Inc(FCyclesConsumed);
   if FPreviousException and (Code = 16) and (S in [0, 1]) then
     Inc(FCyclesConsumed);
-  if FPreviousStore and Memory and CachedAddress(Add64(GPR[S], SX(Op and $FFFF, 16))) then
+  if FPreviousStore and Memory and CachedAddress(Add64(GPR[S], SX16(Op))) then
     Inc(FCyclesConsumed);
+end;
+
+procedure TN64CPU.ApplyInterlocks(Op: Cardinal);
+begin
+  // Stalls only depend on the previous instruction's hazard records.
+  if (FPreviousLoad >= 0) or (FPreviousFP >= 0) or FPreviousCondition or
+    FPreviousException or FPreviousStore then
+    ApplyStalls(Op);
   FPreviousLoad := -1;
   FPreviousFP := -1;
   FPreviousCondition := False;
   FPreviousException := False;
   FPreviousStore := False;
-  if Code in [26, 27, 32..39, 48, 52, 55] then
-    if T <> 0 then
-      FPreviousLoad := T;
-  if Code in [49, 53] then
-    FPreviousLoad := FPRegister(T);
-  if (Code = 17) and (S in [16, 17, 20, 21]) then
-    if Fn >= 48 then
-      FPreviousCondition := True
-    else
-      FPreviousFP := FPRegister(Integer((Op shr 6) and 31));
-  if Code in [40..46, 56, 57, 60, 61, 63] then
-    FPreviousStore := CachedAddress(Add64(GPR[S], SX(Op and $FFFF, 16)));
-  var Wide := Code in [24..27, 52, 55, 60, 63];
-  if Code = 0 then
-    Wide := Fn in [20, 22, 23, 28..31, 44..47, 56, 58..60, 62, 63];
-  if Code in [16, 17, 18] then
-    Wide := S in [1, 5];
-  if (Code = 17) and (S >= 16) then
-    Wide := (S = 21) or (Fn in [8..11, 37]);
-  var Mode := Integer((CP0[12] shr 3) and 3);
-  if ((CP0[12] and 6) <> 0) then
-    Mode := 0;
-  if Wide and (Mode <> 0) and ((CP0[12] and (UInt64($80) shr Mode)) = 0) then
-    Fault(10);
+  var Code := Op shr 26;
+  var Wide := False;
+  case Code of
+    0:
+      Wide := (Op and 63) in [20, 22, 23, 28..31, 44..47, 56, 58..60, 62, 63];
+    16, 18:
+      Wide := ((Op shr 21) and 31) in [1, 5];
+    17:
+      begin
+        var S := (Op shr 21) and 31;
+        if S in [16, 17, 20, 21] then
+          if (Op and 63) >= 48 then
+            FPreviousCondition := True
+          else
+            FPreviousFP := FPRegister(Integer((Op shr 6) and 31));
+        if S >= 16 then
+          Wide := (S = 21) or ((Op and 63) in [8..11, 37])
+        else
+          Wide := S in [1, 5];
+      end;
+    24, 25:
+      Wide := True;
+    26, 27, 52, 55:
+      begin
+        var T := Integer((Op shr 16) and 31);
+        if T <> 0 then
+          FPreviousLoad := T;
+        Wide := True;
+      end;
+    32..39, 48:
+      begin
+        var T := Integer((Op shr 16) and 31);
+        if T <> 0 then
+          FPreviousLoad := T;
+      end;
+    49, 53:
+      FPreviousLoad := FPRegister(Integer((Op shr 16) and 31));
+    40..46, 56, 57, 61:
+      FPreviousStore := CachedAddress(Add64(GPR[(Op shr 21) and 31], SX16(Op)));
+    60, 63:
+      begin
+        FPreviousStore := CachedAddress(Add64(GPR[(Op shr 21) and 31], SX16(Op)));
+        Wide := True;
+      end;
+  end;
+  if Wide then
+  begin
+    var Mode := Integer((CP0[12] shr 3) and 3);
+    if ((CP0[12] and 6) <> 0) then
+      Mode := 0;
+    if (Mode <> 0) and ((CP0[12] and (UInt64($80) shr Mode)) = 0) then
+      Fault(10);
+  end;
 end;
 
 function TN64CPU.FPClocks(A, B: UInt64; Format, Fn: Integer): Cardinal;
@@ -467,15 +719,64 @@ begin
     Result := 2;
 end;
 
-function TN64CPU.Load(Address: UInt64; Size: Integer; Aligned: Boolean): UInt64;
+function TN64CPU.Fetch: Cardinal;
 begin
-  if Aligned and ((Address and Cardinal(Size - 1)) <> 0) then
+  // Aligned kernel KSEG0/KSEG1 code in RDRAM, aligned code in the mapped
+  // RDRAM page fetched last; Load handles everything else (an instruction
+  // fetch has none of its data-access side effects).
+  var Address := FPC;
+  if (Address >= KSeg0Base) and (Address < KSeg2Base) and ((Address and 3) = 0) and KernelMode and
+    ((Address and $1FFFFFFF) + 4 <= FBus.RAMSize) then
+    Exit(FBus.ReadRAM32(Cardinal(Address and $1FFFFFFF)));
+  if (Address and 3) = 0 then
+  begin
+    if FCodeValid and ((Address shr 12) = FCodePage) and (FCodeGeneration = FTLBGeneration) and
+      (FCodeContext = PageContext) then
+      Exit(FBus.ReadRAM32(FCodePhysical or Cardinal(Address and $FFF)));
+    // Translate faults just as Load's would.
+    var Physical := Translate(Address, False);
+    if Physical + 4 <= FBus.RAMSize then
+    begin
+      // A whole 4 KB page: RDRAM ends on a page boundary.
+      if not ((Address >= KSeg0Base) and (Address < KSeg2Base) and KernelMode) then
+      begin
+        FCodePage := Address shr 12;
+        FCodePhysical := Cardinal(Physical and not UInt64($FFF));
+        FCodeGeneration := FTLBGeneration;
+        FCodeContext := PageContext;
+        FCodeValid := True;
+      end;
+      Exit(FBus.ReadRAM32(Cardinal(Physical)));
+    end;
+  end;
+  Result := Cardinal(Load(Address, 4));
+end;
+
+function TN64CPU.Load(Address: UInt64; Size: Integer): UInt64;
+begin
+  if (Address and Cardinal(Size - 1)) <> 0 then
     Fault(4, Address);
-  var Physical := Translate(Address, False);
+  var Cached: Boolean;
+  var Physical := TranslateData(Address, False, Cached);
   if FExecutingInstruction then
-    FDataCached := CachedAddress(Address);
+    FDataCached := Cached;
   if Physical > $FFFFFFFF then
     Exit(0);
+  // RDRAM reads have no side effects and are outside the traced MMIO window.
+  if Physical + Cardinal(Size) <= FBus.RAMSize then
+  begin
+    var P := Cardinal(Physical);
+    case Size of
+      1:
+        Exit(FBus.ReadRAM8(P));
+      2:
+        Exit(FBus.ReadRAM16(P));
+      4:
+        Exit(FBus.ReadRAM32(P));
+    else
+      Exit((UInt64(FBus.ReadRAM32(P)) shl 32) or FBus.ReadRAM32(P + 4));
+    end;
+  end;
   if Size = 4 then
     Result := FBus.Read32(Cardinal(Physical))
   else
@@ -488,16 +789,39 @@ begin
     FBus.Trace(MMIORead, FInstructionPC, Physical, Result);
 end;
 
-procedure TN64CPU.Store(Address: UInt64; Size: Integer; Value: UInt64; Aligned: Boolean);
+procedure TN64CPU.Store(Address: UInt64; Size: Integer; Value: UInt64);
 begin
-  if Aligned and ((Address and Cardinal(Size - 1)) <> 0) then
+  if (Address and Cardinal(Size - 1)) <> 0 then
     Fault(5, Address);
-  var Physical := Translate(Address, True);
+  var Cached: Boolean;
+  var Physical := TranslateData(Address, True, Cached);
   if FExecutingInstruction then
-    FDataCached := CachedAddress(Address);
+    FDataCached := Cached;
   FLL := False;
   if Physical > $FFFFFFFF then
     Exit;
+  // Same byte order and final hidden bits as the bus's byte/word RDRAM writes.
+  if Physical + Cardinal(Size) <= FBus.RAMSize then
+  begin
+    var P := Cardinal(Physical);
+    case Size of
+      1:
+        FBus.WriteRAM8(P, Byte(Value and $FF));
+      2:
+        begin
+          FBus.WriteRAM8(P, Byte((Value shr 8) and $FF));
+          FBus.WriteRAM8(P + 1, Byte(Value and $FF));
+        end;
+      4:
+        FBus.WriteRAM32(P, Cardinal(Value and $FFFFFFFF));
+    else
+      begin
+        FBus.WriteRAM32(P, Cardinal(Value shr 32));
+        FBus.WriteRAM32(P + 4, Cardinal(Value and $FFFFFFFF));
+      end;
+    end;
+    Exit;
+  end;
   if FBus.TraceEnabled and (Physical >= $03F00000) and (Physical < $04A00000) then
   begin
     var Written := Value;
@@ -549,17 +873,17 @@ begin
   Inc(FCyclesConsumed, FOperationCycles - 1);
   case F of
     0:
-      V := SX(B shl N, 32);
+      V := SX32(B shl N);
     2:
-      V := SX((B and $FFFFFFFF) shr N, 32);
+      V := SX32((B and $FFFFFFFF) shr N);
     3:
-      V := SX(SAR(B, N, 32), 32);
+      V := SX32(SAR(B, N, 32));
     4:
-      V := SX(B shl (A and 31), 32);
+      V := SX32(B shl (A and 31));
     6:
-      V := SX((B and $FFFFFFFF) shr (A and 31), 32);
+      V := SX32((B and $FFFFFFFF) shr (A and 31));
     7:
-      V := SX(SAR(B, A and 31, 32), 32);
+      V := SX32(SAR(B, A and 31, 32));
     8, 9:
       begin
         if F = 9 then
@@ -628,9 +952,9 @@ begin
     32, 33, 34, 35:
       begin
         if F in [32, 33] then
-          V := SX(Add64(A, B), 32)
+          V := SX32(Add64(A, B))
         else
-          V := SX(Sub64(A, B), 32);
+          V := SX32(Sub64(A, B));
         if F = 32 then
           if (((not (A xor B)) and (A xor V)) and $80000000) <> 0 then
             Fault(12);
@@ -807,6 +1131,7 @@ begin
               TLB[I].Lo0 := TLB[I].Lo0 and not Cardinal(1);
               TLB[I].Lo1 := TLB[I].Lo1 and not Cardinal(1);
             end;
+            InvalidateTLBCache;
           end;
         8:
           begin
@@ -1099,219 +1424,7 @@ begin
   FInDelay := FDelay;
   FDelay := False;
   try
-    if FBus.InterruptPending then
-      CP0[13] := CP0[13] or $400
-    else
-      CP0[13] := CP0[13] and not UInt64($400);
-    if ((CP0[12] and 7) = 1) and ((CP0[12] and CP0[13] and $FF00) <> 0) then
-      Fault(0);
-    var Op := Cardinal(Load(FPC, 4));
-    if FBus.TraceEnabled then
-      FBus.Trace(Instruction, FPC, FPC, Op);
-    FExecutingInstruction := True;
-    ApplyInterlocks(Op);
-    FPC := FNextPC;
-    FNextPC := Add64(FNextPC, 4);
-    var Code := Op shr 26;
-    var S := (Op shr 21) and 31;
-    var T := (Op shr 16) and 31;
-    var A := GPR[S];
-    var B := GPR[T];
-    var Imm := SX(Op and $FFFF, 16);
-    var Address := Add64(A, Imm);
-    var Target := Add64(FPC, Imm shl 2);
-    var V: UInt64;
-    case Code of
-      0:
-        Special(Op);
-      1:
-        begin
-          var Taken := SignedLess(A, 0);
-          if (T and 1) <> 0 then
-            Taken := not Taken;
-          if T in [16..19] then
-            GPR[31] := Add64(FInstructionPC, 8);
-          if T in [0..3, 16..19] then
-            Branch(Taken, (T and 2) <> 0, Target)
-          else
-            case T of
-              8:
-                if not SignedLess(A, Imm) then
-                  Fault(13);
-              9:
-                if A >= Imm then
-                  Fault(13);
-              10:
-                if SignedLess(A, Imm) then
-                  Fault(13);
-              11:
-                if A < Imm then
-                  Fault(13);
-              12:
-                if A = Imm then
-                  Fault(13);
-              14:
-                if A <> Imm then
-                  Fault(13);
-            else
-              Fault(10);
-            end;
-        end;
-      2, 3:
-        begin
-          if Code = 3 then
-            GPR[31] := Add64(FInstructionPC, 8);
-          Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Op and $3FFFFFF) shl 2));
-        end;
-      4, 20:
-        Branch(A = B, Code = 20, Target);
-      5, 21:
-        Branch(A <> B, Code = 21, Target);
-      6, 22:
-        Branch(not SignedLess(0, A), Code = 22, Target);
-      7, 23:
-        Branch(SignedLess(0, A), Code = 23, Target);
-      8, 9, 24, 25:
-        begin
-          V := Add64(A, Imm);
-          if Code in [8, 9] then
-            V := SX(V, 32);
-          if Code = 8 then
-            if (((not (A xor Imm)) and (A xor V)) and $80000000) <> 0 then
-              Fault(12);
-          if Code = 24 then
-            if ((not (A xor Imm)) and (A xor V)) shr 63 <> 0 then
-              Fault(12);
-          GPR[T] := V;
-        end;
-      10:
-        GPR[T] := Ord(SignedLess(A, Imm));
-      11:
-        GPR[T] := Ord(A < Imm);
-      12:
-        GPR[T] := A and (Op and $FFFF);
-      13:
-        GPR[T] := A or (Op and $FFFF);
-      14:
-        GPR[T] := A xor (Op and $FFFF);
-      15:
-        GPR[T] := SX((Op and $FFFF) shl 16, 32);
-      16:
-        Cop0(Op);
-      17:
-        Cop1(Op);
-      18:
-        Cop2(Op);
-      32:
-        GPR[T] := SX(Load(Address, 1), 8);
-      33:
-        GPR[T] := SX(Load(Address, 2), 16);
-      35:
-        GPR[T] := SX(Load(Address, 4), 32);
-      36:
-        GPR[T] := Load(Address, 1);
-      37:
-        GPR[T] := Load(Address, 2);
-      39:
-        GPR[T] := Load(Address, 4);
-      55:
-        GPR[T] := Load(Address, 8);
-      26, 27, 34, 38:
-        begin
-          var Size := 4;
-          if Code in [26, 27] then
-            Size := 8;
-          var Offset := Integer(Address and Cardinal(Size - 1));
-          var Base := Address and not UInt64(Size - 1);
-          V := B;
-          for var I := 0 to Size - 1 do
-          begin
-            var Pos := I;
-            var J := I;
-            if Code in [26, 34] then
-              J := I + Offset
-            else
-              Pos := I + Size - 1 - Offset;
-            if (J < Size) and (Pos < Size) then
-            begin
-              var Shift := (Size - 1 - Pos) * 8;
-              var M := UInt64($FF) shl Shift;
-              V := (V and not M) or (Load(Add64(Base, Cardinal(J)), 1) shl Shift);
-            end;
-          end;
-          if Size = 4 then
-            V := SX(V, 32);
-          GPR[T] := V;
-        end;
-      40:
-        Store(Address, 1, B);
-      41:
-        Store(Address, 2, B);
-      43:
-        Store(Address, 4, B);
-      63:
-        Store(Address, 8, B);
-      42, 44, 45, 46:
-        begin
-          var Size := 4;
-          if Code in [44, 45] then
-            Size := 8;
-          var Offset := Integer(Address and Cardinal(Size - 1));
-          var Base := Address and not UInt64(Size - 1);
-          for var I := 0 to Size - 1 do
-          begin
-            var Pos := I;
-            var J := I;
-            if Code in [42, 44] then
-              J := I + Offset
-            else
-              Pos := I + Size - 1 - Offset;
-            if (J < Size) and (Pos < Size) then
-              Store(Add64(Base, Cardinal(J)), 1, (B shr ((Size - 1 - Pos) * 8)) and $FF);
-          end;
-        end;
-      47:
-        ; // CACHE: uncached interpreter, all writes immediately visible.
-        48, 52:
-        begin
-          if Code = 48 then
-            GPR[T] := SX(Load(Address, 4), 32)
-          else
-            GPR[T] := Load(Address, 8);
-          FLLAddress := Translate(Address, False);
-          CP0[17] := FLLAddress shr 4;
-          FLL := True;
-        end;
-      56, 60:
-        begin
-          var Size := 4;
-          if Code = 60 then
-            Size := 8;
-          if (Address and Cardinal(Size - 1)) <> 0 then
-            Fault(5, Address);
-          var P := Translate(Address, True);
-          var Success := FLL and (P = FLLAddress);
-          if Success then
-            Store(Address, Size, B);
-          FLL := False;
-          GPR[T] := Ord(Success);
-        end;
-      49, 53, 57, 61:
-        begin
-          if (CP0[12] and $20000000) = 0 then
-            Fault(11, 0, False, 1);
-          if Code = 49 then
-            SetFPBits(T, 16, Load(Address, 4))
-          else if Code = 53 then
-            SetFPBits(T, 17, Load(Address, 8))
-          else if Code = 57 then
-            Store(Address, 4, FPBits(T, 16))
-          else
-            Store(Address, 8, FPBits(T, 17));
-        end;
-    else
-      Fault(10);
-    end;
+    ExecuteInstruction;
   except
     on E: EGuestFault do
       ;
@@ -1326,66 +1439,375 @@ begin
     Dec(CP0[1]);
 end;
 
-function TN64CPU.SkipIdle(MaxInstructions: Integer): Integer;
+procedure TN64CPU.ExecuteInstruction;
 begin
+  // Kept out of Step's exception frame so its locals can stay in registers.
+  if FBus.InterruptLine then
+    CP0[13] := CP0[13] or $400
+  else
+    CP0[13] := CP0[13] and not UInt64($400);
+  if ((CP0[12] and 7) = 1) and ((CP0[12] and CP0[13] and $FF00) <> 0) then
+    Fault(0);
+  var Op := Fetch;
+  if FBus.TraceEnabled then
+    FBus.Trace(Instruction, FPC, FPC, Op);
+  FExecutingInstruction := True;
+  ApplyInterlocks(Op);
+  FPC := FNextPC;
+  FNextPC := Add64(FNextPC, 4);
+  var Code := Op shr 26;
+  var T := (Op shr 16) and 31;
+  var A := GPR[(Op shr 21) and 31];
+  var B := GPR[T];
+  var Imm := SX16(Op);
+  var V: UInt64;
+  case Code of
+    0:
+      Special(Op);
+    1:
+      begin
+        var Target := Add64(FPC, Imm shl 2);
+        var Taken := SignedLess(A, 0);
+        if (T and 1) <> 0 then
+          Taken := not Taken;
+        if T in [16..19] then
+          GPR[31] := Add64(FInstructionPC, 8);
+        if T in [0..3, 16..19] then
+          Branch(Taken, (T and 2) <> 0, Target)
+        else
+          case T of
+            8:
+              if not SignedLess(A, Imm) then
+                Fault(13);
+            9:
+              if A >= Imm then
+                Fault(13);
+            10:
+              if SignedLess(A, Imm) then
+                Fault(13);
+            11:
+              if A < Imm then
+                Fault(13);
+            12:
+              if A = Imm then
+                Fault(13);
+            14:
+              if A <> Imm then
+                Fault(13);
+          else
+            Fault(10);
+          end;
+      end;
+    2, 3:
+      begin
+        if Code = 3 then
+          GPR[31] := Add64(FInstructionPC, 8);
+        Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Op and $3FFFFFF) shl 2));
+      end;
+    4, 20:
+      Branch(A = B, Code = 20, Add64(FPC, Imm shl 2));
+    5, 21:
+      Branch(A <> B, Code = 21, Add64(FPC, Imm shl 2));
+    6, 22:
+      Branch(not SignedLess(0, A), Code = 22, Add64(FPC, Imm shl 2));
+    7, 23:
+      Branch(SignedLess(0, A), Code = 23, Add64(FPC, Imm shl 2));
+    9:
+      GPR[T] := SX32(Add64(A, Imm));
+    8, 24, 25:
+      begin
+        V := Add64(A, Imm);
+        if Code = 8 then
+          V := SX32(V);
+        if Code = 8 then
+          if (((not (A xor Imm)) and (A xor V)) and $80000000) <> 0 then
+            Fault(12);
+        if Code = 24 then
+          if ((not (A xor Imm)) and (A xor V)) shr 63 <> 0 then
+            Fault(12);
+        GPR[T] := V;
+      end;
+    10:
+      GPR[T] := Ord(SignedLess(A, Imm));
+    11:
+      GPR[T] := Ord(A < Imm);
+    12:
+      GPR[T] := A and (Op and $FFFF);
+    13:
+      GPR[T] := A or (Op and $FFFF);
+    14:
+      GPR[T] := A xor (Op and $FFFF);
+    15:
+      GPR[T] := SX32((Op and $FFFF) shl 16);
+    16:
+      Cop0(Op);
+    17:
+      Cop1(Op);
+    18:
+      Cop2(Op);
+    32:
+      GPR[T] := SX8(Load(Add64(A, Imm), 1));
+    33:
+      GPR[T] := SX16(Load(Add64(A, Imm), 2));
+    35:
+      GPR[T] := SX32(Load(Add64(A, Imm), 4));
+    36:
+      GPR[T] := Load(Add64(A, Imm), 1);
+    37:
+      GPR[T] := Load(Add64(A, Imm), 2);
+    39:
+      GPR[T] := Load(Add64(A, Imm), 4);
+    55:
+      GPR[T] := Load(Add64(A, Imm), 8);
+    26, 27, 34, 38:
+      begin
+        var Address := Add64(A, Imm);
+        var Size := 4;
+        if Code in [26, 27] then
+          Size := 8;
+        var Offset := Integer(Address and Cardinal(Size - 1));
+        var Base := Address and not UInt64(Size - 1);
+        V := B;
+        for var I := 0 to Size - 1 do
+        begin
+          var Pos := I;
+          var J := I;
+          if Code in [26, 34] then
+            J := I + Offset
+          else
+            Pos := I + Size - 1 - Offset;
+          if (J < Size) and (Pos < Size) then
+          begin
+            var Shift := (Size - 1 - Pos) * 8;
+            var M := UInt64($FF) shl Shift;
+            V := (V and not M) or (Load(Add64(Base, Cardinal(J)), 1) shl Shift);
+          end;
+        end;
+        if Size = 4 then
+          V := SX32(V);
+        GPR[T] := V;
+      end;
+    40:
+      Store(Add64(A, Imm), 1, B and $FF);
+    41:
+      Store(Add64(A, Imm), 2, B and $FFFF);
+    43:
+      Store(Add64(A, Imm), 4, B and $FFFFFFFF);
+    63:
+      Store(Add64(A, Imm), 8, B);
+    42, 44, 45, 46:
+      begin
+        var Address := Add64(A, Imm);
+        var Size := 4;
+        if Code in [44, 45] then
+          Size := 8;
+        var Offset := Integer(Address and Cardinal(Size - 1));
+        var Base := Address and not UInt64(Size - 1);
+        for var I := 0 to Size - 1 do
+        begin
+          var Pos := I;
+          var J := I;
+          if Code in [42, 44] then
+            J := I + Offset
+          else
+            Pos := I + Size - 1 - Offset;
+          if (J < Size) and (Pos < Size) then
+            Store(Add64(Base, Cardinal(J)), 1, (B shr ((Size - 1 - Pos) * 8)) and $FF);
+        end;
+      end;
+    47:
+      ; // CACHE: uncached interpreter, all writes immediately visible.
+      48, 52:
+      begin
+        var Address := Add64(A, Imm);
+        if Code = 48 then
+          GPR[T] := SX32(Load(Address, 4))
+        else
+          GPR[T] := Load(Address, 8);
+        FLLAddress := Translate(Address, False);
+        CP0[17] := FLLAddress shr 4;
+        FLL := True;
+      end;
+    56, 60:
+      begin
+        var Address := Add64(A, Imm);
+        var Size := 4;
+        if Code = 60 then
+          Size := 8;
+        if (Address and Cardinal(Size - 1)) <> 0 then
+          Fault(5, Address);
+        var P := Translate(Address, True);
+        var Success := FLL and (P = FLLAddress);
+        if Success then
+          Store(Address, Size, B);
+        FLL := False;
+        GPR[T] := Ord(Success);
+      end;
+    49, 53, 57, 61:
+      begin
+        if (CP0[12] and $20000000) = 0 then
+          Fault(11, 0, False, 1);
+        var Address := Add64(A, Imm);
+        if Code = 49 then
+          SetFPBits(T, 16, Load(Address, 4))
+        else if Code = 53 then
+          SetFPBits(T, 17, Load(Address, 8))
+        else if Code = 57 then
+          Store(Address, 4, FPBits(T, 16))
+        else
+          Store(Address, 8, FPBits(T, 17));
+      end;
+  else
+    Fault(10);
+  end;
+end;
+
+function TN64CPU.IdleLimit: Integer;
+begin
+  // Validates an unconditional branch-to-self whose delay slot is a NOP or
+  // an idle counter (ADDIU/DADDIU rt, rt, imm). Every instruction of such a
+  // loop takes one PClock without interlocks, faults or memory accesses.
+  // Returns how many instructions may be applied before COUNT reaches
+  // COMPARE, or 0 when the CPU is not at the loop head.
   Result := 0;
-  FCyclesConsumed := 0;
   if FBus.TraceEnabled then
     Exit;
-  if (MaxInstructions < 2) or FDelay or not FInDelay or
-    (FPC <> Sub64(FInstructionPC, 4)) or (FNextPC <> Add64(FPC, 4)) then
+  if FDelay or not FInDelay or (FPC <> Sub64(FInstructionPC, 4)) or (FNextPC <> Add64(FPC, 4)) then
     Exit;
   if ((CP0[12] and 7) = 1) and
     (((CP0[12] and CP0[13] and $FF00) <> 0) or
-    (((CP0[12] and $400) <> 0) and FBus.InterruptPending)) then
+    (((CP0[12] and $400) <> 0) and FBus.InterruptLine)) then
     Exit;
-  // Only direct kernel RAM: extended mappings and privilege faults always step.
+  // Only kernel mode: privilege faults and extended mappings always step.
   if ((CP0[12] and 6) = 0) and ((CP0[12] and $18) <> 0) then
     Exit;
-  if (FPC < $FFFFFFFF80000000) or (FPC >= $FFFFFFFFC0000000) then
-    Exit;
-  var P := Cardinal(FPC and $1FFFFFFF);
-  if P > $7FFFF8 then
+  var P: Cardinal;
+  if not KernelFetchAddress(FPC, P) or (P > $7FFFF8) then
     Exit;
   var Op := FBus.Read32(P);
   if (Op <> $1000FFFF) and (Op <> ($08000000 or Cardinal((FPC shr 2) and $03FFFFFF))) then
     Exit;
-  if FBus.Read32(P + 4) <> 0 then
+  var Slot := FBus.Read32(P + 4);
+  var Counter := Integer((Slot shr 16) and 31);
+  if (Slot <> 0) and (not ((Slot shr 26) in [9, 25]) or (Counter = 0) or
+    (Integer((Slot shr 21) and 31) <> Counter)) then
+    Exit;
+  var Wired := CP0[6] and 31;
+  if (CP0[1] < Wired) or (CP0[1] > 31) then
     Exit;
   var Distance := (UInt64(CP0[11] and $FFFFFFFF) + UInt64($100000000) - (CP0[9] and $FFFFFFFF)) and $FFFFFFFF;
   if Distance = 0 then
     Distance := $100000000;
   var UntilCompare := Distance * 2 - Cardinal(FCountHalf);
-  var Skip := MaxInstructions and not 1;
-  if UInt64(Skip) >= UntilCompare then
-    Skip := Integer((UntilCompare - 1) and not UInt64(1));
-  if Skip = 0 then
-    Exit;
-  var Wired := CP0[6] and 31;
-  if (CP0[1] < Wired) or (CP0[1] > 31) then
-    Exit;
-  if FBus.InterruptPending then
+  FIdlePhysical := P;
+  FIdleBranch := Op;
+  FIdleSlot := Slot;
+  Result := Integer(Min(UntilCompare - 1, UInt64(High(Integer))));
+end;
+
+function TN64CPU.IdleCodeIntact: Boolean;
+begin
+  if UInt64(FIdlePhysical) + 8 <= FBus.RAMSize then
+    Result := (FBus.ReadRAM32(FIdlePhysical) = FIdleBranch) and (FBus.ReadRAM32(FIdlePhysical + 4) = FIdleSlot)
+  else
+    Result := (FBus.Read32(FIdlePhysical) = FIdleBranch) and (FBus.Read32(FIdlePhysical + 4) = FIdleSlot);
+end;
+
+function TN64CPU.IdleWouldInterrupt(Pending: Boolean): Boolean;
+begin
+  var Cause := CP0[13];
+  if Pending then
+    Cause := Cause or $400
+  else
+    Cause := Cause and not UInt64($400);
+  Result := ((CP0[12] and 7) = 1) and ((CP0[12] and Cause and $FF00) <> 0);
+end;
+
+procedure TN64CPU.ApplyIdle(Count: Integer; Pending: Boolean);
+begin
+  // Equivalent to Count single steps from the loop head validated by IdleLimit,
+  // with Count below its limit. Pending is the MI line seen by the last one.
+  if Pending then
     CP0[13] := CP0[13] or $400
   else
     CP0[13] := CP0[13] and not UInt64($400);
-  FCyclesConsumed := Cardinal(Skip);
+  FCyclesConsumed := Cardinal(Count);
   AdvanceClocks(FCyclesConsumed);
-  CP0[1] := 31 - ((31 - CP0[1] + Cardinal(Skip)) mod (32 - Wired));
+  var Wired := CP0[6] and 31;
+  CP0[1] := 31 - ((31 - CP0[1] + Cardinal(Count)) mod (32 - Wired));
+  var Slot := FIdleSlot;
+  if (Slot <> 0) and (Count >= 2) then
+  begin
+    // Count div 2 delay-slot executions. |Imm| <= 2^15 and Count < 2^31, so
+    // the product is exact; ADDIU keeps only the sign-extended low word.
+    var Counter := Integer((Slot shr 16) and 31);
+    var Executions := UInt64(Count div 2);
+    var Imm := SX16(Slot);
+    var Value: UInt64;
+    if (Imm shr 63) <> 0 then
+      Value := Sub64(GPR[Counter], Executions * Sub64(0, Imm))
+    else
+      Value := Add64(GPR[Counter], Executions * Imm);
+    if (Slot shr 26) = 9 then
+      Value := SX32(Value);
+    GPR[Counter] := Value;
+  end;
+  if Odd(Count) then
+  begin
+    // The branch executed last; its delay slot is next (as after Step).
+    var BranchPC := FPC;
+    FInstructionPC := BranchPC;
+    FInDelay := False;
+    FPC := Add64(BranchPC, 4);
+    FNextPC := BranchPC;
+    FDelay := True;
+  end;
+end;
+
+function TN64CPU.SkipIdle(MaxInstructions: Integer): Integer;
+begin
+  Result := 0;
+  FCyclesConsumed := 0;
+  if MaxInstructions < 2 then
+    Exit;
+  var Limit := IdleLimit;
+  var Skip := Min(MaxInstructions and not 1, Limit and not 1);
+  if Skip <= 0 then
+    Exit;
+  ApplyIdle(Skip, FBus.InterruptLine);
   Result := Skip;
 end;
 
-procedure TN64CPU.AdvanceClocks(Clocks: Cardinal);
+function TN64CPU.KernelFetchAddress(Address: UInt64; out Physical: Cardinal): Boolean;
 begin
-  var Total := UInt64(Clocks) + Cardinal(FCountHalf);
-  var Ticks := Total div 2;
-  FCountHalf := Integer(Total and 1);
-  var OldCount := CP0[9] and $FFFFFFFF;
-  var Distance := (UInt64(CP0[11] and $FFFFFFFF) + UInt64($100000000) - OldCount) and $FFFFFFFF;
-  if Distance = 0 then
-    Distance := $100000000;
-  if Ticks >= Distance then
-    CP0[13] := CP0[13] or $8000;
-  CP0[9] := (OldCount + Ticks) and $FFFFFFFF;
+  // TranslateSlow for kernel mode, without faults: False instead of an exception.
+  Result := False;
+  Physical := 0;
+  if Address <> SX32(Address) then
+    Exit;
+  var Low := Cardinal(Address and $FFFFFFFF);
+  if (Low >= $80000000) and (Low < $C0000000) then
+    Physical := Low and $1FFFFFFF
+  else if ((CP0[12] and 4) <> 0) and (Low < $80000000) then
+    Physical := Low
+  else
+  begin
+    var I := FindTLB(Address);
+    if I < 0 then
+      Exit;
+    var Mask := UInt64(TLB[I].Mask or $1FFF);
+    var HalfMask := (Mask shr 1) + 1;
+    var L := TLB[I].Lo0;
+    if (Address and HalfMask) <> 0 then
+      L := TLB[I].Lo1;
+    if (L and 2) = 0 then
+      Exit;
+    var Mapped := ((UInt64(L shr 6) shl 12) and not (HalfMask - 1)) or (Address and (HalfMask - 1));
+    if Mapped > $FFFFFFFF then
+      Exit;
+    Physical := Cardinal(Mapped);
+  end;
+  Result := True;
 end;
 
 procedure TN64CPU.SerializeState(State: TStateArchive);
@@ -1407,6 +1829,8 @@ begin
   State.Field(HI, SizeOf(HI));
   State.Field(LO, SizeOf(LO));
   State.Field(TLB, SizeOf(TLB));
+  if State.Loading then
+    InvalidateTLBCache;
   State.Field(FPC, SizeOf(FPC));
   State.Field(FNextPC, SizeOf(FNextPC));
   State.Field(FDelay, SizeOf(FDelay));

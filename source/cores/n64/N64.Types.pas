@@ -14,6 +14,12 @@ function Add32(A, B: Cardinal): Cardinal; inline;
 
 function SX(Value: UInt64; Bits: Integer): UInt64; inline;
 
+function SX8(Value: UInt64): UInt64; inline;
+
+function SX16(Value: UInt64): UInt64; inline;
+
+function SX32(Value: UInt64): UInt64; inline;
+
 function SignedValue(Value: UInt64): Int64; inline;
 
 function SignedLess(A, B: UInt64): Boolean; inline;
@@ -40,7 +46,25 @@ type
   TN64Bus = class abstract
   private
     FTraceSink: TN64TraceSink;
-    function GetTraceEnabled: Boolean;
+    FTraceEnabled: Boolean;
+  protected
+    // Plain RDRAM bytes and their hidden bits, and SP DMEM+IMEM
+    // ($04000000..$04001FFF). Fixed bounds keep the checked accesses cheap.
+    // A bus that sets FDirectMemory promises that CPU/RSP/RDP/VI accesses
+    // there have exactly the semantics of the helpers below, so callers may
+    // bypass the virtual decoder. Other buses never expose these arrays.
+    FRAM: array[0..$7FFFFF] of Byte;
+    FHiddenRAM: array[0..$3FFFFF] of Byte;
+    FSP: array[0..$1FFF] of Byte;
+    // IMEM ($1000..$1FFF of FSP) as big-endian words, and for each word the
+    // value of FIMemCounter at its last change (0: never written).
+    FIMemWords: array[0..1023] of Cardinal;
+    FIMemStamps: array[0..1023] of UInt64;
+    FIMemCounter: UInt64;
+    FDirectMemory: Boolean;
+    // A bus that sets FInterruptLineKnown keeps FInterruptLine equal to
+    // InterruptPending at all times, so the CPU can skip the virtual call.
+    FInterruptLineKnown, FInterruptLine: Boolean;
   public
     function Read8(Address: Cardinal): Byte; virtual; abstract;
     procedure Write8(Address: Cardinal; Value: Byte); virtual; abstract;
@@ -54,21 +78,67 @@ type
     function GuestTick: UInt64; virtual;
     procedure SetTraceSink(const Sink: TN64TraceSink);
     procedure Trace(Kind: TN64TraceKind; PC, Address, Value: UInt64);
-    property TraceEnabled: Boolean read GetTraceEnabled;
+    // $800000 with FDirectMemory, otherwise 0 (no direct RDRAM).
+    function RAMSize: Cardinal; inline;
+    // CPU, DMA and VI accessors. Callers guarantee Address + access size <=
+    // RAMSize.
+    function ReadRAM8(Address: Cardinal): Byte; inline;
+    function ReadRAM16(Address: Cardinal): Cardinal; inline;
+    function ReadRAM32(Address: Cardinal): Cardinal; inline;
+    procedure WriteRAM8(Address: Cardinal; Value: Byte); inline;
+    procedure WriteRAM32(Address, Value: Cardinal); inline;
+    // Callers guarantee Address < RAMSize.
+    function ReadHiddenRAM(Address: Cardinal): Byte; inline;
+    procedure WriteHiddenRAM(Address: Cardinal; Value: Byte); inline;
+    // The RDP's accessors. Same bounds as above; RDPWrite8/32 behave as
+    // WriteRAM8/32.
+    function RDPRead8(Address: Cardinal): Byte; inline;
+    function RDPRead16(Address: Cardinal): Cardinal; inline;
+    function RDPRead32(Address: Cardinal): Cardinal; inline;
+    procedure RDPWrite8(Address: Cardinal; Value: Byte); inline;
+    procedure RDPWrite32(Address, Value: Cardinal); inline;
+    function RDPReadHidden(Address: Cardinal): Byte; inline;
+    procedure RDPWriteHidden(Address: Cardinal; Value: Byte); inline;
+    // Data bytes followed by explicit hidden bits: the same result as RDPWrite8
+    // or RDPWrite32 then RDPWriteHidden for each halfword written. For the 16-
+    // and 32-bit forms Address is even.
+    procedure RDPWrite8Hidden(Address: Cardinal; Value, Hidden: Byte); inline;
+    procedure RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte); inline;
+    procedure RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte); inline;
+    // SP memory helpers; Offset is below $2000 and DirectMemory is set.
+    // Every write to SP memory goes through WriteSP8 or SPLoaded, which keep
+    // the IMEM words and their stamps up to date.
+    function ReadSP8(Offset: Cardinal): Byte; inline;
+    procedure WriteSP8(Offset: Cardinal; Value: Byte); inline;
+    function ReadSP32(Offset: Cardinal): Cardinal; inline;
+    procedure IMemChanged(Offset: Cardinal);
+    // After FSP changed as a whole (reset, boot, state load).
+    procedure SPLoaded;
+    // IMEM word Slot (0..1023) and the stamp of its last change.
+    function IMemWord(Slot: Integer): Cardinal; inline;
+    function IMemStamp(Slot: Integer): UInt64; inline;
+    function InterruptLine: Boolean; inline;
+    property DirectMemory: Boolean read FDirectMemory;
+    property TraceEnabled: Boolean read FTraceEnabled;
   end;
 
 implementation
 
 function Add64(A, B: UInt64): UInt64;
 begin
-  var L := (A and $FFFFFFFF) + (B and $FFFFFFFF);
-  var H := (A shr 32) + (B shr 32) + (L shr 32);
-  Result := ((H and $FFFFFFFF) shl 32) or (L and $FFFFFFFF);
+  // B > not A exactly when A + B exceeds 64 bits; both branches stay in range.
+  if B > not A then
+    Result := B - (not A) - 1
+  else
+    Result := A + B;
 end;
 
 function Sub64(A, B: UInt64): UInt64;
 begin
-  Result := Add64(Add64(A, not B), 1);
+  if A >= B then
+    Result := A - B
+  else
+    Result := A + (not B) + 1;
 end;
 
 function Add32(A, B: Cardinal): Cardinal;
@@ -84,6 +154,30 @@ begin
   Result := Value and Mask;
   if (Result and (UInt64(1) shl (Bits - 1))) <> 0 then
     Result := Result or not Mask;
+end;
+
+function SX8(Value: UInt64): UInt64;
+begin
+  if (Value and $80) <> 0 then
+    Result := Value or not UInt64($FF)
+  else
+    Result := Value and $FF;
+end;
+
+function SX16(Value: UInt64): UInt64;
+begin
+  if (Value and $8000) <> 0 then
+    Result := Value or not UInt64($FFFF)
+  else
+    Result := Value and $FFFF;
+end;
+
+function SX32(Value: UInt64): UInt64;
+begin
+  if (Value and $80000000) <> 0 then
+    Result := Value or not UInt64($FFFFFFFF)
+  else
+    Result := Value and $FFFFFFFF;
 end;
 
 function SignedValue(Value: UInt64): Int64;
@@ -208,16 +302,169 @@ begin
   Result := 0;
 end;
 
-function TN64Bus.GetTraceEnabled: Boolean;
-begin
-  Result := Assigned(FTraceSink);
-end;
-
 procedure TN64Bus.SetTraceSink(const Sink: TN64TraceSink);
 begin
   FTraceSink := Sink;
+  FTraceEnabled := Assigned(FTraceSink);
 end;
 
+function TN64Bus.InterruptLine: Boolean;
+begin
+  if FInterruptLineKnown then
+    Result := FInterruptLine
+  else
+    Result := InterruptPending;
+end;
+
+function TN64Bus.RAMSize: Cardinal;
+begin
+  if FDirectMemory then
+    Result := Length(FRAM)
+  else
+    Result := 0;
+end;
+
+function TN64Bus.ReadRAM8(Address: Cardinal): Byte;
+begin
+  Result := FRAM[Address];
+end;
+
+function TN64Bus.ReadRAM16(Address: Cardinal): Cardinal;
+begin
+  Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
+end;
+
+function TN64Bus.ReadRAM32(Address: Cardinal): Cardinal;
+begin
+  Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
+    (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3];
+end;
+
+procedure TN64Bus.WriteRAM8(Address: Cardinal; Value: Byte);
+begin
+  RDPWrite8(Address, Value);
+end;
+
+procedure TN64Bus.WriteRAM32(Address, Value: Cardinal);
+begin
+  RDPWrite32(Address, Value);
+end;
+
+function TN64Bus.ReadHiddenRAM(Address: Cardinal): Byte;
+begin
+  Result := FHiddenRAM[Address shr 1] and 3;
+end;
+
+procedure TN64Bus.WriteHiddenRAM(Address: Cardinal; Value: Byte);
+begin
+  FHiddenRAM[Address shr 1] := Value and 3;
+end;
+
+function TN64Bus.RDPRead8(Address: Cardinal): Byte;
+begin
+  Result := FRAM[Address];
+end;
+
+function TN64Bus.RDPRead16(Address: Cardinal): Cardinal;
+begin
+  Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
+end;
+
+function TN64Bus.RDPRead32(Address: Cardinal): Cardinal;
+begin
+  Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
+    (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3];
+end;
+
+procedure TN64Bus.RDPWrite8(Address: Cardinal; Value: Byte);
+begin
+  FRAM[Address] := Value;
+  FHiddenRAM[Address shr 1] := Byte(Ord((FRAM[Address or 1] and 1) <> 0) * 3);
+end;
+
+procedure TN64Bus.RDPWrite32(Address, Value: Cardinal);
+begin
+  FRAM[Address] := Byte(Value shr 24);
+  FRAM[Address + 1] := Byte((Value shr 16) and $FF);
+  FRAM[Address + 2] := Byte((Value shr 8) and $FF);
+  FRAM[Address + 3] := Byte(Value and $FF);
+  FHiddenRAM[Address shr 1] := Byte(Ord((FRAM[Address + 1] and 1) <> 0) * 3);
+  FHiddenRAM[(Address + 3) shr 1] := Byte(Ord((Value and 1) <> 0) * 3);
+end;
+
+function TN64Bus.RDPReadHidden(Address: Cardinal): Byte;
+begin
+  Result := FHiddenRAM[Address shr 1] and 3;
+end;
+
+procedure TN64Bus.RDPWriteHidden(Address: Cardinal; Value: Byte);
+begin
+  FHiddenRAM[Address shr 1] := Value and 3;
+end;
+
+procedure TN64Bus.RDPWrite8Hidden(Address: Cardinal; Value, Hidden: Byte);
+begin
+  FRAM[Address] := Value;
+  FHiddenRAM[Address shr 1] := Hidden and 3;
+end;
+
+procedure TN64Bus.RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte);
+begin
+  FRAM[Address] := Byte((Value shr 8) and $FF);
+  FRAM[Address + 1] := Byte(Value and $FF);
+  FHiddenRAM[Address shr 1] := Hidden and 3;
+end;
+
+procedure TN64Bus.RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
+begin
+  FRAM[Address] := Byte(Value shr 24);
+  FRAM[Address + 1] := Byte((Value shr 16) and $FF);
+  FRAM[Address + 2] := Byte((Value shr 8) and $FF);
+  FRAM[Address + 3] := Byte(Value and $FF);
+  FHiddenRAM[Address shr 1] := HiddenHi and 3;
+  FHiddenRAM[(Address shr 1) + 1] := HiddenLo and 3;
+end;
+function TN64Bus.ReadSP8(Offset: Cardinal): Byte;
+begin
+  Result := FSP[Offset];
+end;
+
+procedure TN64Bus.WriteSP8(Offset: Cardinal; Value: Byte);
+begin
+  FSP[Offset] := Value;
+  if Offset >= $1000 then
+    IMemChanged(Offset);
+end;
+
+procedure TN64Bus.IMemChanged(Offset: Cardinal);
+begin
+  var Slot := (Offset - $1000) shr 2;
+  FIMemWords[Slot] := ReadSP32(Offset and not Cardinal(3));
+  Inc(FIMemCounter);
+  FIMemStamps[Slot] := FIMemCounter;
+end;
+
+procedure TN64Bus.SPLoaded;
+begin
+  for var Slot := 0 to High(FIMemWords) do
+    IMemChanged($1000 + Cardinal(Slot) * 4);
+end;
+
+function TN64Bus.IMemWord(Slot: Integer): Cardinal;
+begin
+  Result := FIMemWords[Slot];
+end;
+
+function TN64Bus.IMemStamp(Slot: Integer): UInt64;
+begin
+  Result := FIMemStamps[Slot];
+end;
+
+function TN64Bus.ReadSP32(Offset: Cardinal): Cardinal;
+begin
+  Result := (Cardinal(FSP[Offset]) shl 24) or (Cardinal(FSP[Offset + 1]) shl 16) or
+    (Cardinal(FSP[Offset + 2]) shl 8) or FSP[Offset + 3];
+end;
 procedure TN64Bus.Trace(Kind: TN64TraceKind; PC, Address, Value: UInt64);
 begin
   if not Assigned(FTraceSink) then

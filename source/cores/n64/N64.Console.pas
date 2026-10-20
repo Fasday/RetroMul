@@ -40,7 +40,7 @@ type
 
   TN64Console = class(TN64Bus)
   private
-    FData, FRAM, FSP, FPIF, FSave, FHiddenRAM: TBytes;
+    FData, FPIF, FSave: TBytes;
     FReg: array[0..7, 0..15] of Cardinal;
     FCPU: TN64CPU;
     FRSP: TN64RSP;
@@ -78,6 +78,8 @@ type
     FDebugOutput: string;
     FDebugBuffer: array[0..511] of Byte;
     procedure SetInterrupts(Value: Cardinal);
+    procedure UpdateInterruptLine;
+    procedure AppendDebugOutput(Count: Cardinal);
     procedure SPDMA(Writing: Boolean; Value: Cardinal);
     procedure PIDMA(Writing: Boolean; Value: Cardinal);
     procedure SIDMA(Writing: Boolean);
@@ -92,7 +94,10 @@ type
     function EEPROMSize: Integer;
     function HasFlash: Boolean;
     function VideoClock: Cardinal;
-    procedure AdvanceTime(Cycles: Cardinal);
+    procedure AdvanceTime(Cycles: Cardinal); inline;
+    procedure ProcessEvents(Target: UInt64);
+    class procedure RaiseClockOverflow; static;
+    function RunIdle(Budget: Integer): Integer;
     procedure HandleEvent(Kind: TN64EventKind);
     procedure ScheduleVI;
     procedure ScheduleOutput;
@@ -180,9 +185,6 @@ begin
     FDetectedSaveType := TN64SaveType.SRAM
   else if Pos(ID, '|NCC|NCV|NDA|NAF|NJF|NKJ|NZS|NM6|NCK|NMQ|NPN|NPF|NPO|CP2|NP3|NRH|NSQ|NT9|NW4|NDP|') > 0 then
     FDetectedSaveType := TN64SaveType.FlashRAM;
-  SetLength(FRAM, $800000);
-  SetLength(FHiddenRAM, $400000);
-  SetLength(FSP, $2000);
   SetLength(FPIF, 64);
   // EEPROM 16K, SRAM 32K, and four controller paks. Backends are indexed.
   SetLength(FSave, 2048 + 32768 + 4 * 32768);
@@ -191,6 +193,8 @@ begin
   FormatControllerPaks;
   for var I := 0 to High(FFlashData) do
     FFlashData[I] := $FF;
+  FInterruptLineKnown := True;
+  FDirectMemory := True;
   FCPU := TN64CPU.Create(Self);
   FRSP := TN64RSP.Create(Self);
   FRDP := TN64RDP.Create(Self);
@@ -239,6 +243,7 @@ begin
       FReg[I, J] := 0;
   for var I := $40 to $FFF do
     FSP[I] := FData[I];
+  SPLoaded;
   FReg[0, 4] := 1;
   FReg[5, 2] := $7F;
   FReg[5, 3] := $7F;
@@ -249,6 +254,7 @@ begin
   FReg[6, 1] := $40;
   FReg[6, 3] := $14;
   FReg[6, 4] := $00063634;
+  UpdateInterruptLine;
   FFrame := 0;
   FTick := 0;
   FLine := 0;
@@ -399,9 +405,11 @@ begin
   if (Address >= $13FF0020) and (Address < $13FF0220) then
     Exit(FDebugBuffer[Address - $13FF0020]);
   if Address < $800000 then
-    Exit(FRAM[Address]);
+    Exit(ReadRAM8(Address));
   if (Address >= $04000000) and (Address < $04002000) then
+  begin
     Exit(FSP[Address - $04000000]);
+  end;
   if (Address >= $1FC007C0) and (Address < $1FC00800) then
     Exit(FPIF[Address - $1FC007C0]);
   if (Address >= $10000000) and (UInt64(Address) < UInt64($10000000) + Cardinal(Length(FData))) then
@@ -427,12 +435,11 @@ begin
     Exit
   end;
   if Address < $800000 then
-  begin
-    FRAM[Address] := Value;
-    FHiddenRAM[Address shr 1] := Byte(Ord((FRAM[Address or 1] and 1) <> 0) * 3);
-  end
+    WriteRAM8(Address, Value)
   else if (Address >= $04000000) and (Address < $04002000) then
-    FSP[Address - $04000000] := Value
+  begin
+    WriteSP8(Address - $04000000, Value)
+  end
   else if (Address >= $1FC007C0) and (Address < $1FC00800) then
   begin
     FPIF[Address - $1FC007C0] := Value;
@@ -452,8 +459,7 @@ begin
   // Only bypass the bus decoder when the entire word is in one memory bank.
   // Boundary reads and device registers retain their byte-wise side effects.
   if Address <= $7FFFFC then
-    Exit((Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
-      (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3]);
+    Exit(ReadRAM32(Address));
   if (Address >= $04000000) and (Address <= $04001FFC) then
   begin
     var Offset := Address - $04000000;
@@ -488,7 +494,9 @@ begin
     Exit;
   end;
   if Address = $04080000 then
+  begin
     Exit(FSPPC);
+  end;
   if (Address >= $04100000) and (Address < $04900000) then
   begin
     var Bank := (Address - $04000000) div $100000;
@@ -531,34 +539,21 @@ procedure TN64Console.Write32(Address, Value: Cardinal);
 begin
   if Address <= $7FFFFC then
   begin
-    FRAM[Address] := Byte(Value shr 24);
-    FRAM[Address + 1] := Byte((Value shr 16) and $FF);
-    FRAM[Address + 2] := Byte((Value shr 8) and $FF);
-    FRAM[Address + 3] := Byte(Value and $FF);
-    FHiddenRAM[Address shr 1] := Byte(Ord((FRAM[Address + 1] and 1) <> 0) * 3);
-    FHiddenRAM[(Address + 3) shr 1] := Byte(Ord((Value and 1) <> 0) * 3);
+    WriteRAM32(Address, Value);
     Exit;
   end;
   if (Address >= $04000000) and (Address <= $04001FFC) then
   begin
     var Offset := Address - $04000000;
-    FSP[Offset] := Byte(Value shr 24);
-    FSP[Offset + 1] := Byte((Value shr 16) and $FF);
-    FSP[Offset + 2] := Byte((Value shr 8) and $FF);
-    FSP[Offset + 3] := Byte(Value and $FF);
+    WriteSP8(Offset, Byte(Value shr 24));
+    WriteSP8(Offset + 1, Byte((Value shr 16) and $FF));
+    WriteSP8(Offset + 2, Byte((Value shr 8) and $FF));
+    WriteSP8(Offset + 3, Byte(Value and $FF));
     Exit;
   end;
   if Address = $13FF0014 then
   begin
-    // ISViewer is used by libdragon's emulator diagnostics. Bound both buffers.
-    var Count := Integer(Min(Value, Cardinal(Length(FDebugBuffer))));
-    var Data: TBytes;
-    SetLength(Data, Count);
-    for var I := 0 to Count - 1 do
-      Data[I] := FDebugBuffer[I];
-    FDebugOutput := FDebugOutput + TEncoding.UTF8.GetString(Data);
-    if Length(FDebugOutput) > 65536 then
-      FDebugOutput := Copy(FDebugOutput, Length(FDebugOutput) - 65535, 65536);
+    AppendDebugOutput(Value);
     Exit;
   end;
   if (Address >= $13FF0020) and (Address < $13FF0220) then
@@ -692,12 +687,15 @@ begin
                 SetInterrupts(FReg[2, 2] and not $20);
             end;
           3:
-            for var J := 0 to 5 do
             begin
-              if (Value and (Cardinal(1) shl (J * 2))) <> 0 then
-                FReg[2, 3] := FReg[2, 3] and not (Cardinal(1) shl J);
-              if (Value and (Cardinal(2) shl (J * 2))) <> 0 then
-                FReg[2, 3] := FReg[2, 3] or (Cardinal(1) shl J);
+              for var J := 0 to 5 do
+              begin
+                if (Value and (Cardinal(1) shl (J * 2))) <> 0 then
+                  FReg[2, 3] := FReg[2, 3] and not (Cardinal(1) shl J);
+                if (Value and (Cardinal(2) shl (J * 2))) <> 0 then
+                  FReg[2, 3] := FReg[2, 3] or (Cardinal(1) shl J);
+              end;
+              UpdateInterruptLine;
             end;
         end;
       3:
@@ -800,11 +798,32 @@ begin
   end;
 end;
 
+procedure TN64Console.AppendDebugOutput(Count: Cardinal);
+begin
+  // ISViewer is used by libdragon's emulator diagnostics. Bound both buffers.
+  // Kept out of Write32: its string/array temporaries would give that hot
+  // routine an implicit try/finally and keep its variables in memory.
+  var Length8 := Integer(Min(Count, Cardinal(Length(FDebugBuffer))));
+  var Data: TBytes;
+  SetLength(Data, Length8);
+  for var I := 0 to Length8 - 1 do
+    Data[I] := FDebugBuffer[I];
+  FDebugOutput := FDebugOutput + TEncoding.UTF8.GetString(Data);
+  if Length(FDebugOutput) > 65536 then
+    FDebugOutput := Copy(FDebugOutput, Length(FDebugOutput) - 65535, 65536);
+end;
+
+procedure TN64Console.UpdateInterruptLine;
+begin
+  FInterruptLine := (FReg[2, 2] and FReg[2, 3]) <> 0;
+end;
+
 procedure TN64Console.SetInterrupts(Value: Cardinal);
 begin
   if FReg[2, 2] = Value then
     Exit;
   FReg[2, 2] := Value;
+  UpdateInterruptLine;
   if TraceEnabled then
     Trace(TN64TraceKind.InterruptChange, FCPU.PC, $04300008, Value);
 end;
@@ -1280,7 +1299,7 @@ end;
 function TN64Console.ReadHidden(Address: Cardinal): Byte;
 begin
   if Address < Cardinal(Length(FRAM)) then
-    Result := FHiddenRAM[Address shr 1] and 3
+    Result := ReadHiddenRAM(Address)
   else
     Result := 0;
 end;
@@ -1288,7 +1307,7 @@ end;
 procedure TN64Console.WriteHidden(Address: Cardinal; Value: Byte);
 begin
   if Address < Cardinal(Length(FRAM)) then
-    FHiddenRAM[Address shr 1] := Value and 3;
+    WriteHiddenRAM(Address, Value);
 end;
 
 function TN64Console.GuestTick: UInt64;
@@ -1417,7 +1436,7 @@ begin
     if FSPTransfer.Writing then
       Write8(RAM, FSP[local])
     else
-      FSP[local] := Read8(RAM);
+      WriteSP8(local, Read8(RAM));
   end;
   Inc(FSPTransfer.Position, 8);
   if FSPTransfer.Position = FSPTransfer.Size then
@@ -1717,9 +1736,23 @@ end;
 
 procedure TN64Console.AdvanceTime(Cycles: Cardinal);
 begin
-  if UInt64(Cycles) > High(UInt64) - FTimeline.Now then
-    raise ERangeError.Create('N64 guest clock overflow');
-  var Target := FTimeline.Now + Cycles;
+  var Now := FTimeline.Now;
+  if UInt64(Cycles) > High(UInt64) - Now then
+    RaiseClockOverflow;
+  var Target := Now + Cycles;
+  if FTimeline.NextDue > Target then
+    FTimeline.AdvanceTo(Target)
+  else
+    ProcessEvents(Target);
+end;
+
+class procedure TN64Console.RaiseClockOverflow;
+begin
+  raise ERangeError.Create('N64 guest clock overflow');
+end;
+
+procedure TN64Console.ProcessEvents(Target: UInt64);
+begin
   while (FTimeline.NextDue <> High(UInt64)) and (FTimeline.NextDue <= Target) do
   begin
     FTimeline.AdvanceTo(FTimeline.NextDue);
@@ -1749,14 +1782,18 @@ begin
   var Remaining := Count;
   while Remaining > 0 do
   begin
-    AdvanceTime(0);
+    if FTimeline.NextDue <= FTimeline.Now then
+      AdvanceTime(0);
     var Executed := 0;
-    // The deadline also bounds running RSP and DMA writes to the idle code.
-    // SkipIdle validates the branch/NOP pair again after every device event.
-    var UntilEvent := FTimeline.NextDue - FTimeline.Now;
-    var Limit := Integer(Min(UInt64(Remaining), Min(UntilEvent div FCPU.IdleInstructionClocks, UInt64(High(Integer)))));
-    if Limit > 0 then
-      Executed := FCPU.SkipIdle(Limit);
+    if FCPU.IdleCandidate then
+    begin
+      Executed := RunIdle(Remaining);
+      if Executed > 0 then
+      begin
+        Dec(Remaining, Executed);
+        Continue;
+      end;
+    end;
     if Executed = 0 then
     begin
       FCPU.Step;
@@ -1765,6 +1802,44 @@ begin
     AdvanceTime(FCPU.CyclesConsumed);
     Dec(Remaining, Executed);
   end;
+end;
+
+function TN64Console.RunIdle(Budget: Integer): Integer;
+begin
+  // The CPU spins in an idle loop validated by IdleLimit: one instruction per
+  // PClock, invisible to devices. Run the device events it would interleave
+  // with, in order, and apply the elapsed instructions at the end. Stop where
+  // the next instruction would react (interrupt) or the loop was overwritten.
+  Result := 0;
+  var Limit := FCPU.IdleLimit;
+  if Limit > Budget then
+    Limit := Budget;
+  if Limit < 1 then
+    Exit;
+  var Start := FTimeline.Now;
+  var Pending := FInterruptLine;
+  var Elapsed: UInt64 := 0;
+  while Elapsed < UInt64(Limit) do
+  begin
+    var Due := FTimeline.NextDue;
+    Pending := FInterruptLine;
+    if Due - Start > UInt64(Limit) then
+    begin
+      Elapsed := UInt64(Limit);
+      FTimeline.AdvanceTo(Start + Elapsed);
+      Break;
+    end;
+    FTimeline.AdvanceTo(Due);
+    var Event: TN64Event;
+    while FTimeline.Pop(Event) do
+      HandleEvent(Event.Kind);
+    Elapsed := Due - Start;
+    if FCPU.IdleWouldInterrupt(FInterruptLine) or not FCPU.IdleCodeIntact then
+      Break;
+  end;
+  if Elapsed > 0 then
+    FCPU.ApplyIdle(Integer(Elapsed), Pending);
+  Result := Integer(Elapsed);
 end;
 
 procedure TN64Console.RunCycles(Cycles: Cardinal);
@@ -1890,9 +1965,13 @@ begin
     State.Field(FCurrentFrame.Pixels[0], PixelCount * SizeOf(Cardinal));
   State.Field(FRAM[0], Length(FRAM));
   State.Field(FSP[0], Length(FSP));
+  if State.Loading then
+    SPLoaded;
   State.Field(FPIF[0], Length(FPIF));
   State.Field(FSave[0], Length(FSave));
   State.Field(FReg, SizeOf(FReg));
+  if State.Loading then
+    UpdateInterruptLine;
   State.Field(FFrame, SizeOf(FFrame));
   State.Field(FTick, SizeOf(FTick));
   State.Field(FLine, SizeOf(FLine));
