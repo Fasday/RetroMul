@@ -159,6 +159,9 @@ type
     // the IMEM words and their stamps up to date.
     function ReadSP8(Offset: Cardinal): Byte; inline;
     procedure WriteSP8(Offset: Cardinal; Value: Byte); inline;
+    // DMEM (offsets 0..$FFF; IMEM follows): direct access for the RSP's
+    // vector loads and stores, which never reach IMEM.
+    function DMemBytes: PByte; inline;
     function ReadSP32(Offset: Cardinal): Cardinal; inline;
     procedure IMemChanged(Offset: Cardinal);
     // Count bytes from SP memory at Offset to Dest[Index..], and back.
@@ -608,6 +611,11 @@ end;
 function TN64Bus.ReadSP8(Offset: Cardinal): Byte;
 begin
   Result := FSP[Offset];
+end;
+
+function TN64Bus.DMemBytes: PByte;
+begin
+  Result := @FSP[0];
 end;
 
 procedure TN64Bus.WriteSP8(Offset: Cardinal; Value: Byte);

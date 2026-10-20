@@ -12,6 +12,7 @@ uses
 type
   // One vector register's eight lanes.
   TRSPLanes = array[0..7] of Word;
+  PRSPLanes = ^TRSPLanes;
 
   TRSPTimingInfo = record
     Flags, RRead, RWrite, VRead, VWrite, VCRead, VCWrite, VFake: Cardinal;
@@ -181,6 +182,7 @@ type
     function RunClocks(var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean): Integer;
     class function External(Op: Cardinal): Boolean; static;
     procedure AgePipeline; inline;
+    procedure AgePipelineBy(Clocks: Integer); inline;
     function DMemRead(Offset: Cardinal): Byte; inline;
     procedure DMemWrite(Offset: Cardinal; Value: Byte); inline;
     function IMemRead32(PC: Cardinal): Cardinal; inline;
@@ -202,6 +204,7 @@ type
     procedure SetAcc(I: Integer; Value: Int64); inline;
     procedure SetAccLo(I: Integer; Value: Word); inline;
     procedure SelectVT(T, E: Integer; out VT: TRSPLanes); inline;
+    function VTLanes(Op: Cardinal; var Copy: TRSPLanes): PRSPLanes; inline;
     procedure VectorOp(Op: Cardinal);
     procedure VectorMulFrac(Op: Cardinal);
     procedure VectorRound(Op: Cardinal);
@@ -219,6 +222,7 @@ type
     procedure VectorReserved(Op: Cardinal);
     procedure VectorDivide(Op: Cardinal);
     procedure VectorMemory(Op: Cardinal; Writing: Boolean);
+    procedure VectorMemoryDirect(Op: Cardinal; Writing: Boolean);
     function GetByte(R, Index: Integer): Byte;
     procedure SetByte(R, Index: Integer; Value: Byte);
   public
@@ -514,11 +518,19 @@ begin
   Result := Word(FAcc[I] and $FFFF);
 end;
 
+function Wrap48(Value: Int64): Int64; inline;
+begin
+  // The low 48 bits (the guest's accumulator wraps there), sign-extended; a
+  // sum of a lane and a product rarely leaves them.
+  Result := Value;
+  if UInt64(Value + $800000000000) > $FFFFFFFFFFFF then
+    Result := ((Value and $FFFFFFFFFFFF) xor $800000000000) - $800000000000;
+end;
+
 procedure TN64RSP.SetAcc(I: Integer; Value: Int64);
 begin
-  // Keeps the low 48 bits (the guest's accumulator wraps there), sign-
-  // extended: a sum of a lane and a product needs no other wrapping.
-  FAcc[I] := ((Value and $FFFFFFFFFFFF) xor $800000000000) - $800000000000;
+  // A sum of a lane and a product needs no other wrapping.
+  FAcc[I] := Wrap48(Value);
 end;
 
 procedure TN64RSP.SetAccLo(I: Integer; Value: Word);
@@ -530,24 +542,24 @@ end;
 function AccClampMid(Acc: Int64): Word; inline;
 begin
   // The accumulator's bits 16..47 as a signed value, clamped to 16 bits.
-  if Acc >= $80000000 then
-    Result := $7FFF
-  else if Acc < -Int64($80000000) then
+  if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    Result := Word((Acc shr 16) and $FFFF)
+  else if Acc < 0 then
     Result := $8000
   else
-    Result := Word((Acc shr 16) and $FFFF);
+    Result := $7FFF;
 end;
 
 function AccClampLow(Acc: Int64): Word; inline;
 begin
   // VMADL/VMADN: the low slice when the accumulator fits 32 signed bits,
   // else 0 below and $FFFF above.
-  if Acc >= $80000000 then
-    Result := $FFFF
-  else if Acc < -Int64($80000000) then
+  if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    Result := Word(Acc and $FFFF)
+  else if Acc < 0 then
     Result := 0
   else
-    Result := Word(Acc and $FFFF);
+    Result := $FFFF;
 end;
 
 procedure TN64RSP.SelectVT(T, E: Integer; out VT: TRSPLanes);
@@ -558,6 +570,21 @@ begin
   else
     for var I := 0 to 7 do
       VT[I] := FVec[T, VectorSelect[E, I]];
+end;
+
+function TN64RSP.VTLanes(Op: Cardinal; var Copy: TRSPLanes): PRSPLanes;
+begin
+  // Op's VT with its element applied: the register itself when that selects
+  // lane I for lane I (an instruction reads lane I of its sources before it
+  // writes lane I of VD, so VD may be VT), else Copy.
+  var E := Integer((Op shr 21) and 15);
+  if E < 2 then
+    Result := @FVec[(Op shr 16) and 31]
+  else
+  begin
+    SelectVT((Op shr 16) and 31, E, Copy);
+    Result := @Copy;
+  end;
 end;
 
 procedure TN64RSP.VectorOp(Op: Cardinal);
@@ -603,35 +630,36 @@ end;
 procedure TN64RSP.VectorMulFrac(Op: Cardinal);
 begin
   // VMULF, VMULU (product * 2 + rounding), VMACF, VMACU (accumulate).
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
-  var S := (Op shr 11) and 31;
-  var D := (Op shr 6) and 31;
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
   var Fn := Op and 63;
   for var I := 0 to 7 do
   begin
-    var V := Int64(S16(FVec[S, I])) * S16(VT[I]) * 2;
+    var V := Int64(S16(VS[I]) * S16(VT[I])) * 2;
+    var Acc: Int64;
     if Fn < 8 then
-      SetAcc(I, V + $8000)
+      Acc := V + $8000
     else
-      SetAcc(I, FAcc[I] + V);
-    var Acc := FAcc[I];
+      Acc := Wrap48(FAcc[I] + V);
+    FAcc[I] := Acc;
     if (Fn and 1) = 0 then
-      FVec[D, I] := AccClampMid(Acc)
+      VD[I] := AccClampMid(Acc)
     else if Acc < 0 then
-      FVec[D, I] := 0
+      VD[I] := 0
     else if Acc >= $80000000 then
-      FVec[D, I] := $FFFF
+      VD[I] := $FFFF
     else
-      FVec[D, I] := Word((Acc shr 16) and $FFFF);
+      VD[I] := Word((Acc shr 16) and $FFFF);
   end;
 end;
 
 procedure TN64RSP.VectorRound(Op: Cardinal);
 begin
   // VRNDP (if ACC >= 0), VRNDN (if ACC < 0): ACC += VT, shifted when VS is odd.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var Negative := (Op and 63) = 10;
@@ -649,8 +677,8 @@ end;
 procedure TN64RSP.VectorMulQ(Op: Cardinal);
 begin
   // VMULQ (product, biased when negative) and VMACQ (ACC_HI/MD rounded by 32).
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var Accumulate := (Op and 63) = 11;
@@ -684,63 +712,69 @@ end;
 procedure TN64RSP.VectorMul(Op: Cardinal);
 begin
   // VMUDL/VMUDM/VMUDN/VMUDH set ACC to the product, VMADL/VMADM/VMADN/VMADH
-  // add it. One loop per instruction.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
-  var S := (Op shr 11) and 31;
-  var D := (Op shr 6) and 31;
+  // add it. One loop per instruction; the products fit 32 bits.
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
   case Op and 63 of
     4:
       for var I := 0 to 7 do
       begin
-        var V := Word(((Cardinal(FVec[S, I]) * VT[I]) shr 16) and $FFFF);
+        var V := Word(((Cardinal(VS[I]) * VT[I]) shr 16) and $FFFF);
         FAcc[I] := V;
-        FVec[D, I] := V;
+        VD[I] := V;
       end;
     5:
       // The products fit the accumulator as they are.
       for var I := 0 to 7 do
       begin
-        FAcc[I] := Int64(S16(FVec[S, I])) * VT[I];
-        FVec[D, I] := AccClampMid(FAcc[I]);
+        var Acc := Int64(S16(VS[I]) * Integer(VT[I]));
+        FAcc[I] := Acc;
+        VD[I] := AccClampMid(Acc);
       end;
     6:
       for var I := 0 to 7 do
       begin
-        FAcc[I] := Int64(FVec[S, I]) * S16(VT[I]);
-        FVec[D, I] := Word(FAcc[I] and $FFFF);
+        var Acc := Int64(Integer(VS[I]) * S16(VT[I]));
+        FAcc[I] := Acc;
+        VD[I] := Word(Acc and $FFFF);
       end;
     7:
       for var I := 0 to 7 do
       begin
-        var P := S16(FVec[S, I]) * S16(VT[I]);
+        var P := S16(VS[I]) * S16(VT[I]);
         FAcc[I] := Int64(P) * 65536;
-        FVec[D, I] := ClampSigned(P);
+        VD[I] := ClampSigned(P);
       end;
     12:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, FAcc[I] + ((Cardinal(FVec[S, I]) * VT[I]) shr 16));
-        FVec[D, I] := AccClampLow(FAcc[I]);
+        var Acc := Wrap48(FAcc[I] + ((Cardinal(VS[I]) * VT[I]) shr 16));
+        FAcc[I] := Acc;
+        VD[I] := AccClampLow(Acc);
       end;
     13:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, FAcc[I] + Int64(S16(FVec[S, I])) * VT[I]);
-        FVec[D, I] := AccClampMid(FAcc[I]);
+        var Acc := Wrap48(FAcc[I] + S16(VS[I]) * Integer(VT[I]));
+        FAcc[I] := Acc;
+        VD[I] := AccClampMid(Acc);
       end;
     14:
       for var I := 0 to 7 do
       begin
-        SetAcc(I, FAcc[I] + Int64(FVec[S, I]) * S16(VT[I]));
-        FVec[D, I] := AccClampLow(FAcc[I]);
+        var Acc := Wrap48(FAcc[I] + Integer(VS[I]) * S16(VT[I]));
+        FAcc[I] := Acc;
+        VD[I] := AccClampLow(Acc);
       end;
   else
     // VMADH changes bits 16..47 only (a 32-bit sum, wrapped).
     for var I := 0 to 7 do
     begin
-      SetAcc(I, FAcc[I] + Int64(S16(FVec[S, I]) * S16(VT[I])) * 65536);
-      FVec[D, I] := AccClampMid(FAcc[I]);
+      var Acc := Wrap48(FAcc[I] + Int64(S16(VS[I]) * S16(VT[I])) * 65536);
+      FAcc[I] := Acc;
+      VD[I] := AccClampMid(Acc);
     end;
   end;
 end;
@@ -748,20 +782,20 @@ end;
 procedure TN64RSP.VectorAddSub(Op: Cardinal);
 begin
   // VADD, VSUB with the VCO carry; clears VCO.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
-  var S := (Op shr 11) and 31;
-  var D := (Op shr 6) and 31;
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
   var Subtract := (Op and 63) = 17;
   for var I := 0 to 7 do
   begin
     var V: Integer;
     if Subtract then
-      V := S16(FVec[S, I]) - S16(VT[I]) - Integer((FVCO shr I) and 1)
+      V := S16(VS[I]) - S16(VT[I]) - Integer((FVCO shr I) and 1)
     else
-      V := S16(FVec[S, I]) + S16(VT[I]) + Integer((FVCO shr I) and 1);
+      V := S16(VS[I]) + S16(VT[I]) + Integer((FVCO shr I) and 1);
     SetAccLo(I, Word(V and $FFFF));
-    FVec[D, I] := ClampSigned(V);
+    VD[I] := ClampSigned(V);
   end;
   FVCO := 0;
 end;
@@ -769,8 +803,8 @@ end;
 procedure TN64RSP.VectorAbs(Op: Cardinal);
 begin
   // VABS: VT negated, kept or zeroed by the sign of VS.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   for var I := 0 to 7 do
@@ -789,8 +823,8 @@ end;
 procedure TN64RSP.VectorCarry(Op: Cardinal);
 begin
   // VADDC (carry out), VSUBC (borrow and not-equal) into VCO.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var Carry: Cardinal := 0;
@@ -837,8 +871,8 @@ end;
 procedure TN64RSP.VectorCompare(Op: Cardinal);
 begin
   // VLT, VEQ, VNE, VGE: VCC low byte from the test, VCO cleared.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var Fn := Op and 63;
@@ -878,8 +912,8 @@ end;
 procedure TN64RSP.VectorClipLow(Op: Cardinal);
 begin
   // VCL: the clip compare continuing a VCH/VCR, from VCO, VCC and VCE.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var Compare := Cardinal(FVCC);
@@ -923,8 +957,8 @@ end;
 procedure TN64RSP.VectorClipHigh(Op: Cardinal);
 begin
   // VCH (sets VCO and VCE for a following VCL) and VCR.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var High := (Op and 63) = 37;
@@ -990,8 +1024,8 @@ end;
 procedure TN64RSP.VectorMerge(Op: Cardinal);
 begin
   // VMRG: VS where VCC is set, else VT; clears VCO.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   for var I := 0 to 7 do
@@ -1008,8 +1042,8 @@ end;
 procedure TN64RSP.VectorLogic(Op: Cardinal);
 begin
   // VAND, VNAND, VOR, VNOR, VXOR, VNXOR.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   var Fn := Op and 63;
@@ -1038,8 +1072,8 @@ end;
 procedure TN64RSP.VectorReserved(Op: Cardinal);
 begin
   // Reserved encodings still execute: VS + VT to ACC_LO, VD zeroed.
-  var VT: TRSPLanes;
-  SelectVT((Op shr 16) and 31, (Op shr 21) and 15, VT);
+  var Copy: TRSPLanes;
+  var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
   var D := (Op shr 6) and 31;
   for var I := 0 to 7 do
@@ -1127,8 +1161,82 @@ begin
   end;
 end;
 
+procedure TN64RSP.VectorMemoryDirect(Op: Cardinal; Writing: Boolean);
+begin
+  // VectorMemory's LBV, LSV, LLV, LDV, LQV and their stores with direct SP
+  // memory: Size bytes from Address (LQV/SQV: up to the end of its 16-byte
+  // line) to or from element E on, wrapping in DMEM. A load stops at element
+  // 15, a store wraps around the elements.
+  var Kind := Integer((Op shr 11) and 31);
+  var E := Integer((Op shr 7) and 15);
+  var Offset := Integer(Op and 63) - Integer(Op and 64);
+  var Address := ((FReg[(Op shr 21) and 31] and $FFF) + (Cardinal(Offset * (1 shl Kind)) and $FFF)) and $FFF;
+  var Size := 1 shl Kind;
+  if Kind = 4 then
+    Size := 16 - Integer(Address and 15);
+  var SP := FBus.DMemBytes;
+  var Lanes: PRSPLanes := @FVec[(Op shr 16) and 31];
+  var I := 0;
+  if Writing then
+  begin
+    if FAhead then
+    begin
+      // As DMemWrite before its first byte in a line (the 16 bytes at most
+      // lie in the line of the first and of the last).
+      var Last := (Address + Cardinal(Size) - 1) and $FFF;
+      if FLineRun[Address shr 6] <> FRun then
+        SaveLine(Address);
+      if FLineRun[Last shr 6] <> FRun then
+        SaveLine(Last);
+    end;
+    if not Odd(E) then
+      while I + 1 < Size do
+      begin
+        var W := Lanes[((E + I) and 15) shr 1];
+        SP[(Address + Cardinal(I)) and $FFF] := Byte(W shr 8);
+        SP[(Address + Cardinal(I + 1)) and $FFF] := Byte(W and $FF);
+        Inc(I, 2);
+      end;
+    while I < Size do
+    begin
+      var Index := (E + I) and 15;
+      if Odd(Index) then
+        SP[(Address + Cardinal(I)) and $FFF] := Byte(Lanes[Index shr 1] and $FF)
+      else
+        SP[(Address + Cardinal(I)) and $FFF] := Byte(Lanes[Index shr 1] shr 8);
+      Inc(I);
+    end;
+  end
+  else
+  begin
+    Size := Min(Size, 16 - E);
+    if not Odd(E) then
+      while I + 1 < Size do
+      begin
+        Lanes[(E + I) shr 1] := (Word(SP[(Address + Cardinal(I)) and $FFF]) shl 8) or
+          SP[(Address + Cardinal(I + 1)) and $FFF];
+        Inc(I, 2);
+      end;
+    while I < Size do
+    begin
+      var Index := E + I;
+      var B := SP[(Address + Cardinal(I)) and $FFF];
+      if Odd(Index) then
+        Lanes[Index shr 1] := (Lanes[Index shr 1] and $FF00) or B
+      else
+        Lanes[Index shr 1] := (Lanes[Index shr 1] and $FF) or (Word(B) shl 8);
+      Inc(I);
+    end;
+  end;
+end;
+
 procedure TN64RSP.VectorMemory(Op: Cardinal; Writing: Boolean);
 begin
+  if (((Op shr 11) and 31) <= 4) and FBus.DirectMemory then
+  begin
+    VectorMemoryDirect(Op, Writing);
+    Exit;
+  end;
   var Base := (Op shr 21) and 31;
   var V := (Op shr 16) and 31;
   var Kind := (Op shr 11) and 31;
@@ -1336,6 +1444,31 @@ begin
   FVectorLo := FVectorHi and not Lo;
   FVectorHi := FVectorHi and Lo;
   FLoadHistory := (FLoadHistory shl 1) and 3;
+end;
+
+procedure TN64RSP.AgePipelineBy(Clocks: Integer);
+begin
+  // AgePipeline Clocks (1 or more) times: every counter down by Clocks, to 0
+  // at least.
+  if Clocks = 1 then
+    AgePipeline
+  else if Clocks = 2 then
+  begin
+    // Only a 3 leaves anything (a 1).
+    FScalarLo := FScalarHi and FScalarLo;
+    FScalarHi := 0;
+    FVectorLo := FVectorHi and FVectorLo;
+    FVectorHi := 0;
+    FLoadHistory := 0;
+  end
+  else
+  begin
+    FScalarLo := 0;
+    FScalarHi := 0;
+    FVectorLo := 0;
+    FVectorHi := 0;
+    FLoadHistory := 0;
+  end;
 end;
 
 function TN64RSP.InfoEXECUTE(Op: Cardinal): TRSPTimingInfo;
@@ -3389,7 +3522,9 @@ begin
       Dec(FBranchBubble);
       AgePipeline;
       Inc(Result);
-      Continue
+      // Nothing else happens in a bubble (Status stays): the next clock now.
+      if Result >= Cycles then
+        Break;
     end;
     // A stalled opcode only counts at its own PC. Both outcomes below set
     // FHasStalledOpcode/FHasStalledSecondOpcode, so a stale one is dropped.
@@ -3464,18 +3599,65 @@ begin
     var VectorWrites := Masks.VectorWrites;
     var Loading := (Flags and 1) <> 0;
     var Storing := (Flags and 2) <> 0;
-    var Hazard := (Storing and ((FLoadHistory and 2) <> 0)) or
-      ((Masks.Sources and (FScalarLo or FScalarHi)) <> 0) or ((Masks.Vectors and (FVectorLo or FVectorHi)) <> 0);
+    if (Storing and ((FLoadHistory and 2) <> 0)) or
+      ((Masks.Sources and (FScalarLo or FScalarHi)) <> 0) or ((Masks.Vectors and (FVectorLo or FVectorHi)) <> 0) then
+    begin
+      // The words wait until every register they read is ready (and a store
+      // until the load before it is done), all those clocks at once: they
+      // only age the pipeline, and are free ahead.
+      if Ahead and not FCheckpointed then
+        SaveCheckpoint(PC);
+      FStalledOpcode := Op;
+      FStalledPC := PC;
+      FHasStalledOpcode := True;
+      FStalledSecondOpcode := Second;
+      FHasStalledSecondOpcode := Pair;
+      var Sources := Masks.Sources;
+      var Vectors := Masks.Vectors;
+      // The longest wait: a counter is Lo + 2 * Hi.
+      var Wait := 0;
+      if (Sources and FScalarHi) <> 0 then
+        Wait := 2 + Ord((Sources and FScalarHi and FScalarLo) <> 0)
+      else if (Sources and FScalarLo) <> 0 then
+        Wait := 1;
+      if (Vectors and FVectorHi) <> 0 then
+        Wait := Max(Wait, 2 + Ord((Vectors and FVectorHi and FVectorLo) <> 0))
+      else if ((Vectors and FVectorLo) <> 0) and (Wait = 0) then
+        Wait := 1;
+      // A store also waits while a load two clocks back is in the history:
+      // now (bit 1), or one clock on (bit 0), when its registers no longer
+      // keep it waiting by then.
+      if Wait = 0 then
+        Wait := 1;
+      if (Wait = 1) and Storing and ((FLoadHistory and 1) <> 0) then
+        Wait := 2;
+      if Wait >= Cycles - Result then
+      begin
+        // The stall goes on past this call, or ends with it: the next one
+        // starts with the held words, so keep their masks.
+        Wait := Cycles - Result;
+        FStallMasks := Masks^;
+        FStallOp := Op;
+        FStallSecond := Second;
+        FStallPair := Pair;
+        FStallKnown := True;
+        AgePipelineBy(Wait);
+        Inc(Result, Wait);
+        Break;
+      end;
+      AgePipelineBy(Wait);
+      Inc(Result, Wait);
+    end;
     if Ahead then
     begin
       // A replay re-runs clocks that already ran, with the fences set later.
-      if FFenced and not FReplaying and not Hazard and (TouchesFence(Op) or (Pair and TouchesFence(Second))) and
+      if FFenced and not FReplaying and (TouchesFence(Op) or (Pair and TouchesFence(Second))) and
         not LiftFence(PC, Op, Second, Pair, FClockBase + Result + 1) then
       begin
         FAheadStop := TRSPAheadStop.Fence;
         Break;
       end;
-      if not Hazard and Masks.External and not JournalCOP0(Op, Second, Pair, FClockBase + Result + 1) then
+      if Masks.External and not JournalCOP0(Op, Second, Pair, FClockBase + Result + 1) then
       begin
         var Ext := Op;
         if not External(Op) then
@@ -3491,32 +3673,6 @@ begin
       end;
       if not FCheckpointed then
         SaveCheckpoint(PC);
-    end;
-    if Hazard then
-    begin
-      FStalledOpcode := Op;
-      FStalledPC := PC;
-      FHasStalledOpcode := True;
-      FStalledSecondOpcode := Second;
-      FHasStalledSecondOpcode := Pair;
-      FStallMasks := Masks^;
-      FStallOp := Op;
-      FStallSecond := Second;
-      FStallPair := Pair;
-      FStallKnown := True;
-      AgePipeline;
-      Inc(Result);
-      // The clocks after it hold the same words, for as long as the hazard
-      // lasts: they only age the pipeline (and run ahead need nothing else).
-      var Sources := Masks.Sources;
-      var Vectors := Masks.Vectors;
-      while (Result < Cycles) and ((Storing and ((FLoadHistory and 2) <> 0)) or
-        ((Sources and (FScalarLo or FScalarHi)) <> 0) or ((Vectors and (FVectorLo or FVectorHi)) <> 0)) do
-      begin
-        AgePipeline;
-        Inc(Result);
-      end;
-      Continue;
     end;
     FHasStalledOpcode := False;
     FHasStalledSecondOpcode := False;
