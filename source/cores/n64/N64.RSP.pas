@@ -105,13 +105,17 @@ type
     Pair: Boolean;
     // How each word issues (TN64RSP.StepKind).
     Kind, SecondKind: Byte;
+    // The clock's one external instruction is an MFC0 or MTC0 (journalled
+    // ahead as RunClocks does).
+    External: Boolean;
   end;
   PRSPBlockStep = ^TRSPBlockStep;
 
   // The clocks RunClocks takes from an IMEM slot and pipeline state (no
   // branch, stall or bubble pending, not single-stepping), worked out once:
   // up to the delay slot of the first branch, or before the first clock
-  // with an external instruction. Which words issue, paired or not, and the
+  // with an external instruction other than one MFC0 or MTC0. Which words
+  // issue, paired or not, and the
   // stalls depend on nothing else. Its Words IMEM words from the slot on
   // (all those the clocks looked at) are compared again once IMEM changed
   // after Checked.
@@ -232,6 +236,9 @@ type
     function RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
       var Ran: Integer): Integer;
     function TouchesFence(Op: Cardinal): Boolean;
+    procedure HoldStep(Done, S: PRSPBlockStep);
+    procedure StopAtExternal(Op, Second: Cardinal);
+    class function JournalStep(Op, Second: Cardinal; Pair: Boolean): Boolean; static;
     procedure SaveCheckpoint(PC: Cardinal);
     procedure SaveLine(Offset: Cardinal);
     function JournalCOP0(Op, Second: Cardinal; Pair: Boolean; Clock: Integer): Boolean;
@@ -3925,16 +3932,7 @@ begin
       end;
       if Masks.External and not JournalCOP0(Op, Second, Pair, FClockBase + Result + 1) then
       begin
-        var Ext := Op;
-        if not External(Op) then
-          Ext := Second;
-        FAheadStopIndex := Integer((Ext shr 11) and 15);
-        if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 4) then
-          FAheadStop := TRSPAheadStop.WriteCOP0
-        else if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 0) then
-          FAheadStop := TRSPAheadStop.ReadCOP0
-        else
-          FAheadStop := TRSPAheadStop.BreakOrRaise;
+        StopAtExternal(Op, Second);
         Break;
       end;
       if not FCheckpointed then
@@ -4079,8 +4077,9 @@ begin
       if Pair then
         Masks := @FDec[Slot].Paired;
     end;
-    // An external instruction is RunClocks' own business (journal, stops).
-    if Masks.External then
+    // Of the external instructions only a clock's one MFC0 or MTC0 (its
+    // journal entry made as it runs); the others are RunClocks' business.
+    if Masks.External and not JournalStep(Op, Second, Pair) then
       Break;
     var Flags := Masks.Flags;
     var Storing := (Flags and 2) <> 0;
@@ -4139,6 +4138,7 @@ begin
     S.Wait := Wait;
     S.Kind := StepKind(Op);
     S.SecondKind := StepKind(Second);
+    S.External := Masks.External;
     // The issue clock.
     var Lo := SLo;
     SLo := SHi and not Lo;
@@ -4438,24 +4438,7 @@ begin
       end;
       if Ahead and FFenced and not FReplaying and (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
       begin
-        // The pipeline after the stall, the words held.
-        if Done <> nil then
-        begin
-          FScalarLo := Done.ScalarLo;
-          FScalarHi := Done.ScalarHi;
-          FVectorLo := Done.VectorLo;
-          FVectorHi := Done.VectorHi;
-          FLoadHistory := Done.LoadHistory;
-          FSingleIssue := Done.SingleIssue;
-          FHasStalledOpcode := False;
-          FHasStalledSecondOpcode := False;
-        end;
-        if S.Wait > 0 then
-        begin
-          AgePipelineBy(S.Wait);
-          FHasStalledOpcode := True;
-          FHasStalledSecondOpcode := S.Pair;
-        end;
+        HoldStep(Done, S);
         if not LiftFence(PC, S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
         begin
           FAheadStop := TRSPAheadStop.Fence;
@@ -4463,13 +4446,31 @@ begin
           Exit(2);
         end;
       end;
+      if S.External and Ahead and not JournalCOP0(S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
+      begin
+        // The window ends before the clock, as RunClocks ends it. (No lift
+        // came first: an MFC0 or MTC0 shares its clock with no load or
+        // store, both being scalar-unit instructions.)
+        HoldStep(Done, S);
+        StopAtExternal(S.Op, S.Second);
+        Inc(FBlockClocks, Ran - Before);
+        Exit(2);
+      end;
       if S = Last then
         DelaySlot := FBranch;
       IssueKind(S.Kind, S.Op, PC, Status, Interrupt);
-      if S.Pair then
+      // (An MTC0 run here, not ahead, may halt the RSP: then not the word
+      // paired with it, nor any clock after it.)
+      if S.Pair and (not S.External or ((Status and 1) = 0)) then
         IssueKind(S.SecondKind, S.Second, PC, Status, Interrupt);
       Inc(Ran);
       Done := S;
+      if S.External and ((Status and $21) <> 0) then
+      begin
+        if (Status and $20) <> 0 then
+          Status := Status or 1;
+        Break;
+      end;
       if (S = Last) or (Ran >= Cycles) then
         Break;
       Inc(S);
@@ -4494,7 +4495,7 @@ begin
     Inc(FBlockClocks, Ran - Before);
     if Assigned(FOnBlock) then
       FOnBlock(Ran);
-    if (Result <> 0) or (Done <> Last) or (Ran >= Cycles) then
+    if (Result <> 0) or (Done <> Last) or (Ran >= Cycles) or ((Status and 1) <> 0) then
       Exit;
     // The block ran to its end: its bubble, as RunClocks takes it (the
     // checkpoint is taken).
@@ -4535,6 +4536,60 @@ begin
       Exit(3);
     B := Next;
   end;
+end;
+
+procedure TN64RSP.HoldStep(Done, S: PRSPBlockStep);
+begin
+  // Before block clock S (Done: the clock before it, if any) a window
+  // stops: the pipeline after its stall, its words held, as RunClocks
+  // leaves it there.
+  if Done <> nil then
+  begin
+    FScalarLo := Done.ScalarLo;
+    FScalarHi := Done.ScalarHi;
+    FVectorLo := Done.VectorLo;
+    FVectorHi := Done.VectorHi;
+    FLoadHistory := Done.LoadHistory;
+    FSingleIssue := Done.SingleIssue;
+    FHasStalledOpcode := False;
+    FHasStalledSecondOpcode := False;
+  end;
+  if S.Wait > 0 then
+  begin
+    AgePipelineBy(S.Wait);
+    FHasStalledOpcode := True;
+    FHasStalledSecondOpcode := S.Pair;
+  end;
+end;
+
+procedure TN64RSP.StopAtExternal(Op, Second: Cardinal);
+begin
+  // The window ended before the clock of Op (and Second) for its external
+  // instruction: why.
+  var Ext := Op;
+  if not External(Op) then
+    Ext := Second;
+  FAheadStopIndex := Integer((Ext shr 11) and 15);
+  if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 4) then
+    FAheadStop := TRSPAheadStop.WriteCOP0
+  else if ((Ext shr 26) = 16) and (((Ext shr 21) and 31) = 0) then
+    FAheadStop := TRSPAheadStop.ReadCOP0
+  else
+    FAheadStop := TRSPAheadStop.BreakOrRaise;
+end;
+
+class function TN64RSP.JournalStep(Op, Second: Cardinal; Pair: Boolean): Boolean;
+begin
+  // Whether a clock with an external instruction may be a block's: its one
+  // external instruction (as JournalCOP0 finds it) is an MFC0 or MTC0, so
+  // nothing in the block raises. (Two never pair, no vector-unit
+  // instruction being external: a guard.)
+  var Access := Op;
+  if not External(Op) then
+    Access := Second
+  else if Pair and External(Second) then
+    Exit(False);
+  Result := ((Access shr 26) = 16) and (((Access shr 21) and 31) in [0, 4]);
 end;
 
 class function TN64RSP.External(Op: Cardinal): Boolean;
