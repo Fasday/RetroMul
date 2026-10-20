@@ -411,6 +411,15 @@
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2_Win64)'!=''">
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
+        <PF_UWPPublisher>CN=596E8DAA-9BC9-4755-AF54-83573A15368E</PF_UWPPublisher>
+        <PF_UWPPackageName>HemulGM.RetroMul</PF_UWPPackageName>
+        <PF_UWPPackageDisplayName>RetroMul</PF_UWPPackageDisplayName>
+        <PF_UWPPublisherDisplayName>HemulGM</PF_UWPPublisherDisplayName>
+        <PF_UWPDistributionType>Store</PF_UWPDistributionType>
+        <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
+        <VerInfo_Locale>1033</VerInfo_Locale>
+        <Icon_MainIcon>$(ProjectName).Artwork\Windows\AppIcon.ico</Icon_MainIcon>
+        <Icns_MainIcns>$(ProjectName).Artwork\Windows\AppIcon.icns</Icns_MainIcns>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2_WinARM64EC)'!=''">
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
@@ -1931,6 +1940,18 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
+                <DeployFile LocalName="$(ProjectName).Artwork\Windows\Uwp_150.png" Configuration="Release" Class="UWP_DelphiLogo150">
+                    <Platform Name="Win64">
+                        <RemoteName>Logo150x150.png</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="$(ProjectName).Artwork\Windows\Uwp_44.png" Configuration="Release" Class="UWP_DelphiLogo44">
+                    <Platform Name="Win64">
+                        <RemoteName>Logo44x44.png</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
                 <DeployFile LocalName="$(ProjectName).Artwork\macOS\AppIcon.icns" Configuration="Debug" Class="ProjectOSXResource">
                     <Platform Name="OSX64">
                         <RemoteName>RetroMul.icns</RemoteName>
@@ -2350,6 +2371,11 @@
                 <DeployFile LocalName="Win64\Debug\RetroMul.exe" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win64">
                         <RemoteName>RetroMul.exe</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="Win64\Release\AppxManifest.xml" Configuration="Release" Class="ProjectUWPManifest">
+                    <Platform Name="Win64">
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>

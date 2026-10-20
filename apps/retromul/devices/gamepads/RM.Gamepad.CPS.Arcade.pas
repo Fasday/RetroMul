@@ -18,7 +18,7 @@ procedure TGamepadCPSArcade.BuildLayout;
 begin
   AddPad;
   AddMenus('COIN','START');
-  AddButton(TEmulatorButton.Mode,'SERVICE',TVirtualSide.Left,16,74,104,36,True);
+  AddButton(TEmulatorButton.Mode,'SERVICE',TVirtualSide.Left,16,20,104,36,True);
   // Capcom six-button panel: light / medium / heavy punches above kicks.
   AddButton(TEmulatorButton.A,'LP',TVirtualSide.Right,12,148,60,60);
   AddButton(TEmulatorButton.B,'MP',TVirtualSide.Right,88,148,60,60);

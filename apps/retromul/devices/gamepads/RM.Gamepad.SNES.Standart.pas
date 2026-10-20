@@ -24,8 +24,8 @@ begin
   AddButton(TEmulatorButton.B, 'B', TVirtualSide.Right, 88, 248, 60, 60);
   AddButton(TEmulatorButton.X, 'X', TVirtualSide.Right, 88, 136, 60, 60);
   AddButton(TEmulatorButton.A, 'A', TVirtualSide.Right, 160, 200, 60, 60);
-  AddButton(TEmulatorButton.C, 'L', TVirtualSide.Left, 24, 20, 104, 36, True);
-  AddButton(TEmulatorButton.Z, 'R', TVirtualSide.Right, 112, 20, 104, 36, True);
+  AddButton(TEmulatorButton.C, 'L', TVirtualSide.Left, 16, 20, 104, 36, True);
+  AddButton(TEmulatorButton.Z, 'R', TVirtualSide.Right, 120, 20, 104, 36, True);
 end;
 
 end.

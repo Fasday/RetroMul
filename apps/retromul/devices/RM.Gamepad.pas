@@ -15,12 +15,15 @@ type
   private
     FPad: TPlatformGamepad;
     FLayout: TScreenGamepadLayout;
+    FLayoutScale: Single;
     FSystem: TRomSystem;
     FDevice: string;
     FExplicitPlatform: Boolean;
     FButtonMask: TEmulatorButtons;
     FForm: TCommonCustomForm;
     FOnChange: TNotifyEvent;
+    procedure SetLayoutScale(Value: Single);
+    procedure UpdateLayoutScale;
     procedure PadChanged(Sender: TObject);
     procedure ReplacePad(System: TRomSystem; const Device: string);
     procedure SetLayout(Value: TScreenGamepadLayout);
@@ -56,6 +59,7 @@ type
     property System: TRomSystem read FSystem;
     property DeviceId: string read FDevice;
     property PlatformPad: TPlatformGamepad read FPad;
+    property LayoutScale: Single read FLayoutScale write SetLayoutScale;
     property AnalogInput: TEmulatorAnalogPad read GetAnalogInput;
     property Buttons: TEmulatorButtons read GetButtons;
     property CoreButtons: TEmulatorButtons read GetCoreButtons write SetCoreButtons;
@@ -84,7 +88,7 @@ type
 
 implementation
 
-uses System.SysUtils, RM.Gamepad.Factory;
+uses System.SysUtils, System.Math, RM.Gamepad.Factory;
 
 const
   NesButtonMap: array[TNesButton] of TEmulatorButton =
@@ -95,6 +99,7 @@ const
 constructor TScreenGamepad.Create(AOwner: TComponent);
 begin
   inherited;
+  FLayoutScale := 1;
   FButtonMask := [Low(TEmulatorButton)..High(TEmulatorButton)];
   SetBounds(0, 0, 480, 320);
   ConfigureLegacy;
@@ -130,6 +135,29 @@ procedure TScreenGamepad.Resize;
 begin
   inherited;
   ReleaseAll;
+  UpdateLayoutScale;
+end;
+
+procedure TScreenGamepad.SetLayoutScale(Value: Single);
+begin
+  if IsNan(Value) or IsInfinite(Value) then
+    Exit;
+  Value := EnsureRange(Value, 0.5, 2.0);
+  if FLayoutScale = Value then
+    Exit;
+  FLayoutScale := Value;
+  UpdateLayoutScale;
+end;
+
+procedure TScreenGamepad.UpdateLayoutScale;
+begin
+  if FPad = nil then
+    Exit;
+  // Scale relative to the fitted default size, including on small screens.
+  // The child caps the result to the available space for drawing and input.
+  var Fit := Min(1.0, Min(Width / (2 * FPad.DesignSideSize.Width),
+    Height / FPad.DesignSideSize.Height));
+  FPad.LayoutScale := Max(0.001, Fit * FLayoutScale);
 end;
 
 procedure TScreenGamepad.Notification(AComponent: TComponent; Operation: TOperation);
@@ -170,6 +198,7 @@ begin
     FDevice := Device;
     FPad.Parent := Self;
     FPad.Align := TAlignLayout.Client;
+    UpdateLayoutScale;
     FPad.OnChange := PadChanged;
     FPad.AttachToForm(FForm);
   finally

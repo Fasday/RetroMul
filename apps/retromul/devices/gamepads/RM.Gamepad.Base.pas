@@ -246,8 +246,8 @@ end;
 
 procedure TPlatformGamepad.AddAnalogTriggers;
 begin
-  FLeftTrigger := Add(TVirtualTrigger.Create('lt', 'L', TVirtualSide.Left, RectF(172, 16, 228, 116)));
-  FRightTrigger := Add(TVirtualTrigger.Create('rt', 'R', TVirtualSide.Right, RectF(172, 16, 228, 116)));
+  FLeftTrigger := Add(TVirtualTrigger.Create('lt', 'L', TVirtualSide.Left, RectF(172, 8, 228, 108)));
+  FRightTrigger := Add(TVirtualTrigger.Create('rt', 'R', TVirtualSide.Right, RectF(172, 8, 228, 108)));
   Bind(FLeftTrigger, 0, TEmulatorButton.Select);
   Bind(FRightTrigger, 0, TEmulatorButton.Mode);
 end;
@@ -268,9 +268,9 @@ end;
 procedure TPlatformGamepad.AddMenus(const SelectCaption, StartCaption: string);
 begin
   if SelectCaption <> '' then
-    AddButton(TEmulatorButton.Select, SelectCaption, TVirtualSide.Left, 136, 74, 88, 36, True);
+    AddButton(TEmulatorButton.Select, SelectCaption, TVirtualSide.Left, 16, 74, 88, 36, True);
   if StartCaption <> '' then
-    AddButton(TEmulatorButton.Start, StartCaption, TVirtualSide.Right, 16, 74, 88, 36, True);
+    AddButton(TEmulatorButton.Start, StartCaption, TVirtualSide.Right, 136, 74, 88, 36, True);
 end;
 
 procedure TPlatformGamepad.AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF);

@@ -817,7 +817,7 @@ begin
     RecordGameSnapshotDirectory(FState.Session.Storage, FileName, Directory);
     if FState.Browser.View <> nil then
     begin
-      FState.Browser.View.RecordSession(FileName, Directory);
+      FState.Browser.View.RecordSession(FileName, Directory, Platform.Id, DisplayName);
       FState.Browser.View.Visible := False;
       FView.ScreenTabs.ActiveTab := FView.GameScreen;
       FView.LayoutClient.Visible := True;

@@ -1041,6 +1041,7 @@ begin
   (TSettingsSpinBox(FindComponent('SettingsSpinBoxAutosaveMinutes'))).Min := 1;
   (TSettingsSpinBox(FindComponent('SettingsSpinBoxAutosaveMinutes'))).Max := 1440;
   (TSettingsSpinBox(FindComponent('SettingsSpinBoxAutosaveMinutes'))).ValueType := TNumValueType.Integer;
+  ReplaceRuntime('RowGamepadscaleEditor', TSettingsSpinBox);
   ReplaceRuntime('RowBottominsetEditor', TSettingsSpinBox);
   (TSettingsSpinBox(FindComponent('SettingsSpinBoxRowBottominsetEditor'))).Min := 0;
   (TSettingsSpinBox(FindComponent('SettingsSpinBoxRowBottominsetEditor'))).ValueType := TNumValueType.Integer;
@@ -1153,6 +1154,9 @@ begin
       FAutosaveMinutes.Enabled := Periodic.IsChecked;
       Periodic.OnSwitch := AutosaveToggle;
       Heading('GroupOnscreenbuttons');
+      var PadScale := Number('RowGamepadscale', 'General', 'GamepadScale', 100, 200);
+      PadScale.Min := 50;
+      PadScale.Value := Max(50, PadScale.Value);
       Number('RowBottominset', 'General', 'ControlBottomInset', 100, 400);
       Check('RowTouchhaptics', 'General', 'TouchHaptics', True);
     end
@@ -2508,6 +2512,49 @@ end;
 
 procedure TSettingsView.CheckRomFolder(const Location: string);
 begin
+  try
+    if FStorage.FolderExists(Location) and
+      (Length(FStorage.Files(Location)) = 0) and
+      (Length(FStorage.Folders(Location)) = 0) then
+    begin
+      var Alive: TFunc<Boolean> := FAlive;
+      ShowRetroConfirmation(Self,
+        Translate('The selected folder is empty. Create subfolders for all available platforms?'),
+        procedure(Confirmed: Boolean)
+        begin
+          if not Alive() or not Confirmed then
+            Exit;
+
+          try
+            for var Platform in TPlatformRegistry.All do
+            begin
+              {$IFDEF ANDROID}
+              if Location.StartsWith('content://') then
+                TAndroidStorage.EnsureSubfolder(Location, Platform.Folder)
+              else
+              {$ENDIF}
+                FStorage.EnsureFolder(System.IOUtils.TPath.Combine(Location, Platform.Folder));
+            end;
+            LabelStatus.Text := Translate('Platform subfolders created. Click Apply to save changes.');
+          except
+            on E: Exception do
+            begin
+              LabelStatus.Text := Format(Translate('Could not create platform subfolders: %s'), [E.Message]);
+              ShowRetroMessage(Self, LabelStatus.Text);
+            end;
+          end;
+        end);
+      Exit;
+    end;
+  except
+    on E: Exception do
+    begin
+      LabelStatus.Text := E.Message;
+      ShowRetroMessage(Self, E.Message);
+      Exit;
+    end;
+  end;
+
   var SupportedFolders := '';
 
   {$IFDEF ANDROID}

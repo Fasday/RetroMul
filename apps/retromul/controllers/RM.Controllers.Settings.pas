@@ -73,6 +73,8 @@ begin
     end;
     FState.Input.BottomInset := EnsureRange(Ini.ReadInteger('General', 'ControlBottomInset', 100), 0, 400);
     FView.ApplyControlInset;
+    FState.Input.Gamepad.LayoutScale := EnsureRange(
+      Ini.ReadInteger('General', 'GamepadScale', 100), 50, 200) / 100;
     TVirtualGamepadControl.TouchHapticsEnabled := Ini.ReadBool('General', 'TouchHaptics', True);
     FState.Preferences.PauseOnFocusLoss := Ini.ReadBool('General', 'PauseOnFocusLoss', True);
     FState.Preferences.StartFullscreen := Ini.ReadBool('General', 'StartFullscreen', False);

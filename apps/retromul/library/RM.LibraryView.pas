@@ -69,6 +69,8 @@ type
     FContinueCollapse, FContinueExtent: Single;
     FOnPlay, FOnSettings, FOnOpen: TNotifyEvent;
     procedure SaveState;
+    function FindGame(const Location: string): TLibraryGame;
+    procedure LoadRecentGames;
     function Matches(Game: TLibraryGame): Boolean;
     function GetSelected: TLibraryGame;
     function Snapshots(Game: TLibraryGame): TArray<TStorageSnapshot>;
@@ -117,7 +119,8 @@ type
     procedure Reload;
     procedure ApplyPreferences;
     procedure ApplyLanguage(const PreviousLanguage: string);
-    procedure RecordSession(const FileName, SnapshotDirectory: string);
+    procedure RecordSession(const FileName, SnapshotDirectory: string;
+      const SystemId: string = ''; const DisplayName: string = '');
     procedure RefreshSnapshots;
     function CloseDetails: Boolean;
     property Selected: TLibraryGame read GetSelected;
@@ -536,6 +539,7 @@ begin
         Metadata.Free;
       end;
     end;
+    LoadRecentGames;
     FGames.Sort(TComparer<TLibraryGame>.Construct(
       function(const A, B: TLibraryGame): Integer
       begin
@@ -580,18 +584,76 @@ begin
   UpdateContinue;
 end;
 
-procedure TLibraryView.RecordSession(const FileName, SnapshotDirectory: string);
+function TLibraryView.FindGame(const Location: string): TLibraryGame;
 begin
   for var Game in FGames do
-    if SameText(Game.FileInfo.Location, FileName) then
+    if SameText(Game.FileInfo.Location, Location) then
+      Exit(Game);
+  Result := nil;
+end;
+
+procedure TLibraryView.LoadRecentGames;
+begin
+  var Keys := TStringList.Create;
+  try
+    FState.ReadSection('RecentLocations', Keys);
+    for var Key in Keys do
     begin
-      Game.LastPlayed := Now;
-      FState.WriteFloat('Recent', Game.Key, Game.LastPlayed);
-      if SnapshotDirectory <> '' then
-        FState.WriteString('Snapshots', Game.Key, SnapshotDirectory);
-      SaveState;
-      Break;
+      var Location := FState.ReadString('RecentLocations', Key, '');
+      if (Location = '') or (FindGame(Location) <> nil) then
+        Continue;
+      var Platform: TPlatformInfo;
+      if not TPlatformRegistry.Find(FState.ReadString('RecentSystems', Key, ''), Platform) then
+        Continue;
+      // Removable files and document providers may be temporarily unavailable.
+      try
+        if not FStorage.Exists(Location) then
+          Continue;
+      except
+        Continue;
+      end;
+      var Game := TLibraryGame.Create;
+      FGames.Add(Game);
+      Game.FileInfo.Location := Location;
+      Game.FileInfo.Name := FState.ReadString('RecentNames', Key, TPath.GetFileName(Location));
+      Game.SystemId := Platform.Id;
+      Game.Title := TPath.GetFileNameWithoutExtension(Game.FileInfo.Name);
+      Game.LastPlayed := FState.ReadFloat('Recent', Game.Key, 0);
+      Game.Favorite := FState.ReadBool('Favorites', Game.Key, False);
     end;
+  finally
+    Keys.Free;
+  end;
+end;
+
+procedure TLibraryView.RecordSession(const FileName, SnapshotDirectory, SystemId, DisplayName: string);
+begin
+  var Game := FindGame(FileName);
+  if Game = nil then
+  begin
+    var Platform: TPlatformInfo;
+    if not TPlatformRegistry.Find(SystemId, Platform) then
+      Exit;
+    Game := TLibraryGame.Create;
+    FGames.Add(Game);
+    Game.FileInfo.Location := FileName;
+    Game.FileInfo.Name := DisplayName;
+    if Game.FileInfo.Name = '' then
+      Game.FileInfo.Name := TPath.GetFileName(FileName);
+    Game.SystemId := Platform.Id;
+    Game.Title := TPath.GetFileNameWithoutExtension(Game.FileInfo.Name);
+    Game.Favorite := FState.ReadBool('Favorites', Game.Key, False);
+  end;
+  Game.LastPlayed := Now;
+  var Key := Game.Key;
+  FState.WriteFloat('Recent', Key, Game.LastPlayed);
+  FState.WriteString('RecentLocations', Key, Game.FileInfo.Location);
+  FState.WriteString('RecentSystems', Key, Game.SystemId);
+  FState.WriteString('RecentNames', Key, Game.FileInfo.Name);
+  if SnapshotDirectory <> '' then
+    FState.WriteString('Snapshots', Key, SnapshotDirectory);
+  SaveState;
+  BuildCards;
 end;
 
 procedure TLibraryView.SaveState;

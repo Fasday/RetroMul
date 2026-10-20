@@ -33,7 +33,7 @@ type
     FInputPorts: TCoreInputPorts;
     FDmcDmaCycles: Integer;
     FMapperHasCpuClock, FMapperHasIrq, FMapperHasAudio: Boolean;
-    procedure SerializeState(Stream: TStream; Loading: Boolean; Version: Integer = 21);
+    procedure SerializeState(Stream: TStream; Loading: Boolean; Version: Integer = 22);
     function GetRomIdentity: string;
     function GetUsesMiraclePiano: Boolean;
     function GetUsesPowerPad: Boolean;
@@ -83,7 +83,7 @@ uses
   System.Hash, System.IOUtils, NES.Mapper, Core.Snapshots;
 
 const
-  SNAPSHOT_VERSION = 21;
+  SNAPSHOT_VERSION = 22;
   SNAPSHOT_MAGIC: array[0..7] of AnsiChar = ('R', 'E', 'T', 'R', 'O', 'M', 'U', 'L');
 
 type
@@ -148,7 +148,7 @@ begin
     if Version >= 4 then
       FZapper.SerializeState(State)
     else if Loading then
-      FZapper.TriggerPressed := False;
+      FZapper.Reset;
     FBus.SerializeDataBus(State);
     if Version >= 5 then
     begin
@@ -379,7 +379,8 @@ begin
   FConfiguredFourScore := Ports.FourScore;
   FMiraclePiano.Connected := FCartridge.Metadata.DefaultExpansionDevice = $19;
   FController2.PowerPadEnabled := FCartridge.Metadata.DefaultExpansionDevice in [11, 12];
-  FZapper.Enabled := (Ports.Devices[1] = 'auto') and Ports.LegacyZapper;
+  FZapper.Enabled := (Ports.Devices[1] = 'auto') and
+    (Ports.LegacyZapper or (FCartridge.Metadata.DefaultExpansionDevice = 7));
   FFamicomKeyboard.Connected := FCartridge.Metadata.DefaultExpansionDevice = $23;
   FSuborKeyboard.Connected := (FCartridge.MapperId = MAPPER_SUBOR) and not FFamicomKeyboard.Connected;
   FDataRecorder.Connected := FCartridge.Metadata.DefaultExpansionDevice in [$20, $23];
@@ -397,7 +398,7 @@ begin
     else if FDataRecorder.Connected then Resolved.Expansion := 'recorder'
     else Resolved.Expansion := 'none';
   ConfigureInputPorts(Resolved);
-  FZapper.TriggerPressed := False;
+  FZapper.Reset;
   FSuborKeyboard.Clear;
   FSuborKeyboard.Reset;
   FFamicomKeyboard.Clear;
@@ -421,6 +422,9 @@ begin
   FPortsConfigured := False;
   FBus.DisconnectedPads := 0;
   FCartridge.LoadFromStream(Stream, RomName);
+  FZapper.VsMode := (FCartridge.MapperId = MAPPER_VS_SYSTEM) or
+    (FCartridge.Metadata.ConsoleType = 1);
+  FZapper.Enabled := FCartridge.Metadata.DefaultExpansionDevice = 7;
   FMiraclePiano.ClearInput;
   FMiraclePiano.Connected := FCartridge.Metadata.DefaultExpansionDevice = $19;
   FDataRecorder.Reset;
@@ -474,7 +478,7 @@ var
   AudioCallback: TAudioCallback;
 begin
   FDataRecorder.Reset;
-  FZapper.TriggerPressed := False;
+  FZapper.Reset;
   if FCartridge.Valid then
   begin
     FCartridge.Reset;

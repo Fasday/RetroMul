@@ -73,11 +73,19 @@ type
     FEnabled: Boolean;
     FTriggerPressed: Boolean;
     FOnReadLight: TNesZapperLightCallback;
+    FVsMode, FVsStrobe: Boolean;
+    FVsShift: UInt8;
+    procedure LatchVs(const Mask: TNesZapperMask);
   public
     class function ReadMask(const Mask: TNesZapperMask; const PixelX, PixelY: Integer): Boolean;
   public
     procedure SerializeState(State: TNesStateArchive);
     function Read(const Mask: TNesZapperMask): UInt8;
+    procedure Reset;
+    procedure WriteVs(Value: UInt8; const Mask: TNesZapperMask);
+    function ReadVs(const Mask: TNesZapperMask): UInt8;
+    // Selected by the cartridge; the host uses the same trigger and sensor API.
+    property VsMode: Boolean read FVsMode write FVsMode;
     property Enabled: Boolean read FEnabled write FEnabled;
     property TriggerPressed: Boolean read FTriggerPressed write FTriggerPressed;
     property OnReadLight: TNesZapperLightCallback read FOnReadLight write FOnReadLight;
@@ -336,7 +344,51 @@ procedure TZapper.SerializeState(State: TNesStateArchive);
 begin
   State.Field(FEnabled, SizeOf(FEnabled));
   State.Field(FTriggerPressed, SizeOf(FTriggerPressed));
-  // The callback belongs to the host and is never serialized.
+  if State.Version >= 22 then
+  begin
+    State.Field(FVsStrobe, SizeOf(FVsStrobe));
+    State.Field(FVsShift, SizeOf(FVsShift));
+  end
+  else if State.Loading then
+  begin
+    FVsStrobe := False;
+    FVsShift := 0;
+  end;
+  // The callback and cartridge-selected protocol are never serialized.
+end;
+
+procedure TZapper.Reset;
+begin
+  FTriggerPressed := False;
+  FVsStrobe := False;
+  FVsShift := 0;
+end;
+
+procedure TZapper.LatchVs(const Mask: TNesZapperMask);
+begin
+  // NESdev: 0,0,0,0,1,0,light,trigger, transmitted least significant bit first.
+  FVsShift := $10;
+  if Assigned(FOnReadLight) then
+    if FOnReadLight(Mask) then
+      FVsShift := FVsShift or $40;
+  if FTriggerPressed then
+    FVsShift := FVsShift or $80;
+end;
+
+procedure TZapper.WriteVs(Value: UInt8; const Mask: TNesZapperMask);
+begin
+  if FVsStrobe or ((Value and 1) <> 0) then
+    LatchVs(Mask);
+  FVsStrobe := (Value and 1) <> 0;
+end;
+
+function TZapper.ReadVs(const Mask: TNesZapperMask): UInt8;
+begin
+  if FVsStrobe then
+    LatchVs(Mask);
+  Result := FVsShift and 1;
+  if not FVsStrobe then
+    FVsShift := FVsShift shr 1;
 end;
 
 function TZapper.Read(const Mask: TNesZapperMask): UInt8;

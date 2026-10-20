@@ -19,11 +19,13 @@ uses
 procedure TGamepadN64Standart.BuildLayout;
 begin
   AddPad;
+  Find('dpad').Bounds := RectF(28, 132, 172, 276);
   AddStick;
-  AddAuxiliaryButton(0, 'L', TVirtualSide.Left, RectF(136, 120, 224, 156));
-  AddButton(TEmulatorButton.Select, 'Z', TVirtualSide.Left, 164, 20, 60, 44, True);
-  AddButton(TEmulatorButton.Start, 'START', TVirtualSide.Left, 136, 80, 88, 36, True);
-  AddButton(TEmulatorButton.Mode, 'R', TVirtualSide.Right, 112, 20, 104, 36, True);
+  // Put Z/L and START along the bottom edge, clear of the stick and D-pad.
+  AddAuxiliaryButton(0, 'L', TVirtualSide.Left, RectF(88, 284, 176, 320));
+  AddButton(TEmulatorButton.Select, 'Z', TVirtualSide.Left, 16, 284, 60, 36, True);
+  AddButton(TEmulatorButton.Start, 'START', TVirtualSide.Right, 144, 284, 88, 36, True);
+  AddButton(TEmulatorButton.Mode, 'R', TVirtualSide.Right, 120, 20, 104, 36, True);
   AddButton(TEmulatorButton.B, 'B', TVirtualSide.Right, 12, 180, 60, 60);
   AddButton(TEmulatorButton.A, 'A', TVirtualSide.Right, 72, 244, 64, 64);
   AddButton(TEmulatorButton.X, 'C-L', TVirtualSide.Right, 86, 134, 40, 40);

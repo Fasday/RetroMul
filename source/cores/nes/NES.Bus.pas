@@ -216,6 +216,8 @@ begin
     FControllerReadIndex[1] := 0;
   end;
   FControllerStrobe := (Value and 1) <> 0;
+  if (FZapper <> nil) and FZapper.Enabled and FZapper.VsMode then
+    FZapper.WriteVs(Value, FPpu.GetZapperMask^);
   FController1.Write(Value);
   FController2.Write(Value);
   if FController3 <> nil then
@@ -351,7 +353,11 @@ begin
       begin
         if (FMiraclePiano <> nil) and FMiraclePiano.Connected then
           Exit(FMiraclePiano.Read or (FDataBus and $E0));
-        Result := (ReadController(0) and $1F) or (FDataBus and $E0);
+        if (FZapper <> nil) and FZapper.Enabled and FZapper.VsMode then
+          Result := FZapper.ReadVs(FPpu.GetZapperMask^)
+        else
+          Result := ReadController(0);
+        Result := (Result and $1F) or (FDataBus and $E0);
         if FDataRecorder <> nil then
           Result := Result or FDataRecorder.Read;
         // VS coin slots are independent live inputs on $4016 bits 5 and 6.
@@ -371,8 +377,12 @@ begin
           FMiraclePiano.ReadOtherPort;
         // Zapper replaces port 2, including Power Pad/Four Score/keyboard.
         // Parallel inputs are live and independent of $4016 strobes.
-        if (FZapper <> nil) and FZapper.Enabled then
+        if (FZapper <> nil) and FZapper.Enabled and not FZapper.VsMode then
           Exit((FZapper.Read(FPpu.GetZapperMask^) and $1F) or (FDataBus and $E0));
+        // Vs. hardware drives the DIP-switch lines; default switches are off.
+        // NES open bus on D5-D7 must not become random Vs. DIP settings.
+        if HasCoinAcceptor then
+          Exit(ReadController(1) and 1);
         Result := ReadController(1);
         if FSuborKeyboard <> nil then
           Result := Result or FSuborKeyboard.Read;

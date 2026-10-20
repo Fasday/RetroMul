@@ -20,7 +20,7 @@ procedure TGamepadSEGAPad6.BuildLayout;
 begin
   AddPad;
   AddMenus('', 'START');
-  AddButton(TEmulatorButton.Mode, 'MODE', TVirtualSide.Left, 136, 74, 88, 36, True);
+  AddButton(TEmulatorButton.Mode, 'MODE', TVirtualSide.Left, 16, 74, 88, 36, True);
   AddButton(TEmulatorButton.A, 'A', TVirtualSide.Right, 12, 220, 60, 60);
   AddButton(TEmulatorButton.B, 'B', TVirtualSide.Right, 88, 220, 60, 60);
   AddButton(TEmulatorButton.C, 'C', TVirtualSide.Right, 164, 220, 60, 60);

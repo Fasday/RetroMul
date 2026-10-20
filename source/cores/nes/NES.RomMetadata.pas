@@ -17,6 +17,8 @@ function IsLegacyMmc6Rom(const Sha1: string): Boolean;
 
 function IsLegacyPowerPadRom(const Sha1: string): Boolean;
 
+function IsLegacyVsZapperRom(const Sha1: string): Boolean;
+
 function IsLegacyFamicomKeyboardRom(const Sha1: string): Boolean;
 
 function IsLegacyDataRecorderRom(const Sha1: string): Boolean;
@@ -27,6 +29,13 @@ implementation
 
 uses
   Core.RomHashes, System.Hash, System.SysUtils;
+
+function IsLegacyVsZapperRom(const Sha1: string): Boolean;
+begin
+  // Exact payloads: original Vs. Duck Hunt and collection CHR variant.
+  Result := SameText(Sha1, ROM_NES_VS_DUCK_HUNT_SHA1) or
+    SameText(Sha1, ROM_NES_VS_DUCK_HUNT_COLLECTION_SHA1);
+end;
 
 function IsLegacyMiraclePianoRom(const Sha1: string): Boolean;
 begin
@@ -138,7 +147,8 @@ const
   Horizontal: array[0..1] of string = (
     ROM_NES_BATTLE_STORM_SHA1,  // Battle Storm
     ROM_NES_DUE_K_SHA1); // Due K
-  Vertical: array[0..5] of string = (
+  Vertical: array[0..6] of string = (
+    ROM_NES_MARIO_DUCK_HUNT_PAL_SHA1, // MHROM, fixed vertical CIRAM wiring
     ROM_NES_CASTELIA_SHA1,  // Castelia
     ROM_NES_NINJA_KID_SHA1,  // Ninja Kid
     ROM_NES_PIPE_DREAM_SHA1,  // Pipe Dream
@@ -178,6 +188,14 @@ end;
 function IsLegacyPalRom(const Prg, Chr: NES.Types.TByteArray): Boolean;
 begin
   Result := False;
+  if Length(Prg) = $10000 then
+  begin
+    var Payload := THashSHA1.Create;
+    Payload.Update(Prg[0], Length(Prg));
+    if Length(Chr) > 0 then Payload.Update(Chr[0], Length(Chr));
+    if SameText(Payload.HashAsString, ROM_NES_MARIO_DUCK_HUNT_PAL_SHA1) then
+      Exit(True);
+  end;
 
   // Asterix: confirmed against PAL/NTSC runs; this legacy dump has byte 9 = 0.
   // Match payload identity, never a filename or all cartridges on mapper 2.

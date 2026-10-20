@@ -19,8 +19,8 @@ uses
 procedure TGamepadGBAStandart.BuildLayout;
 begin
   inherited;
-  AddButton(TEmulatorButton.C, 'L', TVirtualSide.Left, 24, 20, 104, 36, True);
-  AddButton(TEmulatorButton.Z, 'R', TVirtualSide.Right, 112, 20, 104, 36, True);
+  AddButton(TEmulatorButton.C, 'L', TVirtualSide.Left, 16, 20, 104, 36, True);
+  AddButton(TEmulatorButton.Z, 'R', TVirtualSide.Right, 120, 20, 104, 36, True);
 end;
 
 end.

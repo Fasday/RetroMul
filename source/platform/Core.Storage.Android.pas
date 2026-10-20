@@ -8,6 +8,7 @@ uses
 type
   TAndroidStorage = class
   public
+    class procedure EnsureSubfolder(const FolderUri, Name: string); static;
     class function SameDocument(const Left, Right: string): Boolean; static;
     class function OpenUri(const Uri: string): TStream; static;
     class function OpenWriteUri(const Uri: string): TStream; static;
@@ -285,6 +286,22 @@ begin
   finally
     Cursor.close;
   end;
+end;
+
+class procedure TAndroidStorage.EnsureSubfolder(const FolderUri, Name: string);
+begin
+  for var Folder in Enumerate(FolderUri, False, True) do
+    if SameText(Folder.Name, Name) then
+      Exit;
+
+  var Parent := ParseUri(FolderUri);
+  if not FolderUri.Contains('/document/') then
+    Parent := TJDocumentsContract.JavaClass.buildDocumentUriUsingTree(Parent,
+      TJDocumentsContract.JavaClass.getTreeDocumentId(Parent));
+  var Document := TJDocumentsContract.JavaClass.createDocument(Resolver, Parent,
+    TJDocumentsContract_Document.JavaClass.MIME_TYPE_DIR, StringToJString(Name));
+  if Document = nil then
+    raise EWriteError.CreateFmt('Cannot create folder: %s', [Name]);
 end;
 
 class function TAndroidStorage.ModifiedTime(const Uri: string): TDateTime;

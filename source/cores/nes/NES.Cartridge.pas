@@ -308,6 +308,13 @@ begin
   if FMetadata.Format = TRomFormat.INes then
   begin
     FMetadata.HasBattery := FMetadata.HasBattery or IsLegacyBatteryRom(FRomIdentity);
+    if (FMapperId = MAPPER_VS_SYSTEM) and IsLegacyVsZapperRom(FRomIdentity) then
+    begin
+      FMetadata.DefaultExpansionDevice := 7;
+      FMetadata.ConsoleType := 1;
+      Mirror := TMirrorMode.FourScreen;
+      FMetadata.MirrorMode := Mirror;
+    end;
     if (FMapperId = MAPPER_MMC3) and IsLegacyMmc6Rom(FRomIdentity) then
     begin
       FMetadata.Submapper := 1;
