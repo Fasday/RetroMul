@@ -1,5 +1,8 @@
 ﻿unit N64.SoftFloat;
-{$Q+}{$R+}
+// Runs without range and overflow checks (every index is masked and all
+// guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
+// tests.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -17,10 +20,31 @@ type
 function SFCalculate(A, B: UInt64; Format, Operation, Rounding: Integer): TSoftFloatResult;
 function SFConvert(A: UInt64; SourceFormat, TargetFormat, Rounding: Integer): TSoftFloatResult;
 procedure SFCompare(A, B: UInt64; Format: Integer; out Unordered, Equal, Less: Boolean);
-function SFIsNaN(A: UInt64; Format: Integer): Boolean;
-function SFIsSubnormal(A: UInt64; Format: Integer): Boolean;
+function SFIsNaN(A: UInt64; Format: Integer): Boolean; inline;
+function SFIsSubnormal(A: UInt64; Format: Integer): Boolean; inline;
+
+// Whether the calling thread's floating point suits SFQuick: rounding to
+// nearest, inexact results raising nothing, and on x87 (Win32) a 53-bit
+// significand. SFPrepareHost sets that up; a thread that runs the CPU calls
+// it once. Only on x86 and x64 (tested there): False elsewhere (ARM).
+function SFHostReady: Boolean;
+procedure SFPrepareHost;
+
+// SFCalculate(A, B, Format, Operation, 0) (round to nearest) for add, sub,
+// mul, div and sqrt (Operation 0..4) of normal operands whose result is
+// normal, or an exact zero, computed by the host (SFHostReady must hold):
+// the same bits and events. False where it cannot tell (then SFCalculate).
+function SFQuick(A, B: UInt64; Format, Operation: Integer; out R: TSoftFloatResult): Boolean;
+// SFConvert for single <-> double and 32/64-bit integers to single or double
+// (rounding to nearest, the host's where it rounds), and single or double to
+// integers in any rounding mode, of normal values and zeros whose result is
+// in range: the same bits and events. False where it cannot tell.
+function SFQuickConvert(A: UInt64; SourceFormat, TargetFormat, Rounding: Integer; out R: TSoftFloatResult): Boolean;
 
 implementation
+
+uses
+  System.Math;
 
 type
   TNumber = record
@@ -58,14 +82,18 @@ end;
 
 function SFIsNaN(A: UInt64; Format: Integer): Boolean;
 begin
-  Result := ((A and Infinity(Format)) = Infinity(Format)) and
-    ((A and ((UInt64(1) shl FractionBits(Format)) - 1)) <> 0);
+  if Format = 16 then
+    Result := ((A and $7F800000) = $7F800000) and ((A and $7FFFFF) <> 0)
+  else
+    Result := ((A and $7FF0000000000000) = $7FF0000000000000) and ((A and $FFFFFFFFFFFFF) <> 0);
 end;
 
 function SFIsSubnormal(A: UInt64; Format: Integer): Boolean;
 begin
-  Result := ((A and Infinity(Format)) = 0) and
-    ((A and ((UInt64(1) shl FractionBits(Format)) - 1)) <> 0);
+  if Format = 16 then
+    Result := ((A and $7F800000) = 0) and ((A and $7FFFFF) <> 0)
+  else
+    Result := ((A and $7FF0000000000000) = 0) and ((A and $FFFFFFFFFFFFF) <> 0);
 end;
 
 function ShiftJam(A: UInt64; N: Integer): UInt64;
@@ -366,4 +394,403 @@ begin
   else Less := A < B;
 end;
 
+function SFHostReady: Boolean;
+begin
+  {$IF defined(CPUX64) or defined(CPUX86)}
+  // Overflow, underflow, invalid operations and division by zero never
+  // happen in SFQuick (it checks the ranges first); inexact results do.
+  Result := (GetRoundMode = rmNearest) and (exPrecision in GetExceptionMask);
+  {$IFDEF CPUX86}
+  // x87: every result rounded to a double's 53 bits.
+  Result := Result and ((Get8087CW and $0300) = $0200);
+  {$ENDIF}
+  {$ELSE}
+  // Not tested on other hosts yet: SoftFloat alone.
+  Result := False;
+  {$ENDIF}
+end;
+
+procedure SFPrepareHost;
+begin
+  SetRoundMode(rmNearest);
+  SetExceptionMask(GetExceptionMask + [exPrecision]);
+  {$IFDEF CPUX86}
+  Set8087CW((Get8087CW and not $0300) or $0200);
+  {$ENDIF}
+end;
+
+function DoubleOf(Bits: UInt64): Double; inline;
+begin
+  Move(Bits, Result, SizeOf(Result));
+end;
+
+function BitsOf(Value: Double): UInt64; inline;
+begin
+  Move(Value, Result, SizeOf(Result));
+end;
+
+function SameProduct(M, N, Base: UInt64; Shift: Integer): Boolean;
+begin
+  // M * N = Base * 2^Shift (M, N, Base below 2^53; Shift 0..63).
+  var Hi, Lo: UInt64;
+  Product64(M, N, Hi, Lo);
+  var TargetHi: UInt64 := 0;
+  if Shift > 0 then
+    TargetHi := Base shr (64 - Shift);
+  Result := (Hi = TargetHi) and (Lo = (Base shl Shift));
+end;
+
+function HasZero(A, B: UInt64; Format, Operation: Integer): Boolean; inline;
+begin
+  Result := ((A and not SignMask(Format)) = 0) or ((Operation <= 3) and ((B and not SignMask(Format)) = 0));
+end;
+
+function NormalOrZero(A: UInt64; Format: Integer): Boolean;
+begin
+  var Field := A and Infinity(Format);
+  Result := ((A and not SignMask(Format)) = 0) or ((Field <> 0) and (Field <> Infinity(Format)));
+end;
+
+function QuickZero(A, B: UInt64; Format, Operation: Integer; out R: TSoftFloatResult): Boolean;
+begin
+  // SFCalculate's exact results with a zero operand (the other one normal or
+  // zero): a sum is the other operand, or a zero signed as IEEE rounding to
+  // nearest has it; a product, a quotient of a zero, a root of a zero are
+  // zeros. A division by zero raises: SFCalculate.
+  R.Bits := 0;
+  R.Events := 0;
+  Result := False;
+  var Sign := SignMask(Format);
+  if not NormalOrZero(A, Format) or ((Operation <= 3) and not NormalOrZero(B, Format)) then
+    Exit;
+  var ZeroA := (A and not Sign) = 0;
+  var ZeroB := (B and not Sign) = 0;
+  case Operation of
+    0, 1:
+      begin
+        if Operation = 1 then
+          B := B xor Sign;
+        if ZeroA and ZeroB then
+          R.Bits := A and B and Sign
+        else if ZeroA then
+          R.Bits := B
+        else
+          R.Bits := A;
+      end;
+    2:
+      R.Bits := (A xor B) and Sign;
+    3:
+      begin
+        if ZeroB then
+          Exit;
+        R.Bits := (A xor B) and Sign;
+      end;
+    4:
+      R.Bits := A;
+  else
+    Exit;
+  end;
+  Result := True;
+end;
+
+function SFQuick(A, B: UInt64; Format, Operation: Integer; out R: TSoftFloatResult): Boolean;
+begin
+  // Single: in double, where every operation here is exact, or (division,
+  // square root) correctly rounded to 53 bits, which rounded once more to 24
+  // gives the correctly rounded single (53 >= 2 * 24 + 2). Double: the host
+  // rounds; whether it did is told exactly (TwoSum; integer products).
+  Result := False;
+  R.Bits := 0;
+  R.Events := 0;
+  var Inexact := False;
+  if (Format <> 16) and (Format <> 17) then
+    Exit;
+  if Format = 16 then
+  begin
+    // SFCalculate reads a single's 32 bits only.
+    A := A and $FFFFFFFF;
+    B := B and $FFFFFFFF;
+  end;
+  if HasZero(A, B, Format, Operation) then
+    Exit(QuickZero(A, B, Format, Operation, R));
+  if Format = 16 then
+  begin
+    var EA := Integer((A shr 23) and $FF);
+    var EB := Integer((B shr 23) and $FF);
+    if (EA = 0) or (EA = 255) or ((Operation <= 3) and ((EB = 0) or (EB = 255))) then
+      Exit;
+    var SA, SB: Single;
+    var CA := Cardinal(A and $FFFFFFFF);
+    var CB := Cardinal(B and $FFFFFFFF);
+    Move(CA, SA, 4);
+    Move(CB, SB, 4);
+    var X: Double := SA;
+    var Y: Double := SB;
+    var Z: Double;
+    case Operation of
+      0, 1:
+        begin
+          // Exact: 25 bits plus the exponent difference.
+          if Abs(EA - EB) > 28 then
+            Exit;
+          if Operation = 0 then
+            Z := X + Y
+          else
+            Z := X - Y;
+        end;
+      2:
+        Z := X * Y;
+      3:
+        Z := X / Y;
+      4:
+        begin
+          if (CA and $80000000) <> 0 then
+            Exit;
+          Z := Sqrt(X);
+        end;
+    else
+      Exit;
+    end;
+    // Normal single results only (2^-126 up to below 2^127), or an exact 0.
+    var M := Abs(Z);
+    if (M <> 0) and ((M < 1.1754943508222875E-38) or (M >= 1.7014118346046923E+38)) then
+      Exit;
+    var S: Single := Z;
+    var Back: Double := S;
+    case Operation of
+      3:
+        Inexact := Back * Y <> X;
+      4:
+        Inexact := Back * Back <> X;
+    else
+      Inexact := Back <> Z;
+    end;
+    var Bits: Cardinal;
+    Move(S, Bits, 4);
+    R.Bits := Bits;
+    if Inexact then
+      R.Events := sfInexact;
+    Exit(True);
+  end;
+  if Format <> 17 then
+    Exit;
+  var EA := Integer((A shr 52) and $7FF);
+  var EB := Integer((B shr 52) and $7FF);
+  if (EA = 0) or (EA = 2047) or ((Operation <= 3) and ((EB = 0) or (EB = 2047))) then
+    Exit;
+  var X := DoubleOf(A);
+  var Y := DoubleOf(B);
+  var Z: Double;
+  case Operation of
+    0, 1:
+      begin
+        // Operands from 2^-959 to below 2^1022: the sum finite, and TwoSum's
+        // error term (a multiple of 2^-1011) exact.
+        if (EA < 64) or (EB < 64) or (EA > 2044) or (EB > 2044) then
+          Exit;
+        if Operation = 1 then
+          Y := -Y;
+        Z := X + Y;
+        var Part := Z - X;
+        Inexact := (X - (Z - Part)) + (Y - Part) <> 0;
+      end;
+    2:
+      begin
+        // A product from 2^-1020 to below 2^1022.
+        if (EA + EB < 1026) or (EA + EB > 3066) then
+          Exit;
+        Z := X * Y;
+        var Hi, Lo: UInt64;
+        Product64((A and $FFFFFFFFFFFFF) or $10000000000000, (B and $FFFFFFFFFFFFF) or $10000000000000, Hi, Lo);
+        // Exact when the bits below the 53 the product keeps are 0.
+        var Dropped := 52;
+        if (Hi shr 41) <> 0 then
+          Dropped := 53;
+        Inexact := (Lo and ((UInt64(1) shl Dropped) - 1)) <> 0;
+      end;
+    3:
+      begin
+        // A quotient from 2^-1020 to below 2^1022.
+        if (EA - EB < -1019) or (EA - EB > 1020) then
+          Exit;
+        Z := X / Y;
+      end;
+    4:
+      begin
+        if (A shr 63) <> 0 then
+          Exit;
+        Z := Sqrt(X);
+      end;
+  else
+    Exit;
+  end;
+  var ZBits := BitsOf(Z);
+  var EZ := Integer((ZBits shr 52) and $7FF);
+  if (ZBits and $7FFFFFFFFFFFFFFF) = 0 then
+  begin
+    // An exact 0 (a sum).
+    if Inexact then
+      Exit;
+  end
+  else if (EZ = 0) or (EZ = 2047) then
+    Exit
+  else if Operation in [3, 4] then
+  begin
+    // Exact when the result times the divisor (itself) is the dividend
+    // (the radicand), in integers: MZ * MB = MA * 2^Shift.
+    var MZ := (ZBits and $FFFFFFFFFFFFF) or $10000000000000;
+    var MA := (A and $FFFFFFFFFFFFF) or $10000000000000;
+    var Shift: Integer;
+    var Other: UInt64;
+    if Operation = 3 then
+    begin
+      Shift := EA - EZ - EB + 1075;
+      Other := (B and $FFFFFFFFFFFFF) or $10000000000000;
+    end
+    else
+    begin
+      Shift := EA - 2 * EZ + 1075;
+      Other := MZ;
+    end;
+    Inexact := (Shift < 0) or (Shift > 63) or not SameProduct(MZ, Other, MA, Shift);
+  end;
+  R.Bits := ZBits;
+  if Inexact then
+    R.Events := sfInexact;
+  Result := True;
+end;
+
+function SFQuickConvert(A: UInt64; SourceFormat, TargetFormat, Rounding: Integer; out R: TSoftFloatResult): Boolean;
+begin
+  R.Bits := 0;
+  R.Events := 0;
+  Result := False;
+  if (SourceFormat = 16) or (SourceFormat = 17) then
+  begin
+    var P := FractionBits(SourceFormat);
+    if SourceFormat = 16 then
+      A := A and $FFFFFFFF;
+    var Negative := (A and SignMask(SourceFormat)) <> 0;
+    var Field := Integer((A and Infinity(SourceFormat)) shr P);
+    var Fraction := A and ((UInt64(1) shl P) - 1);
+    // Subnormals, infinities and NaNs: SFConvert.
+    if ((Field = 0) and (Fraction <> 0)) or (Field = Bias(SourceFormat) * 2 + 1) then
+      Exit;
+    if (TargetFormat = 20) or (TargetFormat = 21) then
+    begin
+      // As SFConvert, with the significand at bit P instead of 62.
+      var Width := 32;
+      if TargetFormat = 21 then
+        Width := 64;
+      var Value: UInt64 := 0;
+      var Remainder: UInt64 := 0;
+      var Half: UInt64 := 0;
+      if Field <> 0 then
+      begin
+        var E := Field - Bias(SourceFormat);
+        if E >= Width - 1 then
+          Exit;
+        var M := Fraction or (UInt64(1) shl P);
+        var S := P - E;
+        if S <= 0 then
+          Value := M shl (-S)
+        else if S < 64 then
+        begin
+          Value := M shr S;
+          Remainder := M and ((UInt64(1) shl S) - 1);
+          Half := UInt64(1) shl (S - 1);
+        end
+        else
+          Remainder := M;
+      end;
+      var Increment := False;
+      if Remainder <> 0 then
+      begin
+        R.Events := sfInexact;
+        case Rounding of
+          0:
+            Increment := (Half <> 0) and ((Remainder > Half) or ((Remainder = Half) and Odd(Value)));
+          2:
+            Increment := not Negative;
+          3:
+            Increment := Negative;
+        end;
+      end;
+      if Increment then
+        Inc(Value);
+      // At the limit (or past it): SFConvert.
+      if Value >= UInt64(1) shl (Width - 1) then
+        Exit;
+      if Negative then
+        Value := Sub64(0, Value);
+      if Width = 32 then
+        Value := Value and $FFFFFFFF;
+      R.Bits := Value;
+      Exit(True);
+    end;
+    if (SourceFormat = 16) and (TargetFormat = 17) then
+    begin
+      // Exact.
+      R.Bits := UInt64(Ord(Negative)) shl 63;
+      if Field <> 0 then
+        R.Bits := R.Bits or (UInt64(Field - 127 + 1023) shl 52) or (Fraction shl 29);
+      Exit(True);
+    end;
+    if (SourceFormat = 17) and (TargetFormat = 16) then
+    begin
+      R.Bits := Cardinal(Ord(Negative)) shl 31;
+      if Field = 0 then
+        Exit(True);
+      // A normal single (2^-126 up to below 2^127), rounded to nearest by
+      // the host (or exact, in any mode).
+      var D := DoubleOf(A);
+      var M := Abs(D);
+      if (M < 1.1754943508222875E-38) or (M >= 1.7014118346046923E+38) then
+        Exit;
+      var S: Single := D;
+      var Back: Double := S;
+      if Back <> D then
+      begin
+        if Rounding <> 0 then
+          Exit;
+        R.Events := sfInexact;
+      end;
+      var Bits: Cardinal;
+      Move(S, Bits, 4);
+      R.Bits := Bits;
+      Exit(True);
+    end;
+    Exit;
+  end;
+  if ((SourceFormat <> 20) and (SourceFormat <> 21)) or ((TargetFormat <> 16) and (TargetFormat <> 17)) then
+    Exit;
+  var V: Int64;
+  if SourceFormat = 20 then
+    V := Int64(Integer(Cardinal(A and $FFFFFFFF)))
+  else
+    V := Int64(A);
+  if V = 0 then
+    Exit(True);
+  // Up to 53 bits: exact in a double.
+  if (V >= Int64(1) shl 53) or (V <= -(Int64(1) shl 53)) then
+    Exit;
+  var D: Double := V;
+  if TargetFormat = 17 then
+  begin
+    R.Bits := BitsOf(D);
+    Exit(True);
+  end;
+  var S: Single := D;
+  var Back: Double := S;
+  if Back <> D then
+  begin
+    if Rounding <> 0 then
+      Exit;
+    R.Events := sfInexact;
+  end;
+  var Bits: Cardinal;
+  Move(S, Bits, 4);
+  R.Bits := Bits;
+  Result := True;
+end;
 end.
