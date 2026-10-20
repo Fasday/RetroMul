@@ -53,6 +53,11 @@ type
     // Pixels stays unchanged until the next-but-one Render. A consumer that
     // still holds it then gets a private copy (SetLength copy-on-write).
     procedure Render(const Registers: array of Cardinal; out Width, Height: Integer; out Pixels: TArray<TAlphaColor>);
+    // The RDRAM bytes Render(Registers) may read (more, not fewer): Count
+    // from Address, within RDRAM. False: it reads none.
+    class function SourceSpan(const Registers: array of Cardinal; out Address, Count: Cardinal): Boolean; static;
+    // The bus Render reads RDRAM from.
+    property Source: TN64Bus read FBus write FBus;
     procedure SerializeState(State: TStateArchive);
   end;
 
@@ -629,6 +634,93 @@ begin
   FLastField := Field;
   FFront := Back;
   Pixels := Weave;
+end;
+
+class function TN64VI.SourceSpan(const Registers: array of Cardinal; out Address, Count: Cardinal): Boolean;
+begin
+  // Render's geometry up to its source rows and columns, then every row it
+  // can reach from them: a row's filter window takes the rows around it and
+  // two pixels to either side, divot the rows around those, the bilinear tap
+  // the next row, and the columns of a field row may run into later rows.
+  Result := False;
+  Address := 0;
+  Count := 0;
+  if Length(Registers) < 14 then
+    Exit;
+  var Status := Integer(Registers[0] and $1FFFF);
+  var Stride := Integer(Registers[2] and $FFF);
+  var PixelType := Status and 3;
+  var XStart := Integer((Registers[12] shr 16) and $FFF);
+  var YStart := Integer((Registers[13] shr 16) and $FFF);
+  var XStep := Integer(Registers[12] and $FFF);
+  var YStep := Integer(Registers[13] and $FFF);
+  var HStart := Integer((Registers[9] shr 16) and $3FF);
+  var HEnd := Integer(Registers[9] and $3FF);
+  var VStart := Integer((Registers[10] shr 16) and $3FF);
+  var VEnd := Integer(Registers[10] and $3FF);
+  var ActiveWidth := HEnd - HStart;
+  var FieldRows := (VEnd - VStart) div 2;
+  var PAL := (Registers[6] and $3FF) > 550;
+  var Width := 640;
+  var Height := 480;
+  if PAL then
+    Height := 576;
+  if (ActiveWidth < 1) or (ActiveWidth > 1024) or (FieldRows < 1) or (FieldRows > 512) or
+    (Stride < 1) or (XStep = 0) or (YStep = 0) or not (PixelType in [2, 3]) then
+    Exit;
+  var LeftBlank := 108;
+  var TopBlank := 34;
+  if PAL then
+  begin
+    LeftBlank := 128;
+    TopBlank := 44
+  end;
+  var ActiveLeft := HStart - LeftBlank;
+  var ActiveTop := (VStart - TopBlank) div 2;
+  var LeftClipped := ActiveLeft < 0;
+  if LeftClipped then
+  begin
+    Inc(XStart, -ActiveLeft * XStep);
+    Inc(ActiveWidth, ActiveLeft);
+    ActiveLeft := 0;
+  end;
+  if ActiveTop < 0 then
+  begin
+    Inc(YStart, -ActiveTop * YStep);
+    ActiveTop := 0
+  end;
+  var RightClipped := ActiveLeft + ActiveWidth > Width;
+  if RightClipped then
+    ActiveWidth := Width - ActiveLeft;
+  var FirstSample := 8;
+  var LastSample := ActiveWidth - 7;
+  if LeftClipped then
+    FirstSample := 0;
+  if RightClipped then
+    LastSample := ActiveWidth;
+  FieldRows := Min(FieldRows, Height div 2 - ActiveTop);
+  if (LastSample <= FirstSample) or (FieldRows < 1) then
+    Exit;
+  var FirstColumn := Int64((XStart + FirstSample * XStep) shr 10);
+  var Columns := Int64(((XStart + (LastSample - 1) * XStep) shr 10)) - FirstColumn + 2;
+  var FirstRow := Int64(YStart shr 10);
+  var LastRow := Int64((YStart + (FieldRows - 1) * YStep) shr 10);
+  var Lo := (FirstRow - 4) * Stride + FirstColumn - 4;
+  var Hi := (LastRow + 6) * Stride + FirstColumn + Columns + 4;
+  var Bytes := 2;
+  if PixelType = 3 then
+    Bytes := 4;
+  var First := Int64(Registers[1] and $FFFFFF) + Lo * Bytes;
+  var Last := Int64(Registers[1] and $FFFFFF) + Hi * Bytes;
+  if First < 0 then
+    First := 0;
+  if Last > $800000 then
+    Last := $800000;
+  if Last <= First then
+    Exit;
+  Address := Cardinal(First);
+  Count := Cardinal(Last - First);
+  Result := True;
 end;
 
 procedure TN64VI.SerializeState(State: TStateArchive);

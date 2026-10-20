@@ -129,6 +129,9 @@ type
     procedure WriteHiddenRAM(Address: Cardinal; Value: Byte); inline;
     // The same waits for a byte range (any part may lie beyond RDRAM).
     procedure SyncRDPRead(Address, Count: Cardinal);
+    // Copies Count bytes of RDRAM from Address (within RDRAM), with their
+    // hidden bits, to the same place in Target (without RDP waits).
+    procedure CopyRAMTo(Target: TN64Bus; Address, Count: Cardinal);
     procedure SyncRDPWrite(Address, Count: Cardinal);
     // RDP accessors, without waits: the worker owns the pages of the lists
     // it runs. Same bounds as above; RDPWrite8/32 behave as WriteRAM8/32.
@@ -448,6 +451,15 @@ begin
   if FRDPPending and (FRDPUses[Address shr RDPPageShift] > FRDPDone) then
     SyncRDPWrite(Address, 1);
   FHiddenRAM[Address shr 1] := Value and 3;
+end;
+
+procedure TN64Bus.CopyRAMTo(Target: TN64Bus; Address, Count: Cardinal);
+begin
+  if (Count = 0) or (UInt64(Address) + Count > Length(FRAM)) then
+    Exit;
+  Move(FRAM[Address], Target.FRAM[Address], Count);
+  var Hidden := Address shr 1;
+  Move(FHiddenRAM[Hidden], Target.FHiddenRAM[Hidden], ((Address + Count - 1) shr 1) - Hidden + 1);
 end;
 
 procedure TN64Bus.SyncRDPRead(Address, Count: Cardinal);

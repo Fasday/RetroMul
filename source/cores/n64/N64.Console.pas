@@ -125,6 +125,9 @@ type
     Data: array[0..63] of Byte;
   end;
 
+  // A frame as rendered (TN64Console.OnFrame).
+  TN64FrameNotify = reference to procedure(const Frame: TEmulatorFrame);
+
   TN64Console = class(TN64Bus)
   private const
     // Run-ahead window sizes in RSP clocks (StartRSPAhead): the largest
@@ -152,8 +155,31 @@ type
     public
       constructor Create(Owner: TN64Console; const CPUs: TN64CPUSet; Preferred: Integer);
     end;
+
+    // Renders the VI fields RenderFrame hands it (VIThreaded).
+    TVIThread = class(TThread)
+    private
+      FOwner: TN64Console;
+    protected
+      procedure Execute; override;
+    public
+      constructor Create(Owner: TN64Console);
+    end;
   private
     FData, FPIF, FSave: TBytes;
+    // VI fields rendered on a thread of their own (VIThreaded): as a field
+    // ends, its registers go to the VI thread with the RDRAM it reads copied
+    // to FVIBus; the VI (its noise and weave) is the VI thread's until
+    // WaitVI. FVIBusy: a field is being rendered.
+    FVIThreaded, FVIBusy: Boolean;
+    FVIThread: TVIThread;
+    FVIBus: TN64Bus;
+    FVIStart, FVIDone: TEvent;
+    FVIRegisters: array[0..13] of Cardinal;
+    FVIFrame: UInt64;
+    FVINotify: Boolean;
+    FVIError: string;
+    FOnFrame: TN64FrameNotify;
     FReg: array[0..7, 0..15] of Cardinal;
     FCPU: TN64CPU;
     FRSP: TN64RSP;
@@ -401,7 +427,10 @@ type
     procedure FinishPIBlock;
     procedure CompletePI;
     procedure ConsumeAI;
-    procedure RenderFrame(ScanoutField: Integer);
+    procedure RenderFrame(ScanoutField: Integer; Notify: Boolean);
+    procedure FrameRendered(Notify: Boolean);
+    procedure WaitVI;
+    procedure SetVIThreaded(Value: Boolean);
     procedure ValidateState;
   protected
     procedure WaitRDP(List: UInt64); override;
@@ -463,6 +492,13 @@ type
     // (long windows only; exact either way). On by default with three
     // physical cores or more.
     property RSPThreaded: Boolean read FRSPThreaded write SetRSPThreaded;
+    // VI fields rendered on a thread of their own: a field's frame is ready
+    // shortly after it ends (GetFrame waits for it), the emulation goes on
+    // meanwhile. Exact either way.
+    property VIThreaded: Boolean read FVIThreaded write SetVIThreaded;
+    // Called with the frame of every field that ends (on the VI thread when
+    // VIThreaded).
+    property OnFrame: TN64FrameNotify read FOnFrame write FOnFrame;
     property SaveDirty: Boolean read FSaveDirty;
     // Raw hardware diagnostics can omit host display conversion. DMA, RDP,
     // guest VI registers/IRQs and audio clocks still execute normally.
@@ -472,6 +508,30 @@ type
   end;
 
 implementation
+
+type
+  // RDRAM alone (a VI field's copy): no devices.
+  TN64RAMBus = class(TN64Bus)
+  public
+    constructor Create;
+    function Read8(Address: Cardinal): Byte; override;
+    procedure Write8(Address: Cardinal; Value: Byte); override;
+  end;
+
+constructor TN64RAMBus.Create;
+begin
+  inherited Create;
+  FDirectMemory := True;
+end;
+
+function TN64RAMBus.Read8(Address: Cardinal): Byte;
+begin
+  Result := 0;
+end;
+
+procedure TN64RAMBus.Write8(Address: Cardinal; Value: Byte);
+begin
+end;
 
 function PhysicalCores: Integer;
 begin
@@ -573,6 +633,8 @@ begin
   FRDPMode := TN64RDPMode.Threaded;
   {$ENDIF}
   FVI := TN64VI.Create(Self);
+  // With three physical cores or more, VI fields on a thread of their own.
+  SetVIThreaded(PhysicalCores >= 3);
   FTimeline := TN64Timeline.Create;
   FRSPAhead := True;
   FRSPNoise := $6C078965;
@@ -599,6 +661,15 @@ end;
 
 destructor TN64Console.Destroy;
 begin
+  if FVIThread <> nil then
+  begin
+    FVIThread.Terminate;
+    FVIStart.SetEvent;
+    FreeAndNil(FVIThread);
+  end;
+  FVIStart.Free;
+  FVIDone.Free;
+  FVIBus.Free;
   FRDPWorker.Free; // stops the thread before the RDP goes
   StopRSPThread;
   FRSPWake.Free;
@@ -615,6 +686,7 @@ end;
 
 procedure TN64Console.Reset;
 begin
+  WaitVI;
   DrainRDP;
   // A window on the RSP thread ends; the RSP is reset anyway.
   StopAhead;
@@ -2171,16 +2243,102 @@ begin
     FTimeline.Schedule(TN64EventKind.SITransfer, 256);
 end;
 
-procedure TN64Console.RenderFrame(ScanoutField: Integer);
+procedure TN64Console.RenderFrame(ScanoutField: Integer; Notify: Boolean);
 begin
   var Registers: array[0..13] of Cardinal;
   for var I := 0 to 13 do
     Registers[I] := FReg[3, I];
   Registers[4] := Cardinal((FLine and not 1) or ScanoutField);
+  if FVIThreaded then
+  begin
+    // The VI thread reads FVIBus until the previous field is done. It reads
+    // the RDRAM it would now, as RDP work queued so far leaves it.
+    WaitVI;
+    var Address, Count: Cardinal;
+    if TN64VI.SourceSpan(Registers, Address, Count) then
+    begin
+      SyncRDPRead(Address, Count);
+      CopyRAMTo(FVIBus, Address, Count);
+    end;
+    Move(Registers, FVIRegisters, SizeOf(Registers));
+    FVIFrame := FFrame;
+    FVINotify := Notify;
+    if FVIThread = nil then
+      FVIThread := TVIThread.Create(Self);
+    FVIBusy := True;
+    FVIStart.SetEvent;
+    Exit;
+  end;
   // Render returns a fresh array, so frames already handed out stay intact.
   FVI.Render(Registers, FCurrentFrame.Width, FCurrentFrame.Height, FCurrentFrame.Pixels);
   FCurrentFrame.FrameNumber := FFrame;
+  FrameRendered(Notify);
+end;
+
+procedure TN64Console.FrameRendered(Notify: Boolean);
+begin
   FCurrentFrame.FramesPerSecond := FramesPerSecond;
+  if Notify and Assigned(FOnFrame) then
+    FOnFrame(FCurrentFrame);
+end;
+
+procedure TN64Console.WaitVI;
+begin
+  if not FVIBusy then
+    Exit;
+  FVIDone.WaitFor(INFINITE);
+  FVIBusy := False;
+  if FVIError <> '' then
+    raise EN64Unsupported.Create('VI thread: ' + FVIError);
+end;
+
+procedure TN64Console.SetVIThreaded(Value: Boolean);
+begin
+  if Value = FVIThreaded then
+    Exit;
+  WaitVI;
+  if Value then
+  begin
+    if FVIBus = nil then
+      FVIBus := TN64RAMBus.Create;
+    if FVIStart = nil then
+    begin
+      FVIStart := TEvent.Create(nil, False, False, '');
+      FVIDone := TEvent.Create(nil, False, False, '');
+    end;
+    FVI.Source := FVIBus;
+  end
+  else
+    FVI.Source := Self;
+  FVIThreaded := Value;
+end;
+
+{ TN64Console.TVIThread }
+
+constructor TN64Console.TVIThread.Create(Owner: TN64Console);
+begin
+  FOwner := Owner;
+  inherited Create(False);
+end;
+
+procedure TN64Console.TVIThread.Execute;
+begin
+  while True do
+  begin
+    FOwner.FVIStart.WaitFor(INFINITE);
+    if Terminated then
+      Break;
+    try
+      FOwner.FVI.Render(FOwner.FVIRegisters, FOwner.FCurrentFrame.Width, FOwner.FCurrentFrame.Height,
+        FOwner.FCurrentFrame.Pixels);
+      FOwner.FCurrentFrame.FrameNumber := FOwner.FVIFrame;
+      FOwner.FrameRendered(FOwner.FVINotify);
+    except
+      on E: Exception do
+        FOwner.FVIError := E.ClassName + ': ' + E.Message;
+    end;
+    FOwner.FVIDone.SetEvent;
+  end;
 end;
 
 procedure TN64Console.HandleEvent(Kind: TN64EventKind);
@@ -2202,7 +2360,7 @@ begin
             FField := 0;
           FFrame := Add64(FFrame, 1);
           if FVideoOutputEnabled then
-            RenderFrame(CompletedPhysicalField);
+            RenderFrame(CompletedPhysicalField, True);
         end;
         if FLine = Integer(FReg[3, 3] and $3FF) then
           SetInterrupts(FReg[2, 2] or 8);
@@ -2414,8 +2572,12 @@ end;
 
 function TN64Console.GetFrame: TEmulatorFrame;
 begin
+  WaitVI;
   if Length(FCurrentFrame.Pixels) = 0 then
-    RenderFrame(FField);
+  begin
+    RenderFrame(FField, False);
+    WaitVI;
+  end;
   Result := FCurrentFrame;
 end;
 
@@ -2473,7 +2635,9 @@ end;
 
 procedure TN64Console.SerializeState(State: TStateArchive);
 begin
-  // Saved or loaded, RDRAM and the RDP state are those of a finished queue.
+  // Saved or loaded, the VI and its frame are those of the last field, RDRAM
+  // and the RDP state those of a finished queue.
+  WaitVI;
   DrainRDP;
   // Band RDPs count only their own rows' clocks; the timing RDP has them all.
   if (FRDPWorker <> nil) and not FRDPTimingStale then
