@@ -73,6 +73,12 @@ type
     FIMemStamps: array[0..1023] of UInt64;
     FIMemCounter: UInt64;
     FDirectMemory: Boolean;
+    // RDRAM pages decoded CPU code came from (TN64CPU's blocks), and per page
+    // a count every write of RDRAM data there changes: the code is checked
+    // again when its page's count changed. Band RDPs write it at once
+    // (lost updates still change it).
+    FCodePage: array[0..2047] of Boolean;
+    FCodeGen: array[0..2047] of Cardinal;
     // RDP lists queued to a worker thread (N64.RDPWorker). Per 4 KB RDRAM
     // page: the number of the last queued list that may write the page
     // (FRDPWrites) or read or write it (FRDPUses). FRDPList is the list being
@@ -148,6 +154,11 @@ type
     procedure RDPWrite8Hidden(Address: Cardinal; Value, Hidden: Byte); inline;
     procedure RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte); inline;
     procedure RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte); inline;
+    // Decoded CPU code: its page counts writes from now on; the count.
+    procedure MarkCodePage(Address: Cardinal); inline;
+    function CodeGeneration(Address: Cardinal): Cardinal; inline;
+    // RDRAM changed as a whole (reset, state load): every page's count.
+    procedure RAMReplaced;
     // Pages the list being queued may read, or write (and read). Parts of
     // the range beyond RDRAM are ignored.
     procedure MarkRDPRead(Address, Count: Cardinal);
@@ -164,6 +175,7 @@ type
     function DMemBytes: PByte; inline;
     function ReadSP32(Offset: Cardinal): Cardinal; inline;
     procedure IMemChanged(Offset: Cardinal);
+    procedure CodeWritten(Address: Cardinal); inline;
     // Count bytes from SP memory at Offset to Dest[Index..], and back.
     procedure CopyFromSP(Offset: Cardinal; var Dest: array of Byte; Index, Count: Integer);
     procedure CopyToSP(Offset: Cardinal; const Source: array of Byte; Index, Count: Integer);
@@ -562,14 +574,40 @@ begin
     (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3];
 end;
 
+procedure TN64Bus.CodeWritten(Address: Cardinal);
+begin
+  var Page := Address shr 12;
+  if FCodePage[Page] then
+    FCodeGen[Page] := FCodeGen[Page] + 1;
+end;
+
+procedure TN64Bus.MarkCodePage(Address: Cardinal);
+begin
+  FCodePage[Address shr 12] := True;
+end;
+
+function TN64Bus.CodeGeneration(Address: Cardinal): Cardinal;
+begin
+  Result := FCodeGen[Address shr 12];
+end;
+
+procedure TN64Bus.RAMReplaced;
+begin
+  for var I := 0 to High(FCodeGen) do
+    FCodeGen[I] := FCodeGen[I] + 1;
+end;
+
 procedure TN64Bus.RDPWrite8(Address: Cardinal; Value: Byte);
 begin
+  CodeWritten(Address);
   FRAM[Address] := Value;
   FHiddenRAM[Address shr 1] := Byte(Ord((FRAM[Address or 1] and 1) <> 0) * 3);
 end;
 
 procedure TN64Bus.RDPWrite32(Address, Value: Cardinal);
 begin
+  CodeWritten(Address);
+  CodeWritten(Address + 3);
   FRAM[Address] := Byte(Value shr 24);
   FRAM[Address + 1] := Byte((Value shr 16) and $FF);
   FRAM[Address + 2] := Byte((Value shr 8) and $FF);
@@ -590,12 +628,14 @@ end;
 
 procedure TN64Bus.RDPWrite8Hidden(Address: Cardinal; Value, Hidden: Byte);
 begin
+  CodeWritten(Address);
   FRAM[Address] := Value;
   FHiddenRAM[Address shr 1] := Hidden and 3;
 end;
 
 procedure TN64Bus.RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte);
 begin
+  CodeWritten(Address);
   FRAM[Address] := Byte((Value shr 8) and $FF);
   FRAM[Address + 1] := Byte(Value and $FF);
   FHiddenRAM[Address shr 1] := Hidden and 3;
@@ -603,6 +643,8 @@ end;
 
 procedure TN64Bus.RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
 begin
+  CodeWritten(Address);
+  CodeWritten(Address + 3);
   FRAM[Address] := Byte(Value shr 24);
   FRAM[Address + 1] := Byte((Value shr 16) and $FF);
   FRAM[Address + 2] := Byte((Value shr 8) and $FF);

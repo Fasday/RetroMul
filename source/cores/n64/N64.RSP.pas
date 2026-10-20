@@ -4086,6 +4086,7 @@ begin
     if (Storing and ((LoadHistory and 2) <> 0)) or ((Masks.Sources and (SLo or SHi)) <> 0) or
       ((Masks.Vectors and (VLo or VHi)) <> 0) then
     begin
+      // As RunClocks (a scalar counter never reaches 3, a vector one does).
       var Sources := Masks.Sources;
       var Vectors := Masks.Vectors;
       if (Sources and SHi) <> 0 then
@@ -4112,6 +4113,8 @@ begin
       end
       else if Wait = 2 then
       begin
+        // As AgePipelineBy (what a 3 leaves, a 1, is gone after the issue
+        // clock ages it again).
         SLo := SHi and SLo;
         SHi := 0;
         VLo := VHi and VLo;

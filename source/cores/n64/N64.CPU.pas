@@ -32,15 +32,74 @@ type
     ReadOK, WriteOK, Cached: Boolean;
   end;
 
+  // One instruction of a block (TN64CPU.RunBlocks), decoded once: what it
+  // does (Kind), its fields, its PClocks with the stall behind the one
+  // before it (both fixed in a block), and what it leaves for the next one's
+  // hazards. A LUI joined with the ORI/ADDIU after it (Kind KindLuiPair)
+  // stands for both; Value is then their result.
+  TN64CPUStep = record
+    Value: UInt64;
+    Op: Cardinal;
+    Kind, S, T, D, N, Clocks, Size, Flags: Byte;
+    LoadAfter, FPAfter: ShortInt;
+    // Its first code word's index in the block.
+    Index: Byte;
+  end;
+  PN64CPUStep = ^TN64CPUStep;
+
+  // Steps from one physical code address, for one entry state (the hazards
+  // left by the instruction before, the Status bits fast steps depend on,
+  // whether it starts in a delay slot): up to the delay slot of its first
+  // branch (or a likely branch itself), before the first instruction fast
+  // steps do not take, or the page's end. Its Words code words (from Word)
+  // are compared with RDRAM as it is entered: whatever wrote them (the CPU,
+  // DMA, the RDP), it is then worked out again.
+  PN64CPUBlock = ^TN64CPUBlock;
+  TN64CPUBlock = record
+    Physical: Cardinal;
+    EntryLoad, EntryFP: ShortInt;
+    Mode: Byte;
+    // No step: FSlowSafe for the instruction there (not COP0).
+    SlowSafe: Boolean;
+    // Its page's write count (TN64Bus.CodeGeneration) when last checked.
+    Gen: Cardinal;
+    Count, Words: Integer;
+    // Its steps and code words (each in one chunk, one after another).
+    Steps: PN64CPUStep;
+    Code: PCardinal;
+    // The next block from the same bucket.
+    Next: PN64CPUBlock;
+    // The block entered after this one ran to its end: [0] the next
+    // instruction, [1] a branch taken; at LinkPC (nil: none yet).
+    Link: array[0..1] of PN64CPUBlock;
+    LinkPC: array[0..1] of UInt64;
+  end;
+
   TN64CPU = class
   private const
     KSeg0Base = UInt64($FFFFFFFF80000000);
     KSeg1Base = UInt64($FFFFFFFFA0000000);
     KSeg2Base = UInt64($FFFFFFFFC0000000);
     TLBKeyMask = UInt64($C00000FFFFFFE000);
-    // FCR31 bits that keep floating point off the host (SFQuick): every
-    // exception enable and the rounding mode (anything but nearest).
-    HostFloatOff = $F83;
+    // FCR31 bits that keep floating point off the host (SFQuick): the
+    // rounding mode (anything but nearest) and the inexact enable. The other
+    // enables do not: where SFQuick gives a result, it is the same as
+    // SoftFloat's with the same events, and those never include overflow,
+    // underflow, invalid or division by zero (GoldenEye runs with invalid
+    // enabled). The inexact enable keeps it off by choice, not for
+    // exactness: SFQuick's inexact is SoftFloat's, so it traps either way.
+    HostFloatOff = $83;
+    // Block pool chunks, and how many a CPU may have (then its blocks are
+    // dropped): about 19 MB in all on 64-bit hosts, 5 MB on 32-bit ones.
+    BlockChunkSize = 1024;
+    StepChunkSize = 8192;
+    {$IFDEF CPU64BITS}
+    MaxBlocks = 65536;
+    MaxStepChunks = 64;
+    {$ELSE}
+    MaxBlocks = 16384;
+    MaxStepChunks = 16;
+    {$ENDIF}
   private
     FBus: TN64Bus;
     FTLBGeneration: Cardinal;
@@ -79,6 +138,36 @@ type
     FSlowSafe: Boolean;
     // Floating-point results by the host where SFQuick can (HostFloat).
     FHostFloat: Boolean;
+    // Blocks (TN64CPUBlock): buckets by physical address, the blocks, their
+    // steps and code words in pools, all dropped when one is full.
+    FUseBlocks: Boolean;
+    FBlockHead: array[0..32767] of PN64CPUBlock;
+    // The pools in chunks, allocated as blocks are made (up to the limits
+    // for the platform; then all blocks are dropped and the chunks used
+    // again): blocks, steps and code words used so far.
+    FBlockChunks: TArray<TArray<TN64CPUBlock>>;
+    FStepChunks: TArray<TArray<TN64CPUStep>>;
+    FWordChunks: TArray<TArray<Cardinal>>;
+    FBlockCount, FStepChunk, FStepUsed, FWordChunk, FWordUsed: Integer;
+    FBlockLimit, FChunkLimit: Integer;
+    FBlockGen: Cardinal;
+    FBlocksBuilt, FBlocksRun: Int64;
+    // Set by RunBlocks: it stopped where FastRun may go on.
+    FPlainNext: Boolean;
+    // Where the last RunBlocks left off, for the next one (while no block
+    // was dropped since, FCarryGen): after a block that ran to its end
+    // (FLastBlock, ending at FLastEnd: its links), or within one (step
+    // FResumeStep of FResumeBlock, at FResumePC).
+    FLastBlock, FResumeBlock: PN64CPUBlock;
+    FLastEnd, FResumePC: UInt64;
+    FResumeStep: Integer;
+    FCarryGen: Cardinal;
+    procedure ClearBlocks;
+    function BlockKey(EntryLoad, EntryFP: Integer; Mode: Byte; Physical: Cardinal): PN64CPUBlock;
+    function BuildBlock(PC: UInt64; Physical: Cardinal; Mode: Byte): PN64CPUBlock;
+    function BlockValid(B: PN64CPUBlock): Boolean; inline;
+    function FastFloat(Op: Cardinal; A, B: UInt64; out R: TSoftFloatResult; out Cycles: Cardinal; out Target: Integer): Boolean;
+    function RunBlocks(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
     procedure DeviceAccess; inline;
     function FastCode(PC: UInt64; Context: Cardinal): Boolean;
     function FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal;
@@ -132,6 +221,14 @@ type
     // Set by whoever runs the CPU, on the thread that runs it: whether its
     // floating point suits SFQuick (SFHostReady). Exact either way.
     property HostFloat: Boolean read FHostFloat write FHostFloat;
+    // Fast steps from blocks of decoded instructions (on by default; the same
+    // steps either way).
+    property UseBlocks: Boolean read FUseBlocks write FUseBlocks;
+    property BlocksBuilt: Int64 read FBlocksBuilt;
+    property BlocksRun: Int64 read FBlocksRun;
+    // Tests: all blocks dropped once Blocks were made or Chunks chunks of
+    // steps used (both at least 1).
+    procedure LimitBlocks(Blocks, Chunks: Integer);
     constructor Create(Bus: TN64Bus);
     procedure Reset;
     procedure Step;
@@ -170,6 +267,10 @@ constructor TN64CPU.Create(Bus: TN64Bus);
 begin
   inherited Create;
   FBus := Bus;
+  FUseBlocks := True;
+  FBlockLimit := MaxBlocks;
+  FChunkLimit := MaxStepChunks;
+  ClearBlocks;
   Reset;
 end;
 
@@ -1663,7 +1764,44 @@ begin
     var Physical: Cardinal := 0;
     var Cached := False;
     var Wide := False;
+    // COP1: the format, the operands of an arithmetic one and its result.
+    var FPF := 0;
+    var FPA: UInt64 := 0;
+    var FPB: UInt64 := 0;
+    var FPResult: TSoftFloatResult;
     case Code of
+      17:
+        begin
+          // Moves, and the arithmetic and compares of operands and results
+          // that raise nothing that traps and need no exception: those the
+          // host computes as SoftFloat does (SFQuick, as Cop1 allows it), and
+          // compares without NaN. As Cop1 does them.
+          if not Cop1Usable then
+            Break;
+          FPF := Integer((Op shr 21) and 31);
+          case FPF of
+            0, 1, 4, 5:
+              Wide := (FPF and 1) <> 0;
+            16, 17:
+              begin
+                FPA := FPBits(Integer((Op shr 11) and 31), FPF);
+                FPB := FPBits(T, FPF);
+                if Fn >= 48 then
+                begin
+                  if SFIsNaN(FPA, FPF) or SFIsNaN(FPB, FPF) then
+                    Break;
+                end
+                else if (Fn > 4) or not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or
+                  not SFQuick(FPA, FPB, FPF, Fn, FPResult) or ((FPResult.Events and (FCR31 shr 7) and 31) <> 0) then
+                  // (No event of SFQuick's traps while the gate lets it run,
+                  // inexact being its only one: the last test is a guard.)
+                  Break;
+              end;
+          else
+            Break;
+          end;
+          Reads := 0;
+        end;
       0:
         begin
           case Fn of
@@ -1714,7 +1852,28 @@ begin
     // of these is a COP0 or COP1 instruction, so only a load target it reads
     // and a cached store before an access count), then this one's hazards.
     var C: Cardinal := 1;
-    if (FPreviousLoad >= 0) or FPreviousStore then
+    if Code = 17 then
+    begin
+      // As ApplyStalls: a load target or (arithmetic) an FP result read.
+      var RT := -1;
+      var FS := -1;
+      var FT := -1;
+      if FPF >= 16 then
+      begin
+        FS := FPRegister(Integer((Op shr 11) and 31));
+        if (Fn <= 3) or (Fn >= 48) then
+          FT := FPRegister(T);
+        if (FPreviousFP >= 0) and ((FPreviousFP = FS) or (FPreviousFP = FT)) then
+          Inc(C);
+      end
+      else if FPF >= 4 then
+        RT := T
+      else
+        FS := FPRegister(Integer((Op shr 11) and 31));
+      if (FPreviousLoad >= 0) and ((FPreviousLoad = RT) or (FPreviousLoad = FS) or (FPreviousLoad = FT)) then
+        Inc(C);
+    end
+    else if (FPreviousLoad >= 0) or FPreviousStore then
     begin
       if FPreviousLoad >= 0 then
         if (((Reads and 1) <> 0) and (FPreviousLoad = S)) or (((Reads and 2) <> 0) and (FPreviousLoad = T)) or
@@ -1736,6 +1895,12 @@ begin
         FPreviousLoad := FPRegister(T);
       40, 41, 43, 57, 61, 63:
         FPreviousStore := Cached;
+      17:
+        if FPF >= 16 then
+          if Fn >= 48 then
+            FPreviousCondition := True
+          else
+            FPreviousFP := FPRegister(Integer((Op shr 6) and 31));
     end;
     FInstructionPC := PC;
     FInDelay := FDelay;
@@ -1941,6 +2106,44 @@ begin
           FBus.WriteRAM32(Physical, Cardinal(V shr 32));
           FBus.WriteRAM32(Physical + 4, Cardinal(V and $FFFFFFFF));
         end;
+      17:
+        begin
+          var FS := Integer((Op shr 11) and 31);
+          case FPF of
+            0:
+              GPR[T] := SX(FPBits(FS, 16), 32);
+            1:
+              GPR[T] := FPBits(FS, 17);
+            4:
+              SetFPBits(FS, 16, GPR[T]);
+            5:
+              SetFPBits(FS, 17, GPR[T]);
+          else
+            begin
+              FCR31 := FCR31 and not $3F000;
+              Inc(C, FPClocks(FPA, FPB, FPF, Fn) - 1);
+              if Fn >= 48 then
+              begin
+                var Unordered, Equal, Less: Boolean;
+                SFCompare(FPA, FPB, FPF, Unordered, Equal, Less);
+                FCR31 := FCR31 and not $800000;
+                if (((Fn and 1) <> 0) and Unordered) or (((Fn and 2) <> 0) and Equal) or (((Fn and 4) <> 0) and Less) then
+                  FCR31 := FCR31 or $800000;
+              end
+              else
+              begin
+                // FPExceptions of the result's events (none traps).
+                FCR31 := FCR31 or ((FPResult.Events and 31) shl 12);
+                FCR31 := FCR31 or (((FPResult.Events and not (FCR31 shr 7)) and 31) shl 2);
+                var D := Integer((Op shr 6) and 31);
+                if (FPF = 16) and ((CP0[12] and $4000000) <> 0) then
+                  FPR[D] := FPResult.Bits and $FFFFFFFF
+                else
+                  SetFPBits(D, FPF, FPResult.Bits);
+              end;
+            end;
+          end;
+        end;
     end;
     // Step's end: a store's hazard needs it cached (it is).
     GPR[0] := 0;
@@ -1950,6 +2153,956 @@ begin
     Inc(Clocks, C);
     if (Clocks >= Limit) or IdleHead then
       Break;
+  end;
+  FastFlush(Cardinal(Clocks), Result);
+end;
+
+const
+  // Block step kinds besides the opcodes (1..63): SPECIAL functions, COP1
+  // moves (by format), COP1 arithmetic and compares, a LUI pair.
+  KindSpecial = 64;
+  KindCop1Move = 128;
+  KindCop1Arith = 136;
+  KindCop1Compare = 137;
+  KindCop1Branch = 138;
+  KindCop1Mov = 139;
+  KindLuiPair = 140;
+  // Step flags.
+  StepStore = 1;        // a store: FPreviousStore after it is its Cached
+  StepMayIdle = 2;      // IdleHead may hold after it (a delay slot)
+  StepMemoryHazard = 4; // reads memory: a cached store before it stalls it
+  StepWriting = 8;      // its data access writes
+  StepCondition = 16;   // leaves FPreviousCondition (a compare)
+  StepBranch = 32;      // a branch or jump
+  StepLikely = 64;      // a likely branch
+  // Block modes: Cop1 usable, 64-bit operations allowed, FR, in a delay slot.
+  ModeCop1 = 1;
+  ModeWide = 2;
+  ModeFR = 4;
+  ModeDelay = 8;
+  // At most this many steps in a block (the pools keep room for one).
+  MaxBlockSteps = 48;
+
+function StepOf(B: PN64CPUBlock; I: Integer): PN64CPUStep; inline;
+begin
+  Result := PN64CPUStep(NativeUInt(B.Steps) + NativeUInt(I) * SizeOf(TN64CPUStep));
+end;
+
+function TN64CPU.FastFloat(Op: Cardinal; A, B: UInt64; out R: TSoftFloatResult; out Cycles: Cardinal;
+  out Target: Integer): Boolean;
+begin
+  // Cop1's result for arithmetic or a conversion (Op, operands A and B as
+  // it reads them), worked out without changing anything: False where Cop1
+  // would fault, trap, raise unimplemented, or take its NaN or tiny-result
+  // paths (Step does those). Cycles: its FOperationCycles.
+  Result := False;
+  var F := Integer((Op shr 21) and 31);
+  var Fn := Integer(Op and 63);
+  Target := F;
+  Cycles := FPClocks(A, B, F, Fn);
+  if F in [20, 21] then
+  begin
+    if not (Fn in [32, 33]) then
+      Exit;
+    if (F = 21) and ((A shr 55) <> 0) and ((A shr 55) <> $1FF) then
+      Exit;
+  end
+  else
+  begin
+    var Binary := Fn <= 3;
+    if SFIsSubnormal(A, F) or (Binary and SFIsSubnormal(B, F)) then
+      Exit;
+    if SFIsNaN(A, F) or (Binary and SFIsNaN(B, F)) then
+      Exit;
+  end;
+  case Fn of
+    0..5, 7:
+      if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or (Fn > 4) or not SFQuick(A, B, F, Fn, R) then
+        R := SFCalculate(A, B, F, Fn, FCR31 and 3);
+    8..15, 36, 37:
+      begin
+        Target := 21;
+        if Fn in [12..15, 36] then
+          Target := 20;
+        var Mode := Fn and 3;
+        if Fn in [36, 37] then
+          Mode := FCR31 and 3;
+        var Magnitude := A and $7FFFFFFFFFFFFFFF;
+        var Limit: UInt64 := $4340000000000000;
+        if F = 16 then
+        begin
+          Magnitude := A and $7FFFFFFF;
+          Limit := $5A000000;
+        end;
+        if Magnitude >= Limit then
+          Exit;
+        if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or (Mode <> 0) or not SFQuickConvert(A, F, Target, Mode, R) then
+          R := SFConvert(A, F, Target, Mode);
+        if (R.Events and sfInvalid) <> 0 then
+          Exit;
+      end;
+    32, 33:
+      begin
+        Target := 16;
+        if Fn = 33 then
+          Target := 17;
+        if F = Target then
+          Exit;
+        if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or not SFQuickConvert(A, F, Target, 0, R) then
+          R := SFConvert(A, F, Target, FCR31 and 3);
+      end;
+  else
+    Exit;
+  end;
+  if (Target in [16, 17]) and (SFIsSubnormal(R.Bits, Target) or ((R.Events and sfUnderflow) <> 0)) then
+    Exit;
+  Result := (R.Events and (FCR31 shr 7) and 31) = 0;
+end;
+
+procedure TN64CPU.LimitBlocks(Blocks, Chunks: Integer);
+begin
+  FBlockLimit := Max(1, Min(Blocks, MaxBlocks));
+  FChunkLimit := Max(1, Min(Chunks, MaxStepChunks));
+  ClearBlocks;
+end;
+
+procedure TN64CPU.ClearBlocks;
+begin
+  for var I := 0 to High(FBlockHead) do
+    FBlockHead[I] := nil;
+  FBlockCount := 0;
+  FStepChunk := 0;
+  FStepUsed := 0;
+  FWordChunk := 0;
+  FWordUsed := 0;
+  Inc(FBlockGen);
+end;
+
+function TN64CPU.BlockValid(B: PN64CPUBlock): Boolean;
+begin
+  // Its code as it is in RDRAM (the page has no RDP work queued): compared
+  // again only once the page was written.
+  var Gen := FBus.CodeGeneration(B.Physical);
+  if B.Gen = Gen then
+    Exit(True);
+  var Word := B.Code;
+  for var I := 0 to B.Words - 1 do
+  begin
+    if FBus.PlainRAM32(B.Physical + Cardinal(I) * 4) <> Word^ then
+      Exit(False);
+    Inc(Word);
+  end;
+  B.Gen := Gen;
+  Result := True;
+end;
+
+function TN64CPU.BlockKey(EntryLoad, EntryFP: Integer; Mode: Byte; Physical: Cardinal): PN64CPUBlock;
+begin
+  // The block for this entry state whose code is current, or nil.
+  Result := FBlockHead[(Physical shr 2) and High(FBlockHead)];
+  while Result <> nil do
+  begin
+    if (Result.Physical = Physical) and (Result.Mode = Mode) and (Result.EntryLoad = EntryLoad) and
+      (Result.EntryFP = EntryFP) and BlockValid(Result) then
+      Exit;
+    Result := Result.Next;
+  end;
+end;
+
+function TN64CPU.BuildBlock(PC: UInt64; Physical: Cardinal; Mode: Byte): PN64CPUBlock;
+begin
+  // The steps from Physical (PC) for the entry state as it is: those FastRun
+  // takes, decoded as FastRun decodes them, with their stalls behind each
+  // other as ApplyStalls finds them.
+  // Room for a block of MaxBlockSteps steps and words: the next chunk if
+  // this one has none, all dropped at the limit.
+  if FStepUsed + MaxBlockSteps > StepChunkSize then
+  begin
+    Inc(FStepChunk);
+    FStepUsed := 0;
+  end;
+  // (Two words for a step of a LUI pair, one for an empty block.)
+  if FWordUsed + 2 * MaxBlockSteps + 1 > StepChunkSize then
+  begin
+    Inc(FWordChunk);
+    FWordUsed := 0;
+  end;
+  if (FBlockCount >= FBlockLimit) or (FStepChunk >= FChunkLimit) or (FWordChunk >= FChunkLimit) then
+    ClearBlocks;
+  if FStepChunk >= Length(FStepChunks) then
+  begin
+    SetLength(FStepChunks, FStepChunk + 1);
+    SetLength(FStepChunks[FStepChunk], StepChunkSize);
+  end;
+  if FWordChunk >= Length(FWordChunks) then
+  begin
+    SetLength(FWordChunks, FWordChunk + 1);
+    SetLength(FWordChunks[FWordChunk], StepChunkSize);
+  end;
+  var BlockChunk := FBlockCount div BlockChunkSize;
+  if BlockChunk >= Length(FBlockChunks) then
+  begin
+    SetLength(FBlockChunks, BlockChunk + 1);
+    SetLength(FBlockChunks[BlockChunk], BlockChunkSize);
+  end;
+  Inc(FBlocksBuilt);
+  Result := @FBlockChunks[BlockChunk][FBlockCount mod BlockChunkSize];
+  Inc(FBlockCount);
+  Result.Physical := Physical;
+  Result.EntryLoad := ShortInt(FPreviousLoad);
+  Result.EntryFP := ShortInt(FPreviousFP);
+  Result.Mode := Mode;
+  Result.SlowSafe := False;
+  Result.Steps := @FStepChunks[FStepChunk][FStepUsed];
+  Result.Code := @FWordChunks[FWordChunk][FWordUsed];
+  var Words_: PCardinal := Result.Code;
+  Result.Link[0] := nil;
+  Result.Link[1] := nil;
+  FBus.MarkCodePage(Physical);
+  Result.Gen := FBus.CodeGeneration(Physical);
+  var Bucket := (Physical shr 2) and High(FBlockHead);
+  Result.Next := FBlockHead[Bucket];
+  FBlockHead[Bucket] := Result;
+  var Cop1Usable := (Mode and ModeCop1) <> 0;
+  var WideOK := (Mode and ModeWide) <> 0;
+  // FPRegister as the block's FR has it.
+  var FRMask := 30;
+  if (Mode and ModeFR) <> 0 then
+    FRMask := 31;
+  var PrevLoad := Integer(FPreviousLoad);
+  var PrevFP := Integer(FPreviousFP);
+  var Count := 0;
+  var Words := 0;
+  var AfterBranch := False;
+  while Count < MaxBlockSteps do
+  begin
+    var Offset := (Physical and $FFF) + Cardinal(Words) * 4;
+    if Offset > $FFC then
+      Break;
+    var Op := FBus.PlainRAM32((Physical and not Cardinal($FFF)) or Offset);
+    var Code := Op shr 26;
+    var S := Integer((Op shr 21) and 31);
+    var T := Integer((Op shr 16) and 31);
+    var D := Integer((Op shr 11) and 31);
+    var Fn := Integer(Op and 63);
+    var Kind := Integer(Code);
+    var Reads: Byte := 0;
+    var Wide := False;
+    var Size := 0;
+    var Flags: Byte := 0;
+    var Extra := 0;
+    var FPF := 0;
+    var Eligible := True;
+    // As FastRun's first case.
+    case Code of
+      0:
+        begin
+          case Fn of
+            0, 2, 3, 4, 6, 7, 8, 9, 15..19, 24..27, 33, 35..39, 42, 43:
+              ;
+            20, 22, 23, 28..31, 45, 47, 56, 58..60, 62, 63:
+              Wide := True;
+          else
+            Eligible := False;
+          end;
+          Reads := SpecialReads[Fn];
+          Kind := KindSpecial + Fn;
+          case Fn of
+            8, 9:
+              Flags := StepBranch;
+            24, 25:
+              Extra := 4;
+            26, 27:
+              Extra := 36;
+            28, 29:
+              Extra := 7;
+            30, 31:
+              Extra := 68;
+          end;
+        end;
+      47:
+        Reads := OpReads[Code];
+      1:
+        begin
+          if not (T in [0..3, 16..19]) then
+            Eligible := False;
+          Reads := OpReads[Code];
+          Flags := StepBranch;
+          if (T and 2) <> 0 then
+            Flags := Flags or StepLikely;
+        end;
+      2..7, 9..15, 20..23:
+        begin
+          Reads := OpReads[Code];
+          if Code in [2..7, 20..23] then
+            Flags := StepBranch;
+          if Code >= 20 then
+            Flags := Flags or StepLikely;
+        end;
+      32, 33, 35..37, 39..41, 43, 49, 53, 55, 57, 61, 63:
+        begin
+          if (Code in [49, 53, 57, 61]) and not Cop1Usable then
+            Eligible := False;
+          Wide := Code in [55, 63];
+          case Code of
+            32, 36, 40:
+              Size := 1;
+            33, 37, 41:
+              Size := 2;
+            53, 55, 61, 63:
+              Size := 8;
+          else
+            Size := 4;
+          end;
+          if Code in [40, 41, 43, 57, 61, 63] then
+            Flags := StepStore or StepWriting;
+          Reads := OpReads[Code];
+        end;
+      17:
+        begin
+          if not Cop1Usable then
+            Eligible := False;
+          FPF := S;
+          case FPF of
+            0, 1, 4, 5:
+              begin
+                Wide := (FPF and 1) <> 0;
+                Kind := KindCop1Move + FPF;
+              end;
+            8:
+              begin
+                Kind := KindCop1Branch;
+                Flags := StepBranch;
+                if (T and 2) <> 0 then
+                  Flags := Flags or StepLikely;
+              end;
+            16, 17:
+              begin
+                if Fn >= 48 then
+                  Kind := KindCop1Compare
+                else if Fn = 6 then
+                  Kind := KindCop1Mov
+                else if Fn in [0..5, 7..15, 32, 33, 36, 37] then
+                  Kind := KindCop1Arith
+                else
+                  Eligible := False;
+                Wide := Fn in [8..11, 37];
+              end;
+            20, 21:
+              if Fn in [32, 33] then
+              begin
+                Kind := KindCop1Arith;
+                Wide := FPF = 21;
+              end
+              else
+                Eligible := False;
+          else
+            Eligible := False;
+          end;
+        end;
+    else
+      Eligible := False;
+    end;
+    if Wide and not WideOK then
+      Eligible := False;
+    // A delay slot runs whatever it is (a block entered in one has it alone).
+    if not Eligible then
+    begin
+      // No step: its word is checked too (SlowSafe holds for it alone).
+      if Count = 0 then
+      begin
+        Result.SlowSafe := Code <> 16;
+        Words_^ := Op;
+        Words := 1;
+      end;
+      Break;
+    end;
+    // The stall behind the instruction before (fixed here), as FastRun and
+    // ApplyStalls find it.
+    var Clocks := 1 + Extra;
+    if Code = 17 then
+    begin
+      var RT := -1;
+      var FS := -1;
+      var FT := -1;
+      if FPF >= 16 then
+      begin
+        FS := (D and FRMask) + 32;
+        if (Fn <= 3) or (Fn >= 48) then
+          FT := (T and FRMask) + 32;
+        if (PrevFP >= 0) and ((PrevFP = FS) or (PrevFP = FT)) then
+          Inc(Clocks);
+      end
+      else if FPF >= 8 then
+        // BC1: the condition (FPreviousCondition) as it runs.
+      else if FPF >= 4 then
+        RT := T
+      else
+        FS := (D and FRMask) + 32;
+      if (PrevLoad >= 0) and ((PrevLoad = RT) or (PrevLoad = FS) or (PrevLoad = FT)) then
+        Inc(Clocks);
+    end
+    else
+    begin
+      if (PrevLoad >= 0) and ((((Reads and 1) <> 0) and (PrevLoad = S)) or (((Reads and 2) <> 0) and (PrevLoad = T)) or
+        (((Reads and 8) <> 0) and (PrevLoad = (T and FRMask) + 32))) then
+        Inc(Clocks);
+      if (Reads and 4) <> 0 then
+        Flags := Flags or StepMemoryHazard;
+    end;
+    // What it leaves for the next one.
+    var LoadAfter := -1;
+    var FPAfter := -1;
+    case Code of
+      32, 33, 35..37, 39, 55:
+        if T <> 0 then
+          LoadAfter := T;
+      49, 53:
+        LoadAfter := (T and FRMask) + 32;
+      17:
+        if Kind in [KindCop1Arith, KindCop1Mov] then
+          FPAfter := (Integer((Op shr 6) and 31) and FRMask) + 32
+        else if Kind = KindCop1Compare then
+          Flags := Flags or StepCondition;
+    end;
+    // IdleHead holds only after a delay slot.
+    if ((Count = 0) and ((Mode and ModeDelay) <> 0)) or AfterBranch then
+      Flags := Flags or StepMayIdle;
+    var Step: PN64CPUStep := @FStepChunks[FStepChunk][FStepUsed + Count];
+    Step.Op := Op;
+    Step.Kind := Byte(Kind);
+    Step.S := Byte(S);
+    Step.T := Byte(T);
+    Step.D := Byte(D);
+    Step.N := Byte((Op shr 6) and 31);
+    Step.Clocks := Byte(Clocks);
+    Step.Size := Byte(Size);
+    Step.Flags := Flags;
+    Step.LoadAfter := ShortInt(LoadAfter);
+    Step.FPAfter := ShortInt(FPAfter);
+    Step.Index := Byte(Words);
+    Step.Value := SX16(Op);
+    PCardinal(NativeUInt(Words_) + NativeUInt(Words) * 4)^ := Op;
+    Inc(Words);
+    // A LUI the ORI/ADDIU after it adds to (both into one register): one
+    // step for both (not in a delay slot, not where the block may idle).
+    if (Code = 15) and (T <> 0) and ((Flags and StepMayIdle) = 0) and (Offset + 4 <= $FFC) then
+    begin
+      var Second := FBus.PlainRAM32((Physical and not Cardinal($FFF)) or (Offset + 4));
+      if ((Second shr 26) in [9, 13]) and (Integer((Second shr 21) and 31) = T) and (Integer((Second shr 16) and 31) = T) then
+      begin
+        var Upper := SX32((Op and $FFFF) shl 16);
+        if (Second shr 26) = 13 then
+          Step.Value := Upper or (Second and $FFFF)
+        else
+          Step.Value := SX32(Add64(Upper, SX16(Second)));
+        // Clocks stays the ORI/ADDIU's 1: the LUI's comes with it as it runs.
+        Step.Kind := KindLuiPair;
+        PCardinal(NativeUInt(Words_) + NativeUInt(Words) * 4)^ := Second;
+        Inc(Words);
+      end;
+    end;
+    Inc(Count);
+    PrevLoad := LoadAfter;
+    PrevFP := FPAfter;
+    // A block entered in a delay slot has that one alone; a likely branch
+    // ends one (its delay slot runs or not); a delay slot does.
+    if ((Mode and ModeDelay) <> 0) or AfterBranch or ((Flags and StepLikely) <> 0) then
+      Break;
+    AfterBranch := (Flags and StepBranch) <> 0;
+  end;
+  Result.Count := Count;
+  Result.Words := Words;
+  Inc(FStepUsed, Count);
+  Inc(FWordUsed, Words);
+end;
+
+function TN64CPU.RunBlocks(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
+begin
+  // FastRun's steps (after FastReady), exactly as it takes them, from blocks:
+  // at most MaxSteps, up to the one that brings their PClocks to Limit or
+  // more or after which IdleLimit may find an idle loop's head, or before
+  // one FastRun would not take (FSlowSafe as it leaves it). FPlainNext: it
+  // stopped where FastRun could go on (no block there: RDP work queued on
+  // the code page, or an unusual PC). COUNT and Random updates at the end.
+  Result := 0;
+  Clocks := 0;
+  FPlainNext := False;
+  var Status := CP0[12];
+  var Cop1Usable := (Status and $20000000) <> 0;
+  var Mode := Integer((Status shr 3) and 3);
+  if (Status and 6) <> 0 then
+    Mode := 0;
+  var WideOK := (Mode = 0) or ((Status and (UInt64($80) shr Mode)) <> 0);
+  var BaseMode: Byte := 0;
+  if Cop1Usable then
+    BaseMode := ModeCop1;
+  if WideOK then
+    BaseMode := BaseMode or ModeWide;
+  if (Status and $4000000) <> 0 then
+    BaseMode := BaseMode or ModeFR;
+  var CodeClean := False;
+  // The block before (it ran to its end) and which of its links applies.
+  var Prev: PN64CPUBlock := nil;
+  var PrevEnd: UInt64 := 0;
+  // A block the last call stopped within, and the step it stopped before.
+  var ResumeBlock: PN64CPUBlock := nil;
+  var ResumeStep := 0;
+  if FCarryGen = FBlockGen then
+  begin
+    if (FResumeBlock <> nil) and (FResumePC = FPC) then
+    begin
+      ResumeBlock := FResumeBlock;
+      ResumeStep := FResumeStep;
+    end
+    else if FLastBlock <> nil then
+    begin
+      Prev := FLastBlock;
+      PrevEnd := FLastEnd;
+    end;
+  end;
+  FLastBlock := nil;
+  FResumeBlock := nil;
+  var Stop := False;
+  var Rewritten := False;
+  while (Result < MaxSteps) and not Stop do
+  begin
+    FSlowSafe := False;
+    var PC := FPC;
+    if ((PC and 3) <> 0) or (not FDelay and (FNextPC <> Add64(PC, 4))) then
+    begin
+      FPlainNext := True;
+      Break;
+    end;
+    if not FFastCodeValid or (FFastCodePage <> (PC shr 12)) or (FFastCodeContext <> Context) or
+      (FFastCodeGeneration <> FTLBGeneration) then
+    begin
+      if not FastCode(PC, Context) then
+        Break;
+      CodeClean := False;
+      Prev := nil;
+      ResumeBlock := nil;
+    end;
+    if not CodeClean then
+    begin
+      CodeClean := FBus.RDPReadClean(FFastCodePhysical);
+      if not CodeClean then
+      begin
+        FPlainNext := True;
+        Break;
+      end;
+    end;
+    var Physical := FFastCodePhysical or Cardinal(PC and $FFF);
+    var BlockMode := BaseMode;
+    if FDelay then
+      BlockMode := BlockMode or ModeDelay;
+    var B: PN64CPUBlock := nil;
+    var First := 0;
+    if ResumeBlock <> nil then
+    begin
+      // Within the block where the last call stopped: the rest of its steps,
+      // if they hold as they are (the same place and mode, the hazards its
+      // step before left, a delay slot where it has one, its code unchanged).
+      // Only the next call resumes, and anything run in between moves the
+      // PC: the hazard and delay slot tests are guards.
+      var R := StepOf(ResumeBlock, ResumeStep);
+      var Before := StepOf(ResumeBlock, ResumeStep - 1);
+      if (ResumeBlock.Mode = BaseMode) and (Physical = ResumeBlock.Physical + Cardinal(R.Index) * 4) and
+        (FPreviousLoad = Before.LoadAfter) and (FPreviousFP = Before.FPAfter) and
+        (FDelay = ((Before.Flags and StepBranch) <> 0)) and BlockValid(ResumeBlock) then
+      begin
+        B := ResumeBlock;
+        First := ResumeStep;
+        // (Where the block starts, for its end.)
+        PC := Sub64(PC, Cardinal(R.Index) * 4);
+      end;
+      ResumeBlock := nil;
+    end;
+    var Taken := Ord(PC <> PrevEnd);
+    if (B = nil) and (Prev <> nil) then
+    begin
+      // (The entry hazards after Prev follow from Prev and the way it left;
+      // compared as a guard.)
+      B := Prev.Link[Taken];
+      if (B <> nil) and ((Prev.LinkPC[Taken] <> PC) or (B.Mode <> BlockMode) or (B.EntryLoad <> FPreviousLoad) or
+        (B.EntryFP <> FPreviousFP) or not BlockValid(B)) then
+        B := nil;
+    end;
+    if B = nil then
+    begin
+      var Gen := FBlockGen;
+      B := BlockKey(FPreviousLoad, FPreviousFP, BlockMode, Physical);
+      if B = nil then
+        B := BuildBlock(PC, Physical, BlockMode);
+      if (Prev <> nil) and (FBlockGen = Gen) then
+      begin
+        Prev.Link[Taken] := B;
+        Prev.LinkPC[Taken] := PC;
+      end;
+    end;
+    if B.Count = 0 then
+    begin
+      FSlowSafe := B.SlowSafe;
+      Break;
+    end;
+    Inc(FBlocksRun);
+    var Step := StepOf(B, First);
+    var Last := StepOf(B, B.Count - 1);
+    while True do
+    begin
+      var C: Cardinal := Step.Clocks;
+      var Physical2: Cardinal := 0;
+      var Cached := False;
+      var Kind := Step.Kind;
+      var FPA: UInt64 := 0;
+      var FPB: UInt64 := 0;
+      var FPResult: TSoftFloatResult;
+      var FPCycles: Cardinal := 1;
+      var FPTarget := 0;
+      if Step.Size <> 0 then
+      begin
+        if not FastData(Add64(GPR[Step.S], Step.Value), Step.Size, (Step.Flags and StepWriting) <> 0, Context,
+          Physical2, Cached) then
+        begin
+          FSlowSafe := True;
+          Stop := True;
+          Break;
+        end;
+        if FPreviousStore and ((Step.Flags and StepMemoryHazard) <> 0) and Cached then
+          Inc(C);
+      end
+      else if Kind >= KindCop1Arith then
+      begin
+        if Kind = KindLuiPair then
+        begin
+          // Room for both (else the LUI alone, as FastRun ends after it).
+          if (Clocks + 1 >= Limit) or (Result + 1 >= MaxSteps) then
+            Kind := 15;
+        end
+        else if Kind = KindCop1Branch then
+        begin
+          // ApplyStalls: BC1 right after a compare.
+          if FPreviousCondition then
+            Inc(C);
+        end
+        else if Kind <> KindCop1Mov then
+        begin
+          var F := Integer(Step.S);
+          FPA := FPBits(Integer(Step.D), F);
+          FPB := FPBits(Integer(Step.T), F);
+          if Kind = KindCop1Compare then
+          begin
+            if SFIsNaN(FPA, F) or SFIsNaN(FPB, F) then
+            begin
+              FSlowSafe := True;
+              Stop := True;
+              Break;
+            end;
+          end
+          else if not FastFloat(Step.Op, FPA, FPB, FPResult, FPCycles, FPTarget) then
+          begin
+            FSlowSafe := True;
+            Stop := True;
+            Break;
+          end;
+        end;
+      end;
+      // Its hazards for the next one, then the instruction.
+      FPreviousLoad := Step.LoadAfter;
+      FPreviousFP := Step.FPAfter;
+      FPreviousCondition := (Step.Flags and StepCondition) <> 0;
+      FPreviousException := False;
+      FPreviousStore := ((Step.Flags and StepStore) <> 0) and Cached;
+      var PC2 := FPC;
+      FInstructionPC := PC2;
+      FInDelay := FDelay;
+      FDelay := False;
+      FPC := FNextPC;
+      FNextPC := Add64(FNextPC, 4);
+      var T := Integer(Step.T);
+      var A := GPR[Step.S];
+      case Kind of
+        KindSpecial + 0:
+          GPR[Step.D] := SX32(GPR[T] shl Step.N);
+        KindSpecial + 2:
+          GPR[Step.D] := SX32((GPR[T] and $FFFFFFFF) shr Step.N);
+        KindSpecial + 3:
+          GPR[Step.D] := SX32(SAR(GPR[T], Step.N, 32));
+        KindSpecial + 4:
+          GPR[Step.D] := SX32(GPR[T] shl (A and 31));
+        KindSpecial + 6:
+          GPR[Step.D] := SX32((GPR[T] and $FFFFFFFF) shr (A and 31));
+        KindSpecial + 7:
+          GPR[Step.D] := SX32(SAR(GPR[T], A and 31, 32));
+        KindSpecial + 8:
+          Branch(True, False, A);
+        KindSpecial + 9:
+          begin
+            GPR[Step.D] := Add64(PC2, 8);
+            Branch(True, False, A);
+          end;
+        KindSpecial + 15:
+          ; // SYNC
+        KindSpecial + 16:
+          GPR[Step.D] := HI;
+        KindSpecial + 17:
+          HI := A;
+        KindSpecial + 18:
+          GPR[Step.D] := LO;
+        KindSpecial + 19:
+          LO := A;
+        KindSpecial + 20:
+          GPR[Step.D] := GPR[T] shl (A and 63);
+        KindSpecial + 22:
+          GPR[Step.D] := GPR[T] shr (A and 63);
+        KindSpecial + 23:
+          GPR[Step.D] := SAR(GPR[T], A and 63, 64);
+        KindSpecial + 24, KindSpecial + 25:
+          begin
+            var BB := GPR[T];
+            var V: UInt64;
+            if Kind = KindSpecial + 24 then
+              Multiply64(SX(A, 32), SX(BB, 32), True, HI, V)
+            else
+              V := (A and $FFFFFFFF) * (BB and $FFFFFFFF);
+            LO := SX(V, 32);
+            HI := SX(V shr 32, 32);
+          end;
+        KindSpecial + 26, KindSpecial + 27:
+          begin
+            var BB := GPR[T];
+            if Kind = KindSpecial + 26 then
+              Divide64(SX(A, 32), SX(BB, 32), True, HI, LO)
+            else
+              Divide64(A and $FFFFFFFF, BB and $FFFFFFFF, False, HI, LO);
+            HI := SX(HI, 32);
+            LO := SX(LO, 32);
+          end;
+        KindSpecial + 28, KindSpecial + 29:
+          Multiply64(A, GPR[T], Kind = KindSpecial + 28, HI, LO);
+        KindSpecial + 30, KindSpecial + 31:
+          Divide64(A, GPR[T], Kind = KindSpecial + 30, HI, LO);
+        KindSpecial + 33:
+          GPR[Step.D] := SX32(Add64(A, GPR[T]));
+        KindSpecial + 35:
+          GPR[Step.D] := SX32(Sub64(A, GPR[T]));
+        KindSpecial + 36:
+          GPR[Step.D] := A and GPR[T];
+        KindSpecial + 37:
+          GPR[Step.D] := A or GPR[T];
+        KindSpecial + 38:
+          GPR[Step.D] := A xor GPR[T];
+        KindSpecial + 39:
+          GPR[Step.D] := not (A or GPR[T]);
+        KindSpecial + 42:
+          GPR[Step.D] := Ord(SignedLess(A, GPR[T]));
+        KindSpecial + 43:
+          GPR[Step.D] := Ord(A < GPR[T]);
+        KindSpecial + 45:
+          GPR[Step.D] := Add64(A, GPR[T]);
+        KindSpecial + 47:
+          GPR[Step.D] := Sub64(A, GPR[T]);
+        KindSpecial + 56:
+          GPR[Step.D] := GPR[T] shl Step.N;
+        KindSpecial + 58:
+          GPR[Step.D] := GPR[T] shr Step.N;
+        KindSpecial + 59:
+          GPR[Step.D] := SAR(GPR[T], Step.N, 64);
+        KindSpecial + 60:
+          GPR[Step.D] := GPR[T] shl (Step.N + 32);
+        KindSpecial + 62:
+          GPR[Step.D] := GPR[T] shr (Step.N + 32);
+        KindSpecial + 63:
+          GPR[Step.D] := SAR(GPR[T], Step.N + 32, 64);
+        1:
+          begin
+            var Taken2 := SignedLess(A, 0);
+            if (T and 1) <> 0 then
+              Taken2 := not Taken2;
+            if T >= 16 then
+              GPR[31] := Add64(PC2, 8);
+            Branch(Taken2, (T and 2) <> 0, Add64(FPC, Step.Value shl 2));
+          end;
+        2, 3:
+          begin
+            if Kind = 3 then
+              GPR[31] := Add64(PC2, 8);
+            Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Step.Op and $3FFFFFF) shl 2));
+          end;
+        4, 20:
+          Branch(A = GPR[T], Kind = 20, Add64(FPC, Step.Value shl 2));
+        5, 21:
+          Branch(A <> GPR[T], Kind = 21, Add64(FPC, Step.Value shl 2));
+        6, 22:
+          Branch(not SignedLess(0, A), Kind = 22, Add64(FPC, Step.Value shl 2));
+        7, 23:
+          Branch(SignedLess(0, A), Kind = 23, Add64(FPC, Step.Value shl 2));
+        9:
+          GPR[T] := SX32(Add64(A, Step.Value));
+        10:
+          GPR[T] := Ord(SignedLess(A, Step.Value));
+        11:
+          GPR[T] := Ord(A < Step.Value);
+        12:
+          GPR[T] := A and (Step.Op and $FFFF);
+        13:
+          GPR[T] := A or (Step.Op and $FFFF);
+        14:
+          GPR[T] := A xor (Step.Op and $FFFF);
+        15:
+          GPR[T] := SX32((Step.Op and $FFFF) shl 16);
+        KindLuiPair:
+          begin
+            // The ORI/ADDIU after the LUI: its Step as FastRun takes it.
+            Inc(Result);
+            Inc(Clocks);
+            FInstructionPC := FPC;
+            FInDelay := False;
+            FPC := FNextPC;
+            FNextPC := Add64(FNextPC, 4);
+            GPR[T] := Step.Value;
+          end;
+        32:
+          GPR[T] := SX8(FBus.ReadRAM8(Physical2));
+        33:
+          GPR[T] := SX16(FBus.ReadRAM16(Physical2));
+        35:
+          GPR[T] := SX32(FBus.ReadRAM32(Physical2));
+        36:
+          GPR[T] := FBus.ReadRAM8(Physical2);
+        37:
+          GPR[T] := FBus.ReadRAM16(Physical2);
+        39:
+          GPR[T] := FBus.ReadRAM32(Physical2);
+        49:
+          SetFPBits(T, 16, FBus.ReadRAM32(Physical2));
+        53:
+          SetFPBits(T, 17, (UInt64(FBus.ReadRAM32(Physical2)) shl 32) or FBus.ReadRAM32(Physical2 + 4));
+        55:
+          GPR[T] := (UInt64(FBus.ReadRAM32(Physical2)) shl 32) or FBus.ReadRAM32(Physical2 + 4);
+        63:
+          begin
+            var V := GPR[T];
+            FLL := False;
+            FBus.WriteRAM32(Physical2, Cardinal(V shr 32));
+            FBus.WriteRAM32(Physical2 + 4, Cardinal(V and $FFFFFFFF));
+          end;
+        40:
+          begin
+            FLL := False;
+            FBus.WriteRAM8(Physical2, Byte(GPR[T] and $FF));
+          end;
+        41:
+          begin
+            FLL := False;
+            FBus.WriteRAM8(Physical2, Byte((GPR[T] shr 8) and $FF));
+            FBus.WriteRAM8(Physical2 + 1, Byte(GPR[T] and $FF));
+          end;
+        43:
+          begin
+            FLL := False;
+            FBus.WriteRAM32(Physical2, Cardinal(GPR[T] and $FFFFFFFF));
+          end;
+        57:
+          begin
+            var V := FPBits(T, 16);
+            FLL := False;
+            FBus.WriteRAM32(Physical2, Cardinal(V and $FFFFFFFF));
+          end;
+        61:
+          begin
+            var V := FPBits(T, 17);
+            FLL := False;
+            FBus.WriteRAM32(Physical2, Cardinal(V shr 32));
+            FBus.WriteRAM32(Physical2 + 4, Cardinal(V and $FFFFFFFF));
+          end;
+        KindCop1Move + 0:
+          GPR[T] := SX(FPBits(Step.D, 16), 32);
+        KindCop1Move + 1:
+          GPR[T] := FPBits(Step.D, 17);
+        KindCop1Move + 4:
+          SetFPBits(Step.D, 16, GPR[T]);
+        KindCop1Move + 5:
+          SetFPBits(Step.D, 17, GPR[T]);
+        KindCop1Compare:
+          begin
+            var F := Integer(Step.S);
+            var Fn := Integer(Step.Op and 63);
+            FCR31 := FCR31 and not $3F000;
+            Inc(C, FPClocks(FPA, FPB, F, Fn) - 1);
+            var Unordered, Equal, Less: Boolean;
+            SFCompare(FPA, FPB, F, Unordered, Equal, Less);
+            FCR31 := FCR31 and not $800000;
+            if (((Fn and 1) <> 0) and Unordered) or (((Fn and 2) <> 0) and Equal) or (((Fn and 4) <> 0) and Less) then
+              FCR31 := FCR31 or $800000;
+          end;
+        KindCop1Arith:
+          begin
+            // As Cop1, which FastFloat found takes no special path.
+            FCR31 := FCR31 and not $3F000;
+            Inc(C, FPCycles - 1);
+            // FPExceptions of the result's events (none traps).
+            FCR31 := FCR31 or ((FPResult.Events and 31) shl 12);
+            FCR31 := FCR31 or (((FPResult.Events and not (FCR31 shr 7)) and 31) shl 2);
+            var D := Integer(Step.N);
+            if (FPTarget in [16, 20]) and ((CP0[12] and $4000000) <> 0) then
+              FPR[D] := FPResult.Bits and $FFFFFFFF
+            else
+              SetFPBits(D, FPTarget, FPResult.Bits);
+          end;
+        KindCop1Mov:
+          SetFPBits(Integer(Step.N), 17, FPBits(Integer(Step.D), 17));
+        KindCop1Branch:
+          begin
+            FCR31 := FCR31 and not $3F000;
+            Branch(((FCR31 and $800000) <> 0) = ((T and 1) <> 0), (T and 2) <> 0, Add64(FPC, Step.Value shl 2));
+          end;
+      end;
+      // (47, CACHE: nothing.)
+      GPR[0] := 0;
+      Inc(Result);
+      Inc(Clocks, C);
+      if (Clocks >= Limit) or (Result >= MaxSteps) or (((Step.Flags and StepMayIdle) <> 0) and IdleHead) then
+      begin
+        Stop := True;
+        // The next call may go on here.
+        if Step <> Last then
+        begin
+          FResumeBlock := B;
+          FResumeStep := (NativeUInt(Step) - NativeUInt(B.Steps)) div SizeOf(TN64CPUStep) + 1;
+          FResumePC := FPC;
+          FCarryGen := FBlockGen;
+        end
+        else
+        begin
+          FLastBlock := B;
+          FLastEnd := Add64(PC, Cardinal(B.Words) * 4);
+          FCarryGen := FBlockGen;
+        end;
+        Break;
+      end;
+      // A store into this block's own code: the steps after it are no
+      // longer what is there (the next block is checked as it is entered).
+      if ((Step.Flags and StepStore) <> 0) and (Physical2 < B.Physical + Cardinal(B.Words) * 4) and
+        (Physical2 + Step.Size > B.Physical) then
+      begin
+        Rewritten := True;
+        Break;
+      end;
+      if Step = Last then
+        Break;
+      Inc(Step);
+    end;
+    if Stop then
+      Break;
+    // It ran to its end: the next one, by link if it came before.
+    Prev := B;
+    PrevEnd := Add64(PC, Cardinal(B.Words) * 4);
+    if Rewritten then
+    begin
+      Prev := nil;
+      Rewritten := False;
+    end;
   end;
   FastFlush(Cardinal(Clocks), Result);
 end;
@@ -1977,7 +3130,21 @@ begin
         if UntilCompare < Limit then
           Limit := UntilCompare;
         var Clocks: UInt64;
-        var N := FastRun(MaxSteps - Result, Limit, Context, Clocks);
+        var N: Integer;
+        if FUseBlocks then
+        begin
+          // From blocks; where none can run (RDP work queued on the code
+          // page), FastRun takes over.
+          N := RunBlocks(MaxSteps - Result, Limit, Context, Clocks);
+          if FPlainNext and (Result + N < MaxSteps) and (Clocks < Limit) then
+          begin
+            var More: UInt64;
+            Inc(N, FastRun(MaxSteps - Result - N, Limit - Clocks, Context, More));
+            Inc(Clocks, More);
+          end;
+        end
+        else
+          N := FastRun(MaxSteps - Result, Limit, Context, Clocks);
         Inc(Result, N);
         Inc(Elapsed, Clocks);
         if N > 0 then

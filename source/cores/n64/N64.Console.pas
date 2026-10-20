@@ -703,6 +703,7 @@ begin
   FRSP.EndAhead;
   for var I := 0 to High(FRAM) do
     FRAM[I] := 0;
+  RAMReplaced;
   for var I := 0 to High(FHiddenRAM) do
     FHiddenRAM[I] := 0;
   FTimeline.Reset;
@@ -2719,7 +2720,10 @@ begin
   State.Field(FRAM[0], Length(FRAM));
   State.Field(FSP[0], Length(FSP));
   if State.Loading then
+  begin
+    RAMReplaced;
     SPLoaded;
+  end;
   State.Field(FPIF[0], Length(FPIF));
   State.Field(FSave[0], Length(FSave));
   State.Field(FReg, SizeOf(FReg));
