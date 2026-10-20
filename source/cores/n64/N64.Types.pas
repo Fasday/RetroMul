@@ -59,19 +59,21 @@ type
     FTraceSink: TN64TraceSink;
     FTraceEnabled: Boolean;
   protected
-    // Plain RDRAM bytes and their hidden bits, and SP DMEM+IMEM
-    // ($04000000..$04001FFF). Fixed bounds keep the checked accesses cheap.
-    // A bus that sets FDirectMemory promises that CPU/RSP/RDP/VI accesses
-    // there have exactly the semantics of the helpers below, so callers may
-    // bypass the virtual decoder. Other buses never expose these arrays.
-    FRAM: array[0..$7FFFFF] of Byte;
-    FHiddenRAM: array[0..$3FFFFF] of Byte;
-    FSP: array[0..$1FFF] of Byte;
     // IMEM ($1000..$1FFF of FSP) as big-endian words, and for each word the
     // value of FIMemCounter at its last change (0: never written).
     FIMemWords: array[0..1023] of Cardinal;
     FIMemStamps: array[0..1023] of UInt64;
     FIMemCounter: UInt64;
+    // SP DMEM+IMEM ($04000000..$04001FFF), plain RDRAM bytes and their
+    // hidden bits. Fixed bounds keep the checked accesses cheap. A bus that
+    // sets FDirectMemory promises that CPU/RSP/RDP/VI accesses there have
+    // exactly the semantics of the helpers below, so callers may bypass the
+    // virtual decoder. Other buses never expose these arrays. (After the
+    // 8-byte fields: FSP and FRAM start 8-byte aligned, where the instance
+    // is, for the RSP's 16-byte vector loads and stores in 8-byte words.)
+    FSP: array[0..$1FFF] of Byte;
+    FRAM: array[0..$7FFFFF] of Byte;
+    FHiddenRAM: array[0..$3FFFFF] of Byte;
     FDirectMemory: Boolean;
     // RDRAM pages decoded CPU code came from (TN64CPU's blocks), and per page
     // a count every write of RDRAM data there changes: the code is checked

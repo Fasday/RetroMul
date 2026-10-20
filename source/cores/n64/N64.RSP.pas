@@ -99,17 +99,34 @@ type
   // One clock of a block: the words it issues (Second also unpaired: a
   // stall holds it), the clocks it stalls first and the pipeline after it.
   TRSPBlockStep = record
-    Op, Second: Cardinal;
-    ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
-    Wait, LoadHistory, SingleIssue: Byte;
+    // Each word's routine by its kind (TRSPIssueProc, nil for kind 0), and
+    // what it is given (StepArg: the word, or for a branch the word with
+    // its PC's part worked out).
+    Issue, SecondIssue: Pointer;
+    Arg, SecondArg: Cardinal;
+    // The clocks from the block's start through this one, its stall
+    // included.
+    Clocks: Integer;
+    Wait: Byte;
     Pair: Boolean;
+    // What RunBlock checks before the clock but a stall (none mostly):
+    // StepMemory, a load or store (the only instructions fences concern);
+    // StepExternal, the clock's one external instruction is an MFC0 or MTC0
+    // (journalled ahead as RunClocks does); StepGeneral, an instruction of
+    // IssueInstruction's, or a branch or jump in a delay slot (the PC as
+    // IssueKind moves it).
+    Checks: Byte;
+    // A branch's delay slot run by its routines: the PC goes where the
+    // branch took it after the clock.
+    Delay: Boolean;
+    Op, Second: Cardinal;
     // How each word issues (TN64RSP.StepKind).
     Kind, SecondKind: Byte;
-    // What RunBlock checks before the clock (none mostly): StepWaits, a
-    // stall (Wait); StepMemory, a load or store (the only instructions
-    // fences concern); StepExternal, the clock's one external instruction is
-    // an MFC0 or MTC0 (journalled ahead as RunClocks does).
-    Checks: Byte;
+    LoadHistory, SingleIssue: Byte;
+    // The clock's PC (the same each time: a block starts at one PC and
+    // branches only after its last clock).
+    PC: Word;
+    ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
   end;
   PRSPBlockStep = ^TRSPBlockStep;
 
@@ -126,6 +143,10 @@ type
     ScalarLo, ScalarHi, VectorLo, VectorHi: Cardinal;
     LoadHistory, SingleIssue: Byte;
     Count, First, Words, FirstWord: Integer;
+    // Its steps' clocks (the last one's TRSPBlockStep.Clocks; RunBlock stops
+    // there: never above it, and below it a block would only end early,
+    // RunClocks taking the rest).
+    Clocks: Integer;
     Checked: UInt64;
     // The next block from the same slot, or -1.
     Next: Integer;
@@ -140,15 +161,16 @@ type
   // After a block's clocks (tests): Clocks run so far in this call.
   TRSPBlockDone = procedure(Clocks: Integer) of object;
 
+  // A block step's issue routine (TN64RSP.FKindIssue): a TN64RSP method
+  // called with its Self first, as methods take it.
+  TRSPIssueProc = procedure(RSP: TObject; Op: Cardinal);
+
   TN64RSP = class
   private const
     NotDecoded = High(UInt64);
-    // Element selection: lane I of VT[E] is VT lane VectorSelect[E, I].
-    VectorSelect: array[0..15, 0..7] of Byte = (
-      (0, 1, 2, 3, 4, 5, 6, 7), (0, 1, 2, 3, 4, 5, 6, 7), (0, 0, 2, 2, 4, 4, 6, 6), (1, 1, 3, 3, 5, 5, 7, 7),
-      (0, 0, 0, 0, 4, 4, 4, 4), (1, 1, 1, 1, 5, 5, 5, 5), (2, 2, 2, 2, 6, 6, 6, 6), (3, 3, 3, 3, 7, 7, 7, 7),
-      (0, 0, 0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1, 1, 1), (2, 2, 2, 2, 2, 2, 2, 2), (3, 3, 3, 3, 3, 3, 3, 3),
-      (4, 4, 4, 4, 4, 4, 4, 4), (5, 5, 5, 5, 5, 5, 5, 5), (6, 6, 6, 6, 6, 6, 6, 6), (7, 7, 7, 7, 7, 7, 7, 7));
+  private class var
+    // The issue routine of each step kind (StepKind) but 0.
+    FKindIssue: array[Byte] of Pointer;
   private
     FBus: TN64Bus;
     FReg: array[0..31] of Cardinal;
@@ -200,6 +222,7 @@ type
     // FWritePending: its MTC0 is left to the console.
     FPredict: TRSPPrediction;
     FDefer: TRSPDeferral;
+    FDeferSilent: Cardinal;
     FLift: TRSPFenceLift;
     FJournal: TArray<TRSPJournalEntry>;
     FJournalCount, FReplayPos: Integer;
@@ -238,6 +261,7 @@ type
 
     function RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
       var Ran: Integer): Integer;
+    function RunSteps(S: PRSPBlockStep; Mask: Byte; Room, Limit: Integer): PRSPBlockStep;
     function TouchesFence(Op: Cardinal): Boolean;
     procedure HoldStep(Done, S: PRSPBlockStep);
     procedure StopAtExternal(Op, Second: Cardinal);
@@ -281,7 +305,6 @@ type
     function AccLo(I: Integer): Word; inline;
     procedure SetAcc(I: Integer; Value: Int64); inline;
     procedure SetAccLo(I: Integer; Value: Word); inline;
-    procedure SelectVT(T, E: Integer; out VT: TRSPLanes); inline;
     function VTLanes(Op: Cardinal; var Copy: TRSPQuadLanes): PRSPLanes; inline;
     procedure VectorOp(Op: Cardinal);
     procedure VectorMulFrac(Op: Cardinal);
@@ -296,13 +319,67 @@ type
     procedure VectorMADM(Op: Cardinal);
     procedure VectorMADN(Op: Cardinal);
     procedure VectorMADH(Op: Cardinal);
+    procedure VectorMUDLOne(Op: Cardinal);
+    procedure VectorMUDMOne(Op: Cardinal);
+    procedure VectorMUDNOne(Op: Cardinal);
+    procedure VectorMUDHOne(Op: Cardinal);
+    procedure VectorMADLOne(Op: Cardinal);
+    procedure VectorMADMOne(Op: Cardinal);
+    procedure VectorMADNOne(Op: Cardinal);
+    procedure VectorMADHOne(Op: Cardinal);
 
     procedure VectorAddSub(Op: Cardinal);
     procedure VectorAdd(Op: Cardinal);
     procedure VectorSub(Op: Cardinal);
     class function StepKind(Op: Cardinal): Byte; static;
-    procedure IssueKind(Kind: Byte; Op: Cardinal; var PC, Status, Interrupt: Cardinal); inline;
-    procedure IssueScalar(Kind: Byte; Op: Cardinal);
+    class function StepArg(Kind: Byte; Op, PC: Cardinal): Cardinal; static;
+    procedure IssueKind(Kind: Byte; Op: Cardinal; var PC, Status, Interrupt: Cardinal);
+    procedure IssueStep(Kind: Byte; Op: Cardinal); inline;
+    // A block step's instructions by kind (StepKind, KindIssue): r0 zeroed
+    // after a scalar one.
+    procedure IssueADDI(Op: Cardinal);
+    procedure IssueANDI(Op: Cardinal);
+    procedure IssueORI(Op: Cardinal);
+    procedure IssueXORI(Op: Cardinal);
+    procedure IssueLUI(Op: Cardinal);
+    procedure IssueSLL(Op: Cardinal);
+    procedure IssueSRL(Op: Cardinal);
+    procedure IssueSRA(Op: Cardinal);
+    procedure IssueADD(Op: Cardinal);
+    procedure IssueSUB(Op: Cardinal);
+    procedure IssueAND(Op: Cardinal);
+    procedure IssueOR(Op: Cardinal);
+    procedure IssueXOR(Op: Cardinal);
+    procedure IssueNOR(Op: Cardinal);
+    procedure IssueSLT(Op: Cardinal);
+    procedure IssueSLTU(Op: Cardinal);
+    procedure IssueSLTI(Op: Cardinal);
+    procedure IssueSLTIU(Op: Cardinal);
+    procedure IssueLB(Op: Cardinal);
+    procedure IssueLH(Op: Cardinal);
+    procedure IssueLW(Op: Cardinal);
+    procedure IssueLBU(Op: Cardinal);
+    procedure IssueLHU(Op: Cardinal);
+    procedure IssueSB(Op: Cardinal);
+    procedure IssueSH(Op: Cardinal);
+    procedure IssueSW(Op: Cardinal);
+    procedure StoreBytes(Op: Cardinal; Size: Cardinal); inline;
+    procedure VectorLoad(Op: Cardinal);
+    procedure VectorStore(Op: Cardinal);
+    procedure VectorLoadDirect(Op: Cardinal);
+    procedure VectorStoreDirect(Op: Cardinal);
+    procedure IssueUnexpected(Op: Cardinal);
+    procedure IssueCOP2Move(Op: Cardinal);
+    // Branches and jumps (Arg: StepArg's).
+    procedure IssueBEQ(Arg: Cardinal);
+    procedure IssueBNE(Arg: Cardinal);
+    procedure IssueBLEZ(Arg: Cardinal);
+    procedure IssueBGTZ(Arg: Cardinal);
+    procedure IssueBLTZ(Arg: Cardinal);
+    procedure IssueBGEZ(Arg: Cardinal);
+    procedure IssueJ(Arg: Cardinal);
+    procedure IssueJAL(Arg: Cardinal);
+    procedure IssueJR(Arg: Cardinal);
     procedure VectorAbs(Op: Cardinal);
     procedure VectorCarry(Op: Cardinal);
     procedure VectorSar(Op: Cardinal);
@@ -382,6 +459,10 @@ type
     function JournalEntry(I: Integer): TRSPJournalEntry; inline;
     property OnPredict: TRSPPrediction read FPredict write FPredict;
     property OnDefer: TRSPDeferral read FDefer write FDefer;
+    // The registers (a bit each) whose MTC0s ahead go into the journal
+    // without a call to OnDefer (assigned): those it would leave to the
+    // console as they are, its records of them kept up from the journal.
+    property DeferSilent: Cardinal read FDeferSilent write FDeferSilent;
     property OnLift: TRSPFenceLift read FLift write FLift;
     // Whether clocks run from blocks where they can (on by default; the
     // same clocks either way).
@@ -601,9 +682,15 @@ begin
     FVec[R, Index div 2] := (FVec[R, Index div 2] and $FF) or (Word(Value) shl 8);
 end;
 
+var
+  // The divider's tables (VectorDivide, InitDivideTables): ReciprocalTable
+  // by the 9 bits after the input's leading one, SquareRootTable by the 8 of
+  // them it takes, the shift's parity in the lowest bit.
+  ReciprocalTable, SquareRootTable: array[0..511] of Word;
+
 function S16(Value: Word): Integer; inline;
 begin
-  Result := Integer(Value xor $8000) - $8000;
+  Result := SmallInt(Value);
 end;
 
 function W16(Value: Int64): Word; inline;
@@ -692,15 +779,6 @@ begin
     Result := $FFFF;
 end;
 
-procedure TN64RSP.SelectVT(T, E: Integer; out VT: TRSPLanes);
-begin
-  if E < 2 then
-    for var I := 0 to 7 do
-      VT[I] := FVec[T, I]
-  else
-    for var I := 0 to 7 do
-      VT[I] := FVec[T, VectorSelect[E, I]];
-end;
 
 function TN64RSP.VTLanes(Op: Cardinal; var Copy: TRSPQuadLanes): PRSPLanes;
 begin
@@ -960,9 +1038,19 @@ begin
   var A: PRSPAccLanes := @FAcc;
   for var I := 0 to 7 do
   begin
-    var Acc := Wrap48(A[I] + ((Cardinal(VS[I]) * VT[I]) shr 16));
-    A[I] := Acc;
-    VD[I] := AccClampLow(Acc);
+    var Acc := A[I] + ((Cardinal(VS[I]) * VT[I]) shr 16);
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampLow(Acc);
+    end;
   end;
 end;
 
@@ -975,9 +1063,19 @@ begin
   var A: PRSPAccLanes := @FAcc;
   for var I := 0 to 7 do
   begin
-    var Acc := Wrap48(A[I] + S16(VS[I]) * Integer(VT[I]));
-    A[I] := Acc;
-    VD[I] := AccClampMid(Acc);
+    var Acc := A[I] + S16(VS[I]) * Integer(VT[I]);
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc shr 16);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampMid(Acc);
+    end;
   end;
 end;
 
@@ -990,9 +1088,19 @@ begin
   var A: PRSPAccLanes := @FAcc;
   for var I := 0 to 7 do
   begin
-    var Acc := Wrap48(A[I] + Integer(VS[I]) * S16(VT[I]));
-    A[I] := Acc;
-    VD[I] := AccClampLow(Acc);
+    var Acc := A[I] + Integer(VS[I]) * S16(VT[I]);
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampLow(Acc);
+    end;
   end;
 end;
 
@@ -1006,9 +1114,174 @@ begin
   var A: PRSPAccLanes := @FAcc;
   for var I := 0 to 7 do
   begin
-    var Acc := Wrap48(A[I] + Int64(S16(VS[I]) * S16(VT[I])) * 65536);
+    var Acc := A[I] + Int64(S16(VS[I]) * S16(VT[I])) * 65536;
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc shr 16);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampMid(Acc);
+    end;
+  end;
+end;
+
+// The multiplies with element 8..15, one VT lane for all (read before VD is
+// written: VD may be VT), as the routines above.
+
+procedure TN64RSP.VectorMUDLOne(Op: Cardinal);
+begin
+  var T := Cardinal(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var V := Word(((Cardinal(VS[I]) * T) shr 16) and $FFFF);
+    A[I] := V;
+    VD[I] := V;
+  end;
+end;
+
+procedure TN64RSP.VectorMUDMOne(Op: Cardinal);
+begin
+  var T := Integer(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var Acc := Int64(S16(VS[I]) * T);
     A[I] := Acc;
     VD[I] := AccClampMid(Acc);
+  end;
+end;
+
+procedure TN64RSP.VectorMUDNOne(Op: Cardinal);
+begin
+  var T := S16(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var Acc := Int64(Integer(VS[I]) * T);
+    A[I] := Acc;
+    VD[I] := Word(Acc and $FFFF);
+  end;
+end;
+
+procedure TN64RSP.VectorMUDHOne(Op: Cardinal);
+begin
+  var T := S16(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var P := S16(VS[I]) * T;
+    A[I] := Int64(P) * 65536;
+    VD[I] := ClampSigned(P);
+  end;
+end;
+
+procedure TN64RSP.VectorMADLOne(Op: Cardinal);
+begin
+  var T := Cardinal(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var Acc := A[I] + ((Cardinal(VS[I]) * T) shr 16);
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampLow(Acc);
+    end;
+  end;
+end;
+
+procedure TN64RSP.VectorMADMOne(Op: Cardinal);
+begin
+  var T := Integer(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var Acc := A[I] + S16(VS[I]) * T;
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc shr 16);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampMid(Acc);
+    end;
+  end;
+end;
+
+procedure TN64RSP.VectorMADNOne(Op: Cardinal);
+begin
+  var T := S16(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var Acc := A[I] + Integer(VS[I]) * T;
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampLow(Acc);
+    end;
+  end;
+end;
+
+procedure TN64RSP.VectorMADHOne(Op: Cardinal);
+begin
+  var T := S16(FVec[(Op shr 16) and 31, ((Op shr 21) and 15) - 8]);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  var A: PRSPAccLanes := @FAcc;
+  for var I := 0 to 7 do
+  begin
+    var Acc := A[I] + Int64(S16(VS[I]) * T) * 65536;
+    // (In 32 signed bits, as mostly: in 48 too, and no clamp.)
+    if UInt64(Acc + $80000000) <= $FFFFFFFF then
+    begin
+      A[I] := Acc;
+      VD[I] := Word(Acc shr 16);
+    end
+    else
+    begin
+      Acc := Wrap48(Acc);
+      A[I] := Acc;
+      VD[I] := AccClampMid(Acc);
+    end;
   end;
 end;
 
@@ -1445,12 +1718,13 @@ begin
   var D := (Op shr 6) and 31;
   var Fn := Op and 63;
   var DE := ((Op shr 11) and 31) and 7;
-  var VT: TRSPLanes;
-  SelectVT(T, E, VT);
+  var Copy: TRSPQuadLanes;
+  var VT := VTLanes(Op, Copy);
   // The scalar divider always takes the raw E&7 lane of VT.
   var Source := FVec[T, E and 7];
+  var A: PRSPAccLanes := @FAcc;
   for var I := 0 to 7 do
-    SetAccLo(I, VT[I]);
+    A[I] := (A[I] and not Int64($FFFF)) or VT[I];
   if Fn = 51 then
     FVec[D, DE] := VT[DE]
   else if Fn in [50, 54] then
@@ -1476,37 +1750,39 @@ begin
       Value := $FFFF0000
     else if Data <> 0 then
     begin
+      // Data's leading zeros, shifted out.
       var Shift := 0;
-      while (Data and $80000000) = 0 do
+      if (Data and $FFFF0000) = 0 then
+      begin
+        Data := Data shl 16;
+        Inc(Shift, 16);
+      end;
+      if (Data and $FF000000) = 0 then
+      begin
+        Data := Data shl 8;
+        Inc(Shift, 8);
+      end;
+      if (Data and $F0000000) = 0 then
+      begin
+        Data := Data shl 4;
+        Inc(Shift, 4);
+      end;
+      if (Data and $C0000000) = 0 then
+      begin
+        Data := Data shl 2;
+        Inc(Shift, 2);
+      end;
+      if (Data and $80000000) = 0 then
       begin
         Data := Data shl 1;
-        Inc(Shift)
+        Inc(Shift);
       end;
       var Index := (Data shr 22) and 511;
-      var TableValue: Cardinal;
       if Fn in [52, 53] then
-      begin
-        var Denominator := UInt64(512 + (Index and 510));
-        if (Shift and 1) = 0 then
-          Denominator := Denominator * 2;
-        var LowBound: UInt64 := 65536;
-        var HighBound: UInt64 := 131071;
-        while LowBound < HighBound do
-        begin
-          var Mid := (LowBound + HighBound + 1) div 2;
-          if Mid * Mid * Denominator <= (UInt64(1) shl 43) then
-            LowBound := Mid
-          else
-            HighBound := Mid - 1;
-        end;
-        TableValue := Cardinal(LowBound - 65536);
-        Value := ((($10000 or TableValue) shl 14) shr ((31 - Shift) div 2)) xor SignMask;
-      end
+        Value := (((Cardinal($10000) or SquareRootTable[(Index and 510) or Cardinal(Shift and 1)]) shl 14) shr
+          ((31 - Shift) div 2)) xor SignMask
       else
-      begin
-        TableValue := Cardinal(Min(UInt64($FFFF), ((((UInt64(1) shl 34) div (Index + 512)) + 1) shr 8) - $10000));
-        Value := ((($10000 or TableValue) shl 14) shr (31 - Shift)) xor SignMask;
-      end;
+        Value := (((Cardinal($10000) or ReciprocalTable[Index]) shl 14) shr (31 - Shift)) xor SignMask;
     end;
     FVec[D, DE] := Word(Value and $FFFF);
     FDivisionResult := Word(Value shr 16);
@@ -1542,7 +1818,28 @@ begin
       if FLineRun[Last shr 6] <> FRun then
         SaveLine(Last);
     end;
-    if not Odd(E) then
+    if not Odd(E) and (E + Size <= 16) and (Address + Cardinal(Size) <= $1000) then
+    begin
+      // Whole lanes to bytes that do not wrap: a 16-byte line in two
+      // 8-byte words where it is aligned so (little-endian hosts only).
+      var P := SP + Address;
+      if (Size = 16) and ((NativeUInt(P) and 7) = 0) then
+      begin
+        var Q := PRSPQuadLanes(Lanes);
+        PUInt64(P)^ := ((Q.Quads[0] shr 8) and $00FF00FF00FF00FF) or ((Q.Quads[0] and $00FF00FF00FF00FF) shl 8);
+        PUInt64(P + 8)^ := ((Q.Quads[1] shr 8) and $00FF00FF00FF00FF) or ((Q.Quads[1] and $00FF00FF00FF00FF) shl 8);
+        I := 16;
+      end
+      else
+        while I + 1 < Size do
+        begin
+          var W := Lanes[(E + I) shr 1];
+          P[I] := Byte(W shr 8);
+          P[I + 1] := Byte(W and $FF);
+          Inc(I, 2);
+        end;
+    end
+    else if not Odd(E) then
       while I + 1 < Size do
       begin
         var W := Lanes[((E + I) and 15) shr 1];
@@ -1563,7 +1860,27 @@ begin
   else
   begin
     Size := Min(Size, 16 - E);
-    if not Odd(E) then
+    if not Odd(E) and (Address + Cardinal(Size) <= $1000) then
+    begin
+      // Whole lanes from bytes that do not wrap (as the store).
+      var P := SP + Address;
+      if (Size = 16) and ((NativeUInt(P) and 7) = 0) then
+      begin
+        var Q := PRSPQuadLanes(Lanes);
+        var Q0 := PUInt64(P)^;
+        var Q1 := PUInt64(P + 8)^;
+        Q.Quads[0] := ((Q0 shr 8) and $00FF00FF00FF00FF) or ((Q0 and $00FF00FF00FF00FF) shl 8);
+        Q.Quads[1] := ((Q1 shr 8) and $00FF00FF00FF00FF) or ((Q1 and $00FF00FF00FF00FF) shl 8);
+        I := 16;
+      end
+      else
+        while I + 1 < Size do
+        begin
+          Lanes[(E + I) shr 1] := (Word(P[I]) shl 8) or P[I + 1];
+          Inc(I, 2);
+        end;
+    end
+    else if not Odd(E) then
       while I + 1 < Size do
       begin
         Lanes[(E + I) shr 1] := (Word(SP[(Address + Cardinal(I)) and $FFF]) shl 8) or
@@ -4071,9 +4388,12 @@ end;
 
 const
   // TRSPBlockStep.Checks.
-  StepWaits = 1;
   StepMemory = 2;
+  // The kinds of branches and jumps (StepKind).
+  FirstBranchKind = 55;
+  LastBranchKind = 63;
   StepExternal = 4;
+  StepGeneral = 8;
 
 procedure TN64RSP.ClearBlocks;
 begin
@@ -4160,6 +4480,7 @@ begin
   // Words looked at from Start on.
   var Words := 0;
   var Branched := False;
+  var Clocks := 0;
   while Count < MaxSteps do
   begin
     var Slot := Integer((PC shr 2) and 1023);
@@ -4242,11 +4563,33 @@ begin
     S.Wait := Wait;
     S.Kind := StepKind(Op);
     S.SecondKind := StepKind(Second);
-    S.Checks := Ord(Wait > 0) * StepWaits;
+    S.Issue := nil;
+    if S.Kind <> 0 then
+      S.Issue := FKindIssue[S.Kind];
+    S.SecondIssue := nil;
+    if S.SecondKind <> 0 then
+      S.SecondIssue := FKindIssue[S.SecondKind];
+    S.Arg := StepArg(S.Kind, Op, PC);
+    S.SecondArg := StepArg(S.SecondKind, Second, (PC + 4) and $FFC);
+    S.PC := Word(PC);
+    Clocks := Clocks + Wait + 1;
+    S.Clocks := Clocks;
+    S.Checks := 0;
     if LoadStore(Op) or (Pair and LoadStore(Second)) then
       S.Checks := S.Checks or StepMemory;
     if Masks.External then
       S.Checks := S.Checks or StepExternal;
+    // (IssueInstruction's kinds, and a branch or jump in a delay slot, take
+    // the PC as each instruction moves it. An MFC0 or MTC0, the clock's
+    // external instruction, is IssueInstruction's: the clock that may halt
+    // the RSP is a general one.)
+    S.Delay := False;
+    if (S.Kind = 0) or (Pair and (S.SecondKind = 0)) or
+      (Branched and ((S.Kind in [FirstBranchKind..LastBranchKind]) or
+      (Pair and (S.SecondKind in [FirstBranchKind..LastBranchKind])))) then
+      S.Checks := S.Checks or StepGeneral
+    else
+      S.Delay := Branched;
 
     // The issue clock.
     var Lo := SLo;
@@ -4284,20 +4627,42 @@ begin
   Result.Words := Words;
   Inc(FWordCount, Words);
   Result.Count := Count;
+  Result.Clocks := Clocks;
   Inc(FStepCount, Count);
+end;
+
+class function TN64RSP.StepArg(Kind: Byte; Op, PC: Cardinal): Cardinal;
+begin
+  // What the routine of Op's kind (StepKind) is given, Op at PC: the
+  // target of a branch in its low 12 bits (in place of its offset), that of
+  // a J or JAL, with what JAL links in bits 16..27; Op otherwise.
+  Result := Op;
+  case Kind of
+    55..60:
+      Result := (Op and $FFFF0000) or (((PC + 4) + ((Op and $3FF) shl 2)) and $FFC);
+    61:
+      Result := (Op shl 2) and $FFC;
+    62:
+      Result := ((Op shl 2) and $FFC) or (((PC + 8) and $FFF) shl 16);
+  end;
 end;
 
 class function TN64RSP.StepKind(Op: Cardinal): Byte;
 begin
   // How a block issues Op (IssueKind): the frequent vector instructions by
-  // their own routines (kinds 4..19, 48..51), other vector ones through
+  // their own routines (kinds 4..19, 48..51; the multiplies with one VT lane
+  // for all 64..71), other vector ones through
   // VectorOp (3), vector loads and
-  // stores through VectorMemory, the frequent scalar ones (no branches, no
-  // COP0/COP2) in place, the rest through IssueInstruction (0).
+  // stores through VectorMemory, the frequent scalar ones by their own
+  // routines (20..47), the moves to and from COP2 (54), the branches and
+  // jumps but those that link a register of their own or r31 on a branch
+  // (FirstBranchKind on), the rest through IssueInstruction (0).
   Result := 0;
   case Op shr 26 of
     0:
       case Op and 63 of
+        8:
+          Result := 63;
         0:
           Result := 25;
         2:
@@ -4321,6 +4686,25 @@ begin
         43:
           Result := 35;
       end;
+    1:
+      case (Op shr 16) and 31 of
+        0:
+          Result := 59;
+        1:
+          Result := 60;
+      end;
+    2:
+      Result := 61;
+    3:
+      Result := 62;
+    4:
+      Result := 55;
+    5:
+      Result := 56;
+    6:
+      Result := 57;
+    7:
+      Result := 58;
     8, 9:
       Result := 20;
     10:
@@ -4352,14 +4736,22 @@ begin
     43:
       Result := 47;
     18:
-      if ((Op shr 21) and 31) >= 16 then
+      if ((Op shr 21) and 31) in [0, 2, 4, 6] then
+        Result := 54
+      else if ((Op shr 21) and 31) >= 16 then
         case Op and 63 of
           0, 1, 8, 9:
             Result := 14;
           4..7:
-            Result := 4 + (Op and 3);
+            if ((Op shr 21) and 15) >= 8 then
+              Result := 64 + (Op and 3)
+            else
+              Result := 4 + (Op and 3);
           12..15:
-            Result := 8 + (Op and 3);
+            if ((Op shr 21) and 15) >= 8 then
+              Result := 68 + (Op and 3)
+            else
+              Result := 8 + (Op and 3);
           16:
             Result := 12;
           17:
@@ -4400,9 +4792,115 @@ begin
   end;
 end;
 
+procedure InitDivideTables;
+begin
+  for var Index := 0 to 511 do
+    ReciprocalTable[Index] := Word(Min(UInt64($FFFF), ((((UInt64(1) shl 34) div UInt64(Index + 512)) + 1) shr 8) -
+      $10000));
+  for var Key := 0 to 511 do
+  begin
+    // 1/sqrt by the largest square that fits.
+    var Denominator := UInt64(512 + (Key and 510));
+    if (Key and 1) = 0 then
+      Denominator := Denominator * 2;
+    var LowBound: UInt64 := 65536;
+    var HighBound: UInt64 := 131071;
+    while LowBound < HighBound do
+    begin
+      var Mid := (LowBound + HighBound + 1) div 2;
+      if Mid * Mid * Denominator <= (UInt64(1) shl 43) then
+        LowBound := Mid
+      else
+        HighBound := Mid - 1;
+    end;
+    SquareRootTable[Key] := Word(LowBound - 65536);
+  end;
+end;
+
+procedure InitKindIssue;
+begin
+  for var K := 0 to 255 do
+    TN64RSP.FKindIssue[K] := @TN64RSP.IssueUnexpected;
+  TN64RSP.FKindIssue[1] := @TN64RSP.VectorLoad;
+  TN64RSP.FKindIssue[2] := @TN64RSP.VectorStore;
+  TN64RSP.FKindIssue[3] := @TN64RSP.VectorOp;
+  TN64RSP.FKindIssue[4] := @TN64RSP.VectorMUDL;
+  TN64RSP.FKindIssue[5] := @TN64RSP.VectorMUDM;
+  TN64RSP.FKindIssue[6] := @TN64RSP.VectorMUDN;
+  TN64RSP.FKindIssue[7] := @TN64RSP.VectorMUDH;
+  TN64RSP.FKindIssue[8] := @TN64RSP.VectorMADL;
+  TN64RSP.FKindIssue[9] := @TN64RSP.VectorMADM;
+  TN64RSP.FKindIssue[10] := @TN64RSP.VectorMADN;
+  TN64RSP.FKindIssue[11] := @TN64RSP.VectorMADH;
+  TN64RSP.FKindIssue[12] := @TN64RSP.VectorAdd;
+  TN64RSP.FKindIssue[13] := @TN64RSP.VectorSub;
+  TN64RSP.FKindIssue[14] := @TN64RSP.VectorMulFrac;
+  TN64RSP.FKindIssue[15] := @TN64RSP.VectorLT;
+  TN64RSP.FKindIssue[16] := @TN64RSP.VectorEQ;
+  TN64RSP.FKindIssue[17] := @TN64RSP.VectorNE;
+  TN64RSP.FKindIssue[18] := @TN64RSP.VectorGE;
+  TN64RSP.FKindIssue[19] := @TN64RSP.VectorClipLow;
+  TN64RSP.FKindIssue[20] := @TN64RSP.IssueADDI;
+  TN64RSP.FKindIssue[21] := @TN64RSP.IssueANDI;
+  TN64RSP.FKindIssue[22] := @TN64RSP.IssueORI;
+  TN64RSP.FKindIssue[23] := @TN64RSP.IssueXORI;
+  TN64RSP.FKindIssue[24] := @TN64RSP.IssueLUI;
+  TN64RSP.FKindIssue[25] := @TN64RSP.IssueSLL;
+  TN64RSP.FKindIssue[26] := @TN64RSP.IssueSRL;
+  TN64RSP.FKindIssue[27] := @TN64RSP.IssueSRA;
+  TN64RSP.FKindIssue[28] := @TN64RSP.IssueADD;
+  TN64RSP.FKindIssue[29] := @TN64RSP.IssueSUB;
+  TN64RSP.FKindIssue[30] := @TN64RSP.IssueAND;
+  TN64RSP.FKindIssue[31] := @TN64RSP.IssueOR;
+  TN64RSP.FKindIssue[32] := @TN64RSP.IssueXOR;
+  TN64RSP.FKindIssue[33] := @TN64RSP.IssueNOR;
+  TN64RSP.FKindIssue[34] := @TN64RSP.IssueSLT;
+  TN64RSP.FKindIssue[35] := @TN64RSP.IssueSLTU;
+  TN64RSP.FKindIssue[36] := @TN64RSP.IssueSLTI;
+  TN64RSP.FKindIssue[37] := @TN64RSP.IssueSLTIU;
+  TN64RSP.FKindIssue[40] := @TN64RSP.IssueLB;
+  TN64RSP.FKindIssue[41] := @TN64RSP.IssueLH;
+  TN64RSP.FKindIssue[42] := @TN64RSP.IssueLW;
+  TN64RSP.FKindIssue[43] := @TN64RSP.IssueLBU;
+  TN64RSP.FKindIssue[44] := @TN64RSP.IssueLHU;
+  TN64RSP.FKindIssue[45] := @TN64RSP.IssueSB;
+  TN64RSP.FKindIssue[46] := @TN64RSP.IssueSH;
+  TN64RSP.FKindIssue[47] := @TN64RSP.IssueSW;
+  TN64RSP.FKindIssue[48] := @TN64RSP.VectorCH;
+  TN64RSP.FKindIssue[49] := @TN64RSP.VectorMerge;
+  TN64RSP.FKindIssue[50] := @TN64RSP.VectorLogic;
+  TN64RSP.FKindIssue[51] := @TN64RSP.VectorCarry;
+  TN64RSP.FKindIssue[52] := @TN64RSP.VectorLoadDirect;
+  TN64RSP.FKindIssue[53] := @TN64RSP.VectorStoreDirect;
+  TN64RSP.FKindIssue[54] := @TN64RSP.IssueCOP2Move;
+  TN64RSP.FKindIssue[55] := @TN64RSP.IssueBEQ;
+  TN64RSP.FKindIssue[56] := @TN64RSP.IssueBNE;
+  TN64RSP.FKindIssue[57] := @TN64RSP.IssueBLEZ;
+  TN64RSP.FKindIssue[58] := @TN64RSP.IssueBGTZ;
+  TN64RSP.FKindIssue[59] := @TN64RSP.IssueBLTZ;
+  TN64RSP.FKindIssue[60] := @TN64RSP.IssueBGEZ;
+  TN64RSP.FKindIssue[61] := @TN64RSP.IssueJ;
+  TN64RSP.FKindIssue[62] := @TN64RSP.IssueJAL;
+  TN64RSP.FKindIssue[63] := @TN64RSP.IssueJR;
+  TN64RSP.FKindIssue[64] := @TN64RSP.VectorMUDLOne;
+  TN64RSP.FKindIssue[65] := @TN64RSP.VectorMUDMOne;
+  TN64RSP.FKindIssue[66] := @TN64RSP.VectorMUDNOne;
+  TN64RSP.FKindIssue[67] := @TN64RSP.VectorMUDHOne;
+  TN64RSP.FKindIssue[68] := @TN64RSP.VectorMADLOne;
+  TN64RSP.FKindIssue[69] := @TN64RSP.VectorMADMOne;
+  TN64RSP.FKindIssue[70] := @TN64RSP.VectorMADNOne;
+  TN64RSP.FKindIssue[71] := @TN64RSP.VectorMADHOne;
+end;
+
+procedure TN64RSP.IssueStep(Kind: Byte; Op: Cardinal);
+begin
+  // Op of kind Kind (not 0) by its routine, the PC left alone.
+  TRSPIssueProc(FKindIssue[Kind])(Self, Op);
+end;
+
 procedure TN64RSP.IssueKind(Kind: Byte; Op: Cardinal; var PC, Status, Interrupt: Cardinal);
 begin
-  // Issue (untraced) for Op of kind Kind (StepKind).
+  // Issue (untraced) for Op of kind Kind (StepKind), the PC as it takes it.
   if Kind = 0 then
     IssueInstruction(Op, PC, Status, Interrupt)
   else
@@ -4414,160 +4912,310 @@ begin
     end
     else
       PC := (PC + 4) and $FFC;
-    case Kind of
-      1:
-        VectorMemory(Op, False);
-      2:
-        VectorMemory(Op, True);
-      4:
-        VectorMUDL(Op);
-      5:
-        VectorMUDM(Op);
-      6:
-        VectorMUDN(Op);
-      7:
-        VectorMUDH(Op);
-      8:
-        VectorMADL(Op);
-      9:
-        VectorMADM(Op);
-      10:
-        VectorMADN(Op);
-      11:
-        VectorMADH(Op);
-      12:
-        VectorAdd(Op);
-      13:
-        VectorSub(Op);
-      14:
-        VectorMulFrac(Op);
-      15:
-        VectorLT(Op);
-      16:
-        VectorEQ(Op);
-      17:
-        VectorNE(Op);
-      18:
-        VectorGE(Op);
-      19:
-        VectorClipLow(Op);
-      20..47:
-        begin
-          IssueScalar(Kind, Op);
-          FReg[0] := 0;
-        end;
-      48:
-        VectorCH(Op);
-      49:
-        VectorMerge(Op);
-      50:
-        VectorLogic(Op);
-      51:
-        VectorCarry(Op);
-      52:
-        VectorMemoryDirect(Op, False);
-      53:
-        VectorMemoryDirect(Op, True);
-    else
-      VectorOp(Op);
-    end;
+    IssueStep(Kind, Op);
   end;
 end;
 
-procedure TN64RSP.IssueScalar(Kind: Byte; Op: Cardinal);
+procedure TN64RSP.IssueUnexpected(Op: Cardinal);
 begin
-  // The frequent scalar instructions (StepKind 20..47), as IssueInstruction
-  // does them; it zeroes r0 after. Arithmetic wraps without overflow checks.
-  var S := (Op shr 21) and 31;
-  var T := (Op shr 16) and 31;
-  case Kind of
-    20:
-      FReg[T] := Cardinal((UInt64(FReg[S]) + Cardinal(Integer(SmallInt(Op and $FFFF)))) and $FFFFFFFF);
-    21:
-      FReg[T] := FReg[S] and (Op and $FFFF);
-    22:
-      FReg[T] := FReg[S] or (Op and $FFFF);
-    23:
-      FReg[T] := FReg[S] xor (Op and $FFFF);
-    24:
-      FReg[T] := (Op and $FFFF) shl 16;
-    25:
-      FReg[(Op shr 11) and 31] := FReg[T] shl ((Op shr 6) and 31);
-    26:
-      FReg[(Op shr 11) and 31] := FReg[T] shr ((Op shr 6) and 31);
-    27:
-      begin
-        var B := FReg[T];
-        var N := (Op shr 6) and 31;
-        if (B and $80000000) <> 0 then
-          B := (B shr N) or not (Cardinal($FFFFFFFF) shr N)
-        else
-          B := B shr N;
-        FReg[(Op shr 11) and 31] := B;
-      end;
-    28:
-      FReg[(Op shr 11) and 31] := Cardinal((UInt64(FReg[S]) + FReg[T]) and $FFFFFFFF);
-    29:
-      FReg[(Op shr 11) and 31] := Cardinal((UInt64(FReg[S]) + UInt64($100000000) - FReg[T]) and $FFFFFFFF);
-    30:
-      FReg[(Op shr 11) and 31] := FReg[S] and FReg[T];
-    31:
-      FReg[(Op shr 11) and 31] := FReg[S] or FReg[T];
-    32:
-      FReg[(Op shr 11) and 31] := FReg[S] xor FReg[T];
-    33:
-      FReg[(Op shr 11) and 31] := not (FReg[S] or FReg[T]);
-    34:
-      FReg[(Op shr 11) and 31] := Ord(Integer(FReg[S]) < Integer(FReg[T]));
-    35:
-      FReg[(Op shr 11) and 31] := Ord(FReg[S] < FReg[T]);
-    36:
-      FReg[T] := Ord(Integer(FReg[S]) < Integer(SmallInt(Op and $FFFF)));
-    37:
-      FReg[T] := Ord(FReg[S] < Cardinal(Integer(SmallInt(Op and $FFFF))));
-  else
-    begin
-      // Loads and stores: big-endian bytes, each address wrapped in DMEM,
-      // straight in SP memory (blocks run with it direct); a store saves
-      // the lines of its first and last byte first, as DMemWrite does.
-      var Address := ((FReg[S] and $FFF) + (Op and $FFF)) and $FFF;
-      var M := FBus.DMemBytes;
-      case Kind of
-        40:
-          FReg[T] := Cardinal(Integer(ShortInt(M[Address])));
-        41:
-          FReg[T] := Cardinal(Integer(SmallInt((Word(M[Address]) shl 8) or M[(Address + 1) and $FFF])));
-        42:
-          FReg[T] := (Cardinal(M[Address]) shl 24) or (Cardinal(M[(Address + 1) and $FFF]) shl 16) or
-            (Cardinal(M[(Address + 2) and $FFF]) shl 8) or M[(Address + 3) and $FFF];
-        43:
-          FReg[T] := M[Address];
-        44:
-          FReg[T] := (Cardinal(M[Address]) shl 8) or M[(Address + 1) and $FFF];
-      else
-        begin
-          var V := FReg[T];
-          var Size: Cardinal := 4;
-          if Kind = 45 then
-            Size := 1
-          else if Kind = 46 then
-            Size := 2;
-          if FAhead then
-          begin
-            if FLineRun[Address shr 6] <> FRun then
-              SaveLine(Address);
-            var Last := (Address + Size - 1) and $FFF;
-            if FLineRun[Last shr 6] <> FRun then
-              SaveLine(Last);
-          end;
-          for var I := 0 to Size - 1 do
-            M[(Address + I) and $FFF] := Byte((V shr ((Size - 1 - I) * 8)) and $FF);
-        end;
-      end;
-    end;
+  raise EInvalidOpException.CreateFmt('RSP block step of no kind: %8.8x', [Op]);
+end;
+
+procedure TN64RSP.IssueCOP2Move(Op: Cardinal);
+begin
+  IssueMoveCOP2(Op);
+  FReg[0] := 0;
+end;
+
+// Branches and jumps as IssueInstruction takes them: a taken one goes to
+// its target after the delay slot (FNextPC), a branch not taken leaves
+// nothing behind.
+
+procedure TN64RSP.IssueBEQ(Arg: Cardinal);
+begin
+  if FReg[(Arg shr 21) and 31] = FReg[(Arg shr 16) and 31] then
+  begin
+    FNextPC := Arg and $FFC;
+    FBranch := True;
   end;
 end;
 
+procedure TN64RSP.IssueBNE(Arg: Cardinal);
+begin
+  if FReg[(Arg shr 21) and 31] <> FReg[(Arg shr 16) and 31] then
+  begin
+    FNextPC := Arg and $FFC;
+    FBranch := True;
+  end;
+end;
+
+procedure TN64RSP.IssueBLEZ(Arg: Cardinal);
+begin
+  if Integer(FReg[(Arg shr 21) and 31]) <= 0 then
+  begin
+    FNextPC := Arg and $FFC;
+    FBranch := True;
+  end;
+end;
+
+procedure TN64RSP.IssueBGTZ(Arg: Cardinal);
+begin
+  if Integer(FReg[(Arg shr 21) and 31]) > 0 then
+  begin
+    FNextPC := Arg and $FFC;
+    FBranch := True;
+  end;
+end;
+
+procedure TN64RSP.IssueBLTZ(Arg: Cardinal);
+begin
+  if Integer(FReg[(Arg shr 21) and 31]) < 0 then
+  begin
+    FNextPC := Arg and $FFC;
+    FBranch := True;
+  end;
+end;
+
+procedure TN64RSP.IssueBGEZ(Arg: Cardinal);
+begin
+  if Integer(FReg[(Arg shr 21) and 31]) >= 0 then
+  begin
+    FNextPC := Arg and $FFC;
+    FBranch := True;
+  end;
+end;
+
+procedure TN64RSP.IssueJ(Arg: Cardinal);
+begin
+  FNextPC := Arg;
+  FBranch := True;
+end;
+
+procedure TN64RSP.IssueJAL(Arg: Cardinal);
+begin
+  FReg[31] := Arg shr 16;
+  FNextPC := Arg and $FFC;
+  FBranch := True;
+end;
+
+procedure TN64RSP.IssueJR(Arg: Cardinal);
+begin
+  FNextPC := FReg[(Arg shr 21) and 31] and $FFC;
+  FBranch := True;
+end;
+
+// The frequent scalar instructions (StepKind 20..47), as IssueInstruction
+// does them; arithmetic wraps without overflow checks.
+
+procedure TN64RSP.IssueADDI(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := Cardinal((UInt64(FReg[(Op shr 21) and 31]) + Cardinal(Integer(SmallInt(Op and $FFFF)))) and $FFFFFFFF);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueANDI(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := FReg[(Op shr 21) and 31] and (Op and $FFFF);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueORI(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := FReg[(Op shr 21) and 31] or (Op and $FFFF);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueXORI(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := FReg[(Op shr 21) and 31] xor (Op and $FFFF);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueLUI(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := (Op and $FFFF) shl 16;
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSLL(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := FReg[(Op shr 16) and 31] shl ((Op shr 6) and 31);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSRL(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := FReg[(Op shr 16) and 31] shr ((Op shr 6) and 31);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSRA(Op: Cardinal);
+begin
+  var B := FReg[(Op shr 16) and 31];
+  var N := (Op shr 6) and 31;
+  if (B and $80000000) <> 0 then
+    B := (B shr N) or not (Cardinal($FFFFFFFF) shr N)
+  else
+    B := B shr N;
+  FReg[(Op shr 11) and 31] := B;
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueADD(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := Cardinal((UInt64(FReg[(Op shr 21) and 31]) + FReg[(Op shr 16) and 31]) and $FFFFFFFF);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSUB(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := Cardinal((UInt64(FReg[(Op shr 21) and 31]) + UInt64($100000000) - FReg[(Op shr 16) and 31]) and
+    $FFFFFFFF);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueAND(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := FReg[(Op shr 21) and 31] and FReg[(Op shr 16) and 31];
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueOR(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := FReg[(Op shr 21) and 31] or FReg[(Op shr 16) and 31];
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueXOR(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := FReg[(Op shr 21) and 31] xor FReg[(Op shr 16) and 31];
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueNOR(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := not (FReg[(Op shr 21) and 31] or FReg[(Op shr 16) and 31]);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSLT(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := Ord(Integer(FReg[(Op shr 21) and 31]) < Integer(FReg[(Op shr 16) and 31]));
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSLTU(Op: Cardinal);
+begin
+  FReg[(Op shr 11) and 31] := Ord(FReg[(Op shr 21) and 31] < FReg[(Op shr 16) and 31]);
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSLTI(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := Ord(Integer(FReg[(Op shr 21) and 31]) < Integer(SmallInt(Op and $FFFF)));
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueSLTIU(Op: Cardinal);
+begin
+  FReg[(Op shr 16) and 31] := Ord(FReg[(Op shr 21) and 31] < Cardinal(Integer(SmallInt(Op and $FFFF))));
+  FReg[0] := 0;
+end;
+
+// Loads and stores: big-endian bytes, each address wrapped in DMEM, straight
+// in SP memory (blocks run with it direct); a store saves the lines of its
+// first and last byte first, as DMemWrite does.
+
+procedure TN64RSP.IssueLB(Op: Cardinal);
+begin
+  var M := FBus.DMemBytes;
+  FReg[(Op shr 16) and 31] := Cardinal(Integer(ShortInt(M[((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF])));
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueLH(Op: Cardinal);
+begin
+  var M := FBus.DMemBytes;
+  var Address := ((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF;
+  FReg[(Op shr 16) and 31] := Cardinal(Integer(SmallInt((Word(M[Address]) shl 8) or M[(Address + 1) and $FFF])));
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueLW(Op: Cardinal);
+begin
+  var M := FBus.DMemBytes;
+  var Address := ((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF;
+  FReg[(Op shr 16) and 31] := (Cardinal(M[Address]) shl 24) or (Cardinal(M[(Address + 1) and $FFF]) shl 16) or
+    (Cardinal(M[(Address + 2) and $FFF]) shl 8) or M[(Address + 3) and $FFF];
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueLBU(Op: Cardinal);
+begin
+  var M := FBus.DMemBytes;
+  FReg[(Op shr 16) and 31] := M[((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF];
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.IssueLHU(Op: Cardinal);
+begin
+  var M := FBus.DMemBytes;
+  var Address := ((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF;
+  FReg[(Op shr 16) and 31] := (Cardinal(M[Address]) shl 8) or M[(Address + 1) and $FFF];
+  FReg[0] := 0;
+end;
+
+procedure TN64RSP.StoreBytes(Op: Cardinal; Size: Cardinal);
+begin
+  var M := FBus.DMemBytes;
+  var Address := ((FReg[(Op shr 21) and 31] and $FFF) + (Op and $FFF)) and $FFF;
+  var V := FReg[(Op shr 16) and 31];
+  if FAhead then
+  begin
+    if FLineRun[Address shr 6] <> FRun then
+      SaveLine(Address);
+    var Last := (Address + Size - 1) and $FFF;
+    if FLineRun[Last shr 6] <> FRun then
+      SaveLine(Last);
+  end;
+  for var I := 0 to Size - 1 do
+    M[(Address + I) and $FFF] := Byte((V shr ((Size - 1 - I) * 8)) and $FF);
+end;
+
+procedure TN64RSP.IssueSB(Op: Cardinal);
+begin
+  StoreBytes(Op, 1);
+end;
+
+procedure TN64RSP.IssueSH(Op: Cardinal);
+begin
+  StoreBytes(Op, 2);
+end;
+
+procedure TN64RSP.IssueSW(Op: Cardinal);
+begin
+  StoreBytes(Op, 4);
+end;
+
+procedure TN64RSP.VectorLoad(Op: Cardinal);
+begin
+  VectorMemory(Op, False);
+end;
+
+procedure TN64RSP.VectorStore(Op: Cardinal);
+begin
+  VectorMemory(Op, True);
+end;
+
+procedure TN64RSP.VectorLoadDirect(Op: Cardinal);
+begin
+  VectorMemoryDirect(Op, False);
+end;
+
+procedure TN64RSP.VectorStoreDirect(Op: Cardinal);
+begin
+  VectorMemoryDirect(Op, True);
+end;
 function TN64RSP.RunBlock(B: PRSPBlock; var PC, Status, Interrupt: Cardinal; Cycles: Integer; Ahead: Boolean;
   var Ran: Integer): Integer;
 begin
@@ -4576,78 +5224,156 @@ begin
   // budget allows, 1 before a stall longer than the budget left, 3 before a
   // clock no block takes (RunClocks takes those), 2 when a fence stopped the
   // window (FAheadStop). The pipeline is set after the last clock run, and
-  // before a fence as RunClocks leaves it there.
+  // before a fence as RunClocks leaves it there. The clocks run come from
+  // the steps (TRSPBlockStep.Clocks), and so does the PC: PC is set before a
+  // clock of IssueKind's (it moves it) and on the way out.
+  //
+  // The checks that concern this run (TRSPBlockStep.Checks): fences only
+  // ahead and not replaying (a replay re-runs clocks that ran already, with
+  // the fences set later), while there are any; journal entries ahead.
+  var Fences := Ahead and not FReplaying;
+  var Base: Byte := StepGeneral;
+  if Ahead then
+    Base := Base or StepExternal;
   while True do
   begin
     Result := 0;
     Inc(FBlocksRun);
-    var Before := Ran;
-    var S: PRSPBlockStep := @FBlockSteps[B.First];
+    var First: PRSPBlockStep := @FBlockSteps[B.First];
+    var S := First;
     var Last: PRSPBlockStep := @FBlockSteps[B.First + B.Count - 1];
+    {$IFDEF N64_CHECKED}
+    if First.PC <> PC then
+      raise EInvalidOpException.Create('RSP block run at another PC');
+    {$ENDIF}
+    // The budget from the block's start (at least a clock), and where the
+    // clocks stop: after the clock that reaches it or the last one.
+    var Room := Cycles - Ran;
+    var Limit := Min(Room, B.Clocks);
+    // The last clock run (nil: none yet).
     var Done: PRSPBlockStep := nil;
     // A branch is pending only before the last clock (its delay slot).
     var DelaySlot := False;
-
+    // The last clock ran by its routines (the PC still to be set).
+    var Plain := False;
+    var Mask := Base;
+    if Fences and FFenced then
+      Mask := Mask or StepMemory;
     while True do
     begin
-      var Checks := S.Checks;
-      if Checks <> 0 then
+      // The clocks that need no check, then the one that does.
+      var R := RunSteps(S, Mask, Room, Limit);
+      if R <> First then
       begin
-        if (Checks and StepWaits) <> 0 then
+        Done := R;
+        Dec(Done);
+        if Done.Clocks >= Limit then
         begin
-          if S.Wait >= Cycles - Ran then
-          begin
-            Result := 1;
-            Break;
-          end;
-          FStalledOpcode := S.Op;
-          FStalledPC := PC;
-          FStalledSecondOpcode := S.Second;
-          Inc(Ran, S.Wait);
+          Plain := True;
+          Break;
         end;
-        if ((Checks and StepMemory) <> 0) and Ahead and FFenced and not FReplaying and
-          (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
+      end;
+      S := R;
+      if (S.Wait <> 0) and (S.Clocks > Room) then
+      begin
+        // (The clocks before the stall.)
+        Result := 1;
+        PC := S.PC;
+        Break;
+      end;
+      var Checks := S.Checks and Mask;
+      // (The clocks before this one, its stall included.)
+      var Before := Ran + S.Clocks - 1;
+      if ((Checks and StepMemory) <> 0) and (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
+      begin
+        HoldStep(Done, S);
+        if not LiftFence(S.PC, S.Op, S.Second, S.Pair, FClockBase + Before + 1) then
         begin
-          HoldStep(Done, S);
-          if not LiftFence(PC, S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
-          begin
-            FAheadStop := TRSPAheadStop.Fence;
-            Inc(FBlockClocks, Ran - Before);
-            Exit(2);
-          end;
-        end;
-        if ((Checks and StepExternal) <> 0) and Ahead and not JournalCOP0(S.Op, S.Second, S.Pair, FClockBase + Ran + 1) then
-        begin
-          // The window ends before the clock, as RunClocks ends it. (No lift
-          // came first: an MFC0 or MTC0 shares its clock with no load or
-          // store, both being scalar-unit instructions.)
-          HoldStep(Done, S);
-          StopAtExternal(S.Op, S.Second);
-          Inc(FBlockClocks, Ran - Before);
+          FAheadStop := TRSPAheadStop.Fence;
+          Inc(FBlockClocks, S.Clocks - 1);
+          PC := S.PC;
+          Ran := Before;
           Exit(2);
         end;
+        // (No fence left after the lift, no more checks: they would find
+        // none. A lift sets no fence where there was none.)
+        Mask := Base;
+        if FFenced then
+          Mask := Mask or StepMemory;
       end;
-      if S = Last then
-        DelaySlot := FBranch;
-      IssueKind(S.Kind, S.Op, PC, Status, Interrupt);
-      // (An MTC0 run here, not ahead, may halt the RSP: then not the word
-      // paired with it, nor any clock after it.)
-      if S.Pair and (((Checks and StepExternal) = 0) or ((Status and 1) = 0)) then
-        IssueKind(S.SecondKind, S.Second, PC, Status, Interrupt);
-      Inc(Ran);
-      Done := S;
-      if ((Checks and StepExternal) <> 0) and ((Status and $21) <> 0) then
+      if ((Checks and StepExternal) <> 0) and not JournalCOP0(S.Op, S.Second, S.Pair, FClockBase + Before + 1) then
       begin
-        if (Status and $20) <> 0 then
-          Status := Status or 1;
+        // The window ends before the clock, as RunClocks ends it. (No lift
+        // came first: an MFC0 or MTC0 shares its clock with no load or
+        // store, both being scalar-unit instructions.)
+        HoldStep(Done, S);
+        StopAtExternal(S.Op, S.Second);
+        Inc(FBlockClocks, S.Clocks - 1);
+        PC := S.PC;
+        Ran := Before;
+        Exit(2);
+      end;
+      if (Checks and StepGeneral) <> 0 then
+      begin
+        // A branch, COP0 or other instruction of IssueInstruction's, or a
+        // delay slot: the PC as each instruction takes it.
+        if S = Last then
+          DelaySlot := FBranch;
+        PC := S.PC;
+        IssueKind(S.Kind, S.Arg, PC, Status, Interrupt);
+        // (An MTC0 run here, not ahead, may halt the RSP: then not the
+        // word paired with it, nor any clock after it.)
+        var External := (S.Checks and StepExternal) <> 0;
+        if S.Pair and (not External or ((Status and 1) = 0)) then
+          IssueKind(S.SecondKind, S.SecondArg, PC, Status, Interrupt);
+        Done := S;
+        if External and ((Status and $21) <> 0) then
+        begin
+          if (Status and $20) <> 0 then
+            Status := Status or 1;
+          Break;
+        end;
+        // (A journal entry may have set fences.)
+        Mask := Base;
+        if Fences and FFenced then
+          Mask := Mask or StepMemory;
+        if S.Clocks >= Limit then
+          Break;
+        Inc(S);
+        Continue;
+      end;
+      // A load or store let through: the clock's words by their routines.
+      TRSPIssueProc(S.Issue)(Self, S.Arg);
+      if S.Pair then
+        TRSPIssueProc(S.SecondIssue)(Self, S.SecondArg);
+      Done := S;
+      if S.Clocks >= Limit then
+      begin
+        Plain := True;
         Break;
       end;
-      if (S = Last) or (Ran >= Cycles) then
-        Break;
       Inc(S);
     end;
+    if Plain then
+    begin
+      // The last clock ran by its routines: the PC after it, after a delay
+      // slot where the branch took it (as IssueKind moves it).
+      PC := (Cardinal(Done.PC) + 4 + 4 * Cardinal(Ord(Done.Pair))) and $FFC;
+      if Done.Delay then
+      begin
+        // (A delay slot issues alone.)
+        DelaySlot := FBranch;
+        if FBranch then
+        begin
+          PC := FNextPC;
+          FBranch := False;
+        end;
+      end;
+    end;
+    var Clocks := 0;
     if Done <> nil then
     begin
+      Clocks := Done.Clocks;
       FScalarLo := Done.ScalarLo;
       FScalarHi := Done.ScalarHi;
       FVectorLo := Done.VectorLo;
@@ -4663,7 +5389,8 @@ begin
           FSingleIssue := 1;
       end;
     end;
-    Inc(FBlockClocks, Ran - Before);
+    Inc(FBlockClocks, Clocks);
+    Inc(Ran, Clocks);
     if Assigned(FOnBlock) then
       FOnBlock(Ran);
     if (Result <> 0) or (Done <> Last) or (Ran >= Cycles) or ((Status and 1) <> 0) then
@@ -4709,6 +5436,34 @@ begin
   end;
 end;
 
+function TN64RSP.RunSteps(S: PRSPBlockStep; Mask: Byte; Room, Limit: Integer): PRSPBlockStep;
+begin
+  // A block's clocks from S on (RunBlock): up to the first that needs one of
+  // Mask's checks or stalls past Room, the clocks the budget leaves from the
+  // block's start (not run: the result is that clock), or through the one
+  // that reaches Limit (the result is the step after it).
+  while True do
+  begin
+    if S.Wait <> 0 then
+    begin
+      if S.Clocks > Room then
+        Exit(S);
+      FStalledOpcode := S.Op;
+      FStalledPC := S.PC;
+      FStalledSecondOpcode := S.Second;
+    end;
+    if (S.Checks and Mask) <> 0 then
+      Exit(S);
+    TRSPIssueProc(S.Issue)(Self, S.Arg);
+    if S.Pair then
+      TRSPIssueProc(S.SecondIssue)(Self, S.SecondArg);
+    if S.Clocks >= Limit then
+      Break;
+    Inc(S);
+  end;
+  Inc(S);
+  Result := S;
+end;
 procedure TN64RSP.HoldStep(Done, S: PRSPBlockStep);
 begin
   // Before block clock S (Done: the clock before it, if any) a window
@@ -4892,7 +5647,7 @@ begin
       // The MTC0 is its clock's one scalar-unit instruction: its source
       // register holds the value it writes.
       Value := FReg[(Access shr 16) and 31];
-      if not Assigned(FDefer) or not FDefer(Index, Clock, Value) then
+      if not Assigned(FDefer) or ((((FDeferSilent shr Index) and 1) = 0) and not FDefer(Index, Clock, Value)) then
         Exit;
     end
     else if not Assigned(FPredict) or not FPredict(Index, Clock, Value) then
@@ -5256,6 +6011,10 @@ begin
     ArraysToPlanes;
   end;
 end;
+
+initialization
+  InitKindIssue;
+  InitDivideTables;
 
 end.
 

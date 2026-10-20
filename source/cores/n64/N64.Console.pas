@@ -48,6 +48,8 @@ type
     Applied, Unsaved: Boolean;
   end;
 
+  TN64CycleCount = Int64;
+
   // RSP run-ahead counts since the console was created (diagnostics).
   TN64RSPAheadStats = record
     // Windows run and their clocks; MFC0s run ahead with a predicted value,
@@ -66,6 +68,9 @@ type
     // Time (TStopwatch ticks) windows ran (on the RSP thread or here), and
     // this thread waited for the RSP thread.
     WindowTime, ThreadWaitTime: Int64;
+    // The RSP thread's own CPU time in windows (QueryThreadCycleTime units,
+    // Windows only; 0 elsewhere).
+    ThreadCycles: TN64CycleCount;
     // Windows by how they ended (TRSPAheadStop).
     Stops: array[TRSPAheadStop] of Int64;
     // Windows ended by an MTC0 or MFC0, by SP/DP register.
@@ -491,6 +496,8 @@ type
     property RSPRunAhead: Boolean read FRSPAhead write FRSPAhead;
     property RSPStress: Boolean read FRSPStress write FRSPStress;
     property RSPAheadStats: TN64RSPAheadStats read FRSPStats;
+    // The RSP thread's ID (diagnostics: 0 before its first window).
+    function RSPThreadID: TThreadID;
     // Diagnostics: the fences of SP DMA a window may lift once the transfer
     // is expected done: 2 (default) all, 1 only of transfers out of DMEM, 0
     // none. Any mode is exact.
@@ -520,6 +527,13 @@ type
   end;
 
 implementation
+
+{$IFDEF MSWINDOWS}
+// (Diagnostics: TN64RSPAheadStats.ThreadCycles.)
+function QueryThreadCycleTime(ThreadHandle: THandle; out CycleTime: UInt64): LongBool; stdcall;
+  external 'kernel32.dll' name 'QueryThreadCycleTime';
+function CurrentThreadHandle: THandle; stdcall; external 'kernel32.dll' name 'GetCurrentThread';
+{$ENDIF}
 
 type
   // RDRAM alone (a VI field's copy): no devices.
@@ -654,6 +668,9 @@ begin
   FRSPWindow := RSPWindowMin;
   FRSP.OnPredict := PredictRSPRead;
   FRSP.OnDefer := DeferRSPWrite;
+  // (The DMA addresses, the semaphore and DPC_START: DeferRSPWrite takes
+  // them as they are, and UpdateRSPShadow notes them from the journal.)
+  FRSP.DeferSilent := (1 shl 0) or (1 shl 1) or (1 shl 7) or (1 shl 8);
   FRSP.OnLift := LiftRSPFences;
   FRSPLiftMode := 2;
   // With a core for the emulation thread, one for the RSP thread and one
@@ -4056,7 +4073,16 @@ begin
     end;
     Served := TInterlocked.Read(FOwner.FAheadRequest);
     var Started := TStopwatch.GetTimeStamp;
+    {$IFDEF MSWINDOWS}
+    var Cycles0: UInt64 := 0;
+    QueryThreadCycleTime(CurrentThreadHandle, Cycles0);
+    {$ENDIF}
     FOwner.RunThreadedWindow;
+    {$IFDEF MSWINDOWS}
+    var Cycles1: UInt64 := 0;
+    QueryThreadCycleTime(CurrentThreadHandle, Cycles1);
+    Inc(FOwner.FRSPStats.ThreadCycles, Int64(Cycles1 - Cycles0));
+    {$ENDIF}
     Inc(FOwner.FRSPStats.WindowTime, TStopwatch.GetTimeStamp - Started);
     TInterlocked.Exchange(FOwner.FAheadFinished, Served);
     if (SharedRead(FOwner.FAheadMainWaiting) <> 0) and (TInterlocked.CompareExchange(FOwner.FAheadMainWaiting, 0, 1) = 1) then
@@ -4247,6 +4273,13 @@ begin
   FRDPTiming.OnWords := nil;
   FRDPTiming.OnDataOut := nil;
   FRDPTimingStale := True;
+end;
+
+function TN64Console.RSPThreadID: TThreadID;
+begin
+  Result := 0;
+  if FRSPThread <> nil then
+    Result := FRSPThread.ThreadID;
 end;
 
 procedure TN64Console.RunRSP;
