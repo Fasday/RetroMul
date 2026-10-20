@@ -752,8 +752,9 @@ end;
 
 procedure TN64RSP.SetAccLo(I: Integer; Value: Word);
 begin
-  // The low slice only (bit 47, the sign, stays).
-  FAcc[I] := (FAcc[I] and not Int64($FFFF)) or Value;
+  // The low slice only (bit 47, the sign, stays): its two bytes, the
+  // lowest of the lane (little-endian hosts only), as in the routines below.
+  PWord(@FAcc[I])^ := Value;
 end;
 
 function AccClampMid(Acc: Int64): Word; inline;
@@ -1306,7 +1307,7 @@ begin
   begin
     var V := S16(VS[I]) + S16(VT[I]) + Integer(Carry and 1);
     Carry := Carry shr 1;
-    A[I] := (A[I] and not Int64($FFFF)) or (V and $FFFF);
+    PWord(@A[I])^ := Word(V);
     VD[I] := ClampSigned(V);
   end;
   FVCO := 0;
@@ -1324,7 +1325,7 @@ begin
   begin
     var V := S16(VS[I]) - S16(VT[I]) - Integer(Carry and 1);
     Carry := Carry shr 1;
-    A[I] := (A[I] and not Int64($FFFF)) or (V and $FFFF);
+    PWord(@A[I])^ := Word(V);
     VD[I] := ClampSigned(V);
   end;
   FVCO := 0;
@@ -1419,7 +1420,7 @@ begin
     var Test := Cardinal(Ord(S16(S) < S16(T))) or (Cardinal(Ord(S = T)) and (Equal shr I) and 1);
     Compare := Compare or (Test shl I);
     var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
-    A[I] := (A[I] and not Int64($FFFF)) or R;
+    PWord(@A[I])^ := R;
     VD[I] := R;
   end;
   FVCO := 0;
@@ -1443,7 +1444,7 @@ begin
     var Test := Cardinal(Ord(S = T)) and (Kept shr I) and 1;
     Compare := Compare or (Test shl I);
     var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
-    A[I] := (A[I] and not Int64($FFFF)) or R;
+    PWord(@A[I])^ := R;
     VD[I] := R;
   end;
   FVCO := 0;
@@ -1467,7 +1468,7 @@ begin
     var Test := Cardinal(Ord(S <> T)) or ((NotEqual shr I) and 1);
     Compare := Compare or (Test shl I);
     var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
-    A[I] := (A[I] and not Int64($FFFF)) or R;
+    PWord(@A[I])^ := R;
     VD[I] := R;
   end;
   FVCO := 0;
@@ -1491,7 +1492,7 @@ begin
     var Test := Cardinal(Ord(S16(S) > S16(T))) or (Cardinal(Ord(S = T)) and (Kept shr I) and 1);
     Compare := Compare or (Test shl I);
     var R: Word := T xor ((S xor T) and Word(-Integer(Test)));
-    A[I] := (A[I] and not Int64($FFFF)) or R;
+    PWord(@A[I])^ := R;
     VD[I] := R;
   end;
   FVCO := 0;
@@ -1535,7 +1536,7 @@ begin
       R := Word(UA xor ((UA xor UB) and Word(-Integer(High))));
     end;
     Compare := Compare or (Low shl I) or (High shl (I + 8));
-    Acc[I] := (Acc[I] and not Int64($FFFF)) or R;
+    PWord(@Acc[I])^ := R;
     VD[I] := R;
   end;
   FVCO := 0;
@@ -1585,7 +1586,7 @@ begin
       Carry := Carry or (Cardinal(Ord((Difference <> 0) and (A <> NotB))) shl (I + 8));
     end;
     Compare := Compare or (Low shl I) or (High shl (I + 8));
-    Acc[I] := (Acc[I] and not Int64($FFFF)) or R;
+    PWord(@Acc[I])^ := R;
     VD[I] := R;
   end;
   FVCO := Word(Carry);
@@ -1624,7 +1625,7 @@ begin
         R := Word(UB);
     end;
     Compare := Compare or (Low shl I) or (High shl (I + 8));
-    Acc[I] := (Acc[I] and not Int64($FFFF)) or R;
+    PWord(@Acc[I])^ := R;
     VD[I] := R;
   end;
   FVCO := 0;
@@ -1692,7 +1693,7 @@ begin
   VD.Quads[0] := R0;
   VD.Quads[1] := R1;
   for var I := 0 to 7 do
-    FAcc[I] := (FAcc[I] and not Int64($FFFF)) or VD.Lanes[I];
+    PWord(@FAcc[I])^ := VD.Lanes[I];
 end;
 
 procedure TN64RSP.VectorReserved(Op: Cardinal);
@@ -1724,7 +1725,7 @@ begin
   var Source := FVec[T, E and 7];
   var A: PRSPAccLanes := @FAcc;
   for var I := 0 to 7 do
-    A[I] := (A[I] and not Int64($FFFF)) or VT[I];
+    PWord(@A[I])^ := VT[I];
   if Fn = 51 then
     FVec[D, DE] := VT[DE]
   else if Fn in [50, 54] then
@@ -1830,6 +1831,15 @@ begin
         PUInt64(P + 8)^ := ((Q.Quads[1] shr 8) and $00FF00FF00FF00FF) or ((Q.Quads[1] and $00FF00FF00FF00FF) shl 8);
         I := 16;
       end
+      else if (Size = 8) and ((NativeUInt(P) and 7) = 0) then
+      begin
+        // SDV's four lanes in one 8-byte word.
+        var L := E shr 1;
+        var V := UInt64(Lanes[L]) or (UInt64(Lanes[L + 1]) shl 16) or (UInt64(Lanes[L + 2]) shl 32) or
+          (UInt64(Lanes[L + 3]) shl 48);
+        PUInt64(P)^ := ((V shr 8) and $00FF00FF00FF00FF) or ((V and $00FF00FF00FF00FF) shl 8);
+        I := 8;
+      end
       else
         while I + 1 < Size do
         begin
@@ -1872,6 +1882,18 @@ begin
         Q.Quads[0] := ((Q0 shr 8) and $00FF00FF00FF00FF) or ((Q0 and $00FF00FF00FF00FF) shl 8);
         Q.Quads[1] := ((Q1 shr 8) and $00FF00FF00FF00FF) or ((Q1 and $00FF00FF00FF00FF) shl 8);
         I := 16;
+      end
+      else if (Size = 8) and ((NativeUInt(P) and 7) = 0) then
+      begin
+        // LDV's four lanes from one 8-byte word.
+        var L := E shr 1;
+        var V := PUInt64(P)^;
+        V := ((V shr 8) and $00FF00FF00FF00FF) or ((V and $00FF00FF00FF00FF) shl 8);
+        Lanes[L] := Word(V);
+        Lanes[L + 1] := Word(V shr 16);
+        Lanes[L + 2] := Word(V shr 32);
+        Lanes[L + 3] := Word(V shr 48);
+        I := 8;
       end
       else
         while I + 1 < Size do
