@@ -26,6 +26,8 @@ type
   private type
     TChannel = record
       Address, Block, Control: Cardinal;
+      // A burst that started keeps going without DREQ (chopped bursts).
+      Bursting: Cardinal;
     end;
     PChannel = ^TChannel;
   private
@@ -44,6 +46,7 @@ type
     function Transfer(Index: Integer): Int64;
     function TransferWords(Index: Integer; Address: Cardinal; Count: Integer): Cardinal;
     function Finish(Index: Integer): Boolean;
+    function Gap(Index: Integer): Integer;
     procedure UpdateMaster(Before: Boolean);
   public
     Devices: array[0..5] of TPS1DMADevice;
@@ -63,12 +66,15 @@ implementation
 const
   ControlStart = $01000000;
   ControlTrigger = $10000000;
+  ControlChop = $00000100;
   ControlWritable = $71770703;
   OTCWritable = $51000000;
-  // Per linked-list node overhead and the CPU window between steps, fitted to
-  // the CPU share measured by ps1-tests dma/chain-looping.
+  // Per linked-list node overhead and the CPU window between blocks and list
+  // nodes, fitted to the CPU share measured by ps1-tests dma/chain-looping
+  // and the block timings of dma/chopping.
   ListNodeOverhead = 8;
   StepGap = 10;
+  ChopOverhead = 6;
 
 function TPS1DMADevice.DMARequest(Channel: Integer): Boolean;
 begin
@@ -119,8 +125,11 @@ begin
   if (C and ControlTrigger) <> 0 then
     Exit(True);
 
+  // A burst starts on the first DREQ and then ignores it.
   var Mode := (C shr 9) and 3;
-  Result := (Mode <> 0) and (Index < 6) and (Devices[Index] <> nil) and Devices[Index].DMARequest(Index);
+  if (Mode = 0) and (FChannels[Index].Bursting <> 0) then
+    Exit(True);
+  Result := (Mode <> 3) and (Index < 6) and (Devices[Index] <> nil) and Devices[Index].DMARequest(Index);
 end;
 
 // Cost in 1/16 cycles per word (psx-spx DMA transfer rates).
@@ -197,8 +206,22 @@ begin
         var Count := Integer(Ch.Block and $FFFF);
         if Count = 0 then
           Count := $10000;
-        TransferWords(Index, Ch.Address and $FFFFFC, Count);
-        Cost := Int64(Count) * Unit_;
+        if (Ch.Control and ControlChop) <> 0 then
+        begin
+          // Chopping moves a DMA window at a time and counts MADR and BCR.
+          var Chunk := 1 shl ((Ch.Control shr 16) and 7);
+          if Chunk > Count then
+            Chunk := Count;
+          Ch.Address := TransferWords(Index, Ch.Address and $FFFFFC, Chunk);
+          Ch.Block := (Ch.Block and $FFFF0000) or Cardinal((Count - Chunk) and $FFFF);
+          Ch.Bursting := 1;
+          Cost := Int64(Chunk) * Unit_;
+        end
+        else
+        begin
+          TransferWords(Index, Ch.Address and $FFFFFC, Count);
+          Cost := Int64(Count) * Unit_;
+        end;
       end;
     1:
       begin
@@ -238,6 +261,21 @@ begin
     FIRQ(TPS1IRQ.DMA);
 end;
 
+// CPU time between two steps. Chopped bursts use the CPU window, which
+// cannot exceed 32 cycles per DMA word (ps1-tests dma/chopping).
+function TPS1DMA.Gap(Index: Integer): Integer;
+begin
+  var C := FChannels[Index].Control;
+  if (((C shr 9) and 3) <> 0) or ((C and ControlChop) = 0) then
+    Exit(StepGap);
+
+  var Window := 1 shl ((C shr 20) and 7);
+  var Limit := 32 shl ((C shr 16) and 7);
+  if Window > Limit then
+    Window := Limit;
+  Result := Window + ChopOverhead;
+end;
+
 function TPS1DMA.Finish(Index: Integer): Boolean;
 begin
   var Ch: PChannel := @FChannels[Index];
@@ -246,9 +284,14 @@ begin
     1: Done := (Ch.Block shr 16) = 0;
     2: Done := (Ch.Address and $800000) <> 0;
   end;
+  if (((Ch.Control shr 9) and 3) = 0) and ((Ch.Control and ControlChop) <> 0) then
+    Done := (Ch.Block and $FFFF) = 0;
   Result := Done;
   if Done then
+  begin
     Ch.Control := Ch.Control and not ControlStart;
+    Ch.Bursting := 0;
+  end;
   // Completion flags need both the channel enable and the master enable;
   // bits 0..6 also flag every finished slice or list part.
   if (Done or (((FInterrupt shr Index) and 1) <> 0)) and
@@ -302,7 +345,7 @@ begin
       else
       begin
         FPhase := 2;
-        FScheduler.Schedule(TPS1Event.DMA, Time + StepGap);
+        FScheduler.Schedule(TPS1Event.DMA, Time + Gap(FBusyChannel));
       end;
     2:
       begin
@@ -342,6 +385,7 @@ begin
       $0: Ch.Address := Value and $FFFFFF;
       $4: Ch.Block := Value;
     else
+      Ch.Bursting := 0;
       if Index = 6 then
         Ch.Control := (Value and OTCWritable) or $00000002
       else
