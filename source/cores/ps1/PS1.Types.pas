@@ -21,12 +21,18 @@ const
   PS1BIOSMask = PS1BIOSSize - 1;
   PS1ScratchpadSize = $400;
 
+  PS1VRAMWidth = 1024;
+  PS1VRAMHeight = 512;
+
 type
   EPS1Error = class(Exception);
 
+  TPS1VRAM = array[0..PS1VRAMWidth * PS1VRAMHeight - 1] of Word;
+  PPS1VRAM = ^TPS1VRAM;
+
   // Fixed scheduler slots. The declaration order breaks ties between events
   // that are due on the same cycle, so it is part of the emulated behavior.
-  TPS1Event = (GPU, Timer0, Timer1, Timer2, DMA, CDROM, CDAudio, SPU, SIO0, MDEC);
+  TPS1Event = (GPU, Timer0, Timer1, Timer2, DMA, CDROM, CDAudio, SPU, SIO0, MDEC, GPUDraw);
 
   // I_STAT/I_MASK bit numbers.
   TPS1IRQ = (VBlank = 0, GPU = 1, CDROM = 2, DMA = 3, Timer0 = 4, Timer1 = 5,

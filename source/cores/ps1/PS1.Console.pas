@@ -125,6 +125,7 @@ begin
   FGPU.OnHBlank := HandleHBlank;
   FGPU.OnVBlank := HandleVBlank;
   FGPU.OnDotClockChange := HandleDotClockChange;
+  FGPU.OnReady := FDMA.Kick;
   for var Port := 0 to 1 do
   begin
     FPads[Port] := TPS1DigitalPad.Create;
@@ -245,6 +246,7 @@ begin
       TPS1Event.DMA: FDMA.Event(At);
       TPS1Event.CDROM: FCDROM.Event(At);
       TPS1Event.SIO0: FSIO0.Event(At);
+      TPS1Event.GPUDraw: FGPU.DrawEvent(At);
     end;
 end;
 

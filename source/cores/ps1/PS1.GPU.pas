@@ -4,11 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.UITypes, Core.Snapshots, PS1.Types,
-  PS1.Scheduler, PS1.DMA;
-
-const
-  PS1VRAMWidth = 1024;
-  PS1VRAMHeight = 512;
+  PS1.Scheduler, PS1.DMA, PS1.GPU.Raster;
 
 type
   TPS1BlankNotify = procedure(Active: Boolean; Time: Int64) of object;
@@ -28,9 +24,8 @@ type
     FTransferX, FTransferY, FTransferWidth, FTransferHeight: Cardinal;
     FTransferColumn, FTransferRow: Cardinal;
     FRead: Cardinal;
-    // Rendering environment.
-    FDrawMode, FTextureWindow, FDrawAreaTopLeft, FDrawAreaBottomRight, FDrawOffset: Cardinal;
-    FMaskSet, FMaskCheck: Boolean;
+    FEnv: TPS1DrawEnvironment;
+    FRaster: TPS1Rasterizer;
     // Display control.
     FDisplayStart, FHorizontalRange, FVerticalRange, FDisplayMode: Cardinal;
     FDisplayDisabled, FInterrupt: Boolean;
@@ -45,6 +40,13 @@ type
     FDotBase: Int64;
     FDotPosition: Integer;
     FFrames: UInt64;
+    // Commands execute when received; the time they take on hardware keeps
+    // the GPU busy (GPUSTAT 26/28, DMA requests) until FBusyUntil, counted in
+    // 1/256 CPU cycles. FFIFOWords counts words queued meanwhile.
+    FBusyUntil: Int64;
+    FFIFOWords: Integer;
+    function Busy: Boolean; inline;
+    procedure AddWork(Units: Int64);
     procedure ResetCommands;
     function LineLength: Integer; inline;
     function LinesInField: Integer;
@@ -67,24 +69,25 @@ type
     function ReadTransfer: Cardinal;
     procedure ReadRegister(Index: Cardinal);
     procedure SetDisplayMode(Value: Cardinal);
-  protected
-    // Drawing primitives; the rasterizer overrides these.
-    procedure DrawPolygon(const Words: array of Cardinal); virtual;
-    procedure DrawLine(Color0, Vertex0, Color1, Vertex1: Cardinal; Shaded, SemiTransparent: Boolean); virtual;
-    procedure DrawRectangle(const Words: array of Cardinal); virtual;
+    function OddField: Boolean;
+    function FIFOEmpty: Boolean;
   public
-    VRAM: array[0..PS1VRAMWidth * PS1VRAMHeight - 1] of Word;
+    VRAM: TPS1VRAM;
     // Called with the CPU cycle of each blanking edge.
     OnHBlank, OnVBlank: TPS1BlankNotify;
     // The dot clock rate is about to change.
     OnDotClockChange: TPS1Notify;
+    // The GPU finished its drawing work and can take DMA again.
+    OnReady: TPS1Notify;
     constructor Create(Scheduler: TPS1Scheduler; const IRQ: TPS1IRQRequest; PAL: Boolean);
+    destructor Destroy; override;
     procedure Reset;
     procedure WriteGP0(Value: Cardinal);
     procedure WriteGP1(Value: Cardinal);
     function ReadGP0: Cardinal;
     function Status: Cardinal;
     procedure Event(Time: Int64);
+    procedure DrawEvent(Time: Int64);
     function DotCount(Time: Int64): Int64;
     function DotTime(Count: Int64): Int64;
     // Converts the displayed VRAM area into premultiplied ARGB pixels.
@@ -96,20 +99,19 @@ type
     procedure SerializeState(State: TStateArchive);
     // Increments at the start of each vertical blank (or field end without one).
     property Frames: UInt64 read FFrames;
-    property DrawMode: Cardinal read FDrawMode write FDrawMode;
-    property TextureWindow: Cardinal read FTextureWindow;
-    property DrawAreaTopLeft: Cardinal read FDrawAreaTopLeft;
-    property DrawAreaBottomRight: Cardinal read FDrawAreaBottomRight;
-    property DrawOffset: Cardinal read FDrawOffset;
-    property MaskSet: Boolean read FMaskSet;
-    property MaskCheck: Boolean read FMaskCheck;
-    property DisplayMode: Cardinal read FDisplayMode;
   end;
 
 implementation
 
 const
   Dividers: array[0..7] of Integer = (10, 7, 8, 7, 5, 7, 4, 7);
+  FIFOSize = 16;
+  // Work in 1/256 CPU cycles per halfword (ps1-tests gpu/bandwidth and
+  // dma/chopping).
+  FillPixelWork = 21;
+  CopyPixelWork = 343;
+  TransferPixelWork = 154;
+  ReadPixelWork = 275;
 
 constructor TPS1GPU.Create(Scheduler: TPS1Scheduler; const IRQ: TPS1IRQRequest; PAL: Boolean);
 begin
@@ -120,7 +122,14 @@ begin
     FVideoClock := PS1VideoClockPAL
   else
     FVideoClock := PS1VideoClockNTSC;
+  FRaster := TPS1Rasterizer.Create(@VRAM, @FEnv);
   Reset;
+end;
+
+destructor TPS1GPU.Destroy;
+begin
+  FRaster.Free;
+  inherited;
 end;
 
 procedure TPS1GPU.ResetCommands;
@@ -137,13 +146,8 @@ begin
   FillChar(VRAM, SizeOf(VRAM), 0);
   ResetCommands;
   FRead := 0;
-  FDrawMode := 0;
-  FTextureWindow := 0;
-  FDrawAreaTopLeft := 0;
-  FDrawAreaBottomRight := 0;
-  FDrawOffset := 0;
-  FMaskSet := False;
-  FMaskCheck := False;
+  FEnv := Default(TPS1DrawEnvironment);
+  FRaster.Reset;
   FDisplayStart := 0;
   FHorizontalRange := $200 or (($200 + 256 * 10) shl 12);
   FVerticalRange := $010 or (($010 + 240) shl 10);
@@ -161,6 +165,9 @@ begin
   FDotBase := 0;
   FDotPosition := 0;
   FFrames := 0;
+  FBusyUntil := 0;
+  FFIFOWords := 0;
+  FScheduler.Cancel(TPS1Event.GPUDraw);
   FNextPosition := 0;
   ScheduleNext(0);
 end;
@@ -345,10 +352,10 @@ end;
 
 function TPS1GPU.Status: Cardinal;
 begin
-  Result := (FDrawMode and $7FF) or ((FDrawMode shr 11) and 1) shl 15;
-  if FMaskSet then
+  Result := (FEnv.DrawMode and $7FF) or ((FEnv.DrawMode shr 11) and 1) shl 15;
+  if FEnv.MaskSet then
     Result := Result or $800;
-  if FMaskCheck then
+  if FEnv.MaskCheck then
     Result := Result or $1000;
   if ((FDisplayMode and $20) = 0) or (FField <> 0) then
     Result := Result or $2000;
@@ -360,28 +367,68 @@ begin
     Result := Result or $00800000;
   if FInterrupt then
     Result := Result or $01000000;
-  var Idle := (FCommandCount = 0) and (FTransfer <> 1);
-  if Idle then
-    Result := Result or $04000000 or $10000000;
+  if (FCommandCount = 0) and (FTransfer <> 1) and not Busy then
+    Result := Result or $04000000;
+  var Empty := FIFOEmpty;
+  if Empty then
+    Result := Result or $10000000;
   if FTransfer = 2 then
     Result := Result or $08000000;
   case FDMADirection of
-    1: Result := Result or $02000000;
-    2: if Idle then Result := Result or $02000000;
-    3: if FTransfer = 2 then Result := Result or $02000000;
+    1: if FFIFOWords < FIFOSize then Result := Result or $02000000;
+    2: if Empty then Result := Result or $02000000;
+    3: if (FTransfer = 2) and not Busy then Result := Result or $02000000;
   end;
   Result := Result or (FDMADirection shl 29);
-  // Odd line (240-line mode) or odd field (480-line interlace); zero in vblank.
-  if not FInVBlank then
+  if OddField then
+    Result := Result or $80000000;
+end;
+
+// Commands execute at once, so the FIFO only holds a polygon or line whose
+// parameters are still arriving (bit 28 drops on its first word).
+function TPS1GPU.FIFOEmpty: Boolean;
+begin
+  Result := ((FCommandCount = 0) or not ((FCommand[0] shr 29) in [1, 2])) and not Busy;
+end;
+
+function TPS1GPU.Busy: Boolean;
+begin
+  Result := FScheduler.Now * 256 < FBusyUntil;
+end;
+
+procedure TPS1GPU.AddWork(Units: Int64);
+begin
+  if Units <= 0 then
+    Exit;
+
+  var Start := FScheduler.Now * 256;
+  if FBusyUntil < Start then
+    FBusyUntil := Start;
+  Inc(FBusyUntil, Units);
+  FScheduler.Schedule(TPS1Event.GPUDraw, (FBusyUntil + 255) div 256);
+end;
+
+procedure TPS1GPU.DrawEvent(Time: Int64);
+begin
+  if Busy then
+    FScheduler.Schedule(TPS1Event.GPUDraw, (FBusyUntil + 255) div 256)
+  else
   begin
-    if ((FDisplayMode and $24) = $24) then
-    begin
-      if FField <> 0 then
-        Result := Result or $80000000;
-    end
-    else if (FLine and 1) <> 0 then
-      Result := Result or $80000000;
+    FFIFOWords := 0;
+    if Assigned(OnReady) then
+      OnReady;
   end;
+end;
+
+// Odd line (240-line mode) or odd field (480-line interlace); false in vblank.
+function TPS1GPU.OddField: Boolean;
+begin
+  if FInVBlank then
+    Result := False
+  else if (FDisplayMode and $24) = $24 then
+    Result := FField <> 0
+  else
+    Result := (FLine and 1) <> 0;
 end;
 
 function TPS1GPU.CommandLength(Op: Cardinal): Integer;
@@ -425,9 +472,14 @@ end;
 
 procedure TPS1GPU.WriteGP0(Value: Cardinal);
 begin
+  if Busy then
+    Inc(FFIFOWords)
+  else
+    FFIFOWords := 0;
   if FTransfer = 1 then
   begin
     WriteTransfer(Value);
+    AddWork(2 * TransferPixelWork);
     Exit;
   end;
 
@@ -459,23 +511,32 @@ begin
     FCommand[FCommandCount] := Value;
   Inc(FCommandCount);
   if FCommandCount >= FCommandLength then
+  begin
     ExecuteCommand;
+    AddWork(FRaster.Work);
+    FRaster.Work := 0;
+  end;
 end;
 
 procedure TPS1GPU.ExecuteCommand;
 begin
   var Op := FCommand[0] shr 24;
+  // In 480-line interlaced output the lines of the displayed field are left
+  // alone unless drawing to the display area is allowed.
+  FRaster.SkipParity := -1;
+  if ((FDisplayMode and $24) = $24) and ((FEnv.DrawMode and $400) = 0) then
+    FRaster.SkipParity := Ord(OddField);
   case Op shr 5 of
     1:
-      DrawPolygon(Slice(FCommand, FCommandLength));
+      FRaster.Polygon(Slice(FCommand, FCommandLength));
     2:
       begin
         var Shaded := (Op and $10) <> 0;
         var SemiTransparent := (Op and $02) <> 0;
         if Shaded then
-          DrawLine(FCommand[0], FCommand[1], FCommand[2], FCommand[3], True, SemiTransparent)
+          FRaster.Line(FCommand[0], FCommand[1], FCommand[2], FCommand[3], True, SemiTransparent)
         else
-          DrawLine(FCommand[0], FCommand[1], FCommand[0], FCommand[2], False, SemiTransparent);
+          FRaster.Line(FCommand[0], FCommand[1], FCommand[0], FCommand[2], False, SemiTransparent);
         if FPolyLine then
         begin
           // Keep the last vertex as the start of the next segment.
@@ -495,7 +556,7 @@ begin
         end;
       end;
     3:
-      DrawRectangle(Slice(FCommand, FCommandLength));
+      FRaster.Rectangle(Slice(FCommand, FCommandLength));
     4:
       Copy;
     5, 6:
@@ -515,8 +576,14 @@ begin
       end;
   else
     case Op of
+      $01: FRaster.InvalidateClut;
       $02: Fill;
-      $1F: FInterrupt := True;
+      $1F:
+        if not FInterrupt then
+        begin
+          FInterrupt := True;
+          FIRQ(TPS1IRQ.GPU);
+        end;
     end;
   end;
   FCommandCount := 0;
@@ -525,15 +592,21 @@ end;
 procedure TPS1GPU.ExecuteEnvironment(Word_: Cardinal);
 begin
   case Word_ shr 24 of
-    $E1: FDrawMode := Word_ and $3FFF;
-    $E2: FTextureWindow := Word_ and $FFFFF;
-    $E3: FDrawAreaTopLeft := Word_ and $FFFFF;
-    $E4: FDrawAreaBottomRight := Word_ and $FFFFF;
-    $E5: FDrawOffset := Word_ and $3FFFFF;
+    $E1:
+      begin
+        // Bit 11 (texture disable) only takes a value while GP1(09h) allows it.
+        FEnv.DrawMode := Word_ and $37FF;
+        if FEnv.TextureDisableAllowed then
+          FEnv.DrawMode := FEnv.DrawMode or (Word_ and $800);
+      end;
+    $E2: FEnv.TextureWindow := Word_ and $FFFFF;
+    $E3: FEnv.AreaTopLeft := Word_ and $FFFFF;
+    $E4: FEnv.AreaBottomRight := Word_ and $FFFFF;
+    $E5: FEnv.Offset := Word_ and $3FFFFF;
     $E6:
       begin
-        FMaskSet := (Word_ and 1) <> 0;
-        FMaskCheck := (Word_ and 2) <> 0;
+        FEnv.MaskSet := (Word_ and 1) <> 0;
+        FEnv.MaskCheck := (Word_ and 2) <> 0;
       end;
   end;
 end;
@@ -541,9 +614,9 @@ end;
 procedure TPS1GPU.WritePixel(X, Y: Cardinal; Value: Word);
 begin
   var Index := (Y and $1FF) * PS1VRAMWidth + (X and $3FF);
-  if FMaskCheck and ((VRAM[Index] and $8000) <> 0) then
+  if FEnv.MaskCheck and ((VRAM[Index] and $8000) <> 0) then
     Exit;
-  if FMaskSet then
+  if FEnv.MaskSet then
     Value := Value or $8000;
   VRAM[Index] := Value;
 end;
@@ -556,6 +629,7 @@ begin
   var Y := (FCommand[1] shr 16) and $1FF;
   var Width := ((FCommand[2] and $3FF) + $F) and not Cardinal($F);
   var Height := (FCommand[2] shr 16) and $1FF;
+  Inc(FRaster.Work, Int64(Width) * Height * FillPixelWork);
   for var Row := 0 to Integer(Height) - 1 do
   begin
     var Line := ((Y + Cardinal(Row)) and $1FF) * PS1VRAMWidth;
@@ -564,7 +638,12 @@ begin
   end;
 end;
 
+// Each row is read before it is written (overlapping copies to the right do
+// not smear), while rows are copied top to bottom (ps1-tests
+// vram-to-vram-overlap).
 procedure TPS1GPU.Copy;
+var
+  Row_: array[0..PS1VRAMWidth - 1] of Word;
 begin
   var SourceX := FCommand[1] and $3FF;
   var SourceY := (FCommand[1] shr 16) and $1FF;
@@ -572,12 +651,14 @@ begin
   var TargetY := (FCommand[2] shr 16) and $1FF;
   var Width := (Sub32(FCommand[3] and $FFFF, 1) and $3FF) + 1;
   var Height := (Sub32(FCommand[3] shr 16, 1) and $1FF) + 1;
+  Inc(FRaster.Work, Int64(Width) * Height * CopyPixelWork);
   for var Row := 0 to Integer(Height) - 1 do
   begin
     var Source := ((SourceY + Cardinal(Row)) and $1FF) * PS1VRAMWidth;
     for var Column := 0 to Integer(Width) - 1 do
-      WritePixel(TargetX + Cardinal(Column), TargetY + Cardinal(Row),
-        VRAM[Source + ((SourceX + Cardinal(Column)) and $3FF)]);
+      Row_[Column] := VRAM[Source + ((SourceX + Cardinal(Column)) and $3FF)];
+    for var Column := 0 to Integer(Width) - 1 do
+      WritePixel(TargetX + Cardinal(Column), TargetY + Cardinal(Row), Row_[Column]);
   end;
 end;
 
@@ -623,7 +704,10 @@ end;
 function TPS1GPU.ReadGP0: Cardinal;
 begin
   if FTransfer = 2 then
-    Result := ReadTransfer
+  begin
+    Result := ReadTransfer;
+    AddWork(2 * ReadPixelWork);
+  end
   else
     Result := FRead;
 end;
@@ -631,10 +715,10 @@ end;
 procedure TPS1GPU.ReadRegister(Index: Cardinal);
 begin
   case Index and $F of
-    2: FRead := FTextureWindow;
-    3: FRead := FDrawAreaTopLeft;
-    4: FRead := FDrawAreaBottomRight;
-    5: FRead := FDrawOffset;
+    2: FRead := FEnv.TextureWindow;
+    3: FRead := FEnv.AreaTopLeft;
+    4: FRead := FEnv.AreaBottomRight;
+    5: FRead := FEnv.Offset;
     7: FRead := 2;
     8: FRead := 0;
   end;
@@ -666,16 +750,18 @@ begin
         FDisplayStart := 0;
         FHorizontalRange := $200 or (($200 + 256 * 10) shl 12);
         FVerticalRange := $010 or (($010 + 240) shl 10);
-        FDrawMode := 0;
-        FTextureWindow := 0;
-        FDrawAreaTopLeft := 0;
-        FDrawAreaBottomRight := 0;
-        FDrawOffset := 0;
-        FMaskSet := False;
-        FMaskCheck := False;
+        // GP1(09h) survives the reset.
+        var Allowed := FEnv.TextureDisableAllowed;
+        FEnv := Default(TPS1DrawEnvironment);
+        FEnv.TextureDisableAllowed := Allowed;
+        FRaster.InvalidateClut;
         SetDisplayMode(0);
       end;
-    $01: ResetCommands;
+    $01:
+      begin
+        ResetCommands;
+        FRaster.InvalidateClut;
+      end;
     $02: FInterrupt := False;
     $03: FDisplayDisabled := (Value and 1) <> 0;
     $04: FDMADirection := Value and 3;
@@ -687,27 +773,17 @@ begin
       end;
     $07: FVerticalRange := Value and $FFFFF;
     $08: SetDisplayMode(Value);
+    $09: FEnv.TextureDisableAllowed := (Value and 1) <> 0;
     $10..$1F: ReadRegister(Value and $FFFFFF);
   end;
-end;
-
-procedure TPS1GPU.DrawPolygon(const Words: array of Cardinal);
-begin
-end;
-
-procedure TPS1GPU.DrawLine(Color0, Vertex0, Color1, Vertex1: Cardinal; Shaded, SemiTransparent: Boolean);
-begin
-end;
-
-procedure TPS1GPU.DrawRectangle(const Words: array of Cardinal);
-begin
 end;
 
 function TPS1GPU.DMARequest(Channel: Integer): Boolean;
 begin
   case FDMADirection of
-    1, 2: Result := FTransfer <> 2;
-    3: Result := FTransfer = 2;
+    1: Result := (FTransfer <> 2) and (FFIFOWords < FIFOSize);
+    2: Result := FIFOEmpty and (FTransfer <> 2);
+    3: Result := (FTransfer = 2) and not Busy;
   else
     Result := False;
   end;
@@ -800,6 +876,7 @@ begin
   State.Field(FCommandCount, SizeOf(FCommandCount));
   State.Field(FCommandLength, SizeOf(FCommandLength));
   State.Field(FPolyLine, SizeOf(FPolyLine));
+  State.Field(FPolyLineContinued, SizeOf(FPolyLineContinued));
   State.Field(FTransfer, SizeOf(FTransfer));
   State.Field(FTransferX, SizeOf(FTransferX));
   State.Field(FTransferY, SizeOf(FTransferY));
@@ -808,13 +885,15 @@ begin
   State.Field(FTransferColumn, SizeOf(FTransferColumn));
   State.Field(FTransferRow, SizeOf(FTransferRow));
   State.Field(FRead, SizeOf(FRead));
-  State.Field(FDrawMode, SizeOf(FDrawMode));
-  State.Field(FTextureWindow, SizeOf(FTextureWindow));
-  State.Field(FDrawAreaTopLeft, SizeOf(FDrawAreaTopLeft));
-  State.Field(FDrawAreaBottomRight, SizeOf(FDrawAreaBottomRight));
-  State.Field(FDrawOffset, SizeOf(FDrawOffset));
-  State.Field(FMaskSet, SizeOf(FMaskSet));
-  State.Field(FMaskCheck, SizeOf(FMaskCheck));
+  State.Field(FEnv.DrawMode, SizeOf(FEnv.DrawMode));
+  State.Field(FEnv.TextureWindow, SizeOf(FEnv.TextureWindow));
+  State.Field(FEnv.AreaTopLeft, SizeOf(FEnv.AreaTopLeft));
+  State.Field(FEnv.AreaBottomRight, SizeOf(FEnv.AreaBottomRight));
+  State.Field(FEnv.Offset, SizeOf(FEnv.Offset));
+  State.Field(FEnv.MaskSet, SizeOf(FEnv.MaskSet));
+  State.Field(FEnv.MaskCheck, SizeOf(FEnv.MaskCheck));
+  State.Field(FEnv.TextureDisableAllowed, SizeOf(FEnv.TextureDisableAllowed));
+  FRaster.SerializeState(State);
   State.Field(FDisplayStart, SizeOf(FDisplayStart));
   State.Field(FHorizontalRange, SizeOf(FHorizontalRange));
   State.Field(FVerticalRange, SizeOf(FVerticalRange));
@@ -833,6 +912,8 @@ begin
   State.Field(FDotBase, SizeOf(FDotBase));
   State.Field(FDotPosition, SizeOf(FDotPosition));
   State.Field(FFrames, SizeOf(FFrames));
+  State.Field(FBusyUntil, SizeOf(FBusyUntil));
+  State.Field(FFIFOWords, SizeOf(FFIFOWords));
   if State.Loading and ((FCommandCount < 0) or (FCommandCount > Length(FCommand)) or
     (FCommandLength < 0) or (FCommandLength > Length(FCommand)) or (FTransfer < 0) or (FTransfer > 2) or
     (FLine < 0) or (FLine >= 314) or (FLineFraction < 0) or (FLineFraction >= FVideoClock) or
