@@ -15,6 +15,11 @@ const
   PS1ICacheFillNext = 1;
   PS1IOStall = 2;
   PS1CacheControlStall = 1;
+  // A RAM store occupies the bus this long once it leaves the write queue
+  // (fitted to ps1-tests dma/chain-looping's store/load loop).
+  PS1RAMWriteCycles = 8;
+  PS1IOWriteCycles = 2;
+  PS1WriteQueueDepth = 4;
 
   // Physical regions.
   PS1PhysDEV0 = $1F000000;

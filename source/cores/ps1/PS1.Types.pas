@@ -5,6 +5,8 @@ interface
 uses
   System.SysUtils;
 
+{$SCOPEDENUMS ON}
+
 // Guest arithmetic wraps explicitly, so the core also runs with {$Q+}{$R+}.
 
 const
@@ -25,6 +27,13 @@ type
   // Fixed scheduler slots. The declaration order breaks ties between events
   // that are due on the same cycle, so it is part of the emulated behavior.
   TPS1Event = (GPU, Timer0, Timer1, Timer2, DMA, CDROM, CDAudio, SPU, SIO0, MDEC);
+
+  // I_STAT/I_MASK bit numbers.
+  TPS1IRQ = (VBlank = 0, GPU = 1, CDROM = 2, DMA = 3, Timer0 = 4, Timer1 = 5,
+    Timer2 = 6, SIO0 = 7, SIO1 = 8, SPU = 9, Lightpen = 10);
+
+  // Sets the I_STAT bit; devices call it on the rising edge of their request.
+  TPS1IRQRequest = procedure(Line: TPS1IRQ) of object;
 
 function Add32(A, B: Cardinal): Cardinal; inline;
 

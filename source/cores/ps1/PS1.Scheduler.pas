@@ -25,8 +25,9 @@ type
     procedure Cancel(Event: TPS1Event);
     function Due(Event: TPS1Event): Int64; inline;
     function Pending(Event: TPS1Event): Boolean; inline;
-    // Earliest due event not later than Now, in (time, declaration) order.
-    function TakeDue(out Event: TPS1Event): Boolean;
+    // Earliest due event not later than Now, in (time, declaration) order,
+    // and the cycle it was scheduled for.
+    function TakeDue(out Event: TPS1Event; out At: Int64): Boolean;
     procedure SerializeState(State: TStateArchive);
     property NextDue: Int64 read FNextDue;
   end;
@@ -86,20 +87,21 @@ begin
   Result := FDue[Event] <> PS1Never;
 end;
 
-function TPS1Scheduler.TakeDue(out Event: TPS1Event): Boolean;
+function TPS1Scheduler.TakeDue(out Event: TPS1Event; out At: Int64): Boolean;
 begin
   Result := False;
+  Event := Low(TPS1Event);
+  At := PS1Never;
   if FNextDue > Now then
     Exit;
 
-  var Best := PS1Never;
   for var E := Low(TPS1Event) to High(TPS1Event) do
-    if FDue[E] < Best then
+    if FDue[E] < At then
     begin
-      Best := FDue[E];
+      At := FDue[E];
       Event := E;
     end;
-  if Best > Now then
+  if At > Now then
     Exit;
 
   FDue[Event] := PS1Never;

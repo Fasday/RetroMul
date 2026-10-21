@@ -60,6 +60,9 @@ type
     FIRQ: Boolean;
     FInterruptPending, FUserMode: Boolean;
     FMulDivReady, FGTEReady: Int64;
+    // Completion of the stores waiting in the four-entry write queue.
+    FWriteDone: Int64;
+    FBreak: Boolean;
     FICacheTag: array[0..255] of Cardinal;
     FICacheData: array[0..1023] of Cardinal;
     FHookEnabled: Boolean;
@@ -85,6 +88,8 @@ type
     procedure LoadUnaligned(Op: Cardinal; Left: Boolean);
     procedure Store(Op: Cardinal; Size: Integer);
     procedure StoreUnaligned(Op: Cardinal; Left: Boolean);
+    procedure Drain; inline;
+    procedure QueueWrite(Cycles: Integer);
     procedure WaitMulDiv; inline;
     procedure WaitGTE; inline;
     procedure ExecuteSpecial(Op: Cardinal);
@@ -104,8 +109,11 @@ type
     // Executes until Target or the next scheduled event.
     procedure Run(Target: Int64);
     procedure SetIRQ(Active: Boolean);
+    // Ends Run after the current instruction (the CPU lost the bus).
+    procedure BreakRun;
     // Redirects execution; pending branch and load state is discarded.
     procedure SetPC(Value: Cardinal);
+    procedure InvalidateICache;
     procedure SerializeState(State: TStateArchive);
     property Reg[Index: Integer]: Cardinal read GetReg write SetRegPublic;
     property Hi: Cardinal read FHi write FHi;
@@ -168,6 +176,8 @@ begin
   FDCIC := 0;
   FMulDivReady := 0;
   FGTEReady := 0;
+  FWriteDone := 0;
+  FBreak := False;
   FillChar(FICacheTag, SizeOf(FICacheTag), 0);
   FillChar(FICacheData, SizeOf(FICacheData), 0);
   UpdateStatus;
@@ -216,6 +226,12 @@ begin
   FNextPC := Add32(Value, 4);
   FBranch := False;
   FBranchTaken := False;
+end;
+
+procedure TPS1CPU.InvalidateICache;
+begin
+  for var Line := 0 to High(FICacheTag) do
+    FICacheTag[Line] := FICacheTag[Line] and not Cardinal($F);
 end;
 
 procedure TPS1CPU.SetReg(Index: Integer; Value: Cardinal);
@@ -330,6 +346,7 @@ begin
     First := 0
   else if (Slot = 0) and (((FBus.CacheControl shr 8) and 3) = 0) then
     Last := 1;
+  Drain;
   var LineBase := Address and $FFFFFFF0;
   var Kind := FBus.PageKind[Address shr 16];
   for var I := First to Last do
@@ -375,6 +392,7 @@ begin
   if ((Segment = 0) or (Segment = 4)) and ((FBus.CacheControl and PS1BCCICache) <> 0) then
     Exit(FetchCached(Address, Op));
 
+  Drain;
   var P := FBus.ReadMap[Address shr 16];
   if P <> nil then
   begin
@@ -445,12 +463,38 @@ begin
     FICacheData[(Address shr 2) and $3FF] := Value;
 end;
 
+// Reads use the bus after the write queue has drained; scratchpad and cache
+// accesses do not touch the bus.
+procedure TPS1CPU.Drain;
+begin
+  if FWriteDone > FScheduler.Now then
+    FScheduler.Now := FWriteDone;
+end;
+
+procedure TPS1CPU.QueueWrite(Cycles: Integer);
+begin
+  var Start := FScheduler.Now;
+  if FWriteDone > Start then
+    Start := FWriteDone;
+  FWriteDone := Start + Cycles;
+  // Four entries fit; a further store waits for the oldest to retire.
+  var Backlog := FWriteDone - FScheduler.Now;
+  if Backlog > PS1WriteQueueDepth * PS1RAMWriteCycles then
+    FScheduler.Now := FWriteDone - PS1WriteQueueDepth * PS1RAMWriteCycles;
+end;
+
+function IsScratchpad(Address: Cardinal): Boolean; inline;
+begin
+  Result := ((Address and $1FFFFC00) = $1F800000) and ((Address shr 29) <> 5);
+end;
+
 function TPS1CPU.ReadData(Address: Cardinal; Size: Integer; out Value: Cardinal): Boolean;
 begin
   var Page := Address shr 16;
   var P := FBus.ReadMap[Page];
   if P <> nil then
   begin
+    Drain;
     Inc(P, Address and $FFFF);
     case Size of
       1: Value := P^;
@@ -472,13 +516,18 @@ begin
     Exit(True);
   end;
 
+  if not IsScratchpad(Address) then
+    Drain;
   var Cycles: Integer;
   Result := FBus.ReadSlow(Address, Size, Value, Cycles);
   Inc(FScheduler.Now, Cycles);
 end;
 
+// Stores enter the write queue, except KSEG1 stores, which bypass it after
+// flushing it, and scratchpad stores.
 function TPS1CPU.WriteData(Address, Value: Cardinal; Size: Integer): Boolean;
 begin
+  var Segment := Address shr 29;
   var P := FBus.WriteMap[Address shr 16];
   if P <> nil then
   begin
@@ -489,19 +538,35 @@ begin
     else
       PCardinal(P)^ := Value;
     end;
+    if Segment = 5 then
+    begin
+      Drain;
+      Inc(FScheduler.Now, PS1RAMWriteCycles);
+    end
+    else
+      QueueWrite(PS1RAMWriteCycles);
     Exit(True);
   end;
 
-  var Segment := Address shr 29;
   if FBus.Isolated and ((Segment = 0) or (Segment = 4)) then
   begin
     CacheStore(Address, Value, Size);
     Exit(True);
   end;
 
+  var Scratch := IsScratchpad(Address);
+  if Segment = 5 then
+    Drain;
   var Cycles: Integer;
   Result := FBus.WriteSlow(Address, Value, Size, Cycles);
-  Inc(FScheduler.Now, Cycles);
+  if Scratch then
+    Exit;
+  if Cycles < PS1IOWriteCycles then
+    Cycles := PS1IOWriteCycles;
+  if Segment = 5 then
+    Inc(FScheduler.Now, Cycles)
+  else
+    QueueWrite(Cycles);
 end;
 
 function TPS1CPU.DataAddress(Op: Cardinal; Size: Integer; Store: Boolean; out Address: Cardinal): Boolean;
@@ -799,13 +864,16 @@ begin
     $08:
       Fault(TPS1ExceptionCode.Unusable, 0);
     $10..$1F:
-      if (Op and $3F) = $10 then
-      begin
-        FSR := (FSR and not Cardinal($F)) or ((FSR shr 2) and $F);
-        UpdateStatus;
-      end
-      else
-        Fault(TPS1ExceptionCode.Reserved);
+      // RFE; the TLB commands are reserved, other command numbers do nothing.
+      case Op and $3F of
+        $10:
+          begin
+            FSR := (FSR and not Cardinal($F)) or ((FSR shr 2) and $F);
+            UpdateStatus;
+          end;
+        $01, $02, $06, $08:
+          Fault(TPS1ExceptionCode.Reserved);
+      end;
   else
     Fault(TPS1ExceptionCode.Reserved);
   end;
@@ -851,8 +919,9 @@ end;
 
 procedure TPS1CPU.ExecuteCopMemory(Op: Cardinal; Number: Integer; Store: Boolean);
 begin
-  // LWC0/SWC0 do not exist; the other coprocessors need their usable bit.
-  if (Number = 0) or ((FSR and (Cardinal(PS1SRCU0) shl Number)) = 0) then
+  // Every LWCn/SWCn needs its usable bit, CU0 included even in kernel mode
+  // (ps1-tests cpu/cop); without a data path they then do nothing.
+  if (FSR and (Cardinal(PS1SRCU0) shl Number)) = 0 then
   begin
     Fault(TPS1ExceptionCode.Unusable, Number);
     Exit;
@@ -999,8 +1068,14 @@ end;
 
 procedure TPS1CPU.Run(Target: Int64);
 begin
-  while (FScheduler.Now < Target) and (FScheduler.Now < FScheduler.NextDue) do
+  FBreak := False;
+  while (FScheduler.Now < Target) and (FScheduler.Now < FScheduler.NextDue) and not FBreak do
     Step;
+end;
+
+procedure TPS1CPU.BreakRun;
+begin
+  FBreak := True;
 end;
 
 procedure TPS1CPU.SerializeState(State: TStateArchive);
@@ -1029,6 +1104,7 @@ begin
   State.Field(FIRQ, SizeOf(FIRQ));
   State.Field(FMulDivReady, SizeOf(FMulDivReady));
   State.Field(FGTEReady, SizeOf(FGTEReady));
+  State.Field(FWriteDone, SizeOf(FWriteDone));
   State.Field(FICacheTag, SizeOf(FICacheTag));
   State.Field(FICacheData, SizeOf(FICacheData));
   if State.Loading then
