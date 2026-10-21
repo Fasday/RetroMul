@@ -6,7 +6,7 @@ uses
   System.SysUtils, System.Classes, System.UITypes, System.Math,
   Core.Emulation.Types, Core.Snapshots, MD.Z80, SG1000.Cartridge, SG1000.VDP,
   SG1000.Sound, SG1000.SF7000, SG1000.Cassette, SMS.Cartridge, SMS.VDP,
-  MSX.Sound.OPLL;
+  MSX.Sound.OPLL, Core.AudioFilter;
 
 type
   TSGHostKeys = array[0..255] of Boolean;
@@ -35,6 +35,8 @@ type
     FCassette: TSGCassette;
     FSMSCartridge: TSMSCartridge;
     FFM: TYM2413;
+    FFMUnsupportedROM: Boolean; // Derived from ROM identity, not a host preference.
+    FPSGDC: array[0..1] of TPCMDCBlocker;
     FWorkRAM: array[0..$1FFF] of Byte;
     FBios: TBytes;
     FMemoryControl, FIOControl, FFMControl, FHCounter: Byte;
@@ -175,6 +177,18 @@ begin
   if Model in [TSGModel.MasterSystem, TSGModel.MarkIII, TSGModel.GameGear] then
   begin
     FSMSCartridge := TSMSCartridge.Create(Bytes, MapperHint);
+    // These releases probe FM despite missing/incomplete YM2413 drivers.
+    // Besides lost sound, Wanted and Walter Payton jump into invalid driver
+    // code or loop during initialization. Use their working PSG path.
+    // Match the unheadered image, never a filename or an idle FM chip.
+    if (Length(Bytes) = $20000) or (Length(Bytes) = $40000) then
+      case SGCRC32(Bytes) of
+        $32F4B791, // Dinosaur Dooley, The (K)
+        $A0CF8B15, // World Cup Italia '90 (sample)
+        $5359762D, // Wanted (USA/Europe/Brazil)
+        $3D55759B: // Walter Payton Football (USA)
+          FFMUnsupportedROM := True;
+      end;
     FVDP.Free;
     FVDP := TSMSVDP.Create(Model = TSGModel.MarkIII, Model = TSGModel.GameGear);
     FSound.Free;
@@ -233,6 +247,11 @@ begin
   FSampleCountdown := (FCPUClock + 44099) div 44100;
   FSampleCount := 0;
   FFrameNumber := 0;
+  for var Channel := 0 to 1 do
+  begin
+    FPSGDC[Channel].Configure(44100, 20);
+    FPSGDC[Channel].Reset;
+  end;
   FHold := False;
   if FSF7000 <> nil then
     FSF7000.Reset;
@@ -446,7 +465,7 @@ begin
     end;
 
     if Port = $F2 then
-      if FOptions.FMEnabled then
+      if FOptions.FMEnabled and not FFMUnsupportedROM then
         Exit(FFMControl and 3)
       else
         Exit($FF);
@@ -627,7 +646,7 @@ begin
             var OldB := (FIOControl and 8 <> 0) or (FIOControl and $80 <> 0);
             var NewA := (Value and 2 <> 0) or (Value and $20 <> 0);
             var NewB := (Value and 8 <> 0) or (Value and $80 <> 0);
-            if (OldA and not NewA) or (OldB and not NewB) then
+            if (not OldA and NewA) or (not OldB and NewB) then
               FHCounter := TSMSVDP(FVDP).HCounter(FLineCycles);
             FIOControl := Value;
           end;
@@ -635,14 +654,18 @@ begin
         end;
       $F0, $F1:
         begin
-          if FOptions.FMEnabled then
+          if FOptions.FMEnabled and not FFMUnsupportedROM then
             FFM.WritePort(Port and 1, Value);
           Exit;
         end;
       $F2:
         begin
-          if FOptions.FMEnabled then
+          if FOptions.FMEnabled and not FFMUnsupportedROM then
+          begin
             FFMControl := Value and 3;
+            if FModel = TSGModel.MarkIII then
+              FFMControl := FFMControl and 1;
+          end;
           Exit;
         end;
     end;
@@ -660,7 +683,11 @@ begin
   else if (Port >= $80) and (Port <= $BF) then
   begin
     if Port and 1 = 0 then
-      FVDP.WriteData(Value)
+    begin
+      if FSMSCartridge <> nil then
+        TSMSVDP(FVDP).FlushPalette(FLine, FLineCycles);
+      FVDP.WriteData(Value);
+    end
     else
       FVDP.WriteControl(Value);
   end
@@ -722,15 +749,24 @@ begin
 
       var Sample: SmallInt := 0;
       if FModel <> TSGModel.GameGear then
+      begin
         Sample := FSound.Sample;
+        // Keep the PSG DAC level internally, including PCM volume modulation.
+        // Model AC coupling at its output, before mixing with FM.
+        if FSMSCartridge <> nil then
+          Sample := EnsureRange(Round(FPSGDC[0].Process(Sample)), -32768, 32767);
+      end;
       if FFM <> nil then
       begin
         var Left, Right: SmallInt;
         FFM.Sample(Left, Right);
         var Mixed := Integer(Sample);
-        if FOptions.FMEnabled then
+        if FOptions.FMEnabled and not FFMUnsupportedROM then
         begin
-          if FFMControl and 2 <> 0 then
+          // SMS: $00 = PSG, $01 = FM, $02 = mute, $03 = PSG + FM.
+          // Mark III's external FM unit selects PSG or FM exclusively.
+          if ((FModel = TSGModel.MarkIII) and (FFMControl and 1 <> 0)) or
+            ((FModel <> TSGModel.MarkIII) and (FFMControl in [1, 2])) then
             Mixed := 0;
           if FFMControl and 1 <> 0 then
             Inc(Mixed, Integer(Left) * FOptions.FMVolume div 100);
@@ -740,7 +776,12 @@ begin
       FSamples[FSampleCount * 2] := Sample;
       FSamples[FSampleCount * 2 + 1] := Sample;
       if FModel = TSGModel.GameGear then
+      begin
         FSound.SampleStereo(FSamples[FSampleCount * 2], FSamples[FSampleCount * 2 + 1]);
+        for var Channel := 0 to 1 do
+          FSamples[FSampleCount * 2 + Channel] := EnsureRange(
+            Round(FPSGDC[Channel].Process(FSamples[FSampleCount * 2 + Channel])), -32768, 32767);
+      end;
       Inc(FSampleCount);
     end;
     Inc(FLineCycles, Chunk);
@@ -769,7 +810,12 @@ end;
 
 function TSGConsole.Step: Integer;
 begin
-  Z80Interrupt(FCPU, Ord(FVDP.Interrupt));
+  var IRQ := FVDP.Interrupt;
+  // Delay only a newly asserted request. An unacknowledged IRQ from an
+  // earlier line must not be deasserted at the next VBlank boundary.
+  if (FSMSCartridge <> nil) and (FCPU.InterruptPending = 0) then
+    IRQ := TSMSVDP(FVDP).InterruptAt(FLine, FLineCycles);
+  Z80Interrupt(FCPU, Ord(IRQ));
   Result := Z80DoInstruction(FCPU, FCallbacks);
   Advance(Result);
 end;
@@ -830,6 +876,7 @@ begin
     State.Field(FIOControl, SizeOf(FIOControl));
     State.Field(FFMControl, SizeOf(FFMControl));
     State.Field(FHCounter, SizeOf(FHCounter));
+    State.Field(FPSGDC, SizeOf(FPSGDC));
   end;
 
   if State.Loading then

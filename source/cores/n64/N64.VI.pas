@@ -2,7 +2,8 @@
 // Runs without range and overflow checks (every index is masked and all
 // guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
 // tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 

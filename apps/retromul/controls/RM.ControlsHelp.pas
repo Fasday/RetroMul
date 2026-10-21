@@ -129,7 +129,9 @@ begin
     if i = 9 then
       Row.Visible := HasCoinAcceptor;
   end;
-  LayoutFunctions.Height := (9 + Ord(HasCoinAcceptor)) * 44;
+  if KeyboardPeripheral then
+    (FindComponent('LayoutFunctionHardRestart') as TLayout).Opacity := 0.4;
+  LayoutFunctions.Height := (10 + Ord(HasCoinAcceptor)) * 44;
   BuildPlayer;
 end;
 

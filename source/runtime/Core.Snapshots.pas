@@ -133,6 +133,9 @@ begin
     (PlatformCore = ROM_CORE_ID_SMS) or (PlatformCore = ROM_CORE_ID_GG) or
     SameText(PlatformCore, 'NGP') or SameText(PlatformCore, 'NGPC') then
     Result.Version := 2;
+  // SMS/GG v4 also preserves a partially rendered CRAM transition scanline.
+  if (PlatformCore = ROM_CORE_ID_SMS) or (PlatformCore = ROM_CORE_ID_GG) then
+    Result.Version := 4;
   if SameText(PlatformCore, 'N64') then
     // N64 v4 preserves the clocked DMA/event queues, hidden RDRAM bits,
     // 64-bit architectural CPU state and the software VI pipeline.

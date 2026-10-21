@@ -195,6 +195,7 @@ uses
   SG1000.Disk in '..\..\source\cores\sg1000\SG1000.Disk.pas',
   SG1000.FDC in '..\..\source\cores\sg1000\SG1000.FDC.pas',
   SG1000.SF7000 in '..\..\source\cores\sg1000\SG1000.SF7000.pas',
+  SMS.Firmware in '..\..\source\cores\sms\SMS.Firmware.pas',
   SMS.Cartridge in '..\..\source\cores\sms\SMS.Cartridge.pas',
   SMS.VDP in '..\..\source\cores\sms\SMS.VDP.pas',
   N64.Types in '..\..\source\cores\n64\N64.Types.pas',

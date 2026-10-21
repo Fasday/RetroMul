@@ -36,6 +36,7 @@ type
     procedure FinishFileSelection;
     function CanAcceptRomDrop(const Data: TDragObject): Boolean;
     procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = '');
+    procedure HardRestart;
     procedure ButtonCloseRomClick(Sender: TObject);
     procedure Stop;
     procedure StopOnError;
@@ -637,6 +638,19 @@ begin
     end, 'Load autosave', 'Start new game', 'Cancel launch');
 end;
 
+procedure TSessionController.HardRestart;
+begin
+  if (FState.Session.Emulation = nil) or FState.Session.OpeningRom or
+    FLoadingCore or FState.Session.PendingAutosaveChoice then
+    Exit;
+
+  // Use the normal replacement path to preserve battery RAM and rebuild
+  // peripherals, video and timing. Bypass the autosave prompt/restoration:
+  // a hard restart must start a fresh machine with the saved configuration.
+  BeginGameLoading(FState.Session.RomLocation, FState.Session.RomDisplayName, False, '');
+  FState.Input.SuppressInputUntilRelease := True;
+end;
+
 procedure TSessionController.BeginGameLoading(const FileName, DisplayName: string; StartPaused: Boolean; const SnapshotName: string);
 begin
   var SourceName := FileName;
@@ -794,6 +808,7 @@ begin
   end;
   FView.ImageCanvas.DisableInterpolation := SameText(FState.Session.Emulation.Config.Filter, 'nearest');
   FillChar(FState.Input.KeysDown, SizeOf(FState.Input.KeysDown), 0);
+  FState.Session.RomLocation := FileName;
   FState.Session.RomDisplayName := DisplayName;
   if FState.Session.RomDisplayName = '' then
     FState.Session.RomDisplayName := ExtractFileName(FileName);
@@ -867,6 +882,7 @@ begin
     FView.LibraryBack(FView);
   FState.Session.PendingAutosaveChoice := False;
   FState.Session.OpeningRom := False;
+  FState.Session.RomLocation := '';
   FView.SyncActivity;
 end;
 

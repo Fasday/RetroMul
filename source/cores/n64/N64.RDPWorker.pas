@@ -1,4 +1,7 @@
 ﻿unit N64.RDPWorker;
+// Queue indices are masked; N64_CHECKED restores diagnostics in this hot path.
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 // Full TN64RDPs on their own threads.
 //
@@ -126,6 +129,7 @@ type
     procedure CopyAt(RDP: TN64RDP; Index: Integer);
     procedure MakeCopy(Index: Integer);
     function Failed: Boolean;
+    function Published: Int64; inline;
     class procedure Signal(var Waiting: Integer; Event: TEvent); static;
     class function Noise(var State: Cardinal): Cardinal; static;
     class procedure StressDelay(var State: Cardinal); static;
@@ -211,18 +215,18 @@ begin
   var Position: Int64 := 0;
   while not Terminated do
   begin
-    if (TInterlocked.Read(FOwner.FPublished) <= Position) or FOwner.Failed then
+    if (FOwner.Published <= Position) or FOwner.Failed then
     begin
       // Idle (or stopped by an exception): spin a little, then sleep until
       // the producer publishes or the thread is terminated.
       var Spins := 0;
-      while (Spins < SpinRounds) and (TInterlocked.Read(FOwner.FPublished) <= Position) and not Terminated do
+      while (Spins < SpinRounds) and (FOwner.Published <= Position) and not Terminated do
       begin
         Inc(Spins);
         YieldProcessor;
       end;
       TInterlocked.Exchange(FOwner.FSlots[FIndex].Sleeping, 1);
-      if not Terminated and ((TInterlocked.Read(FOwner.FPublished) <= Position) or FOwner.Failed) then
+      if not Terminated and ((FOwner.Published <= Position) or FOwner.Failed) then
         FOwner.FSlots[FIndex].DataReady.WaitFor(INFINITE)
       else
         TInterlocked.Exchange(FOwner.FSlots[FIndex].Sleeping, 0);
@@ -421,6 +425,19 @@ begin
   FRing[FHeader and RingMask] := 1 or FirstFlag or LastFlag or CopyFlag;
   Inc(FEnded);
   Publish;
+end;
+
+function TN64RDPWorker.Published: Int64;
+begin
+  {$IFDEF CPUX64}
+  // Aligned 64-bit loads are atomic and acquire-ordered on x64. Publication
+  // uses Interlocked.Exchange; consumers must not request exclusive cache
+  // ownership of this shared line merely to poll it. Other hosts retain
+  // the RTL's atomic load and memory barriers.
+  Result := FPublished;
+  {$ELSE}
+  Result := TInterlocked.Read(FPublished);
+  {$ENDIF}
 end;
 
 function TN64RDPWorker.Failed: Boolean;

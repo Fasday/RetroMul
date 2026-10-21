@@ -16,6 +16,7 @@ type
     FileInfo: TStorageFile;
     SystemId, Title, Cover, Description, Developer, Genre, Players: string;
     Favorite: Boolean;
+    InLibrary: Boolean;
     LastPlayed: TDateTime;
     function Key: string;
   end;
@@ -34,6 +35,7 @@ type
     VertScrollBoxScroll: TVertScrollBox;
     LayoutGrid: TLayout;
     LabelTitle, LabelCount, LabelDetails, LabelDescription, LabelGameInfo, LabelSavesEmpty, LabelEmpty, LabelContinueTitle: TLabel;
+    EditRomPath: TEdit;
     ImageCover: TImage;
     LayoutContinuePreview: TLayout;
     LabelContinueNoPreview: TLabel;
@@ -511,6 +513,7 @@ begin
           var Item := TLibraryGame.Create;
           FGames.Add(Item);
           Item.FileInfo := FileInfo;
+          Item.InLibrary := True;
           Item.SystemId := platform.Id;
           Item.Title := TPath.GetFileNameWithoutExtension(FileInfo.Name);
           var Entry: TGame;
@@ -663,7 +666,9 @@ end;
 
 function TLibraryView.Matches(Game: TLibraryGame): Boolean;
 begin
-  Result := ((FSystemFilter = '') or (Game.SystemId = FSystemFilter)) and
+  // Standalone ROMs belong to Recent; only scanned ROMs belong to the catalog.
+  Result := (Game.InLibrary or (FMode = 1)) and
+    ((FSystemFilter = '') or (Game.SystemId = FSystemFilter)) and
     ((FMode <> 1) or (Game.LastPlayed > 0)) and ((FMode <> 2) or Game.Favorite) and
     ((FSearch.Text = '') or Game.Title.ToLower.Contains(FSearch.Text.ToLower));
 end;
@@ -1245,10 +1250,16 @@ begin
       LabelDetails.Text := '';
       LabelDescription.Text := '';
       LabelGameInfo.Text := '';
+      EditRomPath.Text := '';
     end
     else
     begin
       LabelTitle.Text := FSelected.Title;
+      var Location := FSelected.FileInfo.Location;
+      if (Location <> '') and not Location.Contains('://') then
+        Location := ExpandFileName(Location);
+      EditRomPath.Text := Location;
+      EditRomPath.CaretPosition := 0;
       LabelDetails.Text := LibrarySystemFullName(FSelected.SystemId) + sLineBreak + FSelected.Developer;
       LabelDescription.Text := FSelected.Description;
       if LabelDescription.Text = '' then
@@ -1264,6 +1275,8 @@ begin
         ButtonFavorite.Text := Translate('Add to favorites');
       LoadImage(ImageCover, FSelected.Cover);
     end;
+    EditRomPath.Visible := EditRomPath.Text <> '';
+    EditRomPath.Hint := EditRomPath.Text;
     LabelDetails.Visible := LabelDetails.Text <> '';
     LabelDescription.Visible := LabelDescription.Text <> '';
     LabelGameInfo.Visible := LabelGameInfo.Text <> '';
@@ -1285,7 +1298,7 @@ begin
     end;
     // Hidden Top-aligned controls retain old positions. Restore the logical
     // order before FMX sorts them when the selected game's content changes.
-    var Items: TArray<TControl> := [ImageCover, LabelTitle, LabelDetails,
+    var Items: TArray<TControl> := [ImageCover, LabelTitle, LabelDetails, EditRomPath,
       ButtonPlay, ButtonFavorite, LabelDescription, LabelGameInfo,
       FindComponent('LabelSnapshots') as TControl, LabelSavesEmpty,
       TControl(FSaveButtons[0].Parent), TControl(FSaveButtons[1].Parent),

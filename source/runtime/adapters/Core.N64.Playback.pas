@@ -1,4 +1,6 @@
 ﻿unit Core.N64.Playback;
+// PCM preparation also stays optimized in application Debug builds.
+{$IFNDEF N64_CHECKED}{$O+}{$ENDIF}
 
 interface
 
@@ -10,9 +12,10 @@ type
     GeneratedFrames, SubmittedFrames, DroppedFrames, ClearedFrames: UInt64;
     EmptyQueueEvents, Starts: UInt64;
     PendingFrames, QueuedBlocks: Integer;
-    Playing: Boolean;
+    Playing, BilinearFiltering: Boolean;
     MaxSupplyGapMS: Double;
-    EmulationMS, VIWaitMS, RSPWaitMS: Double;
+    EmulationMS, VIWaitMS, RSPWaitMS, RDPWaitMS: Double;
+    RDPThreads, RDPThreadChanges: Integer;
   end;
 
   // One owner (the emulation thread). The device clock paces the guest;
@@ -30,6 +33,7 @@ type
     FPriming, FCanPause, FEmpty: Boolean;
     FStats: TN64PlaybackStats;
     FLastSupply: Int64;
+    FDeviceState: TPCMAudioQueueState;
     function State: TPCMAudioQueueState;
     procedure SubmitBlock(Frames: Integer);
   public
@@ -43,7 +47,8 @@ type
     // End of a finite recording: submit the final partial block when there
     // is room. The caller stops generating and may poll until Pending=0.
     procedure Finish;
-    function Stats: TN64PlaybackStats;
+    // False uses the state just acquired by Pump/Enqueue/Clear.
+    function Stats(RefreshDevice: Boolean = True): TN64PlaybackStats;
   end;
 
 implementation
@@ -80,6 +85,7 @@ begin
   Result := FAudio.QueueState;
   if not Result.DeviceOpen then
     raise EInOutError.Create('N64 audio output is unavailable');
+  FDeviceState := Result;
 end;
 
 procedure TN64AudioPlayback.Clear;
@@ -93,6 +99,7 @@ begin
   FPriming := True;
   FEmpty := False;
   FLastSupply := 0;
+  State;
 end;
 
 procedure TN64AudioPlayback.Enqueue(const Samples: array of SmallInt; Volume: Single);
@@ -107,8 +114,13 @@ begin
   FLastSupply := Now;
   if Length(FPending) < FCount + Length(Samples) then
     SetLength(FPending, Max(FCount + Length(Samples), BlockFrames * 4));
-  for var I := 0 to High(Samples) do
-    FPending[FCount + I] := EnsureRange(Round(Samples[I] * Volume), -32768, 32767);
+  if Volume = 0 then
+    FillChar(FPending[FCount], Length(Samples) * SizeOf(SmallInt), 0)
+  else if Volume = 1 then
+    Move(Samples[0], FPending[FCount], Length(Samples) * SizeOf(SmallInt))
+  else
+    for var I := 0 to High(Samples) do
+      FPending[FCount + I] := EnsureRange(Round(Samples[I] * Volume), -32768, 32767);
   Inc(FCount, Length(Samples));
   Inc(FStats.GeneratedFrames, Length(Samples) div 2);
   Pump;
@@ -151,7 +163,8 @@ end;
 function TN64AudioPlayback.CanAdvance: Boolean;
 begin
   Pump;
-  var S := State;
+  // Pump already acquired the device queue, including any submitted blocks.
+  var S := FDeviceState;
   Result := (FCount < BlockFrames * 2) and
     (FPriming or (S.QueuedBlocks < TargetBlocks));
 end;
@@ -169,10 +182,11 @@ begin
   end;
 end;
 
-function TN64AudioPlayback.Stats: TN64PlaybackStats;
+function TN64AudioPlayback.Stats(RefreshDevice: Boolean): TN64PlaybackStats;
 begin
   Result := FStats;
-  var S := State;
+  var S := FDeviceState;
+  if RefreshDevice then S := State;
   Result.SubmittedFrames := S.SubmittedSamples;
   Result.DroppedFrames := S.DroppedSamples;
   Result.PendingFrames := FCount div 2;

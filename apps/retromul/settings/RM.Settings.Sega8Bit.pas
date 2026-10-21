@@ -51,9 +51,16 @@ end;
 
 procedure TSega8BitSettings.Video(Context: TSettingsPageContext);
 begin
-  Context.Combo('RowNESregion', 'Video', 'Region', ['NTSC', 'PAL'], ['NTSC', 'PAL'], 'NTSC');
+  if Context.PageId = SETTINGS_PAGE_SMS then
+    Context.Combo('RowNESregion', 'Video', 'Region', [Translate('Auto'), 'NTSC', 'PAL'], ['Auto', 'NTSC', 'PAL'], 'Auto')
+  else
+    Context.Combo('RowNESregion', 'Video', 'Region', ['NTSC', 'PAL'], ['NTSC', 'PAL'], 'NTSC');
   (Context.Owner.FindComponent('LabelRowNESregionTitle') as TLabel).Text := 'NTSC / PAL';
-  (Context.Owner.FindComponent('LabelRowNESregionDetail') as TLabel).Text := Translate('Select the video standard and frame timing.');
+  if Context.PageId = SETTINGS_PAGE_SMS then
+    (Context.Owner.FindComponent('LabelRowNESregionDetail') as TLabel).Text :=
+      Translate('Auto detects the ROM region; unknown ROMs use NTSC. Restart with Shift+R to apply.')
+  else
+    (Context.Owner.FindComponent('LabelRowNESregionDetail') as TLabel).Text := Translate('Select the video standard and frame timing.');
   Hardware(Context);
   Context.Heading('GroupSegaVideo');
   Context.Check('RowSegaShowBackground', 'Video', 'ShowBackground', True);

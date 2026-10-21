@@ -2,7 +2,8 @@
 // Runs without range and overflow checks (every index is masked and all
 // guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
 // tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -54,22 +55,22 @@ type
     Kind: Integer; // 0 finite, 1 infinity, 2 NaN.
   end;
 
-function FractionBits(Format: Integer): Integer;
+function FractionBits(Format: Integer): Integer; inline;
 begin
   if Format = 16 then Result := 23 else Result := 52;
 end;
 
-function Bias(Format: Integer): Integer;
+function Bias(Format: Integer): Integer; inline;
 begin
   if Format = 16 then Result := 127 else Result := 1023;
 end;
 
-function SignMask(Format: Integer): UInt64;
+function SignMask(Format: Integer): UInt64; inline;
 begin
   if Format = 16 then Result := $80000000 else Result := UInt64(1) shl 63;
 end;
 
-function Infinity(Format: Integer): UInt64;
+function Infinity(Format: Integer): UInt64; inline;
 begin
   if Format = 16 then Result := $7F800000 else Result := $7FF0000000000000;
 end;
@@ -442,7 +443,8 @@ end;
 
 function HasZero(A, B: UInt64; Format, Operation: Integer): Boolean; inline;
 begin
-  Result := ((A and not SignMask(Format)) = 0) or ((Operation <= 3) and ((B and not SignMask(Format)) = 0));
+  var Magnitude := not SignMask(Format);
+  Result := ((A and Magnitude) = 0) or ((Operation <= 3) and ((B and Magnitude) = 0));
 end;
 
 function NormalOrZero(A: UInt64; Format: Integer): Boolean;

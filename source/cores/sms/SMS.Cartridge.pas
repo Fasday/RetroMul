@@ -42,7 +42,95 @@ type
     property Dirty: Boolean read FDirty write FDirty;
   end;
 
+// SMS headers identify Japan/Export, but contain no PAL/NTSC flag.
+// Unknown dumps use region tags from the basename, then NTSC.
+function SMSAutoPAL(const Data: TBytes; const RomName: string): Boolean;
+
 implementation
+
+type
+  TSMSRegionEntry = record
+    CRC: Cardinal;
+    Size: Integer;
+    PAL: Boolean;
+  end;
+
+{$I SMS.Region.inc}
+
+function SMSAutoPAL(const Data: TBytes; const RomName: string): Boolean;
+begin
+  var ROM := Data;
+  if Length(ROM) mod $4000 = 512 then
+    ROM := Copy(ROM, 512, Length(ROM) - 512);
+  var CRC := SGCRC32(ROM);
+  var L := Low(SMSRegionEntries);
+  var H := High(SMSRegionEntries);
+  while L <= H do
+  begin
+    var M := L + (H - L) div 2;
+    if (CRC = SMSRegionEntries[M].CRC) and (Length(ROM) = SMSRegionEntries[M].Size) then
+      Exit(SMSRegionEntries[M].PAL);
+    if (CRC < SMSRegionEntries[M].CRC) or
+      ((CRC = SMSRegionEntries[M].CRC) and (Length(ROM) < SMSRegionEntries[M].Size)) then
+      H := M - 1
+    else
+      L := M + 1;
+  end;
+
+  // Japan implies 60 Hz. Export alone cannot distinguish 50 from 60 Hz.
+  for var Offset in [$7FF0, $3FF0, $1FF0] do
+    if (Length(ROM) >= Offset + 16) and
+      CompareMem(@ROM[Offset], PAnsiChar(AnsiString('TMR SEGA')), 8) then
+    begin
+      if ROM[Offset + 15] shr 4 = 3 then
+        Exit(False);
+      Break;
+    end;
+
+  var PALTag := False;
+  var NTSCTag := False;
+  var Name := ExtractFileName(RomName).ToUpper;
+  // Restrict matching to parenthesized/bracketed metadata, not title words
+  // or directory names. Support both No-Intro and old GoodSMS region tags.
+  var Opening := #0;
+  var Start := 0;
+  for var I := 1 to Length(Name) do
+    if CharInSet(Name[I], ['(', '[']) then
+    begin
+      Opening := Name[I];
+      Start := I + 1;
+    end
+    else if ((Opening = '(') and (Name[I] = ')')) or
+      ((Opening = '[') and (Name[I] = ']')) then
+    begin
+      var Tag := Copy(Name, Start, I - Start).Trim;
+      if (Tag <> '') and (Length(Tag) <= 4) then
+      begin
+        var RegionCode := True;
+        for var C in Tag do
+          if not CharInSet(C, ['U', 'E', 'J', 'B', 'K', 'W']) then
+            RegionCode := False;
+        if RegionCode then
+        begin
+          PALTag := PALTag or Tag.Contains('E');
+          NTSCTag := NTSCTag or Tag.Contains('U') or Tag.Contains('J') or
+            Tag.Contains('W');
+        end;
+      end;
+      for var Country in Tag.Split([',', '/', ' '], TStringSplitOptions.ExcludeEmpty) do
+      begin
+        if (Country = 'EUROPE') or (Country = 'AUSTRALIA') or (Country = 'UK') or
+          (Country = 'FRANCE') or (Country = 'GERMANY') or (Country = 'SPAIN') or
+          (Country = 'ITALY') or (Country = 'PORTUGAL') or (Country = 'PAL') then
+          PALTag := True;
+        if (Country = 'USA') or (Country = 'JAPAN') or (Country = 'WORLD') or
+          (Country = 'NTSC') then
+          NTSCTag := True;
+      end;
+      Opening := #0;
+    end;
+  Result := PALTag and not NTSCTag;
+end;
 
 constructor TSMSCartridge.Create(const Data: TBytes; MapperHint: Integer);
 begin
@@ -59,6 +147,18 @@ begin
   // Cartridge wiring from MAME's CC0 hash/sms.xml and hash/gamegear.xml.
   // A user-selected mapper remains available for unlisted cartridges.
   case SGCRC32(FData) of
+    $BD610939:
+      if Length(FData) = $8000 then
+      begin
+        // Castle of Illusion rolling demo: the old 32 KiB dump omits
+        // 96 KiB of $FF from the physical 128 KiB EPROM. Restore those
+        // bytes so bank reads and the export BIOS checksum match hardware.
+        // https://www.smspower.org/forums/13480-RollingDemosOfCastleOfIllusionAndGhoulsnGhostsROMSize
+        SetLength(FData, $20000);
+        FillChar(FData[$8000], $18000, $FF);
+      end;
+    $47FA618D:
+      raise EReadError.Create('Mode 5 Example Program requires a Genesis/Mega Drive VDP; it cannot run on Master System hardware.');
     $29822980, $8813514B, $A577CE46, $B9664AE1, $EA5C3A6F, $01A2D595, $152F0DCC, $2306AAF4, $3ACE6335, $5E53C7F7, $6CAA625B, $72981057, $76C5BDFB, $9FA727A0, $AA140C9C, $C1756BEE, $C21E6CD0, $C888222B, $D9A7F170, $DBE8895C, $F7C524F6:
       FMapper := TSMSMapper.Codemasters;
     $0918FBA0, $17AB6883, $565C799F, $61E8806F, $6D309AC5:

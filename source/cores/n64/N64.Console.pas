@@ -1,4 +1,8 @@
 ﻿unit N64.Console;
+// Hot emulation paths use explicit guest arithmetic and bounded indices.
+// Define N64_CHECKED to enable range and overflow checks for diagnostics.
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -162,13 +166,13 @@ type
       RSPWindowMax = 65536;
     // Windows run on the RSP thread once the last one had this many clocks
     // (shorter ones cost more to hand over than they save); the thread
-    // publishes its clocks in parts of AheadPart (each part costs the RSP's
-    // block lookup anew and a publication: GoldenEye ran 4% faster than with
-    // parts of 64, which cost the emulation thread less of a wait each).
+    // publishes its clocks in parts of AheadPart. A 256-clock part keeps
+    // the CPU/audio producer from waiting for a whole 1024-clock chunk in
+    // busy scenes, without the block lookup overhead of 64-clock parts.
     // Real-time audio lets workers sleep between bursts. Keep short jobs
     // local: repeatedly waking the RSP thread costs more than these jobs.
       RSPThreadMin = 1024;
-      AheadPart = 1024;
+      AheadPart = 256;
     // SP DMA transfers one window may know of (the list never grows, so the
     // beats may read it while the window runs on another thread).
       RSPMaxTransfers = 4096;
@@ -224,6 +228,9 @@ type
     FRDPWorker: TN64RDPWorker;
     FRDPMode: TN64RDPMode;
     FRDPBands: Integer;
+    FAdaptiveRDP: Boolean;
+    FMaxRDPBands, FRDPBusyFields, FRDPQuietFields, FRDPThreadChanges: Integer;
+    FRDPTuneWait: Int64;
     FRDPTimingStale: Boolean;
     // Diagnostics: False runs only the timing RDP (no pixels drawn).
     FRDPDrawing: Boolean;
@@ -232,6 +239,9 @@ type
     FPlacement, FPinned: Boolean;
     FPinnedThread: TThreadID;
     FUnpinned: TN64CPUSet;
+    FHintAttempted, FHinted: Boolean;
+    FPreviousIdeal: Integer;
+    FHintedThread: TThreadID;
     FVI: TN64VI;
     FTimeline: TN64Timeline;
     FSPTransfer, FSPQueued: TN64SPTransfer;
@@ -402,7 +412,10 @@ type
     procedure RefreshRDP;
     procedure SetRDPMode(Value: TN64RDPMode);
     procedure SetRDPThreads(Value: Integer);
+    procedure ResizeRDPThreads(Value: Integer);
     procedure SetRDPDrawing(Value: Boolean);
+    procedure SetBilinearFiltering(Value: Boolean);
+    function GetBilinearFiltering: Boolean;
     procedure PlaceThreads(out BandCPUs: TN64CPUSet; out Preferred: TArray<Integer>);
     procedure UnplaceThreads;
     procedure SetPlacement(Value: Boolean);
@@ -515,11 +528,16 @@ type
     property Renderer: TN64RDP read GetRenderer;
     property RDPMode: TN64RDPMode read FRDPMode write SetRDPMode;
     // Threads drawing RDP rows in bands (with a worker; 1 or more).
+    // Called by a realtime frontend once per completed field. Explicitly
+    // setting RDPThreads selects a fixed count and disables adaptation.
+    procedure AdaptRDPThreads;
+    property RDPThreadChanges: Integer read FRDPThreadChanges;
     property RDPThreads: Integer read FRDPBands write SetRDPThreads;
     // Diagnostics: False runs only the timing RDP on this thread: every DP
     // register, interrupt and timing as before, but no pixel is drawn (the
     // guest then sees stale images). Not to be switched back on.
     property RDPDrawing: Boolean read FRDPDrawing write SetRDPDrawing;
+    property BilinearFiltering: Boolean read GetBilinearFiltering write SetBilinearFiltering;
     // The emulation thread on a core of its own (the fastest), each RDP band
     // on another: threads sharing a core (SMT) or on slow cores slow the
     // emulation thread down. Set when the RDP worker starts; the emulation
@@ -723,6 +741,8 @@ begin
   // for the RDP bands.
   FRSPThreaded := PhysicalCores >= 3;
   FRDPBands := DefaultRDPBands(FRSPThreaded);
+  FMaxRDPBands := Max(1, Min(16, PhysicalCores - 1 - Ord(FRSPThreaded)));
+  FAdaptiveRDP := True;
   // Read by the emulation thread while the RSP thread adds to them.
   SetLength(FRSPNotes, TN64RSP.JournalCapacity);
   FRSPJournal := FRSP.Journal;
@@ -2026,10 +2046,14 @@ begin
         if FRSPDMAs[I].State <> 0 then
           Lifted := I;
       end
+      // State 2 is the final handoff: Data is immutable and only this
+      // thread advances Beats afterwards. No ownership CAS is needed.
+      else if SharedRead(FRSPDMAs[I].State) = 2 then
+        Lifted := I
       else if TInterlocked.CompareExchange(FRSPDMAs[I].State, 1, 0) <> 0 then
       begin
-        // Lifted, or being lifted: then its Data is complete shortly.
-        while TInterlocked.CompareExchange(FRSPDMAs[I].State, 2, 2) <> 2 do
+        // Lifted, or being lifted: acquire the final publication of Data.
+        while SharedRead(FRSPDMAs[I].State) <> 2 do
           YieldProcessor;
         Lifted := I;
       end;
@@ -2042,10 +2066,17 @@ begin
   var RAM := (FSPTransfer.RAM + FSPTransfer.Position) and $FFFFFF;
   var Bytes: UInt64 := 0;
   if not FSPTransfer.Writing and (RAM < $800000) then
-    ReadRAMBytes(RAM, @Bytes, 8);
+  begin
+    // An aligned eight-byte beat cannot cross a page or the end of RDRAM.
+    // Keep the same RDP fence as ReadRAMBytes, without its generic range
+    // loop and variable-sized Move on every beat.
+    if FRDPPending and (FRDPWrites[RAM shr RDPPageShift] > FRDPDone) then
+      SyncRDPRead(RAM, 8);
+    Bytes := PUInt64(@FRAM[RAM])^;
+  end;
   if (Lifted >= 0) and not FSPTransfer.Writing then
   begin
-    var Same := CompareMem(@Bytes, @FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8], 8);
+    var Same := Bytes = PUInt64(@FRSPDMAs[Lifted].Data[(FRSPDMAs[Lifted].Beats - FRSPDMAs[Lifted].DataFirst) * 8])^;
     if FRSPStress and ((StressNoise and 63) = 0) then
       // Test mode: as if RDRAM had changed.
       Same := False;
@@ -2069,7 +2100,7 @@ begin
     // (Old keeps DMEM exact while a rewind's replay runs, a guard: the
     // replayed clocks never read these bytes, fenced while the transfer was
     // pending, and every logged beat is back by the replay's end.)
-    Move(FSP[FRSPBeats[FRSPBeatCount].local], FRSPBeats[FRSPBeatCount].Old, 8);
+    PUInt64(@FRSPBeats[FRSPBeatCount].Old)^ := PUInt64(@FSP[FRSPBeats[FRSPBeatCount].local])^;
   end;
   // A lifted transfer's bytes as the window took them.
   var Taken: PByte := nil;
@@ -2083,19 +2114,22 @@ begin
       WriteRAMBytes(RAM, Taken, 8);
   end
   else if Lifted < 0 then
-    WriteSPBytes(local, @Bytes, 8);
+    if local < $1000 then
+      PUInt64(@FSP[local])^ := Bytes
+    else
+      WriteSPBytes(local, @Bytes, 8);
   if Logged then
   begin
     // Into DMEM while the RSP runs ahead (the window kept off these bytes,
     // or wrote them itself when it lifted the transfer's fences).
     if Lifted >= 0 then
-      Move(Taken^, FRSPBeats[FRSPBeatCount].Data, 8)
+      PUInt64(@FRSPBeats[FRSPBeatCount].Data)^ := PUInt64(Taken)^
     else
-      Move(FSP[FRSPBeats[FRSPBeatCount].local], FRSPBeats[FRSPBeatCount].Data, 8);
+      PUInt64(@FRSPBeats[FRSPBeatCount].Data)^ := PUInt64(@FSP[FRSPBeats[FRSPBeatCount].local])^;
     FRSPBeats[FRSPBeatCount].Applied := Lifted < 0;
     Inc(FRSPBeatCount);
   end;
-  if (Window >= 0) and not Shared then
+  if (Window >= 0) and (not Shared or (Lifted >= 0)) then
     Inc(FRSPDMAs[Window].Beats)
   else if Window >= 0 then
   begin
@@ -2714,7 +2748,10 @@ begin
     while FTimeline.Pop(Event) do
       HandleEvent(Event.Kind);
     Elapsed := Due - Start;
-    if FCPU.IdleWouldInterrupt(FInterruptLine) or not FCPU.IdleCodeIntact then
+    // CP0 is static while idle; COUNT is bounded by IdleLimit. Devices can
+    // only introduce a CPU interrupt by changing the MI interrupt line.
+    if ((FInterruptLine <> Pending) and FCPU.IdleWouldInterrupt(FInterruptLine)) or
+      not FCPU.IdleCodeIntact then
       Break;
   end;
   if Elapsed > 0 then
@@ -3180,6 +3217,25 @@ begin
   RefreshRDP;
 end;
 
+function TN64Console.GetBilinearFiltering: Boolean;
+begin
+  Result := FRDP.BilinearFiltering;
+end;
+
+procedure TN64Console.SetBilinearFiltering(Value: Boolean);
+begin
+  if FRDP.BilinearFiltering = Value then Exit;
+  // Finish old work before changing the host preference. Fresh bands copy
+  // the preference from FRDP; no worker can observe a partially changed list.
+  DrainRDP;
+  FreeAndNil(FRDPWorker);
+  FRDPTiming.OnWords := nil;
+  FRDPTiming.OnDataOut := nil;
+  FRDP.BilinearFiltering := Value;
+  FRDPTimingStale := True;
+  FRDPTuneWait := 0; FRDPBusyFields := 0; FRDPQuietFields := 0;
+end;
+
 procedure TN64Console.SetRDPMode(Value: TN64RDPMode);
 begin
   if Value = FRDPMode then
@@ -3192,6 +3248,36 @@ end;
 
 procedure TN64Console.SetRDPThreads(Value: Integer);
 begin
+  FAdaptiveRDP := False;
+  ResizeRDPThreads(Value);
+end;
+
+procedure TN64Console.AdaptRDPThreads;
+begin
+  if not FAdaptiveRDP or (FRDPWorker = nil) or not FRDPDrawing or
+    (FRDPMode <> TN64RDPMode.Threaded) or FRDP.Traced then Exit;
+  var Waited := FRDPWorker.WaitTime;
+  var Delta := Waited - FRDPTuneWait;
+  FRDPTuneWait := Waited;
+  // A restarted worker has a fresh counter. Ignore the old sample window.
+  if Delta < 0 then begin FRDPBusyFields := 0; FRDPQuietFields := 0; Exit end;
+  var FieldBudget := TStopwatch.Frequency / FramesPerSecond;
+  if Delta > FieldBudget * 0.20 then FRDPBusyFields := 1
+  else FRDPBusyFields := 0;
+  if Delta < FieldBudget * 0.02 then FRDPQuietFields := Min(120, FRDPQuietFields + 1)
+  else FRDPQuietFields := 0;
+  // Grow quickly enough for the audio reserve to cover the transition.
+  // Shrink only after two seconds of quiet fields, avoiding oscillation.
+  var Desired := FRDPBands;
+  if FRDPBusyFields >= 1 then Desired := FMaxRDPBands
+  else if FRDPQuietFields >= 120 then Desired := Max(Min(2, FMaxRDPBands), FRDPBands div 2);
+  if Desired = FRDPBands then Exit;
+  ResizeRDPThreads(Desired);
+  Inc(FRDPThreadChanges);
+end;
+
+procedure TN64Console.ResizeRDPThreads(Value: Integer);
+begin
   Value := Max(1, Min(16, Value));
   if Value = FRDPBands then
     Exit;
@@ -3201,6 +3287,7 @@ begin
   FRDPTiming.OnWords := nil;
   FRDPTiming.OnDataOut := nil;
   FRDPBands := Value;
+  FRDPTuneWait := 0; FRDPBusyFields := 0; FRDPQuietFields := 0;
   FRDPTimingStale := True;
 end;
 
@@ -3240,7 +3327,22 @@ begin
   Result := False;
   Cores := nil;
   if not FPlacement then
+  begin
+    if not FHintAttempted then
+    begin
+      FHintAttempted := True;
+      var Available := HostCores;
+      if Length(Available) > 0 then
+      begin
+        var Preferred := 0;
+        while not Available[0].CPUs.Contains(Preferred) do Inc(Preferred);
+        FPreviousIdeal := SuggestProcessor(Preferred);
+        FHinted := FPreviousIdeal >= 0;
+        FHintedThread := TThread.CurrentThread.ThreadID;
+      end;
+    end;
     Exit;
+  end;
   Cores := HostCores;
   if Length(Cores) < 2 then
     Exit;
@@ -3279,6 +3381,11 @@ end;
 
 procedure TN64Console.UnplaceThreads;
 begin
+  if FHinted and (TThread.CurrentThread.ThreadID = FHintedThread) then
+  begin
+    SuggestProcessor(FPreviousIdeal);
+    FHinted := False;
+  end;
   // Only the pinned thread can be given its affinity back.
   if FPinned and (TThread.CurrentThread.ThreadID = FPinnedThread) then
   begin

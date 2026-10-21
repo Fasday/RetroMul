@@ -2,7 +2,8 @@
 // Runs without range and overflow checks (every index is masked and all
 // guest arithmetic wraps explicitly); N64_CHECKED builds them in, for the
 // tests.
-{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$Q-}{$R-}{$ENDIF}
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -51,7 +52,7 @@ type
     function FastFirst: Boolean; inline;
     procedure MaterializeOne;
     procedure MaterializeTo(Limit: UInt64);
-    procedure MaterializeCurrent;
+    procedure MaterializeCurrent; inline;
     procedure UpdateNext; inline;
   public
     procedure Reset;
@@ -76,7 +77,7 @@ type
     // EndAhead: no further clock counts as executed (the console rewound the
     // RSP to the current point). The handled clock count feeds the RSP phase.
     procedure SetAhead(Clocks: Integer);
-    function SyncAhead: Integer;
+    function SyncAhead: Integer; inline;
     procedure EndAhead;
     function AheadLeft: Integer; inline;
     function TakeMaterialized: UInt64;
@@ -220,7 +221,8 @@ begin
   Dec(FAheadLeft);
   Inc(FAheadDone);
   Inc(FMaterialized);
-  UpdateNext;
+  // The exposed deadline stays FHorizon, including when the last
+  // executed clock reaches it. Neither NextDue nor NextHard changes.
 end;
 
 procedure TN64Timeline.MaterializeTo(Limit: UInt64);
@@ -229,6 +231,13 @@ begin
   // next tick with the next sequence number.
   if (FAheadLeft = 0) or (FFast.Due > Limit) then
     Exit;
+  // SP DMA beats often leave exactly one executed RSP clock due.
+  // Avoid the general tick-count and tick-position arithmetic for it.
+  if (FAheadLeft = 1) or (Limit < NextRCPClock(FFast.Due)) then
+  begin
+    MaterializeOne;
+    Exit;
+  end;
   var Count := 1 + RCPTicksBetween(FFast.Due, Limit);
   if Count > UInt64(FAheadLeft) then
     Count := UInt64(FAheadLeft);
@@ -240,7 +249,8 @@ begin
   Dec(FAheadLeft, Integer(Count));
   Inc(FAheadDone, Integer(Count));
   Inc(FMaterialized, Count);
-  UpdateNext;
+  // The exposed deadline stays FHorizon, including when the last
+  // executed clock reaches it. Neither NextDue nor NextHard changes.
 end;
 
 procedure TN64Timeline.MaterializeCurrent;
@@ -301,7 +311,21 @@ begin
     FFast.Due := FNow + Delay; FFast.Sequence := FSequence; FFast.Kind := Kind;
     FFastActive := True;
     Inc(FSequence);
-    UpdateNext;
+    if FFast.Due < FNextDue then FNextDue := FFast.Due;
+    if FFast.Due < FNextHard then FNextHard := FFast.Due;
+    Exit;
+  end;
+  var Due := FNow + Delay;
+  if (FCount = 0) or (Due < FEvents[FCount - 1].Due) then
+  begin
+    // The inactive tail is zeroed by Reset/Pop/Cancel/load. The usual
+    // next DMA beat goes straight there without a temporary record/Move.
+    FEvents[FCount].Due := Due;
+    FEvents[FCount].Sequence := FSequence;
+    FEvents[FCount].Kind := Kind;
+    Inc(FSequence); Inc(FCount);
+    if Due < FNextDue then FNextDue := Due;
+    if (Kind <> TN64EventKind.SPTransfer) and (Due < FNextHard) then FNextHard := Due;
     Exit;
   end;
   var E := Default(TN64Event);
@@ -313,7 +337,10 @@ begin
   while (I > 0) and (FEvents[I - 1].Due <= E.Due) do
   begin FEvents[I] := FEvents[I - 1]; Dec(I) end;
   FEvents[I] := E; Inc(FCount);
-  UpdateNext;
+  // Insertion can only lower the cached deadlines. SP beats are omitted
+  // from NextHard, so adding one never requires rescanning that deadline.
+  if E.Due < FNextDue then FNextDue := E.Due;
+  if (Kind <> TN64EventKind.SPTransfer) and (E.Due < FNextHard) then FNextHard := E.Due;
 end;
 
 procedure TN64Timeline.Cancel(Kind: TN64EventKind);
@@ -417,7 +444,12 @@ begin
       FEvents[FCount] := Default(TN64Event);
       Dec(FKindCount[Event.Kind]);
       FInEvent := True;
-      UpdateNext;
+      if Event.Kind = TN64EventKind.SPTransfer then
+      begin
+        FNextDue := FNextHard;
+        if (FCount > 0) and (FEvents[FCount - 1].Due < FNextDue) then FNextDue := FEvents[FCount - 1].Due;
+      end
+      else UpdateNext;
       Exit;
     end;
   end;
@@ -439,7 +471,12 @@ begin
   end;
   Dec(FKindCount[Event.Kind]);
   FInEvent := True;
-  UpdateNext;
+  if Event.Kind = TN64EventKind.SPTransfer then
+  begin
+    FNextDue := FNextHard;
+    if (FCount > 0) and (FEvents[FCount - 1].Due < FNextDue) then FNextDue := FEvents[FCount - 1].Due;
+  end
+  else UpdateNext;
 end;
 
 procedure TN64Timeline.SerializeState(State: TStateArchive);

@@ -1,4 +1,8 @@
 ﻿unit N64.Types;
+// Hot emulation paths use explicit guest arithmetic and bounded indices.
+// Define N64_CHECKED to enable range and overflow checks for diagnostics.
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -216,24 +220,36 @@ implementation
 
 function Add64(A, B: UInt64): UInt64;
 begin
+  {$IFDEF N64_CHECKED}
   // B > not A exactly when A + B exceeds 64 bits; both branches stay in range.
   if B > not A then
     Result := B - (not A) - 1
   else
     Result := A + B;
+  {$ELSE}
+  Result := A + B;
+  {$ENDIF}
 end;
 
 function Sub64(A, B: UInt64): UInt64;
 begin
+  {$IFDEF N64_CHECKED}
   if A >= B then
     Result := A - B
   else
     Result := A + (not B) + 1;
+  {$ELSE}
+  Result := A - B;
+  {$ENDIF}
 end;
 
 function Add32(A, B: Cardinal): Cardinal;
 begin
+  {$IFDEF N64_CHECKED}
   Result := Cardinal((UInt64(A) + B) and $FFFFFFFF);
+  {$ELSE}
+  Result := A + B;
+  {$ENDIF}
 end;
 
 function SX(Value: UInt64; Bits: Integer): UInt64;
@@ -248,39 +264,59 @@ end;
 
 function SX8(Value: UInt64): UInt64;
 begin
+  {$IFDEF N64_CHECKED}
   if (Value and $80) <> 0 then
     Result := Value or not UInt64($FF)
   else
     Result := Value and $FF;
+  {$ELSE}
+  Result := UInt64(Int64(ShortInt(Byte(Value))));
+  {$ENDIF}
 end;
 
 function SX16(Value: UInt64): UInt64;
 begin
+  {$IFDEF N64_CHECKED}
   if (Value and $8000) <> 0 then
     Result := Value or not UInt64($FFFF)
   else
     Result := Value and $FFFF;
+  {$ELSE}
+  Result := UInt64(Int64(SmallInt(Word(Value))));
+  {$ENDIF}
 end;
 
 function SX32(Value: UInt64): UInt64;
 begin
+  {$IFDEF N64_CHECKED}
   if (Value and $80000000) <> 0 then
     Result := Value or not UInt64($FFFFFFFF)
   else
     Result := Value and $FFFFFFFF;
+  {$ELSE}
+  Result := UInt64(Int64(Integer(Cardinal(Value))));
+  {$ENDIF}
 end;
 
 function SignedValue(Value: UInt64): Int64;
 begin
+  {$IFDEF N64_CHECKED}
   if Value <= UInt64(High(Int64)) then
     Result := Int64(Value)
   else
     Result := -1 - Int64(not Value);
+  {$ELSE}
+  Result := Int64(Value);
+  {$ENDIF}
 end;
 
 function SignedLess(A, B: UInt64): Boolean;
 begin
+  {$IFDEF N64_CHECKED}
   Result := (A xor (UInt64(1) shl 63)) < (B xor (UInt64(1) shl 63));
+  {$ELSE}
+  Result := Int64(A) < Int64(B);
+  {$ENDIF}
 end;
 
 function SAR(Value: UInt64; Count, Bits: Integer): UInt64;
@@ -299,23 +335,16 @@ begin
     A := Sub64(0, A);
   if Signed and (B shr 63 <> 0) then
     B := Sub64(0, B);
-  Hi := 0;
-  Lo := 0;
-  var AH: UInt64 := 0;
-  for var I := 0 to 63 do
-  begin
-    if (B and 1) <> 0 then
-    begin
-      var Old := Lo;
-      Lo := Add64(Lo, A);
-      Hi := Add64(Hi, AH);
-      if Lo < Old then
-        Hi := Add64(Hi, 1);
-    end;
-    AH := (AH shl 1) or (A shr 63);
-    A := A shl 1;
-    B := B shr 1;
-  end;
+  // Four exact 32x32 products instead of 64 bit-at-a-time iterations.
+  // Middle has at most 34 bits; the high-word sum cannot exceed the high
+  // half of the full 128-bit product, so it also fits with Q+ enabled.
+  var P0 := (A and $FFFFFFFF) * (B and $FFFFFFFF);
+  var P1 := (A and $FFFFFFFF) * (B shr 32);
+  var P2 := (A shr 32) * (B and $FFFFFFFF);
+  var P3 := (A shr 32) * (B shr 32);
+  var Middle := (P0 shr 32) + (P1 and $FFFFFFFF) + (P2 and $FFFFFFFF);
+  Lo := (P0 and $FFFFFFFF) or (Middle shl 32);
+  Hi := P3 + (P1 shr 32) + (P2 shr 32) + (Middle shr 32);
   if Negative then
   begin
     Hi := not Hi;
@@ -440,7 +469,11 @@ function TN64Bus.ReadRAM16(Address: Cardinal): Cardinal;
 begin
   if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) = $FFF)) then
     SyncRDPRead(Address, 2);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  Result := Swap(PWord(@FRAM[Address])^);
+  {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
+  {$ENDIF}
 end;
 
 function TN64Bus.RDPReadClean(Address: Cardinal): Boolean;
@@ -463,15 +496,21 @@ function TN64Bus.PlainRAM32(Address: Cardinal): Cardinal;
 begin
   // RDRAM holds big-endian words.
   var V := PCardinal(@FRAM[Address])^;
-  Result := (V shl 24) or ((V and $FF00) shl 8) or ((V shr 8) and $FF00) or (V shr 24);
+  Result := (Cardinal(Swap(Word(V and $FFFF))) shl 16) or Swap(Word(V shr 16));
 end;
 
 function TN64Bus.ReadRAM32(Address: Cardinal): Cardinal;
 begin
   if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) > $FFC)) then
     SyncRDPRead(Address, 4);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  // x86 permits unaligned loads. Keep the bus fences above; decode one
+  // native word instead of loading its four bytes separately.
+  Result := PlainRAM32(Address);
+  {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
     (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3];
+  {$ENDIF}
 end;
 
 procedure TN64Bus.WriteRAM8(Address: Cardinal; Value: Byte);
@@ -656,13 +695,23 @@ end;
 
 function TN64Bus.RDPRead16(Address: Cardinal): Cardinal;
 begin
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  Result := Swap(PWord(@FRAM[Address])^);
+  {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
+  {$ENDIF}
 end;
 
 function TN64Bus.RDPRead32(Address: Cardinal): Cardinal;
 begin
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  // x86 permits unaligned loads. Keep the bus fences above; decode one
+  // native word instead of loading its four bytes separately.
+  Result := PlainRAM32(Address);
+  {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
     (Cardinal(FRAM[Address + 2]) shl 8) or FRAM[Address + 3];
+  {$ENDIF}
 end;
 
 procedure TN64Bus.CodeWritten(Address: Cardinal);
@@ -698,12 +747,16 @@ end;
 procedure TN64Bus.RDPWrite32(Address, Value: Cardinal);
 begin
   CodeWritten(Address);
-  CodeWritten(Address + 3);
+  if (Address and $FFF) > $FFC then CodeWritten(Address + 3);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  PCardinal(@FRAM[Address])^ := (Cardinal(Swap(Word(Value and $FFFF))) shl 16) or Swap(Word(Value shr 16));
+  {$ELSE}
   FRAM[Address] := Byte(Value shr 24);
   FRAM[Address + 1] := Byte((Value shr 16) and $FF);
   FRAM[Address + 2] := Byte((Value shr 8) and $FF);
   FRAM[Address + 3] := Byte(Value and $FF);
-  FHiddenRAM[Address shr 1] := Byte(Ord((FRAM[Address + 1] and 1) <> 0) * 3);
+  {$ENDIF}
+  FHiddenRAM[Address shr 1] := Byte(Ord((Value and $10000) <> 0) * 3);
   FHiddenRAM[(Address + 3) shr 1] := Byte(Ord((Value and 1) <> 0) * 3);
 end;
 
@@ -727,19 +780,27 @@ end;
 procedure TN64Bus.RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte);
 begin
   CodeWritten(Address);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  PWord(@FRAM[Address])^ := Swap(Word(Value and $FFFF));
+  {$ELSE}
   FRAM[Address] := Byte((Value shr 8) and $FF);
   FRAM[Address + 1] := Byte(Value and $FF);
+  {$ENDIF}
   FHiddenRAM[Address shr 1] := Hidden and 3;
 end;
 
 procedure TN64Bus.RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
 begin
   CodeWritten(Address);
-  CodeWritten(Address + 3);
+  if (Address and $FFF) > $FFC then CodeWritten(Address + 3);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  PCardinal(@FRAM[Address])^ := (Cardinal(Swap(Word(Value and $FFFF))) shl 16) or Swap(Word(Value shr 16));
+  {$ELSE}
   FRAM[Address] := Byte(Value shr 24);
   FRAM[Address + 1] := Byte((Value shr 16) and $FF);
   FRAM[Address + 2] := Byte((Value shr 8) and $FF);
   FRAM[Address + 3] := Byte(Value and $FF);
+  {$ENDIF}
   FHiddenRAM[Address shr 1] := HiddenHi and 3;
   FHiddenRAM[(Address shr 1) + 1] := HiddenLo and 3;
 end;

@@ -1,4 +1,4 @@
-object LibraryView: TLibraryView
+﻿object LibraryView: TLibraryView
   Size.Width = 1224.000000000000000000
   Size.Height = 818.000000000000000000
   Size.PlatformDefault = False
@@ -409,16 +409,32 @@ object LibraryView: TLibraryView
         Text = 'FDetails'
         TabOrder = 2
       end
-      object ButtonPlay: TButton
+      object EditRomPath: TEdit
         Align = Top
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
         Position.Y = 410.000000000000000000
         Size.Width = 232.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'transparentedit'
+        StyledSettings = []
+        TextSettings.Font.Size = 13.000000000000000000
+        TextSettings.FontColor = xFFB9C2CC
+        ReadOnly = True
+        ShowHint = True
+        TabOrder = 3
+      end
+      object ButtonPlay: TButton
+        Align = Top
+        Margins.Right = 12.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.Y = 450.000000000000000000
+        Size.Width = 232.000000000000000000
         Size.Height = 44.000000000000000000
         Size.PlatformDefault = False
         StyleLookup = 'buttonstyle_accent'
-        TabOrder = 3
+        TabOrder = 4
         Text = 'Play'
         TextSettings.Trimming = Character
         object PathPlayIcon: TPath
@@ -459,11 +475,11 @@ object LibraryView: TLibraryView
         Align = Top
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
-        Position.Y = 462.000000000000000000
+        Position.Y = 502.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 40.000000000000000000
         Size.PlatformDefault = False
-        TabOrder = 4
+        TabOrder = 5
         Text = 'Add to favorites'
         TextSettings.Trimming = Character
       end
@@ -473,14 +489,14 @@ object LibraryView: TLibraryView
         Opacity = 0.699999988079071000
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
-        Position.Y = 510.000000000000000000
+        Position.Y = 550.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 92.000000000000000000
         Size.PlatformDefault = False
         TextSettings.Font.Size = 13.000000000000000000
         TextSettings.FontColor = xFFE8ECF1
         Text = 'FDescription'
-        TabOrder = 5
+        TabOrder = 6
       end
       object LabelGameInfo: TLabel
         Align = Top
@@ -488,21 +504,21 @@ object LibraryView: TLibraryView
         Opacity = 0.699999988079071000
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
-        Position.Y = 610.000000000000000000
+        Position.Y = 650.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
         TextSettings.Font.Size = 13.000000000000000000
         TextSettings.FontColor = xFFE8ECF1
         Text = 'FGameInfo'
-        TabOrder = 6
+        TabOrder = 7
       end
       object LabelSnapshots: TLabel
         Align = Top
         StyledSettings = []
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
-        Position.Y = 666.000000000000000000
+        Position.Y = 706.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 32.000000000000000000
         Size.PlatformDefault = False
@@ -510,7 +526,7 @@ object LibraryView: TLibraryView
         TextSettings.FontColor = xFFE8ECF1
         TextSettings.WordWrap = False
         Text = 'Save states'
-        TabOrder = 7
+        TabOrder = 8
       end
       object LabelSavesEmpty: TLabel
         Align = Top
@@ -518,24 +534,24 @@ object LibraryView: TLibraryView
         Opacity = 0.600000023841857900
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
-        Position.Y = 706.000000000000000000
+        Position.Y = 746.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 54.000000000000000000
         Size.PlatformDefault = False
         TextSettings.Font.Size = 13.000000000000000000
         TextSettings.FontColor = xFFE8ECF1
         Text = 'FSavesEmpty'
-        TabOrder = 8
+        TabOrder = 9
       end
       object LayoutSaveRow0: TLayout
         Align = Top
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 20.000000000000000000
-        Position.Y = 768.000000000000000000
+        Position.Y = 808.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 64.000000000000000000
         Size.PlatformDefault = False
-        TabOrder = 9
+        TabOrder = 10
         object ImageSavePreview0: TImage
           MultiResBitmap = <
             item
@@ -561,11 +577,11 @@ object LibraryView: TLibraryView
         Align = Top
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 20.000000000000000000
-        Position.Y = 852.000000000000000000
+        Position.Y = 892.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 64.000000000000000000
         Size.PlatformDefault = False
-        TabOrder = 10
+        TabOrder = 11
         object ImageSavePreview1: TImage
           MultiResBitmap = <
             item
@@ -591,11 +607,11 @@ object LibraryView: TLibraryView
         Align = Top
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 20.000000000000000000
-        Position.Y = 936.000000000000000000
+        Position.Y = 976.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 64.000000000000000000
         Size.PlatformDefault = False
-        TabOrder = 11
+        TabOrder = 12
         object ImageSavePreview2: TImage
           MultiResBitmap = <
             item

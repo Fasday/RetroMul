@@ -1,4 +1,8 @@
 ﻿unit N64.CPU;
+// Hot emulation paths use explicit guest arithmetic and bounded indices.
+// Define N64_CHECKED to enable range and overflow checks for diagnostics.
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -113,6 +117,7 @@ type
     FCodeValid: Boolean;
     // Idle loop most recently validated by IdleLimit (physical, both words).
     FIdlePhysical, FIdleBranch, FIdleSlot: Cardinal;
+    FIdleGeneration: Cardinal;
     FPC, FNextPC, FInstructionPC: UInt64;
     FCyclesConsumed: Cardinal;
     FOperationCycles: Cardinal;
@@ -185,7 +190,7 @@ type
     function FPRegister(Index: Integer): Integer; inline;
     function GetIdleInstructionClocks: Cardinal; inline;
     function GetIdleCandidate: Boolean; inline;
-    function FPClocks(A, B: UInt64; Format, Fn: Integer): Cardinal;
+    function FPClocks(A, B: UInt64; Format, Fn: Integer): Cardinal; inline;
     function TranslateSlow(Address: UInt64; Writing: Boolean): UInt64;
     function TranslateMapped(Address: UInt64; Writing: Boolean): UInt64;
     function PageContext: Cardinal; inline;
@@ -1655,7 +1660,8 @@ begin
   var P: UInt64;
   if (Address >= KSeg0Base) and (Address < KSeg2Base) then
   begin
-    if not KernelMode then
+    // FastReady captured these Status bits; fast steps cannot change them.
+    if ((Context and 6) = 0) and ((Context and $18) <> 0) then
       Exit;
     P := Address and $1FFFFFFF;
     Cached := Address < KSeg1Base;
@@ -2225,6 +2231,14 @@ begin
   var F := Integer((Op shr 21) and 31);
   var Fn := Integer(Op and 63);
   Target := F;
+  // SFQuick already rejects non-normal operands/results and reports only
+  // inexact. Accept that common path before repeating the slow-path guards.
+  if (F in [16, 17]) and (Fn <= 4) and FHostFloat and
+    ((FCR31 and HostFloatOff) = 0) and SFQuick(A, B, F, Fn, R) then
+  begin
+    Cycles := FPClocks(A, B, F, Fn);
+    Exit((R.Events and (FCR31 shr 7) and 31) = 0);
+  end;
   Cycles := FPClocks(A, B, F, Fn);
   if F in [20, 21] then
   begin
@@ -2262,7 +2276,10 @@ begin
         end;
         if Magnitude >= Limit then
           Exit;
-        if not FHostFloat or ((FCR31 and HostFloatOff) <> 0) or (Mode <> 0) or not SFQuickConvert(A, F, Target, Mode, R) then
+        // Float-to-integer conversion uses integer significand arithmetic:
+        // all four rounding modes are exact here, independent of host FP.
+        // Enabled exceptions are still checked against R.Events below.
+        if not FHostFloat or not SFQuickConvert(A, F, Target, Mode, R) then
           R := SFConvert(A, F, Target, Mode);
         if (R.Events and sfInvalid) <> 0 then
           Exit;
@@ -2785,11 +2802,10 @@ begin
       var Physical2: Cardinal := 0;
       var Cached := False;
       var Kind := Step.Kind;
-      var FPA: UInt64 := 0;
-      var FPB: UInt64 := 0;
+      var FPA, FPB: UInt64;
       var FPResult: TSoftFloatResult;
-      var FPCycles: Cardinal := 1;
-      var FPTarget := 0;
+      var FPCycles: Cardinal;
+      var FPTarget: Integer;
       if Step.Size <> 0 then
       begin
         if not FastData(Add64(GPR[Step.S], Step.Value), Step.Size, (Step.Flags and StepWriting) <> 0, Context,
@@ -2819,8 +2835,22 @@ begin
         else if Kind <> KindCop1Mov then
         begin
           var F := Integer(Step.S);
-          FPA := FPBits(Integer(Step.D), F);
-          FPB := FPBits(Integer(Step.T), F);
+          // FR is fixed for this batch. A unary operation/conversion never
+          // consumes FT; a compare and arithmetic 0..3 do.
+          var Binary := (Kind = KindCop1Compare) or ((Step.Op and 63) <= 3);
+          FPB := 0;
+          if (BaseMode and ModeFR) <> 0 then
+          begin
+            FPA := FPR[Step.D];
+            if Binary then FPB := FPR[Step.T];
+            if F in [16, 20] then
+            begin FPA := FPA and $FFFFFFFF; FPB := FPB and $FFFFFFFF end;
+          end
+          else
+          begin
+            FPA := FPBits(Integer(Step.D), F);
+            if Binary then FPB := FPBits(Integer(Step.T), F);
+          end;
           if Kind = KindCop1Compare then
           begin
             if SFIsNaN(FPA, F) or SFIsNaN(FPB, F) then
@@ -3080,6 +3110,24 @@ begin
               FPR[D] := FPResult.Bits and $FFFFFFFF
             else
               SetFPBits(D, FPTarget, FPResult.Bits);
+            // A canonical NOP after successful arithmetic has no reads or
+            // side effects beyond its PC, one clock and clearing FP hazards.
+            // Retain the decoded NOP for exact budget/resume boundaries.
+            if (Step <> Last) and (Clocks + C < Limit) and (Result + 1 < MaxSteps) then
+            begin
+              var Tail := PN64CPUStep(NativeUInt(Step) + SizeOf(TN64CPUStep));
+              if (Tail.Op = 0) and (Tail.Flags = 0) and (Tail.Clocks = 1) then
+              begin
+                Inc(Result);
+                Inc(C);
+                Step := Tail;
+                FPreviousFP := -1;
+                FInstructionPC := FPC;
+                FInDelay := False;
+                FPC := FNextPC;
+                FNextPC := Add64(FNextPC, 4);
+              end;
+            end;
           end;
         KindCop1Mov:
           SetFPBits(Integer(Step.N), 17, FPBits(Integer(Step.D), 17));
@@ -3438,8 +3486,9 @@ end;
 
 function TN64CPU.IdleLimit: Integer;
 begin
-  // Validates an unconditional branch-to-self whose delay slot is a NOP or
-  // an idle counter (ADDIU/DADDIU rt, rt, imm). Every instruction of such a
+  // Validates a taken branch-to-self. Conditional BEQ/BNE require a NOP:
+  // their operands then stay unchanged until an interrupt. Unconditional
+  // loops may also use an idle counter (ADDIU/DADDIU rt, rt, imm). Every instruction of such a
   // loop takes one PClock without interlocks, faults or memory accesses.
   // Returns how many instructions may be applied before COUNT reaches
   // COMPARE, or 0 when the CPU is not at the loop head.
@@ -3459,9 +3508,22 @@ begin
   if not KernelFetchAddress(FPC, P) or (P > $7FFFF8) then
     Exit;
   var Op := FBus.Read32(P);
-  if (Op <> $1000FFFF) and (Op <> ($08000000 or Cardinal((FPC shr 2) and $03FFFFFF))) then
-    Exit;
+  var Unconditional := (Op = $1000FFFF) or
+    (Op = ($08000000 or Cardinal((FPC shr 2) and $03FFFFFF)));
+  if not Unconditional then
+  begin
+    // Only ordinary BEQ/BNE with offset -1: no likely/link side effects.
+    // Recheck the full 64-bit predicate, including after a code rewrite.
+    if ((Op and $FFFF) <> $FFFF) or not ((Op shr 26) in [4, 5]) then
+      Exit;
+    var Equal := GPR[(Op shr 21) and 31] = GPR[(Op shr 16) and 31];
+    if Equal <> ((Op shr 26) = 4) then
+      Exit;
+  end;
   var Slot := FBus.Read32(P + 4);
+  // A useful slot could change a branch operand on the next iteration.
+  if not Unconditional and (Slot <> 0) then
+    Exit;
   var Counter := Integer((Slot shr 16) and 31);
   if (Slot <> 0) and (not ((Slot shr 26) in [9, 25]) or (Counter = 0) or
     (Integer((Slot shr 21) and 31) <> Counter)) then
@@ -3473,6 +3535,8 @@ begin
   if Distance = 0 then
     Distance := $100000000;
   var UntilCompare := Distance * 2 - Cardinal(FCountHalf);
+  FBus.MarkCodePage(P);
+  FIdleGeneration := FBus.CodeGeneration(P);
   FIdlePhysical := P;
   FIdleBranch := Op;
   FIdleSlot := Slot;
@@ -3482,7 +3546,14 @@ end;
 function TN64CPU.IdleCodeIntact: Boolean;
 begin
   if UInt64(FIdlePhysical) + 8 <= FBus.RAMSize then
-    Result := (FBus.ReadRAM32(FIdlePhysical) = FIdleBranch) and (FBus.ReadRAM32(FIdlePhysical + 4) = FIdleSlot)
+  begin
+    // The watched code page tracks every CPU/DMA/RDP write. Never trust a
+    // generation while a renderer may still write it, or across two pages.
+    if ((FIdlePhysical and $FFF) <= $FF8) and FBus.RDPReadClean(FIdlePhysical) and
+      (FBus.CodeGeneration(FIdlePhysical) = FIdleGeneration) then Exit(True);
+    Result := (FBus.ReadRAM32(FIdlePhysical) = FIdleBranch) and (FBus.ReadRAM32(FIdlePhysical + 4) = FIdleSlot);
+    if Result then FIdleGeneration := FBus.CodeGeneration(FIdlePhysical);
+  end
   else
     Result := (FBus.Read32(FIdlePhysical) = FIdleBranch) and (FBus.Read32(FIdlePhysical + 4) = FIdleSlot);
 end;

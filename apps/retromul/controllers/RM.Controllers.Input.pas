@@ -599,6 +599,15 @@ begin
       FView.OpenRom
     else if (Code = vkR) and (FState.Session.Emulation <> nil) and not KeyboardActive then
     begin
+      if ssShift in Shift then
+      begin
+        FView.HardRestart;
+        // InstallCore clears held keys; keep this shortcut down until key-up.
+        FState.Input.KeysDown[Code] := True;
+        Key := 0;
+        KeyChar := #0;
+        Exit;
+      end;
       FView.TimerUpdate.Enabled := False;
       try
         if FState.Input.Rumble <> nil then

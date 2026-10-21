@@ -20,6 +20,8 @@ type
     FPaletteColors: array[0..31] of TAlphaColor;
     FTileRows: array[0..4095] of TSMSPixelRow;
     FTileDirty: array[0..4095] of Boolean;
+    FRasterY, FRenderedX: Integer;
+    procedure RenderLineContent(Y: Integer);
     procedure UpdatePalette(Index: Integer);
     procedure RebuildPalette;
     function DecodeRow(Tile, Row: Integer; Sprite: Boolean): TSMSPixelRow;
@@ -34,7 +36,9 @@ type
     procedure WriteData(Value: Byte); override;
     procedure WriteControl(Value: Byte); override;
     function Interrupt: Boolean; override;
+    function InterruptAt(Line, LineCycles: Integer): Boolean;
     procedure RenderLine(Y: Integer); override;
+    procedure FlushPalette(Line, LineCycles: Integer);
     procedure EndLine(Line, TotalLines: Integer); override;
     function ScreenHeight: Integer; override;
     function ViewportTop: Integer;
@@ -44,6 +48,22 @@ type
   end;
 
 implementation
+
+var
+  // Each byte holds one pixel's bit. Shifting combines the four bitplanes
+  // without testing every source bit on each dirty row (also used by SMS1).
+  PlanePixels: array[0..255] of UInt64;
+
+procedure InitializePlanePixels;
+begin
+  for var Bits := 0 to 255 do
+  begin
+    var Pixels: TSMSPixelRow;
+    for var Column := 0 to 7 do
+      Pixels[Column] := (Bits shr (7 - Column)) and 1;
+    Move(Pixels, PlanePixels[Bits], SizeOf(Pixels));
+  end;
+end;
 
 constructor TSMSVDP.Create(OriginalVDP, GameGear: Boolean);
 begin
@@ -63,6 +83,8 @@ begin
   FLineCounter := 0;
   FYScroll := 0;
   FLineIRQ := False;
+  FRasterY := -1;
+  FRenderedX := 0;
   FillChar(FTileDirty, SizeOf(FTileDirty), 1);
   RebuildPalette;
 end;
@@ -184,6 +206,13 @@ begin
     else
       FExtra[(Value and 15) - 8] := FAddress and $FF;
     var Height := ScreenHeight;
+    // A mode change can crop away a line whose palette prefix was flushed.
+    // Do not retain a prefix pointing beyond the resized frame buffer.
+    if FRasterY >= Height then
+    begin
+      FRasterY := -1;
+      FRenderedX := 0;
+    end;
     if Length(FPixels) <> Height * 256 then
       SetLength(FPixels, Height * 256);
   end
@@ -196,7 +225,12 @@ end;
 
 function TSMSVDP.ReadStatus: Byte;
 begin
+  // Mode 4 has no TMS9918 fifth-sprite index in bits 0..4. These unused
+  // bus bits are modeled low; retaining the inherited $1F can trap software
+  // probing the VDP in a DMA-busy loop before it switches back to Mode 4.
   Result := FStatus;
+  if FRegisters[0] and 4 <> 0 then
+    Result := Result and $E0;
   FStatus := $1F;
   FLineIRQ := False;
   FControlPending := False;
@@ -205,6 +239,18 @@ end;
 function TSMSVDP.Interrupt: Boolean;
 begin
   Result := inherited Interrupt or (FLineIRQ and (FRegisters[0] and $10 <> 0));
+end;
+
+function TSMSVDP.InterruptAt(Line, LineCycles: Integer): Boolean;
+begin
+  // The status flag becomes visible before the CPU accepts the raster IRQ.
+  // Keep that short window in the instruction-granular scheduler. Otherwise
+  // a polling IN immediately loses VBlank to the interrupt handler (Chess).
+  // Phase is derived from the raster; no additional snapshot state is needed.
+  var FrameIRQ := inherited Interrupt;
+  if (Line = ScreenHeight + 2) and (LineCycles < 7) then
+    FrameIRQ := False;
+  Result := FrameIRQ or (FLineIRQ and (FRegisters[0] and $10 <> 0));
 end;
 
 procedure TSMSVDP.EndLine(Line, TotalLines: Integer);
@@ -234,22 +280,29 @@ begin
   if not FOriginal and not FTileDirty[Index] then
     Exit(FTileRows[Index]);
 
-  FillChar(Result, SizeOf(Result), 0);
-  for var Plane := 0 to 3 do
+  var Address := Index * 4;
+  var PackedPixels: UInt64;
+  if not FOriginal then
+    PackedPixels := PlanePixels[FVRAM[Address]] or
+      (PlanePixels[FVRAM[Address + 1]] shl 1) or
+      (PlanePixels[FVRAM[Address + 2]] shl 2) or
+      (PlanePixels[FVRAM[Address + 3]] shl 3)
+  else
   begin
-    var Address := Tile * 32 + Row * 4 + Plane;
-    if FOriginal then
+    PackedPixels := 0;
+    for var Plane := 0 to 3 do
+    begin
+      var PlaneAddress := Address + Plane;
       if Sprite then
-        Address := Address and ((Integer(FRegisters[6] and 3) shl 11) or $27FF)
+        PlaneAddress := PlaneAddress and ((Integer(FRegisters[6] and 3) shl 11) or $27FF)
       else if Plane < 2 then
-        Address := Address and ((Integer(FRegisters[3]) shl 6) or $3F)
+        PlaneAddress := PlaneAddress and ((Integer(FRegisters[3]) shl 6) or $3F)
       else
-        Address := Address and ((Integer(FRegisters[4] and 7) shl 11) or $7FF);
-    var Bits := VRAM(Address);
-    for var Column := 0 to 7 do
-      if Bits and ($80 shr Column) <> 0 then
-        Result[Column] := Result[Column] or (1 shl Plane);
+        PlaneAddress := PlaneAddress and ((Integer(FRegisters[4] and 7) shl 11) or $7FF);
+      PackedPixels := PackedPixels or (PlanePixels[FVRAM[PlaneAddress]] shl Plane);
+    end;
   end;
+  Move(PackedPixels, Result, SizeOf(Result));
   if not FOriginal then
   begin
     FTileRows[Index] := Result;
@@ -257,11 +310,52 @@ begin
   end;
 end;
 
+procedure TSMSVDP.FlushPalette(Line, LineCycles: Integer);
+begin
+  if (FCode <> 3) or (FRegisters[0] and 4 = 0) or
+    (Line < 0) or (Line >= ScreenHeight) then
+    Exit;
+  var X := Min(256, LineCycles * 3 div 2);
+  if FRasterY <> Line then
+  begin
+    FRasterY := Line;
+    FRenderedX := 0;
+  end;
+  if X <= FRenderedX then
+    Exit;
+  // Preserve the pixels preceding this CRAM write with the old palette.
+  // The rest will be rendered again at the next write or scanline boundary.
+  // Speculative future sprite pixels must not raise collision/overflow early.
+  var Status := FStatus;
+  RenderLine(Line);
+  FStatus := Status;
+  FRasterY := Line;
+  FRenderedX := X;
+end;
+
 procedure TSMSVDP.RenderLine(Y: Integer);
+begin
+  var Prefix := 0;
+  if Y = FRasterY then
+    Prefix := FRenderedX;
+  var Saved: array[0..255] of TAlphaColor;
+  if Prefix > 0 then
+    Move(FPixels[Y * 256], Saved[0], Prefix * SizeOf(TAlphaColor));
+  RenderLineContent(Y);
+  if Prefix > 0 then
+    Move(Saved[0], FPixels[Y * 256], Prefix * SizeOf(TAlphaColor));
+  if Y = FRasterY then
+  begin
+    FRasterY := -1;
+    FRenderedX := 0;
+  end;
+end;
+
+procedure TSMSVDP.RenderLineContent(Y: Integer);
 begin
   if FRegisters[0] and 4 = 0 then
   begin
-    inherited;
+    inherited RenderLine(Y);
     Exit;
   end;
 
@@ -273,8 +367,11 @@ begin
   FillChar(Priority, SizeOf(Priority), 0);
   FillChar(Drawn, SizeOf(Drawn), 0);
   var Backdrop := Palette(16 + (FRegisters[7] and 15));
-  for var X := 0 to 255 do
-    FPixels[Y * 256 + X] := Backdrop;
+  // The enabled background covers the whole scanline, including color zero.
+  // Fill the backdrop only when that pass will not run.
+  if not FShowBackground or (FRegisters[1] and $40 = 0) then
+    for var X := 0 to 255 do
+      FPixels[Y * 256 + X] := Backdrop;
   if FRegisters[1] and $40 = 0 then
     Exit;
 
@@ -449,6 +546,14 @@ begin
   State.Field(FLineCounter, SizeOf(FLineCounter));
   State.Field(FYScroll, SizeOf(FYScroll));
   State.Field(FLineIRQ, SizeOf(FLineIRQ));
+  // Already flushed pixels are in the serialized frame buffer. Preserve the
+  // prefix boundary too, so a mid-scanline load keeps the palette transition.
+  State.Field(FRasterY, SizeOf(FRasterY));
+  State.Field(FRenderedX, SizeOf(FRenderedX));
+  if State.Loading and ((FRasterY < -1) or (FRasterY >= ScreenHeight) or
+    (FRenderedX < 0) or (FRenderedX > 256) or
+    ((FRasterY = -1) and (FRenderedX <> 0))) then
+    raise EReadError.Create('Invalid SMS raster palette prefix');
   if State.Loading then
   begin
     RebuildPalette;
@@ -456,5 +561,7 @@ begin
   end;
 end;
 
-end.
+initialization
+  InitializePlanePixels;
 
+end.

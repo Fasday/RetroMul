@@ -1,4 +1,8 @@
 ﻿unit N64.RSP;
+// Hot emulation paths use explicit guest arithmetic and bounded indices.
+// Define N64_CHECKED to enable range and overflow checks for diagnostics.
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 

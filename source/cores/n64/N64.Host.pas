@@ -37,6 +37,8 @@ function PinCurrentThread(const CPUs: TN64CPUSet; out Previous: TN64CPUSet): Boo
 // Asks the scheduler to prefer logical processor CPU for the calling thread
 // (a hint, Windows only).
 procedure PreferProcessor(CPU: Integer);
+// Same hint, returning the previous preference for an owning thread to restore.
+function SuggestProcessor(CPU: Integer): Integer;
 
 implementation
 
@@ -104,12 +106,19 @@ begin
   {$ENDIF}
 end;
 
+function SuggestProcessor(CPU: Integer): Integer;
+begin
+  Result := -1;
+  {$IFDEF MSWINDOWS}
+  // 64 removes an existing group-0 preference (MAXIMUM_PROCESSORS).
+  if (CPU >= 0) and (CPU <= 64) then
+    Result := Integer(SetThreadIdealProcessor(GetCurrentThread, DWORD(CPU)));
+  {$ENDIF}
+end;
+
 procedure PreferProcessor(CPU: Integer);
 begin
-  {$IFDEF MSWINDOWS}
-  if (CPU >= 0) and (CPU < 64) then
-    SetThreadIdealProcessor(GetCurrentThread, DWORD(CPU));
-  {$ENDIF}
+  SuggestProcessor(CPU);
 end;
 
 procedure SortCores(var Cores: TArray<TN64HostCore>);

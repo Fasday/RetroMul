@@ -25,6 +25,7 @@ type
     FKeys, FKeys2: TSGKeyMap;
     FSystemId: string;
     FPAL: Boolean;
+    FVideoRegion: string;
     FModelName, FBiosFile, FIPLFile: string;
     FWarmBoot, FKeyboardEnabled, FBIOSenabled, FTapeAutoPlay: Boolean;
     FTapeFile: string;
@@ -36,6 +37,8 @@ type
   public
     constructor Create(const FileName: string; const Storage: IStorage = nil; const SystemId: string = 'sg1000');
     property SystemId: string read FSystemId;
+    function ResolvePAL(const ROM: TBytes; const RomName: string): Boolean;
+    property VideoRegion: string read FVideoRegion;
     property PAL: Boolean read FPAL;
     property Keys: TSGKeyMap read FKeys;
     property Keys2: TSGKeyMap read FKeys2;
@@ -60,7 +63,7 @@ type
     FSnapshotDirectory: string;
     FStorage: IStorage;
     FError: string;
-    FSC3000: Boolean;
+    FSC3000, FResolvedPAL: Boolean;
     FHostKeys, FScreenKeys: TSGHostKeys;
     FConfig: IEmulatorConfig;
     FKeys, FKeys2: TSGKeyMap;
@@ -105,7 +108,7 @@ implementation
 
 uses
   System.IOUtils, System.UITypes, System.Hash, SG1000.Cartridge, SG1000.Disk,
-  SMS.Cartridge, Core.RomFormat, System.Math;
+  SMS.Cartridge, SMS.Firmware, Core.RomFormat, System.Math;
 
 const
   KeyNames: array[TSGButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Start');
@@ -124,6 +127,8 @@ begin
   FKeys2 := Defaults2;
   FOptions := TSGOptions.Defaults;
   FModelName := 'auto';
+  FVideoRegion := 'NTSC';
+  if SameText(SystemId, 'sms') then FVideoRegion := 'Auto';
   FKeyboardEnabled := True;
   FBIOSenabled := True;
   FWarmBoot := True;
@@ -132,7 +137,12 @@ end;
 
 procedure TSGConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
-  FPAL := SameText(Ini.ReadString('Video', 'Region', 'NTSC'), 'PAL');
+  var DefaultRegion := 'NTSC';
+  if FSystemId = ROM_SYSTEM_SMS then DefaultRegion := 'Auto';
+  FVideoRegion := Ini.ReadString('Video', 'Region', DefaultRegion);
+  if not (SameText(FVideoRegion, 'Auto') or SameText(FVideoRegion, 'PAL') or SameText(FVideoRegion, 'NTSC')) then
+    FVideoRegion := DefaultRegion;
+  FPAL := SameText(FVideoRegion, 'PAL');
   FModelName := Ini.ReadString('Hardware', 'Model', 'auto');
   FBiosFile := Ini.ReadString('Hardware', 'BIOS', '');
   FIPLFile := Ini.ReadString('Hardware', 'IPL', '');
@@ -180,15 +190,20 @@ begin
   Ini.WriteBool('Disk', 'WriteProtected', FOptions.DiskWriteProtected);
   for var i := 0 to 3 do
     Ini.WriteInteger('Audio', 'Channel' + IntToStr(i + 1) + 'Volume', FOptions.ChannelVolume[i]);
-  if FPAL then
-    Ini.WriteString('Video', 'Region', 'PAL')
-  else
-    Ini.WriteString('Video', 'Region', 'NTSC');
+  Ini.WriteString('Video', 'Region', FVideoRegion);
   for var Button := Low(TSGButton) to High(TSGButton) do
   begin
     Ini.WriteInteger('Keys', KeyNames[Button], FKeys[Button]);
     Ini.WriteInteger('Keys2', KeyNames[Button], FKeys2[Button]);
   end;
+end;
+
+function TSGConfig.ResolvePAL(const ROM: TBytes; const RomName: string): Boolean;
+begin
+  if (FSystemId = ROM_SYSTEM_SMS) and SameText(FVideoRegion, 'Auto') then
+    Result := SMSAutoPAL(ROM, RomName)
+  else
+    Result := FPAL;
 end;
 
 { TSGCoreAdapter }
@@ -249,14 +264,21 @@ begin
   Config := TSGConfig.Create(FStorage.ConfigFile(SystemId), FStorage, SystemId);
   FConfig := Config;
   Config.Load;
+  FResolvedPAL := Config.ResolvePAL(FData, RomName);
   if (SystemId = ROM_SYSTEM_SG1000) and SameText(Config.ModelName, 'sg1000ii') then
     FModel := TSGModel.SG1000II;
   if (SystemId = ROM_SYSTEM_SC3000) and SameText(Config.ModelName, 'sc3000h') then
     FModel := TSGModel.SC3000H;
   if (SystemId = ROM_SYSTEM_SMS) and SameText(Config.ModelName, 'markiii') then
     FModel := TSGModel.MarkIII;
-  if (SystemId = ROM_SYSTEM_SMS) and Config.BIOSenabled and (Config.BIOSFile <> '') then
-    FBootROM := FStorage.ReadBytes(Config.BIOSFile);
+  if (SystemId = ROM_SYSTEM_SMS) and Config.BIOSenabled then
+  begin
+    if Config.BIOSFile <> '' then
+      FBootROM := FStorage.ReadBytes(Config.BIOSFile)
+    else if FModel = TSGModel.MasterSystem then
+      FBootROM := LoadBuiltinSMSBIOS(DefaultSMSBIOSJapanese(FData));
+    // Mark III has no internal BIOS. An explicit external ROM remains usable.
+  end;
   if FModel = TSGModel.SF7000 then
   begin
     if (Length(FData) = $2000) and (SGCRC32(FData) = $D76810B8) then
@@ -330,7 +352,7 @@ begin
   if FThread <> nil then
     Exit;
 
-  FThread := TSGWorker.Create(FData, FSC3000, TSGConfig(FConfig).PAL, FStorage,
+  FThread := TSGWorker.Create(FData, FSC3000, FResolvedPAL, FStorage,
     Ord(FModel), FBootROM, TSGConfig(FConfig).WarmBoot);
   FThread.Options := TSGConfig(FConfig).Options;
   FThread.MapperHint := TSGConfig(FConfig).MapperHint;

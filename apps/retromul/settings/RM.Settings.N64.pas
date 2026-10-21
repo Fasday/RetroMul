@@ -19,12 +19,17 @@ uses
 
 procedure TN64Settings.Initialize(Context: TSettingsPageContext);
 begin
+  Context.CreateGroup('N64Video', 'N64 rendering');
+  Context.CreateOption('RowN64BilinearFiltering', 'Bilinear texture filtering',
+    'Use the texture filtering requested by the game. Turn off for sharper textures and faster rendering. Applies during play, before output scaling and shaders.', sekSwitch);
   Context.CreateGroup('N64Cartridge', 'N64 cartridge');
   Context.CreateOption('RowN64SaveType', 'Save memory', 'Auto uses known cartridge IDs and probes FlashRAM commands. Override unknown save formats; reopen the ROM after changing this setting.', sekCombo);
 end;
 
 procedure TN64Settings.Video(Context: TSettingsPageContext);
 begin
+  Context.Heading('GroupN64Video');
+  Context.Check('RowN64BilinearFiltering', 'Video', 'BilinearFiltering', True);
   Context.Heading('GroupN64Cartridge');
   Context.Combo('RowN64SaveType', 'Cartridge', 'SaveType',
     [Translate('Auto'), Translate('EEPROM 4 Kbit'), Translate('EEPROM 16 Kbit'),

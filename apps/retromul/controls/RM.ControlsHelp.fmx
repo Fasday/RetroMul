@@ -1,4 +1,4 @@
-object ControlsHelpView: TControlsHelpView
+﻿object ControlsHelpView: TControlsHelpView
   Size.Width = 1154.000000000000000000
   Size.Height = 790.000000000000000000
   Size.PlatformDefault = False
@@ -475,7 +475,7 @@ object ControlsHelpView: TControlsHelpView
             Margins.Top = 16.000000000000000000
             Position.Y = 70.000000000000000000
             Size.Width = 425.799987792968800000
-            Size.Height = 396.000000000000000000
+            Size.Height = 440.000000000000000000
             Size.PlatformDefault = False
             object LayoutFunction0: TLayout
               Align = Top
@@ -993,9 +993,82 @@ object ControlsHelpView: TControlsHelpView
                 WrapMode = Fit
               end
             end
-            object LayoutFunction7: TLayout
+            object LayoutFunctionHardRestart: TLayout
               Align = Top
               Position.Y = 308.000000000000000000
+              Size.Width = 425.799987792968800000
+              Size.Height = 44.000000000000000000
+              Size.PlatformDefault = False
+              object LabelFunctionHardRestartCaption: TLabel
+                Align = Client
+                StyledSettings = []
+                Size.Width = 295.799987792968800000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 13.000000000000000000
+                TextSettings.FontColor = xFFE8ECF1
+                TextSettings.WordWrap = False
+                Text = 'Hard restart'
+              end
+              object RectangleFunctionHardRestartKeyBox: TRectangle
+                Align = Right
+                Fill.Color = xFF1B2126
+                HitTest = False
+                Margins.Left = 8.000000000000000000
+                Margins.Top = 4.000000000000000000
+                Margins.Bottom = 4.000000000000000000
+                Position.X = 337.799987792968800000
+                Position.Y = 4.000000000000000000
+                Size.Width = 88.000000000000000000
+                Size.Height = 36.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Color = xFF586572
+                XRadius = 5.000000000000000000
+                YRadius = 5.000000000000000000
+                object LabelFunctionHardRestartKey: TLabel
+                  Tag = -1
+                  Align = Client
+                  StyledSettings = []
+                  Hint = 'Shift+R'
+                  HitTest = True
+                  Margins.Left = 8.000000000000000000
+                  Margins.Right = 8.000000000000000000
+                  Size.Width = 72.000000000000000000
+                  Size.Height = 36.000000000000000000
+                  Size.PlatformDefault = False
+                  TextSettings.FontColor = xFFE8ECF1
+                  TextSettings.HorzAlign = Center
+                  TextSettings.WordWrap = False
+                  Text = 'Shift+R'
+                  ParentShowHint = False
+                  ShowHint = True
+                end
+              end
+              object PathFunctionHardRestartIcon: TPath
+                Align = MostLeft
+                Data.Path = {
+                  0C000000000000000000803F00002041020000000000803F0000000002000000
+                  0000B84100000000020000000000B84100002041000000000000B84100002041
+                  010000000000B84100000040000000000000B841000020410100000000007041
+                  00002041000000000000B84100008041020000000000B8410000D04102000000
+                  0000803F0000D041020000000000803F00008041}
+                Fill.Kind = None
+                HitTest = False
+                Margins.Top = 10.000000000000000000
+                Margins.Right = 14.000000000000000000
+                Margins.Bottom = 14.000000000000000000
+                Position.Y = 10.000000000000000000
+                Size.Width = 20.000000000000000000
+                Size.Height = 20.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Color = xFFB9C2CC
+                Stroke.Thickness = 1.600000023841858000
+                WrapMode = Fit
+              end
+            end
+            object LayoutFunction7: TLayout
+              Align = Top
+              Position.Y = 352.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -1066,7 +1139,7 @@ object ControlsHelpView: TControlsHelpView
             end
             object LayoutFunction8: TLayout
               Align = Top
-              Position.Y = 352.000000000000000000
+              Position.Y = 396.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -1139,6 +1212,7 @@ object ControlsHelpView: TControlsHelpView
             end
             object LayoutFunction9: TLayout
               Align = Top
+              Position.Y = 440.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False

@@ -26,7 +26,7 @@ implementation
 
 uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
-  Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES, Core.SavePaths,
+  Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.N64, Core.SavePaths,
   Core.Platforms, Core.RomFormat, Core.InputConfig, RM.Input, RM.Gamepad,
   RM.Settings, RM.ControlsHelp, RM.Styles, RM.Dialogs, RM.Gamepad.Base;
 
@@ -177,7 +177,7 @@ begin
       end;
       Config.Filter := Ini.ReadString('Video', 'Filter', Config.Filter);
       var GBConfig: IGBEmulatorConfig;
-      if Supports(Config, IGBEmulatorConfig, GBConfig) then
+      if Supports(Config, IGBEmulatorConfig, GBConfig) or (Config is TN64Config) then
         Config.Load;
       FView.ImageCanvas.LoadSettings(Ini);
       FView.ImageCanvas.DisableInterpolation := SameText(Config.Filter, 'nearest');

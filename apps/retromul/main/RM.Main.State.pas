@@ -32,6 +32,7 @@ type
     InvalidateCallbacks: TProc;
     SoundErrorShown: Boolean;
     RomDisplayName: string;
+    RomLocation: string;
     OpeningRom: Boolean;
     PendingAutosaveChoice: Boolean;
     PreserveOpeningAutosave: Boolean;

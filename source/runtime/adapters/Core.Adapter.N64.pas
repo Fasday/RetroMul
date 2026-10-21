@@ -12,6 +12,7 @@ type
 
   TN64Config = class(TEmulatorConfigBase)
   private
+    FBilinearFiltering: Boolean;
     FKeys: TN64KeyMap;
     FLKeys: array[0..3] of UInt32;
     FConnected: array[0..3] of Boolean;
@@ -22,6 +23,7 @@ type
   public
     constructor Create(const FileName: string; const Storage: IStorage);
     property Keys: TN64KeyMap read FKeys;
+    property BilinearFiltering: Boolean read FBilinearFiltering write FBilinearFiltering;
     property SaveType: TN64SaveType read FSaveType write FSaveType;
     function LKey(Port: Integer): UInt32;
     function Connected(Port: Integer): Boolean;
@@ -43,6 +45,7 @@ type
     FSavePath, FSnapshotDirectory, FError, FAudioError: string;
     FInputs: TN64Pads;
     FPause, FReset, FAudioEnabled, FAvailable: Boolean;
+    FBilinearFiltering: Boolean;
     FVolume: Single;
     FSaveType: TN64SaveType;
     FFrame: TEmulatorFrame;
@@ -123,6 +126,7 @@ const
 constructor TN64Config.Create(const FileName: string; const Storage: IStorage);
 begin
   inherited Create(FileName, Storage);
+  FBilinearFiltering := True;
   for var P := 0 to 3 do
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
       if P = 0 then
@@ -146,6 +150,7 @@ end;
 
 procedure TN64Config.LoadCoreSettings(Ini: TCustomIniFile);
 begin
+  FBilinearFiltering := Ini.ReadBool('Video', 'BilinearFiltering', True);
   var Value := Ini.ReadInteger('Cartridge', 'SaveType', Ord(TN64SaveType.Auto));
   if (Value < Ord(Low(TN64SaveType))) or (Value > Ord(High(TN64SaveType))) then
     Value := 0;
@@ -170,6 +175,7 @@ end;
 
 procedure TN64Config.SaveCoreSettings(Ini: TCustomIniFile);
 begin
+  Ini.WriteBool('Video', 'BilinearFiltering', FBilinearFiltering);
   Ini.WriteInteger('Cartridge', 'SaveType', Ord(FSaveType));
   for var P := 0 to 3 do
   begin
@@ -193,6 +199,7 @@ begin
   inherited Create(True);
   FreeOnTerminate := False;
   FData := Copy(Data);
+  FBilinearFiltering := True;
   FStorage := Storage;
   FSavePath := SavePath;
   FSnapshotDirectory := SnapshotDirectory;
@@ -222,6 +229,7 @@ begin
     FAudioEnabled := Config.AudioEnabled;
     FVolume := Config.AudioVolume;
     FSaveType := (Config as TN64Config).SaveType;
+    FBilinearFiltering := (Config as TN64Config).BilinearFiltering;
   finally
     FLock.Release
   end;
@@ -328,9 +336,13 @@ var
 
   procedure UpdatePlaybackStats;
   begin
-    var Stats := Audio.Stats;
+    var Stats := Audio.Stats(False);
     Stats.EmulationMS := RunTicks * (1000.0 / TStopwatch.Frequency);
     Stats.VIWaitMS := Console.WaitStats.VI * (1000.0 / TStopwatch.Frequency);
+    Stats.RDPThreads := Console.RDPThreads;
+    Stats.BilinearFiltering := Console.BilinearFiltering;
+    Stats.RDPThreadChanges := Console.RDPThreadChanges;
+    Stats.RDPWaitMS := Console.WaitStats.RDP * (1000.0 / TStopwatch.Frequency);
     Stats.RSPWaitMS := Console.RSPAheadStats.ThreadWaitTime * (1000.0 / TStopwatch.Frequency);
     FLock.Acquire;
     try FPlaybackStats := Stats finally FLock.Release end;
@@ -355,6 +367,7 @@ var
       if Audio <> nil then
       begin
         Audio.Enqueue(Samples, Volume);
+        if Length(Samples) = 0 then Audio.Pump;
         UpdatePlaybackStats;
       end;
     except on E: Exception do AudioFailure(E) end;
@@ -454,19 +467,21 @@ begin
             Rate.Reset(Console.FrameNumber, TStopwatch.GetTimeStamp);
           end);
         var Inputs: TN64Pads;
-        var Paused, Enabled, ResetRequested: Boolean;
+        var Paused, Enabled, ResetRequested, Filtering: Boolean;
         var Volume: Single;
         FLock.Acquire;
         try
           Inputs := FInputs;
           Paused := FPause;
           Enabled := FAudioEnabled;
+          Filtering := FBilinearFiltering;
           Volume := FVolume;
           ResetRequested := FReset;
           FReset := False;
         finally
           FLock.Release
         end;
+        Console.BilinearFiltering := Filtering;
         if ResetRequested then
         begin
           SaveBattery(Console);
@@ -541,6 +556,7 @@ begin
 
         FlushAudio(Enabled, Volume);
         PublishFrame;
+        Console.AdaptRDPThreads;
         if not Enabled or AudioFailed then
         begin
           // Muted/unavailable audio: pace actual guest time, preserving
@@ -839,6 +855,7 @@ end;
 
 function TN64CoreAdapter.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
 begin
+  Configure;
   Result := (FWorker <> nil) and FWorker.TryGetFrame(Frame)
 end;
 

@@ -151,6 +151,7 @@ type
     procedure SaveSnapshot(const Name: string); override;
     procedure LoadSnapshot(const Name: string); override;
     procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = ''); override;
+    procedure HardRestart; override;
     procedure SelectTapeFile(const FileName: string); override;
     function SaveScreenshot: string; override;
     constructor Create(AOwner: TComponent); override;
@@ -569,6 +570,11 @@ begin
   finally
     Stream.Free;
   end;
+end;
+
+procedure TFormMain.HardRestart;
+begin
+  FSessionController.HardRestart;
 end;
 
 procedure TFormMain.LoadRom(const FileName: string; const DisplayName: string; StartPaused: Boolean; const SnapshotName: string);

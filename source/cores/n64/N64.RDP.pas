@@ -1,4 +1,8 @@
 ﻿unit N64.RDP;
+// Hot emulation paths use explicit guest arithmetic and bounded indices.
+// Define N64_CHECKED to enable range and overflow checks for diagnostics.
+// Keep hot paths optimized in application Debug builds as well.
+{$IFDEF N64_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -132,6 +136,10 @@ type
     FTexelKeys: array[0..1023] of UInt64;
     FTexelStamps: array[0..1023] of Cardinal;
     FTexels: array[0..1023] of TN64Texel;
+    FPackedTexels: array[0..1023] of UInt64;
+    FFilteredKeys, FFilteredTexels: array[0..4095] of UInt64;
+    FFilteredStamps: array[0..4095] of Cardinal;
+    FBilinearFiltering: Boolean;
     FColorAddress, FTextureAddress, FFill, FPrimitive, FEnvironment, FOtherHi, FOtherLo: Cardinal;
     FCombineHi, FCombineLo: Cardinal;
     FBlendColor, FFogColor: Cardinal;
@@ -201,6 +209,8 @@ type
     // FMemoryCoverage; FKeyMemoryRGB: the last one that read its RGB.
     FKeyRaster, FKeyShade, FKeyMemory, FKeyMemoryRGB, FKeyNoise: UInt64;
     FKeyHidden: array[0..7] of UInt64;
+    class var PerspectiveReciprocal: array[0..32767] of Word;
+    class var PerspectiveShift: array[0..32767] of Byte;
     function BandReason(Carry: Boolean): Integer;
     procedure SelectBand(Safe: Boolean);
     procedure CarryRow(Y: Integer);
@@ -240,14 +250,16 @@ type
     procedure SkipRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
     procedure SkipNoise(Steps: Integer);
     procedure MarkRow(Y: Integer);
-    function BlendSource(Index, Cycle: Integer): Cardinal;
+    function BlendSource(Index, Cycle: Integer): Cardinal; inline;
     function Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
     procedure Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean = False; Depth: Integer = -1; Delta: Cardinal = 1; Coverage: Integer = 8; CoverageBit: Boolean = True);
-    function Texture(Tile: Integer; S, T: Int64; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
+    function Texture(Tile: Integer; S, T: Integer; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
     procedure UpdateTileInfo(Tile: Integer);
+    procedure SetBilinearFiltering(Value: Boolean);
     procedure InvalidateTexels;
     function DecodeTexel(Tile, S, T: Integer): TN64Texel;
-    function TexelAt(Tile, S, T: Integer): TN64Texel;
+    function TexelAt(Tile, S, T: Integer): TN64Texel; inline;
+    function PackedTexelAt(Tile, S, T: Integer): UInt64; inline;
     procedure LoadTexture(Tile, SL, TL, SH, TH: Integer; Block: Boolean);
     function Converted(const Raw: TN64Texel): TN64Texel;
     procedure DecodeMode(Textured: Boolean);
@@ -256,7 +268,7 @@ type
     procedure Dither(X, Y: Integer);
     function Coefficient(Base, Group, Channel: Integer): Int64;
     function EdgeQuantise(Value: Int64): Integer;
-    function TextureDivide(Coordinate, W: Int64): Integer;
+    function TextureDivide(Coordinate, W: Int64): Integer; inline;
     procedure RowAddresses(Y: Integer);
     procedure RasterRow(Y: Integer);
     procedure RasterPixel(X, Y, Mask, Coverage, Step: Integer);
@@ -319,6 +331,8 @@ type
     // Words of a command still incomplete at the end of the last Execute.
     property PendingWords: Integer read FCommandCount;
     property TimingOnly: Boolean read FTimingOnly;
+    // Host preference; excluded from the emulated hardware snapshot.
+    property BilinearFiltering: Boolean read FBilinearFiltering write SetBilinearFiltering;
     // Diagnostics (see the types). A timing RDP counts the pixels of each
     // primitive. Load statistics: [0] bytes sent with the command words, [1]
     // read by the drawing RDP as a queued list may write them, [2] read by
@@ -378,6 +392,9 @@ type
     // Each band, once its rows' carries are set: publishes its memory
     // colour, meets the others, and gets the latest of all bands'.
     procedure CarryBarrier(RDP: TN64RDP; out Color: Cardinal; out Coverage: Integer);
+    function ReadReleased: Int64; inline;
+    function ReadArrived(Member: Integer): Int64; inline;
+    function Aborted: Boolean; inline;
     function Reached(Point: Int64; Release: Boolean): Boolean;
     procedure Wait(Member: Integer; Point: Int64; Release: Boolean);
     procedure Wake;
@@ -436,11 +453,22 @@ begin
   inherited Create;
   FBus := Bus;
   FTimingOnly := TimingOnly;
+  FBilinearFiltering := True;
   Reset
+end;
+
+procedure TN64RDP.SetBilinearFiltering(Value: Boolean);
+begin
+  if FBilinearFiltering = Value then Exit;
+  FBilinearFiltering := Value;
+  // Both filtered and nearest results share the coordinate cache. Switching
+  // the host mode invalidates it before any new command is drawn.
+  InvalidateTexels;
 end;
 
 procedure TN64RDP.Assign(Source: TN64RDP);
 begin
+  FBilinearFiltering := Source.FBilinearFiltering;
   var Stream := TMemoryStream.Create;
   try
     var Writer := TStateArchive.Create(Stream, False);
@@ -1703,6 +1731,7 @@ begin
   begin
     for var I := 0 to High(FTexelStamps) do
       FTexelStamps[I] := 0;
+    for var I := 0 to High(FFilteredStamps) do FFilteredStamps[I] := 0;
     FTexelGeneration := 1;
   end
   else
@@ -1718,8 +1747,21 @@ begin
     Exit(FTexels[Slot]);
   Result := DecodeTexel(Tile, S, T);
   FTexels[Slot] := Result;
+  FPackedTexels[Slot] := UInt64(Result.C[0] and $FF) or
+    (UInt64(Result.C[1] and $FF) shl 16) or
+    (UInt64(Result.C[2] and $FF) shl 32) or
+    (UInt64(Result.C[3] and $FF) shl 48);
   FTexelKeys[Slot] := Key;
   FTexelStamps[Slot] := FTexelGeneration;
+end;
+
+function TN64RDP.PackedTexelAt(Tile, S, T: Integer): UInt64;
+begin
+  var Key := (UInt64(Tile) shl 32) or (UInt64(S) shl 16) or UInt64(T);
+  var Slot := (S + T * 33 + Tile * 257) and 1023;
+  if (FTexelStamps[Slot] <> FTexelGeneration) or (FTexelKeys[Slot] <> Key) then
+    TexelAt(Tile, S, T);
+  Result := FPackedTexels[Slot];
 end;
 
 function TN64RDP.DecodeTexel(Tile, S, T: Integer): TN64Texel;
@@ -1872,23 +1914,44 @@ begin
   Result.C[3] := Y and $1FF;
 end;
 
-function TN64RDP.Texture(Tile: Integer; S, T: Int64; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
+function TN64RDP.Texture(Tile: Integer; S, T: Integer; Cycle: Integer; const Previous: TN64Texel): TN64Texel;
 begin
+  var Cacheable := (((FOtherHi shr 20) and 3) <> 2) and (FTiles[Tile].Format <> 1) and
+    ((FOtherHi and (Cardinal($800) shr Cycle)) <> 0) and
+    not ((Cycle = 1) and ((FOtherHi and $200) <> 0)) and
+    ((FOtherHi and $A000) <> 0);
+  var FilterKey: UInt64 := 0;
+  var FilterSlot := 0;
+  if Cacheable then
+  begin
+    FilterKey := UInt64(S and $FFFF) or (UInt64(T and $FFFF) shl 16) or
+      (UInt64(Tile) shl 32) or (UInt64(Cycle) shl 35);
+    FilterSlot := Integer((FilterKey xor (FilterKey shr 11) xor (FilterKey shr 23)) and 4095);
+    if (FFilteredStamps[FilterSlot] = FTexelGeneration) and (FFilteredKeys[FilterSlot] = FilterKey) then
+    begin
+      var P := FFilteredTexels[FilterSlot];
+      Result.C[0] := Integer(P and $FF);
+      Result.C[1] := Integer((P shr 16) and $FF);
+      Result.C[2] := Integer((P shr 32) and $FF);
+      Result.C[3] := Integer((P shr 48) and $FF);
+      Exit;
+    end;
+  end;
   // SmallInt(Word(..)) is the explicit 16-bit sign extension used by SX(.., 16).
   S := SmallInt(Word(S and $FFFF));
   T := SmallInt(Word(T and $FFFF));
   var ShiftS := FTiles[Tile].ShiftS;
   var ShiftT := FTiles[Tile].ShiftT;
   if ShiftS <= 10 then
-    S := ShiftRight(S, ShiftS)
+    S := ((S + 32768) shr ShiftS) - (32768 shr ShiftS)
   else
     S := SmallInt(Word((S * (1 shl (16 - ShiftS))) and $FFFF));
   if ShiftT <= 10 then
-    T := ShiftRight(T, ShiftT)
+    T := ((T + 32768) shr ShiftT) - (32768 shr ShiftT)
   else
     T := SmallInt(Word((T * (1 shl (16 - ShiftT))) and $FFFF));
-  var MaxS := ShiftRight(S, 3) >= FTiles[Tile].SH;
-  var MaxT := ShiftRight(T, 3) >= FTiles[Tile].TH;
+  var MaxS := S >= FTiles[Tile].SH * 8;
+  var MaxT := T >= FTiles[Tile].TH * 8;
   S := S - FTiles[Tile].SL * 8;
   T := T - FTiles[Tile].TL * 8;
   var FX := Integer(S and 31);
@@ -1896,7 +1959,7 @@ begin
   if FTileInfo[Tile].ClampS then
     if MaxS then
     begin
-      S := Int64(FTileInfo[Tile].LimitS) * 32;
+      S := FTileInfo[Tile].LimitS * 32;
       FX := 0
     end
     else if S < 0 then
@@ -1907,7 +1970,7 @@ begin
   if FTileInfo[Tile].ClampT then
     if MaxT then
     begin
-      T := Int64(FTileInfo[Tile].LimitT) * 32;
+      T := FTileInfo[Tile].LimitT * 32;
       FY := 0
     end
     else if T < 0 then
@@ -1915,8 +1978,29 @@ begin
       T := 0;
       FY := 0
     end;
-  var X := Integer(ShiftRight(S, 5));
-  var Y := Integer(ShiftRight(T, 5));
+  var X := ((S + 65536) shr 5) - 2048;
+  var Y := ((T + 65536) shr 5) - 2048;
+  // Replace spatial interpolation only. Copy cycles and convert-one's
+  // coefficient arithmetic retain their hardware meaning.
+  if not FBilinearFiltering and (((FOtherHi shr 20) and 3) <> 2) and
+    ((FOtherHi and (Cardinal($800) shr Cycle)) <> 0) and
+    ((FOtherHi and $A000) <> 0) and
+    not ((Cycle = 1) and ((FOtherHi and $200) <> 0)) then
+  begin
+    var Nearest := TexelAt(Tile,
+      WrapTexel(X + Ord(FX >= 16), FTileInfo[Tile].LimitS, FTileInfo[Tile].MaskS, FTileInfo[Tile].ClampS, FTiles[Tile].MirrorS),
+      WrapTexel(Y + Ord(FY >= 16), FTileInfo[Tile].LimitT, FTileInfo[Tile].MaskT, FTileInfo[Tile].ClampT, FTiles[Tile].MirrorT));
+    if FTiles[Tile].Format = 1 then Exit(Converted(Nearest));
+    if Cacheable then
+    begin
+      FFilteredTexels[FilterSlot] := UInt64(Nearest.C[0]) or
+        (UInt64(Nearest.C[1]) shl 16) or (UInt64(Nearest.C[2]) shl 32) or
+        (UInt64(Nearest.C[3]) shl 48);
+      FFilteredKeys[FilterSlot] := FilterKey;
+      FFilteredStamps[FilterSlot] := FTexelGeneration;
+    end;
+    Exit(Nearest);
+  end;
   // Wrap each neighbouring coordinate once, then address TMEM with TexelAt.
   var LimitS := FTileInfo[Tile].LimitS;
   var MaskS := FTileInfo[Tile].MaskS;
@@ -1928,12 +2012,56 @@ begin
   var MirrorT := FTiles[Tile].MirrorT;
   var S0 := WrapTexel(X, LimitS, MaskS, WrapClampS, MirrorS);
   var T0 := WrapTexel(Y, LimitT, MaskT, WrapClampT, MirrorT);
-  var Base := TexelAt(Tile, S0, T0);
-  if ((FOtherHi shr 20) and 3) = 2 then
-    Exit(Base);
   var Bilerp := (FOtherHi and (Cardinal($800) shr Cycle)) <> 0;
   var ConvertOne := (Cycle = 1) and ((FOtherHi and $200) <> 0);
   var Sample := (FOtherHi and $2000) <> 0;
+  if Cacheable then
+  begin
+    // Non-YUV texels have unsigned 8-bit channels. Four 16-bit lanes hold
+    // the weighted sum independently: weights total 32, so each lane is
+    // at most 255*32+16 < 2^13 and cannot carry into its neighbour.
+    // Fetch only the three taps of the chosen triangle (four at mid-texel).
+    var S1 := WrapTexel(X + 1, LimitS, MaskS, WrapClampS, MirrorS);
+    var T1 := WrapTexel(Y + 1, LimitT, MaskT, WrapClampT, MirrorT);
+    var Sum: UInt64;
+    if ((FOtherHi and $1000) <> 0) and (FX = 16) and (FY = 16) then
+      Sum := (PackedTexelAt(Tile, S0, T0) + PackedTexelAt(Tile, S1, T0) +
+        PackedTexelAt(Tile, S0, T1) + PackedTexelAt(Tile, S1, T1)) * 8
+    else if FX + FY < 32 then
+    begin
+      Sum := PackedTexelAt(Tile, S0, T0) * UInt64(32 - FX - FY);
+      if FX <> 0 then Inc(Sum, PackedTexelAt(Tile, S1, T0) * UInt64(FX));
+      if FY <> 0 then Inc(Sum, PackedTexelAt(Tile, S0, T1) * UInt64(FY));
+    end
+    else
+      Sum := PackedTexelAt(Tile, S1, T1) * UInt64(FX + FY - 32) +
+        PackedTexelAt(Tile, S0, T1) * UInt64(32 - FX) +
+        PackedTexelAt(Tile, S1, T0) * UInt64(32 - FY);
+    Inc(Sum, UInt64($0010001000100010));
+    Result.C[0] := Integer((Sum shr 5) and $FF);
+    Result.C[1] := Integer((Sum shr 21) and $FF);
+    Result.C[2] := Integer((Sum shr 37) and $FF);
+    Result.C[3] := Integer((Sum shr 53) and $FF);
+    FFilteredTexels[FilterSlot] := (Sum shr 5) and UInt64($00FF00FF00FF00FF);
+    FFilteredKeys[FilterSlot] := FilterKey;
+    FFilteredStamps[FilterSlot] := FTexelGeneration;
+    Exit;
+  end;
+  var Base := TexelAt(Tile, S0, T0);
+  if ((FOtherHi shr 20) and 3) = 2 then Exit(Base);
+  // At an integer texel the bilinear weights select Base exactly. YUV has
+  // separate chroma fractions, so it must keep the general path.
+  if Bilerp and not ConvertOne and (FX = 0) and (FY = 0) and (FTiles[Tile].Format <> 1) then
+    Exit(Base);
+  if not Bilerp then
+  begin
+    if ConvertOne then
+      Exit(Converted(Previous));
+    if (not Sample and ((FOtherHi and $8000) = 0)) or
+      ((FX + FY < 32) and ((FTiles[Tile].Format <> 1) or
+      (((FX shr 1) or ((X and 1) shl 4)) + FY < 32))) then
+      Exit(Converted(Base));
+  end;
   if Sample or ((FOtherHi and $8000) <> 0) then
   begin
     var S1 := WrapTexel(X + 1, LimitS, MaskS, WrapClampS, MirrorS);
@@ -2553,51 +2681,43 @@ begin
   Result := Result and $1FFF;
 end;
 
+procedure InitPerspective;
+begin
+  // Same reciprocal ROM interpolation as TextureDivide, once per W instead
+  // of several times for each pixel. These tables are immutable host data.
+  for var SW := 1 to 32767 do
+  begin
+    var Shift := 14;
+    var Bits := SW;
+    while Bits >= 2 do
+    begin
+      Bits := Bits shr 1;
+      Dec(Shift);
+    end;
+    var Normal := (SW shl Shift) and $3FFF;
+    var Slope := (ReciprocalSlope[Normal shr 8] and $3FF) - 1023;
+    var Value := Integer(ShiftRight(Int64(Slope) * ((Normal and $FF) shl 2), 10)) + ReciprocalPoint[Normal shr 8];
+    TN64RDP.PerspectiveReciprocal[SW] := Word(Value and $7FFF);
+    TN64RDP.PerspectiveShift[SW] := Byte(Shift);
+  end;
+end;
+
 function TN64RDP.TextureDivide(Coordinate, W: Int64): Integer;
 begin
-  var SS := SignedValue(SX(UInt64(ShiftRight(Coordinate, 16) and $FFFF), 16));
+  // Only bits 16..31 participate: sign extension of the discarded upper
+  // bits is unnecessary. The reciprocal is a pure function of the 15-bit W.
+  var SS := Int64(SmallInt(Word((Coordinate shr 16) and $FFFF)));
   if (FOtherHi and $80000) = 0 then
     Exit(Integer(SS));
-  var SW := Integer(ShiftRight(W, 16) and $FFFF);
-  if SW = 0 then
+  var SW := Integer((W shr 16) and $FFFF);
+  if (SW = 0) or ((SW and $8000) <> 0) then
     Exit(32767);
-  var BadW := (SW and $8000) <> 0;
-  SW := SW and $7FFF;
-  // Normalising shift: 14 minus the index of the top set bit (14 for zero).
-  var Shift := 14;
-  if SW <> 0 then
-  begin
-    var Top := 0;
-    var Bits := SW;
-    if Bits >= $100 then
-    begin
-      Bits := Bits shr 8;
-      Inc(Top, 8)
-    end;
-    if Bits >= $10 then
-    begin
-      Bits := Bits shr 4;
-      Inc(Top, 4)
-    end;
-    if Bits >= 4 then
-    begin
-      Bits := Bits shr 2;
-      Inc(Top, 2)
-    end;
-    if Bits >= 2 then
-      Inc(Top);
-    Shift := 14 - Top;
-  end;
-  var Normal := (SW shl Shift) and $3FFF;
-  var Slope := (ReciprocalSlope[Normal shr 8] and $3FF) - 1023;
-  var Reciprocal := Integer(ShiftRight(Int64(Slope) * ((Normal and $FF) shl 2), 10)) + ReciprocalPoint[Normal shr 8];
-  Reciprocal := Reciprocal and $7FFF;
+  var Reciprocal := Integer(PerspectiveReciprocal[SW]);
+  var Shift := Integer(PerspectiveShift[SW]);
   var Product := SS * Reciprocal;
   var V := Product * 2;
   if Shift <> 14 then
     V := ShiftRight(Product, 13 - Shift);
-  if BadW then
-    V := 32767;
   Result := Integer(EnsureRange(V, Int64(-32768), Int64(32767)));
 end;
 
@@ -3703,12 +3823,39 @@ begin
   inherited;
 end;
 
+function TN64RDPGroup.ReadReleased: Int64;
+begin
+  {$IFDEF CPUX64}
+  Result := FReleased;
+  {$ELSE}
+  Result := TInterlocked.Read(FReleased);
+  {$ENDIF}
+end;
+
+function TN64RDPGroup.ReadArrived(Member: Integer): Int64;
+begin
+  {$IFDEF CPUX64}
+  Result := FSlots[Member].Arrived;
+  {$ELSE}
+  Result := TInterlocked.Read(FSlots[Member].Arrived);
+  {$ENDIF}
+end;
+
+function TN64RDPGroup.Aborted: Boolean;
+begin
+  {$IFDEF CPUX64}
+  Result := FAborted <> 0;
+  {$ELSE}
+  Result := TInterlocked.CompareExchange(FAborted, 0, 0) <> 0;
+  {$ENDIF}
+end;
+
 function TN64RDPGroup.Reached(Point: Int64; Release: Boolean): Boolean;
 begin
   if Release then
-    Exit(TInterlocked.Read(FReleased) >= Point);
+    Exit(ReadReleased >= Point);
   for var I := 0 to High(FSlots) do
-    if TInterlocked.Read(FSlots[I].Arrived) < Point then
+    if ReadArrived(I) < Point then
       Exit(False);
   Result := True;
 end;
@@ -3727,7 +3874,7 @@ begin
   var Spins := 0;
   while not Reached(Point, Release) do
   begin
-    if TInterlocked.CompareExchange(FAborted, 0, 0) <> 0 then
+    if Aborted then
       raise EN64Unsupported.Create('RDP band stopped: another band failed');
     if Spins < SpinRounds then
     begin
@@ -3736,7 +3883,7 @@ begin
       Continue;
     end;
     TInterlocked.Exchange(FSlots[Member].Waiting, 1);
-    if Reached(Point, Release) or (TInterlocked.CompareExchange(FAborted, 0, 0) <> 0) then
+    if Reached(Point, Release) or (Aborted) then
     begin
       TInterlocked.Exchange(FSlots[Member].Waiting, 0);
       Continue;
@@ -3853,5 +4000,7 @@ begin
       Target.MergeCarried(Member);
 end;
 
-end.
+initialization
+  InitPerspective;
 
+end.

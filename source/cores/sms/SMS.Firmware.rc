@@ -1,0 +1,2 @@
+SMS_BIOS_EXPORT RCDATA "firmware/sms-us-eu-1.3.bin"
+SMS_BIOS_JAPAN RCDATA "firmware/sms-japan-2.1.bin"

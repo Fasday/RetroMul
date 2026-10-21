@@ -629,6 +629,7 @@
         <DCCReference Include="..\..\source\cores\sg1000\SG1000.Disk.pas"/>
         <DCCReference Include="..\..\source\cores\sg1000\SG1000.FDC.pas"/>
         <DCCReference Include="..\..\source\cores\sg1000\SG1000.SF7000.pas"/>
+        <DCCReference Include="..\..\source\cores\sms\SMS.Firmware.pas"/>
         <DCCReference Include="..\..\source\cores\sms\SMS.Cartridge.pas"/>
         <DCCReference Include="..\..\source\cores\sms\SMS.VDP.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.Types.pas"/>
