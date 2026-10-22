@@ -32,6 +32,10 @@ function LoadBuiltinPS1BIOS(const Name: string): TBytes;
 
 implementation
 
+// firmware/openbios.bin (MIT PCSX-Redux and uC-sdk notices in
+// firmware/LICENSE.openbios.txt).
+{$R 'PS1.Firmware.res' 'PS1.Firmware.rc'}
+
 type
   TKnownBIOS = record
     SHA1, Name: string;
