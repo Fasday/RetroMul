@@ -27,10 +27,10 @@ begin
   AddButton(TEmulatorButton.Select, 'SELECT', TVirtualSide.Left, 16, 284, 88, 36, True);
   AddAuxiliaryButton(Ord(TPS1Extra.Analog), 'ANALOG', TVirtualSide.Left, RectF(112, 284, 200, 320));
   AddButton(TEmulatorButton.Start, 'START', TVirtualSide.Right, 136, 74, 88, 36, True);
-  AddButton(TEmulatorButton.Y, 'Tri', TVirtualSide.Right, 88, 136, 60, 60);
-  AddButton(TEmulatorButton.X, 'Sq', TVirtualSide.Right, 16, 200, 60, 60);
-  AddButton(TEmulatorButton.B, 'O', TVirtualSide.Right, 160, 200, 60, 60);
-  AddButton(TEmulatorButton.A, 'X', TVirtualSide.Right, 88, 264, 60, 60);
+  AddButton(TEmulatorButton.Y, 'Tri', TVirtualSide.Right, 88, 120, 60, 60);
+  AddButton(TEmulatorButton.X, 'Sq', TVirtualSide.Right, 16, 184, 60, 60);
+  AddButton(TEmulatorButton.B, 'O', TVirtualSide.Right, 160, 184, 60, 60);
+  AddButton(TEmulatorButton.A, 'X', TVirtualSide.Right, 88, 248, 60, 60);
   AddButton(TEmulatorButton.Z, 'R1', TVirtualSide.Right, 120, 20, 104, 36, True);
   AddButton(TEmulatorButton.Mode, 'R2', TVirtualSide.Right, 24, 20, 88, 36, True);
 end;
