@@ -420,13 +420,15 @@ begin
   end;
 end;
 
-// Odd line (240-line mode) or odd field (480-line interlace); false in vblank.
+// GPUSTAT bit 31: drawing odd lines; false in vblank. In 480-line mode the
+// GPU draws the field that is not displayed, so bit 31 is the inverse of
+// the field in bit 13 (the OpenBIOS shell's frame wait depends on this).
 function TPS1GPU.OddField: Boolean;
 begin
   if FInVBlank then
     Result := False
   else if (FDisplayMode and $24) = $24 then
-    Result := FField <> 0
+    Result := FField = 0
   else
     Result := (FLine and 1) <> 0;
 end;
@@ -524,8 +526,8 @@ begin
   // In 480-line interlaced output the lines of the displayed field are left
   // alone unless drawing to the display area is allowed.
   FRaster.SkipParity := -1;
-  if ((FDisplayMode and $24) = $24) and ((FEnv.DrawMode and $400) = 0) then
-    FRaster.SkipParity := Ord(OddField);
+  if ((FDisplayMode and $24) = $24) and ((FEnv.DrawMode and $400) = 0) and not FInVBlank then
+    FRaster.SkipParity := FField;
   case Op shr 5 of
     1:
       FRaster.Polygon(Slice(FCommand, FCommandLength));
