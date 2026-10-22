@@ -3,7 +3,7 @@ unit PS1.Console;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.UITypes, Core.Snapshots, PS1.Types,
+  System.SysUtils, System.Classes, System.UITypes, Core.Snapshots, Core.CD.Disc, PS1.Types,
   PS1.Scheduler, PS1.Bus, PS1.GTE, PS1.CPU, PS1.DMA, PS1.Timers, PS1.SIO,
   PS1.GPU, PS1.CDROM, PS1.SPU, PS1.MDEC, PS1.Exe;
 
@@ -61,6 +61,8 @@ type
     procedure SetPad(Port: Integer; Buttons: Word; Connected: Boolean = True);
     // The console owns inserted cards; nil removes the card.
     procedure InsertCard(Port: Integer; Card: TPS1MemoryCard);
+    // The disc stays owned by the caller; nil leaves the drive empty.
+    procedure InsertDisc(Disc: TCDDisc);
     function Card(Port: Integer): TPS1MemoryCard;
     // Starts a PS-X EXE when the BIOS enters its shell (after Reset).
     procedure LoadExe(const Data: TBytes);
@@ -113,6 +115,8 @@ begin
   FSIO1 := TPS1SIO1.Create;
   FGPU := TPS1GPU.Create(FScheduler, RequestIRQ, PAL);
   FCDROM := TPS1CDROM.Create(FScheduler, RequestIRQ);
+  if PAL then
+    FCDROM.Region := 'E';
   FSPU := TPS1SPU.Create(FScheduler, RequestIRQ);
   FMDEC := TPS1MDEC.Create;
   FDMA.Devices[0] := FMDEC;
@@ -293,9 +297,9 @@ begin
         else if Size = 1 then
           Value := (Value shr ((Address and 1) * 8)) and $FF;
       end;
-  else
-    Result := False;
   end;
+  // Unused ports read as zero without a bus error (Gran Turismo 2 reads a
+  // fourth timer at 1F801130h).
 end;
 
 function TPS1Console.WriteIO(Address, Value: Cardinal; Size: Integer): Boolean;
@@ -329,8 +333,6 @@ begin
         if Size = 4 then
           FSPU.Write(Address + 2, Word(Value shr 16));
       end;
-  else
-    Result := False;
   end;
 end;
 
@@ -375,6 +377,11 @@ begin
     FCards[Port].Free;
   FCards[Port] := Card;
   ConnectPorts;
+end;
+
+procedure TPS1Console.InsertDisc(Disc: TCDDisc);
+begin
+  FCDROM.SetDisc(Disc);
 end;
 
 function TPS1Console.Card(Port: Integer): TPS1MemoryCard;
