@@ -31,6 +31,7 @@ type
     FCompressedHash: TBytes;
     procedure LoadCHD(const Storage: IStorage; const Location: string);
     procedure LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
+    procedure LoadRaw(const Storage: IStorage; const Location: string);
     procedure ValidateAndHash;
   public
     // Generic CD media: TOC, companion streams and sectors. Filesystem/boot
@@ -55,6 +56,9 @@ type
   end;
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
+// A single-track raw image (.bin without a CUE): 2352-byte sectors starting
+// with a Mode 1 or Mode 2 data sector. Restores the stream position.
+function IsCDRawImage(Stream: TStream): Boolean;
 function CDDataEDC(const Data: TBytes; Count: Integer): Cardinal;
 // Correct isolated symbol errors using ECMA-130 P/Q parity; commit only on valid EDC.
 function CDCorrectMode1(var Sector: TBytes): Boolean;
@@ -196,8 +200,10 @@ begin
   end
   else if SameText(ExtractFileExt(SourceName), '.chd') then
     LoadCHD(Storage, Location)
+  else if SameText(ExtractFileExt(SourceName), '.bin') then
+    LoadRaw(Storage, Location)
   else
-    raise EReadError.Create('CD expects ISO, CUE or CHD');
+    raise EReadError.Create('CD expects ISO, CUE, CHD or a raw BIN');
 
   if (FLeadOut = 0) and (Length(FTracks) > 0) then
     FLeadOut := FTracks[High(FTracks)].EndLBA;
@@ -403,6 +409,49 @@ begin
   end;
   if Length(FTracks) > 0 then
     FLeadOut := Cursor + PostGaps[High(FTracks)];
+end;
+
+const
+  CDSync: array[0..11] of Byte = ($00, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $00);
+
+function IsCDRawImage(Stream: TStream): Boolean;
+begin
+  Result := False;
+  var Size := Stream.Size;
+  if (Size < 2352 * 16) or (Size mod 2352 <> 0) or (Size > Int64(800) * 1024 * 1024) then
+    Exit;
+
+  var Position := Stream.Position;
+  try
+    var Header: array[0..15] of Byte;
+    Stream.Position := 0;
+    if Stream.Read(Header, SizeOf(Header)) <> SizeOf(Header) then
+      Exit;
+    Result := CompareMem(@Header[0], @CDSync[0], SizeOf(CDSync)) and (Header[15] in [1, 2]);
+  finally
+    Stream.Position := Position;
+  end;
+end;
+
+// One data track over the whole file; the mode comes from the first sector.
+procedure TCDDisc.LoadRaw(const Storage: IStorage; const Location: string);
+begin
+  SetLength(FTracks, 1);
+  FTracks[0].Number := 1;
+  FTracks[0].SectorSize := 2352;
+  FTracks[0].Stream := Storage.OpenRead(Location);
+  FTracks[0].ByteSize := FTracks[0].Stream.Size;
+  FTracks[0].SourceName := ExtractFileName(Location);
+  if not IsCDRawImage(FTracks[0].Stream) then
+    raise EReadError.Create('BIN without CUE must be a raw 2352-byte data track');
+
+  var Header: array[0..15] of Byte;
+  FTracks[0].Stream.Position := 0;
+  FTracks[0].Stream.ReadBuffer(Header, SizeOf(Header));
+  FTracks[0].DataOffset := 16;
+  if Header[15] = 2 then
+    FTracks[0].DataOffset := 24;
+  FTracks[0].EndLBA := FTracks[0].ByteSize div 2352;
 end;
 
 procedure TCDDisc.LoadCHD(const Storage: IStorage; const Location: string);
