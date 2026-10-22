@@ -41,6 +41,8 @@ type
   // Sets the I_STAT bit; devices call it on the rising edge of their request.
   TPS1IRQRequest = procedure(Line: TPS1IRQ) of object;
 
+  TPS1Notify = procedure of object;
+
 function Add32(A, B: Cardinal): Cardinal; inline;
 
 function Sub32(A, B: Cardinal): Cardinal; inline;

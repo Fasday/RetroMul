@@ -25,11 +25,16 @@ type
     FPending, FVolume: array[0..3] of Byte;
     FADPCMMuted, FMuted: Boolean;
     FPeak: Word;
+    procedure Changing; inline;
+    procedure SetMuted(Value: Boolean);
     procedure Push(Left, Right: Integer);
     procedure Resample(Left, Right: Integer);
     procedure DecodeBlock(const Sector: array of Byte; Offset, Block, Channel: Integer; EightBit: Boolean;
       var Output: array of SmallInt; Start: Integer);
   public
+    // Called before anything that changes the frames Pop returns, so that
+    // the consumer can first take the frames due by the current time.
+    BeforeChange: TPS1Notify;
     constructor Create;
     procedure Reset;
     // Forgets ADPCM history between unrelated streams.
@@ -45,7 +50,7 @@ type
     procedure SerializeState(State: TStateArchive);
     property Count: Integer read FCount;
     // Mute/Demute commands silence CD-DA and XA alike.
-    property Muted: Boolean read FMuted write FMuted;
+    property Muted: Boolean read FMuted write SetMuted;
     // Peak level of the last CD-DA sector (for Play reports).
     property Peak: Word read FPeak;
   end;
@@ -98,8 +103,21 @@ begin
   Reset;
 end;
 
+procedure TPS1CDAudio.Changing;
+begin
+  if Assigned(BeforeChange) then
+    BeforeChange;
+end;
+
+procedure TPS1CDAudio.SetMuted(Value: Boolean);
+begin
+  Changing;
+  FMuted := Value;
+end;
+
 procedure TPS1CDAudio.Reset;
 begin
+  Changing;
   FHead := 0;
   FCount := 0;
   ResetXA;
@@ -210,6 +228,7 @@ procedure TPS1CDAudio.DecodeXA(const Sector: array of Byte);
 var
   Left, Right: array[0..223] of SmallInt;
 begin
+  Changing;
   var Coding := Sector[19];
   var Stereo := (Coding and 3) = 1;
   var HalfRate := ((Coding shr 2) and 3) = 1;
@@ -258,6 +277,7 @@ end;
 
 procedure TPS1CDAudio.PushCDDA(const Sector: array of Byte; Offset: Integer);
 begin
+  Changing;
   var Peak := 0;
   for var I := 0 to 587 do
   begin
@@ -280,6 +300,7 @@ end;
 
 procedure TPS1CDAudio.WriteControl(Value: Byte);
 begin
+  Changing;
   FADPCMMuted := (Value and 1) <> 0;
   if (Value and $20) <> 0 then
     FVolume := FPending;

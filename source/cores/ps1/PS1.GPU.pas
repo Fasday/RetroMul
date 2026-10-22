@@ -8,7 +8,6 @@ uses
 
 type
   TPS1BlankNotify = procedure(Active: Boolean; Time: Int64) of object;
-  TPS1Notify = procedure of object;
 
   TPS1GPU = class(TPS1DMADevice)
   private

@@ -117,7 +117,8 @@ begin
   FCDROM := TPS1CDROM.Create(FScheduler, RequestIRQ);
   if PAL then
     FCDROM.Region := 'E';
-  FSPU := TPS1SPU.Create(FScheduler, RequestIRQ);
+  FSPU := TPS1SPU.Create(FScheduler, RequestIRQ, FCDROM.Audio);
+  FSPU.OnReady := FDMA.Kick;
   FMDEC := TPS1MDEC.Create;
   FDMA.Devices[0] := FMDEC;
   FDMA.Devices[1] := FMDEC;
@@ -249,6 +250,7 @@ begin
       TPS1Event.Timer2: FTimers.Event(2, At);
       TPS1Event.DMA: FDMA.Event(At);
       TPS1Event.CDROM: FCDROM.Event(At);
+      TPS1Event.SPU: FSPU.Event(At);
       TPS1Event.SIO0: FSIO0.Event(At);
       TPS1Event.GPUDraw: FGPU.DrawEvent(At);
     end;
