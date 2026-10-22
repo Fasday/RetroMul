@@ -132,7 +132,7 @@ begin
       Names := TArray<string>.Create('ngpc_bios.bin', 'ngpcbios.bin')
     else
       Names := TArray<string>.Create('ngp_bios.bin', 'ngpbios.bin');
-    for var Folder in TArray<string>.Create(ExtractFilePath(RomName), TPath.Combine(FStorage.RomFolder, FSystemId), TPath.Combine(FStorage.Root, 'bios')) do
+    for var Folder in TArray<string>.Create(ExtractFilePath(RomName), FStorage.RomFolder(FSystemId), TPath.Combine(FStorage.Root, 'bios')) do
     begin
       for var Name in Names do
       begin

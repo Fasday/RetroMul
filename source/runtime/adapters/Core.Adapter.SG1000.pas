@@ -292,9 +292,7 @@ begin
       if IPL = '' then
       begin
         var Folders: TArray<string> := [ExtractFilePath(RomName)];
-        if FStorage.RomFolder <> '' then
-          Folders := Folders + [TPath.Combine(FStorage.RomFolder, 'sf7000'),
-              TPath.Combine(FStorage.RomFolder, 'sg1000'), TPath.Combine(FStorage.RomFolder, 'Sega SF-7000')];
+        Folders := Folders + [FStorage.RomFolder('sf7000'), FStorage.RomFolder('sg1000')];
         for var Folder in Folders do
         begin
           if not FStorage.FolderExists(Folder) then

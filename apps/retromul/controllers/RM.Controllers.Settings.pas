@@ -94,7 +94,6 @@ procedure TSettingsController.Save;
 begin
   var Ini := FState.Session.Storage.ReadConfig(FState.Session.Storage.ConfigFile('config'));
   try
-    Ini.WriteString('General', 'Path', FState.Session.Storage.RomFolder);
     Ini.WriteInteger('General', 'ControlBottomInset', FState.Input.BottomInset);
     FState.Session.Storage.WriteConfig(Ini);
   finally
@@ -127,7 +126,10 @@ begin
     FState.Session.Emulation.Pause;
   FState.Settings.ClientVisible := FView.LayoutClient.Visible;
   FState.Settings.View := TSettingsView.CreateSettings(FView, FState.Session.Storage, FState.Input.Manager);
-  if FState.Session.Emulation <> nil then
+  if (FState.Browser.View <> nil) and
+    (Sender = FState.Browser.View.FindComponent('ButtonConfigureLibrary')) then
+    FState.Settings.View.SelectCategory(SETTINGS_CATEGORY_LIBRARY)
+  else if FState.Session.Emulation <> nil then
     FState.Settings.View.SelectCore(PlatformPresentation(FState.Input.SystemId).SettingsPageId, True);
   FState.Settings.View.Parent := FView.SettingsScreen;
   FView.ScreenTabs.ActiveTab := FView.SettingsScreen;

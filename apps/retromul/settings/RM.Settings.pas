@@ -151,7 +151,6 @@ type
     FHeight: Single;
     FBuilding, FRebuildPending, FArranging, FDeviceArranging, FLayoutPending: Boolean;
     FVolumeValue: TLabel;
-    FFolderEdit: TEdit;
     FAutosaveMinutes: TSpinBox;
     FCaptureAction: Integer;
     FCaptureDeadline: UInt64;
@@ -213,7 +212,7 @@ type
     procedure PreviewChange(Sender: TObject);
     procedure ResetClick(Sender: TObject);
     procedure PathClick(Sender: TObject);
-    procedure CheckRomFolder(const Location: string);
+    procedure DetectRomFoldersClick(Sender: TObject);
     procedure ApplyClick(Sender: TObject);
     procedure BackClick(Sender: TObject);
   protected
@@ -252,6 +251,8 @@ uses
 {$R *.fmx}
 
 type
+  TSettingsLayoutAccess = class(TLayout);
+
   TSettingsViewContext = class(TSettingsPageContext)
   private
     FView: TSettingsView;
@@ -780,7 +781,6 @@ begin
     end;
   SetLength(FDrafts, SettingsPlatforms.MaxPageId + 1);
   FDrafts[SETTINGS_PAGE_MAIN] := FStorage.ReadConfig(FStorage.ConfigFile('config'));
-  FDrafts[SETTINGS_PAGE_MAIN].WriteString('General', 'Path', FStorage.RomFolder);
   for var platform in SettingsPlatforms.Items do
     FDrafts[platform.PageId] := FStorage.ReadConfig(FStorage.ConfigFile(platform.CoreId));
   FContext := TSettingsViewContext.Create(Self);
@@ -1095,7 +1095,6 @@ begin
   try
     FPagePicker.ItemIndex := FCategory;
     CancelCapture;
-    FFolderEdit := nil;
     FAutosaveMinutes := nil;
     FVolumeValue := nil;
     if FPreview is TSettingsPreview then TSettingsPreview(FPreview).Mode := TBitmapShaderMode.Original;
@@ -1162,8 +1161,12 @@ begin
     end
     else if FCategory = SETTINGS_CATEGORY_LIBRARY then
     begin
+      Heading('GroupPlatformFolders');
+      Row('RowDetectRomFolders');
+      (FindComponent('ButtonDetectRomFolders') as TButton).OnClick := DetectRomFoldersClick;
+      for var Platform in TPlatformRegistry.All do
+        PathEdit('RowRomFolder' + Platform.Folder.Substring(0, 1).ToUpper + Platform.Folder.Substring(1), 'RomFolders', Platform.Id, '', True);
       Heading('GroupGamelibrary');
-      FFolderEdit := PathEdit('RowROMfolder', 'General', 'Path', FStorage.RomFolder, True);
       Combo('RowLibraryview', 'Library', 'View', [], ['grid', 'list'], 'grid');
       Combo('RowCardsize', 'Library', 'CardWidth', [], ['140', '170', '220'], '170');
       Check('RowShowplatformoncards', 'Library', 'ShowPlatform', True);
@@ -1485,6 +1488,10 @@ begin
     ListBoxNavigation.Visible := PanelSidebar.Visible;
     FPagePicker.Visible := not PanelSidebar.Visible;
     FPlatformPicker.Visible := (FCategory >= SETTINGS_CATEGORY_VIDEO_AUDIO) and not PanelPlatforms.Visible;
+    // Settle the sidebar widths before using the header's available width.
+    // During a window-state transition the parent can still be realigning.
+    Realign;
+    TSettingsLayoutAccess(LayoutBody).Realign;
     LabelTitle.Text := Translate(SettingsCategoryNames[FCategory]);
     if FCategory = SETTINGS_CATEGORY_GENERAL then
       LabelTitle.Text := Translate('General settings');
@@ -1516,9 +1523,23 @@ begin
     if LayoutContent = nil then
       Exit;
 
+    var CompactReset := LayoutFooter.Width < 520;
+    var ResetRow := FindComponent('LayoutSettingsCompactReset') as TLayout;
+    ResetRow.Visible := CompactReset and (FCaptureButton = nil);
+    if CompactReset then ButtonReset.Parent := ResetRow
+    else ButtonReset.Parent := FindComponent('LayoutSettingsActions') as TLayout;
+    ButtonReset.Visible := FCaptureButton = nil;
+    LayoutFooter.Height := 96 + 44 * Ord(ResetRow.Visible);
+    ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
+    ButtonApply.Visible := FCaptureButton = nil;
+    ButtonBack.Visible := FCaptureButton = nil;
+    // Header/footer heights determine the viewport. Apply them, then settle
+    // the content width before measuring responsive rows and column heights.
+    TSettingsLayoutAccess(LayoutBody).Realign;
+    LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
+    VertScrollBoxScroll.RealignContent;
     LayoutContent.BeginUpdate;
     try
-      LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
       var Columns := (FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO) and (FPreviewGroup <> nil) and (LayoutContent.Width >= 850);
       if FPreviewGroup <> nil then
         if Columns then
@@ -1588,16 +1609,9 @@ begin
     finally
       LayoutContent.EndUpdate;
     end;
-    var CompactReset := LayoutFooter.Width < 520;
-    var ResetRow := FindComponent('LayoutSettingsCompactReset') as TLayout;
-    ResetRow.Visible := CompactReset and (FCaptureButton = nil);
-    if CompactReset then ButtonReset.Parent := ResetRow
-    else ButtonReset.Parent := FindComponent('LayoutSettingsActions') as TLayout;
-    ButtonReset.Visible := FCaptureButton = nil;
-    LayoutFooter.Height := 96 + 44 * Ord(ResetRow.Visible);
-    ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
-    ButtonApply.Visible := FCaptureButton = nil;
-    ButtonBack.Visible := FCaptureButton = nil;
+    // Publishing the measured height must also refresh the scroll range;
+    // FMX may have cached it earlier in the native window resize sequence.
+    VertScrollBoxScroll.RealignContent;
   finally
     FArranging := False;
   end;
@@ -2504,86 +2518,41 @@ begin
             if (F.Section = Section) and (F.Key = Key) then
               TEdit(F.Control).Text := Selection.Location;
         LabelStatus.Text := Translate('Click Apply to save changes.');
-        if (Section = 'General') and (Key = 'Path') then
-          CheckRomFolder(Selection.Location);
       end;
     end);
 end;
 
-procedure TSettingsView.CheckRomFolder(const Location: string);
+procedure TSettingsView.DetectRomFoldersClick(Sender: TObject);
 begin
-  try
-    if FStorage.FolderExists(Location) and
-      (Length(FStorage.Files(Location)) = 0) and
-      (Length(FStorage.Folders(Location)) = 0) then
+  CancelCapture;
+  StorePage;
+  var Alive: TFunc<Boolean> := FAlive;
+  PickLocation(True, '',
+    procedure(const Selection: TStorageSelection)
     begin
-      var Alive: TFunc<Boolean> := FAlive;
-      ShowRetroConfirmation(Self,
-        Translate('The selected folder is empty. Create subfolders for all available platforms?'),
-        procedure(Confirmed: Boolean)
+      if not Alive() then
+        Exit;
+      if Selection.Error <> '' then
+        LabelStatus.Text := Selection.Error
+      else if not Selection.Cancelled then
+      try
+        var Count := 0;
+        for var Platform in TPlatformRegistry.All do
         begin
-          if not Alive() or not Confirmed then
-            Exit;
-
-          try
-            for var Platform in TPlatformRegistry.All do
-            begin
-              {$IFDEF ANDROID}
-              if Location.StartsWith('content://') then
-                TAndroidStorage.EnsureSubfolder(Location, Platform.Folder)
-              else
-              {$ENDIF}
-                FStorage.EnsureFolder(System.IOUtils.TPath.Combine(Location, Platform.Folder));
-            end;
-            LabelStatus.Text := Translate('Platform subfolders created. Click Apply to save changes.');
-          except
-            on E: Exception do
-            begin
-              LabelStatus.Text := Format(Translate('Could not create platform subfolders: %s'), [E.Message]);
-              ShowRetroMessage(Self, LabelStatus.Text);
-            end;
-          end;
-        end);
-      Exit;
-    end;
-  except
-    on E: Exception do
-    begin
-      LabelStatus.Text := E.Message;
-      ShowRetroMessage(Self, E.Message);
-      Exit;
-    end;
-  end;
-
-  var SupportedFolders := '';
-
-  {$IFDEF ANDROID}
-  // Document provider URIs must be queried; combining them with a name is invalid.
-  if Location.StartsWith('content://') then
-    for var Folder in TAndroidStorage.Enumerate(Location, False, True) do
-      for var platform in TPlatformRegistry.All do
-        for var Name in platform.ScanFolders do
-          if SameText(Folder.Name, Name) then
-            Exit;
-  {$ENDIF}
-
-  for var platform in TPlatformRegistry.All do
-    for var Name in platform.ScanFolders do
-    begin
-    {$IFDEF ANDROID}
-      if not Location.StartsWith('content://') then
-    {$ENDIF}
-        if FStorage.FolderExists(System.IOUtils.TPath.Combine(Location, Name)) then
-          Exit;
-
-      if SupportedFolders <> '' then
-        SupportedFolders := SupportedFolders + ', ';
-      SupportedFolders := SupportedFolders + Name;
-    end;
-  var Warning := Format(Translate('The selected folder contains no supported platform subfolders. ROMs must be placed in these subfolders: %s.'),
-    [SupportedFolders]);
-  LabelStatus.Text := Warning;
-  ShowRetroMessage(Self, Warning, TRetroDialogKind.Warning);
+          var Folder := FStorage.DetectRomFolder(Selection.Location, Platform.Id);
+          if Folder = '' then
+            Continue;
+          FDrafts[SETTINGS_PAGE_MAIN].WriteString('RomFolders', Platform.Id, Folder);
+          Inc(Count);
+        end;
+        if (FPage = SETTINGS_PAGE_MAIN) and (FCategory = SETTINGS_CATEGORY_LIBRARY) then
+          BuildPage(True);
+        LabelStatus.Text := Format(Translate('Platform folders found: %d. Click Apply to save changes.'), [Count]);
+      except
+        on E: Exception do
+          LabelStatus.Text := E.Message;
+      end;
+    end);
 end;
 
 procedure TSettingsView.PickLocation(Folder: Boolean; const Current: string; const Callback: TStorageSelectionCallback);
@@ -2701,12 +2670,13 @@ begin
       FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'TranslationFile', '').Trim,
       FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Language', 'en'));
     Translation.Free; // Validate the file before writing any settings.
-    var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Path', '').Trim;
-
-    {$IF not Defined(ANDROID) and not Defined(IOS)} // Native filesystem paths.
-    if (Folder <> '') and not TDirectory.Exists(Folder) then
-      raise Exception.Create(Translate('ROM folder not found. Choose an existing folder.'));
-    {$ENDIF}
+    for var Platform in TPlatformRegistry.All do
+    begin
+      var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('RomFolders', Platform.Id, '').Trim;
+      if (Folder <> '') and not FStorage.FolderExists(Folder) then
+        raise Exception.Create(Platform.Name + ': ' + Translate('ROM folder not found. Choose an existing folder.'));
+    end;
+    FDrafts[SETTINGS_PAGE_MAIN].DeleteKey('General', 'Path');
 
     for var platform in SettingsPlatforms.Items do
       platform.Validate(FDrafts[platform.PageId]);
@@ -2715,7 +2685,6 @@ begin
     for var Ini in FDrafts do
       if Ini <> nil then
         FStorage.WriteConfig(Ini);
-    FStorage.RomFolder := Folder;
     if Assigned(FOnApply) then
       FOnApply(Self);
     LabelStatus.Text := Translate('Saved. Core options and connected devices apply when you next open a ROM.');

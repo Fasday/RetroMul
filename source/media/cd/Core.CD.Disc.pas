@@ -62,7 +62,7 @@ function CDCorrectMode1(var Sector: TBytes): Boolean;
 implementation
 
 uses
-  System.Hash, System.IOUtils, System.Math, System.StrUtils, Core.CD.CHD
+  Core.Platforms, System.Hash, System.IOUtils, System.Math, System.StrUtils, Core.CD.CHD
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
@@ -75,8 +75,11 @@ begin
   begin
     // SAF document IDs are opaque. Find the source in the selected system
     // folder, then resolve by display name without constructing a URI.
-    for var Folder in Storage.Folders(Storage.RomFolder) do
+    for var Platform in TPlatformRegistry.All do
     begin
+      var Folder := Storage.RomFolder(Platform.Id);
+      if Folder = '' then
+        Continue;
       var Files := Storage.Files(Folder);
       var Found := False;
       for var Candidate in Files do

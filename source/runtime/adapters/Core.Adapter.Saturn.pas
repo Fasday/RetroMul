@@ -177,7 +177,7 @@ begin
           Break;
         end;
 
-        Candidate := TPath.Combine(FStorage.RomFolder, TPath.Combine('saturn', Name));
+        Candidate := TPath.Combine(FStorage.RomFolder('saturn'), Name);
         if not Candidate.StartsWith('content://', True) and FStorage.Exists(Candidate) then
         begin
           BIOSPath := Candidate;

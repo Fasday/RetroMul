@@ -1433,6 +1433,2643 @@
     Size.Height = 12070.000000000000000000
     Size.PlatformDefault = False
     Visible = False
+    object PanelGroupPlatformFolders: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 2200.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LabelGroupPlatformFoldersTitle: TLabel
+        Align = Top
+        Margins.Bottom = 6.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Font.Size = 20.000000000000000000
+        Text = 'Platform ROM folders'
+      end
+      object PanelRowDetectRomFolders: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowDetectRomFoldersText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowDetectRomFoldersTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Detect platform folders'
+          end
+          object LabelRowDetectRomFoldersDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'Choose a parent folder to fill the platform paths below.'
+          end
+        end
+        object LayoutRowDetectRomFoldersEditorContainer: TLayout
+          Align = Right
+          Size.Width = 220.000000000000000000
+          Size.PlatformDefault = False
+          object ButtonDetectRomFolders: TButton
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.PlatformDefault = False
+            Text = 'Detect automatically'
+          end
+        end
+      end
+      object PanelRowRomFolderCps1: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderCps1Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderCps1Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Capcom Play System I'
+          end
+          object LabelRowRomFolderCps1Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderCps1EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderCps1Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderCps1Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderCps1BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderCps2: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderCps2Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderCps2Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Capcom Play System II'
+          end
+          object LabelRowRomFolderCps2Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderCps2EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderCps2Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderCps2Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderCps2BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderCps3: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderCps3Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderCps3Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Capcom Play System III'
+          end
+          object LabelRowRomFolderCps3Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderCps3EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderCps3Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderCps3Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderCps3BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderGw: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderGwText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderGwTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Game && Watch'
+          end
+          object LabelRowRomFolderGwDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderGwEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderGwEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderGwBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderGwBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderGb: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderGbText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderGbTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Game Boy'
+          end
+          object LabelRowRomFolderGbDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderGbEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderGbEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderGbBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderGbBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderGbc: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderGbcText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderGbcTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Game Boy Color'
+          end
+          object LabelRowRomFolderGbcDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderGbcEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderGbcEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderGbcBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderGbcBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderGba: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderGbaText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderGbaTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Game Boy Advance'
+          end
+          object LabelRowRomFolderGbaDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderGbaEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderGbaEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderGbaBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderGbaBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderNes: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderNesText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderNesTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'NES / Famicom'
+          end
+          object LabelRowRomFolderNesDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderNesEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderNesEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderNesBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderNesBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSnes: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSnesText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSnesTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Super Nintendo'
+          end
+          object LabelRowRomFolderSnesDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSnesEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSnesEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSnesBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSnesBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderN64: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderN64Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderN64Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Nintendo 64'
+          end
+          object LabelRowRomFolderN64Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderN64EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderN64Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderN64Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderN64BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderMegadrive: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderMegadriveText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderMegadriveTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'MegaDrive'
+          end
+          object LabelRowRomFolderMegadriveDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderMegadriveEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderMegadriveEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderMegadriveBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderMegadriveBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSegacd: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSegacdText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSegacdTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Sega CD'
+          end
+          object LabelRowRomFolderSegacdDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSegacdEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSegacdEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSegacdBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSegacdBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSega32x: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSega32xText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSega32xTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Sega 32X'
+          end
+          object LabelRowRomFolderSega32xDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSega32xEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSega32xEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSega32xBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSega32xBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSg1000: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSg1000Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSg1000Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'SG-1000'
+          end
+          object LabelRowRomFolderSg1000Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSg1000EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSg1000Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSg1000Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSg1000BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSc3000: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSc3000Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSc3000Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'SC-3000'
+          end
+          object LabelRowRomFolderSc3000Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSc3000EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSc3000Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSc3000Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSc3000BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSf7000: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSf7000Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSf7000Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'SF-7000'
+          end
+          object LabelRowRomFolderSf7000Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSf7000EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSf7000Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSf7000Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSf7000BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderMastersystem: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderMastersystemText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderMastersystemTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Master System'
+          end
+          object LabelRowRomFolderMastersystemDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderMastersystemEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderMastersystemEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderMastersystemBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderMastersystemBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderGamegear: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderGamegearText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderGamegearTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Game Gear'
+          end
+          object LabelRowRomFolderGamegearDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderGamegearEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderGamegearEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderGamegearBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderGamegearBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSaturn: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSaturnText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSaturnTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'SEGA Saturn'
+          end
+          object LabelRowRomFolderSaturnDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSaturnEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSaturnEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSaturnBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSaturnBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderOmv: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderOmvText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderOmvTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Multivision'
+          end
+          object LabelRowRomFolderOmvDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderOmvEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderOmvEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderOmvBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderOmvBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderNeogeo: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderNeogeoText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderNeogeoTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Neo Geo'
+          end
+          object LabelRowRomFolderNeogeoDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderNeogeoEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderNeogeoEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderNeogeoBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderNeogeoBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderNgp: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderNgpText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderNgpTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Neo Geo Pocket'
+          end
+          object LabelRowRomFolderNgpDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderNgpEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderNgpEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderNgpBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderNgpBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderNgpc: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderNgpcText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderNgpcTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Neo Geo Pocket Color'
+          end
+          object LabelRowRomFolderNgpcDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderNgpcEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderNgpcEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderNgpcBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderNgpcBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderNeogeocd: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderNeogeocdText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderNeogeocdTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'Neo Geo CD'
+          end
+          object LabelRowRomFolderNeogeocdDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderNeogeocdEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderNeogeocdEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderNeogeocdBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderNeogeocdBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderPcengine: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderPcengineText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderPcengineTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'PC Engine / TurboGrafx-16'
+          end
+          object LabelRowRomFolderPcengineDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderPcengineEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderPcengineEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderPcengineBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderPcengineBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderSgx: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderSgxText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderSgxTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'SuperGrafx'
+          end
+          object LabelRowRomFolderSgxDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderSgxEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderSgxEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderSgxBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderSgxBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderPcenginecd: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 56.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderPcenginecdText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderPcenginecdTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'PC Engine CD'
+          end
+          object LabelRowRomFolderPcenginecdDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderPcenginecdEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderPcenginecdEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderPcenginecdBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderPcenginecdBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+    2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+    6E17B64000003441020000000000A040000034410200000092E8894000003441
+    0200000000007040E10B2B410200000000007040000020410200000000007040
+    49F414410200000092E8894000000C41020000000000A04000000C4102000000
+    6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+    030000000000C840000020410000000000003441000020410200000000003441
+    E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+    49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+    0200000000000C4149F414410200000049F4144100000C410200000000002041
+    00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+    0000344100002041030000000000344100002041000000000000704100003441
+    02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+    00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+    0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+    0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+    00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+    end
     object PanelGroupGamelibrary: TPanel
       Align = Top
       Padding.Left = 16.000000000000000000
@@ -1457,98 +4094,6 @@
         TextSettings.Font.StyleExt = {00070000000000000004000000}
         TextSettings.WordWrap = False
         Text = 'Game library'
-      end
-      object PanelRowROMfolder: TPanel
-        Align = Top
-        Padding.Left = 16.000000000000000000
-        Padding.Top = 12.000000000000000000
-        Padding.Right = 16.000000000000000000
-        Padding.Bottom = 12.000000000000000000
-        Margins.Bottom = 6.000000000000000000
-        Position.X = 16.000000000000000000
-        Position.Y = 56.000000000000000000
-        Size.Width = 868.000000000000000000
-        Size.Height = 72.000000000000000000
-        Size.PlatformDefault = False
-        StyleLookup = 'retromul_row'
-        object LayoutRowROMfolderText: TLayout
-          Align = Client
-          Size.Width = 600.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object LabelRowROMfolderTitle: TLabel
-            Align = Top
-            StyledSettings = [Family, Style, FontColor]
-            Size.Width = 600.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 15.000000000000000000
-            TextSettings.WordWrap = False
-            Text = 'ROM folder'
-          end
-          object LabelRowROMfolderDetail: TLabel
-            Align = Client
-            StyledSettings = [Family, Style, FontColor]
-            Opacity = 0.720000028610229500
-            Size.Width = 600.000000000000000000
-            Size.Height = 24.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 14.000000000000000000
-            Text = 
-              'Subfolders: nes, snes, gb, gbc, gba, megadrive, neogeo, neogeocd' +
-              '.'
-          end
-        end
-        object LayoutRowROMfolderEditorContainer: TLayout
-          Align = Right
-          Margins.Left = 16.000000000000000000
-          Position.X = 632.000000000000000000
-          Position.Y = 12.000000000000000000
-          Size.Width = 220.000000000000000000
-          Size.Height = 48.000000000000000000
-          Size.PlatformDefault = False
-          object EditRowROMfolderEditor: TEdit
-            Touch.InteractiveGestures = [LongTap, DoubleTap]
-            Align = Client
-            Margins.Top = 8.000000000000000000
-            Margins.Bottom = 8.000000000000000000
-            Size.Width = 220.000000000000000000
-            Size.Height = 32.000000000000000000
-            Size.PlatformDefault = False
-            object EditButtonRowROMfolderBrowse: TEditButton
-              Touch.InteractiveGestures = [LongTap]
-              CanFocus = False
-              Cursor = crArrow
-              Hint = 'Choose folder'
-              Size.Width = 32.000000000000000000
-              Size.Height = 50.000000000000000000
-              Size.PlatformDefault = False
-              TabOrder = 0
-              object PathRowROMfolderBrowseIcon: TPath
-                Align = Center
-                Data.Path = {
-                  18000000000000000000804000002041020000006666D6400000204102000000
-                  6666D64000006041020000000000804000006041020000006666A63F00006041
-                  020000006666A63F000020410200000000008040000020410300000000008040
-                  000020410000000000004041000020410200000033336B410000204102000000
-                  33336B410000604102000000000040410000604102000000CDCC144100006041
-                  02000000CDCC1441000020410200000000004041000020410300000000004041
-                  00002041000000000000A04100002041020000009A99B5410000204102000000
-                  9A99B54100006041020000000000A041000060410200000066668A4100006041
-                  0200000066668A4100002041020000000000A04100002041030000000000A041
-                  00002041}
-                Fill.Kind = None
-                HitTest = False
-                Size.Width = 16.000000000000000000
-                Size.Height = 16.000000000000000000
-                Size.PlatformDefault = False
-                Stroke.Color = xFFE8ECF1
-                Stroke.Thickness = 1.600000023841858000
-                WrapMode = Fit
-              end
-            end
-          end
-        end
       end
       object PanelRowLibraryview: TPanel
         Align = Top
@@ -1843,9 +4388,8 @@
             Size.Height = 24.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 14.000000000000000000
-            Text = 
-              'Loaded from gamelist.xml next to the ROMs. Favorites are stored ' +
-              'separately and do not change the XML.'
+            Text =
+              'Files with known ROM extensions from all platforms are listed. Optional gamelist.xml adds descriptions and artwork.'
           end
         end
       end

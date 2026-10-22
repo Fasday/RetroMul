@@ -192,8 +192,8 @@ begin
           Break;
         end;
 
-        Candidate := TPath.Combine(FStorage.RomFolder, TPath.Combine('pcecd', N));
-        if not FStorage.RomFolder.StartsWith('content://', True) and FStorage.Exists(Candidate) then
+        Candidate := TPath.Combine(FStorage.RomFolder('pcecd'), N);
+        if not FStorage.RomFolder('pcecd').StartsWith('content://', True) and FStorage.Exists(Candidate) then
         begin
           BIOS := Candidate;
           Break;
