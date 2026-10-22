@@ -5,6 +5,8 @@ interface
 uses
   System.SysUtils, System.Classes, Core.Snapshots, PS1.Types, PS1.Scheduler;
 
+{$SCOPEDENUMS ON}
+
 const
   PS1MemoryCardSize = $20000;
 
@@ -37,15 +39,49 @@ type
     procedure SerializeState(State: TStateArchive); virtual; abstract;
   end;
 
-  TPS1DigitalPad = class(TPS1SIODevice)
+  TPS1PadKind = (Digital, DualShock);
+
+  TPS1PadInput = record
+    Buttons: Word; // PS1Pad* bits, set while pressed
+    // Right X, right Y, left X, left Y: 00h left/up, 80h centred, FFh right/down.
+    Axes: array[0..3] of Byte;
+    AnalogButton: Boolean; // DualShock ANALOG button, acts on press
+    class function Centred(Buttons: Word = 0): TPS1PadInput; static;
+  end;
+
+  // Sony digital pad (SCPH-1080) or DualShock (SCPH-1200). The DualShock
+  // starts in digital mode; the ANALOG button or config command 44h switches
+  // it. Config mode (43h) adds 44h..4Dh; 4Dh maps the rumble motors to the
+  // bytes the host sends with command 42h.
+  TPS1Controller = class(TPS1SIODevice)
   private
-    FStep: Integer;
+    FKind: TPS1PadKind;
+    FInput: TPS1PadInput;
+    FStep, FLast: Integer;
+    FCommand, FParam: Byte;
+    FAnalog, FConfig, FLocked, FConfigured, FTransferConfig: Boolean;
+    FRumble: array[0..5] of Byte;
+    FSmall: Boolean;
+    FLarge: Byte;
+    procedure SetKind(Value: TPS1PadKind);
+    procedure ResetState;
+    function InputByte(Step: Integer; Analog: Boolean): Byte;
+    procedure Motors(Step: Integer; Value: Byte);
   public
-    Buttons: Word;
+    constructor Create;
+    procedure SetInput(const Value: TPS1PadInput);
     function Address(Value: Byte): Boolean; override;
     function Exchange(Value: Byte; out Ack: Boolean; var Delay: Integer): Byte; override;
     procedure Deselect; override;
     procedure SerializeState(State: TStateArchive); override;
+    // Changing the kind resets the controller (as reconnecting it would).
+    property Kind: TPS1PadKind read FKind write SetKind;
+    property Input: TPS1PadInput read FInput;
+    // Analog mode (LED on).
+    property Analog: Boolean read FAnalog;
+    // Rumble motors: right/small on or off, left/large speed 00h..FFh.
+    property SmallMotor: Boolean read FSmall;
+    property LargeMotor: Byte read FLarge;
   end;
 
   // Sony 128 KiB memory card protocol (read, write, get ID, FLAG byte).
@@ -119,6 +155,9 @@ type
 
 implementation
 
+uses
+  System.Math;
+
 const
   // /ACK follows about 1500 cycles after the start of a byte at the standard
   // rate and stays low for a short pulse.
@@ -127,46 +166,254 @@ const
   // Original Sony cards answer late after the seventh byte of a read.
   CardReadDelay = 31000;
 
-{ TPS1DigitalPad }
+{ TPS1PadInput }
 
-function TPS1DigitalPad.Address(Value: Byte): Boolean;
+class function TPS1PadInput.Centred(Buttons: Word): TPS1PadInput;
+begin
+  Result.Buttons := Buttons;
+  FillChar(Result.Axes, SizeOf(Result.Axes), $80);
+  Result.AnalogButton := False;
+end;
+
+{ TPS1Controller }
+
+constructor TPS1Controller.Create;
+begin
+  inherited Create;
+  FInput := TPS1PadInput.Centred;
+  ResetState;
+end;
+
+// Power-on state: digital mode, unlocked, rumble unmapped and stopped.
+procedure TPS1Controller.ResetState;
+begin
+  FStep := 0;
+  FLast := 0;
+  FCommand := 0;
+  FParam := 0;
+  FAnalog := False;
+  FConfig := False;
+  FLocked := False;
+  FConfigured := False;
+  FTransferConfig := False;
+  FillChar(FRumble, SizeOf(FRumble), $FF);
+  FSmall := False;
+  FLarge := 0;
+end;
+
+procedure TPS1Controller.SetKind(Value: TPS1PadKind);
+begin
+  if FKind = Value then
+    Exit;
+  FKind := Value;
+  ResetState;
+end;
+
+// The ANALOG button toggles the mode unless a game locked it (44h); like the
+// watchdog reset it stops the motors and unmaps them.
+procedure TPS1Controller.SetInput(const Value: TPS1PadInput);
+begin
+  if (FKind = TPS1PadKind.DualShock) and Value.AnalogButton and not FInput.AnalogButton and not FLocked then
+  begin
+    FAnalog := not FAnalog;
+    FillChar(FRumble, SizeOf(FRumble), $FF);
+    FSmall := False;
+    FLarge := 0;
+  end;
+  FInput := Value;
+end;
+
+function TPS1Controller.Address(Value: Byte): Boolean;
 begin
   Result := Value = $01;
   FStep := 0;
 end;
 
-function TPS1DigitalPad.Exchange(Value: Byte; out Ack: Boolean; var Delay: Integer): Byte;
+// Step 2/3: switches (L3/R3 only with analog inputs), 4..7: the sticks.
+function TPS1Controller.InputByte(Step: Integer; Analog: Boolean): Byte;
 begin
-  Ack := True;
-  Result := $FF;
-  case FStep of
-    0:
-      if Value = $42 then
-        Result := $41
-      else
-        Ack := False;
-    1: Result := $5A;
+  var Buttons := FInput.Buttons;
+  if not Analog then
+    Buttons := Buttons and not (PS1PadL3 or PS1PadR3);
+  case Step of
     2: Result := Byte(not Buttons);
-    3:
-      begin
-        Result := Byte(not Buttons shr 8);
-        Ack := False;
-      end;
+    3: Result := Byte(not Buttons shr 8);
   else
-    Ack := False;
+    Result := FInput.Axes[Step - 4];
   end;
-  Inc(FStep);
 end;
 
-procedure TPS1DigitalPad.Deselect;
+// Command 42h: before config commands were used, the right motor follows the
+// old one-motor protocol (xx 40h..7Fh with yy bit 0); afterwards 4Dh maps it.
+procedure TPS1Controller.Motors(Step: Integer; Value: Byte);
+begin
+  if not FConfigured then
+  begin
+    if Step = 2 then
+      FParam := Value
+    else if Step = 3 then
+      FSmall := ((FParam and $C0) = $40) and Odd(Value);
+    Exit;
+  end;
+  case FRumble[Step - 2] of
+    $00: FSmall := Odd(Value);
+    $01: FLarge := Value;
+  end;
+end;
+
+function TPS1Controller.Exchange(Value: Byte; out Ack: Boolean; var Delay: Integer): Byte;
+begin
+  var Step := FStep;
+  Inc(FStep);
+  Ack := True;
+  Result := $FF;
+  if FKind = TPS1PadKind.Digital then
+  begin
+    case Step of
+      0:
+        if Value = $42 then
+          Result := $41
+        else
+          Ack := False;
+      1: Result := $5A;
+      2: Result := InputByte(2, False);
+      3:
+        begin
+          Result := InputByte(3, False);
+          Ack := False;
+        end;
+    else
+      Ack := False;
+    end;
+    Exit;
+  end;
+
+  if Step = 0 then
+  begin
+    // The ID leaves while the command arrives, so it reflects the mode.
+    FCommand := Value;
+    FTransferConfig := FConfig;
+    if FConfig then
+    begin
+      Result := $F3;
+      Ack := Value in [$40..$4F];
+      FLast := 7;
+    end
+    else
+    begin
+      Ack := Value in [$42, $43];
+      if FAnalog then
+      begin
+        Result := $73;
+        FLast := 7;
+      end
+      else
+      begin
+        Result := $41;
+        FLast := 3;
+      end;
+    end;
+    Exit;
+  end;
+
+  if Step > FLast then
+  begin
+    Ack := False;
+    Exit;
+  end;
+  Ack := Step < FLast;
+  if Step = 1 then
+    Exit($5A);
+
+  if not FTransferConfig then
+  begin
+    Result := InputByte(Step, FAnalog);
+    if FCommand = $42 then
+      Motors(Step, Value)
+    else if (Step = 2) and Odd(Value) then
+    begin
+      FConfig := True;
+      FConfigured := True;
+    end;
+    Exit;
+  end;
+
+  Result := $00;
+  case FCommand of
+    $42:
+      begin
+        Result := InputByte(Step, True);
+        Motors(Step, Value);
+      end;
+    $43:
+      if Step = 2 then
+        FConfig := Odd(Value);
+    $44:
+      case Step of
+        2:
+          case Value of
+            0: FAnalog := False;
+            1: FAnalog := True;
+          end;
+        3: FLocked := (Value and 3) = 3;
+      end;
+    $45:
+      case Step of
+        2: Result := $01;
+        3: Result := $02;
+        4: Result := Ord(FAnalog);
+        5: Result := $02;
+        6: Result := $01;
+      end;
+    $46:
+      if Step = 2 then
+        FParam := Value
+      else if (Step >= 4) and (FParam <= 1) then
+        Result := Byte(IfThen(FParam = 0, $0A000201, $14010101) shr ((Step - 4) * 8));
+    $47:
+      case Step of
+        4: Result := $02;
+        6: Result := $01;
+      end;
+    $48:
+      if Step = 2 then
+        FParam := Value
+      else if (Step = 6) and (FParam <= 1) then
+        Result := $01;
+    $4C:
+      if Step = 2 then
+        FParam := Value
+      else if (Step = 5) and (FParam <= 1) then
+        Result := IfThen(FParam = 0, $04, $07);
+    $4D:
+      begin
+        Result := FRumble[Step - 2];
+        FRumble[Step - 2] := Value;
+      end;
+  end;
+end;
+
+procedure TPS1Controller.Deselect;
 begin
   FStep := 0;
 end;
 
-procedure TPS1DigitalPad.SerializeState(State: TStateArchive);
+procedure TPS1Controller.SerializeState(State: TStateArchive);
 begin
+  State.Field(FKind, SizeOf(FKind));
+  State.Field(FInput, SizeOf(FInput));
   State.Field(FStep, SizeOf(FStep));
-  State.Field(Buttons, SizeOf(Buttons));
+  State.Field(FLast, SizeOf(FLast));
+  State.Field(FCommand, SizeOf(FCommand));
+  State.Field(FParam, SizeOf(FParam));
+  State.Field(FAnalog, SizeOf(FAnalog));
+  State.Field(FConfig, SizeOf(FConfig));
+  State.Field(FLocked, SizeOf(FLocked));
+  State.Field(FConfigured, SizeOf(FConfigured));
+  State.Field(FTransferConfig, SizeOf(FTransferConfig));
+  State.Field(FRumble, SizeOf(FRumble));
+  State.Field(FSmall, SizeOf(FSmall));
+  State.Field(FLarge, SizeOf(FLarge));
 end;
 
 { TPS1MemoryCard }

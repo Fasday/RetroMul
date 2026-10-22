@@ -63,6 +63,7 @@ uses
   RM.Gamepad in 'devices\RM.Gamepad.pas',
   RM.Gamepad.Saturn.Analog in 'devices\gamepads\RM.Gamepad.Saturn.Analog.pas',
   RM.Gamepad.PS1.Digital in 'devices\gamepads\RM.Gamepad.PS1.Digital.pas',
+  RM.Gamepad.PS1.Analog in 'devices\gamepads\RM.Gamepad.PS1.Analog.pas',
   RM.Gamepad.Viewport in 'devices\gamepads\RM.Gamepad.Viewport.pas',
   RM.Gamepad.Base in 'devices\gamepads\RM.Gamepad.Base.pas',
   RM.Gamepad.Factory in 'devices\gamepads\RM.Gamepad.Factory.pas',

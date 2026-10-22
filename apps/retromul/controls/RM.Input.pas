@@ -5,7 +5,7 @@ interface
 uses
   Core.RomFormat, System.SysUtils, System.Classes, System.IniFiles,
   System.UITypes, FMXInput, Core.Emulation, Core.InputConfig, NES.Controller,
-  NES.FamicomKeyboardDevice, NES.MiraclePianoDevice;
+  NES.FamicomKeyboardDevice, NES.MiraclePianoDevice, Core.Adapter.PS1;
 
 const
   PowerPadAction = 128;
@@ -15,7 +15,7 @@ const
   PianoAction = 512;
   ExtraPadAction = 1024; // Preserve the existing NES peripheral action IDs.
   N64LAction = 4096;
-  PS1L2Action = 4112; // + port: PlayStation L2, outside the logical pad.
+  PS1ExtraAction = 4112; // PlayStation inputs outside the logical pad, see PS1Action.
 
 type
   THostKeys = array[0..255] of Boolean;
@@ -25,6 +25,13 @@ function HidToHostKey(Code: Integer): Word;
 function HostKeyToHid(Code: Word): Integer;
 
 function PadAction(Port: Integer; Button: TEmulatorButton): Integer;
+
+function PS1Action(Port: Integer; Extra: TPS1Extra): Integer;
+
+function PS1ExtraName(Extra: TPS1Extra): string;
+
+// The extras of a DualShock-capable port: L2/L3/R3, ANALOG and both sticks.
+function ReadPS1Pad(Input: TInputManager; Port: Integer): TPS1Pad;
 
 function CoreButtons(const SystemId, Device: string): TEmulatorButtons;
 
@@ -56,8 +63,8 @@ implementation
 uses
   Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.Saturn, Core.Adapter.N64,
   Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, Core.Adapter.CPS, Core.Adapter.PS1, GB.Joypad, NES.Input,
-  NES.Types, MD.Console, SNES.Console, System.Math, FMX.Types;
+  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, Core.Adapter.CPS, GB.Joypad, NES.Input,
+  NES.Types, MD.Console, SNES.Console, System.Math, FMX.Types, PS1.SIO;
 
 function HidToHostKey(Code: Integer): Word;
 const
@@ -144,6 +151,67 @@ begin
     Result := Port * 32 + Ord(Button)
   else
     Result := ExtraPadAction + (Port - 4) * 32 + Ord(Button);
+end;
+
+function PS1Action(Port: Integer; Extra: TPS1Extra): Integer;
+begin
+  Result := PS1ExtraAction + Port * 16 + Ord(Extra);
+end;
+
+function PS1ExtraName(Extra: TPS1Extra): string;
+const
+  Names: array[TPS1Extra] of string = ('L2', 'L3', 'R3', 'Analog', 'LS ↑', 'LS ↓', 'LS ←', 'LS →', 'RS ↑', 'RS ↓',
+    'RS ←', 'RS →');
+begin
+  Result := Names[Extra];
+end;
+
+// 0..1: the deflection of an axis bound to the action, else 1 while pressed.
+function ActionAmount(Input: TInputManager; const Bindings: TArray<TInputBinding>;
+  const Values: TArray<TInputValue>; Action: Integer): Single;
+begin
+  Result := 0;
+  for var B in Bindings do
+    if (B.Action = Action) and (B.Kind = TInputElementKind.Axis) then
+      for var V in Values do
+        if (V.DeviceId = B.DeviceId) and (V.Kind = B.Kind) and (V.Code = B.Code) then
+        begin
+          var Travel := 1.0 - B.AxisOrigin * B.Direction;
+          if Travel > 0 then
+            Result := Max(Result, EnsureRange((V.Value - B.AxisOrigin) * B.Direction / Travel, 0.0, 1.0));
+        end;
+  if (Result = 0) and Input.IsPressed(Action) then
+    Result := 1;
+end;
+
+function ReadPS1Pad(Input: TInputManager; Port: Integer): TPS1Pad;
+
+  function Axis(Negative, Positive: TPS1Extra; const Bindings: TArray<TInputBinding>;
+    const Values: TArray<TInputValue>): SmallInt;
+  begin
+    var Amount := ActionAmount(Input, Bindings, Values, PS1Action(Port, Positive)) -
+      ActionAmount(Input, Bindings, Values, PS1Action(Port, Negative));
+    Result := EnsureRange(Round(Amount * 32767), -32768, 32767);
+  end;
+
+begin
+  Result := Default(TPS1Pad);
+  if Input = nil then
+    Exit;
+
+  if Input.IsPressed(PS1Action(Port, TPS1Extra.L2)) then
+    Result.Buttons := Result.Buttons or PS1PadL2;
+  if Input.IsPressed(PS1Action(Port, TPS1Extra.L3)) then
+    Result.Buttons := Result.Buttons or PS1PadL3;
+  if Input.IsPressed(PS1Action(Port, TPS1Extra.R3)) then
+    Result.Buttons := Result.Buttons or PS1PadR3;
+  Result.AnalogButton := Input.IsPressed(PS1Action(Port, TPS1Extra.Analog));
+  var Bindings := Input.Bindings;
+  var Values := Input.Values;
+  Result.LeftX := Axis(TPS1Extra.LeftLeft, TPS1Extra.LeftRight, Bindings, Values);
+  Result.LeftY := Axis(TPS1Extra.LeftUp, TPS1Extra.LeftDown, Bindings, Values);
+  Result.RightX := Axis(TPS1Extra.RightLeft, TPS1Extra.RightRight, Bindings, Values);
+  Result.RightY := Axis(TPS1Extra.RightUp, TPS1Extra.RightDown, Bindings, Values);
 end;
 
 function CoreButtons(const SystemId, Device: string): TEmulatorButtons;
@@ -621,7 +689,9 @@ begin
       var Section := 'Keys';
       if Port > 0 then
         Section := Section + IntToStr(Port + 1);
-      AddKey(PS1L2Action + Port, ReadEmulatorKey(Ini, Section, 'L2', C.L2Key(Port)));
+      for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+        AddKey(PS1Action(Port, Extra), ReadEmulatorKey(Ini, Section, TPS1Config.ExtraKeyName(Extra),
+          C.ExtraKey(Port, Extra)));
     end;
   end;
   if (SystemId = ROM_SYSTEM_NES) or (SystemId = ROM_SYSTEM_N64) then

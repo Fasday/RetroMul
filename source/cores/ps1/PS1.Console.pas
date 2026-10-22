@@ -22,7 +22,7 @@ type
     FCDROM: TPS1CDROM;
     FSPU: TPS1SPU;
     FMDEC: TPS1MDEC;
-    FPads: array[0..1] of TPS1DigitalPad;
+    FPads: array[0..1] of TPS1Controller;
     FCards: array[0..1] of TPS1MemoryCard;
     FPadConnected: array[0..1] of Boolean;
     FIStat, FIMask: Cardinal;
@@ -58,7 +58,9 @@ type
     procedure RunUntil(Target: Int64; Frame: Boolean = False);
     // Runs to the start of the next vertical blank and captures the picture.
     procedure RunFrame;
-    procedure SetPad(Port: Integer; Buttons: Word; Connected: Boolean = True);
+    procedure SetPad(Port: Integer; Buttons: Word; Connected: Boolean = True); overload;
+    procedure SetPad(Port: Integer; const Input: TPS1PadInput; Kind: TPS1PadKind; Connected: Boolean); overload;
+    function Pad(Port: Integer): TPS1Controller;
     // The console owns inserted cards; nil removes the card.
     procedure InsertCard(Port: Integer; Card: TPS1MemoryCard);
     // The disc stays owned by the caller; nil leaves the drive empty.
@@ -137,7 +139,7 @@ begin
   FGPU.OnReady := FDMA.Kick;
   for var Port := 0 to 1 do
   begin
-    FPads[Port] := TPS1DigitalPad.Create;
+    FPads[Port] := TPS1Controller.Create;
     FPadConnected[Port] := True;
   end;
   ConnectPorts;
@@ -376,12 +378,23 @@ end;
 
 procedure TPS1Console.SetPad(Port: Integer; Buttons: Word; Connected: Boolean);
 begin
-  FPads[Port].Buttons := Buttons;
+  SetPad(Port, TPS1PadInput.Centred(Buttons), TPS1PadKind.Digital, Connected);
+end;
+
+procedure TPS1Console.SetPad(Port: Integer; const Input: TPS1PadInput; Kind: TPS1PadKind; Connected: Boolean);
+begin
+  FPads[Port].Kind := Kind;
+  FPads[Port].SetInput(Input);
   if FPadConnected[Port] <> Connected then
   begin
     FPadConnected[Port] := Connected;
     ConnectPorts;
   end;
+end;
+
+function TPS1Console.Pad(Port: Integer): TPS1Controller;
+begin
+  Result := FPads[Port];
 end;
 
 procedure TPS1Console.InsertCard(Port: Integer; Card: TPS1MemoryCard);

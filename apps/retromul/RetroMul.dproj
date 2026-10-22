@@ -491,6 +491,7 @@
         <DCCReference Include="devices\RM.Gamepad.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Saturn.Analog.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.PS1.Digital.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.PS1.Analog.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Viewport.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Base.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Factory.pas"/>

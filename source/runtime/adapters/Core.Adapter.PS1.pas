@@ -4,36 +4,49 @@ interface
 
 uses
   Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs, Core.Storage,
-  Core.Emulation, Core.Snapshots, Core.CD.Disc, PS1.Console, Core.PS1.Playback;
+  Core.Emulation, Core.Snapshots, Core.CD.Disc, PS1.Console, PS1.SIO, Core.PS1.Playback;
+
+{$SCOPEDENUMS ON}
 
 type
   TPS1KeyMap = array[0..1, TEmulatorButton] of UInt32;
 
+  // Controller inputs beyond the logical pad; frontends number their actions
+  // in this order.
+  TPS1Extra = (L2, L3, R3, Analog, LeftUp, LeftDown, LeftLeft, LeftRight, RightUp, RightDown, RightLeft,
+    RightRight);
+
+  TPS1ExtraKeyMap = array[0..1, TPS1Extra] of UInt32;
+
   TPS1Config = class(TEmulatorConfigBase)
   private
     FKeys: TPS1KeyMap;
-    FL2Keys: array[0..1] of UInt32;
+    FExtraKeys: TPS1ExtraKeyMap;
     FBIOSFile, FVideo: string;
+    FRumble: Boolean;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
   public
     constructor Create(const FileName: string; const Storage: IStorage = nil);
-    function L2Key(Port: Integer): UInt32;
+    class function ExtraKeyName(Extra: TPS1Extra): string; static;
+    function ExtraKey(Port: Integer; Extra: TPS1Extra): UInt32;
     // Empty: search beside the game, then the built-in BIOS. 'builtin:<name>'
     // or a path selects one explicitly.
     property BIOSFile: string read FBIOSFile write FBIOSFile;
     // 'auto' (from the BIOS or the disc), 'ntsc' or 'pal'.
     property Video: string read FVideo write FVideo;
+    property Rumble: Boolean read FRumble write FRumble;
     property Keys: TPS1KeyMap read FKeys;
   end;
 
-  // A complete controller from frontends that can supply it: buttons beyond
-  // the logical pad (PS1Pad* bits of PS1.SIO, added to it) and the sticks.
+  // Controller inputs a frontend supplies beyond the logical pad. The left
+  // stick adds to TEmulatorInput.Analog of the port.
   TPS1Pad = record
-    Buttons: Word;
-    Analog: Boolean;
-    LeftX, LeftY, RightX, RightY: Byte; // 0..255, 128 = centered.
+    Buttons: Word; // PS1Pad* bits (L2, L3, R3) added to the logical pad
+    AnalogButton: Boolean; // DualShock ANALOG button
+    // -32768..32767, 0 centred, Y growing downwards.
+    LeftX, LeftY, RightX, RightY: SmallInt;
   end;
 
   IPS1ControllerInput = interface
@@ -41,7 +54,7 @@ type
     procedure SetPS1Controller(Port: Integer; const Pad: TPS1Pad);
   end;
 
-  TPS1PadInputs = array[0..1] of TPS1Pad;
+  TPS1PadInputs = array[0..1] of TPS1PadInput;
 
   TPS1Worker = class(TThread)
   private
@@ -59,6 +72,7 @@ type
     FPause, FReset, FAudioEnabled, FAvailable: Boolean;
     FVolume: Single;
     FFrame: TEmulatorFrame;
+    FRumbleLevel: Byte;
     // Worker-thread state.
     FConsole: TPS1Console;
     FAudio: TPS1AudioPlayback;
@@ -67,6 +81,7 @@ type
     FDeadline: Double;
     FClockGuest: Int64;
     FConnected: array[0..1] of Boolean;
+    FKinds: array[0..1] of TPS1PadKind;
     procedure ReportError(const Text: string);
     procedure AudioFailure(E: Exception);
     procedure ClearAudio;
@@ -90,11 +105,13 @@ type
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
     function TakeError(Audio: Boolean): string;
     procedure Snapshot(const Name: string; Loading: Boolean);
+    // Port 1 motors after the last frame (large speed, or the small motor).
+    function RumbleLevel: Byte;
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   end;
 
   TPS1CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation,
-    IEmulationAudioDiagnostics, IPS1ControllerInput)
+    IEmulationAudioDiagnostics, IPS1ControllerInput, IEmulationRumbleOutput)
   private
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
@@ -103,9 +120,10 @@ type
     FDisc: TCDDisc;
     FBIOS, FExe, FIdentity: TBytes;
     FPAL: Boolean;
+    FPorts: TCoreInputPorts;
     FKeyboard, FGamepad: TEmulatorInput;
-    FKeyboardL2: array[0..1] of Boolean;
-    FControllers: TPS1PadInputs;
+    FKeyboardExtra: array[0..1, TPS1Extra] of Boolean;
+    FControllers: array[0..1] of TPS1Pad;
     FPaused: Boolean;
     FCardFiles: array[0..1] of string;
     FSnapshotDirectory, FError: string;
@@ -143,6 +161,8 @@ type
     function TakeAudioError: string;
     function GetConfig: IEmulatorConfig;
     function IsPaused: Boolean;
+    function GetHasRumble: Boolean;
+    function GetRumbleLevel: Byte;
   end;
 
 implementation
@@ -150,7 +170,7 @@ implementation
 uses
   {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF}
   System.Math, System.Diagnostics, System.UITypes, System.IOUtils, Core.RomFormat, Core.SavePaths,
-  PS1.Types, PS1.SIO, PS1.Firmware;
+  PS1.Types, PS1.Firmware;
 
 const
   KeyNames: array[TEmulatorButton] of string =
@@ -163,6 +183,9 @@ const
     PS1PadCircle, PS1PadSelect, PS1PadStart, PS1PadL1, PS1PadSquare, PS1PadTriangle, PS1PadR1, PS1PadR2);
   BIOSNames: array[0..9] of string = ('ps1_bios.bin', 'psx_bios.bin', 'scph1001.bin', 'scph5501.bin', 'scph7001.bin',
     'scph101.bin', 'scph1002.bin', 'scph5502.bin', 'scph1000.bin', 'scph5500.bin');
+  ExtraKeyNames: array[TPS1Extra] of string = ('L2', 'L3', 'R3', 'Analog', 'LeftStickUp', 'LeftStickDown',
+    'LeftStickLeft', 'LeftStickRight', 'RightStickUp', 'RightStickDown', 'RightStickLeft', 'RightStickRight');
+  DefaultExtraKeys: array[TPS1Extra] of UInt32 = (vkW, 0, 0, vkA, vkT, vkG, vkF, vkH, vkI, vkK, vkJ, vkL);
 
 function PadBits(const Buttons: TEmulatorButtons): Word;
 begin
@@ -172,20 +195,35 @@ begin
       Result := Result or ButtonBits[B];
 end;
 
+// -32768..32767 (sums of several sources are clamped) to the pad's 00h..FFh.
+function StickByte(Value: Integer): Byte;
+begin
+  Result := EnsureRange(128 + EnsureRange(Value, -32768, 32767) div 256, 0, 255);
+end;
+
 { TPS1Config }
 
 constructor TPS1Config.Create(const FileName: string; const Storage: IStorage);
 begin
   inherited Create(FileName, Storage);
   FKeys := TPS1KeyMap(DefaultKeys);
-  FL2Keys[0] := vkW;
-  FL2Keys[1] := 0;
+  for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+  begin
+    FExtraKeys[0, Extra] := DefaultExtraKeys[Extra];
+    FExtraKeys[1, Extra] := 0;
+  end;
   FVideo := 'auto';
+  FRumble := True;
 end;
 
-function TPS1Config.L2Key(Port: Integer): UInt32;
+class function TPS1Config.ExtraKeyName(Extra: TPS1Extra): string;
 begin
-  Result := FL2Keys[Port];
+  Result := ExtraKeyNames[Extra];
+end;
+
+function TPS1Config.ExtraKey(Port: Integer; Extra: TPS1Extra): UInt32;
+begin
+  Result := FExtraKeys[Port, Extra];
 end;
 
 procedure TPS1Config.LoadCoreSettings(Ini: TCustomIniFile);
@@ -194,6 +232,7 @@ begin
   FVideo := Ini.ReadString('System', 'Video', 'auto').ToLower;
   if (FVideo <> 'ntsc') and (FVideo <> 'pal') then
     FVideo := 'auto';
+  FRumble := Ini.ReadBool('Peripherals', 'Rumble', True);
   for var P := 0 to 1 do
   begin
     var Section := 'Keys';
@@ -201,7 +240,8 @@ begin
       Section := Section + IntToStr(P + 1);
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
       FKeys[P, B] := ReadEmulatorKey(Ini, Section, KeyNames[B], FKeys[P, B]);
-    FL2Keys[P] := ReadEmulatorKey(Ini, Section, 'L2', FL2Keys[P]);
+    for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+      FExtraKeys[P, Extra] := ReadEmulatorKey(Ini, Section, ExtraKeyNames[Extra], FExtraKeys[P, Extra]);
   end;
 end;
 
@@ -209,6 +249,7 @@ procedure TPS1Config.SaveCoreSettings(Ini: TCustomIniFile);
 begin
   Ini.WriteString('Hardware', 'BIOS', FBIOSFile);
   Ini.WriteString('System', 'Video', FVideo);
+  Ini.WriteBool('Peripherals', 'Rumble', FRumble);
   for var P := 0 to 1 do
   begin
     var Section := 'Keys';
@@ -216,7 +257,8 @@ begin
       Section := Section + IntToStr(P + 1);
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
       Ini.WriteInteger(Section, KeyNames[B], FKeys[P, B]);
-    Ini.WriteInteger(Section, 'L2', FL2Keys[P]);
+    for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+      Ini.WriteInteger(Section, ExtraKeyNames[Extra], FExtraKeys[P, Extra]);
   end;
 end;
 
@@ -341,6 +383,16 @@ procedure TPS1Worker.Snapshot(const Name: string; Loading: Boolean);
 begin
   FWake.SetEvent;
   FSnapshots.Execute(Self, Name, Loading);
+end;
+
+function TPS1Worker.RumbleLevel: Byte;
+begin
+  FLock.Acquire;
+  try
+    Result := FRumbleLevel;
+  finally
+    FLock.Release;
+  end;
 end;
 
 // The picture is resampled to its shape on a 4:3 screen: the width follows
@@ -472,7 +524,13 @@ end;
 procedure TPS1Worker.ApplyPorts(const Ports: TCoreInputPorts);
 begin
   for var Port := 0 to 1 do
+  begin
     FConnected[Port] := Ports.Devices[Port] <> 'none';
+    if Ports.Devices[Port] = 'pad-analog' then
+      FKinds[Port] := TPS1PadKind.DualShock
+    else
+      FKinds[Port] := TPS1PadKind.Digital;
+  end;
 end;
 
 procedure TPS1Worker.TransferSnapshot(const Name: string; Loading: Boolean);
@@ -604,8 +662,18 @@ begin
         end;
 
         for var Port := 0 to 1 do
-          FConsole.SetPad(Port, Inputs[Port].Buttons, FConnected[Port]);
+          FConsole.SetPad(Port, Inputs[Port], FKinds[Port], FConnected[Port]);
         FConsole.RunFrame;
+        var Pad := FConsole.Pad(0);
+        var Level := Pad.LargeMotor;
+        if Pad.SmallMotor then
+          Level := Max(Level, 128);
+        FLock.Acquire;
+        try
+          FRumbleLevel := Level;
+        finally
+          FLock.Release;
+        end;
         if Terminated then
           Break;
 
@@ -792,12 +860,44 @@ begin
     Exit;
 
   var Input := GetInputState;
-  var Inputs := FControllers;
-  Inputs[0].Buttons := Inputs[0].Buttons or PadBits(Input.Buttons);
-  Inputs[1].Buttons := Inputs[1].Buttons or PadBits(Input.Buttons2);
+  var Inputs: TPS1PadInputs;
   for var Port := 0 to 1 do
-    if FKeyboardL2[Port] then
-      Inputs[Port].Buttons := Inputs[Port].Buttons or PS1PadL2;
+  begin
+    var Pad := FControllers[Port];
+    var Keys := FKeyboardExtra[Port];
+    var LeftX := Integer(Pad.LeftX);
+    var LeftY := Integer(Pad.LeftY);
+    var RightX := Integer(Pad.RightX);
+    var RightY := Integer(Pad.RightY);
+    if Input.Analog[Port].Valid then
+    begin
+      Inc(LeftX, Input.Analog[Port].X);
+      Inc(LeftY, Input.Analog[Port].Y);
+    end;
+    LeftX := LeftX + 32767 * (Ord(Keys[TPS1Extra.LeftRight]) - Ord(Keys[TPS1Extra.LeftLeft]));
+    LeftY := LeftY + 32767 * (Ord(Keys[TPS1Extra.LeftDown]) - Ord(Keys[TPS1Extra.LeftUp]));
+    RightX := RightX + 32767 * (Ord(Keys[TPS1Extra.RightRight]) - Ord(Keys[TPS1Extra.RightLeft]));
+    RightY := RightY + 32767 * (Ord(Keys[TPS1Extra.RightDown]) - Ord(Keys[TPS1Extra.RightUp]));
+
+    var Buttons := Pad.Buttons;
+    if Port = 0 then
+      Buttons := Buttons or PadBits(Input.Buttons)
+    else
+      Buttons := Buttons or PadBits(Input.Buttons2);
+    if Keys[TPS1Extra.L2] then
+      Buttons := Buttons or PS1PadL2;
+    if Keys[TPS1Extra.L3] then
+      Buttons := Buttons or PS1PadL3;
+    if Keys[TPS1Extra.R3] then
+      Buttons := Buttons or PS1PadR3;
+
+    Inputs[Port].Buttons := Buttons;
+    Inputs[Port].AnalogButton := Pad.AnalogButton or Keys[TPS1Extra.Analog];
+    Inputs[Port].Axes[0] := StickByte(RightX);
+    Inputs[Port].Axes[1] := StickByte(RightY);
+    Inputs[Port].Axes[2] := StickByte(LeftX);
+    Inputs[Port].Axes[3] := StickByte(LeftY);
+  end;
   FWorker.Configure(Inputs, FPaused, FConfig.AudioEnabled, FConfig.AudioVolume);
 end;
 
@@ -808,7 +908,8 @@ begin
 
   FWorker := TPS1Worker.Create(FBIOS, FExe, FIdentity, FPAL, FDisc, FStorage, FCardFiles[0], FCardFiles[1],
     FSnapshotDirectory);
-  FWorker.InputPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_PS1);
+  FPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_PS1);
+  FWorker.InputPorts := FPorts;
   Configure;
   FWorker.Start;
 end;
@@ -848,14 +949,14 @@ begin
   ClearInput;
   if FWorker <> nil then
     FWorker.InputPorts := Ports;
+  FPorts := Ports;
 end;
 
 procedure TPS1CoreAdapter.ClearInput;
 begin
   FKeyboard := Default(TEmulatorInput);
   FGamepad := Default(TEmulatorInput);
-  FKeyboardL2[0] := False;
-  FKeyboardL2[1] := False;
+  FillChar(FKeyboardExtra, SizeOf(FKeyboardExtra), 0);
   FControllers[0] := Default(TPS1Pad);
   FControllers[1] := Default(TPS1Pad);
   Configure;
@@ -881,8 +982,9 @@ begin
           Include(FKeyboard.Buttons2, Button)
         else
           Exclude(FKeyboard.Buttons2, Button);
-    if Code = FConfigObject.L2Key(Port) then
-      FKeyboardL2[Port] := Pressed;
+    for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+      if Code = FConfigObject.ExtraKey(Port, Extra) then
+        FKeyboardExtra[Port, Extra] := Pressed;
   end;
   Configure;
 end;
@@ -988,6 +1090,18 @@ end;
 function TPS1CoreAdapter.IsPaused: Boolean;
 begin
   Result := FPaused;
+end;
+
+function TPS1CoreAdapter.GetHasRumble: Boolean;
+begin
+  Result := FPorts.Devices[0] = 'pad-analog';
+end;
+
+function TPS1CoreAdapter.GetRumbleLevel: Byte;
+begin
+  Result := 0;
+  if GetHasRumble and FConfigObject.Rumble and not FPaused and (FWorker <> nil) then
+    Result := FWorker.RumbleLevel;
 end;
 
 end.

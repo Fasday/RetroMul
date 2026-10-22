@@ -48,7 +48,7 @@ uses
   System.SysUtils, System.Math, System.Generics.Collections,
   System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager, RM.LibraryView,
   RM.Settings, RM.Input, RM.Gamepad, Core.Emulation, RM.Icons, RM.Styles,
-  NES.PowerPad;
+  NES.PowerPad, Core.Adapter.PS1;
 
 {$R *.fmx}
 
@@ -223,10 +223,13 @@ begin
       Y := Y + 34;
     end;
     if FSystemId = ROM_SYSTEM_PS1 then
-    begin
-      AssignmentRow(LayoutAssignments, 'L2', Assignments(PS1L2Action + FPlayer), Y, PS1L2Action + FPlayer);
-      Y := Y + 34;
-    end;
+      for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+        if (Extra = TPS1Extra.L2) or (FPorts.Devices[FPlayer] = 'pad-analog') then
+        begin
+          var Action := PS1Action(FPlayer, Extra);
+          AssignmentRow(LayoutAssignments, PS1ExtraName(Extra), Assignments(Action), Y, Action);
+          Y := Y + 34;
+        end;
     if PowerPadActive then
       for var Button := 1 to 12 do
       begin

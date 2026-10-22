@@ -814,15 +814,21 @@ begin
       N64Input.SetN64Controller(Port, Pad);
     end;
 
-  // PlayStation L2 sits outside the logical pad.
+  // PlayStation L2/L3/R3, ANALOG and the right stick sit outside the logical
+  // pad; on-screen auxiliary button N is TPS1Extra(N).
   var PS1Input: IPS1ControllerInput;
   if Supports(FState.Session.Emulation, IPS1ControllerInput, PS1Input) then
     for var Port := 0 to 1 do
     begin
-      var Pad := Default(TPS1Pad);
-      if ((Port = 0) and ((FState.Input.Gamepad.AuxiliaryButtons and 1) <> 0)) or
-        ((FState.Input.Manager <> nil) and FState.Input.Manager.IsPressed(PS1L2Action + Port)) then
-        Pad.Buttons := PS1PadL2;
+      var Pad := ReadPS1Pad(FState.Input.Manager, Port);
+      if Port = 0 then
+      begin
+        var Auxiliary := FState.Input.Gamepad.AuxiliaryButtons;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.L2))) <> 0 then
+          Pad.Buttons := Pad.Buttons or PS1PadL2;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.Analog))) <> 0 then
+          Pad.AnalogButton := True;
+      end;
       PS1Input.SetPS1Controller(Port, Pad);
     end;
 
