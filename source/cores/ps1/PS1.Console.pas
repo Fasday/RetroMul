@@ -76,6 +76,7 @@ type
     property SPU: TPS1SPU read FSPU;
     property CDROM: TPS1CDROM read FCDROM;
     property DMA: TPS1DMA read FDMA;
+    property MDEC: TPS1MDEC read FMDEC;
     property Timers: TPS1Timers read FTimers;
     property PAL: Boolean read FPAL;
     property Pixels: TArray<TAlphaColor> read FPixels;
@@ -125,6 +126,7 @@ begin
   FDMA.Devices[2] := FGPU;
   FDMA.Devices[3] := FCDROM;
   FDMA.Devices[4] := FSPU;
+  FMDEC.OnReady := FDMA.Kick;
   FTimers.DotCount := FGPU.DotCount;
   FTimers.DotTime := FGPU.DotTime;
   FGPU.OnHBlank := HandleHBlank;
