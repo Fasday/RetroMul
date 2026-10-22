@@ -19,7 +19,7 @@ uses
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
-  Core.Adapter.CPS, CPS.RomSets;
+  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.PS1;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -39,9 +39,11 @@ begin
   if (Storage <> nil) and RomName.StartsWith('content://', True) then
     SourceName := Storage.Describe(RomName).Name;
 
+  // A raw single-track .bin is a disc, not a cartridge (CD sync at sector 0).
+  var RawDisc := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_BIN) and IsCDRawImage(Stream);
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CUE) or
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ISO) or
-    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) then
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) or RawDisc then
   begin
     // A location is only a hint. Confirm the native NEC boot string in the first
     // data track so generic .cue/.iso/.chd still select the correct CD family.
@@ -91,6 +93,12 @@ begin
       begin
         Stream.Position := 0;
         Exit(TMDCoreAdapter.Create(Stream, Storage, RomName, True));
+      end;
+      if not IsPCE and TPS1CoreAdapter.IsPS1Disc(Disc) then
+      begin
+        var OwnedDisc := Disc;
+        Disc := nil;
+        Exit(TPS1CoreAdapter.Create(Stream, DiscStorage, RomName, OwnedDisc));
       end;
       if IsPCE or SameText(Folder, 'pcecd') or SameText(Folder, 'pcenginecd') then
       begin
@@ -267,6 +275,8 @@ begin
         Result := TMDCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.Saturn:
         Result := TSaturnCoreAdapter.Create(Input, Storage, RomName);
+      TRomSystem.PS1:
+        Result := TPS1CoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.SNES:
         Result := TSnesCoreAdapter.Create(Input, Storage, RomName);
     end;

@@ -25,7 +25,7 @@ uses
   RM.Gamepad.SEGA.Mega32X.Pad3, RM.Gamepad.SEGA.Mega32X.Pad6,
   RM.Gamepad.PCE.Pad2, RM.Gamepad.PCE.Pad6, RM.Gamepad.SuperGrafx.Pad2,
   RM.Gamepad.SuperGrafx.Pad6, RM.Gamepad.PCECD.Pad2, RM.Gamepad.PCECD.Pad6,
-  RM.Gamepad.CPS.Arcade;
+  RM.Gamepad.CPS.Arcade, RM.Gamepad.PS1.Digital;
 
 function GamepadClass(System: TRomSystem; const Device: string): TPlatformGamepadClass;
 begin
@@ -47,6 +47,8 @@ begin
       Result := TGamepadSNESStandart;
     TRomSystem.N64:
       Result := TGamepadN64Standart;
+    TRomSystem.PS1:
+      Result := TGamepadPS1Digital;
     TRomSystem.Saturn:
       if Device = 'pad-analog' then
         Result := TGamepadSaturnAnalog

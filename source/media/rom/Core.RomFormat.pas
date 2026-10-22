@@ -26,6 +26,7 @@ const
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_SATURN = 'saturn';
+  ROM_SYSTEM_PS1 = 'ps1';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
   ROM_SYSTEM_NEOGEOAES = 'neogeoaes';
@@ -55,6 +56,7 @@ const
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_SATURN = 'SATURN';
+  ROM_CORE_ID_PS1 = 'PS1';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
   ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
 
@@ -96,6 +98,7 @@ const
   ROM_EXTENSION_CUE = '.cue';
   ROM_EXTENSION_ISO = '.iso';
   ROM_EXTENSION_CHD = '.chd';
+  ROM_EXTENSION_EXE = '.exe';
 
 const
   ROM_MAX_SIZE = 64 * 1024 * 1024;
@@ -378,6 +381,13 @@ begin
     Result.System := TRomSystem.NeoGeoPocket;
     if Data[$23] = $10 then
       Result.System := TRomSystem.NeoGeoPocketColor;
+    Exit;
+  end;
+
+  // PlayStation executables (PS-X EXE header).
+  if (Length(Data) >= $800) and Signature(0, 'PS-X EXE') then
+  begin
+    Result.System := TRomSystem.PS1;
     Exit;
   end;
 

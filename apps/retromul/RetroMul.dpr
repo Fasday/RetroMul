@@ -62,6 +62,7 @@ uses
   RM.Storage.Dialogs in 'controls\RM.Storage.Dialogs.pas',
   RM.Gamepad in 'devices\RM.Gamepad.pas',
   RM.Gamepad.Saturn.Analog in 'devices\gamepads\RM.Gamepad.Saturn.Analog.pas',
+  RM.Gamepad.PS1.Digital in 'devices\gamepads\RM.Gamepad.PS1.Digital.pas',
   RM.Gamepad.Viewport in 'devices\gamepads\RM.Gamepad.Viewport.pas',
   RM.Gamepad.Base in 'devices\gamepads\RM.Gamepad.Base.pas',
   RM.Gamepad.Factory in 'devices\gamepads\RM.Gamepad.Factory.pas',
@@ -235,6 +236,24 @@ uses
   Saturn.Audio in '..\..\source\cores\saturn\Saturn.Audio.pas',
   Saturn.Emulation in '..\..\source\cores\saturn\Saturn.Emulation.pas',
   RM.Settings.Saturn in 'settings\RM.Settings.Saturn.pas',
+  PS1.Types in '..\..\source\cores\ps1\PS1.Types.pas',
+  PS1.Scheduler in '..\..\source\cores\ps1\PS1.Scheduler.pas',
+  PS1.Bus in '..\..\source\cores\ps1\PS1.Bus.pas',
+  PS1.GTE in '..\..\source\cores\ps1\PS1.GTE.pas',
+  PS1.CPU in '..\..\source\cores\ps1\PS1.CPU.pas',
+  PS1.DMA in '..\..\source\cores\ps1\PS1.DMA.pas',
+  PS1.Timers in '..\..\source\cores\ps1\PS1.Timers.pas',
+  PS1.SIO in '..\..\source\cores\ps1\PS1.SIO.pas',
+  PS1.GPU.Raster in '..\..\source\cores\ps1\PS1.GPU.Raster.pas',
+  PS1.GPU in '..\..\source\cores\ps1\PS1.GPU.pas',
+  PS1.CDROM.Audio in '..\..\source\cores\ps1\PS1.CDROM.Audio.pas',
+  PS1.CDROM in '..\..\source\cores\ps1\PS1.CDROM.pas',
+  PS1.SPU in '..\..\source\cores\ps1\PS1.SPU.pas',
+  PS1.MDEC in '..\..\source\cores\ps1\PS1.MDEC.pas',
+  PS1.Exe in '..\..\source\cores\ps1\PS1.Exe.pas',
+  PS1.Firmware in '..\..\source\cores\ps1\PS1.Firmware.pas',
+  PS1.Console in '..\..\source\cores\ps1\PS1.Console.pas',
+  RM.Settings.PS1 in 'settings\RM.Settings.PS1.pas',
   MD.Firmware in '..\..\source\cores\md\MD.Firmware.pas',
   MD.Mars in '..\..\source\cores\md\MD.Mars.pas',
   MD.MegaCD in '..\..\source\cores\md\MD.MegaCD.pas',
@@ -417,7 +436,9 @@ uses
   Core.Adapter.PCE in '..\..\source\runtime\adapters\Core.Adapter.PCE.pas',
   Core.Adapter.Saturn in '..\..\source\runtime\adapters\Core.Adapter.Saturn.pas',
   Core.Adapter.SG1000 in '..\..\source\runtime\adapters\Core.Adapter.SG1000.pas',
-  Core.Adapter.SNES in '..\..\source\runtime\adapters\Core.Adapter.SNES.pas';
+  Core.Adapter.SNES in '..\..\source\runtime\adapters\Core.Adapter.SNES.pas',
+  Core.PS1.Playback in '..\..\source\runtime\adapters\Core.PS1.Playback.pas',
+  Core.Adapter.PS1 in '..\..\source\runtime\adapters\Core.Adapter.PS1.pas';
 
 {$R *.res}
 

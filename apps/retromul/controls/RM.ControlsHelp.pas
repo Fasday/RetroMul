@@ -222,6 +222,11 @@ begin
       AssignmentRow(LayoutAssignments, 'L', Assignments(N64LAction + FPlayer), Y, N64LAction + FPlayer);
       Y := Y + 34;
     end;
+    if FSystemId = ROM_SYSTEM_PS1 then
+    begin
+      AssignmentRow(LayoutAssignments, 'L2', Assignments(PS1L2Action + FPlayer), Y, PS1L2Action + FPlayer);
+      Y := Y + 34;
+    end;
     if PowerPadActive then
       for var Button := 1 to 12 do
       begin

@@ -50,7 +50,7 @@ implementation
 uses
   System.SysUtils, System.Types, System.IOUtils, System.Math, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.Dialogs, FMX.Platform, FMX.Edit, FMX.OpenDialog,
-  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console,
+  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console, Core.Adapter.PS1, PS1.SIO,
   Core.InputConfig, Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard,
   NES.Controller, RM.Gamepad, NES.SuborKeyboard, NES.FamicomKeyboard,
   NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
@@ -812,6 +812,18 @@ begin
         Pad.StickY := -Round(Result.Analog[Port].Y / 32767 * 80);
       end;
       N64Input.SetN64Controller(Port, Pad);
+    end;
+
+  // PlayStation L2 sits outside the logical pad.
+  var PS1Input: IPS1ControllerInput;
+  if Supports(FState.Session.Emulation, IPS1ControllerInput, PS1Input) then
+    for var Port := 0 to 1 do
+    begin
+      var Pad := Default(TPS1Pad);
+      if ((Port = 0) and ((FState.Input.Gamepad.AuxiliaryButtons and 1) <> 0)) or
+        ((FState.Input.Manager <> nil) and FState.Input.Manager.IsPressed(PS1L2Action + Port)) then
+        Pad.Buttons := PS1PadL2;
+      PS1Input.SetPS1Controller(Port, Pad);
     end;
 
   var Piano: INesMiraclePianoCore;

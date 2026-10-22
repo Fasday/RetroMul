@@ -616,6 +616,9 @@ begin
   if (Core = ROM_SYSTEM_N64) and (Device is TScreenGamepad) and
     not TScreenGamepad(Device).AuxiliaryButtonBounds(0).IsEmpty then
     AddCallout(-1, N64LAction + Port, 'L', Translate('Button ') + 'L', True, Click);
+  if (Core = ROM_SYSTEM_PS1) and (Device is TScreenGamepad) and
+    not TScreenGamepad(Device).AuxiliaryButtonBounds(0).IsEmpty then
+    AddCallout(-1, PS1L2Action + Port, 'L2', Translate('Button ') + 'L2', True, Click);
   Refresh;
   Resize;
 end;
@@ -2152,6 +2155,11 @@ begin
       AddAssignment(D, P, N64LAction + Port, 'L');
       Y := Y + 40;
     end;
+    if SettingsCoreIds[FPage] = ROM_SYSTEM_PS1 then
+    begin
+      AddAssignment(D, P, PS1L2Action + Port, 'L2');
+      Y := Y + 40;
+    end;
     D.AssignmentList.Height := Y;
   end;
   Preview.Parent := FindComponent('LayoutBindingPreview' + IntToStr(Port)) as TLayout;
@@ -2253,6 +2261,12 @@ begin
         begin
           Action := N64LAction + D.Port;
           Caption := Translate('Button ') + 'L';
+        end;
+        if (SettingsCoreIds[FPage] = ROM_SYSTEM_PS1) and
+          ((TScreenGamepad(Sender).AuxiliaryButtons and 1) <> 0) then
+        begin
+          Action := PS1L2Action + D.Port;
+          Caption := Translate('Button ') + 'L2';
         end;
         for var B in TScreenGamepad(Sender).Buttons do
           if B in CoreButtons(SettingsCoreIds[FPage], D.Device) then

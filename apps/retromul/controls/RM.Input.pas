@@ -15,6 +15,7 @@ const
   PianoAction = 512;
   ExtraPadAction = 1024; // Preserve the existing NES peripheral action IDs.
   N64LAction = 4096;
+  PS1L2Action = 4112; // + port: PlayStation L2, outside the logical pad.
 
 type
   THostKeys = array[0..255] of Boolean;
@@ -55,7 +56,7 @@ implementation
 uses
   Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.Saturn, Core.Adapter.N64,
   Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, Core.Adapter.CPS, GB.Joypad, NES.Input,
+  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, Core.Adapter.CPS, Core.Adapter.PS1, GB.Joypad, NES.Input,
   NES.Types, MD.Console, SNES.Console, System.Math, FMX.Types;
 
 function HidToHostKey(Code: Integer): Word;
@@ -182,6 +183,9 @@ begin
   if SystemId = ROM_SYSTEM_SATURN then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
 
+  if SystemId = ROM_SYSTEM_PS1 then
+    Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
+
   if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X) then
   begin
     Include(Result, TEmulatorButton.C);
@@ -246,6 +250,27 @@ begin
       TEmulatorButton.Mode:
         Exit('R');
     end;
+
+  if SystemId = ROM_SYSTEM_PS1 then
+  begin
+    case Button of
+      TEmulatorButton.A:
+        Result := 'Cross';
+      TEmulatorButton.B:
+        Result := 'Circle';
+      TEmulatorButton.X:
+        Result := 'Square';
+      TEmulatorButton.Y:
+        Result := 'Triangle';
+      TEmulatorButton.C:
+        Result := 'L1';
+      TEmulatorButton.Z:
+        Result := 'R1';
+      TEmulatorButton.Mode:
+        Result := 'R2';
+    end;
+    Exit;
+  end;
 
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
   begin
@@ -539,6 +564,15 @@ begin
       for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
         Keys[Port, B] := Map[Port, B];
   end
+  else if SystemId = ROM_SYSTEM_PS1 then
+  begin
+    var C := TPS1Config.Create('', nil);
+    Config := C;
+    var Map := C.Keys;
+    for var Port := 0 to 1 do
+      for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+        Keys[Port, B] := Map[Port, B];
+  end
   else if SystemId = ROM_SYSTEM_GBA then
   begin
     var C := TGBAConfig.Create('');
@@ -578,6 +612,18 @@ begin
       AddKey(N64LAction + Port, ReadEmulatorKey(Ini, Section, 'L', C.LKey(Port)));
     end;
   end;
+  if SystemId = ROM_SYSTEM_PS1 then
+  begin
+    var C := TPS1Config.Create('', nil);
+    Config := C;
+    for var Port := 0 to 1 do
+    begin
+      var Section := 'Keys';
+      if Port > 0 then
+        Section := Section + IntToStr(Port + 1);
+      AddKey(PS1L2Action + Port, ReadEmulatorKey(Ini, Section, 'L2', C.L2Key(Port)));
+    end;
+  end;
   if (SystemId = ROM_SYSTEM_NES) or (SystemId = ROM_SYSTEM_N64) then
     Count := 4;
   if SystemId = ROM_SYSTEM_SNES then
@@ -604,7 +650,8 @@ begin
           Section := 'Keys';
         if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           Section := 'Keys';
-        if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) then
+        if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or
+          (SystemId = ROM_SYSTEM_PS1) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);

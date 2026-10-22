@@ -836,7 +836,7 @@ begin
         Continue;
 
       // Prefer the CUE with its complete TOC/audio over the paired data ISO.
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and SameText(ExtractFileExt(Item.Name), '.iso') then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn, TRomSystem.PS1]) and SameText(ExtractFileExt(Item.Name), '.iso') then
       begin
         var HasCue := False;
         for var Candidate in Candidates do
@@ -847,9 +847,23 @@ begin
           Continue;
       end;
 
+      // PlayStation track files belong to a CUE named like them (Game.cue with
+      // Game.bin or "Game (Track 1).bin"); a lone BIN is a raw disc image.
+      if (RomSystem = TRomSystem.PS1) and SameText(ExtractFileExt(Item.Name), '.bin') then
+      begin
+        var HasCue := False;
+        for var Candidate in Candidates do
+          if SameText(ExtractFileExt(Candidate.Name), '.cue') and
+            (ExtractFilePath(Candidate.RelativePath) = ExtractFilePath(Item.RelativePath)) and
+            ChangeFileExt(Item.Name, '').ToLower.StartsWith(ChangeFileExt(Candidate.Name, '').ToLower) then
+            HasCue := True;
+        if HasCue then
+          Continue;
+      end;
+
       // Listing never opens ROM streams. Header validation belongs to loading.
       var MaxSize := FMaxRomFileSize;
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and (MaxSize = ROM_MAX_SIZE) then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn, TRomSystem.PS1]) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := Int64(800) * 1024 * 1024;
       if (RomSystem in [TRomSystem.NeoGeo, TRomSystem.NeoGeoAES]) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := 256 * 1024 * 1024;

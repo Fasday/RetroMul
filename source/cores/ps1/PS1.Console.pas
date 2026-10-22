@@ -67,6 +67,8 @@ type
     // Starts a PS-X EXE when the BIOS enters its shell (after Reset).
     procedure LoadExe(const Data: TBytes);
     function FramesPerSecond: Double;
+    // Width/height of the current picture on a 4:3 screen.
+    function DisplayAspect: Double;
     procedure SerializeState(State: TStateArchive);
     property Scheduler: TPS1Scheduler read FScheduler;
     property Bus: TPS1Bus read FBus;
@@ -403,6 +405,11 @@ end;
 function TPS1Console.FramesPerSecond: Double;
 begin
   Result := FGPU.FramesPerSecond;
+end;
+
+function TPS1Console.DisplayAspect: Double;
+begin
+  Result := FGPU.DisplayAspect;
 end;
 
 procedure TPS1Console.UpdateHook;

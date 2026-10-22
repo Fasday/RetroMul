@@ -92,6 +92,9 @@ type
     // Converts the displayed VRAM area into premultiplied ARGB pixels.
     procedure Output(var Pixels: TArray<TAlphaColor>; out Width, Height: Integer);
     function FramesPerSecond: Double;
+    // Width/height of the picture on a 4:3 screen: 2560 video clocks by 240
+    // (NTSC) or 288 (PAL) lines fill it. Presentation only, not emulated state.
+    function DisplayAspect: Double;
     function DMARequest(Channel: Integer): Boolean; override;
     procedure DMAWrite(Channel: Integer; Data: PCardinal; Count: Integer); override;
     procedure DMARead(Channel: Integer; Data: PCardinal; Count: Integer); override;
@@ -189,6 +192,22 @@ begin
   // Interlaced fields alternate between the two half-line counts.
   if (FDisplayMode and $20) <> 0 then
     Result := Result - 1 + FField;
+end;
+
+function TPS1GPU.DisplayAspect: Double;
+begin
+  var Clocks := Integer((FHorizontalRange shr 12) and $FFF) - Integer(FHorizontalRange and $FFF);
+  var Lines := Integer((FVerticalRange shr 10) and $3FF) - Integer(FVerticalRange and $3FF);
+  if Clocks <= 0 then
+    Clocks := 2560;
+  if Lines > LinesInField then
+    Lines := LinesInField;
+  if Lines <= 0 then
+    Lines := 240;
+  var FullLines := 240;
+  if (FDisplayMode and 8) <> 0 then
+    FullLines := 288;
+  Result := 4 / 3 * (Clocks / 2560) * (FullLines / Lines);
 end;
 
 function TPS1GPU.DotDivider: Integer;
