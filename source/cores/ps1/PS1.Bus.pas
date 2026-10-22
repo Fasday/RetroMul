@@ -456,8 +456,8 @@ begin
 
   if Physical < PS1PhysIO + $24 then
   begin
-    // Narrow stores still drive the whole register.
-    WriteMemControl(Physical and not 3, Value);
+    // Narrow stores still drive the whole register, shifted to the offset.
+    WriteMemControl(Physical and not 3, Value shl ((Physical and 3) * 8));
     Exit(True);
   end;
   if (Physical >= $1F801060) and (Physical < $1F801064) then

@@ -304,6 +304,13 @@ begin
   // fourth timer at 1F801130h).
 end;
 
+// psx-spx "Unpredictable Things": 8/16-bit stores drive the whole register
+// on the bus; 32-bit ports ("w32") take it shifted to the address offset.
+function Wide(Value, Address: Cardinal): Cardinal; inline;
+begin
+  Result := Value shl ((Address and 3) * 8);
+end;
+
 function TPS1Console.WriteIO(Address, Value: Cardinal; Size: Integer): Boolean;
 begin
   DispatchEvents;
@@ -313,16 +320,16 @@ begin
     $1F801050..$1F80105F: FSIO1.Write(Address, Value, Size);
     $1F801070..$1F801073:
       begin
-        FIStat := FIStat and Value;
+        FIStat := FIStat and Wide(Value, Address);
         UpdateIRQ;
       end;
     $1F801074..$1F801077:
       begin
-        FIMask := Value and $7FF;
+        FIMask := Wide(Value, Address) and $7FF;
         UpdateIRQ;
       end;
-    $1F801080..$1F8010FF: FDMA.Write(Address and not 3, Value);
-    $1F801100..$1F80112F: FTimers.Write(Address and not 3, Value);
+    $1F801080..$1F8010F7: FDMA.Write(Address and not 3, Wide(Value, Address));
+    $1F801100..$1F80112F: FTimers.Write(Address and not 3, Wide(Value, Address));
     $1F801800..$1F801803:
       for var I := 0 to Size - 1 do
         FCDROM.Write(CDROMAddress(Address, I), Byte(Value shr (I * 8)));
