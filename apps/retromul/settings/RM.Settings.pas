@@ -117,6 +117,9 @@ type
     LayoutSettingsMainColumn, LayoutSettingsPreviewColumn: TLayout;
     VertScrollBoxScroll: TVertScrollBox;
     LabelTitle, LabelStatus: TLabel;
+    PanelConfigurationNotice: TPanel;
+    VertScrollBoxConfigurationNotice: TVertScrollBox;
+    LabelConfigurationNotice: TLabel;
     ButtonApply, ButtonBack, ButtonCancelCapture: TButton;
     LayoutComponentStore: TLayout;
     LabelBrand: TLabel;
@@ -173,6 +176,10 @@ type
     procedure BuildPage(PreserveScroll: Boolean = False);
     procedure RequestRebuild;
     procedure StorePage;
+    procedure WireConfigurationChanges;
+    procedure ConfigurationChange(Sender: TObject);
+    procedure UpdateConfigurationNotice;
+    procedure MeasureConfigurationNotice;
     procedure Heading(const Name: string);
     function Row(const Name: string): TPanel;
     function Field(Control: TControl; const Section, Key: string): TSettingsField;
@@ -245,7 +252,7 @@ uses
   NES.MiraclePiano, NES.Controller, NES.MiraclePianoDevice, FMX.BehaviorManager,
   FMX.Graphics, FMX.SpinBox.Style, FMX.Presentation.Style,
   FMX.Presentation.Factory, RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles,
-  RM.Dialogs
+  RM.Dialogs, FMX.TextLayout
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 {$R *.fmx}
@@ -482,10 +489,12 @@ end;
 
 procedure TSettingsPreview.SetColorPattern;
 begin
-  if FPaletteIndex = -1 then Exit;
+  if FPaletteIndex = -1 then
+    Exit;
   Bitmap.SetSize(256, 240);
   var Data: TBitmapData;
-  if not Bitmap.Map(TMapAccess.Write, Data) then Exit;
+  if not Bitmap.Map(TMapAccess.Write, Data) then
+    Exit;
   try
     // Fine edges, gradients and saturated colors make all built-in effects visible.
     for var Y := 0 to Bitmap.Height - 1 do
@@ -505,13 +514,18 @@ begin
         if (Y > 176) and (X > 16) and (X < 240) then
         begin
           var Shade := Byte(48 + 160 * Ord(((X div 4 + Y div 4) and 1) = 0));
-          Pixel.R := Shade; Pixel.G := Shade; Pixel.B := Shade;
+          Pixel.R := Shade;
+          Pixel.G := Shade;
+          Pixel.B := Shade;
         end;
-        if (X in [16, 239]) or (Y in [64, 160]) then Pixel.Color := TAlphaColors.White;
+        if (X in [16, 239]) or (Y in [64, 160]) then
+          Pixel.Color := TAlphaColors.White;
         Data.SetPixel(X, Y, Pixel.Color);
       end;
     FPaletteIndex := -1;
-  finally Bitmap.Unmap(Data); end;
+  finally
+    Bitmap.Unmap(Data);
+  end;
   ResetHistory;
 end;
 
@@ -855,8 +869,7 @@ begin
   Preview.DisableInterpolation := Scaling.ItemIndex = 0;
 end;
 
-function TSettingsView.ShaderTrack(const Name, Key: string;
-  Default, Minimum, Maximum: Integer): TTrackBar;
+function TSettingsView.ShaderTrack(const Name, Key: string; Default, Minimum, Maximum: Integer): TTrackBar;
 begin
   Row(Name);
   Result := FindComponent('SettingsTrackBar' + Name + 'Editor') as TSettingsTrackBar;
@@ -881,21 +894,24 @@ begin
   if Track.TagString = 'LCDResponseMS' then
     Caption := IntToStr(Value) + ' ' + Translate('ms');
   TLabel(Track.TagObject).Text := Caption;
-  if FBuilding then Exit;
+  if FBuilding then
+    Exit;
   StorePage;
   UpdateShaderPreview;
 end;
 
 procedure TSettingsView.ShaderFileChange(Sender: TObject);
 begin
-  if FBuilding then Exit;
+  if FBuilding then
+    Exit;
   StorePage;
   UpdateShaderPreview;
 end;
 
 procedure TSettingsView.UpdateShaderPreview;
 begin
-  if not (FPreview is TSettingsPreview) then Exit;
+  if not (FPreview is TSettingsPreview) then
+    Exit;
   var Preview := TSettingsPreview(FPreview);
   var Draft := FDrafts[FPage];
   var Options := TBitmapShaderSettings.Default;
@@ -912,10 +928,14 @@ begin
   Preview.DisableInterpolation := Draft.ReadString('Video', 'Filter', 'nearest') = 'nearest';
   var Effect := Draft.ReadString('Shaders', 'Mode', 'off');
   var NextMode := TBitmapShaderMode.Original;
-  if Effect = 'scanlines' then NextMode := TBitmapShaderMode.Scanlines
-  else if Effect = 'crt' then NextMode := TBitmapShaderMode.CRT
-  else if Effect = 'lcd' then NextMode := TBitmapShaderMode.LCD
-  else if Effect = 'color' then NextMode := TBitmapShaderMode.ColorCorrection;
+  if Effect = 'scanlines' then
+    NextMode := TBitmapShaderMode.Scanlines
+  else if Effect = 'crt' then
+    NextMode := TBitmapShaderMode.CRT
+  else if Effect = 'lcd' then
+    NextMode := TBitmapShaderMode.LCD
+  else if Effect = 'color' then
+    NextMode := TBitmapShaderMode.ColorCorrection;
   var Status := FindComponent('LabelShaderPreviewStatus') as TLabel;
   if Effect = 'custom' then
   begin
@@ -949,9 +969,11 @@ begin
         Status.Visible := True;
       end;
     end;
-    if FPreviewShaderLoaded then NextMode := TBitmapShaderMode.Custom;
+    if FPreviewShaderLoaded then
+      NextMode := TBitmapShaderMode.Custom;
   end
-  else Status.Visible := False;
+  else
+    Status.Visible := False;
   Preview.Mode := NextMode;
 end;
 
@@ -987,6 +1009,7 @@ type
   end;
 
 begin
+  ReplaceRuntime('ZXConfigurationPresetEditor', TSettingsComboBox);
   for var platform in SettingsPlatforms.Items do
   begin
     FContext.PageId := platform.PageId;
@@ -1052,6 +1075,8 @@ begin
   ReplaceCombo('RowGameBoypaletteEditor', []);
   ReplaceRuntime('PalettePreview', TSettingsPreview);
   ReplaceCombo('RowNESregionEditor', ['Automatic', 'NTSC', 'PAL']);
+  ReplaceRuntime('RowMDCDAudioEditor', TSettingsSpinBox);
+  ReplaceRuntime('RowMD32XAudioEditor', TSettingsSpinBox);
   ReplaceRuntime('VolumeTrack', TSettingsTrackBar);
   (TSettingsTrackBar(FindComponent('SettingsTrackBarVolumeTrack'))).Min := 0;
   (TSettingsTrackBar(FindComponent('SettingsTrackBarVolumeTrack'))).Max := 100;
@@ -1097,7 +1122,8 @@ begin
     CancelCapture;
     FAutosaveMinutes := nil;
     FVolumeValue := nil;
-    if FPreview is TSettingsPreview then TSettingsPreview(FPreview).Mode := TBitmapShaderMode.Original;
+    if FPreview is TSettingsPreview then
+      TSettingsPreview(FPreview).Mode := TBitmapShaderMode.Original;
     FPreview := nil;
     FPreviewGroup := nil;
     FPreviewShaderFile := '';
@@ -1164,8 +1190,8 @@ begin
       Heading('GroupPlatformFolders');
       Row('RowDetectRomFolders');
       (FindComponent('ButtonDetectRomFolders') as TButton).OnClick := DetectRomFoldersClick;
-      for var Platform in TPlatformRegistry.All do
-        PathEdit('RowRomFolder' + Platform.Folder.Substring(0, 1).ToUpper + Platform.Folder.Substring(1), 'RomFolders', Platform.Id, '', True);
+      for var platform in TPlatformRegistry.All do
+        PathEdit('RowRomFolder' + platform.Folder.Substring(0, 1).ToUpper + platform.Folder.Substring(1), 'RomFolders', platform.Id, '', True);
       Heading('GroupGamelibrary');
       Combo('RowLibraryview', 'Library', 'View', [], ['grid', 'list'], 'grid');
       Combo('RowCardsize', 'Library', 'CardWidth', [], ['140', '170', '220'], '170');
@@ -1183,6 +1209,7 @@ begin
         LoadInputBindings(FInput, FDrafts[FPage], SettingsCoreIds[FPage]);
       if FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO then
       begin
+        platform.Configuration(FContext);
         Heading('GroupVideo');
         var Scaling := Combo('RowImagescaling', 'Video', 'Filter', [], ['nearest', 'linear'], 'nearest');
         Scaling.OnChange := PreviewChange;
@@ -1220,7 +1247,6 @@ begin
           TSettingsPreview(FPreview).SetColorPattern;
         end;
         Heading('GroupAudio');
-        Check('RowAudio', 'Audio', 'Enabled', True);
         var VolumeRow := Row('RowVolume');
         var Volume := FindComponent('SettingsTrackBarVolumeTrack') as TSettingsTrackBar;
         Volume.OnChange := nil;
@@ -1259,11 +1285,15 @@ begin
           BuildPort(Port, Translate('Port ') + IntToStr(Port + 1));
         platform.Expansion(FContext);
       end;
+      WireConfigurationChanges;
       LabelStatus.Text := Translate('Settings are saved separately for each platform. Core options apply when you next open a ROM.');
+      if platform.HasConfiguration then
+        LabelStatus.Text := Translate('Configuration changes stay in this draft until you click Apply. Hardware options apply when you next open a ROM.');
     end;
   finally
     FBuilding := False;
     UpdateShaderPreview;
+    UpdateConfigurationNotice;
     Resize;
     LayoutSettingsMainColumn.EndUpdate;
     LayoutSettingsPreviewColumn.EndUpdate;
@@ -1295,6 +1325,117 @@ begin
     end);
 end;
 
+procedure TSettingsView.WireConfigurationChanges;
+begin
+  var platform := SettingsPlatforms.Find(FPage);
+  if (platform = nil) or not platform.HasConfiguration then
+    Exit;
+  for var F in FFields do
+    if F.Control is TComboBox then
+    begin
+      if not Assigned(TComboBox(F.Control).OnChange) then
+        TComboBox(F.Control).OnChange := ConfigurationChange;
+    end
+    else if F.Control is TSwitch then
+    begin
+      if not Assigned(TSwitch(F.Control).OnSwitch) then
+        TSwitch(F.Control).OnSwitch := ConfigurationChange;
+    end
+    else if F.Control is TSpinBox then
+    begin
+      if not Assigned(TSpinBox(F.Control).OnChange) then
+        TSpinBox(F.Control).OnChange := ConfigurationChange;
+    end
+    else if F.Control is TEdit then
+    begin
+      if not Assigned(TEdit(F.Control).OnChangeTracking) then
+        TEdit(F.Control).OnChangeTracking := ConfigurationChange;
+    end;
+end;
+
+procedure TSettingsView.ConfigurationChange(Sender: TObject);
+begin
+  if FBuilding or FRebuildPending then
+    Exit;
+  var platform := SettingsPlatforms.Find(FPage);
+  if (platform = nil) or not platform.HasConfiguration then
+    Exit;
+  for var F in FFields do
+    if F.Control = Sender then
+    begin
+      // FMX may deliver a switch animation notification after rebuilding a page.
+      // Ignore notifications whose value is already present in the draft.
+      var Changed := False;
+      var Draft := FDrafts[FPage];
+      if F.Control is TComboBox then
+      begin
+        var Index := TComboBox(F.Control).ItemIndex;
+        Changed := (Index >= 0) and (Index < Length(F.Values)) and
+          not SameText(Draft.ReadString(F.Section, F.Key, F.DefaultValue), F.Values[Index]);
+      end
+      else if F.Control is TSwitch then
+        Changed := Draft.ReadBool(F.Section, F.Key, StrToIntDef(F.DefaultValue, 0) <> 0) <> TSwitch(F.Control).IsChecked
+      else if F.Control is TSpinBox then
+        Changed := Draft.ReadInteger(F.Section, F.Key, StrToIntDef(F.DefaultValue, 0)) <> Round(TSpinBox(F.Control).Value)
+      else if F.Control is TEdit then
+        Changed := Draft.ReadString(F.Section, F.Key, F.DefaultValue) <> TEdit(F.Control).Text.Trim;
+      if not Changed then
+        Exit;
+      LabelStatus.Text := Translate('Configuration changed in the draft. Click Apply to save, or Cancel to discard.');
+      StorePage;
+      if platform.ChangeConfiguration(FDrafts[FPage], F.Section, F.Key) then
+        RequestRebuild
+      else
+      begin
+        // Update only the preset indicator; keep the edited control and focus.
+        FBuilding := True;
+        try
+          for var P in FFields do
+            if SameText(P.Section, 'Hardware') and SameText(P.Key, 'Preset') then
+              TComboBox(P.Control).ItemIndex := 0;
+        finally
+          FBuilding := False;
+        end;
+      end;
+      UpdateConfigurationNotice;
+      Exit;
+    end;
+end;
+
+procedure TSettingsView.MeasureConfigurationNotice;
+begin
+  if not PanelConfigurationNotice.Visible then
+    Exit;
+  var Layout := TTextLayoutManager.DefaultTextLayout.Create;
+  try
+    Layout.BeginUpdate;
+    Layout.Font.Assign(LabelConfigurationNotice.TextSettings.Font);
+    Layout.MaxSize := TPointF.Create(Max(1, PanelConfigurationNotice.Width - 48), 100000);
+    Layout.WordWrap := True;
+    Layout.Text := LabelConfigurationNotice.Text;
+    Layout.EndUpdate;
+    LabelConfigurationNotice.Height := Max(24, Ceil(Layout.TextHeight) + 8);
+    PanelConfigurationNotice.Height := Min(Max(64, LabelConfigurationNotice.Height + 16),
+      Max(64, Min(180, Height * 0.25)));
+  finally
+    Layout.Free;
+  end;
+  VertScrollBoxConfigurationNotice.RealignContent;
+end;
+
+procedure TSettingsView.UpdateConfigurationNotice;
+begin
+  var platform := SettingsPlatforms.Find(FPage);
+  var Text := '';
+  if (platform <> nil) and platform.HasConfiguration then
+    Text := platform.ConfigurationNotice(FDrafts[FPage]);
+  if LabelConfigurationNotice.Text <> Text then
+    VertScrollBoxConfigurationNotice.ViewportPosition := TPointF.Zero;
+  LabelConfigurationNotice.Text := Text;
+  PanelConfigurationNotice.Visible := Text <> '';
+  MeasureConfigurationNotice;
+end;
+
 procedure TSettingsView.StorePage;
 begin
   for var F in FFields do
@@ -1313,7 +1454,8 @@ begin
     begin
       if F.Section = 'Shaders' then
         FDrafts[FPage].WriteInteger(F.Section, F.Key, Round(TTrackBar(F.Control).Value))
-      else FDrafts[FPage].WriteFloat(F.Section, F.Key, TTrackBar(F.Control).Value / 100);
+      else
+        FDrafts[FPage].WriteFloat(F.Section, F.Key, TTrackBar(F.Control).Value / 100);
     end
     else if F.Control is TEdit then
       FDrafts[FPage].WriteString(F.Section, F.Key, TEdit(F.Control).Text.Trim);
@@ -1526,13 +1668,16 @@ begin
     var CompactReset := LayoutFooter.Width < 520;
     var ResetRow := FindComponent('LayoutSettingsCompactReset') as TLayout;
     ResetRow.Visible := CompactReset and (FCaptureButton = nil);
-    if CompactReset then ButtonReset.Parent := ResetRow
-    else ButtonReset.Parent := FindComponent('LayoutSettingsActions') as TLayout;
+    if CompactReset then
+      ButtonReset.Parent := ResetRow
+    else
+      ButtonReset.Parent := FindComponent('LayoutSettingsActions') as TLayout;
     ButtonReset.Visible := FCaptureButton = nil;
     LayoutFooter.Height := 96 + 44 * Ord(ResetRow.Visible);
     ButtonRefresh.Visible := (FCategory = SETTINGS_CATEGORY_CONTROLS) and (LayoutFooter.Width >= 700);
     ButtonApply.Visible := FCaptureButton = nil;
     ButtonBack.Visible := FCaptureButton = nil;
+    MeasureConfigurationNotice;
     // Header/footer heights determine the viewport. Apply them, then settle
     // the content width before measuring responsive rows and column heights.
     TSettingsLayoutAccess(LayoutBody).Realign;
@@ -2461,7 +2606,8 @@ end;
 
 procedure TSettingsView.PreviewChange(Sender: TObject);
 begin
-  if FBuilding then Exit;
+  if FBuilding then
+    Exit;
   StorePage;
   if (FPage = SETTINGS_PAGE_GB) and (FPreview is TSettingsPreview) then
     TSettingsPreview(FPreview).PaletteIndex :=
@@ -2537,12 +2683,12 @@ begin
       else if not Selection.Cancelled then
       try
         var Count := 0;
-        for var Platform in TPlatformRegistry.All do
+        for var platform in TPlatformRegistry.All do
         begin
-          var Folder := FStorage.DetectRomFolder(Selection.Location, Platform.Id);
+          var Folder := FStorage.DetectRomFolder(Selection.Location, platform.Id);
           if Folder = '' then
             Continue;
-          FDrafts[SETTINGS_PAGE_MAIN].WriteString('RomFolders', Platform.Id, Folder);
+          FDrafts[SETTINGS_PAGE_MAIN].WriteString('RomFolders', platform.Id, Folder);
           Inc(Count);
         end;
         if (FPage = SETTINGS_PAGE_MAIN) and (FCategory = SETTINGS_CATEGORY_LIBRARY) then
@@ -2670,16 +2816,23 @@ begin
       FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'TranslationFile', '').Trim,
       FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Language', 'en'));
     Translation.Free; // Validate the file before writing any settings.
-    for var Platform in TPlatformRegistry.All do
+    for var platform in TPlatformRegistry.All do
     begin
-      var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('RomFolders', Platform.Id, '').Trim;
+      var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('RomFolders', platform.Id, '').Trim;
       if (Folder <> '') and not FStorage.FolderExists(Folder) then
-        raise Exception.Create(Platform.Name + ': ' + Translate('ROM folder not found. Choose an existing folder.'));
+        raise Exception.Create(platform.Name + ': ' + Translate('ROM folder not found. Choose an existing folder.'));
     end;
     FDrafts[SETTINGS_PAGE_MAIN].DeleteKey('General', 'Path');
 
     for var platform in SettingsPlatforms.Items do
-      platform.Validate(FDrafts[platform.PageId]);
+    begin
+      var Draft := FDrafts[platform.PageId];
+      Draft.DeleteKey('Audio', 'Enabled');
+      Draft.DeleteKey('Audio', 'FMEnabled');
+      Draft.DeleteKey('SegaCD', 'AudioEnabled');
+      Draft.DeleteKey('Sega32X', 'AudioEnabled');
+      platform.Validate(Draft);
+    end;
 
     // Config writes are per core and retain all settings that this UI does not expose.
     for var Ini in FDrafts do
@@ -2687,11 +2840,12 @@ begin
         FStorage.WriteConfig(Ini);
     if Assigned(FOnApply) then
       FOnApply(Self);
-    LabelStatus.Text := Translate('Saved. Core options and connected devices apply when you next open a ROM.');
+    LabelStatus.Text := Translate('Saved. Runtime settings applied. Hardware and boot options apply when you next open a ROM.');
   except
     on E: Exception do
       LabelStatus.Text := Translate('Unable to save settings: ') + E.Message;
   end;
+  UpdateConfigurationNotice;
 end;
 
 procedure TSettingsView.ApplyLanguage(const PreviousLanguage: string);

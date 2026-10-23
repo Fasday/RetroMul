@@ -120,6 +120,14 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
+  // ZX v16 adds Profi CMR1, DS80 latches/palette and variable-sector disk states.
+  // ZX v17 adds Byte PROM gate, VI53, Byte-01 RAM/video and KDI geometry.
+  // ZX v18 adds Didaktik Gama 8255 mode, latches and output/interrupt state.
+  // ZX v19 adds TK90X/TK95 timing and original ROM language selection.
+  // ZX v20 adds the Turbo Sound FM configuration, CPLD and both YM2203 states.
+  // ZX v21 adds Next-DAC startup configuration, gates, selector and sample latches.
+  if SameText(PlatformCore, 'ZX') then
+    Result.Version := 21;
   // CPS v2 adds OKI bank state, enlarged sprite buffers and board peripherals.
   if SameText(PlatformCore, 'CPS1') or SameText(PlatformCore, 'CPS2') then
     Result.Version := 2;

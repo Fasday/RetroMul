@@ -5,8 +5,7 @@
 interface
 
 uses
-  RM.Platforms.Presentation,
-  RM.Controllers.Base;
+  RM.Platforms.Presentation, RM.Controllers.Base;
 
 type
   TSettingsController = class(TMainController)
@@ -26,9 +25,10 @@ implementation
 
 uses
   System.SysUtils, System.Classes, System.Math, System.UITypes, FMX.Types,
-  Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.N64, Core.SavePaths,
-  Core.Platforms, Core.RomFormat, Core.InputConfig, RM.Input, RM.Gamepad,
-  RM.Settings, RM.ControlsHelp, RM.Styles, RM.Dialogs, RM.Gamepad.Base;
+  Core.Emulation, Core.Adapter.SG1000, Core.Adapter.GB, Core.Adapter.NES,
+  Core.Adapter.N64, Core.SavePaths, Core.Platforms, Core.RomFormat,
+  Core.InputConfig, RM.Input, RM.Gamepad, RM.Settings, RM.ControlsHelp,
+  RM.Styles, RM.Dialogs, RM.Gamepad.Base;
 
 procedure TSettingsController.Load;
 begin
@@ -157,6 +157,7 @@ begin
     var Config := FState.Session.Emulation.Config;
     var Ini := FState.Session.Storage.ReadConfig(Config.FileName);
     try
+      Config.Load;
       var InputPorts: IEmulationInputPorts;
       if Supports(FState.Session.Emulation, IEmulationInputPorts, InputPorts) then
       begin
@@ -172,15 +173,14 @@ begin
           FState.Input.GamepadInput := Default(TEmulatorInput);
           InputPorts.ApplyInputPorts(Ports);
           FState.Input.Ports := Ports;
-          var Platform := TPlatformRegistry.Require(FState.Input.SystemId);
-          FState.Input.Gamepad.Configure(Platform.System, Ports.Devices[0],
+          var platform := TPlatformRegistry.Require(FState.Input.SystemId);
+          FState.Input.Gamepad.Configure(platform.System, Ports.Devices[0],
             CoreButtons(FState.Input.SystemId, Ports.Devices[0]));
         end;
       end;
-      Config.Filter := Ini.ReadString('Video', 'Filter', Config.Filter);
-      var GBConfig: IGBEmulatorConfig;
-      if Supports(Config, IGBEmulatorConfig, GBConfig) or (Config is TN64Config) then
-        Config.Load;
+      var LiveSettings: IEmulationLiveSettings;
+      if Supports(FState.Session.Emulation, IEmulationLiveSettings, LiveSettings) then
+        LiveSettings.ApplyLiveSettings;
       FView.ImageCanvas.LoadSettings(Ini);
       FView.ImageCanvas.DisableInterpolation := SameText(Config.Filter, 'nearest');
       FView.UpdateFrame;
@@ -245,8 +245,8 @@ begin
           FState.Session.AutoPaused := True
         else
         {$ENDIF}
-        if not RetroDialogVisible(FView)
-          {$IFDEF ISMOBILE}and not FState.Mobile.InBackground{$ENDIF} then
+          if not RetroDialogVisible(FView)
+          {$IFDEF ISMOBILE} and not FState.Mobile.InBackground{$ENDIF} then
           FState.Session.Emulation.Resume;
       end;
       FView.SyncActivity;
@@ -278,9 +278,12 @@ begin
   FView.FormDeactivate(FView);
   FState.Session.Emulation.Pause;
   var Players := TPlatformRegistry.Require(FState.Input.SystemId).Ports;
-  if (FState.Input.SystemId=ROM_SYSTEM_PCE) or (FState.Input.SystemId=ROM_SYSTEM_SGX) or
-    (FState.Input.SystemId=ROM_SYSTEM_PCECD) then begin
-    Players:=1; if FState.Input.Ports.Multitap[0] then Players:=5;
+  if (FState.Input.SystemId = ROM_SYSTEM_PCE) or (FState.Input.SystemId = ROM_SYSTEM_SGX) or
+    (FState.Input.SystemId = ROM_SYSTEM_PCECD) then
+  begin
+    Players := 1;
+    if FState.Input.Ports.Multitap[0] then
+      Players := 5;
   end;
   if FState.Input.SystemId = ROM_SYSTEM_SNES then
     if FState.Input.Ports.Multitap[0] then

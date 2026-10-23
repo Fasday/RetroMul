@@ -1,4 +1,4 @@
-﻿# RetroMul
+# RetroMul
 
 ![RetroMul](https://github.com/HemulGM/RetroMul/blob/main/screen/screen0.png?raw=true)
 
@@ -22,6 +22,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | SEGA Master System / Mark III | `.sms` |
 | SEGA Game Gear | `.gg` |
 | SEGA Saturn | `.iso`, `.cue`, `.chd` |
+| ZX Spectrum family / clones | `.sna`, `.z80`, `.tap`, `.tzx`, `.trd`, `.scl`, `.dsk`, `.dck`, `.pro`, `.kdi`, `.ide`, `.mmc`, `.zip` / `.7z` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
 | Neo Geo CD / CDZ | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
@@ -46,6 +47,10 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 
 Compatibility depends on the game's cartridge hardware, protection, and peripherals. Mapper or ROM-set support does not imply complete hardware accuracy or full gameplay compatibility for every game. Save-state formats can change between builds.
 
+ZX Spectrum includes built-in 48K/128K ROMs, a touch keyboard, Kempston plus QAOP/Space controls,
+beeper and AY audio, and automatic cassette loading. TAP/TZX play at original tape speed.
+Snapshots load immediately. TRD/SCL auto-select Pentagon 128K and boot through native Beta 128 / TR-DOS; disk writes use separate save overlays. PAL Timex TC2048/TC2068, Scorpion ZS-256 and Profi+ 512K/1024K are selectable in settings; DCK boots Timex cartridges; PRO boots native Profi CP/M disks. Microdigital TK90X/TK95 adds MC16845 60/50 Hz timing and embedded Portuguese/Spanish ROMs. ZX settings include 30 ready configurations and live conflict notifications. Didaktik Gama 1987/1988/1989 adds native 80K paging, on-board 8255 and embedded ROMs. Byte 48K and Byte-01 128K/KVU are selectable with embedded ROM/PROM images, native video/VI53 sound and 800K KDI CP/M boot. Optional Pentagon 512K/1024K models are available in settings; 1024K includes software-controlled turbo, 16C/512/384 video and persistent Gluk CMOS. See [ZX Spectrum support and accuracy limits](source/cores/zx/README.md).
+
 ## Getting started
 
 Open a ROM directly, or select the library root folder in Settings. The library uses these system subdirectories:
@@ -61,6 +66,7 @@ ROMS/
   megadrive/
   sg1000/
   sc3000/
+  zxspectrum/
   sf7000/
   omv/
   sms/

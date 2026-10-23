@@ -6,6 +6,7 @@ uses
   System.Classes, System.SysUtils, Core.Platforms;
 
 const
+  ROM_SYSTEM_ZX = 'zx';
   ROM_SYSTEM_NES = 'nes';
   ROM_SYSTEM_GB = 'gb';
   ROM_SYSTEM_GBC = 'gbc';

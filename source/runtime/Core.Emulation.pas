@@ -21,6 +21,8 @@ type
 
   IEmulationAudioDiagnostics = Core.Emulation.Types.IEmulationAudioDiagnostics;
 
+  IEmulationMouseInput = Core.Emulation.Types.IEmulationMouseInput;
+
   IEmulationMotionInput = Core.Emulation.Types.IEmulationMotionInput;
 
   IEmulationRotationInput = Core.Emulation.Types.IEmulationRotationInput;
@@ -30,6 +32,8 @@ type
   IEmulationSnapshotLocation = Core.Emulation.Types.IEmulationSnapshotLocation;
 
   IEmulationVirtualControls = Core.Emulation.Types.IEmulationVirtualControls;
+
+  IEmulationLiveSettings = Core.Emulation.Types.IEmulationLiveSettings;
 
   IEmulationCore = Core.Emulation.Types.IEmulationCore;
 

@@ -21,6 +21,8 @@ type
       FKeys, FSticky: TSGHostKeys;
       FOnChange: TNotifyEvent;
       FNativeInput: TObject;
+      FSpectrumMode: Boolean;
+    procedure SetSpectrumMode(Value: Boolean);
     procedure LayoutKeys;
     procedure AddKey(Code: Byte; const Caption: string; Row: Integer; Column, Span: Single);
     function KeyAt(const Point: TPointF): Byte;
@@ -44,6 +46,7 @@ type
     procedure PointerUp(Id: NativeInt);
     procedure ReleaseAll;
     property Keys: TSGHostKeys read FKeys;
+    property SpectrumMode: Boolean read FSpectrumMode write SetSpectrumMode;
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
   end;
 
@@ -96,6 +99,8 @@ begin
   FVisualKeys[i].Caption := Caption;
   var U := Width / 16;
   var H := Height / 5;
+  if FSpectrumMode then
+    H := Height / 4;
   FVisualKeys[i].Bounds := RectF(Column * U + 2, Row * H + 2, (Column + Span) * U - 2, (Row + 1) * H - 2);
 end;
 
@@ -104,6 +109,22 @@ const
   Letters: array[0..2] of string = ('QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM');
 begin
   FVisualKeys := nil;
+  if FSpectrumMode then
+  begin
+    for var i := 1 to 10 do
+      AddKey(Ord('0') + (i mod 10), IntToStr(i mod 10), 0, (i - 1) * 1.6, 1.6);
+    for var i := 1 to Length(Letters[0]) do
+      AddKey(Ord(Letters[0][i]), Letters[0][i], 1, (i - 1) * 1.6, 1.6);
+    for var i := 1 to Length(Letters[1]) do
+      AddKey(Ord(Letters[1][i]), Letters[1][i], 2, (i - 1) * 1.5, 1.5);
+    AddKey(vkReturn, 'ENTER', 2, 13.5, 2.5);
+    AddKey(vkShift, 'CAPS SHIFT', 3, 0, 2);
+    for var i := 1 to Length(Letters[2]) do
+      AddKey(Ord(Letters[2][i]), Letters[2][i], 3, 2 + (i - 1) * 1.4, 1.4);
+    AddKey(vkControl, 'SYMBOL SHIFT', 3, 11.8, 2.1);
+    AddKey(vkSpace, 'SPACE', 3, 13.9, 2.1);
+    Exit;
+  end;
   for var i := 1 to 9 do
     AddKey($30 + i, IntToStr(i), 0, i - 1, 1);
   AddKey($30, '0', 0, 9, 1);
@@ -136,6 +157,16 @@ begin
   AddKey(vkSpace, 'Space', 4, 5, 6);
   AddKey(vkTab, 'Func', 4, 11, 2);
   AddKey(vkRMenu, 'Kana', 4, 13, 3);
+end;
+
+procedure TSGKeyboard.SetSpectrumMode(Value: Boolean);
+begin
+  if FSpectrumMode = Value then
+    Exit;
+  ReleaseAll;
+  FSpectrumMode := Value;
+  LayoutKeys;
+  Repaint;
 end;
 
 function TSGKeyboard.KeyAt(const Point: TPointF): Byte;

@@ -24,11 +24,11 @@ begin
   var Ext := ExtractFileExt(Name).ToLower;
   Result := not Name.Contains('__MACOSX/') and
     not ExtractFileName(Name).StartsWith('._') and
-    MatchText(Ext, ['.ngp', '.ngc', '.pce', '.sgx', '.sg', '.sc', '.sf7', '.sf', '.dsk',
+    MatchText(Ext, ['.sna', '.z80', '.tap', '.tzx', '.trd', '.scl', '.pro', '.kdi', '.ngp',
+        '.ngc', '.pce', '.sgx', '.sg', '.sc', '.sf7', '.sf', '.dsk',
         '.mv', '.sms', '.gg', '.nes', '.gb', '.gbc', '.gbx', '.gba', '.sfc', '.smc', '.swc',
         '.fig', '.z64', '.n64', '.v64', '.smd', '.gen', '.md', '.32x', '.neo', '.gw', '.mgw']);
-  Result := Result or ((Ext = '.bin') and (Size = $2000) and
-    Name.ToLower.Contains('initial program loader'));
+  Result := Result or ((Ext = '.bin') and (Size = $2000) and Name.ToLower.Contains('initial program loader'));
 end;
 
 function CartridgeVariantScore(const Name: string): Integer;

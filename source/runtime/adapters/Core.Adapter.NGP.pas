@@ -23,7 +23,7 @@ type
     property Keys2: TNGPKeyMap read FKeys2;
   end;
 
-  TNGPCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TNGPCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FBIOS, FIdentity: TBytes;
     FCartridgeROM: TBytes;
@@ -38,6 +38,7 @@ type
     FError, FSnapshotDirectory, FSaveFile: string;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
     destructor Destroy; override;
     function GetSystemId: string;
@@ -74,6 +75,11 @@ uses
 
 const
   KeyNames: array[TEmulatorButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+
+procedure TNGPCoreAdapter.ApplyLiveSettings;
+begin
+  ApplySettings;
+end;
 
 constructor TNGPConfig.Create(const FileName: string; const Storage: IStorage);
 const

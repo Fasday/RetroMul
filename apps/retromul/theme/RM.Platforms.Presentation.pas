@@ -38,6 +38,7 @@ const
   SETTINGS_PAGE_CPS1 = 24;
   SETTINGS_PAGE_CPS2 = 25;
   SETTINGS_PAGE_CPS3 = 26;
+  SETTINGS_PAGE_ZX = 27;
 
 type
   TPlatformPresentation = record
@@ -59,6 +60,12 @@ function PlatformPresentation(System: TRomSystem): TPlatformPresentation;
 begin
   Result := Default(TPlatformPresentation);
   case System of
+    TRomSystem.ZXSpectrum:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_ZX;
+        Result.PadLayout := TPlatformPadLayout.Nes;
+        Result.IconData := PlatformIconSC3000;
+      end;
     TRomSystem.CPS1, TRomSystem.CPS2, TRomSystem.CPS3:
       begin
         case System of

@@ -434,6 +434,21 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\..\source\cores\zx\ZX.BlockImage.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.DivStorage.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Timex.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Machine.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Configuration.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.NextDAC.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.TurboSoundFM.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Console.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Tape.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.BetaDisk.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.CMOS.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Emulation.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.ZX.pas"/>
+        <DCCReference Include="settings\RM.Settings.ZX.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.ZX.pas"/>
         <DCCReference Include="..\..\source\ui\fmx\shaders\RM.ShaderBitmap.pas"/>
         <DCCReference Include="..\..\source\ui\fmx\shaders\RM.BitmapShaders.pas"/>
         <DCCReference Include="..\..\source\ui\fmx\shaders\RM.BitmapShaders.Skia.pas"/>

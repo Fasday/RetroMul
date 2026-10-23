@@ -30,6 +30,7 @@ type
     FPause, FReset, FAudioEnabled: Boolean;
     FVolume: Single;
     FCDAudioEnabled, F32XAudioEnabled, FMicrophoneEnabled: Boolean;
+    FCDVolume, F32XVolume: Integer;
     FMicrophone: IMicrophoneSource;
     FFrame: TEmulatorFrame;
     FAvailable: Boolean;
@@ -45,6 +46,7 @@ type
     procedure WakeSetEvent;
     procedure Configure(const Input: TMDButtons; Paused, AudioEnabled: Boolean; Volume: Single;
       const Input2: TMDButtons = []; const Input3: TMDButtons = []; const Input4: TMDButtons = []);
+    procedure ConfigureExpansionVolume(CDVolume, Volume32X: Integer);
     procedure ConfigureExpansion(CDAudio, Audio32X, Microphone: Boolean; const Source: IMicrophoneSource);
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
@@ -88,6 +90,8 @@ begin
   FSnapshots := TSnapshotQueue.Create;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil, False, False, '');
+  FCDVolume := 100;
+  F32XVolume := 100;
   FCDAudioEnabled := True;
   F32XAudioEnabled := True;
   FData := Copy(Data);
@@ -119,6 +123,17 @@ begin
     FPause := Paused;
     FAudioEnabled := AudioEnabled;
     FVolume := Volume;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TMDWorker.ConfigureExpansionVolume(CDVolume, Volume32X: Integer);
+begin
+  FLock.Acquire;
+  try
+    FCDVolume := EnsureRange(CDVolume, 0, 100);
+    F32XVolume := EnsureRange(Volume32X, 0, 100);
   finally
     FLock.Release;
   end;
@@ -383,6 +398,8 @@ begin
           Paused := FPause;
           Enabled := FAudioEnabled;
           Volume := FVolume;
+          Console.CDVolume := FCDVolume;
+          Console.Volume32X := F32XVolume;
           Console.CDAudioEnabled := FCDAudioEnabled;
           Console.Audio32XEnabled := F32XAudioEnabled;
           Microphone := FMicrophone;

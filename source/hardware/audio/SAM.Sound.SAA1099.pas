@@ -3,9 +3,11 @@
 interface
 
 uses
-  System.SysUtils, Core.AudioFilter;
+  System.SysUtils, System.Classes, Core.AudioFilter;
 
 type
+  TSAA1099StateField = procedure(var Value; Size: Integer) of object;
+
   TSAA1099 = class
   private
     FRegisters: array[0..31] of Byte;
@@ -28,6 +30,7 @@ type
     procedure NativeStep;
   public
     constructor Create(Clock: Integer = 8000000; SampleRate: Integer = 44100);
+    procedure SerializeState(const Field: TSAA1099StateField);
     procedure Reset;
     procedure WriteAddress(Value: Byte);
     procedure WriteData(Value: Byte);
@@ -309,6 +312,30 @@ begin
   end;
   FFiltered[0] := FFilter[0].Process(L / 90);
   FFiltered[1] := FFilter[1].Process(R / 90);
+end;
+
+procedure TSAA1099.SerializeState(const Field: TSAA1099StateField);
+begin
+  Field(FRegisters, SizeOf(FRegisters));
+  Field(FAddress, SizeOf(FAddress));
+  Field(FClock, SizeOf(FClock));
+  Field(FSampleRate, SizeOf(FSampleRate));
+  Field(FPhase, SizeOf(FPhase));
+  Field(FToneCounter, SizeOf(FToneCounter));
+  Field(FTone, SizeOf(FTone));
+  Field(FNoiseCounter, SizeOf(FNoiseCounter));
+  Field(FNoise, SizeOf(FNoise));
+  Field(FEnvelope, SizeOf(FEnvelope));
+  Field(FEnvControl, SizeOf(FEnvControl));
+  Field(FEnvPending, SizeOf(FEnvPending));
+  Field(FEnvEnded, SizeOf(FEnvEnded));
+  Field(FEnvHasPending, SizeOf(FEnvHasPending));
+  Field(FFilter, SizeOf(FFilter));
+  Field(FDC, SizeOf(FDC));
+  Field(FFiltered, SizeOf(FFiltered));
+  if (FAddress > 31) or ((FClock < 100000) or (FClock > 32000000)) or ((FSampleRate < 8000) or (FSampleRate > 192000)) or
+    IsNan(FPhase) or IsInfinite(FPhase) or (FPhase < 0) or (FPhase >= 1) then
+    raise EReadError.Create('Unsupported SAA1099 state');
 end;
 
 procedure TSAA1099.Sample(out Left, Right: SmallInt);

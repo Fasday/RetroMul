@@ -19,7 +19,7 @@ uses
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
-  Core.Adapter.CPS, CPS.RomSets;
+  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.ZX;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -105,6 +105,9 @@ begin
     Exit(TNeoGeoCoreAdapter.Create(Stream, Storage, RomName, True));
   end;
 
+  if SameText(ExtractFileExt(SourceName), '.mmc') or SameText(ExtractFileExt(SourceName), '.ide') then
+    Exit(TZXCoreAdapter.Create(Stream, Storage, RomName, SourceName));
+
   var Data := ReadNeoGeoData(Stream);
   var IsSevenZip := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_7Z);
   if IsSevenZip then
@@ -141,6 +144,7 @@ begin
     try
       Archive.Open(ArchiveStream, TZipMode.zmRead);
       var Candidate := -1;
+
       for var i := 0 to Archive.FileCount - 1 do
       begin
         var Name := Archive.FileNames[i];
@@ -161,7 +165,29 @@ begin
           if Candidate >= 0 then
           begin
             if not IsSevenZip then
+            begin
+              var OldName := Archive.FileNames[Candidate];
+              var NewDisk := SameText(ExtractFileExt(Name), '.trd') or SameText(ExtractFileExt(Name), '.scl') or SameText(ExtractFileExt(Name), '.dsk');
+              var OldDisk := SameText(ExtractFileExt(OldName), '.trd') or SameText(ExtractFileExt(OldName), '.scl') or SameText(ExtractFileExt(OldName), '.dsk');
+              if IsZXImageName(Name) and IsZXImageName(OldName) and (NewDisk or OldDisk) then
+              begin
+                if OldDisk and not NewDisk then
+                  Continue;
+                if NewDisk and not OldDisk then
+                begin
+                  Candidate := i;
+                  Continue;
+                end;
+                if SameText(ExtractFileExt(OldName), '.trd') and SameText(ExtractFileExt(Name), '.scl') then
+                  Continue;
+                if SameText(ExtractFileExt(Name), '.trd') and SameText(ExtractFileExt(OldName), '.scl') then
+                begin
+                  Candidate := i;
+                  Continue;
+                end;
+              end;
               raise EReadError.Create('Cartridge ZIP must contain one cartridge or disk image');
+            end;
             var Score := CartridgeVariantScore(Name);
             var Previous := CartridgeVariantScore(Archive.FileNames[Candidate]);
             if (Score < Previous) or ((Score = Previous) and
@@ -196,6 +222,29 @@ begin
       Result := TPCECoreAdapter.Create(InputPCE, Storage, RomName, nil, SourceName);
     finally
       InputPCE.Free;
+    end;
+    Exit;
+  end;
+
+  // DSK is shared with SF-7000. Raw 160 KiB media and an explicit Sega path
+  // retain their historical dispatch; other CPC DSK containers default to +3.
+  var DSKContainer := (Length(Data) >= 256) and
+    ((TEncoding.ASCII.GetString(Data, 0, 20) = 'EXTENDED CPC DSK File') or
+    (TEncoding.ASCII.GetString(Data, 0, 20) = 'MV - CPCEMU Disk-File'));
+  var SegaDisk := SameText(ExtractFileExt(SourceName), '.dsk') and
+    (((Length(Data) = 163840) and not DSKContainer) or
+    ((Length(Data) >= 512) and DSKContainer and (Data[$30] = 40) and (Data[$31] = 1) and
+    (Data[256 + $14] = 1) and (Data[256 + $15] = 16)) or
+    RomName.ToLower.Replace('\', '/').Contains('/sf7000/') or
+    RomName.ToLower.Replace('\', '/').Contains('/sg1000/') or
+    RomName.ToLower.Contains('(sf-7000)') or RomName.ToLower.Contains('initial program loader'));
+  if IsZXImageName(SourceName) and not SegaDisk then
+  begin
+    var ZXStream := TBytesStream.Create(Data);
+    try
+      Result := TZXCoreAdapter.Create(ZXStream, Storage, RomName, SourceName);
+    finally
+      ZXStream.Free;
     end;
     Exit;
   end;

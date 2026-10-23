@@ -30,7 +30,7 @@ type
     property Keys: TGBAKeyMap read FKeys;
   end;
 
-  TGBACoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMotionInput, IEmulationRotationInput, IEmulationRumbleOutput)
+  TGBACoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMotionInput, IEmulationRotationInput, IEmulationRumbleOutput)
   private
     FThread: TGBAWorker;
     FData: TBytes;
@@ -46,6 +46,7 @@ type
     FMotionX, FMotionY, FRotation: Double;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string); overload;
     destructor Destroy; override;
@@ -94,6 +95,14 @@ const
     ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'L', 'X', 'Y', 'R', 'Mode');
 
 { TGBAConfig }
+
+procedure TGBACoreAdapter.ApplyLiveSettings;
+begin
+  FKeys := FCoreConfig.Keys;
+  if FThread <> nil then
+    FThread.SetSolarLevel(FCoreConfig.SolarLevel);
+  ApplySettings;
+end;
 
 constructor TGBAConfig.Create(const FileName: string; const Storage: IStorage);
 const
