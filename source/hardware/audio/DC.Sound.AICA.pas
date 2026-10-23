@@ -1,9 +1,9 @@
-﻿unit DC.Sound.AICA;
+unit DC.Sound.AICA;
 
 interface
 
 uses
-  System.SysUtils, Core.AudioFilter, DC.Sound.AICA.DSP;
+  System.SysUtils, Core.AudioFilter, Core.Snapshots, DC.Sound.AICA.DSP;
 
 type
   TAICAWrite = procedure(Address: Cardinal; Value: Byte) of object;
@@ -53,6 +53,7 @@ type
     procedure WriteRegister(Address: Integer; Value: Byte);
     procedure Sample(out Left, Right: SmallInt);
     function FIQ: Boolean;
+    procedure SerializeState(Archive: TStateArchive);
   end;
 
 implementation
@@ -470,6 +471,17 @@ begin
         FIRQ := Ord(WordAt($28A8) and Bit <> 0) + 2 * Ord(WordAt($28AC) and Bit <> 0) + 4 * Ord(WordAt($28B0) and Bit <> 0);
         Break;
       end;
+end;
+
+procedure TAICA.SerializeState(Archive: TStateArchive);
+begin
+  Archive.Field(FRegisters, SizeOf(FRegisters));
+  Archive.Field(FVoices, SizeOf(FVoices));
+  Archive.Field(FTimers, SizeOf(FTimers));
+  Archive.Field(FIRQ, SizeOf(FIRQ));
+  Archive.Field(FNoise, SizeOf(FNoise));
+  Archive.Field(FDC, SizeOf(FDC));
+  FDSP.SerializeState(Archive);
 end;
 
 function TAICA.FIQ: Boolean;

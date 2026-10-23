@@ -1,6 +1,9 @@
-﻿unit DC.Sound.AICA.DSP;
+unit DC.Sound.AICA.DSP;
 
 interface
+
+uses
+  Core.Snapshots;
 
 type
   TDSPRead = function(Address: Cardinal): Byte of object;
@@ -27,6 +30,7 @@ type
     procedure Mix(Channel, Sample: Integer);
     procedure Step;
     function Effect(Channel: Integer): Integer;
+    procedure SerializeState(Archive: TStateArchive);
   end;
 
 implementation
@@ -144,6 +148,25 @@ end;
 procedure TAICADSP.Mix(Channel, Sample: Integer);
 begin
   FMix[Channel and 15] := SignedBits(Int64(FMix[Channel and 15]) + Sample, 20);
+end;
+
+procedure TAICADSP.SerializeState(Archive: TStateArchive);
+begin
+  Archive.Field(FRegisters, SizeOf(FRegisters));
+  Archive.Field(FTemp, SizeOf(FTemp));
+  Archive.Field(FMemory, SizeOf(FMemory));
+  Archive.Field(FMix, SizeOf(FMix));
+  Archive.Field(FEffects, SizeOf(FEffects));
+  Archive.Field(FDelay, SizeOf(FDelay));
+  Archive.Field(RingBase, SizeOf(RingBase));
+  Archive.Field(RingLength, SizeOf(RingLength));
+  if Archive.Loading then
+  begin
+    FDelay := FDelay and $FFFF;
+    RingBase := RingBase and $FFF;
+    if (RingLength <> 8192) and (RingLength <> 16384) and (RingLength <> 32768) and (RingLength <> 65536) then
+      RingLength := 8192;
+  end;
 end;
 
 function TAICADSP.Effect(Channel: Integer): Integer;

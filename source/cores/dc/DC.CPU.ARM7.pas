@@ -1,11 +1,11 @@
-﻿unit DC.CPU.ARM7;
+unit DC.CPU.ARM7;
 
 // ARM7DI (ARMv3) interpreter. Bus accesses use integer addresses, never pointers.
 
 interface
 
 uses
-  System.SysUtils;
+  System.SysUtils, Core.Snapshots;
 
 type
   TARMRead = function(Address: Cardinal; Size: Integer): Cardinal of object;
@@ -31,6 +31,8 @@ type
     constructor Create(Read: TARMRead; Write: TARMWrite);
     procedure Reset;
     function Step(FIQ: Boolean): Integer;
+    // Banked registers and saved PSRs; R, PSR and SPSR are public fields.
+    procedure SerializeBanks(Archive: TStateArchive);
   end;
 
 function ARMAdd(A, B: Cardinal): Cardinal; inline;
@@ -82,6 +84,12 @@ begin
   FRead := Read;
   FWrite := Write;
   Reset;
+end;
+
+procedure TARM7.SerializeBanks(Archive: TStateArchive);
+begin
+  Archive.Field(FBanked, SizeOf(FBanked));
+  Archive.Field(FSaved, SizeOf(FSaved));
 end;
 
 procedure TARM7.Reset;
