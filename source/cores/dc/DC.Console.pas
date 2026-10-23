@@ -88,8 +88,13 @@ uses
 
 procedure TraceIO(Console: TDCConsole; const Kind: string; Address: Cardinal; Value: UInt64; Size: Integer);
 begin
-  if Console.IOTrace.Count < Console.IOTraceLimit then
-    Console.IOTrace.Add(Format('%s%d %.8x=%x pc=%.8x', [Kind, Size, Address, Value, Console.CPU.S.PC]));
+  // Repeats of the last line (a polling loop) only count in its object.
+  var Line := Format('%s%d %.8x=%x pc=%.8x', [Kind, Size, Address, Value, Console.CPU.S.PC]);
+  var Trace := Console.IOTrace;
+  if (Trace.Count > 0) and (Trace[Trace.Count - 1] = Line) then
+    Trace.Objects[Trace.Count - 1] := TObject(NativeInt(Trace.Objects[Trace.Count - 1]) + 1)
+  else if Trace.Count < Console.IOTraceLimit then
+    Trace.Add(Line);
 end;
 
 function BusRead(User: Pointer; Address: Cardinal; Size: Integer): UInt64;
