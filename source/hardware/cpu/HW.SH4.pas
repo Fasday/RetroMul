@@ -175,6 +175,7 @@ type
     FLenient: Boolean;
     FScratch: array[0..1] of TSH4Inst;
     procedure BuildMaps;
+    procedure MapPage(Page: Integer);
     function PhysicalPage(Virtual: Cardinal; Writing: Boolean): PByte;
     function SlowRead(Address: Cardinal; Size: Integer): UInt64;
     procedure SlowWrite(Address: Cardinal; Value: UInt64; Size: Integer);
@@ -218,6 +219,8 @@ type
     procedure Reset;
     // Physical page tables or MMU/OCRAM state changed.
     procedure RemapMemory;
+    // One physical 64 KiB page's table entries changed.
+    procedure RemapPhysical(Page: Integer);
     procedure InvalidateBlocks;
     procedure SetFetchHook(Fetch: TSH4Fetch; User: Pointer);
     procedure SetIllegalHook(Hook: TSH4IllegalHook; User: Pointer);
@@ -326,28 +329,38 @@ begin
     Result := FBus.ReadPages[Physical shr 16];
 end;
 
+procedure TSH4.MapPage(Page: Integer);
+begin
+  var Virtual := Cardinal(Page) shl 16;
+  FReadMap[Page] := PhysicalPage(Virtual, False);
+  FWriteMap[Page] := PhysicalPage(Virtual, True);
+  FGenMap[Page] := @FSinkGens[0];
+  if FReadMap[Page] <> nil then
+  begin
+    var G := FBus.Gens[(Virtual and $1FFFFFFF) shr 16];
+    if G <> nil then
+      FGenMap[Page] := G
+    else if FWriteMap[Page] = nil then
+      FGenMap[Page] := @FZeroGens[0];
+  end;
+end;
+
 procedure TSH4.BuildMaps;
 begin
   for var Page := 0 to 65535 do
-  begin
-    var Virtual := Cardinal(Page) shl 16;
-    FReadMap[Page] := PhysicalPage(Virtual, False);
-    FWriteMap[Page] := PhysicalPage(Virtual, True);
-    FGenMap[Page] := @FSinkGens[0];
-    if FReadMap[Page] <> nil then
-    begin
-      var G := FBus.Gens[(Virtual and $1FFFFFFF) shr 16];
-      if G <> nil then
-        FGenMap[Page] := G
-      else if FWriteMap[Page] = nil then
-        FGenMap[Page] := @FZeroGens[0];
-    end;
-  end;
+    MapPage(Page);
 end;
 
 procedure TSH4.RemapMemory;
 begin
   BuildMaps;
+end;
+
+procedure TSH4.RemapPhysical(Page: Integer);
+begin
+  // The eight virtual 64 KiB pages that alias a physical one.
+  for var Top := 0 to 7 do
+    MapPage((Top shl 13) or (Page and $1FFF));
 end;
 
 function TSH4.Read8(A: Cardinal): Cardinal;

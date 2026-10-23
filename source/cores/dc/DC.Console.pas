@@ -31,7 +31,11 @@ type
     FFrameDone: Boolean;
     FHalted: Boolean;
     FFrameCount: Int64;
+    FRenderFirst, FRenderLast: Cardinal;
     procedure DispatchEvent(Event: TDCEvent);
+    procedure SetRenderPages(Direct: Boolean);
+    procedure JoinForMemory;
+    procedure JoinForTA;
     procedure StartRender(Sender: Pointer);
     procedure Build;
   public
@@ -55,6 +59,8 @@ type
     // to IOTraceLimit lines.
     IOTrace: TStrings;
     IOTraceLimit: Integer;
+    // Diagnostics: waits for renders from VRAM accesses and the TA.
+    RenderJoins: array[0..1] of Int64;
     constructor Create(const Config: TDCConsoleConfig);
     destructor Destroy; override;
     procedure Reset;
@@ -65,6 +71,8 @@ type
     procedure InsertDisc(Image: TCDDisc);
     procedure BootDisc;
     procedure RunFrame;
+    // Waits for a render still running on worker threads.
+    procedure JoinRender;
     function ReadBus(Address: Cardinal; Size: Integer): UInt64;
     procedure WriteBus(Address: Cardinal; Value: UInt64; Size: Integer);
     procedure SerializeState(Archive: TStateArchive);
@@ -208,6 +216,8 @@ end;
 
 destructor TDCConsole.Destroy;
 begin
+  if (Renderer <> nil) and (Memory <> nil) then
+    JoinRender;
   Disc.Free;
   Flash.Free;
   GDROMHLE.Free;
@@ -229,6 +239,8 @@ end;
 
 procedure TDCConsole.Reset;
 begin
+  if Renderer <> nil then
+    JoinRender;
   Scheduler.Reset;
   FillChar(Memory.RAM^, DCRAMSize, 0);
   FillChar(Memory.VRAM^, DCVRAMSize, 0);
@@ -263,6 +275,7 @@ begin
   Interrupts.Reset;
   PVR.Reset(FConfig.PAL);
   TA.Reset;
+  TA.Rendering := nil;
   GDROM.Reset;
   GDROMHLE.Reset;
   AICA.Reset(FConfig.RTCSeconds);
@@ -345,6 +358,7 @@ begin
       else
       begin
         var A := Address and $7FFFFF;
+        Memory.Observe(A and not Cardinal(3), 4);
         case Size of
           1: Result := Memory.VRAM[A];
           2: Result := PWord(Memory.VRAM + (A and $7FFFFE))^;
@@ -414,6 +428,7 @@ begin
       else
       begin
         var A := Address and $7FFFFF;
+        Memory.Observe(A and not Cardinal(3), 4);
         case Size of
           1: Memory.VRAM[A] := Byte(Value);
           2: PWord(Memory.VRAM + (A and $7FFFFE))^ := Word(Value);
@@ -472,6 +487,37 @@ begin
   end;
 end;
 
+procedure TDCConsole.SetRenderPages(Direct: Boolean);
+begin
+  Memory.MapVRAMPages(FRenderFirst, FRenderLast, Direct);
+  for var P := Integer(FRenderFirst shr 16) to Integer((FRenderLast - 1) shr 16) and $7F do
+    for var Area in [$0500, $0700] do
+      for var Mirror in [0, 128] do
+        CPU.RemapPhysical(Area + Mirror + P);
+end;
+
+procedure TDCConsole.JoinForMemory;
+begin
+  Inc(RenderJoins[0]);
+  JoinRender;
+end;
+
+procedure TDCConsole.JoinForTA;
+begin
+  Inc(RenderJoins[1]);
+  JoinRender;
+end;
+
+procedure TDCConsole.JoinRender;
+begin
+  if not Assigned(Memory.Barrier) then
+    Exit;
+  Renderer.Wait;
+  Memory.Barrier := nil;
+  TA.OnBusy := nil;
+  SetRenderPages(True);
+end;
+
 procedure TDCConsole.StartRender(Sender: Pointer);
 begin
   // The scene renders at once; completion is signalled after a nominal time.
@@ -481,9 +527,23 @@ begin
   var SavedRound := GetRoundMode;
   SetExceptionMask(exAllArithmeticExceptions);
   SetRoundMode(rmNearest);
+  JoinRender;
   try
     Renderer.Render;
-    Renderer.RenderAll;
+    TA.Rendering := Renderer.Context;
+    // The workers may finish later: every access that could observe their
+    // output (the framebuffer range, the scene's TA context) waits for them
+    // first, so results match a render completed here.
+    if Renderer.RenderAsync then
+    begin
+      FRenderFirst := Renderer.FramebufferFirst;
+      FRenderLast := Renderer.FramebufferLast;
+      Memory.PendingFirst := FRenderFirst;
+      Memory.PendingLast := FRenderLast;
+      Memory.Barrier := JoinForMemory;
+      TA.OnBusy := JoinForTA;
+      SetRenderPages(False);
+    end;
   finally
     SetExceptionMask(SavedMask);
     SetRoundMode(SavedRound);
@@ -526,6 +586,7 @@ end;
 
 procedure TDCConsole.SerializeState(Archive: TStateArchive);
 begin
+  JoinRender;
   Scheduler.SerializeState(Archive);
   Memory.SerializeState(Archive);
   CPU.SerializeState(Archive);

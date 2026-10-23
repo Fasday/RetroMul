@@ -280,6 +280,11 @@ begin
     Exit;
   end;
   var Stride := (Words + Modulus - 1) * 4;
+  // A render in flight finishes before its buffer is shown.
+  var Span := Cardinal(Lines) * Cardinal(Stride) + Cardinal(Width) * 4;
+  FMemory.Observe(R[PVRFBRSOF1 shr 2] and $7FFFFF, Span);
+  if Interlaced then
+    FMemory.Observe(R[PVRFBRSOF2 shr 2] and $7FFFFF, Span);
   var VRAM := FMemory.VRAM;
   for var Y := 0 to Height - 1 do
   begin

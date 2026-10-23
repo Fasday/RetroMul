@@ -120,6 +120,9 @@ type
     FFogTable: array[0..127] of Word;
     FFogScale: Double;
     FFogColorRAM, FFogColorVert: Cardinal;
+    // Registers the tile workers use, as they were at the render start.
+    FShadowScale, FPTAlphaRef, FFBCtrl, FFBStride, FFBBase, FFBClipX, FFBClipY: Cardinal;
+    FBusy: Boolean;
     FBuffers: TArray<TTileBuffers>;
     FFragments: TArray<TFragmentBuffer>;
     // Region entries grouped per tile (work items, in any order on the
@@ -164,6 +167,16 @@ type
     // Every tile of the current render, on Threads threads (the caller's
     // included). Tiles are independent, so the result does not depend on it.
     procedure RenderAll;
+    // Starts the tiles on the worker threads and returns True, or renders
+    // them at once (no workers, a single tile, render to texture). Until
+    // Wait the workers write FramebufferFirst..FramebufferLast-1 (linear
+    // VRAM) and read Context; nothing else.
+    function RenderAsync: Boolean;
+    procedure Wait;
+    function FramebufferFirst: Cardinal;
+    function FramebufferLast: Cardinal;
+    property Busy: Boolean read FBusy;
+    property Context: TPVRContext read FContext;
     function TileCount: Integer;
     property Threads: Integer read FThreads write SetThreads;
   end;
@@ -230,6 +243,7 @@ end;
 
 procedure TDCRenderer.SetThreads(Value: Integer);
 begin
+  Wait;
   Value := EnsureRange(Value, 1, 32);
   for var W in FWorkers do
   begin
@@ -289,6 +303,41 @@ begin
     for var K := FItemStart[G] to FItemStart[G + 1] - 1 do
       RenderEntry(FItemEntries[K], Slot);
   end;
+end;
+
+function TDCRenderer.FramebufferFirst: Cardinal;
+begin
+  Result := FFBBase and $7FFFFF;
+end;
+
+function TDCRenderer.FramebufferLast: Cardinal;
+begin
+  Result := FramebufferFirst + FFBStride * Cardinal(FTilesY * TileSize);
+end;
+
+function TDCRenderer.RenderAsync: Boolean;
+begin
+  Wait;
+  if (Length(FWorkers) = 0) or (FItemCount < 2) or ((FFBBase and $1000000) <> 0) then
+  begin
+    RenderAll;
+    Exit(False);
+  end;
+  FNextGroup := 0;
+  FPending := Length(FWorkers);
+  FDone.ResetEvent;
+  FBusy := True;
+  for var W in FWorkers do
+    W.FStart.SetEvent;
+  Result := True;
+end;
+
+procedure TDCRenderer.Wait;
+begin
+  if not FBusy then
+    Exit;
+  FDone.WaitFor(INFINITE);
+  FBusy := False;
 end;
 
 procedure TDCRenderer.RenderAll;
@@ -565,6 +614,13 @@ begin
   FFogScale := ((Density shr 8) and $FF) / 128.0 * IntPower(2, ShortInt(Density and $FF));
   FFogColorRAM := FPVR.R[PVRFogColRAM shr 2];
   FFogColorVert := FPVR.R[PVRFogColVert shr 2];
+  FShadowScale := FPVR.R[PVRFPUShadScale shr 2];
+  FPTAlphaRef := FPVR.R[PVRPTAlphaRef shr 2];
+  FFBCtrl := FPVR.R[PVRFBWCtrl shr 2];
+  FFBStride := (FPVR.R[PVRFBWLineStride shr 2] and $1FF) * 8;
+  FFBBase := FPVR.R[PVRFBWSOF1 shr 2] and $1FFFFFF;
+  FFBClipX := FPVR.R[PVRFBXClip shr 2];
+  FFBClipY := FPVR.R[PVRFBYClip shr 2];
   FScaleX := 1;
   if (FPVR.R[PVRScalerCtlReg shr 2] and $10000) <> 0 then
     FScaleX := 2;
@@ -973,7 +1029,7 @@ begin
   // Cheap shadow: polygons with the shadow bit are darkened inside volumes.
   if Modified and RP.Shadow and not P.TwoVolume then
   begin
-    var Scale := FPVR.R[PVRFPUShadScale shr 2];
+    var Scale := FShadowScale;
     if (Scale and $100) <> 0 then
     begin
       var F := Scale and $FF;
@@ -989,7 +1045,7 @@ end;
 procedure TDCRenderer.RasterOpaque(B: PTileBuffers; TileX, TileY, List, Pass: Integer);
 begin
   var Bin := (TileY * FTilesX + TileX) * 5 + List;
-  var PTRef := Integer(FPVR.R[PVRPTAlphaRef shr 2] and $FF);
+  var PTRef := Integer(FPTAlphaRef and $FF);
   for var K := FBinStart[Bin] to FBinStart[Bin] + FBinCount[Bin] - 1 do
   begin
     var Index := FBinItems[K];
@@ -1309,16 +1365,16 @@ end;
 
 procedure TDCRenderer.WriteTile(B: PTileBuffers; TileX, TileY: Integer);
 begin
-  var Ctrl := FPVR.R[PVRFBWCtrl shr 2];
+  var Ctrl := FFBCtrl;
   var Pack := Ctrl and 7;
   var Dither := (Ctrl and 8) <> 0;
   var KVal := (Ctrl shr 8) and $FF;
   var AlphaThreshold := (Ctrl shr 16) and $FF;
-  var Stride := (FPVR.R[PVRFBWLineStride shr 2] and $1FF) * 8;
-  var Base := FPVR.R[PVRFBWSOF1 shr 2] and $1FFFFFF;
+  var Stride := FFBStride;
+  var Base := FFBBase;
   var ToTexture := (Base and $1000000) <> 0;
-  var ClipX := FPVR.R[PVRFBXClip shr 2];
-  var ClipY := FPVR.R[PVRFBYClip shr 2];
+  var ClipX := FFBClipX;
+  var ClipY := FFBClipY;
   var MinX := Integer(ClipX and $7FF);
   var MaxX := Integer((ClipX shr 16) and $7FF);
   var MinY := Integer(ClipY and $3FF);

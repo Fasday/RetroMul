@@ -105,7 +105,14 @@ type
     procedure EndList;
     procedure NewPoly(Kind: Byte);
     procedure YUVMacroblock;
+    procedure WaitIdle(Context: TPVRContext); inline;
   public
+    // The context the last render read. A list started for its parameter
+    // base builds another context, so the render may still read this one;
+    // OnBusy (while that render runs) waits for it before the accelerator
+    // appends to it.
+    Rendering: TPVRContext;
+    OnBusy: TDCVRAMBarrier;
     constructor Create(Memory: TDCMemory; Interrupts: TDCInterrupts; PVR: TDCPVR);
     destructor Destroy; override;
     procedure Reset; override;
@@ -206,6 +213,7 @@ begin
     C.Base := $FFFFFFFF;
     C.Used := 0;
   end;
+  // Rendering stays: a soft reset must not reuse the context a render reads.
   FCurrent := nil;
   FList := -1;
   FListsDone := 0;
@@ -223,11 +231,16 @@ begin
   for var C in FContexts do
     if C.Base = Base then
       Result := C;
+  // The rendered context keeps its contents; the base moves to another.
+  if (Result <> nil) and (Result = Rendering) then
+  begin
+    Result.Base := $FFFFFFFF;
+    Result := nil;
+  end;
   if Result = nil then
   begin
-    Result := FContexts[0];
     for var C in FContexts do
-      if C.Used < Result.Used then
+      if (C <> Rendering) and ((Result = nil) or (C.Used < Result.Used)) then
         Result := C;
     Result.Base := Base;
   end;
@@ -242,9 +255,16 @@ begin
       Exit(C);
 end;
 
+procedure TDCTA.WaitIdle(Context: TPVRContext);
+begin
+  if (Context <> nil) and (Context = Rendering) and Assigned(OnBusy) then
+    OnBusy;
+end;
+
 procedure TDCTA.ListInit;
 begin
   FCurrent := ContextFor(FPVR.R[PVRTAISPBase shr 2] and $7FFFFF);
+  WaitIdle(FCurrent);
   FCurrent.Clear;
   FList := -1;
   FListsDone := 0;
@@ -258,6 +278,7 @@ end;
 procedure TDCTA.ListContinue;
 begin
   // Multipass: further lists append to the current context.
+  WaitIdle(FCurrent);
   Inc(FPass);
   FList := -1;
   FListsDone := 0;
@@ -640,6 +661,7 @@ procedure TDCTA.Write32Bytes(Data: PCardinal);
 begin
   if FCurrent = nil then
     ListInit;
+  WaitIdle(FCurrent);
   if FPendingKind <> 0 then
   begin
     Move(Data^, FPending[8], 32);
@@ -804,6 +826,11 @@ begin
     if FContexts[I] = FCurrent then
       Current := I;
   Archive.Field(Current, SizeOf(Current));
+  var RenderingIndex := -1;
+  for var I := 0 to High(FContexts) do
+    if FContexts[I] = Rendering then
+      RenderingIndex := I;
+  Archive.Field(RenderingIndex, SizeOf(RenderingIndex));
   Archive.Field(FClock, SizeOf(FClock));
   Archive.Field(FStripOpen, SizeOf(FStripOpen));
   Archive.Field(FStripPoly, SizeOf(FStripPoly));
@@ -838,9 +865,14 @@ begin
       raise EReadError.Create('Dreamcast snapshot TA state');
     if (Current < -1) or (Current > High(FContexts)) then
       raise EReadError.Create('Dreamcast snapshot TA context');
+    if (RenderingIndex < -1) or (RenderingIndex > High(FContexts)) then
+      raise EReadError.Create('Dreamcast snapshot TA context');
     FCurrent := nil;
     if Current >= 0 then
       FCurrent := FContexts[Current];
+    Rendering := nil;
+    if RenderingIndex >= 0 then
+      Rendering := FContexts[RenderingIndex];
     if FStripOpen and ((FCurrent = nil) or (FStripPoly < 0) or (FStripPoly >= FCurrent.PolyCount)) then
       raise EReadError.Create('Dreamcast snapshot TA strip');
   end;

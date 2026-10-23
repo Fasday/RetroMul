@@ -13,6 +13,8 @@ uses
   System.SysUtils, Core.Snapshots, HW.SH4, DC.Types;
 
 type
+  TDCVRAMBarrier = procedure of object;
+
   TDCMemory = class
   private
     FBlocks: array[0..4] of Pointer;
@@ -23,9 +25,17 @@ type
     VRAMGens: array[0..DCVRAMSize div 4096 - 1] of Cardinal;
     ReadPages, WritePages: TSH4PhysicalPages;
     Gens: TSH4PhysicalGens;
+    // A render in flight writes linear VRAM PendingFirst..PendingLast-1;
+    // device accesses that may observe that range call Barrier first.
+    PendingFirst, PendingLast: Cardinal;
+    Barrier: TDCVRAMBarrier;
     constructor Create;
     destructor Destroy; override;
     procedure BuildPages;
+    procedure Observe(Offset, Size: Cardinal); inline;
+    // Direct CPU pages of the 32-bit VRAM view over linear First..Last-1:
+    // removed so accesses take the device path, or restored.
+    procedure MapVRAMPages(First, Last: Cardinal; Direct: Boolean);
     // Offset in the 64-bit VRAM view to the linear (32-bit view) offset.
     class function VRAM64(Offset: Cardinal): Cardinal; static; inline;
     procedure TouchVRAM(Offset, Size: Cardinal); inline;
@@ -98,6 +108,34 @@ begin
   end;
 end;
 
+procedure TDCMemory.Observe(Offset, Size: Cardinal);
+begin
+  if Assigned(Barrier) and (Offset < PendingLast) and (Offset + Size > PendingFirst) then
+    Barrier;
+end;
+
+procedure TDCMemory.MapVRAMPages(First, Last: Cardinal; Direct: Boolean);
+begin
+  if Last <= First then
+    Exit;
+  for var P := Integer(First shr 16) to Integer((Last - 1) shr 16) and $7F do
+    for var Area in [$0500, $0700] do
+      for var Mirror in [0, 128] do
+      begin
+        var Page := Area + Mirror + P;
+        if Direct then
+        begin
+          ReadPages[Page] := VRAM + P * 65536;
+          WritePages[Page] := VRAM + P * 65536;
+        end
+        else
+        begin
+          ReadPages[Page] := nil;
+          WritePages[Page] := nil;
+        end;
+      end;
+end;
+
 class function TDCMemory.VRAM64(Offset: Cardinal): Cardinal;
 begin
   Result := ((Offset and $7FFFF8) shr 1) or (Offset and 3) or ((Offset and 4) shl 20);
@@ -128,11 +166,13 @@ end;
 
 function TDCMemory.VRAMRead32(Offset: Cardinal): Cardinal;
 begin
+  Observe(Offset and $7FFFFC, 4);
   Result := PCardinal(VRAM + (Offset and $7FFFFC))^;
 end;
 
 procedure TDCMemory.VRAMWrite32(Offset, Value: Cardinal);
 begin
+  Observe(Offset and $7FFFFC, 4);
   PCardinal(VRAM + (Offset and $7FFFFC))^ := Value;
   Inc(VRAMGens[(Offset and $7FFFFF) shr 12]);
 end;
@@ -140,6 +180,11 @@ end;
 function TDCMemory.VRAMRead64Path(Offset: Cardinal; Size: Integer): UInt64;
 begin
   Offset := Offset and $7FFFFF;
+  if Assigned(Barrier) then
+  begin
+    Observe(VRAM64(Offset) and not Cardinal(3), 4);
+    Observe(VRAM64(Offset + 4) and not Cardinal(3), 4);
+  end;
   case Size of
     1: Result := (VRAM + VRAM64(Offset))^;
     2: Result := PWord(VRAM + VRAM64(Offset))^;
@@ -152,6 +197,11 @@ end;
 procedure TDCMemory.VRAMWrite64Path(Offset: Cardinal; Value: UInt64; Size: Integer);
 begin
   Offset := Offset and $7FFFFF;
+  if Assigned(Barrier) then
+  begin
+    Observe(VRAM64(Offset) and not Cardinal(3), 4);
+    Observe(VRAM64(Offset + 4) and not Cardinal(3), 4);
+  end;
   var Linear := VRAM64(Offset);
   case Size of
     1: (VRAM + Linear)^ := Byte(Value);
