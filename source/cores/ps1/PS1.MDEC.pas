@@ -321,29 +321,43 @@ end;
 // sum precision is the closest fit found to the hardware output of
 // ps1-tests mdec/8bit, step-by-step-log and frame (not exact: about 9% of
 // pixels are off by one or two).
+// Zero coefficients contribute exactly zero and are skipped: most blocks
+// hold a few low frequencies, and a zero input column makes a zero row of
+// the intermediate block.
 procedure TPS1MDEC.IDCT(var Block: TPS1MDECBlock);
 var
   Temp: TPS1MDECBlock;
   Scale: array[0..63] of Integer;
+  Rows: array[0..7] of Boolean;
 begin
   for var I := 0 to 63 do
     Scale[I] := Sar(FScale[I], 3);
-  for var X := 0 to 7 do
-    for var Y := 0 to 7 do
+  FillChar(Temp, SizeOf(Temp), 0);
+  for var Y := 0 to 7 do
+  begin
+    Rows[Y] := False;
+    for var Z := 0 to 7 do
     begin
-      var Sum := 0;
-      for var Z := 0 to 7 do
-        Inc(Sum, TruncShift(Block[Y + Z * 8] * Scale[X + Z * 8], 11));
-      Temp[X + Y * 8] := Sum;
+      var Value := Block[Y + Z * 8];
+      if Value = 0 then
+        Continue;
+      Rows[Y] := True;
+      for var X := 0 to 7 do
+        Inc(Temp[X + Y * 8], TruncShift(Value * Scale[X + Z * 8], 11));
     end;
-  for var X := 0 to 7 do
-    for var Y := 0 to 7 do
+  end;
+  FillChar(Block, SizeOf(Block), 0);
+  for var Y := 0 to 7 do
+    for var Z := 0 to 7 do
     begin
-      var Sum := 0;
-      for var Z := 0 to 7 do
-        Inc(Sum, TruncShift(Temp[Y + Z * 8] * Scale[X + Z * 8], 9));
+      if not Rows[Z] then
+        Continue;
+      var Value := Temp[Y + Z * 8];
+      if Value = 0 then
+        Continue;
       // Kept with Fraction bits until the output is rounded.
-      Block[X + Y * 8] := Sum;
+      for var X := 0 to 7 do
+        Inc(Block[X + Y * 8], TruncShift(Value * Scale[X + Z * 8], 9));
     end;
 end;
 

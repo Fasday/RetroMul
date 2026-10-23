@@ -83,7 +83,7 @@ type
     procedure CacheStore(Address, Value: Cardinal; Size: Integer);
     function ReadData(Address: Cardinal; Size: Integer; out Value: Cardinal): Boolean;
     function WriteData(Address, Value: Cardinal; Size: Integer): Boolean;
-    function DataAddress(Op: Cardinal; Size: Integer; Store: Boolean; out Address: Cardinal): Boolean;
+    function DataAddress(Op: Cardinal; Size: Integer; Store: Boolean; out Address: Cardinal): Boolean; inline;
     procedure Load(Op: Cardinal; Size: Integer; Signed: Boolean);
     procedure LoadUnaligned(Op: Cardinal; Left: Boolean);
     procedure Store(Op: Cardinal; Size: Integer);
@@ -99,6 +99,7 @@ type
     procedure ExecuteCopMemory(Op: Cardinal; Number: Integer; Store: Boolean);
     procedure Execute(Op: Cardinal);
     procedure TakeInterrupt;
+    procedure StepOnce; inline;
     function GetReg(Index: Integer): Cardinal;
     procedure SetRegPublic(Index: Integer; Value: Cardinal);
     function GetCause: Cardinal;
@@ -1033,7 +1034,7 @@ begin
   Enter(TPS1ExceptionCode.Interrupt, FBranch, FBranchTaken, FBranchTarget, FPC, 0);
 end;
 
-procedure TPS1CPU.Step;
+procedure TPS1CPU.StepOnce;
 begin
   if FInterruptPending then
   begin
@@ -1053,8 +1054,23 @@ begin
   FWrittenReg := 0;
   FNewLoadReg := 0;
   Inc(FScheduler.Now);
+  // An i-cache hit as in FetchCached: aligned address in KUSEG (first 512
+  // MiB) or in KSEG0 outside user mode, cache enabled, tag and word valid.
   var Op: Cardinal;
-  if Fetch(FCurrentPC, Op) then
+  var Address := FCurrentPC;
+  var Segment := Address shr 29;
+  var Tag := FICacheTag[(Address shr 4) and $FF];
+  var Fetched: Boolean;
+  if ((Address and 3) = 0) and ((Segment = 0) or ((Segment = 4) and not FUserMode)) and
+    ((FBus.CacheControl and PS1BCCICache) <> 0) and (((Tag xor Address) and $1FFFF000) = 0) and
+    (((Tag shr ((Address shr 2) and 3)) and 1) <> 0) then
+  begin
+    Op := FICacheData[(Address shr 2) and $3FF];
+    Fetched := True;
+  end
+  else
+    Fetched := Fetch(Address, Op);
+  if Fetched then
   begin
     FPC := FNextPC;
     FNextPC := Add32(FNextPC, 4);
@@ -1066,11 +1082,16 @@ begin
   FLoadValue := FNewLoadValue;
 end;
 
+procedure TPS1CPU.Step;
+begin
+  StepOnce;
+end;
+
 procedure TPS1CPU.Run(Target: Int64);
 begin
   FBreak := False;
   while (FScheduler.Now < Target) and (FScheduler.Now < FScheduler.NextDue) and not FBreak do
-    Step;
+    StepOnce;
 end;
 
 procedure TPS1CPU.BreakRun;

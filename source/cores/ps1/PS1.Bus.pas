@@ -212,13 +212,10 @@ begin
   for var Size := 1 to 4 do
     FBIOSRead[Size] := DeviceCycles(DelayDEV2, Size, False);
 
+  // Only the RAM banks (at most 16 MiB: physical pages 0..FFh) and the BIOS
+  // window (pages 1FC0h..1FFFh) are ever mapped; every other page keeps the
+  // nil/Slow entry it got when the object was created.
   var BIOSWindow := DeviceWindow(DelayDEV2);
-  for var Page := 0 to $FFFF do
-  begin
-    ReadMap[Page] := nil;
-    WriteMap[Page] := nil;
-    PageKind[Page] := TPS1PageKind.Slow;
-  end;
   for var Segment := 0 to 2 do
   begin
     var Base: Cardinal := 0;
@@ -227,10 +224,16 @@ begin
       2: Base := $A000;
     end;
     var Cached := Segment < 2;
-    for var Physical := 0 to $1FFF do
+    for var Index := 0 to $13F do
     begin
+      var Physical := Index;
+      if Index > $FF then
+        Physical := Integer(PS1PhysBIOS shr 16) + Index - $100;
       var Address := Cardinal(Physical) shl 16;
       var Page := Base + Cardinal(Physical);
+      ReadMap[Page] := nil;
+      WriteMap[Page] := nil;
+      PageKind[Page] := TPS1PageKind.Slow;
       if Address < FRAMWindow then
       begin
         var Memory := @RAM[RAMOffset(Address)];

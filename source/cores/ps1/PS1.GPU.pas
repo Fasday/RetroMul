@@ -115,6 +115,23 @@ const
   TransferPixelWork = 154;
   ReadPixelWork = 275;
 
+var
+  // Opaque ARGB of each 15-bit VRAM color (5 bits widened by repeating the
+  // top bits). Filled once at unit initialization, read-only afterwards.
+  Color15: array[0..$7FFF] of TAlphaColor;
+
+procedure InitColor15;
+begin
+  for var P := 0 to $7FFF do
+  begin
+    var R := Cardinal(P and $1F);
+    var G := Cardinal((P shr 5) and $1F);
+    var B := Cardinal((P shr 10) and $1F);
+    Color15[P] := $FF000000 or (((R shl 3) or (R shr 2)) shl 16) or (((G shl 3) or (G shr 2)) shl 8) or
+      ((B shl 3) or (B shr 2));
+  end;
+end;
+
 constructor TPS1GPU.Create(Scheduler: TPS1Scheduler; const IRQ: TPS1IRQRequest; PAL: Boolean);
 begin
   inherited Create;
@@ -865,27 +882,32 @@ begin
     if Color24 then
     begin
       var ByteX := SourceX * 2;
-      for var Column := 0 to Width - 1 do
+      if ByteX + Cardinal(Width) * 3 <= PS1VRAMWidth * 2 then
       begin
-        var C: array[0..2] of Cardinal;
-        for var I := 0 to 2 do
+        // The row does not wrap: read its bytes in place.
+        var Source := PByte(@VRAM[Line]) + ByteX;
+        for var Column := 0 to Width - 1 do
         begin
-          var Offset := ByteX + Cardinal(Column * 3 + I);
-          C[I] := (VRAM[Line + ((Offset shr 1) and $3FF)] shr ((Offset and 1) * 8)) and $FF;
+          Pixels[Target + Column] := $FF000000 or (Cardinal(Source[0]) shl 16) or (Cardinal(Source[1]) shl 8) or
+            Source[2];
+          Inc(Source, 3);
         end;
-        Pixels[Target + Column] := $FF000000 or (C[0] shl 16) or (C[1] shl 8) or C[2];
-      end;
+      end
+      else
+        for var Column := 0 to Width - 1 do
+        begin
+          var C: array[0..2] of Cardinal;
+          for var I := 0 to 2 do
+          begin
+            var Offset := ByteX + Cardinal(Column * 3 + I);
+            C[I] := (VRAM[Line + ((Offset shr 1) and $3FF)] shr ((Offset and 1) * 8)) and $FF;
+          end;
+          Pixels[Target + Column] := $FF000000 or (C[0] shl 16) or (C[1] shl 8) or C[2];
+        end;
     end
     else
       for var Column := 0 to Width - 1 do
-      begin
-        var P := VRAM[Line + ((SourceX + Cardinal(Column)) and $3FF)];
-        var R := Cardinal(P and $1F);
-        var G := Cardinal((P shr 5) and $1F);
-        var B := Cardinal((P shr 10) and $1F);
-        Pixels[Target + Column] := $FF000000 or (((R shl 3) or (R shr 2)) shl 16) or
-          (((G shl 3) or (G shr 2)) shl 8) or ((B shl 3) or (B shr 2));
-      end;
+        Pixels[Target + Column] := Color15[VRAM[Line + ((SourceX + Cardinal(Column)) and $3FF)] and $7FFF];
   end;
 end;
 
@@ -940,5 +962,8 @@ begin
     (FNextPosition < 0) or (FNextPosition > 3413) or (FDotPosition < 0) or (FDotPosition > 3413)) then
     raise EReadError.Create('PS1 snapshot GPU');
 end;
+
+initialization
+  InitColor15;
 
 end.

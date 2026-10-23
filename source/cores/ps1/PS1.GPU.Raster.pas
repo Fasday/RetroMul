@@ -15,6 +15,10 @@ type
 
   // Draws GP0 polygons, lines and rectangles into VRAM.
   TPS1Rasterizer = class
+  private const
+    // 4x4 dither offsets added to 8-bit colors before truncation to 5 bits
+    // (here so that the inline Shade can use them).
+    DitherTable: array[0..3, 0..3] of Integer = ((-4, 0, -3, 1), (2, -2, 3, -1), (-3, 1, -4, 0), (3, -1, 2, -2));
   private type
     TVertex = record
       X, Y, R, G, B, U, V: Integer;
@@ -40,7 +44,7 @@ type
     procedure PrepareWork(var Mode: TMode);
     procedure LoadClut(const Mode: TMode; Attribute: Cardinal);
     function Texel(const Mode: TMode; U, V: Integer): Word; inline;
-    procedure Shade(const Mode: TMode; X, Y, R, G, B: Integer; Texture: Word);
+    procedure Shade(const Mode: TMode; X, Y, R, G, B: Integer; Texture: Word); inline;
     procedure Triangle(const V0, V1, V2: TVertex; const Mode: TMode);
   public
     // Rows of this parity are left alone (interlaced output with drawing to
@@ -61,9 +65,6 @@ type
 implementation
 
 const
-  // 4x4 dither offsets added to 8-bit colors before truncation to 5 bits.
-  DitherTable: array[0..3, 0..3] of Integer = ((-4, 0, -3, 1), (2, -2, 3, -1), (-3, 1, -4, 0), (3, -1, 2, -2));
-
   // Drawing time in 1/256 CPU cycles, fitted to ps1-tests gpu/bandwidth: per
   // primitive, per drawn row and per pixel (untextured opaque and
   // semi-transparent, textured by texel depth).
@@ -426,10 +427,17 @@ begin
           Integer(Sar64(Acc[4], AttributeFraction) and $FF));
       if not Mode.Textured or (Texture <> 0) then
         Shade(Mode, X, Y, R, G, B, Texture);
-      for var J := 0 to PlaneCount - 1 do
+      // Planes holds 0..2 with NeedColor and 3..4 when textured.
+      if NeedColor then
       begin
-        var I := Planes[J];
-        Inc(Acc[I], GradX[I]);
+        Inc(Acc[0], GradX[0]);
+        Inc(Acc[1], GradX[1]);
+        Inc(Acc[2], GradX[2]);
+      end;
+      if Mode.Textured then
+      begin
+        Inc(Acc[3], GradX[3]);
+        Inc(Acc[4], GradX[4]);
       end;
     end;
   end;
