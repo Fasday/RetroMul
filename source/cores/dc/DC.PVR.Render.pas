@@ -955,6 +955,10 @@ begin
     Base := VC.Base;
     Offset := VC.Offset;
   end;
+  // Use Alpha (TSP bit 20) clear: the vertex colour counts as opaque; the
+  // texture's alpha still takes part in the shading instruction.
+  if (TSP and $100000) = 0 then
+    Base := Base or $FF000000;
   var Color := Base;
   if Texture <> nil then
   begin
@@ -1025,8 +1029,6 @@ begin
     end;
     Color := ARGB(A, R, G, B);
   end;
-  if (TSP and $100000) = 0 then
-    Color := Color or $FF000000;
   // Cheap shadow: polygons with the shadow bit are darkened inside volumes.
   if Modified and RP.Shadow and not P.TwoVolume then
   begin
