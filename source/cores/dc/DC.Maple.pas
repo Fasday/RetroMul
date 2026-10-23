@@ -1,4 +1,4 @@
-unit DC.Maple;
+﻿unit DC.Maple;
 
 // Maple bus: DMA command lists and the devices on ports A-D. The standard
 // controller and its expansion devices (VMU, Puru Puru) answer the frame
@@ -55,6 +55,30 @@ type
       out Response: Byte): Integer; override;
   end;
 
+  // Visual Memory: 128 KiB flash (256 blocks of 512 bytes), the 48x32
+  // monochrome LCD and the clock.
+  TDCVMU = class(TDCMapleDevice)
+  public
+    Data: TBytes;
+    LCD: array[0..191] of Byte;
+    Dirty, LCDChanged: Boolean;
+    constructor Create;
+    procedure Format;
+    function Handle(Command, Address: Byte; Data_: PCardinal; Words: Integer; Reply: PCardinal;
+      out Response: Byte): Integer; override;
+    procedure SerializeState(Archive: TStateArchive); override;
+  end;
+
+  // Puru Puru (jump) pack: vibration settings from SETCOND.
+  TDCPuruPuru = class(TDCMapleDevice)
+  public
+    Setting: Cardinal;
+    function Level: Byte;
+    function Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+      out Response: Byte): Integer; override;
+    procedure SerializeState(Archive: TStateArchive); override;
+  end;
+
   TDCMaple = class
   private
     FMemory: TDCMemory;
@@ -97,7 +121,7 @@ end;
 function TDCController.Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
   out Response: Byte): Integer;
 begin
-  Response := $FE;
+  Response := $FD;
   Result := 0;
   case Command of
     1, 2:
@@ -127,7 +151,7 @@ begin
       begin
         if (Words < 1) or (Data[0] <> MapleFuncController) then
         begin
-          Response := $FD;
+          Response := $FE;
           Exit(0);
         end;
         Reply[0] := MapleFuncController;
@@ -140,8 +164,223 @@ begin
   end;
 end;
 
-{ TDCMaple }
+{ TDCVMU }
 
+constructor TDCVMU.Create;
+begin
+  inherited Create;
+  SetLength(Data, 128 * 1024);
+  Format;
+  Dirty := False;
+end;
+
+procedure TDCVMU.Format;
+begin
+  // A blank card: root block 255, FAT 254, 13 directory blocks 253..241,
+  // 200 user blocks.
+  FillChar(Data[0], Length(Data), 0);
+  var Root := 255 * 512;
+  for var I := 0 to 15 do
+    Data[Root + I] := $55;
+  PWord(@Data[Root + $46])^ := 254;
+  PWord(@Data[Root + $48])^ := 1;
+  PWord(@Data[Root + $4A])^ := 253;
+  PWord(@Data[Root + $4C])^ := 13;
+  PWord(@Data[Root + $50])^ := 200;
+  var FAT := 254 * 512;
+  for var B := 0 to 255 do
+    PWord(@Data[FAT + B * 2])^ := $FFFC;
+  PWord(@Data[FAT + 255 * 2])^ := $FFFA;
+  PWord(@Data[FAT + 254 * 2])^ := $FFFA;
+  for var B := 242 to 253 do
+    PWord(@Data[FAT + B * 2])^ := Word(B - 1);
+  PWord(@Data[FAT + 241 * 2])^ := $FFFA;
+  Dirty := True;
+end;
+
+function TDCVMU.Handle(Command, Address: Byte; Data_: PCardinal; Words: Integer; Reply: PCardinal;
+  out Response: Byte): Integer;
+begin
+  Response := $FD;
+  Result := 0;
+  var Func: Cardinal := 0;
+  if Words >= 1 then
+    Func := Data_[0];
+  case Command of
+    1, 2:
+      begin
+        FillChar(Reply^, 28 * 4, 0);
+        Reply[0] := MapleFuncStorage or MapleFuncLCD or MapleFuncClock;
+        Reply[1] := $403F7E7E;
+        Reply[2] := $00100500;
+        Reply[3] := $00410F00;
+        var B := PByte(@Reply[4]);
+        B[0] := $FF;
+        MapleText(B + 2, 'Visual Memory', 30);
+        MapleText(B + 32, 'Produced By or Under License From SEGA ENTERPRISES,LTD.', 60);
+        PWord(B + 92)^ := $007C;
+        PWord(B + 94)^ := $0082;
+        Response := 5;
+        Exit(28);
+      end;
+    3:
+      begin
+        Response := 7;
+        Exit(0);
+      end;
+    9:
+      if Func = MapleFuncClock then
+      begin
+        // Date: year (big-endian 16 bit), month, day, hour, minute, second, weekday.
+        Reply[0] := MapleFuncClock;
+        Reply[1] := $01000AD0;
+        Reply[2] := 0;
+        Response := 8;
+        Exit(3);
+      end;
+    10:
+      if Func = MapleFuncStorage then
+      begin
+        // Media information: last block, partition, system/FAT/directory
+        // locations and sizes, icon, save area.
+        FillChar(Reply^, 7 * 4, 0);
+        Reply[0] := MapleFuncStorage;
+        var W := PWord(@Reply[1]);
+        W[0] := 255;
+        W[1] := 0;
+        W[2] := 255;
+        W[3] := 254;
+        W[4] := 1;
+        W[5] := 253;
+        W[6] := 13;
+        W[7] := 0;
+        W[8] := 0;
+        W[9] := 200;
+        W[10] := 31;
+        Response := 8;
+        Exit(7);
+      end;
+    11:
+      if (Func = MapleFuncStorage) and (Words >= 2) then
+      begin
+        var Location := Data_[1];
+        var Block := Integer(((Location shr 24) and $FF) or (((Location shr 16) and $FF) shl 8)) and 255;
+        Reply[0] := MapleFuncStorage;
+        Reply[1] := Location;
+        Move(Data[Block * 512], Reply[2], 512);
+        Response := 8;
+        Exit(130);
+      end;
+    12:
+      if (Func = MapleFuncStorage) and (Words >= 2) then
+      begin
+        var Location := Data_[1];
+        var Block := Integer(((Location shr 24) and $FF) or (((Location shr 16) and $FF) shl 8)) and 255;
+        var Phase := Integer((Location shr 8) and 3);
+        var Count := (Words - 2) * 4;
+        if Count > 128 then
+          Count := 128;
+        if Count > 0 then
+          Move(Data_[2], Data[Block * 512 + Phase * 128], Count);
+        Dirty := True;
+        Response := 7;
+        Exit(0);
+      end
+      else if (Func = MapleFuncLCD) and (Words >= 2) then
+      begin
+        var Count := (Words - 2) * 4;
+        if Count > 192 then
+          Count := 192;
+        if Count > 0 then
+          Move(Data_[2], LCD[0], Count);
+        LCDChanged := True;
+        Response := 7;
+        Exit(0);
+      end
+      else if Func = MapleFuncClock then
+      begin
+        Response := 7;
+        Exit(0);
+      end;
+    13, 14:
+      begin
+        Response := 7;
+        Exit(0);
+      end;
+  end;
+  if Command in [9..14] then
+    Response := $FE;
+end;
+
+procedure TDCVMU.SerializeState(Archive: TStateArchive);
+begin
+  Archive.Field(Data[0], Length(Data));
+  Archive.Field(LCD, SizeOf(LCD));
+  if Archive.Loading then
+  begin
+    Dirty := True;
+    LCDChanged := True;
+  end;
+end;
+
+{ TDCPuruPuru }
+
+function TDCPuruPuru.Level: Byte;
+begin
+  // Effect intensity in bits 8..10 (power, 1..7).
+  var Power := (Setting shr 8) and 7;
+  Result := Byte(Power * 36);
+end;
+
+function TDCPuruPuru.Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+  out Response: Byte): Integer;
+begin
+  Response := $FD;
+  Result := 0;
+  case Command of
+    1, 2:
+      begin
+        FillChar(Reply^, 28 * 4, 0);
+        Reply[0] := MapleFuncVibration;
+        Reply[1] := $01010000;
+        var B := PByte(@Reply[4]);
+        B[0] := $FF;
+        MapleText(B + 2, 'Puru Puru Pack', 30);
+        MapleText(B + 32, 'Produced By or Under License From SEGA ENTERPRISES,LTD.', 60);
+        PWord(B + 92)^ := $00C8;
+        PWord(B + 94)^ := $0640;
+        Response := 5;
+        Exit(28);
+      end;
+    3:
+      begin
+        Setting := 0;
+        Response := 7;
+        Exit(0);
+      end;
+    9:
+      begin
+        Reply[0] := MapleFuncVibration;
+        Reply[1] := Setting;
+        Response := 8;
+        Exit(2);
+      end;
+    14:
+      begin
+        if Words >= 2 then
+          Setting := Data[1];
+        Response := 7;
+        Exit(0);
+      end;
+  end;
+end;
+
+procedure TDCPuruPuru.SerializeState(Archive: TStateArchive);
+begin
+  Archive.Field(Setting, SizeOf(Setting));
+end;
+
+{ TDCMaple }
 constructor TDCMaple.Create(Memory: TDCMemory);
 begin
   inherited Create;
