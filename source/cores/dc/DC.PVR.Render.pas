@@ -89,6 +89,8 @@ type
     FPaletteHash: UInt64;
     FFogTable: array[0..127] of Word;
     FBuffers: TArray<TTileBuffers>;
+    // Closing instruction of each modifier volume (1 inside, 2 outside).
+    FVolumeMode: TArray<Byte>;
     FScaleX: Integer;
     procedure Prepare;
     procedure AddTriangle(Poly: Integer; I0, I1, I2: Integer; Volume: Integer);
@@ -289,7 +291,12 @@ begin
         begin
           AddTriangle(I, P.First, P.First + 1, P.First + 2, Volume);
           if P.VolumeEnd <> 0 then
+          begin
+            if Volume >= Length(FVolumeMode) then
+              SetLength(FVolumeMode, Volume * 2 + 16);
+            FVolumeMode[Volume] := P.VolumeEnd;
             Inc(Volume);
+          end;
         end;
     end;
   end;
@@ -442,9 +449,18 @@ end;
 
 function TDCRenderer.Covers(const T: TRenderTri; PX, PY: Single; out Z: Single): Boolean;
 begin
-  // Top-left rule approximated by a closed edge on the inside.
-  Result := (T.EA[0] * PX + T.EB[0] * PY + T.EC[0] >= 0) and (T.EA[1] * PX + T.EB[1] * PY + T.EC[1] >= 0) and
-    (T.EA[2] * PX + T.EB[2] * PY + T.EC[2] >= 0);
+  // A sample on an edge belongs to the triangle only for left/top edges, so
+  // triangles sharing an edge cover each pixel once.
+  Result := False;
+  for var K := 0 to 2 do
+  begin
+    var E := T.EA[K] * PX + T.EB[K] * PY + T.EC[K];
+    if E < 0 then
+      Exit;
+    if (E = 0) and not ((T.EA[K] > 0) or ((T.EA[K] = 0) and (T.EB[K] > 0))) then
+      Exit;
+  end;
+  Result := True;
   Z := T.ZC + T.ZA * (PX - T.X0) + T.ZB * (PY - T.Y0);
 end;
 
@@ -794,14 +810,38 @@ begin
   var Bin := (TileY * FTilesX + TileX) * 5 + List;
   if FBinCount[Bin] = 0 then
     Exit;
+  // A volume closes with its last triangle, which may lie outside the tile:
+  // close when the volume number changes or the bin ends.
   FillChar(B.Stencil, SizeOf(B.Stencil), 0);
-  for var K := FBinStart[Bin] to FBinStart[Bin] + FBinCount[Bin] - 1 do
+  var Current := -1;
+  for var K := FBinStart[Bin] to FBinStart[Bin] + FBinCount[Bin] do
   begin
-    var Index := FBinItems[K];
+    var Volume := -2;
+    var Index := -1;
+    if K < FBinStart[Bin] + FBinCount[Bin] then
+    begin
+      Index := FBinItems[K];
+      if FContext.Polys[FTris[Index].Poly].Pass <> Pass then
+        Continue;
+      Volume := FTris[Index].Volume;
+    end;
+    if (Current >= 0) and (Volume <> Current) then
+    begin
+      var Mode := 0;
+      if Current < Length(FVolumeMode) then
+        Mode := FVolumeMode[Current];
+      for var I := 0 to TileSize * TileSize - 1 do
+      begin
+        var Inside := B.Stencil[I] <> 0;
+        if ((Mode = 1) and Inside) or ((Mode = 2) and not Inside) then
+          B.Modified[I] := 1;
+      end;
+      FillChar(B.Stencil, SizeOf(B.Stencil), 0);
+    end;
+    Current := Volume;
+    if Index < 0 then
+      Break;
     var T: PRenderTri := @FTris[Index];
-    var P: PPVRPoly := @FContext.Polys[T.Poly];
-    if P.Pass <> Pass then
-      Continue;
     var X0 := Max(T.MinX - TileX * TileSize, 0);
     var X1 := Min(T.MaxX - TileX * TileSize, TileSize - 1);
     var Y0 := Max(T.MinY - TileY * TileSize, 0);
@@ -814,17 +854,8 @@ begin
         if Covers(T^, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, Z) and (Z > B.Depth[I]) then
           B.Stencil[I] := B.Stencil[I] xor 1;
       end;
-    if P.VolumeEnd <> 0 then
-    begin
-      for var I := 0 to TileSize * TileSize - 1 do
-      begin
-        var Inside := B.Stencil[I] <> 0;
-        if ((P.VolumeEnd = 1) and Inside) or ((P.VolumeEnd = 2) and not Inside) then
-          B.Modified[I] := 1;
-      end;
-      FillChar(B.Stencil, SizeOf(B.Stencil), 0);
-    end;
   end;
+
 end;
 
 procedure TDCRenderer.ShadeOpaque(B: PTileBuffers; TileX, TileY: Integer);
