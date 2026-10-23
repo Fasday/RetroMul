@@ -403,6 +403,13 @@ begin
   FBackgroundDepth := PSingle(@FPVR.R[PVRISPBackgndD shr 2])^;
 end;
 
+{$Q-}{$R-}
+function HashStep(Hash: UInt64; Value: Cardinal): UInt64;
+begin
+  Result := Hash * 1099511628211 + Value;
+end;
+{$IFDEF DC_CHECKED}{$Q+}{$R+}{$ENDIF}
+
 function TDCRenderer.Render: Integer;
 begin
   Result := 0;
@@ -413,7 +420,7 @@ begin
   for var I := 0 to 1023 do
   begin
     FPalette[I] := FPVR.R[(PVRPalette shr 2) + I];
-    Hash := Hash * 1099511628211 + FPalette[I];
+    Hash := HashStep(Hash, FPalette[I]);
   end;
   if Hash <> FPaletteHash then
   begin

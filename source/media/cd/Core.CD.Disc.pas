@@ -1,4 +1,4 @@
-﻿unit Core.CD.Disc;
+unit Core.CD.Disc;
 
 interface
 
@@ -20,6 +20,8 @@ type
     SubStream: TStream;
     SubRaw: Boolean;
     SubchannelStored: Boolean;
+    // Recording session (multi-session CD-R images); 1 otherwise.
+    Session: Integer;
   end;
 
   // Immutable TOC; streams are owned here and accessed by the emulation worker.
@@ -29,6 +31,9 @@ type
     FLeadOut: Integer;
     FIdentity: TBytes;
     FCompressedHash: TBytes;
+    FHighDensity: Boolean;
+    procedure LoadGDI(Stream: TStream; const Storage: IStorage; const Location: string);
+    procedure LoadCDI(const Storage: IStorage; const Location: string);
     procedure LoadCHD(const Storage: IStorage; const Location: string);
     procedure LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
     procedure ValidateAndHash;
@@ -52,6 +57,8 @@ type
     procedure ReadRawData(LBA: Integer; var Sector: TBytes);
     function ReadSubQ(LBA: Integer; var Q: TBytes): Boolean;
     function Identity: TBytes;
+    // GD-ROM layout: a high-density area from LBA 45000.
+    property HighDensity: Boolean read FHighDensity;
   end;
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
@@ -196,6 +203,10 @@ begin
   end
   else if SameText(ExtractFileExt(SourceName), '.chd') then
     LoadCHD(Storage, Location)
+  else if SameText(ExtractFileExt(SourceName), '.gdi') then
+    LoadGDI(Stream, Storage, Location)
+  else if SameText(ExtractFileExt(SourceName), '.cdi') then
+    LoadCDI(Storage, Location)
   else
     raise EReadError.Create('CD expects ISO, CUE or CHD');
 
@@ -405,11 +416,278 @@ begin
     FLeadOut := Cursor + PostGaps[High(FTracks)];
 end;
 
+// Raw data sector: Mode 1 or Mode 2 header after the sync pattern.
+function RawDataOffset(Stream: TStream; Position: Int64): Integer;
+var
+  Header: array[0..15] of Byte;
+begin
+  Result := 16;
+  Stream.Position := Position;
+  if (Stream.Read(Header, SizeOf(Header)) = SizeOf(Header)) and (Header[0] = 0) and (Header[1] = $FF) and
+    (Header[11] = 0) and (Header[15] = 2) then
+    Result := 24;
+end;
+
+function SegaBootSector(Stream: TStream; Position: Int64): Boolean;
+var
+  Text: array[0..15] of AnsiChar;
+begin
+  Stream.Position := Position;
+  Result := (Stream.Read(Text, SizeOf(Text)) = SizeOf(Text)) and CompareMem(@Text[0], PAnsiChar(AnsiString('SEGA SEGAKATANA ')), 16);
+end;
+
+// GD-ROM track list: count, then "number LBA type sectorsize file offset".
+procedure TCDDisc.LoadGDI(Stream: TStream; const Storage: IStorage; const Location: string);
+begin
+  if Stream.Size - Stream.Position > 65536 then
+    raise EReadError.Create('GDI exceeds 64 KiB');
+  var Data: TBytes;
+  SetLength(Data, Stream.Size - Stream.Position);
+  if Length(Data) > 0 then
+    Stream.ReadBuffer(Data[0], Length(Data));
+  var Lines := TEncoding.UTF8.GetString(Data).TrimLeft([#$FEFF]).Split([#10]);
+  var Count := -1;
+  for var Line in Lines do
+  begin
+    var Value := Line.Trim;
+    if Value = '' then
+      Continue;
+    if Count < 0 then
+    begin
+      Count := StrToIntDef(Value, -1);
+      if (Count < 1) or (Count > 99) then
+        raise EReadError.Create('Invalid GDI track count');
+      Continue;
+    end;
+    // The file name may be quoted and contain spaces.
+    var FileName := '';
+    var Head := Value;
+    var Tail := '';
+    var Quote := Pos('"', Value);
+    if Quote > 0 then
+    begin
+      Head := Copy(Value, 1, Quote - 1);
+      var Rest := Copy(Value, Quote + 1, MaxInt);
+      var Close := Pos('"', Rest);
+      if Close = 0 then
+        raise EReadError.Create('Unterminated GDI file name');
+      FileName := Copy(Rest, 1, Close - 1);
+      Tail := Copy(Rest, Close + 1, MaxInt);
+    end;
+    var Tokens := Head.Split([' ', #9], TStringSplitOptions.ExcludeEmpty);
+    if Quote = 0 then
+    begin
+      if Length(Tokens) < 5 then
+        raise EReadError.Create('Invalid GDI track line');
+      FileName := Tokens[4];
+    end
+    else if Length(Tokens) < 4 then
+      raise EReadError.Create('Invalid GDI track line');
+    var Number := StrToInt(Tokens[0]);
+    var Start := StrToInt(Tokens[1]);
+    var Kind := StrToInt(Tokens[2]);
+    var SectorSize := StrToInt(Tokens[3]);
+    if (Number <> Length(FTracks) + 1) or (Start < 0) or (Start > 549150) or
+      ((SectorSize <> 2352) and (SectorSize <> 2048)) or ((Kind <> 0) and (Kind <> 4)) then
+      raise EReadError.Create('Invalid GDI track');
+    var Item := Default(TCDTrack);
+    Item.Number := Number;
+    Item.Audio := Kind = 0;
+    Item.SectorSize := SectorSize;
+    Item.LittleEndian := True;
+    Item.SourceName := FileName;
+    Item.Stream := Storage.OpenRead(CDSibling(Storage, Location, FileName));
+    Item.ByteSize := Item.Stream.Size;
+    SetLength(FTracks, Length(FTracks) + 1);
+    FTracks[High(FTracks)] := Item;
+    if Item.ByteSize > Int64(1400) * 1024 * 1024 then
+      raise EReadError.Create('GDI track exceeds 1400 MiB');
+    if not Item.Audio and (SectorSize = 2352) then
+      Item.DataOffset := RawDataOffset(Item.Stream, 0);
+    // Some dumps keep the 150-sector pregap in the high-density data file.
+    if not Item.Audio and (Start >= 45000) and (SectorSize = 2352) and
+      not SegaBootSector(Item.Stream, Item.DataOffset) and SegaBootSector(Item.Stream, Int64(150) * 2352 + Item.DataOffset) then
+      Item.FileSector := 150;
+    Item.StartLBA := Start;
+    Item.PregapLBA := Start;
+    Item.EndLBA := Start + Integer(Item.ByteSize div SectorSize) - Item.FileSector;
+    Item.Session := 1;
+    if Start >= 45000 then
+    begin
+      Item.Session := 2;
+      FHighDensity := True;
+    end;
+    if (Length(FTracks) > 1) and (Item.StartLBA < FTracks[High(FTracks) - 1].EndLBA) then
+      raise EReadError.Create('GDI tracks overlap');
+    FTracks[High(FTracks)] := Item;
+  end;
+  if (Count < 1) or (Length(FTracks) <> Count) then
+    raise EReadError.Create('GDI track count does not match its tracks');
+  FLeadOut := FTracks[High(FTracks)].EndLBA;
+end;
+
+// DiscJuggler image: track data in order from the file start, descriptors
+// in a header located through the last eight bytes (version, offset).
+procedure TCDDisc.LoadCDI(const Storage: IStorage; const Location: string);
+const
+  Mark: array[0..9] of Byte = (0, 0, 1, 0, 0, 0, $FF, $FF, $FF, $FF);
+var
+  Input: TStream;
+
+  function U8: Byte;
+  begin
+    Input.ReadBuffer(Result, 1);
+  end;
+
+  function U16: Word;
+  begin
+    Input.ReadBuffer(Result, 2);
+  end;
+
+  function U32: Cardinal;
+  begin
+    Input.ReadBuffer(Result, 4);
+  end;
+
+  procedure Skip(Count: Integer);
+  begin
+    Input.Position := Input.Position + Count;
+  end;
+
+begin
+  Input := Storage.OpenRead(Location);
+  try
+    var Size := Input.Size;
+    if (Size < 1024) or (Size > Int64(1400) * 1024 * 1024) then
+      raise EReadError.Create('Invalid CDI size');
+    Input.Position := Size - 8;
+    var Version := U32;
+    var HeaderOffset := U32;
+    var V2 := Version = $80000004;
+    if ((Version <> $80000004) and (Version <> $80000005) and (Version <> $80000006)) or (HeaderOffset = 0) then
+      raise EReadError.Create('Unsupported CDI version');
+    // Version 3.5 stores the header offset from the end of the file.
+    if Version = $80000006 then
+      Input.Position := Size - HeaderOffset
+    else
+      Input.Position := HeaderOffset;
+    if (Input.Position <= 0) or (Input.Position >= Size) then
+      raise EReadError.Create('Invalid CDI header offset');
+    var Sessions := U16;
+    if (Sessions = 0) or (Sessions > 99) then
+      raise EReadError.Create('Invalid CDI session count');
+    var DataPosition: Int64 := 0;
+    for var S := 1 to Sessions do
+    begin
+      var Tracks := U16;
+      if Length(FTracks) + Tracks > 99 then
+        raise EReadError.Create('Invalid CDI track count');
+      for var T := 1 to Tracks do
+      begin
+        // Newer versions may prefix eight extra bytes.
+        if U32 <> 0 then
+          Skip(8);
+        var Probe: array[0..9] of Byte;
+        for var K := 0 to 1 do
+        begin
+          Input.ReadBuffer(Probe, 10);
+          if not CompareMem(@Probe[0], @Mark[0], 10) then
+            raise EReadError.Create('Invalid CDI track descriptor');
+        end;
+        Skip(4);
+        Skip(U8);
+        Skip(11 + 4 + 4);
+        if U32 = $80000000 then
+          Skip(8);
+        Skip(2);
+        var Pregap := Integer(U32);
+        var Length_ := Integer(U32);
+        Skip(6);
+        var Mode := U32;
+        Skip(12);
+        var StartLBA := Integer(U32);
+        var Total := Integer(U32);
+        Skip(16);
+        var SectorSize: Integer;
+        case U32 of
+          0: SectorSize := 2048;
+          1: SectorSize := 2336;
+          2: SectorSize := 2352;
+          4: SectorSize := 2448;
+        else
+          raise EReadError.Create('Unsupported CDI sector size');
+        end;
+        if (Mode > 2) or (Pregap < 0) or (Length_ <= 0) or (Total < Pregap + Length_) or (StartLBA < 0) or
+          (StartLBA > 450000) then
+          raise EReadError.Create('Invalid CDI track');
+        Skip(29);
+        if not V2 then
+        begin
+          Skip(5);
+          if U32 = $FFFFFFFF then
+            Skip(78);
+        end;
+        var Item := Default(TCDTrack);
+        Item.Number := Length(FTracks) + 1;
+        Item.Session := S;
+        Item.Audio := Mode = 0;
+        Item.LittleEndian := True;
+        Item.SectorSize := SectorSize;
+        Item.SourceName := ExtractFileName(Location);
+        Item.ByteOffset := DataPosition;
+        Item.FileSector := Pregap;
+        // CDI start addresses include the 150-sector lead-in offset.
+        Item.PregapLBA := StartLBA;
+        Item.StartLBA := StartLBA + Pregap - 150;
+        if Item.StartLBA < 0 then
+          Item.StartLBA := 0;
+        Item.EndLBA := Item.StartLBA + Length_;
+        if not Item.Audio then
+          case SectorSize of
+            2336: Item.DataOffset := 8;
+            2352, 2448:
+              if Mode = 2 then
+                Item.DataOffset := 24
+              else
+                Item.DataOffset := 16;
+          end;
+        Item.Stream := Storage.OpenRead(Location);
+        Item.ByteSize := Item.Stream.Size;
+        Inc(DataPosition, Int64(Total) * SectorSize);
+        if DataPosition > Size then
+        begin
+          Item.Stream.Free;
+          raise EReadError.Create('Truncated CDI track');
+        end;
+        if (System.Length(FTracks) > 0) and (Item.StartLBA < FTracks[High(FTracks)].EndLBA) then
+        begin
+          Item.Stream.Free;
+          raise EReadError.Create('CDI tracks overlap');
+        end;
+        SetLength(FTracks, System.Length(FTracks) + 1);
+        FTracks[High(FTracks)] := Item;
+      end;
+      // Session trailer.
+      Skip(12);
+      if not V2 then
+        Skip(1);
+    end;
+    if System.Length(FTracks) = 0 then
+      raise EReadError.Create('CDI has no tracks');
+    FLeadOut := FTracks[High(FTracks)].EndLBA;
+  finally
+    Input.Free;
+  end;
+end;
+
 procedure TCDDisc.LoadCHD(const Storage: IStorage; const Location: string);
 begin
+  // GD-ROM images (CHGD track metadata) may exceed a CD's size.
+  var Source := OpenCHD(Storage.OpenRead(Location));
+  var GDROM := Source.Metadata($43484744, 0) <> ''; // CHGD
   var Input := Storage.OpenRead(Location);
   try
-    if Input.Size > Int64(800) * 1024 * 1024 then
+    if (Input.Size > Int64(800) * 1024 * 1024) and not (GDROM and (Input.Size <= Int64(1600) * 1024 * 1024)) then
       raise EReadError.Create('CHD exceeds 800 MiB');
 
     var Hash := THashSHA2.Create;
@@ -426,7 +704,7 @@ begin
   finally
     Input.Free;
   end;
-  var Source := OpenCHD(Storage.OpenRead(Location));
+  FHighDensity := GDROM;
   var FileCursor := 0;
   var Cursor := 0;
   for var i := 0 to 98 do
@@ -434,6 +712,8 @@ begin
     var Metadata := Source.Metadata($43485432, i); // CHT2
     if Metadata = '' then
       Metadata := Source.Metadata($43485452, i); // CHTR
+    if Metadata = '' then
+      Metadata := Source.Metadata($43484744, i); // CHGD
     if Metadata = '' then
       Break;
 
@@ -484,9 +764,15 @@ begin
     if Frames <= StoredGap then
       raise EReadError.Create('CHD track contains only a pregap');
 
+    // The GD-ROM high-density area starts with track 3 at LBA 45000.
+    if GDROM and (Number = 3) and (Cursor + Gap < 45000) then
+      Cursor := 45000 - Gap;
     SetLength(FTracks, i + 1);
     var Item := Default(TCDTrack);
     Item.Number := Number;
+    Item.Session := 1;
+    if GDROM and (Number >= 3) then
+      Item.Session := 2;
     Item.Audio := Audio;
     Item.SubRaw := SubKind = 'RW_RAW';
     Item.SubchannelStored := (SubKind = 'RW') or Item.SubRaw;
@@ -516,7 +802,7 @@ end;
 
 procedure TCDDisc.ValidateAndHash;
 begin
-  if (Length(FTracks) = 0) or (LeadOut > 100 * 60 * 75) then
+  if (Length(FTracks) = 0) or ((LeadOut > 100 * 60 * 75) and not FHighDensity) or (LeadOut > 560000) then
     raise EReadError.Create('CD requires a valid track table shorter than 100 minutes');
 
   var Hash := THashSHA2.Create;

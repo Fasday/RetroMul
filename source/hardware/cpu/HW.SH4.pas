@@ -85,8 +85,10 @@ type
   // Complete architectural state. FR/XF hold FRn at index n xor 1, so that
   // DRn (even n) is the native double D[n div 2]. R0..R7 always hold the
   // active bank; RBank the inactive one (swapped on SR.RB changes).
+  TSH4Registers = array[0..15] of Cardinal;
+
   TSH4State = record
-    R: array[0..15] of Cardinal;
+    R: TSH4Registers;
     RBank: array[0..7] of Cardinal;
     FR, XF: TSH4FPBank;
     PC, PR, GBR, VBR, SSR, SPC, SGR, DBR, MACH, MACL, FPUL, FPSCR: Cardinal;
@@ -209,6 +211,9 @@ type
     // Advanced by executed instructions; the run loop stops at Deadline^.
     Now, Deadline: PInt64;
     InstructionsExecuted: Int64;
+    // Diagnostics (not serialized): exceptions taken and the first one.
+    ExceptionCount: Int64;
+    FirstExceptionPC, FirstExceptionCode, FirstExceptionPR: Cardinal;
     constructor Create(const Bus: TSH4Bus; NowCounter, DeadlineCounter: PInt64);
     procedure Reset;
     // Physical page tables or MMU/OCRAM state changed.
@@ -922,6 +927,16 @@ end;
 
 procedure TSH4.EnterException(Code, Offset, ReturnPC: Cardinal);
 begin
+  if Offset <> $600 then
+  begin
+    if ExceptionCount = 0 then
+    begin
+      FirstExceptionPC := ReturnPC;
+      FirstExceptionCode := Code;
+      FirstExceptionPR := S.PR;
+    end;
+    Inc(ExceptionCount);
+  end;
   S.SPC := ReturnPC;
   S.SSR := GetSRValue;
   S.SGR := S.R[15];

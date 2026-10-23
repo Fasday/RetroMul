@@ -12,8 +12,8 @@ unit DC.AICA;
 interface
 
 uses
-  System.SysUtils, Core.Snapshots, DC.Types, DC.Memory, DC.Scheduler, DC.Interrupts,
-  DC.CPU.ARM7, DC.Sound.AICA;
+  System.SysUtils, System.Math, Core.Snapshots, DC.Types, DC.Memory, DC.Scheduler, DC.Interrupts,
+  DC.CPU.ARM7, DC.Sound.AICA, DC.GDROM;
 
 const
   AICASampleRate = 44100;
@@ -50,6 +50,8 @@ type
     procedure UpdateSH4Interrupt;
   public
     S: TDCAICAState;
+    // CD-DA source mixed into the output (not owned).
+    GDROM: TDCGDROM;
     constructor Create(Memory: TDCMemory; Scheduler: TDCScheduler; Interrupts: TDCInterrupts);
     destructor Destroy; override;
     procedure Reset(RTCSeconds: Cardinal);
@@ -166,6 +168,13 @@ begin
   end;
   var L, R: SmallInt;
   FAICA.Sample(L, R);
+  if GDROM <> nil then
+  begin
+    var CL, CR: SmallInt;
+    GDROM.NextSample(CL, CR);
+    L := SmallInt(EnsureRange(Integer(L) + CL, -32768, 32767));
+    R := SmallInt(EnsureRange(Integer(R) + CR, -32768, 32767));
+  end;
   if FSampleCount + 2 > Length(FSamples) then
     SetLength(FSamples, FSampleCount * 2 + 4096);
   FSamples[FSampleCount] := L;

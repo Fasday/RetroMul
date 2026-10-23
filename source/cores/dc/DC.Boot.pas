@@ -12,7 +12,7 @@ unit DC.Boot;
 interface
 
 uses
-  System.SysUtils, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.PVR;
+  System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.PVR, DC.Disc;
 
 const
   DCStubBase = $8C000800;
@@ -50,12 +50,17 @@ type
     function FlashPartition(Index: Integer; out Offset, Size: Integer): Boolean;
   public
     GDROM: TDCGDROMSyscalls;
+    // Optional diagnostics: one line per system call.
+    Trace: TStrings;
     // Video output: True for VGA (31 kHz progressive), else NTSC/PAL 480i.
     VGA, PAL: Boolean;
     constructor Create(CPU: TSH4; Memory: TDCMemory; Periph: TSH4Periph; PVR: TDCPVR);
     // System call vectors, stubs and the hardware state at program entry.
     procedure Install;
     procedure EnterProgram(Entry: Cardinal);
+    // Loads IP.BIN (8C008000) and the boot file (8C010000), descrambled on CD
+    // media, and starts the IP.BIN bootstrap at 8C008300.
+    procedure BootDisc(Disc: TDCDisc);
     function Syscall(Address: Cardinal): Boolean;
     function TakeRequest: TDCBootRequest;
   end;
@@ -113,8 +118,10 @@ begin
   FCPU.S.GBR := $8C000000;
   FCPU.S.PR := $8C000000;
   FCPU.S.PC := Entry;
-  // Caches enabled, as the boot ROM sets CCR.
-  FCPU.S.CCR := $0000090D and not Cardinal($0808);
+  // Caches enabled with half the operand cache as RAM (IP.BIN keeps its stack
+  // there), as the boot ROM leaves CCR.
+  FCPU.S.CCR := $00000125;
+  FCPU.RemapMemory;
   // Video: 640x480, 16 bpp RGB565, NTSC/PAL interlaced or VGA.
   var R: ^TDCPVRRegs := @FPVR.R;
   if VGA then
@@ -152,6 +159,36 @@ begin
   R[PVRFBRSOF2 shr 2] := $00200000 + 640 * 2;
   // Enable the DMAC master switch as the boot ROM does.
   FPeriph.S.DMAOR := $8201;
+end;
+
+procedure TDCBoot.BootDisc(Disc: TDCDisc);
+begin
+  if not Disc.HasBootTrack then
+    raise EReadError.Create('Disc has no Dreamcast boot track');
+  var RAM := FMemory.RAM;
+  for var I := 0 to 15 do
+  begin
+    var Sector := Disc.ReadBootSector(I);
+    Move(Sector[0], (RAM + $8000 + Cardinal(I) * 2048)^, 2048);
+  end;
+  if not CompareMem(RAM + $8000, PAnsiChar(AnsiString('SEGA SEGAKATANA ')), 16) then
+    raise EReadError.Create('Disc boot area has no Dreamcast IP.BIN');
+  // Boot file name at IP.BIN offset 60h, space padded.
+  var Name := '';
+  for var I := 0 to 15 do
+    if (RAM + $8060 + Cardinal(I))^ > 32 then
+      Name := Name + Char((RAM + $8060 + Cardinal(I))^);
+  if Name = '' then
+    Name := '1ST_READ.BIN';
+  var Data := Disc.ReadFile(Name, DCRAMSize - $20000);
+  if Length(Data) = 0 then
+    raise EReadError.CreateFmt('Boot file %s not found on the disc', [Name]);
+  // The boot ROM descrambles boot files read from CD media (MIL-CD, CD-R).
+  if not Disc.IsGDROM then
+    DCDescramble(Data);
+  Move(Data[0], (RAM + $10000)^, Length(Data));
+  FMemory.TouchRAM($8000, $8000 + Cardinal(Length(Data)));
+  EnterProgram($AC008300);
 end;
 
 procedure TDCBoot.Sysinfo;
@@ -244,9 +281,13 @@ end;
 
 function TDCBoot.Syscall(Address: Cardinal): Boolean;
 begin
+  // Stubs are reached through P1 or P2.
+  Address := (Address and $1FFFFFFF) or $80000000;
   if (Address < DCStubBase) or (Address >= DCStubEnd) or ((Address and $F) <> 0) then
     Exit(False);
   var S: ^TSH4State := @FCPU.S;
+  if Trace <> nil then
+    Trace.Add(Format('syscall %.8x r4=%.8x r5=%.8x r6=%.8x r7=%.8x r1=%.8x pr=%.8x', [Address, S.R[4], S.R[5], S.R[6], S.R[7], S.R[1], S.PR]));
   case Address of
     DCStubSysinfo:
       case S.R[7] of

@@ -10,7 +10,8 @@ interface
 
 uses
   System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.Scheduler,
-  DC.Interrupts, DC.PVR, DC.PVR.TA, DC.PVR.Render, DC.GDROM, DC.AICA, DC.Maple, DC.Holly, DC.Boot;
+  DC.Interrupts, DC.PVR, DC.PVR.TA, DC.PVR.Render, DC.GDROM, DC.GDROM.HLE, DC.AICA, DC.Maple, DC.Holly, DC.Boot,
+  DC.Disc, DC.Flash, Core.CD.Disc;
 
 type
   TDCConsoleConfig = record
@@ -21,6 +22,7 @@ type
     Cable: TDCCable;
     PAL: Boolean;
     RTCSeconds: Cardinal; // seconds since 1950-01-01
+    Language: TDCLanguage;
   end;
 
   TDCConsole = class
@@ -46,11 +48,18 @@ type
     Maple: TDCMaple;
     Holly: TDCHolly;
     Boot: TDCBoot;
+    GDROMHLE: TDCGDROMHLE;
+    Flash: TDCFlash;
+    Disc: TDCDisc;
     constructor Create(const Config: TDCConsoleConfig);
     destructor Destroy; override;
     procedure Reset;
     // Loads a homebrew program (ELF or raw binary) and enters it.
     procedure LoadProgram(const Data: TBytes);
+    // Inserts a disc image (not owned) and, with the high-level boot ROM,
+    // boots it through IP.BIN.
+    procedure InsertDisc(Image: TCDDisc);
+    procedure BootDisc;
     procedure RunFrame;
     function ReadBus(Address: Cardinal; Size: Integer): UInt64;
     procedure WriteBus(Address: Cardinal; Value: UInt64; Size: Integer);
@@ -173,10 +182,17 @@ begin
   Maple := TDCMaple.Create(Memory);
   Holly := TDCHolly.Create(Memory, Scheduler, Interrupts, Periph, PVR, GDROM, AICA, Maple);
   Boot := TDCBoot.Create(CPU, Memory, Periph, PVR);
+  GDROMHLE := TDCGDROMHLE.Create(GDROM, Memory, Interrupts, ReadBus, WriteBus);
+  Boot.GDROM := GDROMHLE;
+  Flash := TDCFlash.Create(Memory.Flash);
+  AICA.GDROM := GDROM;
 end;
 
 destructor TDCConsole.Destroy;
 begin
+  Disc.Free;
+  Flash.Free;
+  GDROMHLE.Free;
   Boot.Free;
   Holly.Free;
   Maple.Free;
@@ -202,10 +218,17 @@ begin
   FillChar(Memory.Boot^, DCBootSize, 0);
   if Length(FConfig.BootROM) = DCBootSize then
     Move(FConfig.BootROM[0], Memory.Boot^, DCBootSize);
+  // A supplied flash image is kept; otherwise one is generated for the region.
   if Length(FConfig.Flash) = DCFlashSize then
     Move(FConfig.Flash[0], Memory.Flash^, DCFlashSize)
   else
-    FillChar(Memory.Flash^, DCFlashSize, $FF);
+  begin
+    var Broadcast := TDCBroadcast.NTSC;
+    if FConfig.PAL then
+      Broadcast := TDCBroadcast.PAL;
+    Flash.Generate(FConfig.Region, Broadcast, FConfig.Language, FConfig.RTCSeconds);
+  end;
+  Flash.Reset;
   for var I := 0 to High(Memory.RAMGens) do
     Inc(Memory.RAMGens[I]);
   for var I := 0 to High(Memory.VRAMGens) do
@@ -223,6 +246,7 @@ begin
   PVR.Reset(FConfig.PAL);
   TA.Reset;
   GDROM.Reset;
+  GDROMHLE.Reset;
   AICA.Reset(FConfig.RTCSeconds);
   Holly.Reset;
   FHalted := False;
@@ -237,6 +261,23 @@ begin
   end
   else
     CPU.SetIllegalHook(nil, nil);
+end;
+
+procedure TDCConsole.InsertDisc(Image: TCDDisc);
+begin
+  FreeAndNil(Disc);
+  if Image <> nil then
+    Disc := TDCDisc.Create(Image);
+  GDROM.Disc := Disc;
+end;
+
+procedure TDCConsole.BootDisc;
+begin
+  if Disc = nil then
+    raise EReadError.Create('No disc inserted');
+  CPU.InvalidateBlocks;
+  Boot.BootDisc(Disc);
+  CPU.InvalidateBlocks;
 end;
 
 procedure TDCConsole.LoadProgram(const Data: TBytes);
@@ -334,7 +375,9 @@ begin
     0:
       begin
         var A := Address and $01FFFFFF;
-        if (A >= $005F7000) and (A < $005F7100) then
+        if (A >= $00200000) and (A < $00220000) then
+          Flash.Write(A - $00200000, Cardinal(Value))
+        else if (A >= $005F7000) and (A < $005F7100) then
           GDROM.Write(A - $005F7000, Cardinal(Value), Size)
         else if (A >= $005F6800) and (A < $005F8000) then
           Holly.Write(A, Cardinal(Value), Size)
@@ -464,6 +507,8 @@ begin
   AICA.SerializeState(Archive);
   Maple.SerializeState(Archive);
   Holly.SerializeState(Archive);
+  GDROMHLE.SerializeState(Archive);
+  Flash.SerializeState(Archive);
   Archive.Field(FFrameCount, SizeOf(FFrameCount));
   Archive.Field(FHalted, SizeOf(FHalted));
 end;
