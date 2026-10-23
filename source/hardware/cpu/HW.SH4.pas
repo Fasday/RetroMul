@@ -47,6 +47,9 @@ type
   TSH4OnChipWrite = procedure(User: Pointer; Address, Value: Cardinal; Size: Integer);
   // Optional instruction fetch hook for test harnesses (all fetches when set).
   TSH4Fetch = function(User: Pointer; Address: Cardinal): Word;
+  // Called for an illegal instruction; True when the owner handled it (HLE
+  // firmware entry points) and set PC itself.
+  TSH4IllegalHook = function(User: Pointer; Address: Cardinal): Boolean;
 
   // Physical 64 KiB pages: host memory or nil (callbacks). Gens points to
   // sixteen write-generation counters, one per 4 KiB of the page.
@@ -143,6 +146,8 @@ type
     FBus: TSH4Bus;
     FFetch: TSH4Fetch;
     FFetchUser: Pointer;
+    FIllegalHook: TSH4IllegalHook;
+    FIllegalUser: Pointer;
     // Virtual 64 KiB pages for direct access (nil: slow path).
     FReadMap: array[0..65535] of PByte;
     FWriteMap: array[0..65535] of PByte;
@@ -210,6 +215,7 @@ type
     procedure RemapMemory;
     procedure InvalidateBlocks;
     procedure SetFetchHook(Fetch: TSH4Fetch; User: Pointer);
+    procedure SetIllegalHook(Hook: TSH4IllegalHook; User: Pointer);
     // Highest pending INTC request: priority level 1..15 and INTEVT code.
     procedure SetInterrupt(Level: Integer; Code: Cardinal);
     procedure RequestExit; inline;
@@ -2618,6 +2624,18 @@ begin
         end;
       oIllegal, oSlotIllegal, oFPUDisabled, oSlotFPUDisabled:
         begin
+          if (TOp(I.Kind) = oIllegal) and Assigned(FIllegalHook) then
+          begin
+            S.PC := I.Addr;
+            if FIllegalHook(FIllegalUser, I.Addr) then
+            begin
+              Jumped := True;
+              JumpTarget := S.PC;
+              Inc(Result);
+              Inc(I);
+              Break;
+            end;
+          end;
           case TOp(I.Kind) of
             oIllegal: S.EXPEVT := SH4ExcIllegal;
             oSlotIllegal: S.EXPEVT := SH4ExcSlotIllegal;
@@ -2846,6 +2864,12 @@ begin
   FFetch := Fetch;
   FFetchUser := User;
   ClearBlocks;
+end;
+
+procedure TSH4.SetIllegalHook(Hook: TSH4IllegalHook; User: Pointer);
+begin
+  FIllegalHook := Hook;
+  FIllegalUser := User;
 end;
 
 procedure TSH4.Reset;
