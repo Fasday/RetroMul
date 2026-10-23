@@ -173,6 +173,9 @@ type
     FCodeChunks: TArray<TArray<Word>>;
     FBlockCount, FInstChunk, FInstUsed, FCodeChunk, FCodeUsed: Integer;
     FBlocksBuilt: Int64;
+    // Instructions of fused operations beyond one each, since the run loop
+    // last counted them.
+    FFusedExtra: Integer;
     FBlocksEnabled: Boolean;
     FLenient: Boolean;
     FScratch: array[0..1] of TSH4Inst;
@@ -197,6 +200,9 @@ type
     function FetchWord(Address: Cardinal; out Op: Word): Boolean;
     function Decode(Op: Word; Address, AMode: Cardinal; Slot: Boolean; out I: TSH4Inst): Boolean;
     function Execute(Insts: PSH4Inst; Count: Integer; out Next: Cardinal): Integer;
+    procedure Div1(N, M: Integer); inline;
+    procedure RotateDivide(const I: TSH4Inst);
+    procedure FuseBlock(Insts: PSH4Inst; var Count: Integer);
     procedure ClearBlocks;
     function FindBlock(PC, AMode: Cardinal): PSH4Block;
     function BuildBlock(PC, AMode: Cardinal): PSH4Block;
@@ -310,7 +316,11 @@ type
     oFLDI0, oFLDI1, oFLDS, oFSTS, oFABS, oFNEG, oFADD, oFSUB, oFMUL, oFDIV, oFMAC, oFSQRT,
     oFCMPEQ, oFCMPGT, oFLOAT, oFTRC, oFSRRA, oFIPR, oFTRV, oFSCA, oFSCHG, oFRCHG,
     oDABS, oDNEG, oDADD, oDSUB, oDMUL, oDDIV, oDSQRT, oDCMPEQ, oDCMPGT, oDFLOAT, oDFTRC,
-    oFCNVSD, oFCNVDS);
+    oFCNVSD, oFCNVDS,
+    // Fused runs of the division step pairs ROTCL Ra / DIV1 Rm,Rn (in either
+    // order) that unrolled divisions consist of: N, M of DIV1, Imm = pairs
+    // or Ra shl 16. They run exactly as the single instructions.
+    oROTDIV, oDIVROT);
 
 { Memory }
 
@@ -1673,6 +1683,109 @@ end;
 
 { Executor }
 
+procedure TSH4.Div1(N, M: Integer);
+begin
+  var OldQ := (S.SR shr 8) and 1;
+  var MM := (S.SR shr 9) and 1;
+  var Q := S.R[N] shr 31;
+  var A := (S.R[N] shl 1) or S.T;
+  // DIV1 Rn,Rn divides by the shifted value (SingleStepTests).
+  var Divisor := S.R[M];
+  if N = M then
+    Divisor := A;
+  var Tmp0 := A;
+  var Tmp1: Cardinal;
+  if OldQ = MM then
+  begin
+    A := A - Divisor;
+    Tmp1 := Cardinal(Ord(A > Tmp0));
+  end
+  else
+  begin
+    A := A + Divisor;
+    Tmp1 := Cardinal(Ord(A < Tmp0));
+  end;
+  // The manual's case table for old Q / M reduces to Q xor carry xor M.
+  Q := Q xor Tmp1 xor MM;
+  S.R[N] := A;
+  S.SR := (S.SR and not Cardinal(SRQ)) or (Q shl 8);
+  S.T := Cardinal(Ord(Q = MM));
+end;
+
+procedure TSH4.RotateDivide(const I: TSH4Inst);
+begin
+  var Pairs := Integer(I.Imm and $FFFF);
+  var Ra := Integer(I.Imm shr 16);
+  for var K := 1 to Pairs do
+  begin
+    if TOp(I.Kind) = oDIVROT then
+      Div1(I.N, I.M);
+    var V := S.R[Ra];
+    S.R[Ra] := (V shl 1) or S.T;
+    S.T := V shr 31;
+    if TOp(I.Kind) = oROTDIV then
+      Div1(I.N, I.M);
+  end;
+  Inc(FFusedExtra, Pairs * 2 - 1);
+end;
+
+procedure TSH4.FuseBlock(Insts: PSH4Inst; var Count: Integer);
+
+  function Plain(const I: TSH4Inst): Boolean; inline;
+  begin
+    Result := (I.Flags and (IFEnd or IFDelayed or IFSlot)) = 0;
+  end;
+
+begin
+  // ROTCL / DIV1 pairs with the same registers become one operation.
+  var Output := 0;
+  var K := 0;
+  while K < Count do
+  begin
+    var Pairs := 0;
+    var First := oNOP;
+    if (K + 1 < Count) and Plain(Insts[K]) and Plain(Insts[K + 1]) then
+    begin
+      First := TOp(Insts[K].Kind);
+      var Second := TOp(Insts[K + 1].Kind);
+      if ((First = oROTCL) and (Second = oDIV1)) or ((First = oDIV1) and (Second = oROTCL)) then
+      begin
+        Pairs := 1;
+        while (K + Pairs * 2 + 1 < Count) and Plain(Insts[K + Pairs * 2]) and Plain(Insts[K + Pairs * 2 + 1]) and
+          (Insts[K + Pairs * 2].Kind = Insts[K].Kind) and (Insts[K + Pairs * 2].N = Insts[K].N) and
+          (Insts[K + Pairs * 2].M = Insts[K].M) and (Insts[K + Pairs * 2 + 1].Kind = Insts[K + 1].Kind) and
+          (Insts[K + Pairs * 2 + 1].N = Insts[K + 1].N) and (Insts[K + Pairs * 2 + 1].M = Insts[K + 1].M) do
+          Inc(Pairs);
+      end;
+    end;
+    if Pairs >= 2 then
+    begin
+      var Rotate := Insts[K];
+      var Divide := Insts[K + 1];
+      var Fused := Rotate;
+      Fused.Kind := Ord(oROTDIV);
+      if First = oDIV1 then
+      begin
+        Rotate := Insts[K + 1];
+        Divide := Insts[K];
+        Fused.Kind := Ord(oDIVROT);
+      end;
+      Fused.N := Divide.N;
+      Fused.M := Divide.M;
+      Fused.Imm := Cardinal(Pairs) or (Cardinal(Rotate.N) shl 16);
+      Insts[Output] := Fused;
+      Inc(K, Pairs * 2);
+    end
+    else
+    begin
+      Insts[Output] := Insts[K];
+      Inc(K);
+    end;
+    Inc(Output);
+  end;
+  Count := Output;
+end;
+
 function TSH4.Execute(Insts: PSH4Inst; Count: Integer; out Next: Cardinal): Integer;
 var
   I: PSH4Inst;
@@ -1927,33 +2040,9 @@ begin
           S.T := 0;
         end;
       oDIV1:
-        begin
-          var OldQ := (S.SR shr 8) and 1;
-          var MM := (S.SR shr 9) and 1;
-          var Q := S.R[N] shr 31;
-          A := (S.R[N] shl 1) or S.T;
-          // DIV1 Rn,Rn divides by the shifted value (SingleStepTests).
-          var Divisor := S.R[M];
-          if N = M then
-            Divisor := A;
-          var Tmp0 := A;
-          var Tmp1: Cardinal;
-          if OldQ = MM then
-          begin
-            A := A - Divisor;
-            Tmp1 := Cardinal(Ord(A > Tmp0));
-          end
-          else
-          begin
-            A := A + Divisor;
-            Tmp1 := Cardinal(Ord(A < Tmp0));
-          end;
-          // The manual's case table for old Q / M reduces to Q xor carry xor M.
-          Q := Q xor Tmp1 xor MM;
-          S.R[N] := A;
-          S.SR := (S.SR and not Cardinal(SRQ)) or (Q shl 8);
-          S.T := Cardinal(Ord(Q = MM));
-        end;
+        Div1(N, M);
+      oROTDIV, oDIVROT:
+        RotateDivide(I^);
       oDMULS:
         begin
           P64 := Int64(Integer(S.R[N])) * Int64(Integer(S.R[M]));
@@ -2847,9 +2936,11 @@ begin
   Inc(FInstUsed, Count);
   Inc(FCodeUsed, Count);
   Inc(FBlocksBuilt);
+  var Ops := Count;
+  FuseBlock(Insts, Ops);
   B.PC := PC;
   B.Mode := AMode;
-  B.Count := Count;
+  B.Count := Ops;
   B.Words := Count;
   B.Insts := Insts;
   B.Code := Code;
@@ -2982,7 +3073,8 @@ begin
       end;
       if B <> nil then
       begin
-        Count := Execute(B.Insts, B.Count, Next);
+        Count := Execute(B.Insts, B.Count, Next) + FFusedExtra;
+        FFusedExtra := 0;
         S.PC := Next;
         Inc(InstructionsExecuted, Count);
         if Count = 0 then
