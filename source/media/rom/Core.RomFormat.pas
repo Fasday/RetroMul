@@ -101,6 +101,7 @@ const
   ROM_EXTENSION_GDI = '.gdi';
   ROM_EXTENSION_CDI = '.cdi';
   ROM_EXTENSION_ELF = '.elf';
+  ROM_EXTENSION_MDS = '.mds';
 
 const
   ROM_MAX_SIZE = 64 * 1024 * 1024;

@@ -137,7 +137,8 @@ begin
   var Stream := Storage.OpenRead(FileName);
   try
     Create(Stream, Storage, FileName, SameText(ExtractFileExt(FileName), '.chd') or
-      SameText(ExtractFileExt(FileName), '.cue') or SameText(ExtractFileExt(FileName), '.iso'));
+      SameText(ExtractFileExt(FileName), '.cue') or SameText(ExtractFileExt(FileName), '.iso') or
+      SameText(ExtractFileExt(FileName), '.mds'));
   finally
     Stream.Free;
   end;
