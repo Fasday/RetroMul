@@ -168,6 +168,12 @@ type
     FOnCommandCompleted: TN64RDPCommandTrace;
     FTraceWords: TArray<Cardinal>;
     FTimingOnly: Boolean;
+    // Timing RDP (see Lazy, Replay): primitives counted lazily, and whether
+    // the current list's clocks lack some; no bus at all; the words Execute
+    // fed (Capture).
+    FLazy, FLazyClocks, FClocksOnly, FCapture: Boolean;
+    FCaptured: TArray<Cardinal>;
+    FCapturedCount: Integer;
     FOnWords: TN64RDPWords;
     // Diagnostics: OnPrimitive, the pixels counted for the current primitive
     // (timing RDP), and texture/TLUT loads by how their bytes travel.
@@ -250,6 +256,8 @@ type
     procedure SkipRow(Y, Left, Right: Integer; const EdgeLo, EdgeHi, LoMask, HiMask, QuarterMask: array of Integer);
     procedure SkipNoise(Steps: Integer);
     procedure MarkRow(Y: Integer);
+    procedure MarkRows(YH, YL: Integer);
+    function LazyPrimitive: Boolean; inline;
     function BlendSource(Index, Cycle: Integer): Cardinal; inline;
     function Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
     procedure Pixel(X, Y: Integer; Color: Cardinal; Fill: Boolean = False; Depth: Integer = -1; Delta: Cardinal = 1; Coverage: Integer = 8; CoverageBit: Boolean = True);
@@ -314,6 +322,14 @@ type
     procedure JoinGroup(Group: TN64RDPGroup; Band, Bands: Integer);
     // For snapshots of a band RDP, whose own count covers only its rows.
     procedure SetWorkClocks(Value: UInt64);
+    // A timing RDP runs again, without the bus (ClocksOnly), the Count words
+    // an Execute fed it (Capture), as Execute did: their exact clocks, or
+    // (Exact False) only the state they leave.
+    function Replay(const Words: TArray<Cardinal>; Count: Integer; Exact: Boolean): UInt64;
+    // The current list's exact clocks, worked out by a Replay (LazyClocks).
+    procedure ResolveClocks(Value: UInt64);
+    // Execute's words since its start, for Replay; Buffer takes their place.
+    procedure TakeCaptured(var Buffer: TArray<Cardinal>; out Count: Integer);
     function Traced: Boolean;
     procedure SerializeState(State: TStateArchive);
     function Describe: string;
@@ -331,6 +347,16 @@ type
     // Words of a command still incomplete at the end of the last Execute.
     property PendingWords: Integer read FCommandCount;
     property TimingOnly: Boolean read FTimingOnly;
+    // Timing RDP: WorkClocks matter only for a list with a Full Sync and for
+    // a snapshot, the latest list's. Lazy, a primitive marks every row within
+    // the scissor it may touch, unless a row may crash the pipeline, but does
+    // not count its pixels: LazyClocks, the list's clocks are then short of
+    // them (Replay, ResolveClocks).
+    property Lazy: Boolean read FLazy write FLazy;
+    property LazyClocks: Boolean read FLazyClocks;
+    // No bus at all (no marks, no texture bytes sent or read): Replay's.
+    property ClocksOnly: Boolean read FClocksOnly write FClocksOnly;
+    property Capture: Boolean read FCapture write FCapture;
     // Host preference; excluded from the emulated hardware snapshot.
     property BilinearFiltering: Boolean read FBilinearFiltering write SetBilinearFiltering;
     // Diagnostics (see the types). A timing RDP counts the pixels of each
@@ -505,6 +531,45 @@ end;
 procedure TN64RDP.SetWorkClocks(Value: UInt64);
 begin
   FWorkClocks := Value;
+end;
+
+function TN64RDP.Replay(const Words: TArray<Cardinal>; Count: Integer; Exact: Boolean): UInt64;
+begin
+  // As Execute's loop, the words fetched already.
+  var WasLazy := FLazy;
+  FLazy := not Exact;
+  try
+    BeginList;
+    if not FPipelineCrashed then
+    begin
+      var I := 0;
+      while I + 1 < Count do
+      begin
+        var Status := Feed(Words[I], Words[I + 1]);
+        Inc(I, 2);
+        if Status = FeedStop then
+          Break;
+      end;
+    end;
+  finally
+    FLazy := WasLazy;
+  end;
+  Result := FWorkClocks;
+end;
+
+procedure TN64RDP.ResolveClocks(Value: UInt64);
+begin
+  FWorkClocks := Value;
+  FLazyClocks := False;
+end;
+
+procedure TN64RDP.TakeCaptured(var Buffer: TArray<Cardinal>; out Count: Integer);
+begin
+  var Words := FCaptured;
+  FCaptured := Buffer;
+  Buffer := Words;
+  Count := FCapturedCount;
+  FCapturedCount := 0;
 end;
 
 procedure TN64RDP.ResetBands;
@@ -1335,6 +1400,8 @@ begin
   // and RDPWrite32's look at the neighbouring byte) always share a halfword
   // with one of its own bytes, and halfwords never straddle the 64-byte
   // lines the marks track, so the pixels' own bytes cover them.
+  if FClocksOnly then
+    Exit;
   var BPP := ColorBytes;
   var First := (Y * FColorWidth + FRowMinX) * BPP;
   var Bytes := (FRowMaxX - FRowMinX + 1) * BPP;
@@ -1344,6 +1411,42 @@ begin
     var Z := UInt64(FZAddress) + Cardinal((Y * FColorWidth + FRowMinX) * 2);
     if Z < $800000 then
       FBus.MarkRDPWrite(Cardinal(Z), Cardinal((FRowMaxX - FRowMinX + 1) * 2));
+  end;
+end;
+
+function TN64RDP.LazyPrimitive: Boolean;
+begin
+  // Triangle's primitive (FPrim.Cycle set) counted lazily: only its rows'
+  // marks, unless a row may crash the pipeline (RasterRow) or the pixels
+  // are wanted (OnPrimitive).
+  Result := FLazy and not Assigned(FOnPrimitive) and ((FPrim.Cycle <> 3) or ((FOtherLo and $24) <> $20));
+end;
+
+procedure TN64RDP.MarkRows(YH, YL: Integer);
+begin
+  // A lazy primitive (Triangle's YH, YL): what MarkRow marks for any pixels
+  // CountRow could count, in one range per image from the first row it may
+  // reach to the last. Those rows lie within the scissor and the quarter
+  // lines Triangle walks; their pixels X within the scissor and 0..1023.
+  if FClocksOnly then
+    Exit;
+  var First := Max(Max(Integer(ShiftRight(YH, 2)), FScissorY0), 0);
+  var Last := Min(Min(Integer(ShiftRight(Min(YL, FScissorQuarterY1) - 1, 2)), FScissorY1 - 1), 1023);
+  var Lo := Max(FScissorX0, 0);
+  var Hi := Min(FScissorX1 - 1, 1023);
+  var BPP := ColorBytes;
+  if (First > Last) or (Lo > Hi) or (Int64($800000) - BPP - Int64(FColorAddress) < 0) then
+    Exit;
+  var Start := Int64(FColorAddress) + (Int64(First) * FColorWidth + Lo) * BPP;
+  var Stop := Min(Int64(FColorAddress) + (Int64(Last) * FColorWidth + Hi + 1) * BPP, Int64($800000));
+  if Start < Stop then
+    FBus.MarkRDPWrite(Cardinal(Start), Cardinal(Stop - Start));
+  if (((FOtherHi shr 20) and 3) < 2) and ((FOtherLo and $30) <> 0) then
+  begin
+    Start := Int64(FZAddress) + (Int64(First) * FColorWidth + Lo) * 2;
+    Stop := Min(Int64(FZAddress) + (Int64(Last) * FColorWidth + Hi + 1) * 2, Int64($800000));
+    if Start < Stop then
+      FBus.MarkRDPWrite(Cardinal(Start), Cardinal(Stop - Start));
   end;
 end;
 
@@ -2554,6 +2657,8 @@ begin
   // (flag 1, then the bytes), so the RDRAM pages stay free for the CPU.
   // Otherwise (flag 0) the full RDP reads RDRAM itself, in order with its own
   // writes, and the pages are marked as read.
+  if FClocksOnly then
+    Exit;
   var Total := 0;
   var Hazard := False;
   for var Y := 0 to Rows - 1 do
@@ -3123,7 +3228,8 @@ begin
   FPrim.MaxLevel := (FCommand[0] shr 19) and 7;
   FPrim.Cycle := (FOtherHi shr 20) and 3;
   Inc(FPrimSeq);
-  if FModeDirty or (FMode.Textured <> ((Code and 2) <> 0)) then
+  // (A lazy primitive, below, needs no mode.)
+  if (FModeDirty or (FMode.Textured <> ((Code and 2) <> 0))) and not LazyPrimitive then
     DecodeMode((Code and 2) <> 0);
   FCarryPrim := False;
   if FGroup <> nil then
@@ -3143,6 +3249,12 @@ begin
   begin
     FPipelineCrashed := True;
     Exit
+  end;
+  if LazyPrimitive then
+  begin
+    FLazyClocks := True;
+    MarkRows(YH, YL);
+    Exit;
   end;
   for var Group := 0 to 3 do
     for var I := 0 to 7 do
@@ -3383,6 +3495,14 @@ begin
     // A worker RDP receives exactly these words, in this order.
     if Assigned(FOnWords) then
       FOnWords(W0, W1);
+    if FCapture then
+    begin
+      if FCapturedCount + 2 > Length(FCaptured) then
+        SetLength(FCaptured, Max(64, Length(FCaptured) * 2));
+      FCaptured[FCapturedCount] := W0;
+      FCaptured[FCapturedCount + 1] := W1;
+      Inc(FCapturedCount, 2);
+    end;
     var Status := Feed(W0, W1);
     if Status = FeedSync then
       Result := True
@@ -3405,6 +3525,8 @@ procedure TN64RDP.BeginList;
 begin
   FWorkClocks := 0;
   FTransferBits := 0;
+  FLazyClocks := False;
+  FCapturedCount := 0;
 end;
 
 function TN64RDP.Feed(W0, W1: Cardinal): Integer;
@@ -3513,7 +3635,9 @@ begin
           // with the command words unless a queued list may write them.
           var First := UInt64(FTextureAddress) + Cardinal(((TL div 4) * FTextureWidth + SL div 4) * 2);
           var Entries := Min(Count, 256);
-          if FTimingOnly then
+          if FClocksOnly then
+            // (No bus: Replay.)
+          else if FTimingOnly then
           begin
             var Payload := Assigned(FOnDataOut) and ((First >= $800000) or
               not FBus.RDPWriteHazard(Cardinal(First), Cardinal(Entries * 2)));
