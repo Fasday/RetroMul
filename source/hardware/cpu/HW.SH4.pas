@@ -388,6 +388,9 @@ type
     function OpFABS(I: PSH4Inst): Boolean;
     function OpFNEG(I: PSH4Inst): Boolean;
     function OpFADD(I: PSH4Inst): Boolean;
+    function OpFSUB(I: PSH4Inst): Boolean;
+    function OpFMUL(I: PSH4Inst): Boolean;
+    function OpFDIV(I: PSH4Inst): Boolean;
     function OpFMAC(I: PSH4Inst): Boolean;
     function OpFSQRT(I: PSH4Inst): Boolean;
     function OpFSRRA(I: PSH4Inst): Boolean;
@@ -3837,33 +3840,50 @@ begin
   S.FR.U[N] := S.FR.U[N] xor $80000000;
 end;
 
+// FADD, FSUB, FMUL and FDIV in single precision; with FPSCR.DN denormal
+// operands and results are flushed to zero.
 function TSH4.OpFADD(I: PSH4Inst): Boolean;
-var
-  N, M: Integer;
-  F: Single;
-  DN: Boolean;
 begin
   Result := False;
-  N := I.N;
-  M := I.M;
-  DN := (S.FPSCR and FPSCRDN) <> 0;
-  var X := S.FR.S[N];
-  var Y := S.FR.S[M];
-  if DN then
-  begin
-    X := FlushSingle(X);
-    Y := FlushSingle(Y);
-  end;
-  case TOp(I.Kind) of
-    oFADD: F := X + Y;
-    oFSUB: F := X - Y;
-    oFMUL: F := X * Y;
+  var X := S.FR.U[I.N];
+  var Y := S.FR.U[I.M];
+  if (S.FPSCR and FPSCRDN) = 0 then
+    S.FR.S[I.N] := BitsSingle(X) + BitsSingle(Y)
   else
-    F := X / Y;
-  end;
-  if DN then
-    F := FlushSingle(F);
-  S.FR.S[N] := F;
+    S.FR.U[I.N] := FlushBits(SingleBits(BitsSingle(FlushBits(X)) + BitsSingle(FlushBits(Y))));
+end;
+
+function TSH4.OpFSUB(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  var X := S.FR.U[I.N];
+  var Y := S.FR.U[I.M];
+  if (S.FPSCR and FPSCRDN) = 0 then
+    S.FR.S[I.N] := BitsSingle(X) - BitsSingle(Y)
+  else
+    S.FR.U[I.N] := FlushBits(SingleBits(BitsSingle(FlushBits(X)) - BitsSingle(FlushBits(Y))));
+end;
+
+function TSH4.OpFMUL(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  var X := S.FR.U[I.N];
+  var Y := S.FR.U[I.M];
+  if (S.FPSCR and FPSCRDN) = 0 then
+    S.FR.S[I.N] := BitsSingle(X) * BitsSingle(Y)
+  else
+    S.FR.U[I.N] := FlushBits(SingleBits(BitsSingle(FlushBits(X)) * BitsSingle(FlushBits(Y))));
+end;
+
+function TSH4.OpFDIV(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  var X := S.FR.U[I.N];
+  var Y := S.FR.U[I.M];
+  if (S.FPSCR and FPSCRDN) = 0 then
+    S.FR.S[I.N] := BitsSingle(X) / BitsSingle(Y)
+  else
+    S.FR.U[I.N] := FlushBits(SingleBits(BitsSingle(FlushBits(X)) / BitsSingle(FlushBits(Y))));
 end;
 
 function TSH4.OpFMAC(I: PSH4Inst): Boolean;
@@ -4867,7 +4887,7 @@ begin
   @SH4Ops[oFCMPGT] := @TSH4.OpFCMPGT;
   @SH4Ops[oFCNVDS] := @TSH4.OpFCNVDS;
   @SH4Ops[oFCNVSD] := @TSH4.OpFCNVSD;
-  @SH4Ops[oFDIV] := @TSH4.OpFADD;
+  @SH4Ops[oFDIV] := @TSH4.OpFDIV;
   @SH4Ops[oFIPR] := @TSH4.OpFIPR;
   @SH4Ops[oFLDI0] := @TSH4.OpFLDI0;
   @SH4Ops[oFLDI1] := @TSH4.OpFLDI1;
@@ -4888,7 +4908,7 @@ begin
   @SH4Ops[oFMOVST] := @TSH4.OpFMOVST;
   @SH4Ops[oFMOVST0] := @TSH4.OpFMOVST0;
   @SH4Ops[oFMOVSTM] := @TSH4.OpFMOVSTM;
-  @SH4Ops[oFMUL] := @TSH4.OpFADD;
+  @SH4Ops[oFMUL] := @TSH4.OpFMUL;
   @SH4Ops[oFNEG] := @TSH4.OpFNEG;
   @SH4Ops[oFPUDisabled] := @TSH4.OpIllegal;
   @SH4Ops[oFRCHG] := @TSH4.OpFRCHG;
@@ -4897,7 +4917,7 @@ begin
   @SH4Ops[oFSQRT] := @TSH4.OpFSQRT;
   @SH4Ops[oFSRRA] := @TSH4.OpFSRRA;
   @SH4Ops[oFSTS] := @TSH4.OpFSTS;
-  @SH4Ops[oFSUB] := @TSH4.OpFADD;
+  @SH4Ops[oFSUB] := @TSH4.OpFSUB;
   @SH4Ops[oFTRC] := @TSH4.OpFTRC;
   @SH4Ops[oFTRV] := @TSH4.OpFTRV;
   @SH4Ops[oIllegal] := @TSH4.OpIllegal;

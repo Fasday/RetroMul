@@ -93,6 +93,9 @@ type
     FFIFO: array[0..7] of Cardinal;
     FFIFOCount: Integer;
     FFrame, FLine: TArray<Cardinal>;
+    // RGB555/565 to ARGB for the current depth and concat value.
+    FPixels16: TArray<Cardinal>;
+    FPixels16Key: Cardinal;
     FFrameWidth, FFrameHeight: Integer;
     FFrameReady: Boolean;
     FPAL: Boolean;
@@ -309,6 +312,27 @@ begin
   var VRAM := FMemory.VRAM;
   if Length(FLine) < Width then
     SetLength(FLine, Width);
+  if (Depth <= 1) and ((Length(FPixels16) = 0) or (FPixels16Key <> Depth * 8 + Concat)) then
+  begin
+    SetLength(FPixels16, 65536);
+    for var P := 0 to 65535 do
+    begin
+      var RR, GG, BB: Cardinal;
+      if Depth = 0 then
+      begin
+        RR := ((P shr 10) and 31) shl 3 or Concat;
+        GG := ((P shr 5) and 31) shl 3 or Concat;
+      end
+      else
+      begin
+        RR := ((P shr 11) and 31) shl 3 or Concat;
+        GG := ((P shr 5) and 63) shl 2 or (Concat shr 1);
+      end;
+      BB := (P and 31) shl 3 or Concat;
+      FPixels16[P] := $FF000000 or (RR shl 16) or (GG shl 8) or BB;
+    end;
+    FPixels16Key := Depth * 8 + Concat;
+  end;
   for var Y := 0 to Height - 1 do
   begin
     var Base: Cardinal;
@@ -326,23 +350,12 @@ begin
       Base := R[PVRFBRSOF1 shr 2] + Cardinal(Y * Stride);
     var Line: PCardinal := @FLine[0];
     case Depth of
-      0:
-        for var X := 0 to Width - 1 do
+      0, 1:
         begin
-          var P := PWord(VRAM + ((Base + Cardinal(X) * 2) and $7FFFFE))^;
-          var RR := ((P shr 10) and 31) shl 3 or Concat;
-          var GG := ((P shr 5) and 31) shl 3 or Concat;
-          var BB := (P and 31) shl 3 or Concat;
-          Line[X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
-        end;
-      1:
-        for var X := 0 to Width - 1 do
-        begin
-          var P := PWord(VRAM + ((Base + Cardinal(X) * 2) and $7FFFFE))^;
-          var RR := ((P shr 11) and 31) shl 3 or Concat;
-          var GG := ((P shr 5) and 63) shl 2 or (Concat shr 1);
-          var BB := (P and 31) shl 3 or Concat;
-          Line[X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
+          // 16-bit pixels through a table of the 65536 colours.
+          var Table: PCardinal := @FPixels16[0];
+          for var X := 0 to Width - 1 do
+            Line[X] := Table[PWord(VRAM + ((Base + Cardinal(X) * 2) and $7FFFFE))^];
         end;
       2:
         for var X := 0 to Width - 1 do
