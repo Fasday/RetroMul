@@ -233,6 +233,7 @@ begin
     TScreenGamepadLayout.GameBoyColor: System := TRomSystem.GBC;
     TScreenGamepadLayout.GameBoyAdvance: System := TRomSystem.GBA;
     TScreenGamepadLayout.Nintendo64: System := TRomSystem.N64;
+    TScreenGamepadLayout.Dreamcast: System := TRomSystem.DC;
     TScreenGamepadLayout.NeoGeo: System := TRomSystem.NeoGeo;
     TScreenGamepadLayout.PCE:
       begin

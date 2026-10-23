@@ -8,7 +8,8 @@ uses
 {$SCOPEDENUMS ON}
 
 type
-  TPlatformPadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64, PCE, CPS);
+  TPlatformPadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64, PCE, CPS,
+    Dreamcast);
 
 const
   SETTINGS_PAGE_MAIN = 0;
@@ -38,6 +39,7 @@ const
   SETTINGS_PAGE_CPS1 = 24;
   SETTINGS_PAGE_CPS2 = 25;
   SETTINGS_PAGE_CPS3 = 26;
+  SETTINGS_PAGE_DC = 28;
 
 type
   TPlatformPresentation = record
@@ -110,6 +112,12 @@ begin
         Result.SettingsPageId := SETTINGS_PAGE_SATURN;
         Result.PadLayout := TPlatformPadLayout.Sega;
         Result.IconData := PlatformIconSaturn;
+      end;
+    TRomSystem.DC:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_DC;
+        Result.PadLayout := TPlatformPadLayout.Dreamcast;
+        Result.IconData := PlatformIconDC;
       end;
     TRomSystem.N64:
       begin

@@ -246,7 +246,7 @@ uses
   NES.MiraclePiano, NES.Controller, NES.MiraclePianoDevice, FMX.BehaviorManager,
   FMX.Graphics, FMX.SpinBox.Style, FMX.Presentation.Style,
   FMX.Presentation.Factory, RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles,
-  RM.Dialogs
+  RM.Dialogs, Core.Adapter.DC
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 {$R *.fmx}
@@ -2152,6 +2152,12 @@ begin
       AddAssignment(D, P, N64LAction + Port, 'L');
       Y := Y + 40;
     end;
+    if SettingsCoreIds[FPage] = ROM_SYSTEM_DC then
+      for var Extra := Low(TDCExtra) to High(TDCExtra) do
+      begin
+        AddAssignment(D, P, DCAction(Port, Extra), DCExtraName(Extra));
+        Y := Y + 40;
+      end;
     D.AssignmentList.Height := Y;
   end;
   Preview.Parent := FindComponent('LayoutBindingPreview' + IntToStr(Port)) as TLayout;

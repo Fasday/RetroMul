@@ -53,7 +53,7 @@ uses
   FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console,
   Core.InputConfig, Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard,
   NES.Controller, RM.Gamepad, NES.SuborKeyboard, NES.FamicomKeyboard,
-  NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
+  NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles, Core.Adapter.DC
   {$IFDEF MSWINDOWS}
     , Winapi.Windows
   {$ENDIF}
@@ -813,6 +813,13 @@ begin
       end;
       N64Input.SetN64Controller(Port, Pad);
     end;
+
+  // Dreamcast stick and trigger axes from host bindings (the on-screen stick
+  // and triggers arrive as Analog[0]).
+  var DCInput: IDCControllerInput;
+  if Supports(FState.Session.Emulation, IDCControllerInput, DCInput) then
+    for var Port := 0 to 3 do
+      DCInput.SetDCController(Port, ReadDCPad(FState.Input.Manager, Port));
 
   var Piano: INesMiraclePianoCore;
   if Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano then

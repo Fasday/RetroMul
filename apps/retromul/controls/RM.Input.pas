@@ -5,7 +5,7 @@ interface
 uses
   Core.RomFormat, System.SysUtils, System.Classes, System.IniFiles,
   System.UITypes, FMXInput, Core.Emulation, Core.InputConfig, NES.Controller,
-  NES.FamicomKeyboardDevice, NES.MiraclePianoDevice;
+  NES.FamicomKeyboardDevice, NES.MiraclePianoDevice, Core.Adapter.DC;
 
 const
   PowerPadAction = 128;
@@ -15,6 +15,7 @@ const
   PianoAction = 512;
   ExtraPadAction = 1024; // Preserve the existing NES peripheral action IDs.
   N64LAction = 4096;
+  DCExtraAction = 4160; // Dreamcast analog stick directions, see DCAction.
 
 type
   THostKeys = array[0..255] of Boolean;
@@ -24,6 +25,14 @@ function HidToHostKey(Code: Integer): Word;
 function HostKeyToHid(Code: Word): Integer;
 
 function PadAction(Port: Integer; Button: TEmulatorButton): Integer;
+
+function DCAction(Port: Integer; Extra: TDCExtra): Integer;
+
+function DCExtraName(Extra: TDCExtra): string;
+
+// The analog stick (DC extras) and the triggers (Select and Mode) of a
+// Dreamcast controller; axes give partial deflection.
+function ReadDCPad(Input: TInputManager; Port: Integer): TDCAnalogPad;
 
 function CoreButtons(const SystemId, Device: string): TEmulatorButtons;
 
@@ -145,8 +154,66 @@ begin
     Result := ExtraPadAction + (Port - 4) * 32 + Ord(Button);
 end;
 
+function DCAction(Port: Integer; Extra: TDCExtra): Integer;
+begin
+  Result := DCExtraAction + Port * 16 + Ord(Extra);
+end;
+
+function DCExtraName(Extra: TDCExtra): string;
+const
+  Names: array[TDCExtra] of string = ('Stick ↑', 'Stick ↓', 'Stick ←', 'Stick →');
+begin
+  Result := Names[Extra];
+end;
+
+// 0..1: the deflection of an axis bound to the action, else 1 while pressed.
+function DCActionAmount(Input: TInputManager; const Bindings: TArray<TInputBinding>;
+  const Values: TArray<TInputValue>; Action: Integer): Single;
+begin
+  Result := 0;
+  for var B in Bindings do
+    if (B.Action = Action) and (B.Kind = TInputElementKind.Axis) then
+      for var V in Values do
+        if (V.DeviceId = B.DeviceId) and (V.Kind = B.Kind) and (V.Code = B.Code) then
+        begin
+          var Travel := 1.0 - B.AxisOrigin * B.Direction;
+          if Travel > 0 then
+            Result := Max(Result, EnsureRange((V.Value - B.AxisOrigin) * B.Direction / Travel, 0.0, 1.0));
+        end;
+  if (Result = 0) and Input.IsPressed(Action) then
+    Result := 1;
+end;
+
+function ReadDCPad(Input: TInputManager; Port: Integer): TDCAnalogPad;
+begin
+  Result := Default(TDCAnalogPad);
+  if Input = nil then
+    Exit;
+
+  var Bindings := Input.Bindings;
+  var Values := Input.Values;
+  var X := DCActionAmount(Input, Bindings, Values, DCAction(Port, TDCExtra.StickRight)) -
+    DCActionAmount(Input, Bindings, Values, DCAction(Port, TDCExtra.StickLeft));
+  var Y := DCActionAmount(Input, Bindings, Values, DCAction(Port, TDCExtra.StickDown)) -
+    DCActionAmount(Input, Bindings, Values, DCAction(Port, TDCExtra.StickUp));
+  Result.StickX := EnsureRange(Round(X * 32767), -32768, 32767);
+  Result.StickY := EnsureRange(Round(Y * 32767), -32768, 32767);
+  Result.LeftTrigger := Round(DCActionAmount(Input, Bindings, Values, PadAction(Port, TEmulatorButton.Select)) * 255);
+  Result.RightTrigger := Round(DCActionAmount(Input, Bindings, Values, PadAction(Port, TEmulatorButton.Mode)) * 255);
+end;
+
 function CoreButtons(const SystemId, Device: string): TEmulatorButtons;
 begin
+  // Dreamcast controller: Select and Mode are the L and R triggers.
+  if SystemId = ROM_SYSTEM_DC then
+  begin
+    if Device = 'none' then
+      Exit([]);
+    Exit([TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right,
+      TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.Start,
+      TEmulatorButton.Select, TEmulatorButton.Mode]);
+  end;
+
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
   begin
     if Device = 'none' then
@@ -239,7 +306,7 @@ begin
     end;
 
   Result := Names[Button];
-  if SystemId = ROM_SYSTEM_SATURN then
+  if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_DC) then
     case Button of
       TEmulatorButton.Select:
         Exit('L');
@@ -539,6 +606,15 @@ begin
       for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
         Keys[Port, B] := Map[Port, B];
   end
+  else if SystemId = ROM_SYSTEM_DC then
+  begin
+    var C := TDCConfig.Create('', nil);
+    Config := C;
+    var Map := C.Keys;
+    for var Port := 0 to 3 do
+      for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+        Keys[Port, B] := Map[Port, B];
+  end
   else if SystemId = ROM_SYSTEM_GBA then
   begin
     var C := TGBAConfig.Create('');
@@ -578,7 +654,21 @@ begin
       AddKey(N64LAction + Port, ReadEmulatorKey(Ini, Section, 'L', C.LKey(Port)));
     end;
   end;
-  if (SystemId = ROM_SYSTEM_NES) or (SystemId = ROM_SYSTEM_N64) then
+  if SystemId = ROM_SYSTEM_DC then
+  begin
+    var C := TDCConfig.Create('', nil);
+    Config := C;
+    for var Port := 0 to 3 do
+    begin
+      var Section := 'Keys';
+      if Port > 0 then
+        Section := Section + IntToStr(Port + 1);
+      for var Extra := Low(TDCExtra) to High(TDCExtra) do
+        AddKey(DCAction(Port, Extra), ReadEmulatorKey(Ini, Section, TDCConfig.ExtraKeyName(Extra),
+          C.ExtraKey(Port, Extra)));
+    end;
+  end;
+  if (SystemId = ROM_SYSTEM_NES) or (SystemId = ROM_SYSTEM_N64) or (SystemId = ROM_SYSTEM_DC) then
     Count := 4;
   if SystemId = ROM_SYSTEM_SNES then
     Count := 8;
@@ -604,7 +694,8 @@ begin
           Section := 'Keys';
         if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           Section := 'Keys';
-        if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) then
+        if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or
+          (SystemId = ROM_SYSTEM_DC) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);
@@ -612,7 +703,7 @@ begin
           .Replace('←', 'Left').Replace('→', 'Right');
         if ((SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC)) and (B = TEmulatorButton.Start) then
           KeyName := 'Start';
-        if SystemId = ROM_SYSTEM_SATURN then
+        if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_DC) then
           case B of
             TEmulatorButton.Select:
               KeyName := 'Select';

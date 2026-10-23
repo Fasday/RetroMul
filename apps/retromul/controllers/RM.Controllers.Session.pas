@@ -7,7 +7,7 @@ interface
 uses
   RM.BitmapShaders,
   RM.Platforms.Presentation,
-  System.SysUtils, FMX.Types, Core.Emulation, RM.Controllers.Base;
+  System.SysUtils, FMX.Types, Core.Emulation, RM.Controllers.Base, RM.VMUOverlay;
 
 type
   TSessionController = class(TMainController)
@@ -15,7 +15,9 @@ type
     FLoadingCore: Boolean;
     FLoadGeneration: Integer;
     FCancelLoad: TProc;
+    FVMUOverlay: TVMUOverlay;
     procedure UpdateVirtualButtons;
+    procedure UpdateVMUOverlay;
     procedure EndCoreLoading;
     procedure CancelCoreLoading;
     procedure BeginGameLoading(const FileName, DisplayName: string;
@@ -80,7 +82,19 @@ destructor TSessionController.Destroy;
 begin
   if Assigned(FCancelLoad) then
     FCancelLoad();
+  FVMUOverlay.Free;
   inherited;
+end;
+
+procedure TSessionController.UpdateVMUOverlay;
+begin
+  if FVMUOverlay = nil then
+  begin
+    if FState.Session.Emulation = nil then
+      Exit;
+    FVMUOverlay := TVMUOverlay.Create(FView.ImageCanvas);
+  end;
+  FVMUOverlay.Update(FState.Session.Emulation);
 end;
 
 procedure TSessionController.FormActivate(Sender: TObject);
@@ -766,6 +780,8 @@ begin
   if FState.Input.Rumble <> nil then
     FState.Input.Rumble.Reset;
   FState.Session.Emulation := nil; // Join before replacing the session.
+  if FVMUOverlay <> nil then
+    FVMUOverlay.Hide;
   FView.SyncMotionSensor;
   FState.Session.Emulation := NewEmulation;
   FState.Session.PreserveOpeningAutosave := False;
@@ -877,6 +893,8 @@ begin
     FView.ImageCanvas.Bitmap := nil;
     FView.ImageLogo.Visible := True;
     FState.Session.Emulation := nil;
+    if FVMUOverlay <> nil then
+      FVMUOverlay.Hide;
   end;
   if FState.Browser.View <> nil then
     FView.LibraryBack(FView);
@@ -1002,6 +1020,7 @@ begin
     FView.ImageCanvas.Bitmap.Unmap(Data);
   end;
   FView.ImageCanvas.Repaint;
+  UpdateVMUOverlay;
 end;
 
 procedure TSessionController.PauseClick(Sender: TObject);
