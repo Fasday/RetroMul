@@ -176,6 +176,23 @@ type
     // Instructions of fused operations beyond one each, since the run loop
     // last counted them.
     FFusedExtra: Integer;
+    // Wait loops (see IdleCheck): the candidate loop head, iterations seen,
+    // probe phase and its starting point, writes logged while probing and a
+    // count of accesses that rule a loop out (device memory, exceptions).
+    FIdleHead, FIdleRejected: Cardinal;
+    FIdleHits, FIdlePhase: Integer;
+    FIdleStart: TSH4State;
+    FIdleNow0, FIdleCycles: Int64;
+    FIdleSide0: Cardinal;
+    FIdleCounter: Cardinal;
+    FJournalOn, FJournalFull: Boolean;
+    FJournal: array[0..15] of record
+      Address: Cardinal;
+      Size: Integer;
+      Old: UInt64;
+    end;
+    FJournalCount: Integer;
+    FSideEffects: Cardinal;
     // Block execution state shared with the operation handlers.
     FJumped, FExcepted: Boolean;
     FJumpTarget: Cardinal;
@@ -402,6 +419,9 @@ type
     function BuildBlock(PC, AMode: Cardinal): PSH4Block;
     function BlockValid(B: PSH4Block): Boolean;
     procedure RunBlocks;
+    procedure JournalWrite(A: Cardinal; Size: Integer);
+    function IdleIteration(out Counter: Cardinal; out Delta: Int64): Boolean;
+    procedure IdleCheck;
     function Read8(A: Cardinal): Cardinal; inline;
     function Read16(A: Cardinal): Cardinal; inline;
     function Read32(A: Cardinal): Cardinal; inline;
@@ -415,6 +435,11 @@ type
     // Advanced by executed instructions; the run loop stops at Deadline^.
     Now, Deadline: PInt64;
     InstructionsExecuted: Int64;
+    // Wait loops run ahead to the next event (on by default; the result is
+    // the same either way).
+    IdleSkipping: Boolean;
+    // Diagnostics: clocks of wait-loop iterations accounted without running them.
+    IdleCyclesSkipped: Int64;
     // Diagnostics (not serialized): exceptions taken and the first one.
     ExceptionCount: Int64;
     FirstExceptionPC, FirstExceptionCode, FirstExceptionPR: Cardinal;
@@ -623,6 +648,8 @@ begin
   var P := FWriteMap[A shr 16];
   if P <> nil then
   begin
+    if FJournalOn then
+      JournalWrite(A, 1);
     (P + (A and $FFFF))^ := Byte(V);
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
@@ -635,6 +662,8 @@ begin
   var P := FWriteMap[A shr 16];
   if (P <> nil) and ((A and 1) = 0) then
   begin
+    if FJournalOn then
+      JournalWrite(A, 2);
     PWord(P + (A and $FFFF))^ := Word(V);
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
@@ -647,6 +676,8 @@ begin
   var P := FWriteMap[A shr 16];
   if (P <> nil) and ((A and 3) = 0) then
   begin
+    if FJournalOn then
+      JournalWrite(A, 4);
     PCardinal(P + (A and $FFFF))^ := V;
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
@@ -659,6 +690,8 @@ begin
   var P := FWriteMap[A shr 16];
   if (P <> nil) and ((A and 7) = 0) then
   begin
+    if FJournalOn then
+      JournalWrite(A, 8);
     PUInt64(P + (A and $FFFF))^ := V;
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
@@ -770,6 +803,7 @@ end;
 
 function TSH4.SlowRead(Address: Cardinal; Size: Integer): UInt64;
 begin
+  Inc(FSideEffects);
   Result := 0;
   if FLenient then
     Exit(FBus.Read(FBus.User, Address and $1FFFFFFF, Size));
@@ -832,6 +866,7 @@ end;
 
 procedure TSH4.SlowWrite(Address: Cardinal; Value: UInt64; Size: Integer);
 begin
+  Inc(FSideEffects);
   if FLenient then
   begin
     FBus.Write(FBus.User, Address and $1FFFFFFF, Value, Size);
@@ -904,6 +939,7 @@ end;
 
 procedure TSH4.StoreQueueFlush(Address: Cardinal);
 begin
+  Inc(FSideEffects);
   var Q := (Address shr 5) and 1;
   var Target: Cardinal;
   if (S.MMUCR and 1) <> 0 then
@@ -1152,6 +1188,7 @@ end;
 
 procedure TSH4.EnterException(Code, Offset, ReturnPC: Cardinal);
 begin
+  Inc(FSideEffects);
   if Offset <> $600 then
   begin
     if ExceptionCount = 0 then
@@ -4136,6 +4173,7 @@ begin
   if (TOp(I.Kind) = oIllegal) and Assigned(FIllegalHook) then
   begin
     S.PC := I.Addr;
+    Inc(FSideEffects);
     if FIllegalHook(FIllegalUser, I.Addr) then
     begin
       FJumped := True;
@@ -4395,6 +4433,7 @@ begin
   Now := NowCounter;
   Deadline := DeadlineCounter;
   FBlocksEnabled := True;
+  IdleSkipping := True;
   Reset;
 end;
 
@@ -4454,6 +4493,161 @@ begin
   end;
 end;
 
+{ Wait loops }
+
+// Programs wait for an interrupt-driven change by polling memory, often with
+// a timeout counter. Such a loop is recognised by observing two iterations:
+// no device access, exception or system call; every store writes back the
+// value already in memory except a single word that drops by one (the
+// timeout); registers come back unchanged but for copies of that word; and
+// both iterations take the same time. Until the next scheduler event nothing
+// else can change what the loop reads, so further iterations would repeat
+// exactly: the clock, the counter and its copies advance by whole iterations
+// at once, stopping short of any value the loop could compare the counter
+// with. The result equals running the iterations.
+
+procedure TSH4.JournalWrite(A: Cardinal; Size: Integer);
+begin
+  for var K := 0 to FJournalCount - 1 do
+    if FJournal[K].Address = A then
+    begin
+      if FJournal[K].Size <> Size then
+        FJournalFull := True;
+      Exit;
+    end;
+  if FJournalCount > High(FJournal) then
+  begin
+    FJournalFull := True;
+    Exit;
+  end;
+  var P := FReadMap[A shr 16];
+  var Old: UInt64 := 0;
+  if P = nil then
+    FJournalFull := True
+  else
+    case Size of
+      1: Old := (P + (A and $FFFF))^;
+      2: Old := PWord(P + (A and $FFFF))^;
+      4: Old := PCardinal(P + (A and $FFFF))^;
+    else
+      Old := PUInt64(P + (A and $FFFF))^;
+    end;
+  FJournal[FJournalCount].Address := A;
+  FJournal[FJournalCount].Size := Size;
+  FJournal[FJournalCount].Old := Old;
+  Inc(FJournalCount);
+end;
+
+function TSH4.IdleIteration(out Counter: Cardinal; out Delta: Int64): Boolean;
+begin
+  Result := False;
+  Counter := 0;
+  Delta := 0;
+  var Cycles := Now^ - FIdleNow0;
+  if (FSideEffects <> FIdleSide0) or FJournalFull or (Cycles <= 0) or (Cycles > 512) or S.DelaySlot then
+    Exit;
+  var OldValue, NewValue: Cardinal;
+  OldValue := 0;
+  NewValue := 0;
+  for var K := 0 to FJournalCount - 1 do
+  begin
+    var A := FJournal[K].Address;
+    // System RAM only (through P0, P1 or P2 without translation).
+    if not ((A shr 29) in [0, 4, 5]) or ((A and $1FFFFFFF) < $0C000000) or ((A and $1FFFFFFF) >= $10000000) then
+      Exit;
+    var P := FReadMap[A shr 16] + (A and $FFFF);
+    var Current: UInt64;
+    case FJournal[K].Size of
+      1: Current := P^;
+      2: Current := PWord(P)^;
+      4: Current := PCardinal(P)^;
+    else
+      Current := PUInt64(P)^;
+    end;
+    if Current = FJournal[K].Old then
+      Continue;
+    if (FJournal[K].Size <> 4) or (Counter <> 0) or (Cardinal(Current) <> Cardinal(FJournal[K].Old) - 1) then
+      Exit;
+    Counter := A;
+    OldValue := Cardinal(FJournal[K].Old);
+    NewValue := Cardinal(Current);
+    Delta := -1;
+  end;
+  for var I := 0 to 15 do
+    if (S.R[I] <> FIdleStart.R[I]) and not ((Counter <> 0) and (FIdleStart.R[I] = OldValue) and (S.R[I] = NewValue)) then
+      Exit;
+  var Rest := NativeUInt(@S.RBank) - NativeUInt(@S);
+  Result := CompareMem(@S.RBank, @FIdleStart.RBank, SizeOf(TSH4State) - Rest);
+end;
+
+procedure TSH4.IdleCheck;
+begin
+  if Now^ = FIdleNow0 then
+    Exit;
+  var Counter: Cardinal;
+  var Delta: Int64;
+  if not IdleIteration(Counter, Delta) or ((FIdlePhase = 2) and
+    ((Now^ - FIdleNow0 <> FIdleCycles) or (Counter <> FIdleCounter))) then
+  begin
+    FIdleRejected := FIdleHead;
+    FIdlePhase := 0;
+    FIdleHits := 0;
+    FJournalOn := False;
+    Exit;
+  end;
+  if FIdlePhase = 1 then
+  begin
+    // A second iteration must repeat the first.
+    FIdlePhase := 2;
+    FIdleCycles := Now^ - FIdleNow0;
+    FIdleCounter := Counter;
+    FIdleStart := S;
+    FIdleNow0 := Now^;
+    FIdleSide0 := FSideEffects;
+    FJournalCount := 0;
+    FJournalFull := False;
+    Exit;
+  end;
+  FIdlePhase := 0;
+  FIdleHits := 0;
+  FJournalOn := False;
+  // Whole iterations up to the next event, leaving the last ones to run.
+  var Iterations := (Deadline^ - Now^) div FIdleCycles - 1;
+  var Copies: Cardinal := 0;
+  var Value: Cardinal := 0;
+  if Counter <> 0 then
+  begin
+    Value := PCardinal(FReadMap[Counter shr 16] + (Counter and $FFFF))^;
+    for var I := 0 to 15 do
+      if (S.R[I] = Value) and (FIdleStart.R[I] = Value + 1) then
+        Copies := Copies or (Cardinal(1) shl I);
+    // Stop before the counter reaches 1, or any value a register holds.
+    if Value < 3 then
+      Exit;
+    Iterations := Min(Iterations, Int64(Value) - 2);
+    for var I := 0 to 15 do
+      if ((Copies shr I) and 1 = 0) and (S.R[I] < Value) and (Int64(Value) - S.R[I] <= Iterations) then
+        Iterations := Int64(Value) - S.R[I] - 1;
+    for var I := 0 to 7 do
+      if (S.RBank[I] < Value) and (Int64(Value) - S.RBank[I] <= Iterations) then
+        Iterations := Int64(Value) - S.RBank[I] - 1;
+  end;
+  if Iterations <= 0 then
+    Exit;
+  Inc(Now^, Iterations * FIdleCycles);
+  Inc(InstructionsExecuted, Iterations * FIdleCycles);
+  Inc(IdleCyclesSkipped, Iterations * FIdleCycles);
+  if Counter <> 0 then
+  begin
+    var NewValue := Value - Cardinal(Iterations);
+    PCardinal(FWriteMap[Counter shr 16] + (Counter and $FFFF))^ := NewValue;
+    Inc(FGenMap[Counter shr 16][(Counter shr 12) and 15], Cardinal(Iterations));
+    for var I := 0 to 15 do
+      if (Copies shr I) and 1 <> 0 then
+        S.R[I] := NewValue;
+  end;
+end;
+
 procedure TSH4.RunBlocks;
 var
   Prev, B: PSH4Block;
@@ -4463,8 +4657,14 @@ begin
   // Kept apart from Run's exception frame so its variables stay in registers.
   FExitRequest := False;
   Prev := nil;
+  // A probe never spans scheduler events (they may change memory).
+  FIdlePhase := 0;
+  FIdleHits := 0;
+  FJournalOn := False;
   while Now^ < Deadline^ do
   begin
+    if (FIdlePhase <> 0) and (S.PC = FIdleHead) then
+      IdleCheck;
     if (FIRQLevel > Integer((S.SR shr 4) and 15)) and ((S.SR and SRBL) = 0) and not S.DelaySlot then
     begin
       S.INTEVT := FIRQCode;
@@ -4516,6 +4716,31 @@ begin
       if Count = 0 then
         Count := 1;
       Inc(Now^, Count);
+      // A short backward branch closes a loop; one entered often enough is
+      // probed as a possible wait loop.
+      var Last := B.PC + Cardinal(B.Words) * 2;
+      if (Next < Last) and (Last - Next <= 256) and (FIdlePhase = 0) then
+      begin
+        if Next <> FIdleHead then
+        begin
+          FIdleHead := Next;
+          FIdleHits := 0;
+        end
+        else
+        begin
+          Inc(FIdleHits);
+          if (FIdleHits >= 16) and IdleSkipping and (Next <> FIdleRejected) and not S.DelaySlot and ((S.MMUCR and 1) = 0) then
+          begin
+            FIdlePhase := 1;
+            FIdleStart := S;
+            FIdleNow0 := Now^;
+            FIdleSide0 := FSideEffects;
+            FJournalCount := 0;
+            FJournalFull := False;
+            FJournalOn := True;
+          end;
+        end;
+      end;
     end
     else
       Step;
@@ -4530,6 +4755,7 @@ end;
 
 procedure TSH4.Step;
 begin
+  Inc(FSideEffects);
   var SavedMask := GetExceptionMask;
   var SavedRound := GetRoundMode;
   SetExceptionMask(exAllArithmeticExceptions);
