@@ -176,6 +176,10 @@ type
     // Instructions of fused operations beyond one each, since the run loop
     // last counted them.
     FFusedExtra: Integer;
+    // Block execution state shared with the operation handlers.
+    FJumped, FExcepted: Boolean;
+    FJumpTarget: Cardinal;
+    FStop: Byte;
     FBlocksEnabled: Boolean;
     FLenient: Boolean;
     FScratch: array[0..1] of TSH4Inst;
@@ -200,6 +204,196 @@ type
     function FetchWord(Address: Cardinal; out Op: Word): Boolean;
     function Decode(Op: Word; Address, AMode: Cardinal; Slot: Boolean; out I: TSH4Inst): Boolean;
     function Execute(Insts: PSH4Inst; Count: Integer; out Next: Cardinal): Integer;
+    // Operation handlers (SH4Ops); True stops the block.
+    function OpNOP(I: PSH4Inst): Boolean;
+    function OpMOV(I: PSH4Inst): Boolean;
+    function OpMOVI(I: PSH4Inst): Boolean;
+    function OpMOVWPC(I: PSH4Inst): Boolean;
+    function OpMOVLPC(I: PSH4Inst): Boolean;
+    function OpMOVA(I: PSH4Inst): Boolean;
+    function OpMOVBS(I: PSH4Inst): Boolean;
+    function OpMOVWS(I: PSH4Inst): Boolean;
+    function OpMOVLS(I: PSH4Inst): Boolean;
+    function OpMOVBL(I: PSH4Inst): Boolean;
+    function OpMOVWL(I: PSH4Inst): Boolean;
+    function OpMOVLL(I: PSH4Inst): Boolean;
+    function OpMOVBM(I: PSH4Inst): Boolean;
+    function OpMOVWM(I: PSH4Inst): Boolean;
+    function OpMOVLM(I: PSH4Inst): Boolean;
+    function OpMOVBP(I: PSH4Inst): Boolean;
+    function OpMOVWP(I: PSH4Inst): Boolean;
+    function OpMOVLP(I: PSH4Inst): Boolean;
+    function OpMOVBS0(I: PSH4Inst): Boolean;
+    function OpMOVWS0(I: PSH4Inst): Boolean;
+    function OpMOVLS0(I: PSH4Inst): Boolean;
+    function OpMOVBL0(I: PSH4Inst): Boolean;
+    function OpMOVWL0(I: PSH4Inst): Boolean;
+    function OpMOVLL0(I: PSH4Inst): Boolean;
+    function OpMOVBS4(I: PSH4Inst): Boolean;
+    function OpMOVWS4(I: PSH4Inst): Boolean;
+    function OpMOVLS4(I: PSH4Inst): Boolean;
+    function OpMOVBL4(I: PSH4Inst): Boolean;
+    function OpMOVWL4(I: PSH4Inst): Boolean;
+    function OpMOVLL4(I: PSH4Inst): Boolean;
+    function OpMOVBSG(I: PSH4Inst): Boolean;
+    function OpMOVWSG(I: PSH4Inst): Boolean;
+    function OpMOVLSG(I: PSH4Inst): Boolean;
+    function OpMOVBLG(I: PSH4Inst): Boolean;
+    function OpMOVWLG(I: PSH4Inst): Boolean;
+    function OpMOVLLG(I: PSH4Inst): Boolean;
+    function OpMOVT(I: PSH4Inst): Boolean;
+    function OpSWAPB(I: PSH4Inst): Boolean;
+    function OpSWAPW(I: PSH4Inst): Boolean;
+    function OpXTRCT(I: PSH4Inst): Boolean;
+    function OpADD(I: PSH4Inst): Boolean;
+    function OpADDI(I: PSH4Inst): Boolean;
+    function OpADDC(I: PSH4Inst): Boolean;
+    function OpADDV(I: PSH4Inst): Boolean;
+    function OpCMPEQ(I: PSH4Inst): Boolean;
+    function OpCMPEQI(I: PSH4Inst): Boolean;
+    function OpCMPHS(I: PSH4Inst): Boolean;
+    function OpCMPGE(I: PSH4Inst): Boolean;
+    function OpCMPHI(I: PSH4Inst): Boolean;
+    function OpCMPGT(I: PSH4Inst): Boolean;
+    function OpCMPPZ(I: PSH4Inst): Boolean;
+    function OpCMPPL(I: PSH4Inst): Boolean;
+    function OpCMPSTR(I: PSH4Inst): Boolean;
+    function OpDIV0S(I: PSH4Inst): Boolean;
+    function OpDIV0U(I: PSH4Inst): Boolean;
+    function OpDIV1(I: PSH4Inst): Boolean;
+    function OpROTDIV(I: PSH4Inst): Boolean;
+    function OpDMULS(I: PSH4Inst): Boolean;
+    function OpDMULU(I: PSH4Inst): Boolean;
+    function OpDT(I: PSH4Inst): Boolean;
+    function OpEXTSB(I: PSH4Inst): Boolean;
+    function OpEXTSW(I: PSH4Inst): Boolean;
+    function OpEXTUB(I: PSH4Inst): Boolean;
+    function OpEXTUW(I: PSH4Inst): Boolean;
+    function OpMACL(I: PSH4Inst): Boolean;
+    function OpMACW(I: PSH4Inst): Boolean;
+    function OpMULL(I: PSH4Inst): Boolean;
+    function OpMULSW(I: PSH4Inst): Boolean;
+    function OpMULUW(I: PSH4Inst): Boolean;
+    function OpNEG(I: PSH4Inst): Boolean;
+    function OpNEGC(I: PSH4Inst): Boolean;
+    function OpSUB(I: PSH4Inst): Boolean;
+    function OpSUBC(I: PSH4Inst): Boolean;
+    function OpSUBV(I: PSH4Inst): Boolean;
+    function OpAND(I: PSH4Inst): Boolean;
+    function OpANDI(I: PSH4Inst): Boolean;
+    function OpANDB(I: PSH4Inst): Boolean;
+    function OpNOT(I: PSH4Inst): Boolean;
+    function OpOR(I: PSH4Inst): Boolean;
+    function OpORI(I: PSH4Inst): Boolean;
+    function OpTASB(I: PSH4Inst): Boolean;
+    function OpTST(I: PSH4Inst): Boolean;
+    function OpTSTI(I: PSH4Inst): Boolean;
+    function OpXOR(I: PSH4Inst): Boolean;
+    function OpXORI(I: PSH4Inst): Boolean;
+    function OpROTL(I: PSH4Inst): Boolean;
+    function OpROTR(I: PSH4Inst): Boolean;
+    function OpROTCL(I: PSH4Inst): Boolean;
+    function OpROTCR(I: PSH4Inst): Boolean;
+    function OpSHAD(I: PSH4Inst): Boolean;
+    function OpSHLD(I: PSH4Inst): Boolean;
+    function OpSHAL(I: PSH4Inst): Boolean;
+    function OpSHAR(I: PSH4Inst): Boolean;
+    function OpSHLL2(I: PSH4Inst): Boolean;
+    function OpSHLL8(I: PSH4Inst): Boolean;
+    function OpSHLL16(I: PSH4Inst): Boolean;
+    function OpSHLR(I: PSH4Inst): Boolean;
+    function OpSHLR2(I: PSH4Inst): Boolean;
+    function OpSHLR8(I: PSH4Inst): Boolean;
+    function OpSHLR16(I: PSH4Inst): Boolean;
+    function OpBF(I: PSH4Inst): Boolean;
+    function OpBT(I: PSH4Inst): Boolean;
+    function OpBFS(I: PSH4Inst): Boolean;
+    function OpBTS(I: PSH4Inst): Boolean;
+    function OpBRA(I: PSH4Inst): Boolean;
+    function OpBSR(I: PSH4Inst): Boolean;
+    function OpBRAF(I: PSH4Inst): Boolean;
+    function OpBSRF(I: PSH4Inst): Boolean;
+    function OpJMP(I: PSH4Inst): Boolean;
+    function OpJSR(I: PSH4Inst): Boolean;
+    function OpRTS(I: PSH4Inst): Boolean;
+    function OpRTE(I: PSH4Inst): Boolean;
+    function OpCLRMAC(I: PSH4Inst): Boolean;
+    function OpCLRS(I: PSH4Inst): Boolean;
+    function OpCLRT(I: PSH4Inst): Boolean;
+    function OpSETS(I: PSH4Inst): Boolean;
+    function OpSETT(I: PSH4Inst): Boolean;
+    function OpLDTLB(I: PSH4Inst): Boolean;
+    function OpMOVCAL(I: PSH4Inst): Boolean;
+    function OpPREF(I: PSH4Inst): Boolean;
+    function OpSLEEP(I: PSH4Inst): Boolean;
+    function OpTRAPA(I: PSH4Inst): Boolean;
+    function OpLDCSR(I: PSH4Inst): Boolean;
+    function OpLDCGBR(I: PSH4Inst): Boolean;
+    function OpLDCVBR(I: PSH4Inst): Boolean;
+    function OpLDCSSR(I: PSH4Inst): Boolean;
+    function OpLDCSPC(I: PSH4Inst): Boolean;
+    function OpLDCDBR(I: PSH4Inst): Boolean;
+    function OpLDCBANK(I: PSH4Inst): Boolean;
+    function OpLDCMSR(I: PSH4Inst): Boolean;
+    function OpLDSMACH(I: PSH4Inst): Boolean;
+    function OpLDSMACL(I: PSH4Inst): Boolean;
+    function OpLDSPR(I: PSH4Inst): Boolean;
+    function OpSTCSR(I: PSH4Inst): Boolean;
+    function OpSTCGBR(I: PSH4Inst): Boolean;
+    function OpSTCVBR(I: PSH4Inst): Boolean;
+    function OpSTCSSR(I: PSH4Inst): Boolean;
+    function OpSTCSPC(I: PSH4Inst): Boolean;
+    function OpSTCSGR(I: PSH4Inst): Boolean;
+    function OpSTCDBR(I: PSH4Inst): Boolean;
+    function OpSTCBANK(I: PSH4Inst): Boolean;
+    function OpSTCMSR(I: PSH4Inst): Boolean;
+    function OpSTSMACH(I: PSH4Inst): Boolean;
+    function OpSTSMACL(I: PSH4Inst): Boolean;
+    function OpSTSPR(I: PSH4Inst): Boolean;
+    function OpLDSFPSCR(I: PSH4Inst): Boolean;
+    function OpLDSFPUL(I: PSH4Inst): Boolean;
+    function OpSTSFPSCR(I: PSH4Inst): Boolean;
+    function OpSTSFPUL(I: PSH4Inst): Boolean;
+    function OpFMOV(I: PSH4Inst): Boolean;
+    function OpFMOVLD(I: PSH4Inst): Boolean;
+    function OpFMOVLD0(I: PSH4Inst): Boolean;
+    function OpFMOVLDP(I: PSH4Inst): Boolean;
+    function OpFMOVST(I: PSH4Inst): Boolean;
+    function OpFMOVST0(I: PSH4Inst): Boolean;
+    function OpFMOVSTM(I: PSH4Inst): Boolean;
+    function OpFMOVD(I: PSH4Inst): Boolean;
+    function OpFMOVDLD(I: PSH4Inst): Boolean;
+    function OpFMOVDST(I: PSH4Inst): Boolean;
+    function OpFLDI0(I: PSH4Inst): Boolean;
+    function OpFLDI1(I: PSH4Inst): Boolean;
+    function OpFLDS(I: PSH4Inst): Boolean;
+    function OpFSTS(I: PSH4Inst): Boolean;
+    function OpFABS(I: PSH4Inst): Boolean;
+    function OpFNEG(I: PSH4Inst): Boolean;
+    function OpFADD(I: PSH4Inst): Boolean;
+    function OpFMAC(I: PSH4Inst): Boolean;
+    function OpFSQRT(I: PSH4Inst): Boolean;
+    function OpFSRRA(I: PSH4Inst): Boolean;
+    function OpFCMPEQ(I: PSH4Inst): Boolean;
+    function OpFCMPGT(I: PSH4Inst): Boolean;
+    function OpFLOAT(I: PSH4Inst): Boolean;
+    function OpFTRC(I: PSH4Inst): Boolean;
+    function OpFIPR(I: PSH4Inst): Boolean;
+    function OpFTRV(I: PSH4Inst): Boolean;
+    function OpFSCA(I: PSH4Inst): Boolean;
+    function OpFSCHG(I: PSH4Inst): Boolean;
+    function OpFRCHG(I: PSH4Inst): Boolean;
+    function OpDABS(I: PSH4Inst): Boolean;
+    function OpDNEG(I: PSH4Inst): Boolean;
+    function OpDADD(I: PSH4Inst): Boolean;
+    function OpDSQRT(I: PSH4Inst): Boolean;
+    function OpDCMPEQ(I: PSH4Inst): Boolean;
+    function OpDCMPGT(I: PSH4Inst): Boolean;
+    function OpDFLOAT(I: PSH4Inst): Boolean;
+    function OpDFTRC(I: PSH4Inst): Boolean;
+    function OpFCNVSD(I: PSH4Inst): Boolean;
+    function OpFCNVDS(I: PSH4Inst): Boolean;
+    function OpIllegal(I: PSH4Inst): Boolean;
     procedure Div1(N, M: Integer); inline;
     procedure RotateDivide(const I: TSH4Inst);
     procedure FuseBlock(Insts: PSH4Inst; var Count: Integer);
@@ -207,6 +401,7 @@ type
     function FindBlock(PC, AMode: Cardinal): PSH4Block;
     function BuildBlock(PC, AMode: Cardinal): PSH4Block;
     function BlockValid(B: PSH4Block): Boolean;
+    procedure RunBlocks;
     function Read8(A: Cardinal): Cardinal; inline;
     function Read16(A: Cardinal): Cardinal; inline;
     function Read32(A: Cardinal): Cardinal; inline;
@@ -321,6 +516,18 @@ type
     // order) that unrolled divisions consist of: N, M of DIV1, Imm = pairs
     // or Ra shl 16. They run exactly as the single instructions.
     oROTDIV, oDIVROT);
+
+  // Operation handlers: methods of TSH4 called with Self; True stops the
+  // block (FStop tells how).
+  TSH4OpHandler = function(CPU: TSH4; I: PSH4Inst): Boolean;
+
+const
+  StopNone = 0;
+  StopLeave = 1; // the instruction completed and the block ends
+  StopTrap = 2;  // TRAPA completed; the exception entry set PC
+
+var
+  SH4Ops: array[TOp] of TSH4OpHandler;
 
 { Memory }
 
@@ -1786,986 +1993,2202 @@ begin
   Count := Output;
 end;
 
-function TSH4.Execute(Insts: PSH4Inst; Count: Integer; out Next: Cardinal): Integer;
+function TSH4.OpNOP(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  ;
+end;
+
+function TSH4.OpMOV(I: PSH4Inst): Boolean;
 var
-  I: PSH4Inst;
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[M];
+end;
+
+function TSH4.OpMOVI(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := I.Imm;
+end;
+
+function TSH4.OpMOVWPC(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  V := Read16(I.Imm);
+  if FFault then Exit(True);
+  S.R[N] := SignExtend16(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLPC(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  V := Read32(I.Imm);
+  if FFault then Exit(True);
+  S.R[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVA(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.R[0] := I.Imm;
+end;
+
+function TSH4.OpMOVBS(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write8(S.R[N], S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWS(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write16(S.R[N], S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLS(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write32(S.R[N], S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBL(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read8(S.R[M]);
+  if FFault then Exit(True);
+  S.R[N] := SignExtend8(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWL(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read16(S.R[M]);
+  if FFault then Exit(True);
+  S.R[N] := SignExtend16(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLL(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M]);
+  if FFault then Exit(True);
+  S.R[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBM(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  A := S.R[N] - 1;
+  Write8(A, S.R[M]);
+  if FFault then Exit(True);
+  S.R[N] := A;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWM(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  A := S.R[N] - 2;
+  Write16(A, S.R[M]);
+  if FFault then Exit(True);
+  S.R[N] := A;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLM(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  A := S.R[N] - 4;
+  Write32(A, S.R[M]);
+  if FFault then Exit(True);
+  S.R[N] := A;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBP(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read8(S.R[M]);
+  if FFault then Exit(True);
+  if N <> M then
+    S.R[M] := S.R[M] + 1;
+  S.R[N] := SignExtend8(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWP(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read16(S.R[M]);
+  if FFault then Exit(True);
+  if N <> M then
+    S.R[M] := S.R[M] + 2;
+  S.R[N] := SignExtend16(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLP(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M]);
+  if FFault then Exit(True);
+  if N <> M then
+    S.R[M] := S.R[M] + 4;
+  S.R[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBS0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write8(S.R[N] + S.R[0], S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWS0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write16(S.R[N] + S.R[0], S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLS0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write32(S.R[N] + S.R[0], S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBL0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read8(S.R[M] + S.R[0]);
+  if FFault then Exit(True);
+  S.R[N] := SignExtend8(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWL0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read16(S.R[M] + S.R[0]);
+  if FFault then Exit(True);
+  S.R[N] := SignExtend16(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLL0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M] + S.R[0]);
+  if FFault then Exit(True);
+  S.R[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBS4(I: PSH4Inst): Boolean;
+var
+  M: Integer;
+begin
+  M := I.M;
+  Write8(S.R[M] + I.Imm, S.R[0]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWS4(I: PSH4Inst): Boolean;
+var
+  M: Integer;
+begin
+  M := I.M;
+  Write16(S.R[M] + I.Imm, S.R[0]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLS4(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write32(S.R[N] + I.Imm, S.R[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBL4(I: PSH4Inst): Boolean;
+var
+  M: Integer;
+  V: Cardinal;
+begin
+  M := I.M;
+  V := Read8(S.R[M] + I.Imm);
+  if FFault then Exit(True);
+  S.R[0] := SignExtend8(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWL4(I: PSH4Inst): Boolean;
+var
+  M: Integer;
+  V: Cardinal;
+begin
+  M := I.M;
+  V := Read16(S.R[M] + I.Imm);
+  if FFault then Exit(True);
+  S.R[0] := SignExtend16(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLL4(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M] + I.Imm);
+  if FFault then Exit(True);
+  S.R[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBSG(I: PSH4Inst): Boolean;
+begin
+  Write8(S.GBR + I.Imm, S.R[0]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWSG(I: PSH4Inst): Boolean;
+begin
+  Write16(S.GBR + I.Imm, S.R[0]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLSG(I: PSH4Inst): Boolean;
+begin
+  Write32(S.GBR + I.Imm, S.R[0]);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVBLG(I: PSH4Inst): Boolean;
+var
+  V: Cardinal;
+begin
+  V := Read8(S.GBR + I.Imm);
+  if FFault then Exit(True);
+  S.R[0] := SignExtend8(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVWLG(I: PSH4Inst): Boolean;
+var
+  V: Cardinal;
+begin
+  V := Read16(S.GBR + I.Imm);
+  if FFault then Exit(True);
+  S.R[0] := SignExtend16(V);
+  Result := FFault;
+end;
+
+function TSH4.OpMOVLLG(I: PSH4Inst): Boolean;
+var
+  V: Cardinal;
+begin
+  V := Read32(S.GBR + I.Imm);
+  if FFault then Exit(True);
+  S.R[0] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpMOVT(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.T;
+end;
+
+function TSH4.OpSWAPB(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  V := S.R[M];
+  S.R[N] := (V and $FFFF0000) or ((V and $FF) shl 8) or ((V shr 8) and $FF);
+end;
+
+function TSH4.OpSWAPW(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  V := S.R[M];
+  S.R[N] := (V shl 16) or (V shr 16);
+end;
+
+function TSH4.OpXTRCT(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := (S.R[N] shr 16) or (S.R[M] shl 16);
+end;
+
+function TSH4.OpADD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[N] + S.R[M];
+end;
+
+function TSH4.OpADDI(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] + I.Imm;
+end;
+
+function TSH4.OpADDC(I: PSH4Inst): Boolean;
+var
   N, M: Integer;
   A, B, V: Cardinal;
-  V64: UInt64;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  A := S.R[N];
+  B := A + S.R[M];
+  V := B + S.T;
+  S.T := Cardinal(Ord((A > B) or (B > V)));
+  S.R[N] := V;
+end;
+
+function TSH4.OpADDV(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, B, V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  A := S.R[N];
+  B := S.R[M];
+  V := A + B;
+  S.T := ((not (A xor B)) and (A xor V)) shr 31;
+  S.R[N] := V;
+end;
+
+function TSH4.OpCMPEQ(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.T := Cardinal(Ord(S.R[N] = S.R[M]));
+end;
+
+function TSH4.OpCMPEQI(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.T := Cardinal(Ord(S.R[0] = I.Imm));
+end;
+
+function TSH4.OpCMPHS(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.T := Cardinal(Ord(S.R[N] >= S.R[M]));
+end;
+
+function TSH4.OpCMPGE(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.T := Cardinal(Ord(Integer(S.R[N]) >= Integer(S.R[M])));
+end;
+
+function TSH4.OpCMPHI(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.T := Cardinal(Ord(S.R[N] > S.R[M]));
+end;
+
+function TSH4.OpCMPGT(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.T := Cardinal(Ord(Integer(S.R[N]) > Integer(S.R[M])));
+end;
+
+function TSH4.OpCMPPZ(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.T := Cardinal(Ord(Integer(S.R[N]) >= 0));
+end;
+
+function TSH4.OpCMPPL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.T := Cardinal(Ord(Integer(S.R[N]) > 0));
+end;
+
+function TSH4.OpCMPSTR(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  V := S.R[N] xor S.R[M];
+  S.T := Cardinal(Ord(((V and $FF) = 0) or ((V and $FF00) = 0) or
+    ((V and $FF0000) = 0) or ((V and $FF000000) = 0)));
+end;
+
+function TSH4.OpDIV0S(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  var Q := S.R[N] shr 31;
+  var MM := S.R[M] shr 31;
+  S.SR := (S.SR and not Cardinal(SRQ or SRM)) or (Q shl 8) or (MM shl 9);
+  S.T := Q xor MM;
+end;
+
+function TSH4.OpDIV0U(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.SR := S.SR and not Cardinal(SRQ or SRM);
+  S.T := 0;
+end;
+
+function TSH4.OpDIV1(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  Div1(N, M);
+end;
+
+function TSH4.OpROTDIV(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  RotateDivide(I^);
+end;
+
+function TSH4.OpDMULS(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
   P64: Int64;
-  Jumped, Excepted: Boolean;
-  JumpTarget: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  P64 := Int64(Integer(S.R[N])) * Int64(Integer(S.R[M]));
+  S.MACH := Cardinal(UInt64(P64) shr 32);
+  S.MACL := Cardinal(P64);
+end;
+
+function TSH4.OpDMULU(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V64: UInt64;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  V64 := UInt64(S.R[N]) * UInt64(S.R[M]);
+  S.MACH := Cardinal(V64 shr 32);
+  S.MACL := Cardinal(V64);
+end;
+
+function TSH4.OpDT(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N] - 1;
+  S.R[N] := V;
+  S.T := Cardinal(Ord(V = 0));
+end;
+
+function TSH4.OpEXTSB(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := SignExtend8(S.R[M]);
+end;
+
+function TSH4.OpEXTSW(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := SignExtend16(S.R[M]);
+end;
+
+function TSH4.OpEXTUB(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[M] and $FF;
+end;
+
+function TSH4.OpEXTUW(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[M] and $FFFF;
+end;
+
+function TSH4.OpMACL(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, B: Cardinal;
+  P64: Int64;
+begin
+  N := I.N;
+  M := I.M;
+  A := Read32(S.R[N]);
+  if FFault then Exit(True);
+  B := Read32(S.R[M] + Cardinal(Ord(N = M)) * 4);
+  if FFault then Exit(True);
+  S.R[N] := S.R[N] + 4;
+  S.R[M] := S.R[M] + 4;
+  P64 := Int64(Integer(A)) * Int64(Integer(B));
+  P64 := Int64((UInt64(S.MACH) shl 32) or S.MACL) + P64;
+  if (S.SR and SRS) <> 0 then
+  begin
+    if P64 > Int64($00007FFFFFFFFFFF) then
+      P64 := $00007FFFFFFFFFFF
+    else if P64 < -Int64($0000800000000000) then
+      P64 := -Int64($0000800000000000);
+  end;
+  S.MACH := Cardinal(UInt64(P64) shr 32);
+  S.MACL := Cardinal(P64);
+  Result := FFault;
+end;
+
+function TSH4.OpMACW(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, B: Cardinal;
+  P64: Int64;
+begin
+  N := I.N;
+  M := I.M;
+  A := Read16(S.R[N]);
+  if FFault then Exit(True);
+  B := Read16(S.R[M] + Cardinal(Ord(N = M)) * 2);
+  if FFault then Exit(True);
+  S.R[N] := S.R[N] + 2;
+  S.R[M] := S.R[M] + 2;
+  var Product := Integer(SmallInt(Word(A))) * Integer(SmallInt(Word(B)));
+  if (S.SR and SRS) <> 0 then
+  begin
+    P64 := Int64(Integer(S.MACL)) + Product;
+    if P64 > MaxInt then
+      S.MACL := $7FFFFFFF
+    else if P64 < -Int64(2147483648) then
+      S.MACL := $80000000
+    else
+      S.MACL := Cardinal(Integer(P64));
+  end
+  else
+  begin
+    P64 := Int64((UInt64(S.MACH) shl 32) or S.MACL) + Product;
+    S.MACH := Cardinal(UInt64(P64) shr 32);
+    S.MACL := Cardinal(P64);
+  end;
+  Result := FFault;
+end;
+
+function TSH4.OpMULL(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.MACL := S.R[N] * S.R[M];
+end;
+
+function TSH4.OpMULSW(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.MACL := Cardinal(Integer(SmallInt(Word(S.R[N]))) * Integer(SmallInt(Word(S.R[M]))));
+end;
+
+function TSH4.OpMULUW(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.MACL := (S.R[N] and $FFFF) * (S.R[M] and $FFFF);
+end;
+
+function TSH4.OpNEG(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := 0 - S.R[M];
+end;
+
+function TSH4.OpNEGC(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  A := 0 - S.R[M];
+  V := A - S.T;
+  S.T := Cardinal(Ord((A <> 0) or (A < V)));
+  S.R[N] := V;
+end;
+
+function TSH4.OpSUB(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[N] - S.R[M];
+end;
+
+function TSH4.OpSUBC(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, B, V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  A := S.R[N];
+  B := A - S.R[M];
+  V := B - S.T;
+  S.T := Cardinal(Ord((A < B) or (B < V)));
+  S.R[N] := V;
+end;
+
+function TSH4.OpSUBV(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, B, V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  A := S.R[N];
+  B := S.R[M];
+  V := A - B;
+  S.T := ((A xor B) and (A xor V)) shr 31;
+  S.R[N] := V;
+end;
+
+function TSH4.OpAND(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[N] and S.R[M];
+end;
+
+function TSH4.OpANDI(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.R[0] := S.R[0] and I.Imm;
+end;
+
+function TSH4.OpANDB(I: PSH4Inst): Boolean;
+var
+  A, V: Cardinal;
+begin
+  A := S.GBR + S.R[0];
+  V := Read8(A);
+  if FFault then Exit(True);
+  case TOp(I.Kind) of
+    oANDB: Write8(A, V and I.Imm);
+    oORB: Write8(A, V or I.Imm);
+    oXORB: Write8(A, V xor I.Imm);
+  else
+    S.T := Cardinal(Ord((V and I.Imm) = 0));
+  end;
+  Result := FFault;
+end;
+
+function TSH4.OpNOT(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := not S.R[M];
+end;
+
+function TSH4.OpOR(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[N] or S.R[M];
+end;
+
+function TSH4.OpORI(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.R[0] := S.R[0] or I.Imm;
+end;
+
+function TSH4.OpTASB(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  A, V: Cardinal;
+begin
+  N := I.N;
+  A := S.R[N];
+  V := Read8(A);
+  if FFault then Exit(True);
+  Write8(A, V or $80);
+  if FFault then Exit(True);
+  S.T := Cardinal(Ord(V = 0));
+  Result := FFault;
+end;
+
+function TSH4.OpTST(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.T := Cardinal(Ord((S.R[N] and S.R[M]) = 0));
+end;
+
+function TSH4.OpTSTI(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.T := Cardinal(Ord((S.R[0] and I.Imm) = 0));
+end;
+
+function TSH4.OpXOR(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.R[N] xor S.R[M];
+end;
+
+function TSH4.OpXORI(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.R[0] := S.R[0] xor I.Imm;
+end;
+
+function TSH4.OpROTL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.T := V shr 31;
+  S.R[N] := (V shl 1) or S.T;
+end;
+
+function TSH4.OpROTR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.T := V and 1;
+  S.R[N] := (V shr 1) or (S.T shl 31);
+end;
+
+function TSH4.OpROTCL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.R[N] := (V shl 1) or S.T;
+  S.T := V shr 31;
+end;
+
+function TSH4.OpROTCR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.R[N] := (V shr 1) or (S.T shl 31);
+  S.T := V and 1;
+end;
+
+function TSH4.OpSHAD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  B, V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  B := S.R[M];
+  V := S.R[N];
+  if Integer(B) >= 0 then
+    S.R[N] := V shl (B and 31)
+  else if (B and 31) = 0 then
+    S.R[N] := Sar32(V, 31)
+  else
+    S.R[N] := Sar32(V, ((not B) and 31) + 1);
+end;
+
+function TSH4.OpSHLD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  B, V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  B := S.R[M];
+  V := S.R[N];
+  if Integer(B) >= 0 then
+    S.R[N] := V shl (B and 31)
+  else if (B and 31) = 0 then
+    S.R[N] := 0
+  else
+    S.R[N] := V shr (((not B) and 31) + 1);
+end;
+
+function TSH4.OpSHAL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.T := V shr 31;
+  S.R[N] := V shl 1;
+end;
+
+function TSH4.OpSHAR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.T := V and 1;
+  S.R[N] := Sar32(V, 1);
+end;
+
+function TSH4.OpSHLL2(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] shl 2;
+end;
+
+function TSH4.OpSHLL8(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] shl 8;
+end;
+
+function TSH4.OpSHLL16(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] shl 16;
+end;
+
+function TSH4.OpSHLR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  V: Cardinal;
+begin
+  Result := False;
+  N := I.N;
+  V := S.R[N];
+  S.T := V and 1;
+  S.R[N] := V shr 1;
+end;
+
+function TSH4.OpSHLR2(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] shr 2;
+end;
+
+function TSH4.OpSHLR8(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] shr 8;
+end;
+
+function TSH4.OpSHLR16(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.R[N] shr 16;
+end;
+
+function TSH4.OpBF(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  if S.T = 0 then
+  begin
+    FJumped := True;
+    FJumpTarget := I.Imm;
+  end;
+end;
+
+function TSH4.OpBT(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  if S.T <> 0 then
+  begin
+    FJumped := True;
+    FJumpTarget := I.Imm;
+  end;
+end;
+
+function TSH4.OpBFS(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.DelaySlot := True;
+  if S.T = 0 then
+    S.DelayTarget := I.Imm
+  else
+    S.DelayTarget := I.Addr + 4;
+end;
+
+function TSH4.OpBTS(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.DelaySlot := True;
+  if S.T <> 0 then
+    S.DelayTarget := I.Imm
+  else
+    S.DelayTarget := I.Addr + 4;
+end;
+
+function TSH4.OpBRA(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.DelaySlot := True;
+  S.DelayTarget := I.Imm;
+end;
+
+function TSH4.OpBSR(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.PR := I.Addr + 4;
+  S.DelaySlot := True;
+  S.DelayTarget := I.Imm;
+end;
+
+function TSH4.OpBRAF(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.DelaySlot := True;
+  S.DelayTarget := I.Addr + 4 + S.R[N];
+end;
+
+function TSH4.OpBSRF(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.DelaySlot := True;
+  S.DelayTarget := I.Addr + 4 + S.R[N];
+  S.PR := I.Addr + 4;
+end;
+
+function TSH4.OpJMP(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.DelaySlot := True;
+  S.DelayTarget := S.R[N];
+end;
+
+function TSH4.OpJSR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.DelaySlot := True;
+  S.DelayTarget := S.R[N];
+  S.PR := I.Addr + 4;
+end;
+
+function TSH4.OpRTS(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.DelaySlot := True;
+  S.DelayTarget := S.PR;
+end;
+
+function TSH4.OpRTE(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.DelaySlot := True;
+  S.DelayTarget := S.SPC;
+  S.RTEPending := True;
+  S.RTESR := S.SSR;
+end;
+
+function TSH4.OpCLRMAC(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.MACH := 0;
+  S.MACL := 0;
+end;
+
+function TSH4.OpCLRS(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.SR := S.SR and not Cardinal(SRS);
+end;
+
+function TSH4.OpCLRT(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.T := 0;
+end;
+
+function TSH4.OpSETS(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.SR := S.SR or SRS;
+end;
+
+function TSH4.OpSETT(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.T := 1;
+end;
+
+function TSH4.OpLDTLB(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  var Index := (S.MMUCR shr 10) and 63;
+  S.UTLB[Index].VPN := S.PTEH and $FFFFFC00;
+  S.UTLB[Index].ASID := S.PTEH and $FF;
+  S.UTLB[Index].PPN := S.PTEL and $1FFFFC00;
+  S.UTLB[Index].Flags := S.PTEL and $1FF;
+  S.UTLB[Index].PTEA := S.PTEA and $F;
+  if (S.MMUCR and 1) <> 0 then
+    InvalidateBlocks;
+end;
+
+function TSH4.OpMOVCAL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  N := I.N;
+  Write32(S.R[N], S.R[0]);
+  Result := FFault;
+end;
+
+function TSH4.OpPREF(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  N := I.N;
+  if (S.R[N] and $FC000000) = $E0000000 then
+    StoreQueueFlush(S.R[N]);
+  Result := FFault;
+end;
+
+function TSH4.OpSLEEP(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  // PC stays on SLEEP; an accepted interrupt returns past it.
+  S.Sleeping := True;
+  FJumped := True;
+  FJumpTarget := I.Addr;
+end;
+
+function TSH4.OpTRAPA(I: PSH4Inst): Boolean;
+begin
+  S.TRA := I.Imm shl 2;
+  S.EXPEVT := SH4ExcTrap;
+  EnterException(SH4ExcTrap, $100, I.Addr + 2);
+  FStop := StopTrap;
+  Exit(True);
+end;
+
+function TSH4.OpLDCSR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  SetSRValue(S.R[N]);
+end;
+
+function TSH4.OpLDCGBR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.GBR := S.R[N];
+end;
+
+function TSH4.OpLDCVBR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.VBR := S.R[N];
+end;
+
+function TSH4.OpLDCSSR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.SSR := S.R[N];
+end;
+
+function TSH4.OpLDCSPC(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.SPC := S.R[N];
+end;
+
+function TSH4.OpLDCDBR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.DBR := S.R[N];
+end;
+
+function TSH4.OpLDCBANK(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.RBank[M] := S.R[N];
+end;
+
+function TSH4.OpLDCMSR(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[N]);
+  if FFault then Exit(True);
+  S.R[N] := S.R[N] + 4;
+  case TOp(I.Kind) of
+    oLDCMSR: SetSRValue(V);
+    oLDCMGBR: S.GBR := V;
+    oLDCMVBR: S.VBR := V;
+    oLDCMSSR: S.SSR := V;
+    oLDCMSPC: S.SPC := V;
+    oLDCMDBR: S.DBR := V;
+    oLDCMBANK: S.RBank[M] := V;
+    oLDSMMACH: S.MACH := V;
+    oLDSMMACL: S.MACL := V;
+    oLDSMPR: S.PR := V;
+    oLDSMFPUL: S.FPUL := V;
+  else
+    begin
+      SetFPSCRValue(V);
+    end;
+  end;
+  Result := FFault;
+end;
+
+function TSH4.OpLDSMACH(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.MACH := S.R[N];
+end;
+
+function TSH4.OpLDSMACL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.MACL := S.R[N];
+end;
+
+function TSH4.OpLDSPR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.PR := S.R[N];
+end;
+
+function TSH4.OpSTCSR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := GetSRValue;
+end;
+
+function TSH4.OpSTCGBR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.GBR;
+end;
+
+function TSH4.OpSTCVBR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.VBR;
+end;
+
+function TSH4.OpSTCSSR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.SSR;
+end;
+
+function TSH4.OpSTCSPC(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.SPC;
+end;
+
+function TSH4.OpSTCSGR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.SGR;
+end;
+
+function TSH4.OpSTCDBR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.DBR;
+end;
+
+function TSH4.OpSTCBANK(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  S.R[N] := S.RBank[M];
+end;
+
+function TSH4.OpSTCMSR(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A, V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  case TOp(I.Kind) of
+    oSTCMSR: V := GetSRValue;
+    oSTCMGBR: V := S.GBR;
+    oSTCMVBR: V := S.VBR;
+    oSTCMSSR: V := S.SSR;
+    oSTCMSPC: V := S.SPC;
+    oSTCMSGR: V := S.SGR;
+    oSTCMDBR: V := S.DBR;
+    oSTCMBANK: V := S.RBank[M];
+    oSTSMMACH: V := S.MACH;
+    oSTSMMACL: V := S.MACL;
+    oSTSMPR: V := S.PR;
+    oSTSMFPUL: V := S.FPUL;
+  else
+    V := S.FPSCR;
+  end;
+  A := S.R[N] - 4;
+  Write32(A, V);
+  if FFault then Exit(True);
+  S.R[N] := A;
+  Result := FFault;
+end;
+
+function TSH4.OpSTSMACH(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.MACH;
+end;
+
+function TSH4.OpSTSMACL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.MACL;
+end;
+
+function TSH4.OpSTSPR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.PR;
+end;
+
+function TSH4.OpLDSFPSCR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  SetFPSCRValue(S.R[N]);
+end;
+
+function TSH4.OpLDSFPUL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FPUL := S.R[N];
+end;
+
+function TSH4.OpSTSFPSCR(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.FPSCR;
+end;
+
+function TSH4.OpSTSFPUL(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.R[N] := S.FPUL;
+end;
+
+function TSH4.OpFMOV(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  // Single-precision moves; register numbers are pre-xored (see TSH4State).
+  S.FR.U[N] := S.FR.U[M];
+end;
+
+function TSH4.OpFMOVLD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M]);
+  if FFault then Exit(True);
+  S.FR.U[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVLD0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M] + S.R[0]);
+  if FFault then Exit(True);
+  S.FR.U[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVLDP(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  V := Read32(S.R[M]);
+  if FFault then Exit(True);
+  S.R[M] := S.R[M] + 4;
+  S.FR.U[N] := V;
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVST(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write32(S.R[N], S.FR.U[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVST0(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  N := I.N;
+  M := I.M;
+  Write32(S.R[N] + S.R[0], S.FR.U[M]);
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVSTM(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A: Cardinal;
+begin
+  N := I.N;
+  M := I.M;
+  A := S.R[N] - 4;
+  Write32(A, S.FR.U[M]);
+  if FFault then Exit(True);
+  S.R[N] := A;
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  V64: UInt64;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  // Pair moves (SZ=1): odd register numbers select XD.
+  if (M and 1) = 0 then
+    V64 := S.FR.Q[M shr 1]
+  else
+    V64 := S.XF.Q[M shr 1];
+  if (N and 1) = 0 then
+    S.FR.Q[N shr 1] := V64
+  else
+    S.XF.Q[N shr 1] := V64;
+end;
+
+function TSH4.OpFMOVDLD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A: Cardinal;
+  V64: UInt64;
+begin
+  N := I.N;
+  M := I.M;
+  A := S.R[M];
+  if TOp(I.Kind) = oFMOVDLD0 then
+    A := A + S.R[0];
+  V64 := Read64(A);
+  if FFault then Exit(True);
+  if TOp(I.Kind) = oFMOVDLDP then
+    S.R[M] := S.R[M] + 8;
+  if (N and 1) = 0 then
+    S.FR.Q[N shr 1] := SwapHalves(V64)
+  else
+    S.XF.Q[N shr 1] := SwapHalves(V64);
+  Result := FFault;
+end;
+
+function TSH4.OpFMOVDST(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  A: Cardinal;
+  V64: UInt64;
+begin
+  N := I.N;
+  M := I.M;
+  if (M and 1) = 0 then
+    V64 := SwapHalves(S.FR.Q[M shr 1])
+  else
+    V64 := SwapHalves(S.XF.Q[M shr 1]);
+  A := S.R[N];
+  case TOp(I.Kind) of
+    oFMOVDST0: A := A + S.R[0];
+    oFMOVDSTM: A := A - 8;
+  end;
+  Write64(A, V64);
+  if FFault then Exit(True);
+  if TOp(I.Kind) = oFMOVDSTM then
+    S.R[N] := A;
+  Result := FFault;
+end;
+
+function TSH4.OpFLDI0(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.U[N] := 0;
+end;
+
+function TSH4.OpFLDI1(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.U[N] := $3F800000;
+end;
+
+function TSH4.OpFLDS(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FPUL := S.FR.U[N];
+end;
+
+function TSH4.OpFSTS(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.U[N] := S.FPUL;
+end;
+
+function TSH4.OpFABS(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.U[N] := S.FR.U[N] and $7FFFFFFF;
+end;
+
+function TSH4.OpFNEG(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.U[N] := S.FR.U[N] xor $80000000;
+end;
+
+function TSH4.OpFADD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  F: Single;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  var X := S.FR.S[N];
+  var Y := S.FR.S[M];
+  if DN then
+  begin
+    X := FlushSingle(X);
+    Y := FlushSingle(Y);
+  end;
+  case TOp(I.Kind) of
+    oFADD: F := X + Y;
+    oFSUB: F := X - Y;
+    oFMUL: F := X * Y;
+  else
+    F := X / Y;
+  end;
+  if DN then
+    F := FlushSingle(F);
+  S.FR.S[N] := F;
+end;
+
+function TSH4.OpFMAC(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
   F: Single;
   DV: Double;
   DN: Boolean;
 begin
-  Result := 0;
-  Jumped := False;
-  Excepted := False;
-  JumpTarget := 0;
+  Result := False;
+  N := I.N;
+  M := I.M;
   DN := (S.FPSCR and FPSCRDN) <> 0;
+  var X := S.FR.S[1];
+  var Y := S.FR.S[M];
+  var Z := S.FR.S[N];
+  if DN then
+  begin
+    X := FlushSingle(X);
+    Y := FlushSingle(Y);
+    Z := FlushSingle(Z);
+  end;
+  DV := Double(X) * Double(Y) + Double(Z);
+  F := RoundToSingle(DV);
+  if DN then
+    F := FlushSingle(F);
+  S.FR.S[N] := F;
+end;
+
+function TSH4.OpFSQRT(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  F: Single;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  F := S.FR.S[N];
+  if DN then
+    F := FlushSingle(F);
+  F := RoundToSingle(Sqrt(Double(F)));
+  S.FR.S[N] := F;
+end;
+
+function TSH4.OpFSRRA(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  F: Single;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  F := S.FR.S[N];
+  if DN then
+    F := FlushSingle(F);
+  F := RoundToSingle(1.0 / Sqrt(Double(F)));
+  if DN then
+    F := FlushSingle(F);
+  S.FR.S[N] := F;
+end;
+
+function TSH4.OpFCMPEQ(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  if IsNaNBits(S.FR.U[N]) or IsNaNBits(S.FR.U[M]) then
+    S.T := 0
+  else
+    S.T := Cardinal(Ord(S.FR.S[N] = S.FR.S[M]));
+end;
+
+function TSH4.OpFCMPGT(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  if IsNaNBits(S.FR.U[N]) or IsNaNBits(S.FR.U[M]) then
+    S.T := 0
+  else
+    S.T := Cardinal(Ord(S.FR.S[N] > S.FR.S[M]));
+end;
+
+function TSH4.OpFLOAT(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  F: Single;
+begin
+  Result := False;
+  N := I.N;
+  F := Integer(S.FPUL);
+  S.FR.S[N] := F;
+end;
+
+function TSH4.OpFTRC(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FPUL := SingleToInt(S.FR.S[N]);
+end;
+
+function TSH4.OpFIPR(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  F: Single;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  // FIPR/FTRV: a rounded first product, then fused multiply-adds with one
+  // rounding each (the order matches SingleStepTests).
+  F := SingleProduct(S.FR.S[N xor 1], S.FR.S[M xor 1]);
+  F := FusedSingle(S.FR.S[(N + 1) xor 1], S.FR.S[(M + 1) xor 1], F);
+  F := FusedSingle(S.FR.S[(N + 2) xor 1], S.FR.S[(M + 2) xor 1], F);
+  F := FusedSingle(S.FR.S[(N + 3) xor 1], S.FR.S[(M + 3) xor 1], F);
+  if DN then
+    F := FlushSingle(F);
+  S.FR.S[(N + 3) xor 1] := F;
+end;
+
+function TSH4.OpFTRV(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  F: Single;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  var X0 := S.FR.S[N xor 1];
+  var X1 := S.FR.S[(N + 1) xor 1];
+  var X2 := S.FR.S[(N + 2) xor 1];
+  var X3 := S.FR.S[(N + 3) xor 1];
+  for var Row := 0 to 3 do
+  begin
+    F := SingleProduct(S.XF.S[(Row + 4) xor 1], X1);
+    F := FusedSingle(S.XF.S[Row xor 1], X0, F);
+    F := FusedSingle(S.XF.S[(Row + 8) xor 1], X2, F);
+    F := FusedSingle(S.XF.S[(Row + 12) xor 1], X3, F);
+    if DN then
+      F := FlushSingle(F);
+    S.FR.S[(N + Row) xor 1] := F;
+  end;
+end;
+
+function TSH4.OpFSCA(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  DV: Double;
+begin
+  Result := False;
+  N := I.N;
+  DV := (S.FPUL and $FFFF) * (2 * Pi / 65536);
+  S.FR.S[N + 1] := RoundToSingle(Sin(DV));
+  S.FR.S[N] := RoundToSingle(Cos(DV));
+end;
+
+function TSH4.OpFSCHG(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.FPSCR := S.FPSCR xor FPSCRSZ;
+end;
+
+function TSH4.OpFRCHG(I: PSH4Inst): Boolean;
+begin
+  Result := False;
+  S.FPSCR := S.FPSCR xor FPSCRFR;
+  SwapFPBanks;
+end;
+
+function TSH4.OpDABS(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.Q[N shr 1] := S.FR.Q[N shr 1] and $7FFFFFFFFFFFFFFF;
+end;
+
+function TSH4.OpDNEG(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.Q[N shr 1] := S.FR.Q[N shr 1] xor $8000000000000000;
+end;
+
+function TSH4.OpDADD(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+  DV: Double;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  var X := S.FR.D[N shr 1];
+  var Y := S.FR.D[M shr 1];
+  if DN then
+  begin
+    X := FlushDouble(X);
+    Y := FlushDouble(Y);
+  end;
+  case TOp(I.Kind) of
+    oDADD: DV := X + Y;
+    oDSUB: DV := X - Y;
+    oDMUL: DV := X * Y;
+  else
+    DV := X / Y;
+  end;
+  if DN then
+    DV := FlushDouble(DV);
+  S.FR.D[N shr 1] := DV;
+end;
+
+function TSH4.OpDSQRT(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.D[N shr 1] := Sqrt(S.FR.D[N shr 1]);
+end;
+
+function TSH4.OpDCMPEQ(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  if IsNaN64(S.FR.Q[N shr 1]) or IsNaN64(S.FR.Q[M shr 1]) then
+    S.T := 0
+  else
+    S.T := Cardinal(Ord(S.FR.D[N shr 1] = S.FR.D[M shr 1]));
+end;
+
+function TSH4.OpDCMPGT(I: PSH4Inst): Boolean;
+var
+  N, M: Integer;
+begin
+  Result := False;
+  N := I.N;
+  M := I.M;
+  if IsNaN64(S.FR.Q[N shr 1]) or IsNaN64(S.FR.Q[M shr 1]) then
+    S.T := 0
+  else
+    S.T := Cardinal(Ord(S.FR.D[N shr 1] > S.FR.D[M shr 1]));
+end;
+
+function TSH4.OpDFLOAT(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.D[N shr 1] := Integer(S.FPUL);
+end;
+
+function TSH4.OpDFTRC(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FPUL := DoubleToInt(S.FR.D[N shr 1]);
+end;
+
+function TSH4.OpFCNVSD(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+begin
+  Result := False;
+  N := I.N;
+  S.FR.D[N shr 1] := BitsSingle(S.FPUL);
+end;
+
+function TSH4.OpFCNVDS(I: PSH4Inst): Boolean;
+var
+  N: Integer;
+  F: Single;
+  DN: Boolean;
+begin
+  Result := False;
+  N := I.N;
+  DN := (S.FPSCR and FPSCRDN) <> 0;
+  F := RoundToSingle(S.FR.D[N shr 1]);
+  if DN then
+    F := FlushSingle(F);
+  S.FPUL := SingleBits(F);
+end;
+
+function TSH4.OpIllegal(I: PSH4Inst): Boolean;
+begin
+  if (TOp(I.Kind) = oIllegal) and Assigned(FIllegalHook) then
+  begin
+    S.PC := I.Addr;
+    if FIllegalHook(FIllegalUser, I.Addr) then
+    begin
+      FJumped := True;
+      FJumpTarget := S.PC;
+      FStop := StopLeave;
+      Exit(True);
+    end;
+  end;
+  case TOp(I.Kind) of
+    oIllegal: S.EXPEVT := SH4ExcIllegal;
+    oSlotIllegal: S.EXPEVT := SH4ExcSlotIllegal;
+    oFPUDisabled: S.EXPEVT := SH4ExcFPUDisabled;
+  else
+    S.EXPEVT := SH4ExcSlotFPUDisabled;
+  end;
+  FExcepted := True;
+  Exit(True);
+end;
+
+function TSH4.Execute(Insts: PSH4Inst; Count: Integer; out Next: Cardinal): Integer;
+var
+  I: PSH4Inst;
+begin
+  Result := 0;
+  FJumped := False;
+  FExcepted := False;
   I := Insts;
   while Result < Count do
   begin
-    N := I.N;
-    M := I.M;
-    case TOp(I.Kind) of
-      oNOP, oOCB:
-        ;
-      oMOV:
-        S.R[N] := S.R[M];
-      oMOVI:
-        S.R[N] := I.Imm;
-      oMOVWPC:
-        begin
-          V := Read16(I.Imm);
-          if FFault then Break;
-          S.R[N] := SignExtend16(V);
-        end;
-      oMOVLPC:
-        begin
-          V := Read32(I.Imm);
-          if FFault then Break;
-          S.R[N] := V;
-        end;
-      oMOVA:
-        S.R[0] := I.Imm;
-      oMOVBS:
-        Write8(S.R[N], S.R[M]);
-      oMOVWS:
-        Write16(S.R[N], S.R[M]);
-      oMOVLS:
-        Write32(S.R[N], S.R[M]);
-      oMOVBL:
-        begin
-          V := Read8(S.R[M]);
-          if FFault then Break;
-          S.R[N] := SignExtend8(V);
-        end;
-      oMOVWL:
-        begin
-          V := Read16(S.R[M]);
-          if FFault then Break;
-          S.R[N] := SignExtend16(V);
-        end;
-      oMOVLL:
-        begin
-          V := Read32(S.R[M]);
-          if FFault then Break;
-          S.R[N] := V;
-        end;
-      oMOVBM:
-        begin
-          A := S.R[N] - 1;
-          Write8(A, S.R[M]);
-          if FFault then Break;
-          S.R[N] := A;
-        end;
-      oMOVWM:
-        begin
-          A := S.R[N] - 2;
-          Write16(A, S.R[M]);
-          if FFault then Break;
-          S.R[N] := A;
-        end;
-      oMOVLM:
-        begin
-          A := S.R[N] - 4;
-          Write32(A, S.R[M]);
-          if FFault then Break;
-          S.R[N] := A;
-        end;
-      oMOVBP:
-        begin
-          V := Read8(S.R[M]);
-          if FFault then Break;
-          if N <> M then
-            S.R[M] := S.R[M] + 1;
-          S.R[N] := SignExtend8(V);
-        end;
-      oMOVWP:
-        begin
-          V := Read16(S.R[M]);
-          if FFault then Break;
-          if N <> M then
-            S.R[M] := S.R[M] + 2;
-          S.R[N] := SignExtend16(V);
-        end;
-      oMOVLP:
-        begin
-          V := Read32(S.R[M]);
-          if FFault then Break;
-          if N <> M then
-            S.R[M] := S.R[M] + 4;
-          S.R[N] := V;
-        end;
-      oMOVBS0:
-        Write8(S.R[N] + S.R[0], S.R[M]);
-      oMOVWS0:
-        Write16(S.R[N] + S.R[0], S.R[M]);
-      oMOVLS0:
-        Write32(S.R[N] + S.R[0], S.R[M]);
-      oMOVBL0:
-        begin
-          V := Read8(S.R[M] + S.R[0]);
-          if FFault then Break;
-          S.R[N] := SignExtend8(V);
-        end;
-      oMOVWL0:
-        begin
-          V := Read16(S.R[M] + S.R[0]);
-          if FFault then Break;
-          S.R[N] := SignExtend16(V);
-        end;
-      oMOVLL0:
-        begin
-          V := Read32(S.R[M] + S.R[0]);
-          if FFault then Break;
-          S.R[N] := V;
-        end;
-      oMOVBS4:
-        Write8(S.R[M] + I.Imm, S.R[0]);
-      oMOVWS4:
-        Write16(S.R[M] + I.Imm, S.R[0]);
-      oMOVLS4:
-        Write32(S.R[N] + I.Imm, S.R[M]);
-      oMOVBL4:
-        begin
-          V := Read8(S.R[M] + I.Imm);
-          if FFault then Break;
-          S.R[0] := SignExtend8(V);
-        end;
-      oMOVWL4:
-        begin
-          V := Read16(S.R[M] + I.Imm);
-          if FFault then Break;
-          S.R[0] := SignExtend16(V);
-        end;
-      oMOVLL4:
-        begin
-          V := Read32(S.R[M] + I.Imm);
-          if FFault then Break;
-          S.R[N] := V;
-        end;
-      oMOVBSG:
-        Write8(S.GBR + I.Imm, S.R[0]);
-      oMOVWSG:
-        Write16(S.GBR + I.Imm, S.R[0]);
-      oMOVLSG:
-        Write32(S.GBR + I.Imm, S.R[0]);
-      oMOVBLG:
-        begin
-          V := Read8(S.GBR + I.Imm);
-          if FFault then Break;
-          S.R[0] := SignExtend8(V);
-        end;
-      oMOVWLG:
-        begin
-          V := Read16(S.GBR + I.Imm);
-          if FFault then Break;
-          S.R[0] := SignExtend16(V);
-        end;
-      oMOVLLG:
-        begin
-          V := Read32(S.GBR + I.Imm);
-          if FFault then Break;
-          S.R[0] := V;
-        end;
-      oMOVT:
-        S.R[N] := S.T;
-      oSWAPB:
-        begin
-          V := S.R[M];
-          S.R[N] := (V and $FFFF0000) or ((V and $FF) shl 8) or ((V shr 8) and $FF);
-        end;
-      oSWAPW:
-        begin
-          V := S.R[M];
-          S.R[N] := (V shl 16) or (V shr 16);
-        end;
-      oXTRCT:
-        S.R[N] := (S.R[N] shr 16) or (S.R[M] shl 16);
-      oADD:
-        S.R[N] := S.R[N] + S.R[M];
-      oADDI:
-        S.R[N] := S.R[N] + I.Imm;
-      oADDC:
-        begin
-          A := S.R[N];
-          B := A + S.R[M];
-          V := B + S.T;
-          S.T := Cardinal(Ord((A > B) or (B > V)));
-          S.R[N] := V;
-        end;
-      oADDV:
-        begin
-          A := S.R[N];
-          B := S.R[M];
-          V := A + B;
-          S.T := ((not (A xor B)) and (A xor V)) shr 31;
-          S.R[N] := V;
-        end;
-      oCMPEQ:
-        S.T := Cardinal(Ord(S.R[N] = S.R[M]));
-      oCMPEQI:
-        S.T := Cardinal(Ord(S.R[0] = I.Imm));
-      oCMPHS:
-        S.T := Cardinal(Ord(S.R[N] >= S.R[M]));
-      oCMPGE:
-        S.T := Cardinal(Ord(Integer(S.R[N]) >= Integer(S.R[M])));
-      oCMPHI:
-        S.T := Cardinal(Ord(S.R[N] > S.R[M]));
-      oCMPGT:
-        S.T := Cardinal(Ord(Integer(S.R[N]) > Integer(S.R[M])));
-      oCMPPZ:
-        S.T := Cardinal(Ord(Integer(S.R[N]) >= 0));
-      oCMPPL:
-        S.T := Cardinal(Ord(Integer(S.R[N]) > 0));
-      oCMPSTR:
-        begin
-          V := S.R[N] xor S.R[M];
-          S.T := Cardinal(Ord(((V and $FF) = 0) or ((V and $FF00) = 0) or
-            ((V and $FF0000) = 0) or ((V and $FF000000) = 0)));
-        end;
-      oDIV0S:
-        begin
-          var Q := S.R[N] shr 31;
-          var MM := S.R[M] shr 31;
-          S.SR := (S.SR and not Cardinal(SRQ or SRM)) or (Q shl 8) or (MM shl 9);
-          S.T := Q xor MM;
-        end;
-      oDIV0U:
-        begin
-          S.SR := S.SR and not Cardinal(SRQ or SRM);
-          S.T := 0;
-        end;
-      oDIV1:
-        Div1(N, M);
-      oROTDIV, oDIVROT:
-        RotateDivide(I^);
-      oDMULS:
-        begin
-          P64 := Int64(Integer(S.R[N])) * Int64(Integer(S.R[M]));
-          S.MACH := Cardinal(UInt64(P64) shr 32);
-          S.MACL := Cardinal(P64);
-        end;
-      oDMULU:
-        begin
-          V64 := UInt64(S.R[N]) * UInt64(S.R[M]);
-          S.MACH := Cardinal(V64 shr 32);
-          S.MACL := Cardinal(V64);
-        end;
-      oDT:
-        begin
-          V := S.R[N] - 1;
-          S.R[N] := V;
-          S.T := Cardinal(Ord(V = 0));
-        end;
-      oEXTSB:
-        S.R[N] := SignExtend8(S.R[M]);
-      oEXTSW:
-        S.R[N] := SignExtend16(S.R[M]);
-      oEXTUB:
-        S.R[N] := S.R[M] and $FF;
-      oEXTUW:
-        S.R[N] := S.R[M] and $FFFF;
-      oMACL:
-        begin
-          A := Read32(S.R[N]);
-          if FFault then Break;
-          B := Read32(S.R[M] + Cardinal(Ord(N = M)) * 4);
-          if FFault then Break;
-          S.R[N] := S.R[N] + 4;
-          S.R[M] := S.R[M] + 4;
-          P64 := Int64(Integer(A)) * Int64(Integer(B));
-          P64 := Int64((UInt64(S.MACH) shl 32) or S.MACL) + P64;
-          if (S.SR and SRS) <> 0 then
-          begin
-            if P64 > Int64($00007FFFFFFFFFFF) then
-              P64 := $00007FFFFFFFFFFF
-            else if P64 < -Int64($0000800000000000) then
-              P64 := -Int64($0000800000000000);
-          end;
-          S.MACH := Cardinal(UInt64(P64) shr 32);
-          S.MACL := Cardinal(P64);
-        end;
-      oMACW:
-        begin
-          A := Read16(S.R[N]);
-          if FFault then Break;
-          B := Read16(S.R[M] + Cardinal(Ord(N = M)) * 2);
-          if FFault then Break;
-          S.R[N] := S.R[N] + 2;
-          S.R[M] := S.R[M] + 2;
-          var Product := Integer(SmallInt(Word(A))) * Integer(SmallInt(Word(B)));
-          if (S.SR and SRS) <> 0 then
-          begin
-            P64 := Int64(Integer(S.MACL)) + Product;
-            if P64 > MaxInt then
-              S.MACL := $7FFFFFFF
-            else if P64 < -Int64(2147483648) then
-              S.MACL := $80000000
-            else
-              S.MACL := Cardinal(Integer(P64));
-          end
-          else
-          begin
-            P64 := Int64((UInt64(S.MACH) shl 32) or S.MACL) + Product;
-            S.MACH := Cardinal(UInt64(P64) shr 32);
-            S.MACL := Cardinal(P64);
-          end;
-        end;
-      oMULL:
-        S.MACL := S.R[N] * S.R[M];
-      oMULSW:
-        S.MACL := Cardinal(Integer(SmallInt(Word(S.R[N]))) * Integer(SmallInt(Word(S.R[M]))));
-      oMULUW:
-        S.MACL := (S.R[N] and $FFFF) * (S.R[M] and $FFFF);
-      oNEG:
-        S.R[N] := 0 - S.R[M];
-      oNEGC:
-        begin
-          A := 0 - S.R[M];
-          V := A - S.T;
-          S.T := Cardinal(Ord((A <> 0) or (A < V)));
-          S.R[N] := V;
-        end;
-      oSUB:
-        S.R[N] := S.R[N] - S.R[M];
-      oSUBC:
-        begin
-          A := S.R[N];
-          B := A - S.R[M];
-          V := B - S.T;
-          S.T := Cardinal(Ord((A < B) or (B < V)));
-          S.R[N] := V;
-        end;
-      oSUBV:
-        begin
-          A := S.R[N];
-          B := S.R[M];
-          V := A - B;
-          S.T := ((A xor B) and (A xor V)) shr 31;
-          S.R[N] := V;
-        end;
-      oAND:
-        S.R[N] := S.R[N] and S.R[M];
-      oANDI:
-        S.R[0] := S.R[0] and I.Imm;
-      oANDB, oORB, oXORB, oTSTB:
-        begin
-          A := S.GBR + S.R[0];
-          V := Read8(A);
-          if FFault then Break;
-          case TOp(I.Kind) of
-            oANDB: Write8(A, V and I.Imm);
-            oORB: Write8(A, V or I.Imm);
-            oXORB: Write8(A, V xor I.Imm);
-          else
-            S.T := Cardinal(Ord((V and I.Imm) = 0));
-          end;
-        end;
-      oNOT:
-        S.R[N] := not S.R[M];
-      oOR:
-        S.R[N] := S.R[N] or S.R[M];
-      oORI:
-        S.R[0] := S.R[0] or I.Imm;
-      oTASB:
-        begin
-          A := S.R[N];
-          V := Read8(A);
-          if FFault then Break;
-          Write8(A, V or $80);
-          if FFault then Break;
-          S.T := Cardinal(Ord(V = 0));
-        end;
-      oTST:
-        S.T := Cardinal(Ord((S.R[N] and S.R[M]) = 0));
-      oTSTI:
-        S.T := Cardinal(Ord((S.R[0] and I.Imm) = 0));
-      oXOR:
-        S.R[N] := S.R[N] xor S.R[M];
-      oXORI:
-        S.R[0] := S.R[0] xor I.Imm;
-      oROTL:
-        begin
-          V := S.R[N];
-          S.T := V shr 31;
-          S.R[N] := (V shl 1) or S.T;
-        end;
-      oROTR:
-        begin
-          V := S.R[N];
-          S.T := V and 1;
-          S.R[N] := (V shr 1) or (S.T shl 31);
-        end;
-      oROTCL:
-        begin
-          V := S.R[N];
-          S.R[N] := (V shl 1) or S.T;
-          S.T := V shr 31;
-        end;
-      oROTCR:
-        begin
-          V := S.R[N];
-          S.R[N] := (V shr 1) or (S.T shl 31);
-          S.T := V and 1;
-        end;
-      oSHAD:
-        begin
-          B := S.R[M];
-          V := S.R[N];
-          if Integer(B) >= 0 then
-            S.R[N] := V shl (B and 31)
-          else if (B and 31) = 0 then
-            S.R[N] := Sar32(V, 31)
-          else
-            S.R[N] := Sar32(V, ((not B) and 31) + 1);
-        end;
-      oSHLD:
-        begin
-          B := S.R[M];
-          V := S.R[N];
-          if Integer(B) >= 0 then
-            S.R[N] := V shl (B and 31)
-          else if (B and 31) = 0 then
-            S.R[N] := 0
-          else
-            S.R[N] := V shr (((not B) and 31) + 1);
-        end;
-      oSHAL, oSHLL:
-        begin
-          V := S.R[N];
-          S.T := V shr 31;
-          S.R[N] := V shl 1;
-        end;
-      oSHAR:
-        begin
-          V := S.R[N];
-          S.T := V and 1;
-          S.R[N] := Sar32(V, 1);
-        end;
-      oSHLL2:
-        S.R[N] := S.R[N] shl 2;
-      oSHLL8:
-        S.R[N] := S.R[N] shl 8;
-      oSHLL16:
-        S.R[N] := S.R[N] shl 16;
-      oSHLR:
-        begin
-          V := S.R[N];
-          S.T := V and 1;
-          S.R[N] := V shr 1;
-        end;
-      oSHLR2:
-        S.R[N] := S.R[N] shr 2;
-      oSHLR8:
-        S.R[N] := S.R[N] shr 8;
-      oSHLR16:
-        S.R[N] := S.R[N] shr 16;
-      oBF:
-        if S.T = 0 then
-        begin
-          Jumped := True;
-          JumpTarget := I.Imm;
-        end;
-      oBT:
-        if S.T <> 0 then
-        begin
-          Jumped := True;
-          JumpTarget := I.Imm;
-        end;
-      oBFS:
-        begin
-          S.DelaySlot := True;
-          if S.T = 0 then
-            S.DelayTarget := I.Imm
-          else
-            S.DelayTarget := I.Addr + 4;
-        end;
-      oBTS:
-        begin
-          S.DelaySlot := True;
-          if S.T <> 0 then
-            S.DelayTarget := I.Imm
-          else
-            S.DelayTarget := I.Addr + 4;
-        end;
-      oBRA:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := I.Imm;
-        end;
-      oBSR:
-        begin
-          S.PR := I.Addr + 4;
-          S.DelaySlot := True;
-          S.DelayTarget := I.Imm;
-        end;
-      oBRAF:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := I.Addr + 4 + S.R[N];
-        end;
-      oBSRF:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := I.Addr + 4 + S.R[N];
-          S.PR := I.Addr + 4;
-        end;
-      oJMP:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := S.R[N];
-        end;
-      oJSR:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := S.R[N];
-          S.PR := I.Addr + 4;
-        end;
-      oRTS:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := S.PR;
-        end;
-      oRTE:
-        begin
-          S.DelaySlot := True;
-          S.DelayTarget := S.SPC;
-          S.RTEPending := True;
-          S.RTESR := S.SSR;
-        end;
-      oCLRMAC:
-        begin
-          S.MACH := 0;
-          S.MACL := 0;
-        end;
-      oCLRS:
-        S.SR := S.SR and not Cardinal(SRS);
-      oCLRT:
-        S.T := 0;
-      oSETS:
-        S.SR := S.SR or SRS;
-      oSETT:
-        S.T := 1;
-      oLDTLB:
-        begin
-          var Index := (S.MMUCR shr 10) and 63;
-          S.UTLB[Index].VPN := S.PTEH and $FFFFFC00;
-          S.UTLB[Index].ASID := S.PTEH and $FF;
-          S.UTLB[Index].PPN := S.PTEL and $1FFFFC00;
-          S.UTLB[Index].Flags := S.PTEL and $1FF;
-          S.UTLB[Index].PTEA := S.PTEA and $F;
-          if (S.MMUCR and 1) <> 0 then
-            InvalidateBlocks;
-        end;
-      oMOVCAL:
-        Write32(S.R[N], S.R[0]);
-      oPREF:
-        if (S.R[N] and $FC000000) = $E0000000 then
-          StoreQueueFlush(S.R[N]);
-      oSLEEP:
-        begin
-          // PC stays on SLEEP; an accepted interrupt returns past it.
-          S.Sleeping := True;
-          Jumped := True;
-          JumpTarget := I.Addr;
-        end;
-      oTRAPA:
-        begin
-          S.TRA := I.Imm shl 2;
-          S.EXPEVT := SH4ExcTrap;
-          EnterException(SH4ExcTrap, $100, I.Addr + 2);
-          Inc(Result);
-          Next := S.PC;
-          Exit;
-        end;
-      oLDCSR:
-        SetSRValue(S.R[N]);
-      oLDCGBR:
-        S.GBR := S.R[N];
-      oLDCVBR:
-        S.VBR := S.R[N];
-      oLDCSSR:
-        S.SSR := S.R[N];
-      oLDCSPC:
-        S.SPC := S.R[N];
-      oLDCDBR:
-        S.DBR := S.R[N];
-      oLDCBANK:
-        S.RBank[M] := S.R[N];
-      oLDCMSR, oLDCMGBR, oLDCMVBR, oLDCMSSR, oLDCMSPC, oLDCMDBR, oLDCMBANK,
-      oLDSMMACH, oLDSMMACL, oLDSMPR, oLDSMFPUL, oLDSMFPSCR:
-        begin
-          V := Read32(S.R[N]);
-          if FFault then Break;
-          S.R[N] := S.R[N] + 4;
-          case TOp(I.Kind) of
-            oLDCMSR: SetSRValue(V);
-            oLDCMGBR: S.GBR := V;
-            oLDCMVBR: S.VBR := V;
-            oLDCMSSR: S.SSR := V;
-            oLDCMSPC: S.SPC := V;
-            oLDCMDBR: S.DBR := V;
-            oLDCMBANK: S.RBank[M] := V;
-            oLDSMMACH: S.MACH := V;
-            oLDSMMACL: S.MACL := V;
-            oLDSMPR: S.PR := V;
-            oLDSMFPUL: S.FPUL := V;
-          else
-            begin
-              SetFPSCRValue(V);
-              DN := (S.FPSCR and FPSCRDN) <> 0;
-            end;
-          end;
-        end;
-      oLDSMACH:
-        S.MACH := S.R[N];
-      oLDSMACL:
-        S.MACL := S.R[N];
-      oLDSPR:
-        S.PR := S.R[N];
-      oSTCSR:
-        S.R[N] := GetSRValue;
-      oSTCGBR:
-        S.R[N] := S.GBR;
-      oSTCVBR:
-        S.R[N] := S.VBR;
-      oSTCSSR:
-        S.R[N] := S.SSR;
-      oSTCSPC:
-        S.R[N] := S.SPC;
-      oSTCSGR:
-        S.R[N] := S.SGR;
-      oSTCDBR:
-        S.R[N] := S.DBR;
-      oSTCBANK:
-        S.R[N] := S.RBank[M];
-      oSTCMSR, oSTCMGBR, oSTCMVBR, oSTCMSSR, oSTCMSPC, oSTCMSGR, oSTCMDBR, oSTCMBANK,
-      oSTSMMACH, oSTSMMACL, oSTSMPR, oSTSMFPUL, oSTSMFPSCR:
-        begin
-          case TOp(I.Kind) of
-            oSTCMSR: V := GetSRValue;
-            oSTCMGBR: V := S.GBR;
-            oSTCMVBR: V := S.VBR;
-            oSTCMSSR: V := S.SSR;
-            oSTCMSPC: V := S.SPC;
-            oSTCMSGR: V := S.SGR;
-            oSTCMDBR: V := S.DBR;
-            oSTCMBANK: V := S.RBank[M];
-            oSTSMMACH: V := S.MACH;
-            oSTSMMACL: V := S.MACL;
-            oSTSMPR: V := S.PR;
-            oSTSMFPUL: V := S.FPUL;
-          else
-            V := S.FPSCR;
-          end;
-          A := S.R[N] - 4;
-          Write32(A, V);
-          if FFault then Break;
-          S.R[N] := A;
-        end;
-      oSTSMACH:
-        S.R[N] := S.MACH;
-      oSTSMACL:
-        S.R[N] := S.MACL;
-      oSTSPR:
-        S.R[N] := S.PR;
-      oLDSFPSCR:
-        begin
-          SetFPSCRValue(S.R[N]);
-          DN := (S.FPSCR and FPSCRDN) <> 0;
-        end;
-      oLDSFPUL:
-        S.FPUL := S.R[N];
-      oSTSFPSCR:
-        S.R[N] := S.FPSCR;
-      oSTSFPUL:
-        S.R[N] := S.FPUL;
-      // Single-precision moves; register numbers are pre-xored (see TSH4State).
-      oFMOV:
-        S.FR.U[N] := S.FR.U[M];
-      oFMOVLD:
-        begin
-          V := Read32(S.R[M]);
-          if FFault then Break;
-          S.FR.U[N] := V;
-        end;
-      oFMOVLD0:
-        begin
-          V := Read32(S.R[M] + S.R[0]);
-          if FFault then Break;
-          S.FR.U[N] := V;
-        end;
-      oFMOVLDP:
-        begin
-          V := Read32(S.R[M]);
-          if FFault then Break;
-          S.R[M] := S.R[M] + 4;
-          S.FR.U[N] := V;
-        end;
-      oFMOVST:
-        Write32(S.R[N], S.FR.U[M]);
-      oFMOVST0:
-        Write32(S.R[N] + S.R[0], S.FR.U[M]);
-      oFMOVSTM:
-        begin
-          A := S.R[N] - 4;
-          Write32(A, S.FR.U[M]);
-          if FFault then Break;
-          S.R[N] := A;
-        end;
-      // Pair moves (SZ=1): odd register numbers select XD.
-      oFMOVD:
-        begin
-          if (M and 1) = 0 then
-            V64 := S.FR.Q[M shr 1]
-          else
-            V64 := S.XF.Q[M shr 1];
-          if (N and 1) = 0 then
-            S.FR.Q[N shr 1] := V64
-          else
-            S.XF.Q[N shr 1] := V64;
-        end;
-      oFMOVDLD, oFMOVDLD0, oFMOVDLDP:
-        begin
-          A := S.R[M];
-          if TOp(I.Kind) = oFMOVDLD0 then
-            A := A + S.R[0];
-          V64 := Read64(A);
-          if FFault then Break;
-          if TOp(I.Kind) = oFMOVDLDP then
-            S.R[M] := S.R[M] + 8;
-          if (N and 1) = 0 then
-            S.FR.Q[N shr 1] := SwapHalves(V64)
-          else
-            S.XF.Q[N shr 1] := SwapHalves(V64);
-        end;
-      oFMOVDST, oFMOVDST0, oFMOVDSTM:
-        begin
-          if (M and 1) = 0 then
-            V64 := SwapHalves(S.FR.Q[M shr 1])
-          else
-            V64 := SwapHalves(S.XF.Q[M shr 1]);
-          A := S.R[N];
-          case TOp(I.Kind) of
-            oFMOVDST0: A := A + S.R[0];
-            oFMOVDSTM: A := A - 8;
-          end;
-          Write64(A, V64);
-          if FFault then Break;
-          if TOp(I.Kind) = oFMOVDSTM then
-            S.R[N] := A;
-        end;
-      oFLDI0:
-        S.FR.U[N] := 0;
-      oFLDI1:
-        S.FR.U[N] := $3F800000;
-      oFLDS:
-        S.FPUL := S.FR.U[N];
-      oFSTS:
-        S.FR.U[N] := S.FPUL;
-      oFABS:
-        S.FR.U[N] := S.FR.U[N] and $7FFFFFFF;
-      oFNEG:
-        S.FR.U[N] := S.FR.U[N] xor $80000000;
-      oFADD, oFSUB, oFMUL, oFDIV:
-        begin
-          var X := S.FR.S[N];
-          var Y := S.FR.S[M];
-          if DN then
-          begin
-            X := FlushSingle(X);
-            Y := FlushSingle(Y);
-          end;
-          case TOp(I.Kind) of
-            oFADD: F := X + Y;
-            oFSUB: F := X - Y;
-            oFMUL: F := X * Y;
-          else
-            F := X / Y;
-          end;
-          if DN then
-            F := FlushSingle(F);
-          S.FR.S[N] := F;
-        end;
-      oFMAC:
-        begin
-          var X := S.FR.S[1];
-          var Y := S.FR.S[M];
-          var Z := S.FR.S[N];
-          if DN then
-          begin
-            X := FlushSingle(X);
-            Y := FlushSingle(Y);
-            Z := FlushSingle(Z);
-          end;
-          DV := Double(X) * Double(Y) + Double(Z);
-          F := RoundToSingle(DV);
-          if DN then
-            F := FlushSingle(F);
-          S.FR.S[N] := F;
-        end;
-      oFSQRT:
-        begin
-          F := S.FR.S[N];
-          if DN then
-            F := FlushSingle(F);
-          F := RoundToSingle(Sqrt(Double(F)));
-          S.FR.S[N] := F;
-        end;
-      oFSRRA:
-        begin
-          F := S.FR.S[N];
-          if DN then
-            F := FlushSingle(F);
-          F := RoundToSingle(1.0 / Sqrt(Double(F)));
-          if DN then
-            F := FlushSingle(F);
-          S.FR.S[N] := F;
-        end;
-      oFCMPEQ:
-        if IsNaNBits(S.FR.U[N]) or IsNaNBits(S.FR.U[M]) then
-          S.T := 0
-        else
-          S.T := Cardinal(Ord(S.FR.S[N] = S.FR.S[M]));
-      oFCMPGT:
-        if IsNaNBits(S.FR.U[N]) or IsNaNBits(S.FR.U[M]) then
-          S.T := 0
-        else
-          S.T := Cardinal(Ord(S.FR.S[N] > S.FR.S[M]));
-      oFLOAT:
-        begin
-          F := Integer(S.FPUL);
-          S.FR.S[N] := F;
-        end;
-      oFTRC:
-        S.FPUL := SingleToInt(S.FR.S[N]);
-      // FIPR/FTRV: a rounded first product, then fused multiply-adds with one
-      // rounding each (the order matches SingleStepTests).
-      oFIPR:
-        begin
-          F := SingleProduct(S.FR.S[N xor 1], S.FR.S[M xor 1]);
-          F := FusedSingle(S.FR.S[(N + 1) xor 1], S.FR.S[(M + 1) xor 1], F);
-          F := FusedSingle(S.FR.S[(N + 2) xor 1], S.FR.S[(M + 2) xor 1], F);
-          F := FusedSingle(S.FR.S[(N + 3) xor 1], S.FR.S[(M + 3) xor 1], F);
-          if DN then
-            F := FlushSingle(F);
-          S.FR.S[(N + 3) xor 1] := F;
-        end;
-      oFTRV:
-        begin
-          var X0 := S.FR.S[N xor 1];
-          var X1 := S.FR.S[(N + 1) xor 1];
-          var X2 := S.FR.S[(N + 2) xor 1];
-          var X3 := S.FR.S[(N + 3) xor 1];
-          for var Row := 0 to 3 do
-          begin
-            F := SingleProduct(S.XF.S[(Row + 4) xor 1], X1);
-            F := FusedSingle(S.XF.S[Row xor 1], X0, F);
-            F := FusedSingle(S.XF.S[(Row + 8) xor 1], X2, F);
-            F := FusedSingle(S.XF.S[(Row + 12) xor 1], X3, F);
-            if DN then
-              F := FlushSingle(F);
-            S.FR.S[(N + Row) xor 1] := F;
-          end;
-        end;
-      oFSCA:
-        begin
-          DV := (S.FPUL and $FFFF) * (2 * Pi / 65536);
-          S.FR.S[N + 1] := RoundToSingle(Sin(DV));
-          S.FR.S[N] := RoundToSingle(Cos(DV));
-        end;
-      oFSCHG:
-        S.FPSCR := S.FPSCR xor FPSCRSZ;
-      oFRCHG:
-        begin
-          S.FPSCR := S.FPSCR xor FPSCRFR;
-          SwapFPBanks;
-        end;
-      oDABS:
-        S.FR.Q[N shr 1] := S.FR.Q[N shr 1] and $7FFFFFFFFFFFFFFF;
-      oDNEG:
-        S.FR.Q[N shr 1] := S.FR.Q[N shr 1] xor $8000000000000000;
-      oDADD, oDSUB, oDMUL, oDDIV:
-        begin
-          var X := S.FR.D[N shr 1];
-          var Y := S.FR.D[M shr 1];
-          if DN then
-          begin
-            X := FlushDouble(X);
-            Y := FlushDouble(Y);
-          end;
-          case TOp(I.Kind) of
-            oDADD: DV := X + Y;
-            oDSUB: DV := X - Y;
-            oDMUL: DV := X * Y;
-          else
-            DV := X / Y;
-          end;
-          if DN then
-            DV := FlushDouble(DV);
-          S.FR.D[N shr 1] := DV;
-        end;
-      oDSQRT:
-        S.FR.D[N shr 1] := Sqrt(S.FR.D[N shr 1]);
-      oDCMPEQ:
-        if IsNaN64(S.FR.Q[N shr 1]) or IsNaN64(S.FR.Q[M shr 1]) then
-          S.T := 0
-        else
-          S.T := Cardinal(Ord(S.FR.D[N shr 1] = S.FR.D[M shr 1]));
-      oDCMPGT:
-        if IsNaN64(S.FR.Q[N shr 1]) or IsNaN64(S.FR.Q[M shr 1]) then
-          S.T := 0
-        else
-          S.T := Cardinal(Ord(S.FR.D[N shr 1] > S.FR.D[M shr 1]));
-      oDFLOAT:
-        S.FR.D[N shr 1] := Integer(S.FPUL);
-      oDFTRC:
-        S.FPUL := DoubleToInt(S.FR.D[N shr 1]);
-      oFCNVSD:
-        S.FR.D[N shr 1] := BitsSingle(S.FPUL);
-      oFCNVDS:
-        begin
-          F := RoundToSingle(S.FR.D[N shr 1]);
-          if DN then
-            F := FlushSingle(F);
-          S.FPUL := SingleBits(F);
-        end;
-      oIllegal, oSlotIllegal, oFPUDisabled, oSlotFPUDisabled:
-        begin
-          if (TOp(I.Kind) = oIllegal) and Assigned(FIllegalHook) then
-          begin
-            S.PC := I.Addr;
-            if FIllegalHook(FIllegalUser, I.Addr) then
-            begin
-              Jumped := True;
-              JumpTarget := S.PC;
-              Inc(Result);
-              Inc(I);
-              Break;
-            end;
-          end;
-          case TOp(I.Kind) of
-            oIllegal: S.EXPEVT := SH4ExcIllegal;
-            oSlotIllegal: S.EXPEVT := SH4ExcSlotIllegal;
-            oFPUDisabled: S.EXPEVT := SH4ExcFPUDisabled;
-          else
-            S.EXPEVT := SH4ExcSlotFPUDisabled;
-          end;
-          Excepted := True;
-          Break;
-        end;
-    end;
-    if FFault then
+    if SH4Ops[TOp(I.Kind)](Self, I) then
+    begin
+      // A fault or exception stops before the instruction; TRAPA and an
+      // accepted illegal-instruction hook complete it and leave the block.
+      if FStop = StopTrap then
+      begin
+        FStop := StopNone;
+        Inc(Result);
+        Next := S.PC;
+        Exit;
+      end;
+      if FStop = StopLeave then
+      begin
+        FStop := StopNone;
+        Inc(Result);
+        Inc(I);
+      end;
       Break;
+    end;
     Inc(Result);
     Inc(I);
   end;
 
-  if FFault or Excepted then
+  if FFault or FExcepted then
   begin
     FFault := False;
     Fault(S.EXPEVT, I^, (I.Flags and IFSlot) <> 0);
@@ -2774,8 +4197,8 @@ begin
   end;
 
   Dec(I);
-  if Jumped then
-    Next := JumpTarget
+  if FJumped then
+    Next := FJumpTarget
   else if (I.Flags and IFDelayed) <> 0 then
     Next := I.Addr + 2
   else if S.DelaySlot then
@@ -3023,77 +4446,85 @@ begin
   SetExceptionMask(exAllArithmeticExceptions);
   ApplyHostRounding;
   try
-    FExitRequest := False;
-    var Prev: PSH4Block := nil;
-    while Now^ < Deadline^ do
-    begin
-      if (FIRQLevel > Integer((S.SR shr 4) and 15)) and ((S.SR and SRBL) = 0) and not S.DelaySlot then
-      begin
-        S.INTEVT := FIRQCode;
-        if S.Sleeping then
-          S.PC := S.PC + 2;
-        EnterException(0, $600, S.PC);
-        Inc(Now^);
-      end;
-      if S.Sleeping then
-      begin
-        Now^ := Deadline^;
-        Break;
-      end;
-      var Next: Cardinal;
-      var Count: Integer;
-      var B: PSH4Block := nil;
-      if FBlocksEnabled and not S.DelaySlot and not Assigned(FFetch) then
-      begin
-        var AMode := Mode;
-        // The previous block remembers its last two successors.
-        if Prev <> nil then
-        begin
-          B := Prev.Link[0];
-          if (B = nil) or (B.PC <> S.PC) or (B.Mode <> AMode) then
-          begin
-            B := Prev.Link[1];
-            if (B <> nil) and ((B.PC <> S.PC) or (B.Mode <> AMode)) then
-              B := nil;
-          end;
-          if (B <> nil) and not BlockValid(B) then
-            B := nil;
-        end;
-        if B = nil then
-        begin
-          B := FindBlock(S.PC, AMode);
-          if B = nil then
-            B := BuildBlock(S.PC, AMode);
-          if (Prev <> nil) and (B <> nil) then
-          begin
-            Prev.Link[1] := Prev.Link[0];
-            Prev.Link[0] := B;
-          end;
-        end;
-      end;
-      if B <> nil then
-      begin
-        Count := Execute(B.Insts, B.Count, Next) + FFusedExtra;
-        FFusedExtra := 0;
-        S.PC := Next;
-        Inc(InstructionsExecuted, Count);
-        if Count = 0 then
-          Count := 1;
-        Inc(Now^, Count);
-      end
-      else
-        Step;
-      Prev := B;
-      if FExitRequest then
-      begin
-        FExitRequest := False;
-        Break;
-      end;
-    end;
+    RunBlocks;
   finally
     ClearExceptions(False);
     SetExceptionMask(FHostMaskSaved);
     SetRoundMode(FHostRoundSaved);
+  end;
+end;
+
+procedure TSH4.RunBlocks;
+var
+  Prev, B: PSH4Block;
+  Next: Cardinal;
+  Count: Integer;
+begin
+  // Kept apart from Run's exception frame so its variables stay in registers.
+  FExitRequest := False;
+  Prev := nil;
+  while Now^ < Deadline^ do
+  begin
+    if (FIRQLevel > Integer((S.SR shr 4) and 15)) and ((S.SR and SRBL) = 0) and not S.DelaySlot then
+    begin
+      S.INTEVT := FIRQCode;
+      if S.Sleeping then
+        S.PC := S.PC + 2;
+      EnterException(0, $600, S.PC);
+      Inc(Now^);
+    end;
+    if S.Sleeping then
+    begin
+      Now^ := Deadline^;
+      Break;
+    end;
+    B := nil;
+    if FBlocksEnabled and not S.DelaySlot and not Assigned(FFetch) then
+    begin
+      var AMode := Mode;
+      // The previous block remembers its last two successors.
+      if Prev <> nil then
+      begin
+        B := Prev.Link[0];
+        if (B = nil) or (B.PC <> S.PC) or (B.Mode <> AMode) then
+        begin
+          B := Prev.Link[1];
+          if (B <> nil) and ((B.PC <> S.PC) or (B.Mode <> AMode)) then
+            B := nil;
+        end;
+        if (B <> nil) and ((B.GenPtr^ <> B.Gen) or (B.GenPtr2^ <> B.Gen2)) and not BlockValid(B) then
+          B := nil;
+      end;
+      if B = nil then
+      begin
+        B := FindBlock(S.PC, AMode);
+        if B = nil then
+          B := BuildBlock(S.PC, AMode);
+        if (Prev <> nil) and (B <> nil) then
+        begin
+          Prev.Link[1] := Prev.Link[0];
+          Prev.Link[0] := B;
+        end;
+      end;
+    end;
+    if B <> nil then
+    begin
+      Count := Execute(B.Insts, B.Count, Next) + FFusedExtra;
+      FFusedExtra := 0;
+      S.PC := Next;
+      Inc(InstructionsExecuted, Count);
+      if Count = 0 then
+        Count := 1;
+      Inc(Now^, Count);
+    end
+    else
+      Step;
+    Prev := B;
+    if FExitRequest then
+    begin
+      FExitRequest := False;
+      Break;
+    end;
   end;
 end;
 
@@ -3150,5 +4581,243 @@ begin
     ClearBlocks;
   end;
 end;
+
+procedure InitOps;
+begin
+  for var K := Low(TOp) to High(TOp) do
+    @SH4Ops[K] := @TSH4.OpNOP;
+  @SH4Ops[oADD] := @TSH4.OpADD;
+  @SH4Ops[oADDC] := @TSH4.OpADDC;
+  @SH4Ops[oADDI] := @TSH4.OpADDI;
+  @SH4Ops[oADDV] := @TSH4.OpADDV;
+  @SH4Ops[oAND] := @TSH4.OpAND;
+  @SH4Ops[oANDB] := @TSH4.OpANDB;
+  @SH4Ops[oANDI] := @TSH4.OpANDI;
+  @SH4Ops[oBF] := @TSH4.OpBF;
+  @SH4Ops[oBFS] := @TSH4.OpBFS;
+  @SH4Ops[oBRA] := @TSH4.OpBRA;
+  @SH4Ops[oBRAF] := @TSH4.OpBRAF;
+  @SH4Ops[oBSR] := @TSH4.OpBSR;
+  @SH4Ops[oBSRF] := @TSH4.OpBSRF;
+  @SH4Ops[oBT] := @TSH4.OpBT;
+  @SH4Ops[oBTS] := @TSH4.OpBTS;
+  @SH4Ops[oCLRMAC] := @TSH4.OpCLRMAC;
+  @SH4Ops[oCLRS] := @TSH4.OpCLRS;
+  @SH4Ops[oCLRT] := @TSH4.OpCLRT;
+  @SH4Ops[oCMPEQ] := @TSH4.OpCMPEQ;
+  @SH4Ops[oCMPEQI] := @TSH4.OpCMPEQI;
+  @SH4Ops[oCMPGE] := @TSH4.OpCMPGE;
+  @SH4Ops[oCMPGT] := @TSH4.OpCMPGT;
+  @SH4Ops[oCMPHI] := @TSH4.OpCMPHI;
+  @SH4Ops[oCMPHS] := @TSH4.OpCMPHS;
+  @SH4Ops[oCMPPL] := @TSH4.OpCMPPL;
+  @SH4Ops[oCMPPZ] := @TSH4.OpCMPPZ;
+  @SH4Ops[oCMPSTR] := @TSH4.OpCMPSTR;
+  @SH4Ops[oDABS] := @TSH4.OpDABS;
+  @SH4Ops[oDADD] := @TSH4.OpDADD;
+  @SH4Ops[oDCMPEQ] := @TSH4.OpDCMPEQ;
+  @SH4Ops[oDCMPGT] := @TSH4.OpDCMPGT;
+  @SH4Ops[oDDIV] := @TSH4.OpDADD;
+  @SH4Ops[oDFLOAT] := @TSH4.OpDFLOAT;
+  @SH4Ops[oDFTRC] := @TSH4.OpDFTRC;
+  @SH4Ops[oDIV0S] := @TSH4.OpDIV0S;
+  @SH4Ops[oDIV0U] := @TSH4.OpDIV0U;
+  @SH4Ops[oDIV1] := @TSH4.OpDIV1;
+  @SH4Ops[oDIVROT] := @TSH4.OpROTDIV;
+  @SH4Ops[oDMUL] := @TSH4.OpDADD;
+  @SH4Ops[oDMULS] := @TSH4.OpDMULS;
+  @SH4Ops[oDMULU] := @TSH4.OpDMULU;
+  @SH4Ops[oDNEG] := @TSH4.OpDNEG;
+  @SH4Ops[oDSQRT] := @TSH4.OpDSQRT;
+  @SH4Ops[oDSUB] := @TSH4.OpDADD;
+  @SH4Ops[oDT] := @TSH4.OpDT;
+  @SH4Ops[oEXTSB] := @TSH4.OpEXTSB;
+  @SH4Ops[oEXTSW] := @TSH4.OpEXTSW;
+  @SH4Ops[oEXTUB] := @TSH4.OpEXTUB;
+  @SH4Ops[oEXTUW] := @TSH4.OpEXTUW;
+  @SH4Ops[oFABS] := @TSH4.OpFABS;
+  @SH4Ops[oFADD] := @TSH4.OpFADD;
+  @SH4Ops[oFCMPEQ] := @TSH4.OpFCMPEQ;
+  @SH4Ops[oFCMPGT] := @TSH4.OpFCMPGT;
+  @SH4Ops[oFCNVDS] := @TSH4.OpFCNVDS;
+  @SH4Ops[oFCNVSD] := @TSH4.OpFCNVSD;
+  @SH4Ops[oFDIV] := @TSH4.OpFADD;
+  @SH4Ops[oFIPR] := @TSH4.OpFIPR;
+  @SH4Ops[oFLDI0] := @TSH4.OpFLDI0;
+  @SH4Ops[oFLDI1] := @TSH4.OpFLDI1;
+  @SH4Ops[oFLDS] := @TSH4.OpFLDS;
+  @SH4Ops[oFLOAT] := @TSH4.OpFLOAT;
+  @SH4Ops[oFMAC] := @TSH4.OpFMAC;
+  @SH4Ops[oFMOV] := @TSH4.OpFMOV;
+  @SH4Ops[oFMOVD] := @TSH4.OpFMOVD;
+  @SH4Ops[oFMOVDLD] := @TSH4.OpFMOVDLD;
+  @SH4Ops[oFMOVDLD0] := @TSH4.OpFMOVDLD;
+  @SH4Ops[oFMOVDLDP] := @TSH4.OpFMOVDLD;
+  @SH4Ops[oFMOVDST] := @TSH4.OpFMOVDST;
+  @SH4Ops[oFMOVDST0] := @TSH4.OpFMOVDST;
+  @SH4Ops[oFMOVDSTM] := @TSH4.OpFMOVDST;
+  @SH4Ops[oFMOVLD] := @TSH4.OpFMOVLD;
+  @SH4Ops[oFMOVLD0] := @TSH4.OpFMOVLD0;
+  @SH4Ops[oFMOVLDP] := @TSH4.OpFMOVLDP;
+  @SH4Ops[oFMOVST] := @TSH4.OpFMOVST;
+  @SH4Ops[oFMOVST0] := @TSH4.OpFMOVST0;
+  @SH4Ops[oFMOVSTM] := @TSH4.OpFMOVSTM;
+  @SH4Ops[oFMUL] := @TSH4.OpFADD;
+  @SH4Ops[oFNEG] := @TSH4.OpFNEG;
+  @SH4Ops[oFPUDisabled] := @TSH4.OpIllegal;
+  @SH4Ops[oFRCHG] := @TSH4.OpFRCHG;
+  @SH4Ops[oFSCA] := @TSH4.OpFSCA;
+  @SH4Ops[oFSCHG] := @TSH4.OpFSCHG;
+  @SH4Ops[oFSQRT] := @TSH4.OpFSQRT;
+  @SH4Ops[oFSRRA] := @TSH4.OpFSRRA;
+  @SH4Ops[oFSTS] := @TSH4.OpFSTS;
+  @SH4Ops[oFSUB] := @TSH4.OpFADD;
+  @SH4Ops[oFTRC] := @TSH4.OpFTRC;
+  @SH4Ops[oFTRV] := @TSH4.OpFTRV;
+  @SH4Ops[oIllegal] := @TSH4.OpIllegal;
+  @SH4Ops[oJMP] := @TSH4.OpJMP;
+  @SH4Ops[oJSR] := @TSH4.OpJSR;
+  @SH4Ops[oLDCBANK] := @TSH4.OpLDCBANK;
+  @SH4Ops[oLDCDBR] := @TSH4.OpLDCDBR;
+  @SH4Ops[oLDCGBR] := @TSH4.OpLDCGBR;
+  @SH4Ops[oLDCMBANK] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCMDBR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCMGBR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCMSPC] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCMSR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCMSSR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCMVBR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDCSPC] := @TSH4.OpLDCSPC;
+  @SH4Ops[oLDCSR] := @TSH4.OpLDCSR;
+  @SH4Ops[oLDCSSR] := @TSH4.OpLDCSSR;
+  @SH4Ops[oLDCVBR] := @TSH4.OpLDCVBR;
+  @SH4Ops[oLDSFPSCR] := @TSH4.OpLDSFPSCR;
+  @SH4Ops[oLDSFPUL] := @TSH4.OpLDSFPUL;
+  @SH4Ops[oLDSMACH] := @TSH4.OpLDSMACH;
+  @SH4Ops[oLDSMACL] := @TSH4.OpLDSMACL;
+  @SH4Ops[oLDSMFPSCR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDSMFPUL] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDSMMACH] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDSMMACL] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDSMPR] := @TSH4.OpLDCMSR;
+  @SH4Ops[oLDSPR] := @TSH4.OpLDSPR;
+  @SH4Ops[oLDTLB] := @TSH4.OpLDTLB;
+  @SH4Ops[oMACL] := @TSH4.OpMACL;
+  @SH4Ops[oMACW] := @TSH4.OpMACW;
+  @SH4Ops[oMOV] := @TSH4.OpMOV;
+  @SH4Ops[oMOVA] := @TSH4.OpMOVA;
+  @SH4Ops[oMOVBL] := @TSH4.OpMOVBL;
+  @SH4Ops[oMOVBL0] := @TSH4.OpMOVBL0;
+  @SH4Ops[oMOVBL4] := @TSH4.OpMOVBL4;
+  @SH4Ops[oMOVBLG] := @TSH4.OpMOVBLG;
+  @SH4Ops[oMOVBM] := @TSH4.OpMOVBM;
+  @SH4Ops[oMOVBP] := @TSH4.OpMOVBP;
+  @SH4Ops[oMOVBS] := @TSH4.OpMOVBS;
+  @SH4Ops[oMOVBS0] := @TSH4.OpMOVBS0;
+  @SH4Ops[oMOVBS4] := @TSH4.OpMOVBS4;
+  @SH4Ops[oMOVBSG] := @TSH4.OpMOVBSG;
+  @SH4Ops[oMOVCAL] := @TSH4.OpMOVCAL;
+  @SH4Ops[oMOVI] := @TSH4.OpMOVI;
+  @SH4Ops[oMOVLL] := @TSH4.OpMOVLL;
+  @SH4Ops[oMOVLL0] := @TSH4.OpMOVLL0;
+  @SH4Ops[oMOVLL4] := @TSH4.OpMOVLL4;
+  @SH4Ops[oMOVLLG] := @TSH4.OpMOVLLG;
+  @SH4Ops[oMOVLM] := @TSH4.OpMOVLM;
+  @SH4Ops[oMOVLP] := @TSH4.OpMOVLP;
+  @SH4Ops[oMOVLPC] := @TSH4.OpMOVLPC;
+  @SH4Ops[oMOVLS] := @TSH4.OpMOVLS;
+  @SH4Ops[oMOVLS0] := @TSH4.OpMOVLS0;
+  @SH4Ops[oMOVLS4] := @TSH4.OpMOVLS4;
+  @SH4Ops[oMOVLSG] := @TSH4.OpMOVLSG;
+  @SH4Ops[oMOVT] := @TSH4.OpMOVT;
+  @SH4Ops[oMOVWL] := @TSH4.OpMOVWL;
+  @SH4Ops[oMOVWL0] := @TSH4.OpMOVWL0;
+  @SH4Ops[oMOVWL4] := @TSH4.OpMOVWL4;
+  @SH4Ops[oMOVWLG] := @TSH4.OpMOVWLG;
+  @SH4Ops[oMOVWM] := @TSH4.OpMOVWM;
+  @SH4Ops[oMOVWP] := @TSH4.OpMOVWP;
+  @SH4Ops[oMOVWPC] := @TSH4.OpMOVWPC;
+  @SH4Ops[oMOVWS] := @TSH4.OpMOVWS;
+  @SH4Ops[oMOVWS0] := @TSH4.OpMOVWS0;
+  @SH4Ops[oMOVWS4] := @TSH4.OpMOVWS4;
+  @SH4Ops[oMOVWSG] := @TSH4.OpMOVWSG;
+  @SH4Ops[oMULL] := @TSH4.OpMULL;
+  @SH4Ops[oMULSW] := @TSH4.OpMULSW;
+  @SH4Ops[oMULUW] := @TSH4.OpMULUW;
+  @SH4Ops[oNEG] := @TSH4.OpNEG;
+  @SH4Ops[oNEGC] := @TSH4.OpNEGC;
+  @SH4Ops[oNOT] := @TSH4.OpNOT;
+  @SH4Ops[oOR] := @TSH4.OpOR;
+  @SH4Ops[oORB] := @TSH4.OpANDB;
+  @SH4Ops[oORI] := @TSH4.OpORI;
+  @SH4Ops[oPREF] := @TSH4.OpPREF;
+  @SH4Ops[oROTCL] := @TSH4.OpROTCL;
+  @SH4Ops[oROTCR] := @TSH4.OpROTCR;
+  @SH4Ops[oROTDIV] := @TSH4.OpROTDIV;
+  @SH4Ops[oROTL] := @TSH4.OpROTL;
+  @SH4Ops[oROTR] := @TSH4.OpROTR;
+  @SH4Ops[oRTE] := @TSH4.OpRTE;
+  @SH4Ops[oRTS] := @TSH4.OpRTS;
+  @SH4Ops[oSETS] := @TSH4.OpSETS;
+  @SH4Ops[oSETT] := @TSH4.OpSETT;
+  @SH4Ops[oSHAD] := @TSH4.OpSHAD;
+  @SH4Ops[oSHAL] := @TSH4.OpSHAL;
+  @SH4Ops[oSHAR] := @TSH4.OpSHAR;
+  @SH4Ops[oSHLD] := @TSH4.OpSHLD;
+  @SH4Ops[oSHLL] := @TSH4.OpSHAL;
+  @SH4Ops[oSHLL16] := @TSH4.OpSHLL16;
+  @SH4Ops[oSHLL2] := @TSH4.OpSHLL2;
+  @SH4Ops[oSHLL8] := @TSH4.OpSHLL8;
+  @SH4Ops[oSHLR] := @TSH4.OpSHLR;
+  @SH4Ops[oSHLR16] := @TSH4.OpSHLR16;
+  @SH4Ops[oSHLR2] := @TSH4.OpSHLR2;
+  @SH4Ops[oSHLR8] := @TSH4.OpSHLR8;
+  @SH4Ops[oSLEEP] := @TSH4.OpSLEEP;
+  @SH4Ops[oSTCBANK] := @TSH4.OpSTCBANK;
+  @SH4Ops[oSTCDBR] := @TSH4.OpSTCDBR;
+  @SH4Ops[oSTCGBR] := @TSH4.OpSTCGBR;
+  @SH4Ops[oSTCMBANK] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMDBR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMGBR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMSGR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMSPC] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMSR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMSSR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCMVBR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTCSGR] := @TSH4.OpSTCSGR;
+  @SH4Ops[oSTCSPC] := @TSH4.OpSTCSPC;
+  @SH4Ops[oSTCSR] := @TSH4.OpSTCSR;
+  @SH4Ops[oSTCSSR] := @TSH4.OpSTCSSR;
+  @SH4Ops[oSTCVBR] := @TSH4.OpSTCVBR;
+  @SH4Ops[oSTSFPSCR] := @TSH4.OpSTSFPSCR;
+  @SH4Ops[oSTSFPUL] := @TSH4.OpSTSFPUL;
+  @SH4Ops[oSTSMACH] := @TSH4.OpSTSMACH;
+  @SH4Ops[oSTSMACL] := @TSH4.OpSTSMACL;
+  @SH4Ops[oSTSMFPSCR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTSMFPUL] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTSMMACH] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTSMMACL] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTSMPR] := @TSH4.OpSTCMSR;
+  @SH4Ops[oSTSPR] := @TSH4.OpSTSPR;
+  @SH4Ops[oSUB] := @TSH4.OpSUB;
+  @SH4Ops[oSUBC] := @TSH4.OpSUBC;
+  @SH4Ops[oSUBV] := @TSH4.OpSUBV;
+  @SH4Ops[oSWAPB] := @TSH4.OpSWAPB;
+  @SH4Ops[oSWAPW] := @TSH4.OpSWAPW;
+  @SH4Ops[oSlotFPUDisabled] := @TSH4.OpIllegal;
+  @SH4Ops[oSlotIllegal] := @TSH4.OpIllegal;
+  @SH4Ops[oTASB] := @TSH4.OpTASB;
+  @SH4Ops[oTRAPA] := @TSH4.OpTRAPA;
+  @SH4Ops[oTST] := @TSH4.OpTST;
+  @SH4Ops[oTSTB] := @TSH4.OpANDB;
+  @SH4Ops[oTSTI] := @TSH4.OpTSTI;
+  @SH4Ops[oXOR] := @TSH4.OpXOR;
+  @SH4Ops[oXORB] := @TSH4.OpANDB;
+  @SH4Ops[oXORI] := @TSH4.OpXORI;
+  @SH4Ops[oXTRCT] := @TSH4.OpXTRCT;
+end;
+
+initialization
+  InitOps;
 
 end.
