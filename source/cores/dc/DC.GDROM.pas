@@ -1,8 +1,14 @@
 ﻿unit DC.GDROM;
 
-// GD-ROM drive on the G1 ATA interface (005F7000..): status registers and
-// the CD-DA playback state shared by the system calls and the AICA mixer
-// (44.1 kHz stereo from audio sectors, 588 samples each).
+// GD-ROM drive on the G1 ATA interface (005F7000..): the ATA registers, the
+// packet (SPI) commands a boot ROM uses (status, mode, TOC, sessions, reads
+// by PIO or G1 DMA, CD-DA control, sub-channel) and the CD-DA playback state
+// shared with the high-level system calls and the AICA mixer (44.1 kHz
+// stereo from audio sectors, 588 samples each).
+// References: ATA/ATAPI-4 packet protocol; Marcus Comstedt's GD-ROM notes
+// and the GD-ROM command list documented by the Dreamcast homebrew
+// community. The security commands (70h/71h) are acknowledged without the
+// drive's authentication data, so a real boot ROM rejects GD-ROM media.
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
@@ -19,7 +25,25 @@ type
   end;
 
   TDCGDROMState = record
-    Status, Error, Features, SectorCount, SectorNumber, ByteCount, DriveSelect, DeviceControl: Cardinal;
+    Status, Error, Features, Reason, ByteCount, ByteLimit, DriveSelect, DeviceControl: Cardinal;
+    // Transfer phase: 0 idle, 1 packet wanted, 2 data to the host (PIO),
+    // 3 data from the host (PIO), 4 data to the host by G1 DMA.
+    Phase: Integer;
+    Packet: array[0..11] of Byte;
+    PacketPos: Integer;
+    // Buffered chunk (DataPos..DataLen) and the sectors still to read.
+    DataPos, DataLen: Integer;
+    ReadFAD, ReadLeft: Cardinal;
+    ReadRaw: Boolean;
+    // Mode data written by SET_MODE at DataTarget.
+    DataTarget: Integer;
+    // What the next drive event does: 0 nothing, 1 present a PIO chunk,
+    // 2 complete the command.
+    Pending: Integer;
+    IRQ: Boolean;
+    SenseKey, SenseCode: Byte;
+    CurrentFAD: Cardinal;
+    Mode: array[0..31] of Byte;
     CDDA: TDCCDDAState;
   end;
 
@@ -30,6 +54,20 @@ type
     FAudio: array[0..2351] of Byte;
     FAudioFAD: Cardinal;
     FAudioValid: Boolean;
+    FData: TBytes;
+    procedure RaiseIRQ;
+    procedure SetPending(Kind: Integer; Delay: Int64);
+    procedure Complete(Delay: Int64);
+    procedure Fail(Key, Code: Byte);
+    procedure SendData(const Data: array of Byte; Offset, Limit: Integer);
+    procedure FillSectors;
+    procedure StartRead(FAD, Count: Cardinal; Raw: Boolean);
+    procedure ATACommand(Command: Cardinal);
+    procedure PacketCommand;
+    function ReadDataWord: Cardinal;
+    procedure WriteDataWord(Value: Cardinal);
+    function MediaType: Cardinal;
+    function TrackControl(FAD: Cardinal; out Track: Integer): Byte;
   public
     S: TDCGDROMState;
     // Not owned; nil without a disc.
@@ -61,14 +99,43 @@ type
 implementation
 
 const
+  ATAStatusBSY = $80;
   ATAStatusDRDY = $40;
   ATAStatusDSC = $10;
+  ATAStatusDRQ = $08;
+  ATAStatusCHECK = $01;
+
+  // Interrupt reason (sector count register): CoD and IO.
+  ReasonCommand = 1;
+  ReasonToHost = 2;
+
+  PhaseIdle = 0;
+  PhasePacket = 1;
+  PhaseDataIn = 2;
+  PhaseDataOut = 3;
+  PhaseDMA = 4;
+
+  PendingChunk = 1;
+  PendingComplete = 2;
+
+  // Clocks from a command to its result; reads take longer per sector.
+  CommandDelay = 4000;
+  SectorDelay = 2000;
+  MaxChunkSectors = 32;
+
+  DefaultMode: array[0..31] of Byte = (0, 0, 0, 0, 0, $B4, $19, 0, 0, 8,
+    Ord('S'), Ord('E'), 32, 32, 32, 32, 32, 32,
+    Ord('R'), Ord('e'), Ord('v'), 32, Ord('6'), Ord('.'), Ord('4'), Ord('3'),
+    Ord('9'), Ord('9'), Ord('0'), Ord('4'), Ord('0'), Ord('8'));
+
+  IdentifyText: AnsiString = 'SE              CD-ROM DRIVE    6.43990408      ';
 
 constructor TDCGDROM.Create(Scheduler: TDCScheduler; Interrupts: TDCInterrupts);
 begin
   inherited Create;
   FScheduler := Scheduler;
   FInterrupts := Interrupts;
+  SetLength(FData, MaxChunkSectors * 2352);
   Reset;
 end;
 
@@ -76,8 +143,11 @@ procedure TDCGDROM.Reset;
 begin
   S := Default(TDCGDROMState);
   S.Status := ATAStatusDRDY or ATAStatusDSC;
-  S.SectorNumber := DriveStatus;
+  S.Reason := ReasonCommand or ReasonToHost;
+  Move(DefaultMode, S.Mode, SizeOf(S.Mode));
   FAudioValid := False;
+  FScheduler.Cancel(TDCEvent.GDROM);
+  FInterrupts.SetExternal(HollyExtGDROM, False);
 end;
 
 function TDCGDROM.DriveStatus: Cardinal;
@@ -90,6 +160,35 @@ begin
   else
     Result := 1;
   end;
+end;
+
+function TDCGDROM.MediaType: Cardinal;
+begin
+  // The medium as it is; the high-level system calls may report a GD-ROM
+  // for self-booting copies, the drive does not.
+  if Disc = nil then
+    Exit(0);
+  if Disc.IsGDROM then
+    Exit(DCDiscGDROM);
+  Result := DCDiscCDDA;
+  for var T := 1 to Disc.Image.TrackCount do
+    if not Disc.Image.Track(T).Audio then
+    begin
+      if Disc.Image.Track(T).DataOffset in [8, 24] then
+        Exit(DCDiscCDROMXA);
+      Result := DCDiscCDROM;
+    end;
+end;
+
+function TDCGDROM.TrackControl(FAD: Cardinal; out Track: Integer): Byte;
+begin
+  Track := 0;
+  Result := $41;
+  if Disc = nil then
+    Exit;
+  Track := Disc.TrackOf(Integer(FAD) - 150);
+  if (Track > 0) and Disc.Image.Track(Track).Audio then
+    Result := $01;
 end;
 
 function TDCGDROM.AudioStatus: Byte;
@@ -189,19 +288,495 @@ begin
   end;
 end;
 
+{ ATA }
+
+procedure TDCGDROM.RaiseIRQ;
+begin
+  S.IRQ := True;
+  // nIEN (device control bit 1) keeps INTRQ low.
+  if (S.DeviceControl and 2) = 0 then
+    FInterrupts.SetExternal(HollyExtGDROM, True);
+end;
+
+procedure TDCGDROM.SetPending(Kind: Integer; Delay: Int64);
+begin
+  S.Pending := Kind;
+  S.Status := ATAStatusBSY;
+  FScheduler.Schedule(TDCEvent.GDROM, FScheduler.Now + Delay);
+end;
+
+procedure TDCGDROM.Complete(Delay: Int64);
+begin
+  S.Phase := PhaseIdle;
+  SetPending(PendingComplete, Delay);
+end;
+
+procedure TDCGDROM.Fail(Key, Code: Byte);
+begin
+  S.SenseKey := Key;
+  S.SenseCode := Code;
+  S.Phase := PhaseIdle;
+  S.Error := (Cardinal(Key) shl 4) or $04;
+  S.Status := ATAStatusDRDY or ATAStatusCHECK;
+  S.Reason := ReasonCommand or ReasonToHost;
+  RaiseIRQ;
+end;
+
+procedure TDCGDROM.SendData(const Data: array of Byte; Offset, Limit: Integer);
+begin
+  // Bytes Offset..Offset+Limit-1 of a response, as one PIO chunk.
+  if Offset < 0 then
+    Offset := 0;
+  var Count := Length(Data) - Offset;
+  if Count > Limit then
+    Count := Limit;
+  if Count <= 0 then
+  begin
+    Complete(CommandDelay);
+    Exit;
+  end;
+  Move(Data[Offset], FData[0], Count);
+  S.DataPos := 0;
+  S.DataLen := Count;
+  S.ReadLeft := 0;
+  S.Phase := PhaseDataIn;
+  SetPending(PendingChunk, CommandDelay);
+end;
+
+procedure TDCGDROM.FillSectors;
+begin
+  // As many sectors as the host's byte count allows (at least one).
+  var Size := 2048;
+  if S.ReadRaw then
+    Size := 2352;
+  var Count: Integer;
+  if S.Phase = PhaseDataIn then
+  begin
+    var Limit := Integer(S.ByteLimit);
+    if Limit = 0 then
+      Limit := $10000;
+    Count := Limit div Size;
+  end
+  else
+    Count := MaxChunkSectors;
+  if Count < 1 then
+    Count := 1;
+  if Count > MaxChunkSectors then
+    Count := MaxChunkSectors;
+  if Cardinal(Count) > S.ReadLeft then
+    Count := Integer(S.ReadLeft);
+  for var I := 0 to Count - 1 do
+  begin
+    var LBA := Integer(S.ReadFAD) - 150;
+    if Disc = nil then
+      FillChar(FData[I * Size], Size, 0)
+    else if S.ReadRaw then
+      Disc.ReadAudio(LBA, @FData[I * Size])
+    else
+      Disc.ReadData(LBA, @FData[I * Size]);
+    S.CurrentFAD := S.ReadFAD;
+    Inc(S.ReadFAD);
+    Dec(S.ReadLeft);
+  end;
+  S.DataPos := 0;
+  S.DataLen := Count * Size;
+end;
+
+procedure TDCGDROM.StartRead(FAD, Count: Cardinal; Raw: Boolean);
+begin
+  if (Disc = nil) or not Disc.HasBootTrack then
+  begin
+    Fail(2, $3A);
+    Exit;
+  end;
+  StopCDDA;
+  S.ReadFAD := FAD;
+  S.ReadLeft := Count;
+  S.ReadRaw := Raw;
+  if Count = 0 then
+  begin
+    Complete(CommandDelay);
+    Exit;
+  end;
+  if (S.Features and 1) <> 0 then
+  begin
+    // G1 DMA pulls the data; the drive signals completion afterwards.
+    S.Phase := PhaseDMA;
+    S.DataPos := 0;
+    S.DataLen := 0;
+    S.Status := ATAStatusDRDY or ATAStatusDRQ;
+    S.Reason := ReasonToHost;
+    Exit;
+  end;
+  S.Phase := PhaseDataIn;
+  FillSectors;
+  SetPending(PendingChunk, CommandDelay + Int64(S.DataLen div 2048 + 1) * SectorDelay);
+end;
+
+procedure TDCGDROM.ATACommand(Command: Cardinal);
+begin
+  FScheduler.Cancel(TDCEvent.GDROM);
+  S.Pending := 0;
+  S.Error := 0;
+  case Command of
+    $08:
+      begin
+        // Soft reset: the packet device signature, no interrupt.
+        S.Phase := PhaseIdle;
+        S.Status := ATAStatusDRDY or ATAStatusDSC;
+        S.Reason := ReasonCommand;
+        S.ByteCount := $EB14;
+        S.Error := 1;
+        StopCDDA;
+      end;
+    $90:
+      begin
+        // Diagnostics: no error.
+        S.Error := 1;
+        Complete(CommandDelay);
+      end;
+    $A0:
+      begin
+        S.Phase := PhasePacket;
+        S.PacketPos := 0;
+        S.ByteLimit := S.ByteCount;
+        S.Status := ATAStatusDRDY or ATAStatusDRQ;
+        S.Reason := ReasonCommand;
+      end;
+    $A1:
+      begin
+        var Identify: array[0..79] of Byte;
+        FillChar(Identify, SizeOf(Identify), 0);
+        Move(PAnsiChar(IdentifyText)^, Identify[8], Length(IdentifyText));
+        S.ByteLimit := 80;
+        SendData(Identify, 0, 80);
+      end;
+    $EF:
+      Complete(CommandDelay);
+  else
+    Fail(5, $20);
+  end;
+end;
+
+function BE24(const P: array of Byte; Offset: Integer): Cardinal;
+begin
+  Result := (Cardinal(P[Offset]) shl 16) or (Cardinal(P[Offset + 1]) shl 8) or P[Offset + 2];
+end;
+
+function MSFToFAD(M, S, F: Byte): Cardinal;
+begin
+  Result := (Cardinal(M) * 60 + S) * 75 + F;
+end;
+
+procedure TDCGDROM.PacketCommand;
+begin
+  var P := S.Packet;
+  S.SenseKey := 0;
+  S.SenseCode := 0;
+  case P[0] of
+    $00, $16, $22, $70:
+      // Test unit, tray, scan and security unlock need no data.
+      Complete(CommandDelay);
+    $10:
+      begin
+        var Data: array[0..9] of Byte;
+        FillChar(Data, SizeOf(Data), 0);
+        var FAD := CDDAPosition;
+        if FAD = 0 then
+          FAD := S.CurrentFAD;
+        var Track: Integer;
+        Data[0] := Byte(DriveStatus);
+        Data[1] := Byte(MediaType or Cardinal(S.CDDA.Repeats and 15));
+        Data[2] := TrackControl(FAD, Track);
+        Data[3] := Byte(Track);
+        Data[4] := 1;
+        Data[5] := Byte(FAD shr 16);
+        Data[6] := Byte(FAD shr 8);
+        Data[7] := Byte(FAD);
+        Data[8] := 8;
+        SendData(Data, P[2], P[4]);
+      end;
+    $11:
+      SendData(S.Mode, P[2], P[4]);
+    $12:
+      begin
+        // The mode bytes follow from the host.
+        S.DataTarget := P[2];
+        S.DataPos := 0;
+        S.DataLen := P[4];
+        if S.DataLen = 0 then
+        begin
+          Complete(CommandDelay);
+          Exit;
+        end;
+        S.Phase := PhaseDataOut;
+        S.ByteCount := Cardinal(S.DataLen);
+        S.Status := ATAStatusDRDY or ATAStatusDRQ;
+        S.Reason := 0;
+        RaiseIRQ;
+      end;
+    $13:
+      begin
+        var Data: array[0..9] of Byte;
+        FillChar(Data, SizeOf(Data), 0);
+        Data[0] := $F0;
+        Data[2] := S.SenseKey;
+        Data[8] := S.SenseCode;
+        SendData(Data, 0, P[4]);
+      end;
+    $14:
+      begin
+        var Words: TArray<Cardinal>;
+        if (Disc = nil) or not Disc.TOC(P[1] and 1, Words) then
+        begin
+          Fail(5, $24);
+          Exit;
+        end;
+        // Entries as control/address then a big-endian FAD.
+        var Data: array[0..407] of Byte;
+        for var I := 0 to 101 do
+        begin
+          Data[I * 4] := Byte(Words[I] shr 24);
+          Data[I * 4 + 1] := Byte(Words[I] shr 16);
+          Data[I * 4 + 2] := Byte(Words[I] shr 8);
+          Data[I * 4 + 3] := Byte(Words[I]);
+        end;
+        SendData(Data, 0, (Integer(P[3]) shl 8) or P[4]);
+      end;
+    $15:
+      begin
+        var Data: array[0..5] of Byte;
+        FillChar(Data, SizeOf(Data), 0);
+        Data[0] := Byte(DriveStatus);
+        if Disc <> nil then
+        begin
+          var Sessions := 1;
+          for var T := 1 to Disc.Image.TrackCount do
+            if Disc.Image.Track(T).Session > Sessions then
+              Sessions := Disc.Image.Track(T).Session;
+          var FAD: Cardinal := 0;
+          if P[2] = 0 then
+          begin
+            Data[2] := Byte(Sessions);
+            FAD := Cardinal(Disc.Image.LeadOut + 150);
+          end
+          else
+            for var T := 1 to Disc.Image.TrackCount do
+              if Disc.Image.Track(T).Session = Integer(P[2]) then
+              begin
+                Data[2] := Byte(T);
+                FAD := Cardinal(Disc.Image.Track(T).StartLBA + 150);
+                Break;
+              end;
+          Data[3] := Byte(FAD shr 16);
+          Data[4] := Byte(FAD shr 8);
+          Data[5] := Byte(FAD);
+        end;
+        SendData(Data, 0, P[4]);
+      end;
+    $20:
+      begin
+        if Disc = nil then
+        begin
+          Fail(2, $3A);
+          Exit;
+        end;
+        case P[1] and 7 of
+          1: PlaySectors(BE24(P, 2), BE24(P, 8), P[6]);
+          2: PlaySectors(MSFToFAD(P[2], P[3], P[4]), MSFToFAD(P[8], P[9], P[10]), P[6]);
+          7: ResumeCDDA;
+        end;
+        Complete(CommandDelay);
+      end;
+    $21:
+      begin
+        case P[1] and 15 of
+          1: SeekCDDA(BE24(P, 2));
+          2: SeekCDDA(MSFToFAD(P[2], P[3], P[4]));
+          3: StopCDDA;
+          4: PauseCDDA;
+        end;
+        Complete(CommandDelay);
+      end;
+    $30, $31:
+      begin
+        var FAD := BE24(P, 2);
+        if (P[1] and 1) <> 0 then
+          FAD := MSFToFAD(P[2], P[3], P[4]);
+        // Data select F: whole 2352-byte sectors (CD-DA); otherwise user data.
+        StartRead(FAD, BE24(P, 8), (P[1] shr 4) = $F);
+      end;
+    $40:
+      begin
+        var Data: array[0..99] of Byte;
+        FillChar(Data, SizeOf(Data), 0);
+        var Size := 100;
+        if (P[1] and 15) = 1 then
+          Size := 14;
+        var FAD := CDDAPosition;
+        if FAD = 0 then
+          FAD := S.CurrentFAD;
+        var Track: Integer;
+        Data[1] := AudioStatus;
+        Data[3] := Byte(Size);
+        Data[4] := TrackControl(FAD, Track);
+        Data[5] := Byte(Track);
+        Data[6] := 1;
+        var Relative := 0;
+        if Track > 0 then
+          Relative := Integer(FAD) - 150 - Disc.Image.Track(Track).StartLBA;
+        if Relative < 0 then
+          Relative := 0;
+        Data[7] := Byte(Relative shr 16);
+        Data[8] := Byte(Relative shr 8);
+        Data[9] := Byte(Relative);
+        Data[11] := Byte(FAD shr 16);
+        Data[12] := Byte(FAD shr 8);
+        Data[13] := Byte(FAD);
+        SendData(Data, 0, Size);
+      end;
+    $71:
+      begin
+        // Authentication data is not available: zeros, as many as the host
+        // accepts.
+        var Data: TBytes;
+        SetLength(Data, S.ByteLimit and $FFFF);
+        if Length(Data) = 0 then
+          Complete(CommandDelay)
+        else
+          SendData(Data, 0, Length(Data));
+      end;
+  else
+    Fail(5, $20);
+  end;
+end;
+
+function TDCGDROM.ReadDataWord: Cardinal;
+begin
+  Result := 0;
+  if S.Phase <> PhaseDataIn then
+    Exit;
+  if S.DataPos + 1 < S.DataLen then
+    Result := Cardinal(FData[S.DataPos]) or (Cardinal(FData[S.DataPos + 1]) shl 8)
+  else if S.DataPos < S.DataLen then
+    Result := FData[S.DataPos];
+  Inc(S.DataPos, 2);
+  if S.DataPos < S.DataLen then
+    Exit;
+  // Chunk taken: the next one, or the command ends.
+  if S.ReadLeft > 0 then
+  begin
+    FillSectors;
+    SetPending(PendingChunk, Int64(S.DataLen div 2048 + 1) * SectorDelay);
+  end
+  else
+    Complete(CommandDelay);
+end;
+
+procedure TDCGDROM.WriteDataWord(Value: Cardinal);
+begin
+  case S.Phase of
+    PhasePacket:
+      begin
+        S.Packet[S.PacketPos] := Byte(Value);
+        S.Packet[S.PacketPos + 1] := Byte(Value shr 8);
+        Inc(S.PacketPos, 2);
+        if S.PacketPos >= 12 then
+        begin
+          S.Phase := PhaseIdle;
+          S.Status := ATAStatusBSY;
+          PacketCommand;
+        end;
+      end;
+    PhaseDataOut:
+      begin
+        for var K := 0 to 1 do
+          if S.DataPos < S.DataLen then
+          begin
+            var Target := S.DataTarget + S.DataPos;
+            if (Target >= 0) and (Target < Length(S.Mode)) then
+              S.Mode[Target] := Byte(Value shr (K * 8));
+            Inc(S.DataPos);
+          end;
+        if S.DataPos >= S.DataLen then
+          Complete(CommandDelay);
+      end;
+  end;
+end;
+
+procedure TDCGDROM.Event;
+begin
+  var Kind := S.Pending;
+  S.Pending := 0;
+  case Kind of
+    PendingChunk:
+      begin
+        S.ByteCount := Cardinal(S.DataLen);
+        S.Status := ATAStatusDRDY or ATAStatusDRQ;
+        S.Reason := ReasonToHost;
+        RaiseIRQ;
+      end;
+    PendingComplete:
+      begin
+        S.Status := ATAStatusDRDY or ATAStatusDSC;
+        S.Reason := ReasonCommand or ReasonToHost;
+        RaiseIRQ;
+      end;
+  end;
+end;
+
+function TDCGDROM.DMARead(Dest: PByte; Count: Integer): Integer;
+begin
+  Result := 0;
+  if S.Phase <> PhaseDMA then
+    Exit;
+  while Result < Count do
+  begin
+    if S.DataPos >= S.DataLen then
+    begin
+      if S.ReadLeft = 0 then
+        Break;
+      FillSectors;
+    end;
+    var Chunk := S.DataLen - S.DataPos;
+    if Chunk > Count - Result then
+      Chunk := Count - Result;
+    Move(FData[S.DataPos], (Dest + Result)^, Chunk);
+    Inc(S.DataPos, Chunk);
+    Inc(Result, Chunk);
+  end;
+  if (S.ReadLeft = 0) and (S.DataPos >= S.DataLen) then
+    Complete(Int64(Result) * 12 + CommandDelay);
+end;
+
 function TDCGDROM.Read(Offset: Cardinal; Size: Integer): Cardinal;
 begin
   case Offset and $FF of
-    $18: Result := S.Status;
-    $84: Result := S.Error;
-    $88: Result := S.SectorCount;
-    $8C: Result := DriveStatus or (Cardinal(0) shl 4);
-    $90: Result := S.ByteCount and $FF;
-    $94: Result := (S.ByteCount shr 8) and $FF;
-    $98: Result := S.DriveSelect;
+    $18:
+      Result := S.Status;
+    $80:
+      begin
+        Result := ReadDataWord;
+        if Size = 4 then
+          Result := Result or (ReadDataWord shl 16);
+      end;
+    $84:
+      Result := S.Error;
+    $88:
+      Result := S.Reason;
+    $8C:
+      Result := DriveStatus or MediaType;
+    $90:
+      Result := S.ByteCount and $FF;
+    $94:
+      Result := (S.ByteCount shr 8) and $FF;
+    $98:
+      Result := S.DriveSelect;
     $9C:
       begin
+        // Reading the status acknowledges the interrupt.
         Result := S.Status;
+        S.IRQ := False;
         FInterrupts.SetExternal(HollyExtGDROM, False);
       end;
   else
@@ -212,37 +787,44 @@ end;
 procedure TDCGDROM.Write(Offset, Value: Cardinal; Size: Integer);
 begin
   case Offset and $FF of
-    $18: S.DeviceControl := Value and $FF;
-    $84: S.Features := Value and $FF;
-    $88: S.SectorCount := Value and $FF;
-    $90: S.ByteCount := (S.ByteCount and $FF00) or (Value and $FF);
-    $94: S.ByteCount := (S.ByteCount and $FF) or ((Value and $FF) shl 8);
-    $98: S.DriveSelect := Value and $FF;
-    $9C:
+    $18:
       begin
-        // ATA/packet commands are not modelled: abort them.
-        S.Error := $04;
-        S.Status := ATAStatusDRDY or ATAStatusDSC or 1;
-        FInterrupts.SetExternal(HollyExtGDROM, True);
+        S.DeviceControl := Value and $FF;
+        if (S.DeviceControl and 2) <> 0 then
+          FInterrupts.SetExternal(HollyExtGDROM, False)
+        else if S.IRQ then
+          FInterrupts.SetExternal(HollyExtGDROM, True);
       end;
+    $80:
+      begin
+        WriteDataWord(Value and $FFFF);
+        if Size = 4 then
+          WriteDataWord(Value shr 16);
+      end;
+    $84:
+      S.Features := Value and $FF;
+    $88:
+      ;
+    $90:
+      S.ByteCount := (S.ByteCount and $FF00) or (Value and $FF);
+    $94:
+      S.ByteCount := (S.ByteCount and $FF) or ((Value and $FF) shl 8);
+    $98:
+      S.DriveSelect := Value and $FF;
+    $9C:
+      ATACommand(Value and $FF);
   end;
-end;
-
-procedure TDCGDROM.Event;
-begin
-end;
-
-function TDCGDROM.DMARead(Dest: PByte; Count: Integer): Integer;
-begin
-  Result := 0;
 end;
 
 procedure TDCGDROM.SerializeState(Archive: TStateArchive);
 begin
   Archive.Field(S, SizeOf(S));
+  Archive.Field(FData[0], Length(FData));
   if Archive.Loading then
   begin
-    if (S.CDDA.Sample < 0) or (S.CDDA.Sample >= 588) or (S.CDDA.Status < 0) or (S.CDDA.Status > 3) then
+    if (S.CDDA.Sample < 0) or (S.CDDA.Sample >= 588) or (S.CDDA.Status < 0) or (S.CDDA.Status > 3) or
+      (S.DataPos < 0) or (S.DataLen < 0) or (S.DataLen > Length(FData)) or (S.PacketPos < 0) or (S.PacketPos > 12) or
+      (S.Phase < PhaseIdle) or (S.Phase > PhaseDMA) then
       raise EReadError.Create('Dreamcast snapshot GD-ROM state');
     FAudioValid := False;
   end;
