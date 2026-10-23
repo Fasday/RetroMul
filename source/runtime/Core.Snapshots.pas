@@ -126,8 +126,11 @@ begin
   // ZX v19 adds TK90X/TK95 timing and original ROM language selection.
   // ZX v20 adds the Turbo Sound FM configuration, CPLD and both YM2203 states.
   // ZX v21 adds Next-DAC startup configuration, gates, selector and sample latches.
-  if SameText(PlatformCore, 'ZX') then
-    Result.Version := 21;
+  // ZX v22 adds the independent General Sound CPU, memory, clocks and DAC state.
+  // ZX v23 adds NeoGS and the shared native SPI SD state.
+  // ZX v24 stores VS1011e, MP3 DMA, CPLD/FPGA and programmable flash.
+  // ZX v25 adds DMA USC controller/timers, physical DMA and bus continuation.
+  if SameText(PlatformCore, 'ZX') then Result.Version := 25;
   // CPS v2 adds OKI bank state, enlarged sprite buffers and board peripherals.
   if SameText(PlatformCore, 'CPS1') or SameText(PlatformCore, 'CPS2') then
     Result.Version := 2;

@@ -48,6 +48,7 @@ uses
 
 procedure TBrowserController.InitializeScreenshotTool;
 begin
+  FView.ButtonReset.OnClick := FView.ResetClick;
   // Split buttons and hardware views have no installed design-time components.
   {$IFDEF ISMOBILE}
   InitializeMobileGameMenu;
@@ -344,7 +345,7 @@ begin
   FState.Browser.GameStatus := FView.GameStatus;
   FState.Browser.GameFPS := FView.GameFPS;
   FState.Browser.GameAudio := FView.GameAudio;
-  for var Tool in [FView.ButtonLibrary, FView.GamePause, FView.GameFullscreen, FView.GameSettings, FView.GameInsertCoin, FView.GameControlsHelp] do
+  for var Tool in [FView.ButtonLibrary, FView.GamePause, FView.ButtonReset, FView.GameFullscreen, FView.GameSettings, FView.GameInsertCoin, FView.GameControlsHelp] do
   begin
     Tool.StylesData['text.Margins.Left'] := 36;
     Tool.StylesData['text.Margins.Right'] := 10;
@@ -456,6 +457,11 @@ begin
     if WasVisible <> FState.Browser.CoinTool.Visible then
       FView.FormResize(FView);
   end;
+  if FState.Browser.ScreenshotTool <> nil then
+    if FState.Input.SystemId = 'zx' then
+      FState.Browser.ScreenshotTool.Hint := Translate('Take screenshot')
+    else
+      FState.Browser.ScreenshotTool.Hint := Translate('Take screenshot · F8');
   if FState.Browser.HelpTool <> nil then
   begin
     FState.Browser.HelpTool.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.OpeningRom and not FState.Help.Closing;

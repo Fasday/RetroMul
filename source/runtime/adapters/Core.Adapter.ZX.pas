@@ -26,7 +26,7 @@ type
   public
     Keys: TZXKeyMap;
     Machine: TZXMachineConfig;
-    ServiceROMFile, DivImageFile, DivFirmwareFile, TimexCartridgeFile: string;
+    ServiceROMFile, DivImageFile, DivFirmwareFile, TimexCartridgeFile, NeoGSImageFile: string;
     Options: TZXRuntimeOptions;
     // Read-only compatibility views; Machine is the single source of truth.
     property Tape128: Boolean read GetTape128;
@@ -46,6 +46,9 @@ type
     FDivImageFile: string;
     FDivImageHash: TBytes;
     FDivImageLock: TStream;
+    FNeoGSImageFile: string;
+    FNeoGSImageHash: TBytes;
+    FNeoGSImageLock: TStream;
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
     FKeys, FScreenKeys: TZXHostKeys;
@@ -160,6 +163,7 @@ begin
   TimexCartridgeFile := Ini.ReadString('Hardware', 'TimexCartridge', '');
   Machine := TZXConfiguration.ReadMachine(Ini);
   DivImageFile := Ini.ReadString('Hardware', 'DivImage', '');
+  NeoGSImageFile := Ini.ReadString('Hardware', 'NeoGSImage', '');
   DivFirmwareFile := Ini.ReadString('Hardware', 'DivFirmware', '');
   Machine.Validate;
   Options := TZXRuntimeOptions.Defaults;
@@ -198,6 +202,7 @@ begin
   Ini.WriteString('Hardware', 'DivType', DivKind);
   Ini.WriteInteger('Hardware', 'DivRAMKB', Machine.DivRAMKB);
   Ini.WriteString('Hardware', 'DivImage', DivImageFile);
+  Ini.WriteString('Hardware', 'NeoGSImage', NeoGSImageFile);
   Ini.WriteString('Hardware', 'DivFirmware', DivFirmwareFile);
   Ini.WriteString('Hardware', 'TapeModel', Machine.Id);
   Ini.WriteString('Hardware', 'TKTiming', '60hz');
@@ -217,6 +222,13 @@ begin
   Ini.WriteString('Hardware', 'DAC', DACNames[Machine.DAC]);
   Ini.WriteInteger('Hardware', 'NextDACMode', Machine.NextDACMode);
   Ini.WriteBool('Hardware', 'NextDACStartup', Machine.NextDACStartup);
+  Ini.WriteBool('Hardware', 'GeneralSound', Machine.GeneralSound);
+  Ini.WriteInteger('Hardware', 'GeneralSoundRAMKB', Machine.GeneralSoundRAMKB);
+  Ini.WriteBool('Hardware', 'NeoGS', Machine.NeoGS);
+  Ini.WriteBool('Hardware', 'DMAUSC', Machine.DMAUSC);
+  Ini.WriteBool('Hardware', 'DMAUSCULABypass', Machine.DMAUSCULABypass);
+  Ini.WriteInteger('Hardware', 'DMAUSCStereo', Machine.DMAUSCStereo);
+  Ini.WriteInteger('Hardware', 'NeoGSRAMKB', Machine.NeoGSRAMKB);
   Options := Options.Normalized;
   if Options.YMChip then
     Ini.WriteString('Audio', 'PSGModel', 'ym')
@@ -294,6 +306,12 @@ begin
     else
       FDivImageHash := TZXBlockImage.Identity(FDivImageLock);
   end;
+  if Machine.NeoGS and (Config.NeoGSImageFile <> '') then
+  begin
+    FNeoGSImageFile := Config.NeoGSImageFile;
+    FNeoGSImageLock := FStorage.OpenRead(FNeoGSImageFile);
+    FNeoGSImageHash := TZXBlockImage.Identity(FNeoGSImageLock);
+  end;
   var Console := TZXConsole.Create;
   try
     Console.Load(FData, FName, Machine);
@@ -303,6 +321,8 @@ begin
       Console.DivStorage.Configure(Machine.DivType, Machine.DivRAMKB, FStorage.ReadBytes(Config.DivFirmwareFile));
     if FDivImageFile <> '' then
       Console.DivStorage.Mount(FStorage.OpenRead(FDivImageFile), FDivImageHash);
+    if FNeoGSImageFile <> '' then
+      Console.NeoGS.Mount(FStorage.OpenRead(FNeoGSImageFile), FNeoGSImageHash);
   finally
     Console.Free;
   end;
@@ -314,6 +334,7 @@ destructor TZXCoreAdapter.Destroy;
 begin
   FThread.Free;
   FDivImageLock.Free;
+  FNeoGSImageLock.Free;
   inherited;
 end;
 
@@ -337,6 +358,11 @@ begin
   FThread.CMOSSaveFile := ChangeFileExt(FStorage.ConfigFile('zx'), '.cmos');
   FThread.ServiceROMFile := TZXConfig(FConfig).ServiceROMFile;
   FThread.TimexCartridgeFile := TZXConfig(FConfig).TimexCartridgeFile;
+  FThread.NeoGSImageHash := Copy(FNeoGSImageHash);
+  FThread.NeoGSImageFile := FNeoGSImageFile;
+  FThread.NeoGSFlashFile := ChangeFileExt(FStorage.ConfigFile('zx'), '.neogs.flash');
+  if FNeoGSImageFile <> '' then
+    FThread.NeoGSSaveFile := FStorage.GameSave('zx', FNeoGSImageFile, SnapshotIdentity(FNeoGSImageHash)) + '.ngs';
   FThread.DivImageHash := Copy(FDivImageHash);
   FThread.DivImageFile := FDivImageFile;
   FThread.DivFirmwareFile := TZXConfig(FConfig).DivFirmwareFile;

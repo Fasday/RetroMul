@@ -41,6 +41,13 @@ begin
     Result.DAC := 0;
   Result.NextDACMode := Ini.ReadInteger('Hardware', 'NextDACMode', 0);
   Result.NextDACStartup := Ini.ReadBool('Hardware', 'NextDACStartup', True);
+  Result.GeneralSound := Ini.ReadBool('Hardware', 'GeneralSound', False);
+  Result.GeneralSoundRAMKB := Ini.ReadInteger('Hardware', 'GeneralSoundRAMKB', 128);
+  Result.NeoGS := Ini.ReadBool('Hardware', 'NeoGS', False);
+  Result.DMAUSC := Ini.ReadBool('Hardware', 'DMAUSC', False);
+  Result.DMAUSCULABypass := Ini.ReadBool('Hardware', 'DMAUSCULABypass', True);
+  Result.DMAUSCStereo := Ini.ReadInteger('Hardware', 'DMAUSCStereo', 0);
+  Result.NeoGSRAMKB := Ini.ReadInteger('Hardware', 'NeoGSRAMKB', 2048);
   if SameText(Ini.ReadString('Hardware', 'DivType', 'none'), 'divide') then
     Result.DivType := zdIDE;
   if SameText(Ini.ReadString('Hardware', 'DivType', 'none'), 'divmmc') then
@@ -87,6 +94,21 @@ begin
   Result[High(Result)].Machine.TurboSoundFM := True;
   Add('nextdac', 'Pentagon 128K + Next-DAC (audio only)', zmPentagon128);
   Result[High(Result)].Machine.DAC := 6;
+  Add('gs128', 'Pentagon 128K + General Sound 128K', zmPentagon128);
+  Result[High(Result)].Machine.GeneralSound := True;
+  Add('gs512', 'Pentagon 128K + General Sound 512K', zmPentagon128);
+  Result[High(Result)].Machine.GeneralSound := True;
+  Result[High(Result)].Machine.GeneralSoundRAMKB := 512;
+  Add('neogs512', 'Pentagon 128K + NeoGS 512K', zmPentagon128);
+  Result[High(Result)].Machine.NeoGS := True;
+  Result[High(Result)].Machine.NeoGSRAMKB := 512;
+  Add('neogs2048', 'Pentagon 128K + NeoGS 2M', zmPentagon128);
+  Result[High(Result)].Machine.NeoGS := True;
+  Add('neogs4096', 'Pentagon 128K + NeoGS 4M', zmPentagon128);
+  Result[High(Result)].Machine.NeoGS := True;
+  Result[High(Result)].Machine.NeoGSRAMKB := 4096;
+  Add('dmausc', 'Pentagon 128K + DMA Ultrasound Card', zmPentagon128);
+  Result[High(Result)].Machine.DMAUSC := True;
   Add('ulaplus', 'Spectrum 48K + ULAplus', zmSpectrum48);
   Result[High(Result)].Machine.ULAPlus := True;
   Add('gama-divmmc', 'Gama 1989 + divMMC / esxDOS', zmGama89);
@@ -130,6 +152,14 @@ begin
   Ini.WriteString('Hardware', 'DAC', DACNames[Machine.DAC]);
   Ini.WriteInteger('Hardware', 'NextDACMode', Machine.NextDACMode);
   Ini.WriteBool('Hardware', 'NextDACStartup', Machine.NextDACStartup);
+  Ini.WriteBool('Hardware', 'GeneralSound', Machine.GeneralSound);
+  Ini.WriteInteger('Hardware', 'GeneralSoundRAMKB', Machine.GeneralSoundRAMKB);
+  Ini.WriteBool('Hardware', 'NeoGS', Machine.NeoGS);
+  Ini.WriteBool('Hardware', 'DMAUSC', Machine.DMAUSC);
+  Ini.WriteBool('Hardware', 'DMAUSCULABypass', Machine.DMAUSCULABypass);
+  Ini.WriteInteger('Hardware', 'DMAUSCStereo', Machine.DMAUSCStereo);
+  Ini.WriteInteger('Hardware', 'NeoGSRAMKB', Machine.NeoGSRAMKB);
+  Ini.WriteString('Hardware', 'NeoGSImage', '');
   Ini.WriteString('Hardware', 'DivType', 'none');
   if Machine.DivType = zdMMC then
     Ini.WriteString('Hardware', 'DivType', 'divmmc');
@@ -215,6 +245,20 @@ begin
   var Machine := ReadMachine(Ini);
   for var Error in Machine.ConfigurationErrors do
     Add('Conflict: ' + Error);
+  if Machine.DMAUSC and not Machine.DMAUSCULABypass then
+    Add('Notice: DMA Ultrasound uses the complete interrupt controller. Programs must enable IRQ-control bit 3 for normal Spectrum interrupts; early players may require the ULA compatibility option.');
+  if Machine.DMAUSC and (Machine.Model = zmPentagon1024) then
+    Add('Notice: DMA Ultrasound register aliases can also reach Pentagon EFF7. Programs should use the documented 77 ports.');
+  if Machine.NeoGS then
+    Add('Notice: NeoGS supports standard NedoPC FPGA configurations and VS1011e MP3. Custom FPGA designs and DSP plugins are unsupported.');
+  if Machine.NeoGS and (Machine.Model = zmPentagon1024) then
+    Add('Notice: NeoGS data writes at E0B3..EFB3 also reach Pentagon 1024SL EFF7. Software must use explicit port addresses such as 00B3.');
+  if not Machine.NeoGS and (Ini.ReadString('Hardware', 'NeoGSImage', '').Trim <> '') then
+    Add('Notice: The NeoGS SD image is ignored while NeoGS is disabled.');
+  if Machine.GeneralSound and (Machine.Model = zmPentagon1024) then
+    Add('Notice: General Sound data writes at E0B3..EFB3 also reach Pentagon 1024SL EFF7. Software must use explicit port addresses such as 00B3.');
+  if Machine.GeneralSound and (Machine.GeneralSoundRAMKB = 512) then
+    Add('Notice: Classic GS512 exposes 480 KiB of RAM. Its original decoder leaves one 32 KiB region unavailable.');
   if Machine.DAC = 6 then
   begin
     Add('Notice: Next-DAC provides audio ports only. Spectrum Next CPU, video, DMA and copper are not enabled.');

@@ -91,9 +91,17 @@ begin
   Context.CreateOption('ZXTurboSoundFM', 'Turbo Sound FM', 'Replace the PSG with two YM2203 chips (NedoPC revision C). FM uses the expansion volume; SSG uses AY / YM volume. Applies when opening media.', sekSwitch);
   Context.CreateOption('ZXSAA1099', 'SAA1099 sound board', 'Attach the 8 MHz board at ports 00FF/01FF. Shares ports with Timex video; applies when opening media.', sekSwitch);
   Context.CreateOption('ZXDAC', 'DAC sound board', 'Choose the external 8-bit DAC interface. GS-port Covox is the B3 DAC interface. Applies when opening media.', sekCombo);
+  Context.CreateOption('ZXGeneralSound', 'General Sound', 'Attach the classic 12 MHz Z80 sound card with built-in GS ROM 1.05b and four DAC channels. Applies when opening media.', sekSwitch);
+  Context.CreateOption('ZXGeneralSoundRAM', 'General Sound RAM', 'Select the classic 128 KiB board or GS512 expansion. GS512 retains the original missing 32 KiB region. Applies when opening media.', sekCombo);
+  Context.CreateOption('ZXDMAUSC', 'DMA Ultrasound Card', 'Attach the four-channel DMA Ultrasound Card. Samples use motherboard RAM; no BIOS is required. Applies when opening media.', sekSwitch);
+  Context.CreateOption('ZXDMAUSCStereo', 'DMA Ultrasound stereo', 'Route the four physical audio outputs to stereo or mono.', sekCombo);
+  Context.CreateOption('ZXDMAUSCULABypass', 'Keep ULA interrupts enabled', 'Compatibility option for early DMA USC players. Keep frame interrupts enabled regardless of IRQ-control bit 3. Turn off to emulate the complete interrupt controller.', sekSwitch);
+  Context.CreateOption('ZXNeoGS', 'NeoGS', 'Attach NeoGS with built-in firmware 1.11, 4/8-channel PCM, VS1011e MP3, SD and DMA. Flash updates are saved automatically. Applies when opening media.', sekSwitch);
+  Context.CreateOption('ZXNeoGSRAM', 'NeoGS RAM', 'Select 512 KiB, 2 MiB or 4 MiB of sound card RAM. Programs control paging, channel mode and the 10/12/20/24 MHz CPU clock.', sekCombo);
+  Context.CreateOption('ZXNeoGSImage', 'NeoGS SD image', 'Optional raw SD image for the NeoGS slot, independent of divMMC. Sector changes are saved separately; the original image is preserved.', sekPath);
   Context.CreateOption('ZXNextDACMode', 'Next-DAC port profile', 'Choose enabled DAC aliases on startup. Programs can change these gates through NextReg 84. Applies only to Next-DAC.', sekCombo);
   Context.CreateOption('ZXNextDACStartup', 'Enable Next-DAC on startup', 'Enable the DAC for classic software. Turn off to start with the hardware power-on gate closed; programs can enable NextReg 08 bit 3.', sekSwitch);
-  Context.CreateOption('ZXExpansionVolume', 'DAC / SAA1099 / FM volume (%)', 'Adjust external DAC, SAA1099 and Turbo Sound FM synthesis independently of the PSG and beeper.', sekNumber);
+  Context.CreateOption('ZXExpansionVolume', 'DAC / GS / SAA1099 / FM volume (%)', 'Adjust external DAC, General Sound, SAA1099 and Turbo Sound FM synthesis independently of the PSG and beeper.', sekNumber);
   Context.CreateOption('ZXPSGModel', 'PSG chip', 'Select AY-3-8912 or YM2149 sound characteristics. Turbo Sound FM always uses YM2203 SSG.', sekCombo);
   Context.CreateOption('ZXStereo', 'PSG stereo layout', 'Mono or channel order from left to right. ABC preserves the previous sound.', sekCombo);
   Context.CreateOption('ZXAYVolume', 'AY / YM volume (%)', 'Adjust PSG sound independently. Zero mutes the chip.', sekNumber);
@@ -158,6 +166,14 @@ begin
   Context.Check('ZXSAA1099', 'Hardware', 'SAA1099', False);
   Context.Combo('ZXDAC', 'Hardware', 'DAC', ['None', 'Covox #FB', 'Covox #DD', 'GS-port Covox #B3', 'SounDrive 1.00', 'SpecDrum #DF', 'Next-DAC (audio only)'],
     ['none', 'covoxfb', 'covoxdd', 'covoxgs', 'soundrive', 'specdrum', 'nextdac'], 'none');
+  Context.Check('ZXGeneralSound', 'Hardware', 'GeneralSound', False);
+  Context.Combo('ZXGeneralSoundRAM', 'Hardware', 'GeneralSoundRAMKB', ['128 KiB', '512 KiB'], ['128', '512'], '128');
+  Context.Check('ZXDMAUSC', 'Hardware', 'DMAUSC', False);
+  Context.Combo('ZXDMAUSCStereo', 'Hardware', 'DMAUSCStereo', ['AD left / BC right', 'AB left / CD right', 'Mono'], ['0', '1', '2'], '0');
+  Context.Check('ZXDMAUSCULABypass', 'Hardware', 'DMAUSCULABypass', True);
+  Context.Check('ZXNeoGS', 'Hardware', 'NeoGS', False);
+  Context.Combo('ZXNeoGSRAM', 'Hardware', 'NeoGSRAMKB', ['512 KiB', '2 MiB', '4 MiB'], ['512', '2048', '4096'], '2048');
+  Context.PathEdit('ZXNeoGSImage', 'Hardware', 'NeoGSImage', '', False);
   Context.Combo('ZXNextDACMode', 'Hardware', 'NextDACMode', ['All DAC aliases', 'SounDrive mode 1', 'SounDrive mode 2', 'Profi stereo Covox', 'Stereo Covox', 'Pentagon / ATM mono', 'GS Covox mono', 'SpecDrum mono', 'NextReg mirrors only'], ['0', '1', '2', '3', '4', '5', '6', '7', '8'], '0');
   Context.Check('ZXNextDACStartup', 'Hardware', 'NextDACStartup', True);
   Context.Number('ZXExpansionVolume', 'Audio', 'ExpansionVolume', 100, 100);

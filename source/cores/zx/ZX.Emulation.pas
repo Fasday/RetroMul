@@ -33,12 +33,15 @@ type
     FTapeChoices: TArray<string>;
     FTapeCommands: TArray<Integer>;
     procedure Publish(Console: TZXConsole);
+    procedure PersistNeoGSFlash(Console: TZXConsole);
   protected
     procedure Execute; override;
   public
     SnapshotDirectory, DiskSaveFile, CMOSSaveFile, ServiceROMFile, TimexCartridgeFile: string;
     DivImageFile, DivFirmwareFile, DivSaveFile: string;
     DivImageHash: TBytes;
+    NeoGSImageFile, NeoGSSaveFile, NeoGSFlashFile: string;
+    NeoGSImageHash: TBytes;
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   public
     constructor Create(const Data: TBytes; const Name: string; const Storage: IStorage; Tape128: Boolean = False; Pentagon: Boolean = False; PentagonRAMKB: Integer = 128); overload;
@@ -283,6 +286,19 @@ begin
   end;
 end;
 
+procedure TZXWorker.PersistNeoGSFlash(Console: TZXConsole);
+begin
+  if (Console = nil) or (Console.NeoGS = nil) or not Console.NeoGS.FlashDirty or
+    (NeoGSFlashFile = '') then
+    Exit;
+  var Stream := TBytesStream.Create(Console.NeoGS.FlashImage);
+  try
+    SaveStreamAtomically(Stream, NeoGSFlashFile, FStorage);
+  finally
+    Stream.Free;
+  end;
+end;
+
 procedure TZXWorker.Execute;
 var
   Console: TZXConsole;
@@ -324,6 +340,15 @@ begin
         Console.DivStorage.Mount(FStorage.OpenRead(DivImageFile), DivImageHash);
       if (Console.DivStorage.Disk <> nil) and (DivSaveFile <> '') and FStorage.Exists(DivSaveFile) then
         Console.DivStorage.Disk.LoadOverlay(FStorage.ReadBytes(DivSaveFile));
+      if (Console.NeoGS <> nil) and (NeoGSFlashFile <> '') and FStorage.Exists(NeoGSFlashFile) then
+        Console.NeoGS.LoadFlash(FStorage.ReadBytes(NeoGSFlashFile));
+      if (Console.NeoGS <> nil) and (NeoGSImageFile <> '') then
+      begin
+        Console.NeoGS.Mount(FStorage.OpenRead(NeoGSImageFile), NeoGSImageHash);
+        if (NeoGSSaveFile <> '') and FStorage.Exists(NeoGSSaveFile) then
+          Console.NeoGS.Disk.LoadOverlay(FStorage.ReadBytes(NeoGSSaveFile));
+        Console.NeoGS.Disk.WriteProtected := Options.DiskWriteProtected;
+      end;
       if (ServiceROMFile <> '') and (Console.Pentagon and (Console.RAMSizeKB = 1024)) then
         Console.SetServiceROM(FStorage.ReadBytes(ServiceROMFile));
       if (Console.Beta.Disk <> nil) and (DiskSaveFile <> '') and FStorage.Exists(DiskSaveFile) then
@@ -357,6 +382,8 @@ begin
               end;
             if Loading then
             begin
+              // A state may remove the board. Retain completed guest flash writes.
+              PersistNeoGSFlash(Console);
               LoadCoreSnapshot(Path, CoreId, FData, Transfer, FStorage);
               FLock.Acquire;
               try
@@ -424,7 +451,18 @@ begin
           var DivOverlay: TBytes;
           if Console.DivStorage.Disk <> nil then
             DivOverlay := Console.DivStorage.Disk.SaveOverlay;
+          var NeoGSOverlay: TBytes;
+          if (Console.NeoGS <> nil) and (Console.NeoGS.Disk <> nil) then
+            NeoGSOverlay := Console.NeoGS.Disk.SaveOverlay;
           Console.Load(FData, FName, FMachine);
+          if (Console.NeoGS <> nil) and (NeoGSImageFile <> '') then
+          begin
+            if Console.NeoGS.Disk = nil then
+              Console.NeoGS.Mount(FStorage.OpenRead(NeoGSImageFile), NeoGSImageHash);
+            if Length(NeoGSOverlay) > 0 then
+              Console.NeoGS.Disk.LoadOverlay(NeoGSOverlay);
+            Console.NeoGS.Disk.WriteProtected := Options.DiskWriteProtected;
+          end;
           if (TimexCartridgeFile <> '') and (Console.Machine.Model = zmTimex2068) and not SameText(ExtractFileExt(FName), '.dck') then
             Console.MountTimexCartridge(FStorage.ReadBytes(TimexCartridgeFile));
           if DivFirmwareFile <> '' then
@@ -560,6 +598,40 @@ begin
       var Stream := TBytesStream.Create(Console.DivStorage.Disk.SaveOverlay);
       try
         SaveStreamAtomically(Stream, DivSaveFile, FStorage);
+      finally
+        Stream.Free;
+      end;
+    except
+      on E: Exception do
+      begin
+        FLock.Acquire;
+        try
+          FError := E.Message;
+        finally
+          FLock.Release;
+        end;
+      end;
+    end;
+    if (Console <> nil) and (Console.NeoGS <> nil) and Console.NeoGS.FlashDirty and (NeoGSFlashFile <> '') then
+    try
+      PersistNeoGSFlash(Console);
+    except
+      on E: Exception do
+      begin
+        FLock.Acquire;
+        try
+          FError := E.Message;
+        finally
+          FLock.Release;
+        end;
+      end;
+    end;
+    if (Console <> nil) and (Console.NeoGS <> nil) and (Console.NeoGS.Disk <> nil) and
+      Console.NeoGS.Disk.Dirty and (NeoGSSaveFile <> '') then
+    try
+      var Stream := TBytesStream.Create(Console.NeoGS.Disk.SaveOverlay);
+      try
+        SaveStreamAtomically(Stream, NeoGSSaveFile, FStorage);
       finally
         Stream.Free;
       end;

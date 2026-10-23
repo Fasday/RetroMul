@@ -34,6 +34,7 @@ type
     procedure FinishFileSelection;
     function CanAcceptRomDrop(const Data: TDragObject): Boolean;
     procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = '');
+    procedure ResetConsole(Hard: Boolean);
     procedure HardRestart;
     procedure ButtonCloseRomClick(Sender: TObject);
     procedure Stop;
@@ -219,6 +220,9 @@ begin
     FState.Session.DialogWasPaused := FState.Session.UserPaused;
     FState.Session.Emulation.Pause;
   end;
+  FView.ButtonReset.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.OpeningRom and
+    not FState.Session.PendingAutosaveChoice and not FState.Browser.ViewingLibrary and
+    (FState.Settings.View = nil) and (FState.Help.View = nil);
   FView.GamePause.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
   var UserPaused := (FState.Session.Emulation <> nil) and (FState.Session.UserPaused or FState.Session.AutoPaused);
   FView.GamePauseIcon.Visible := not UserPaused;
@@ -240,7 +244,8 @@ begin
     FView.GamePause.Text := ''
   else
     FView.GamePause.Text := FView.GamePause.Hint;
-  FView.GamePause.Hint := FView.GamePause.Hint + ' · P';
+  if (FState.Input.SystemId <> ROM_SYSTEM_ZX) or not FState.Input.Ports.KeyboardEnabled then
+    FView.GamePause.Hint := FView.GamePause.Hint + ' · P';
   // Changing the style recreates its text resource, including its margins.
   FView.GamePause.ApplyStyleLookup;
   FView.GamePause.StylesData['text.Margins.Left'] := 36;
@@ -643,6 +648,36 @@ begin
         FView.SyncActivity;
       end;
     end, 'Load autosave', 'Start new game', 'Cancel launch');
+end;
+
+procedure TSessionController.ResetConsole(Hard: Boolean);
+begin
+  if (FState.Session.Emulation = nil) or FState.Session.OpeningRom or
+    FLoadingCore or FState.Session.PendingAutosaveChoice or FState.Browser.ViewingLibrary or
+    (FState.Settings.View <> nil) or (FState.Help.View <> nil) then
+    Exit;
+  if Hard then
+  begin
+    HardRestart;
+    Exit;
+  end;
+  FView.TimerUpdate.Enabled := False;
+  try
+    if FState.Input.Rumble <> nil then
+      FState.Input.Rumble.Reset;
+    FState.Session.Emulation.Reset;
+    FState.Session.UserPaused := False;
+    FState.Session.EmulationFaulted := False;
+    {$IFDEF ISMOBILE}
+    if FState.Mobile.ActivityPaused then
+      FState.Session.Emulation.Pause;
+    {$ENDIF}
+    FView.SyncActivity;
+    FView.SetStatus(FState.Session.RomDisplayName);
+  except
+    FView.StopOnError;
+    raise;
+  end;
 end;
 
 procedure TSessionController.HardRestart;

@@ -578,6 +578,8 @@ begin
     (Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) and Peripheral.UsesFamicomKeyboard) or
     (Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano);
 
+  var ZXActive := FState.Input.SystemId = ROM_SYSTEM_ZX;
+
   var WasDown: Boolean := False;
   if Code <= High(FState.Input.KeysDown) then
   begin
@@ -615,36 +617,20 @@ begin
     begin
       if ssShift in Shift then
       begin
-        FView.HardRestart;
+        FView.ResetConsole(True);
         // InstallCore clears held keys; keep this shortcut down until key-up.
         FState.Input.KeysDown[Code] := True;
         Key := 0;
         KeyChar := #0;
         Exit;
       end;
-      FView.TimerUpdate.Enabled := False;
-      try
-        if FState.Input.Rumble <> nil then
-          FState.Input.Rumble.Reset;
-        FState.Session.Emulation.Reset;
-        FState.Session.UserPaused := False;
-        FState.Session.EmulationFaulted := False;
-        {$IFDEF ISMOBILE}
-        if FState.Mobile.ActivityPaused then
-          FState.Session.Emulation.Pause;
-        {$ENDIF}
-        FView.SyncActivity;
-        FView.SetStatus(FState.Session.RomDisplayName);
-      except
-        FView.StopOnError;
-        raise;
-      end;
+      FView.ResetConsole(False);
     end
     else if (Code = vkP) and not KeyboardActive then
       FView.SwitchPause
-    else if (Code = vkF9) and not KeyboardActive then
+    else if (Code = vkF9) and not KeyboardActive and not ZXActive then
       FView.InsertCoinClick(FView)
-    else if (Code = vkF8) and (FState.Session.Emulation <> nil) and not KeyboardActive then
+    else if (Code = vkF8) and (FState.Session.Emulation <> nil) and not KeyboardActive and not ZXActive then
     begin
       try
         FView.SetStatus(Translate('Screenshot: ') + FView.SaveScreenshot);
@@ -653,7 +639,7 @@ begin
           ShowRetroMessage(FView, E.Message);
       end;
     end
-    else if (Code in [vkF5, vkF6]) and (FState.Session.Emulation <> nil) and not KeyboardActive then
+    else if (Code in [vkF5, vkF6]) and (FState.Session.Emulation <> nil) and (not KeyboardActive or ZXActive) then
     begin
       try
         if Code = vkF5 then
@@ -667,8 +653,9 @@ begin
     end;
   end;
 
-  if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift)) then
-    if (FState.Session.Emulation <> nil) and ((FState.Input.Manager = nil) or ((SGKeyboard <> nil) and SGKeyboard.HasKeyboard)) then
+  var ZXControlKey := ZXActive and (Code in [vkF7, vkF8, vkF9]);
+  if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift) or ZXControlKey) then
+    if (FState.Session.Emulation <> nil) and ((FState.Input.Manager = nil) or ZXControlKey or ((SGKeyboard <> nil) and SGKeyboard.HasKeyboard)) then
       FView.ForwardKeyState(Code, True);
 
   Key := 0;
@@ -746,7 +733,8 @@ begin
 
   var SGKeyboard: ISGKeyboardCore;
   if (FState.Help.View = nil) and (FState.Session.Emulation <> nil) and
-    ((FState.Input.Manager = nil) or (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard)) then
+    ((FState.Input.Manager = nil) or ((FState.Input.SystemId = ROM_SYSTEM_ZX) and (Code in [vkF7, vkF8, vkF9])) or
+    (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard)) then
     FView.ForwardKeyState(Code, False);
 
   Key := 0;
