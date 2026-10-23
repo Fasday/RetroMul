@@ -20,7 +20,14 @@ type
     FMix: array[0..15] of Integer;
     FEffects: array[0..15] of SmallInt;
     FDelay: Integer;
+    // Program words per step, decoded from MPRO, and the last step that is
+    // not all zero (-1: none). An all-zero step changes only the step-local
+    // accumulator, so steps after the last one have no effect.
+    FProgram: array[0..127, 0..3] of Integer;
+    FLastStep: Integer;
+    FProgramDirty: Boolean;
     function WordAt(Index: Integer): Integer;
+    procedure DecodeProgram;
   public
     RingBase, RingLength: Integer;
     constructor Create(Read: TDSPRead; Write: TDSPWrite);
@@ -106,6 +113,23 @@ begin
   FDelay := 0;
   RingBase := 0;
   RingLength := 8192;
+  FProgramDirty := True;
+end;
+
+procedure TAICADSP.DecodeProgram;
+begin
+  FLastStep := -1;
+  for var Index := 0 to 127 do
+  begin
+    var P := $400 + Index * 16;
+    FProgram[Index, 0] := WordAt(P);
+    FProgram[Index, 1] := WordAt(P + 4);
+    FProgram[Index, 2] := WordAt(P + 8);
+    FProgram[Index, 3] := WordAt(P + 12);
+    if (FProgram[Index, 0] or FProgram[Index, 1] or FProgram[Index, 2] or FProgram[Index, 3]) <> 0 then
+      FLastStep := Index;
+  end;
+  FProgramDirty := False;
 end;
 
 function TAICADSP.WordAt(Index: Integer): Integer;
@@ -117,7 +141,11 @@ end;
 procedure TAICADSP.WriteRegister(Address: Integer; Value: Byte);
 begin
   if (Address >= $3000) and (Address < $4000) then
+  begin
     FRegisters[Address - $3000] := Value;
+    if Address >= $3400 then
+      FProgramDirty := True;
+  end;
 end;
 
 function TAICADSP.ReadRegister(Address: Integer): Byte;
@@ -166,6 +194,7 @@ begin
     RingBase := RingBase and $FFF;
     if (RingLength <> 8192) and (RingLength <> 16384) and (RingLength <> 32768) and (RingLength <> 65536) then
       RingLength := 8192;
+    FProgramDirty := True;
   end;
 end;
 
@@ -182,13 +211,14 @@ begin
   var Fraction := 0;
   var YReg := 0;
   var AddressReg := 0;
-  for var Index := 0 to 127 do
+  if FProgramDirty then
+    DecodeProgram;
+  for var Index := 0 to FLastStep do
   begin
-    var P := $400 + Index * 16;
-    var I0 := WordAt(P);
-    var I1 := WordAt(P + 4);
-    var I2 := WordAt(P + 8);
-    var I3 := WordAt(P + 12);
+    var I0 := FProgram[Index, 0];
+    var I1 := FProgram[Index, 1];
+    var I2 := FProgram[Index, 2];
+    var I3 := FProgram[Index, 3];
     var ReadTemp := (I0 shr 9) and 127;
     var WriteTemp := (I0 shr 1) and 127;
     var InputIndex := (I1 shr 7) and 63;
