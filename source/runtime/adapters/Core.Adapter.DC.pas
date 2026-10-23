@@ -667,7 +667,7 @@ begin
     if Length(Saved) = DCFlashSize then
       Move(Saved[0], FConsole.Memory.Flash^, DCFlashSize);
   end;
-  if Length(FConfig.BootROM) = 0 then
+  if FConsole.HighLevelBoot then
   begin
     if FDisc <> nil then
       FConsole.BootDisc
@@ -923,9 +923,11 @@ end;
 procedure TDCCoreAdapter.LoadFirmware(const RomName: string);
 begin
   // External boot ROM: setting, else dc_boot.bin beside the image or in the
-  // dc ROM folder. The high-level boot is used without one, or by choice.
+  // dc ROM folder. The high-level boot is used without one, or by choice;
+  // in automatic mode and for programs a found boot ROM only lends its font.
   if FConfigObject.BIOSMode = 'hle' then
     Exit;
+  FMachine.HLEBoot := (FConfigObject.BIOSMode = 'auto') or (FDisc = nil);
   var Path := FConfigObject.BIOSFile;
   var FlashPath := FConfigObject.FlashFile;
   if Path = '' then

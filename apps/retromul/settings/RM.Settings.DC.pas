@@ -23,7 +23,8 @@ procedure TDCSettings.Initialize(Context: TSettingsPageContext);
 begin
   Context.CreateGroup('DCSystem', 'System');
   Context.CreateOption('RowDCBoot', 'Boot',
-    'Built-in high-level boot, or an external boot ROM (dc_boot.bin) when found or required.', sekCombo);
+    'Built-in high-level boot. Automatic also takes the font of a boot ROM (dc_boot.bin) when found; ' +
+    'Boot ROM file starts the console from it.', sekCombo);
   Context.CreateOption('RowDCBIOS', 'Boot ROM file',
     'Optional 2 MiB boot ROM. Without it, dc_boot.bin beside the game or in the dc ROM folder is used.', sekPath);
   Context.CreateOption('RowDCFlash', 'Flash file',

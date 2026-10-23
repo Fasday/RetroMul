@@ -17,6 +17,9 @@ type
   TDCConsoleConfig = record
     // Empty: high-level boot. Otherwise a 2 MiB boot ROM image.
     BootROM: TBytes;
+    // High-level boot even with a boot ROM image, which then only provides
+    // its contents (the ROM font) at their addresses.
+    HLEBoot: Boolean;
     Flash: TBytes;
     Region: TDCRegion;
     Cable: TDCCable;
@@ -76,6 +79,9 @@ type
     function ReadBus(Address: Cardinal; Size: Integer): UInt64;
     procedure WriteBus(Address: Cardinal; Value: UInt64; Size: Integer);
     procedure SerializeState(Archive: TStateArchive);
+    // True when the built-in boot code and system calls run (no boot ROM, or
+    // HLEBoot).
+    function HighLevelBoot: Boolean;
     property FrameCount: Int64 read FFrameCount;
     property Halted: Boolean read FHalted;
     property Config: TDCConsoleConfig read FConfig;
@@ -289,7 +295,7 @@ begin
   FFrameCount := 0;
   Boot.VGA := FConfig.Cable = TDCCable.VGA;
   Boot.PAL := FConfig.PAL;
-  if Length(FConfig.BootROM) = 0 then
+  if HighLevelBoot then
   begin
     // High-level boot: vectors installed, CPU waits for a program.
     CPU.SetIllegalHook(DCBootIllegalHook, Boot);
@@ -297,6 +303,11 @@ begin
   end
   else
     CPU.SetIllegalHook(nil, nil);
+end;
+
+function TDCConsole.HighLevelBoot: Boolean;
+begin
+  Result := (Length(FConfig.BootROM) = 0) or FConfig.HLEBoot;
 end;
 
 procedure TDCConsole.InsertDisc(Image: TCDDisc);
