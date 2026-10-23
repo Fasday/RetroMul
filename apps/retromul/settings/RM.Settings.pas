@@ -252,7 +252,7 @@ uses
   NES.MiraclePiano, NES.Controller, NES.MiraclePianoDevice, FMX.BehaviorManager,
   FMX.Graphics, FMX.SpinBox.Style, FMX.Presentation.Style,
   FMX.Presentation.Factory, RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles,
-  RM.Dialogs, FMX.TextLayout
+  RM.Dialogs, FMX.TextLayout, Core.Adapter.PS1
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 {$R *.fmx}
@@ -570,8 +570,9 @@ function TDeviceCallouts.ButtonBounds(Index: Integer): TRectF;
 begin
   if FDevice is TNesPowerPad then
     Result := TNesPowerPad(FDevice).ButtonBounds(FItems[Index].Button)
-  else if FItems[Index].Button = -1 then
-    Result := TScreenGamepad(FDevice).AuxiliaryButtonBounds(0)
+  else if FItems[Index].Button < 0 then
+    // -1 - N: auxiliary button N.
+    Result := TScreenGamepad(FDevice).AuxiliaryButtonBounds(-1 - FItems[Index].Button)
   else
     Result := TScreenGamepad(FDevice).ButtonBounds(TEmulatorButton(FItems[Index].Button));
 end;
@@ -631,6 +632,11 @@ begin
   if (Core = ROM_SYSTEM_N64) and (Device is TScreenGamepad) and
     not TScreenGamepad(Device).AuxiliaryButtonBounds(0).IsEmpty then
     AddCallout(-1, N64LAction + Port, 'L', Translate('Button ') + 'L', True, Click);
+  if (Core = ROM_SYSTEM_PS1) and (Device is TScreenGamepad) then
+    for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+      if not TScreenGamepad(Device).AuxiliaryButtonBounds(Ord(Extra)).IsEmpty then
+        AddCallout(-1 - Ord(Extra), PS1Action(Port, Extra), PS1ExtraName(Extra),
+          Translate('Button ') + PS1ExtraName(Extra), True, Click);
   Refresh;
   Resize;
 end;
@@ -2311,6 +2317,14 @@ begin
       AddAssignment(D, P, N64LAction + Port, 'L');
       Y := Y + 40;
     end;
+    // A digital pad has only L2 beyond the logical pad.
+    if SettingsCoreIds[FPage] = ROM_SYSTEM_PS1 then
+      for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+        if (Extra = TPS1Extra.L2) or (Device = 'pad-analog') then
+        begin
+          AddAssignment(D, P, PS1Action(Port, Extra), PS1ExtraName(Extra));
+          Y := Y + 40;
+        end;
     D.AssignmentList.Height := Y;
   end;
   Preview.Parent := FindComponent('LayoutBindingPreview' + IntToStr(Port)) as TLayout;
@@ -2413,6 +2427,13 @@ begin
           Action := N64LAction + D.Port;
           Caption := Translate('Button ') + 'L';
         end;
+        if SettingsCoreIds[FPage] = ROM_SYSTEM_PS1 then
+          for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+            if (TScreenGamepad(Sender).AuxiliaryButtons and (1 shl Ord(Extra))) <> 0 then
+            begin
+              Action := PS1Action(D.Port, Extra);
+              Caption := Translate('Button ') + PS1ExtraName(Extra);
+            end;
         for var B in TScreenGamepad(Sender).Buttons do
           if B in CoreButtons(SettingsCoreIds[FPage], D.Device) then
           begin
