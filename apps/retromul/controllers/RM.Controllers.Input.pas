@@ -50,7 +50,7 @@ implementation
 uses
   System.SysUtils, System.Types, System.IOUtils, System.Math, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.Dialogs, FMX.Platform, FMX.Edit, FMX.OpenDialog,
-  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console,
+  FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console, Core.Adapter.PS1, PS1.SIO,
   Core.InputConfig, Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard,
   NES.Controller, RM.Gamepad, NES.SuborKeyboard, NES.FamicomKeyboard,
   NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
@@ -815,6 +815,31 @@ begin
         Pad.StickY := -Round(Result.Analog[Port].Y / 32767 * 80);
       end;
       N64Input.SetN64Controller(Port, Pad);
+    end;
+
+  // PlayStation L2/L3/R3, ANALOG and the right stick sit outside the logical
+  // pad; on-screen auxiliary button N is TPS1Extra(N).
+  var PS1Input: IPS1ControllerInput;
+  if Supports(FState.Session.Emulation, IPS1ControllerInput, PS1Input) then
+    for var Port := 0 to 1 do
+    begin
+      var Pad := ReadPS1Pad(FState.Input.Manager, Port);
+      if Port = 0 then
+      begin
+        var Auxiliary := FState.Input.Gamepad.AuxiliaryButtons;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.L2))) <> 0 then
+          Pad.Buttons := Pad.Buttons or PS1PadL2;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.Analog))) <> 0 then
+          Pad.AnalogButton := True;
+        // The on-screen right stick (the left one arrives as Analog[0]).
+        var Right := FState.Input.Gamepad.RightAnalogInput;
+        if Right.Valid then
+        begin
+          Pad.RightX := EnsureRange(Integer(Pad.RightX) + Right.X, -32768, 32767);
+          Pad.RightY := EnsureRange(Integer(Pad.RightY) + Right.Y, -32768, 32767);
+        end;
+      end;
+      PS1Input.SetPS1Controller(Port, Pad);
     end;
 
   var Piano: INesMiraclePianoCore;
