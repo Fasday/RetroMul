@@ -548,13 +548,12 @@ begin
     SetExceptionMask(SavedMask);
     SetRoundMode(SavedRound);
   end;
-  var Stride := (PVR.R[PVRFBWLineStride shr 2] and $1FF) * 8;
-  var Base := PVR.R[PVRFBWSOF1 shr 2] and $7FFFFF;
-  var Size := Stride * 1024;
+  // Cached textures over the written range are stale.
+  var Base := Renderer.FramebufferFirst;
+  var Size := Renderer.FramebufferLast - Base;
   if (PVR.R[PVRFBWSOF1 shr 2] and $1000000) <> 0 then
   begin
-    // Render to texture: the 64-bit range covers both banks.
-    Memory.TouchVRAM(TDCMemory.VRAM64(Base), 4096);
+    // Render to texture: the 64-bit range spreads over both banks.
     for var P := 0 to Integer(Size shr 13) do
     begin
       Inc(Memory.VRAMGens[((Base shr 1) shr 12 + Cardinal(P)) and 1023]);
@@ -562,8 +561,8 @@ begin
     end;
   end
   else
-    for var P := 0 to Integer(Size shr 12) do
-      Inc(Memory.VRAMGens[((Base shr 12) + Cardinal(P)) and High(Memory.VRAMGens)]);
+    for var P := Integer(Base shr 12) to Integer((Base + Size - 1) shr 12) do
+      Inc(Memory.VRAMGens[P and High(Memory.VRAMGens)]);
   Scheduler.Schedule(TDCEvent.Render, Scheduler.Now + 40000 + Int64(Renderer.PolygonsRendered) * 200);
 end;
 

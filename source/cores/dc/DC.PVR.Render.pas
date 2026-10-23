@@ -437,6 +437,7 @@ end;
 
 procedure TDCRenderer.Prepare;
 begin
+  var Mark := FTextures.Clock;
   FTriCount := 0;
   SetLength(FPolys, FContext.PolyCount);
   var Volume := 0;
@@ -483,7 +484,7 @@ begin
         end;
     end;
   end;
-  FTextures.Trim(4096);
+  FTextures.Trim(4096, Mark);
 end;
 
 procedure TDCRenderer.Bin;

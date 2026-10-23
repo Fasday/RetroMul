@@ -53,7 +53,10 @@ type
     // Texture for a TCW and the TSP size bits (U size 5..3, V size 2..0).
     function Get(TCW, TSP: Cardinal; const Palette: array of Cardinal; PalFormat, PaletteGen: Cardinal;
       Stride: Integer): TPVRTexture;
-    procedure Trim(MaxTextures: Integer);
+    // Drops the least recently used half above MaxTextures, never a texture
+    // used since Clock was Mark (the current scene's).
+    procedure Trim(MaxTextures: Integer; Mark: Int64);
+    property Clock: Int64 read FClock;
   end;
 
 function Twiddle(X, Y, Width, Height: Integer): Integer;
@@ -161,7 +164,7 @@ begin
   FTextures.Clear;
 end;
 
-procedure TPVRTextureCache.Trim(MaxTextures: Integer);
+procedure TPVRTextureCache.Trim(MaxTextures: Integer; Mark: Int64);
 begin
   if FTextures.Count <= MaxTextures then
     Exit;
@@ -176,6 +179,8 @@ begin
   end;
   TArray.Sort<Int64>(Stamps);
   var Limit := Stamps[N div 2];
+  if Limit > Mark then
+    Limit := Mark;
   var Keys := FTextures.Keys.ToArray;
   for var K in Keys do
   begin

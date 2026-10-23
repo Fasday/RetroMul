@@ -127,6 +127,8 @@ type
     GenPtr, GenPtr2: PCardinal;
     Gen, Gen2: Cardinal;
     Next: PSH4Block;
+    // Recently followed successors (validated by PC, mode and code).
+    Link: array[0..1] of PSH4Block;
     Idle: Boolean;
   end;
 
@@ -189,7 +191,7 @@ type
     procedure SetFPSCRValue(Value: Cardinal);
     procedure ApplyHostRounding;
     function GetSRValue: Cardinal; inline;
-    function Mode: Cardinal;
+    function Mode: Cardinal; inline;
     procedure EnterException(Code, Offset, ReturnPC: Cardinal);
     procedure Fault(Code: Cardinal; const I: TSH4Inst; Slot: Boolean);
     function FetchWord(Address: Cardinal; out Op: Word): Boolean;
@@ -927,15 +929,8 @@ end;
 
 function TSH4.Mode: Cardinal;
 begin
-  Result := 0;
-  if (S.SR and SRMD) <> 0 then
-    Result := ModeMD;
-  if (S.SR and SRFD) <> 0 then
-    Result := Result or ModeFD;
-  if (S.FPSCR and FPSCRPR) <> 0 then
-    Result := Result or ModePR;
-  if (S.FPSCR and FPSCRSZ) <> 0 then
-    Result := Result or ModeSZ;
+  // ModeMD (SR bit 30), ModeFD (SR bit 15), ModePR and ModeSZ (FPSCR bits 19, 20).
+  Result := ((S.SR shr 30) and ModeMD) or ((S.SR shr 14) and ModeFD) or ((S.FPSCR shr 17) and (ModePR or ModeSZ));
 end;
 
 procedure TSH4.EnterException(Code, Offset, ReturnPC: Cardinal);
@@ -2864,6 +2859,8 @@ begin
   B.Gen := B.GenPtr^;
   B.Gen2 := B.GenPtr2^;
   B.Idle := False;
+  B.Link[0] := nil;
+  B.Link[1] := nil;
   var Bucket := (PC shr 1) and (BlockBuckets - 1);
   B.Next := FBlockHead[Bucket];
   FBlockHead[Bucket] := B;
@@ -2936,6 +2933,7 @@ begin
   ApplyHostRounding;
   try
     FExitRequest := False;
+    var Prev: PSH4Block := nil;
     while Now^ < Deadline^ do
     begin
       if (FIRQLevel > Integer((S.SR shr 4) and 15)) and ((S.SR and SRBL) = 0) and not S.DelaySlot then
@@ -2957,9 +2955,30 @@ begin
       if FBlocksEnabled and not S.DelaySlot and not Assigned(FFetch) then
       begin
         var AMode := Mode;
-        B := FindBlock(S.PC, AMode);
+        // The previous block remembers its last two successors.
+        if Prev <> nil then
+        begin
+          B := Prev.Link[0];
+          if (B = nil) or (B.PC <> S.PC) or (B.Mode <> AMode) then
+          begin
+            B := Prev.Link[1];
+            if (B <> nil) and ((B.PC <> S.PC) or (B.Mode <> AMode)) then
+              B := nil;
+          end;
+          if (B <> nil) and not BlockValid(B) then
+            B := nil;
+        end;
         if B = nil then
-          B := BuildBlock(S.PC, AMode);
+        begin
+          B := FindBlock(S.PC, AMode);
+          if B = nil then
+            B := BuildBlock(S.PC, AMode);
+          if (Prev <> nil) and (B <> nil) then
+          begin
+            Prev.Link[1] := Prev.Link[0];
+            Prev.Link[0] := B;
+          end;
+        end;
       end;
       if B <> nil then
       begin
@@ -2972,6 +2991,7 @@ begin
       end
       else
         Step;
+      Prev := B;
       if FExitRequest then
       begin
         FExitRequest := False;
