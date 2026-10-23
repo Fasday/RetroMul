@@ -657,7 +657,8 @@ begin
   if FileName.StartsWith('content://', True) then
     SourceName := FState.Session.Storage.Describe(FileName).Name;
   var Ext := ExtractFileExt(SourceName);
-  if not (SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD)) then
+  if not (SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD) or
+    SameText(Ext, ROM_EXTENSION_MDS)) then
   begin
     InstallCore(FView.NewCore(FileName), FileName, DisplayName, StartPaused);
     if SnapshotName <> '' then FView.LoadSnapshot(SnapshotName);

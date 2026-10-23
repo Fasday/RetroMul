@@ -84,7 +84,7 @@ begin
     'Sega', 'MD Genesis Sega CD Mega CD 32X', 'megadrive', ['megadrive'], [ROM_EXTENSION_SMD, ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD],
     'MegaDrive', 'md', 4);
   RegisterPlatform(TRomSystem.SegaCD, ROM_SYSTEM_SEGACD, 'Sega CD', 'Sega CD',
-    'Sega', 'Mega CD CD32X 32X CD', 'segacd', ['segacd', 'megacd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'Sega', 'Mega CD CD32X 32X CD', 'segacd', ['segacd', 'megacd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD, ROM_EXTENSION_MDS],
     'MegaDrive', 'md', 4);
   RegisterPlatform(TRomSystem.Sega32X, ROM_SYSTEM_SEGA32X, 'Sega 32X', 'Sega 32X',
     'Sega', '32X Mars Super 32X', 'sega32x', ['sega32x', '32x'], ['.32x', ROM_EXTENSION_BIN, ROM_EXTENSION_GEN, ROM_EXTENSION_MD, ROM_EXTENSION_SMD],
@@ -105,7 +105,7 @@ begin
     'Sega', 'GG GameGear', 'gamegear', ['gamegear', 'gg'], [ROM_EXTENSION_GG],
     'GameGear', 'gg', 1);
   RegisterPlatform(TRomSystem.Saturn, ROM_SYSTEM_SATURN, 'SEGA Saturn', 'Saturn',
-    'Sega', 'Saturn SH2 CD', 'saturn', ['saturn'], [ROM_EXTENSION_BIN, ROM_EXTENSION_GENERIC, '.bios', ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'Sega', 'Saturn SH2 CD', 'saturn', ['saturn'], [ROM_EXTENSION_BIN, ROM_EXTENSION_GENERIC, '.bios', ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD, ROM_EXTENSION_MDS],
     'Saturn', 'saturn', 2);
   RegisterPlatform(TRomSystem.Multivision, ROM_SYSTEM_OMV, 'Multivision', 'Multivision',
     'Tsukuda Original', 'OMV Othello Multivision', 'omv', ['omv', 'sg1000'], [ROM_EXTENSION_MV],
@@ -120,7 +120,7 @@ begin
     'SNK', 'NGPC Pocket Color', 'ngpc', ['ngpc', 'neogeopocketcolor'], [ROM_EXTENSION_NGP, ROM_EXTENSION_NGPC, ROM_EXTENSION_ZIP],
     'NeoGeoPocket', 'ngpc', 1);
   RegisterPlatform(TRomSystem.NeoGeoCD, ROM_SYSTEM_NEOGEOCD, 'Neo Geo CD', 'NG CD',
-    'SNK', 'NG NeoGeo CD', 'neogeocd', ['neogeocd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'SNK', 'NG NeoGeo CD', 'neogeocd', ['neogeocd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD, ROM_EXTENSION_MDS],
     'NeoGeo', 'neogeocd', 2, ROM_SYSTEM_NEOGEO);
   RegisterPlatform(TRomSystem.PCE, ROM_SYSTEM_PCE, 'PC Engine / TurboGrafx-16', 'PCE',
     'NEC', 'PCE CoreGrafx Shuttle GT LT TurboExpress', 'pcengine', ['pcengine', 'pce'], [ROM_EXTENSION_PCE, ROM_EXTENSION_ZIP],
@@ -129,7 +129,7 @@ begin
     'NEC', 'SGX', 'sgx', ['sgx', 'supergrafx', 'pcengine', 'pce'], [ROM_EXTENSION_SGX, ROM_EXTENSION_PCE, ROM_EXTENSION_ZIP],
     'PCE', 'sgx', 5);
   RegisterPlatform(TRomSystem.PCECD, ROM_SYSTEM_PCECD, 'PC Engine CD', 'PCE CD',
-    'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcenginecd', ['pcenginecd', 'pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
+    'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcenginecd', ['pcenginecd', 'pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD, ROM_EXTENSION_MDS],
     'PCE', 'pcecd', 5);
   FItems.Sort(TComparer<TPlatformInfo>.Construct(
     function(const A, B: TPlatformInfo): Integer

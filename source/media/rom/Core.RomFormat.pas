@@ -96,6 +96,7 @@ const
   ROM_EXTENSION_CUE = '.cue';
   ROM_EXTENSION_ISO = '.iso';
   ROM_EXTENSION_CHD = '.chd';
+  ROM_EXTENSION_MDS = '.mds';
 
 const
   ROM_MAX_SIZE = 64 * 1024 * 1024;
