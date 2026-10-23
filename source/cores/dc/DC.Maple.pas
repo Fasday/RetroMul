@@ -10,7 +10,7 @@ unit DC.Maple;
 interface
 
 uses
-  System.SysUtils, System.Classes, Core.Snapshots, DC.Types, DC.Memory;
+  System.SysUtils, System.Classes, System.Math, Core.Snapshots, DC.Types, DC.Memory;
 
 const
   MapleFuncController = $01000000;
@@ -62,6 +62,8 @@ type
   public
     // [port, unit]: unit 0 is the main device, 1..5 its expansion sockets.
     Devices: array[0..3, 0..5] of TDCMapleDevice;
+    // Optional diagnostics: one line per frame.
+    Trace: TStrings;
     constructor Create(Memory: TDCMemory);
     destructor Destroy; override;
     procedure Attach(Port, AUnit: Integer; Device: TDCMapleDevice);
@@ -104,7 +106,8 @@ begin
         // product name, license, standby and maximum power.
         FillChar(Reply^, 28 * 4, 0);
         Reply[0] := MapleFuncController;
-        Reply[1] := $000F06FE; // buttons C B A Start, pad, triggers, analog X/Y
+        // Capabilities: A, B, X, Y, Start, D-pad, analog triggers and stick.
+        Reply[1] := $FE060F00;
         var B := PByte(@Reply[4]);
         B[0] := $FF;
         B[1] := 0;
@@ -181,6 +184,8 @@ begin
     Exit(1);
   end;
   var Response: Byte;
+  if Trace <> nil then
+    Trace.Add(Format('maple port %d unit %d cmd %d words %d data0 %.8x', [Port, AUnit, Command, Words, Frame[Min(1, Words - 1)]]));
   var Length := Device.Handle(Command, Recipient, @Frame[1], Words - 1, @Reply[1], Response);
   // The sender field names the device and the sockets that hold expansions.
   var Sender := Byte(Port shl 6);
@@ -214,6 +219,8 @@ begin
     var Port := Integer((Control shr 16) and 3);
     var Words := Integer(Control and $FF) + 1;
     Inc(Address, 8);
+    if (Trace <> nil) and (Pattern <> 0) then
+      Trace.Add(Format('maple pattern %d control %.8x', [Pattern, Control]));
     if Pattern = 0 then
     begin
       for var I := 0 to Words - 1 do
