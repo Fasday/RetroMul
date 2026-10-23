@@ -58,13 +58,37 @@ function ReadFamicomInput(Input: TInputManager): TFamicomKeys;
 
 function ReadPianoInput(Input: TInputManager): TMiracleKeys;
 
+// Reads the aggregate mouse once, avoiding duplicate physical-device aliases.
+procedure ReadRelativeMouse(Input: TInputManager; out DX, DY: Integer; out Buttons: Byte);
+
 implementation
 
 uses
-  Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.Saturn, Core.Adapter.N64,
-  Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD, Core.Adapter.SNES,
-  Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA, Core.Adapter.CPS, GB.Joypad, NES.Input,
-  NES.Types, MD.Console, SNES.Console, System.Math, FMX.Types, PS1.SIO;
+  Core.Adapter.ZX, Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.Saturn,
+  Core.Adapter.N64, Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD,
+  Core.Adapter.SNES, Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA,
+  Core.Adapter.CPS, GB.Joypad, NES.Input, NES.Types, MD.Console, SNES.Console,
+  System.Math, FMX.Types, PS1.SIO;
+
+procedure ReadRelativeMouse(Input: TInputManager; out DX, DY: Integer; out Buttons: Byte);
+begin
+  DX := 0;
+  DY := 0;
+  Buttons := 0;
+  if Input = nil then
+    Exit;
+  for var V in Input.Values do
+    if V.DeviceId = SystemMouseId then
+      if V.Kind = TInputElementKind.RelativeAxis then
+      begin
+        if V.Code = MouseX then
+          DX := Round(EnsureRange(V.Value, -32768.0, 32767.0));
+        if V.Code = MouseY then
+          DY := Round(EnsureRange(V.Value, -32768.0, 32767.0));
+      end
+      else if (V.Kind = TInputElementKind.Button) and (V.Code in [MouseLeft, MouseRight, MouseMiddle]) and (V.Value > 0.5) then
+        Buttons := Buttons or (1 shl V.Code);
+end;
 
 function HidToHostKey(Code: Integer): Word;
 const
@@ -216,6 +240,13 @@ end;
 
 function CoreButtons(const SystemId, Device: string): TEmulatorButtons;
 begin
+  if SystemId = ROM_SYSTEM_ZX then
+  begin
+    if Device = 'none' then
+      Exit([]);
+    Exit([TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left,
+        TEmulatorButton.Right, TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Mode, TEmulatorButton.Select, TEmulatorButton.Start]);
+  end;
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
   begin
     if Device = 'none' then
@@ -265,7 +296,7 @@ begin
   begin
     Include(Result, TEmulatorButton.Select);
     if (SystemId = ROM_SYSTEM_CPS1) or (SystemId = ROM_SYSTEM_CPS2) or (SystemId = ROM_SYSTEM_CPS3) then
-      Result := Result + [TEmulatorButton.C,TEmulatorButton.X,TEmulatorButton.Y,TEmulatorButton.Z,TEmulatorButton.Mode];
+      Result := Result + [TEmulatorButton.C, TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.Z, TEmulatorButton.Mode];
     if ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) then
       Result := Result + [TEmulatorButton.C, TEmulatorButton.X];
     if SystemId = ROM_SYSTEM_GBA then
@@ -281,16 +312,37 @@ const
   Names: array[TEmulatorButton] of string =
     ('↑', '↓', '←', '→', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
 begin
-  if (SystemId=ROM_SYSTEM_CPS1) or (SystemId=ROM_SYSTEM_CPS2) or (SystemId=ROM_SYSTEM_CPS3) then
+  if SystemId = ROM_SYSTEM_ZX then
     case Button of
-      TEmulatorButton.A: Exit('LP');
-      TEmulatorButton.B: Exit('MP');
-      TEmulatorButton.C: Exit('HP');
-      TEmulatorButton.X: Exit('LK');
-      TEmulatorButton.Y: Exit('MK');
-      TEmulatorButton.Z: Exit('HK');
-      TEmulatorButton.Select: Exit('Coin');
-      TEmulatorButton.Mode: Exit('Service');
+      TEmulatorButton.A:
+        Exit('Fire');
+      TEmulatorButton.B:
+        Exit('Tape play/pause');
+      TEmulatorButton.Mode:
+        Exit('Tape rewind');
+      TEmulatorButton.Select:
+        Exit('1');
+      TEmulatorButton.Start:
+        Exit('Enter');
+    end;
+  if (SystemId = ROM_SYSTEM_CPS1) or (SystemId = ROM_SYSTEM_CPS2) or (SystemId = ROM_SYSTEM_CPS3) then
+    case Button of
+      TEmulatorButton.A:
+        Exit('LP');
+      TEmulatorButton.B:
+        Exit('MP');
+      TEmulatorButton.C:
+        Exit('HP');
+      TEmulatorButton.X:
+        Exit('LK');
+      TEmulatorButton.Y:
+        Exit('MK');
+      TEmulatorButton.Z:
+        Exit('HK');
+      TEmulatorButton.Select:
+        Exit('Coin');
+      TEmulatorButton.Mode:
+        Exit('Service');
     end;
   if SystemId = ROM_SYSTEM_GW then
     case Button of
@@ -533,12 +585,22 @@ begin
   FillChar(Keys, SizeOf(Keys), 0);
 
   // Import the existing core keyboard maps once; all later assignments use FMXInput.
-  if (SystemId = ROM_SYSTEM_CPS1) or (SystemId = ROM_SYSTEM_CPS2) or (SystemId = ROM_SYSTEM_CPS3) then
+  if SystemId = ROM_SYSTEM_ZX then
   begin
-    var C := TCPSConfig.Create('',nil);
+    var C := TZXConfig.Create('', nil);
     Config := C;
     for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
-    begin Keys[0,B] := C.Keys[0,B]; Keys[1,B] := C.Keys[1,B]; end;
+      Keys[0, B] := C.Keys[B];
+  end
+  else if (SystemId = ROM_SYSTEM_CPS1) or (SystemId = ROM_SYSTEM_CPS2) or (SystemId = ROM_SYSTEM_CPS3) then
+  begin
+    var C := TCPSConfig.Create('', nil);
+    Config := C;
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+    begin
+      Keys[0, B] := C.Keys[0, B];
+      Keys[1, B] := C.Keys[1, B];
+    end;
   end
   else if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
   begin
@@ -702,7 +764,7 @@ begin
     Count := 12;
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
     Count := 5;
-  if (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
+  if (SystemId = ROM_SYSTEM_ZX) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
     Count := 1;
   if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X) then
     Count := 4;
@@ -714,6 +776,8 @@ begin
       if (SystemId <> ROM_SYSTEM_SC3000) and (B in CoreButtons(SystemId, BindingDevice)) then
       begin
         var Section := 'Controls';
+        if SystemId = ROM_SYSTEM_ZX then
+          Section := 'Keys';
         if (SystemId = ROM_SYSTEM_CPS1) or (SystemId = ROM_SYSTEM_CPS2) or (SystemId = ROM_SYSTEM_CPS3) then
           Section := 'Keys';
         if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_N64) or ((SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X)) or (SystemId = ROM_SYSTEM_SNES) or ((SystemId = ROM_SYSTEM_NEOGEO) or (SystemId = ROM_SYSTEM_NEOGEOCD) or (SystemId = ROM_SYSTEM_NEOGEOAES)) or (SystemId = ROM_SYSTEM_GBA) then
@@ -738,8 +802,10 @@ begin
           end;
 
         // Config keys are stable identifiers, not the displayed GW button labels.
-        if (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
+        if (SystemId = ROM_SYSTEM_ZX) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           case B of
+            TEmulatorButton.Mode:
+              KeyName := 'Mode';
             TEmulatorButton.A:
               KeyName := 'A';
             TEmulatorButton.B:

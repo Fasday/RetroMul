@@ -65,7 +65,7 @@ type
     procedure Snapshot(const Name: string; Loading: Boolean);
   end;
 
-  TN64CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IN64ControllerInput)
+  TN64CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IN64ControllerInput)
   private
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
@@ -80,6 +80,7 @@ type
     FSavePath, FSnapshotDirectory, FError: string;
     procedure Configure;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
     destructor Destroy; override;
     function GetSystemId: string;
@@ -122,6 +123,11 @@ const
     ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Z', 'Start', 'CDown', 'CLeft', 'CUp', 'CRight', 'R');
   DefaultKeys: array[TEmulatorButton] of UInt32 =
     (vkUp, vkDown, vkLeft, vkRight, vkX, vkZ, vkSpace, vkReturn, vkS, vkA, vkW, vkD, vkE);
+
+procedure TN64CoreAdapter.ApplyLiveSettings;
+begin
+  Configure;
+end;
 
 constructor TN64Config.Create(const FileName: string; const Storage: IStorage);
 begin

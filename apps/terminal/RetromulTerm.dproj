@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{4490F9E7-DA81-458B-A9BF-211F6E8C70C0}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -230,6 +230,19 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\..\source\cores\zx\ZX.BlockImage.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.DivStorage.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Timex.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Machine.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Configuration.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.NextDAC.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.TurboSoundFM.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Console.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Tape.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.BetaDisk.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.CMOS.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Emulation.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.ZX.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS.Medal.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS.MSMSound.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS1.MSM.pas"/>

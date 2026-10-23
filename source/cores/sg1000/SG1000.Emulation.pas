@@ -25,6 +25,7 @@ type
     FKeys: TSGHostKeys;
     FPause, FReset, FAudioEnabled, FAvailable: Boolean;
     FVolume: Single;
+    FOptions: TSGOptions;
     FFrame: TEmulatorFrame;
     FError, FAudioError: string;
     procedure Publish(Console: TSGConsole);
@@ -33,10 +34,11 @@ type
   public
     SnapshotDirectory: string;
     SaveFile: string;
-    Options: TSGOptions;
     MapperHint: Integer;
     TapeFile: string;
     TapeAutoPlay: Boolean;
+    procedure ConfigureOptions(const Value: TSGOptions);
+    property Options: TSGOptions read FOptions write ConfigureOptions;
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   public
     constructor Create(const Data: TBytes; SC3000, PAL: Boolean; const Storage: IStorage; Model: Integer = -1; const BIOS: TBytes = nil; WarmBoot: Boolean = True);
@@ -121,6 +123,17 @@ begin
   end;
   if Wake then
     FWake.SetEvent;
+end;
+
+procedure TSGWorker.ConfigureOptions(const Value: TSGOptions);
+begin
+  FLock.Acquire;
+  try
+    FOptions := Value;
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
 end;
 
 procedure TSGWorker.RequestReset;
@@ -299,7 +312,12 @@ begin
             if Loading then
             begin
               LoadCoreSnapshot(Path, CoreId, FData, Transfer, FStorage);
-              Console.ApplyOptions(Options);
+              FLock.Acquire;
+              try
+                Console.ApplyOptions(FOptions);
+              finally
+                FLock.Release;
+              end;
               if Audio <> nil then
                 Audio.Clear;
               Publish(Console);
@@ -316,6 +334,7 @@ begin
           end);
         FLock.Acquire;
         try
+          Console.ApplyOptions(FOptions);
           Input := FInput;
           Keys := FKeys;
           Paused := FPause;

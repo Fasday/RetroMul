@@ -103,12 +103,12 @@ begin
   FCPU.IYL := InitialLow;
   FCPU.StackPointer := Stack;
   if Play = 0 then
-    for var I := 0 to High(Passive) do
-      RAM[I] := Passive[I]
+    for var i := 0 to High(Passive) do
+      RAM[i] := Passive[i]
   else
   begin
-    for var I := 0 to High(Active) do
-      RAM[I] := Active[I];
+    for var i := 0 to High(Active) do
+      RAM[i] := Active[i];
     RAM[9] := Play and 255;
     RAM[10] := Play shr 8;
   end;
@@ -136,6 +136,7 @@ end;
 procedure TZXAudioMachine.PortWrite(Address, Value: Cardinal);
 begin
   Value := Value and 255;
+
   // CPC uses an 8255 latch; Spectrum uses partially decoded AY ports.
   if (Address shr 8) = $F4 then
     FCPCAddress := Value
@@ -179,7 +180,7 @@ begin
   FSamplePhase := FSamplePhase - Count;
   FSumL := 0;
   FSumR := 0;
-  for var I := 1 to Count do
+  for var i := 1 to Count do
   begin
     if FDebt = 0 then
       FDebt := Z80DoInstruction(FCPU, FCallbacks);

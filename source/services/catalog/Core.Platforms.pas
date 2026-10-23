@@ -10,7 +10,7 @@ uses
 type
   TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
     SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn, NeoGeoAES, NeoGeoPocket, NeoGeoPocketColor,
-    CPS1, CPS2, CPS3, PS1);
+    CPS1, CPS2, CPS3, ZXSpectrum, PS1);
 
 type
   // Stable system IDs and settings keys preserve existing collections and INI files.
@@ -134,6 +134,9 @@ begin
   RegisterPlatform(TRomSystem.PCECD, ROM_SYSTEM_PCECD, 'PC Engine CD', 'PCE CD',
     'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcenginecd', ['pcenginecd', 'pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
     'PCE', 'pcecd', 5);
+  RegisterPlatform(TRomSystem.ZXSpectrum, 'zx', 'ZX Spectrum', 'ZX',
+    'Sinclair', 'ZX Spectrum 48K 128K +2 Pentagon 128K TR-DOS', 'zxspectrum', ['zxspectrum', 'zx', 'spectrum'],
+    ['.sna', '.z80', '.tap', '.tzx', '.trd', '.scl', '.dsk', '.mmc', '.ide', '.dck', '.pro', '.kdi'], 'ZXSpectrum', 'zx', 2);
   FItems.Sort(TComparer<TPlatformInfo>.Construct(
     function(const A, B: TPlatformInfo): Integer
     begin

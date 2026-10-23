@@ -144,7 +144,7 @@ begin
   if Location.StartsWith('content://', True) then
     SourceFolder := Location;
   var Folders := TArray<string>.Create(SourceFolder,
-    TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD),
+    Storage.RomFolder(ROM_SYSTEM_NEOGEOCD),
     TPath.Combine(Storage.Root, 'bios'), Storage.Root);
   var Names := TArray<string>.Create('neocd.bin', 'neocd_z.rom', 'neocd_t.bin', 'neocd_f.bin', 'top-sp1.bin', 'neocd_t.rom', 'front-sp1.bin', 'neocd_f.rom');
   if BIOSName <> '' then
@@ -210,7 +210,7 @@ procedure TNeoGeoCartridge.ConfigureHardware(const Storage: IStorage; const Loca
       Result := Storage.ReadBytes(Name)
     else
     begin
-      for var Folder in TArray<string>.Create(ExtractFilePath(Location), TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEO), TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOAES), TPath.Combine(Storage.RomFolder, ROM_SYSTEM_NEOGEOCD), TPath.Combine(Storage.Root, 'bios')) do
+      for var Folder in TArray<string>.Create(ExtractFilePath(Location), Storage.RomFolder(ROM_SYSTEM_NEOGEO), Storage.RomFolder(ROM_SYSTEM_NEOGEOAES), Storage.RomFolder(ROM_SYSTEM_NEOGEOCD), TPath.Combine(Storage.Root, 'bios')) do
       begin
         if Storage.Exists(TPath.Combine(Folder, Name)) then
           Exit(Storage.ReadBytes(TPath.Combine(Folder, Name)));

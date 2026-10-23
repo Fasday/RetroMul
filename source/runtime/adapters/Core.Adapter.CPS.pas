@@ -70,7 +70,7 @@ type
     function TakeError: string;
   end;
 
-  TCPSCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationVirtualControls, IEmulationAudioDiagnostics, IEmulationSnapshotLocation)
+  TCPSCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationVirtualControls, IEmulationAudioDiagnostics, IEmulationSnapshotLocation)
   private
     FDisc: TCDDisc;
     FCart: TCPSCartridge;
@@ -85,6 +85,7 @@ type
     FError, FAudioError: string;
     procedure Configure;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
     destructor Destroy; override;
     function GetSystemId: string;
@@ -123,6 +124,11 @@ uses
 
 const
   KeyNames: array[TEmulatorButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+
+procedure TCPSCoreAdapter.ApplyLiveSettings;
+begin
+  Configure;
+end;
 
 procedure TCPSAudioBuffer.Clear(Audio: TPCMAudio);
 begin

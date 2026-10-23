@@ -437,6 +437,13 @@ end;
 
 procedure TInputController.PollHostInput;
 begin
+  var MouseInput: IEmulationMouseInput;
+  var HasMouse := Supports(FState.Session.Emulation, IEmulationMouseInput, MouseInput);
+  if HasMouse and ((FState.Input.Manager = nil) or FState.Input.PollingFailed or not FView.InputHasFocus or
+    FState.Session.OpeningRom or (FState.Settings.View <> nil) or FState.Browser.ViewingLibrary or
+    (FState.Help.View <> nil) or FState.Session.Emulation.IsPaused or FState.Session.EmulationFaulted or
+    RetroDialogVisible(FView) or ((FView.Focused <> nil) and (FView.Focused.GetObject is TCustomEdit))) then
+    MouseInput.SendMouseDelta(0, 0, 0);
   if (FState.Input.Manager = nil) or FState.Input.PollingFailed then
     Exit;
 
@@ -510,6 +517,13 @@ begin
   if (ssCtrl in Shift) then
     Input := Default(TEmulatorInput);
   FState.Session.Emulation.SetGamepadInput(Input);
+  if HasMouse then
+  begin
+    var DX, DY: Integer;
+    var Buttons: Byte;
+    ReadRelativeMouse(FState.Input.Manager, DX, DY, Buttons);
+    MouseInput.SendMouseDelta(DX, DY, Buttons);
+  end;
   FView.UpdatePeripheralInput;
   var Peripheral: INesPeripheralCore;
   if Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) then
@@ -789,7 +803,8 @@ begin
     Result.Buttons12 := Host.Buttons12;
     var VirtualAnalog := Result.Analog[0];
     Result.Analog := Host.Analog;
-    if VirtualAnalog.Valid then Result.Analog[0] := VirtualAnalog;
+    if VirtualAnalog.Valid then
+      Result.Analog[0] := VirtualAnalog;
   end;
 
   if FState.Input.Ports.Devices[0] = 'none' then

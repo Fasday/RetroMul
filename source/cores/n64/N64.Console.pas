@@ -176,7 +176,11 @@ type
     // SP DMA transfers one window may know of (the list never grows, so the
     // beats may read it while the window runs on another thread).
       RSPMaxTransfers = 4096;
-      SpinRounds = 4000;
+    // Spins of the RSP handshake before a thread sleeps (the RSP thread for a
+    // window, the emulation thread for its clocks). Short: a spinning thread
+    // takes from the other one where both share a core (SMT), and they wait
+    // for each other.
+      SpinRounds = 1000;
   private
     type
     // Runs the windows the emulation thread requests (RunThreadedWindow).
@@ -232,6 +236,14 @@ type
     FMaxRDPBands, FRDPBusyFields, FRDPQuietFields, FRDPThreadChanges: Integer;
     FRDPTuneWait: Int64;
     FRDPTimingStale: Boolean;
+    // Queued lists run lazily on FRDPTiming (TN64RDP.Lazy). FRDPFollow trails
+    // it by the latest list (FRDPLastWords, FRDPLastCount; FRDPLastPending: not
+    // run yet) and gives that list's exact clocks where they are used
+    // (ResolveRDPClocks). FRDPFollowStale: copy FRDPTiming's state first.
+    FRDPFollow: TN64RDP;
+    FRDPLastWords: TArray<Cardinal>;
+    FRDPLastCount: Integer;
+    FRDPLastPending, FRDPFollowStale: Boolean;
     // Diagnostics: False runs only the timing RDP (no pixels drawn).
     FRDPDrawing: Boolean;
     // Thread placement (see PlaceThreads): enabled, and the emulation thread
@@ -408,6 +420,7 @@ type
     procedure AudioTick;
     procedure ProcessRDP;
     function QueueRDP(out Consumed: Cardinal): Boolean;
+    procedure ResolveRDPClocks;
     procedure DrainRDP;
     procedure RefreshRDP;
     procedure SetRDPMode(Value: TN64RDPMode);
@@ -711,6 +724,9 @@ begin
   FRSP := TN64RSP.Create(Self);
   FRDP := TN64RDP.Create(Self);
   FRDPTiming := TN64RDP.Create(Self, True);
+  FRDPFollow := TN64RDP.Create(Self, True);
+  FRDPFollow.ClocksOnly := True;
+  FRDPFollowStale := True;
   FRDPDrawing := True;
   // Leave real-time scheduling to the host. Pinning the CPU/RSP to one
   // physical core each prevents migration when another application uses
@@ -780,6 +796,7 @@ begin
   FRSP.Free;
   FRDP.Free;
   FRDPTiming.Free;
+  FRDPFollow.Free;
   FVI.Free;
   FTimeline.Free;
   inherited;
@@ -2874,7 +2891,11 @@ begin
   DrainRDP;
   // Band RDPs count only their own rows' clocks; the timing RDP has them all.
   if (FRDPWorker <> nil) and not FRDPTimingStale then
+  begin
+    if FRDPTiming.LazyClocks then
+      ResolveRDPClocks;
     FRDP.SetWorkClocks(FRDPTiming.WorkClocks);
+  end;
   FCPU.SerializeState(State);
   // The RSP exactly at the current point (no clock run ahead), and its phase.
   RewindRSP;
@@ -3124,6 +3145,8 @@ begin
     end;
     FullSync := FRDPTiming.Execute(FReg[1, 2], FReg[1, 1], (FReg[1, 3] and 1) <> 0, Consumed);
     Clocks := FRDPTiming.WorkClocks;
+    // (A list FRDPFollow did not see.)
+    FRDPFollowStale := True;
   end
   // Command capture needs the drawing RDP on this thread.
   else if (FRDPMode <> TN64RDPMode.Synchronous) and not FRDP.Traced then
@@ -3170,16 +3193,35 @@ begin
     FRDPTiming.Assign(FRDP);
     FRDPWorker.Resync;
     FRDPTimingStale := False;
+    FRDPFollowStale := True;
   end;
+  // FRDPFollow at the state before this list.
+  if FRDPFollowStale then
+    FRDPFollow.Assign(FRDPTiming)
+  else if FRDPLastPending then
+    FRDPFollow.Replay(FRDPLastWords, FRDPLastCount, False);
+  FRDPLastPending := False;
+  // (Until this list's words are kept: an exception leaves it behind.)
+  FRDPFollowStale := True;
   FRDPDone := UInt64(FRDPWorker.Done);
   Inc(FRDPList);
   FRDPPending := True;
   FRDPWorker.BeginList;
+  FRDPTiming.Lazy := True;
+  FRDPTiming.Capture := True;
   try
     Result := FRDPTiming.Execute(FReg[1, 2], FReg[1, 1], (FReg[1, 3] and 1) <> 0, Consumed);
   finally
+    FRDPTiming.Lazy := False;
+    FRDPTiming.Capture := False;
     FRDPWorker.EndList;
   end;
+  FRDPTiming.TakeCaptured(FRDPLastWords, FRDPLastCount);
+  FRDPLastPending := True;
+  FRDPFollowStale := False;
+  // The clocks where they are used (a Full Sync's interrupt) or checked.
+  if FRDPTiming.LazyClocks and (Result or (FRDPMode = TN64RDPMode.Verify)) then
+    ResolveRDPClocks;
   if FRDPMode = TN64RDPMode.Verify then
   begin
     DrainRDP;
@@ -3188,6 +3230,16 @@ begin
       (FRDP.PipelineCrashed <> FRDPTiming.PipelineCrashed) or (FRDP.PendingWords <> FRDPTiming.PendingWords) then
       raise EN64Unsupported.CreateFmt('RDP list %d: worker clocks/crash/pending %d/%s/%d, timing %d/%s/%d', [FRDPList, FRDP.WorkClocks, BoolToStr(FRDP.PipelineCrashed, True), FRDP.PendingWords, FRDPTiming.WorkClocks, BoolToStr(FRDPTiming.PipelineCrashed, True), FRDPTiming.PendingWords]);
   end;
+end;
+
+procedure TN64Console.ResolveRDPClocks;
+begin
+  // The latest queued list's exact clocks: FRDPFollow, at the state before
+  // it, runs it again. (Not after an exception within it.)
+  if not FRDPLastPending then
+    Exit;
+  FRDPTiming.ResolveClocks(FRDPFollow.Replay(FRDPLastWords, FRDPLastCount, True));
+  FRDPLastPending := False;
 end;
 
 procedure TN64Console.DrainRDP;

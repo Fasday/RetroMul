@@ -66,7 +66,7 @@ type
     procedure SetScreenPalette(const Value: Integer);
   end;
 
-  TGBCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IGBCameraInput, IEmulationMotionInput, IEmulationRumbleOutput)
+  TGBCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IGBCameraInput, IEmulationMotionInput, IEmulationRumbleOutput)
   protected
     FThread: TGBEmulationThread;
     FColorHardware: Boolean;
@@ -94,6 +94,7 @@ type
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
   public
+    procedure ApplyLiveSettings;
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string); overload;
     destructor Destroy; override;
@@ -131,6 +132,15 @@ implementation
 uses
   Core.RomFormat, Core.Snapshots, Core.SavePaths, System.Math, System.UITypes,
   GB.ROM, GB.MBC, GBC.EmulationThread;
+
+procedure TGBCoreAdapter.ApplyLiveSettings;
+begin
+  if FThread = nil then
+    Exit;
+  FThread.ScreenPalette := FConfig.ScreenPalette;
+  FThread.RuntimeOptions := FConfig.RuntimeOptions;
+  FThread.SoundVolume := FConfig.AudioVolume;
+end;
 
 function TGBCoreAdapter.GetHasRumble: Boolean;
 begin

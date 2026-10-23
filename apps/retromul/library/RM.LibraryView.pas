@@ -58,6 +58,9 @@ type
     FSaveButtons: array[0..2] of TButton;
     FSaveImages: array[0..2] of TImage;
     FPlatformButtons: TList<TButton>;
+    FConfiguredPlatforms: TList<string>;
+    LayoutLibraryEmptyState, LayoutEmptyMessage: TLayout;
+    ButtonConfigureLibrary: TButton;
     FSidebarPlatformBorders: TList<TRectangle>;
     FNavButtons: array[0..2] of TButton;
     FNavIcons: array[0..2] of TPath;
@@ -70,6 +73,7 @@ type
     FCardWidth: Integer;
     FContinueCollapse, FContinueExtent: Single;
     FOnPlay, FOnSettings, FOnOpen: TNotifyEvent;
+    procedure ClearCards;
     procedure SaveState;
     function FindGame(const Location: string): TLibraryGame;
     procedure LoadRecentGames;
@@ -95,6 +99,7 @@ type
     procedure OpenClick(Sender: TObject);
     procedure SettingsClick(Sender: TObject);
     procedure FilterClick(Sender: TObject);
+    procedure UpdateConfiguredPlatforms;
     procedure UpdatePlatformCombo;
     procedure PlatformChange(Sender: TObject);
     procedure ModeClick(Sender: TObject);
@@ -270,6 +275,7 @@ begin
   FCards := TList<TLibraryCard>.Create;
   FLetterButtons := TList<TButton>.Create;
   FPlatformButtons := TList<TButton>.Create;
+  FConfiguredPlatforms := TList<string>.Create;
   FSidebarPlatformBorders := TList<TRectangle>.Create;
   FState := FStorage.ReadConfig(FStorage.ConfigFile('library'));
   FLimit := 48;
@@ -319,6 +325,11 @@ begin
   LabelGameInfo := FindComponent('LabelGameInfo') as TLabel;
   LabelSavesEmpty := FindComponent('LabelSavesEmpty') as TLabel;
   LabelEmpty := FindComponent('LabelEmpty') as TLabel;
+  LayoutLibraryEmptyState := FindComponent('LayoutLibraryEmptyState') as TLayout;
+  LayoutEmptyMessage := FindComponent('LayoutEmptyMessage') as TLayout;
+  ButtonConfigureLibrary := FindComponent('ButtonConfigureLibrary') as TButton;
+  ButtonConfigureLibrary.OnClick := SettingsClick;
+  LayoutLibraryEmptyState.BringToFront;
   LabelContinueTitle := FindComponent('LabelContinueTitle') as TLabel;
   ImageCover := FindComponent('ImageCover') as TImage;
   ButtonPlay := FindComponent('ButtonPlay') as TButton;
@@ -454,6 +465,7 @@ begin
   FBuilding := True;
   FCards.Free;
   FLetterButtons.Free;
+  FConfiguredPlatforms.Free;
   FPlatformButtons.Free;
   FSidebarPlatformBorders.Free;
   FGames.Free;
@@ -461,50 +473,110 @@ begin
   inherited;
 end;
 
+procedure TLibraryView.ClearCards;
+  procedure Detach(Control: TControl);
+  begin
+    if (Control.Root <> nil) and (Control.Root.Captured <> nil) and (Control.Root.Captured.GetObject = Control) then
+      Control.Root.SetCaptured(nil);
+    Control.OnClick := nil;
+    Control.OnDblClick := nil;
+    Control.OnMouseDown := nil;
+    Control.OnMouseUp := nil;
+    Control.OnTap := nil;
+    Control.TagObject := nil;
+    for var Child in Control.Controls do
+      Detach(Child);
+  end;
+begin
+  for var Card in FCards do
+  begin
+    Detach(Card);
+    Card.Parent := nil;
+    Card.Release;
+  end;
+  FCards.Clear;
+end;
+
 procedure TLibraryView.Reload;
+  function MetadataPath(const Folder, Relative: string): string;
+  begin
+    Result := '';
+    if Relative = '' then
+      Exit;
+    if not Folder.StartsWith('content://', True) then
+      Exit(TPath.Combine(Folder, Relative));
+    // SAF identifiers are opaque: resolve metadata by display names.
+    Result := Folder;
+    var Parts := Relative.Replace('\', '/').Split(['/']);
+    for var I := 0 to High(Parts) do
+    begin
+      if (Parts[I] = '') or (Parts[I] = '.') then
+        Continue;
+      var Candidates: TArray<string>;
+      if I = High(Parts) then
+        Candidates := FStorage.Files(Result)
+      else
+        Candidates := FStorage.Folders(Result);
+      var Found := '';
+      for var Candidate in Candidates do
+        if SameText(FStorage.Describe(Candidate).Name, Parts[I]) then
+        begin
+          Found := Candidate;
+          Break;
+        end;
+      if Found = '' then
+        Exit('');
+      Result := Found;
+    end;
+  end;
+  function MetadataKey(const Location: string): string;
+  begin
+    if Location.StartsWith('content://', True) then
+      Exit(Location);
+    Result := ExpandFileName(Location);
+    {$IFDEF MSWINDOWS}
+    Result := LowerCase(Result);
+    {$ENDIF}
+  end;
 begin
   FBuilding := True;
   FSelected := nil;
   FRecent := nil;
   // Cards reference games. Release them before replacing the catalog.
-  for var Card in FCards do
-    Card.Free;
-  FCards.Clear;
+  ClearCards;
   FGames.Clear;
+  UpdateConfiguredPlatforms;
   try
     for var platform in TPlatformRegistry.All do
     begin
-      // Each alias folder has its own metadata and relative artwork paths.
+      // Optional metadata enriches files found in the configured platform folder.
       var Metadata := TObjectList<TGameList>.Create(True);
       var Lookup := TDictionary<string, TGame>.Create;
       try
-        if not FStorage.RomFolder.StartsWith('content://', True) then
-          for var Candidate in platform.ScanFolders do
+        var Folder := FStorage.RomFolder(platform.Id);
+        if Folder <> '' then
+          for var XMLLocation in FStorage.Files(Folder) do
           begin
-            var Folder := TPath.Combine(FStorage.RomFolder, Candidate);
-            var XML := TPath.Combine(Folder, 'gamelist.xml');
-            if not FStorage.Exists(XML) then
+            if not SameText(FStorage.Describe(XMLLocation).Name, 'gamelist.xml') then
               Continue;
+            var XML := XMLLocation;
             var Catalog := TGameList.Create;
             Metadata.Add(Catalog);
-            var Stream := FStorage.OpenRead(XML);
             try
+              var Stream := FStorage.OpenRead(XML);
               try
                 Catalog.LoadFromStream(Stream);
-              except
-                Catalog.Clear;
+              finally
+                Stream.Free;
               end;
-            finally
-              Stream.Free;
+            except
+              Catalog.Clear;
             end;
             for var Game in Catalog.Games do
             begin
-              Game.Image := Game.GetPhysicalPath(Folder, Game.Image);
-              Game.Box := Game.GetPhysicalPath(Folder, Game.Box);
-              var Key := ExpandFileName(Game.GetPhysicalPath(Folder, Game.Path));
-              {$IFDEF MSWINDOWS}
-              Key := LowerCase(Key);
-              {$ENDIF}
+              Game.Image := MetadataPath(Folder, Game.Image);
+              Game.Box := MetadataPath(Folder, Game.Box);
+              var Key := MetadataKey(MetadataPath(Folder, Game.Path));
               Lookup.AddOrSetValue(Key, Game);
             end;
           end;
@@ -517,10 +589,7 @@ begin
           Item.SystemId := platform.Id;
           Item.Title := TPath.GetFileNameWithoutExtension(FileInfo.Name);
           var Entry: TGame;
-          var Key := ExpandFileName(FileInfo.Location);
-          {$IFDEF MSWINDOWS}
-          Key := LowerCase(Key);
-          {$ENDIF}
+          var Key := MetadataKey(FileInfo.Location);
           if Lookup.TryGetValue(Key, Entry) then
           begin
             if Entry.Name <> '' then
@@ -619,6 +688,7 @@ begin
       FGames.Add(Game);
       Game.FileInfo.Location := Location;
       Game.FileInfo.Name := FState.ReadString('RecentNames', Key, TPath.GetFileName(Location));
+      Game.InLibrary := False;
       Game.SystemId := Platform.Id;
       Game.Title := TPath.GetFileNameWithoutExtension(Game.FileInfo.Name);
       Game.LastPlayed := FState.ReadFloat('Recent', Game.Key, 0);
@@ -643,6 +713,7 @@ begin
     Game.FileInfo.Name := DisplayName;
     if Game.FileInfo.Name = '' then
       Game.FileInfo.Name := TPath.GetFileName(FileName);
+    Game.InLibrary := False;
     Game.SystemId := Platform.Id;
     Game.Title := TPath.GetFileNameWithoutExtension(Game.FileInfo.Name);
     Game.Favorite := FState.ReadBool('Favorites', Game.Key, False);
@@ -780,9 +851,7 @@ begin
 
       if not AppendOnly then
       begin
-        for var Card in FCards do
-          Card.Free;
-        FCards.Clear;
+        ClearCards;
       end;
 
       var SelectedVisible := MatchesList.Contains(FSelected);
@@ -843,7 +912,10 @@ begin
       end;
       ButtonMore.Visible := MatchesList.Count > FLimit;
       LabelEmpty.Visible := MatchesList.Count = 0;
-      if FGames.Count = 0 then
+      LayoutLibraryEmptyState.Visible := MatchesList.Count = 0;
+      ButtonConfigureLibrary.Visible := FConfiguredPlatforms.Count = 0;
+      LayoutEmptyMessage.Height := IfThen(ButtonConfigureLibrary.Visible, 160, 92);
+      if (FGames.Count = 0) or (FConfiguredPlatforms.Count = 0) then
         LabelEmpty.Text := Translate('Your library is empty') + sLineBreak + Translate('Open settings and choose a ROM folder.')
       else
         LabelEmpty.Text := Translate('No games found') + sLineBreak + Translate('Change your search or filter.');
@@ -1115,6 +1187,7 @@ begin
     for var Child in VertScrollBoxPlatforms.Content.Children do
       if Child is TLayout then
         TLayout(Child).Width := VertScrollBoxPlatforms.Width;
+    LayoutEmptyMessage.Width := Min(520, Max(1, LayoutLibraryEmptyState.Width - 32));
     var ContentWidth := Max(1, LayoutBody.Width - 48);
     LayoutContinuePreview.Visible := ContentWidth >= 720;
     FContinueCollapse := 0;
@@ -1156,6 +1229,8 @@ begin
       var Used: Single := 0;
       for var B in FPlatformButtons do
       begin
+        if (B.TagString <> '') and not FConfiguredPlatforms.Contains(B.TagString) then
+          Continue;
         var W: Single := Max(56, Length(LibrarySystemName(B.TagString)) * 8 + 24);
         W := Min(W, ContentWidth);
         if (Used > 0) and (Used + W > ContentWidth) then
@@ -1424,26 +1499,63 @@ end;
 procedure TLibraryView.SettingsClick(Sender: TObject);
 begin
   if Assigned(FOnSettings) then
-    FOnSettings(Self);
+    FOnSettings(Sender);
+end;
+
+procedure TLibraryView.UpdateConfiguredPlatforms;
+begin
+  FConfiguredPlatforms.Clear;
+  for var Platform in TPlatformRegistry.All do
+    if FStorage.RomFolder(Platform.Id) <> '' then
+      FConfiguredPlatforms.Add(Platform.Id);
+  TLayout(FindComponent('LayoutPlatforms')).Visible := FConfiguredPlatforms.Count > 0;
+  VertScrollBoxPlatforms.Visible := FConfiguredPlatforms.Count > 0;
+  if (FSystemFilter <> '') and not FConfiguredPlatforms.Contains(FSystemFilter) then
+    FSystemFilter := '';
+
+  for var Button in FPlatformButtons do
+    Button.Visible := (Button.TagString = '') or FConfiguredPlatforms.Contains(Button.TagString);
+  for var Child in VertScrollBoxPlatforms.Content.Children do
+    if Child is TLayout then
+    begin
+      var Group := TLayout(Child);
+      var Height: Single := 46; // Manufacturer heading and its margins.
+      var HasPlatforms := False;
+      Group.BeginUpdate;
+      try
+        for var Control in Group.Controls do
+          if Control is TButton then
+          begin
+            Control.Visible := FConfiguredPlatforms.Contains(Control.TagString);
+            if Control.Visible then
+            begin
+              Control.Position.Y := Height;
+              Height := Height + Control.Height + Control.Margins.Top + Control.Margins.Bottom;
+              HasPlatforms := True;
+            end;
+          end;
+        Group.Height := Height;
+        Group.Visible := HasPlatforms;
+      finally
+        Group.EndUpdate;
+      end;
+    end;
 end;
 
 procedure TLibraryView.UpdatePlatformCombo;
 begin
-  // Share the button order and translated captions; selection changes here are silent.
   ComboBoxPlatform.OnChange := nil;
   ComboBoxPlatform.Items.BeginUpdate;
   try
+    ComboBoxPlatform.Items.Clear;
     var SelectedIndex := -1;
-    for var i := 0 to FPlatformButtons.Count - 1 do
+    for var Button in FPlatformButtons do
     begin
-      var Button := FPlatformButtons[i];
-      var Caption := LibrarySystemFullName(Button.TagString);
-      if i >= ComboBoxPlatform.Items.Count then
-        ComboBoxPlatform.Items.Add(Caption)
-      else if ComboBoxPlatform.Items[i] <> Caption then
-        ComboBoxPlatform.Items[i] := Caption;
+      if (Button.TagString <> '') and not FConfiguredPlatforms.Contains(Button.TagString) then
+        Continue;
+      var Index := ComboBoxPlatform.Items.AddObject(LibrarySystemFullName(Button.TagString), Button);
       if Button.TagString = FSystemFilter then
-        SelectedIndex := i;
+        SelectedIndex := Index;
     end;
     ComboBoxPlatform.ItemIndex := SelectedIndex;
   finally
@@ -1455,11 +1567,12 @@ end;
 procedure TLibraryView.PlatformChange(Sender: TObject);
 begin
   var Index := ComboBoxPlatform.ItemIndex;
-  if FBuilding or (Index < 0) or (Index >= FPlatformButtons.Count) then
+  if FBuilding or (Index < 0) or (Index >= ComboBoxPlatform.Items.Count) then
     Exit;
-  if FPlatformButtons[Index].TagString = FSystemFilter then
+  var Button := TButton(ComboBoxPlatform.Items.Objects[Index]);
+  if Button.TagString = FSystemFilter then
     Exit;
-  FilterClick(FPlatformButtons[Index]);
+  FilterClick(Button);
 end;
 
 procedure TLibraryView.FilterClick(Sender: TObject);

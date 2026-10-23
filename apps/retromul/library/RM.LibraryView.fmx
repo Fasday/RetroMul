@@ -1027,21 +1027,6 @@
           Size.Height = 180.000000000000000000
           Size.PlatformDefault = False
           TabOrder = 0
-          object LabelEmpty: TLabel
-            Align = Contents
-            StyledSettings = []
-            Margins.Left = 16.000000000000000000
-            Margins.Top = 28.000000000000000000
-            Margins.Right = 16.000000000000000000
-            Margins.Bottom = 20.000000000000000000
-            Size.Width = 572.000000000000000000
-            Size.Height = 132.000000000000000000
-            Size.PlatformDefault = False
-            TextSettings.Font.Size = 18.000000000000000000
-            TextSettings.FontColor = xFFE8ECF1
-            Text = 'No games found.'
-            TabOrder = 0
-          end
           object LayoutCardRows: TLayout
             Align = Top
             Size.Width = 604.000000000000000000
@@ -1063,6 +1048,45 @@
               Text = 'Show more'
               TextSettings.Trimming = Character
               Visible = False
+            end
+          end
+        end
+      end
+      object LayoutLibraryEmptyState: TLayout
+        Align = Contents
+        HitTest = False
+        Size.Width = 604.000000000000000000
+        Size.Height = 608.000000000000000000
+        Size.PlatformDefault = False
+        Visible = False
+        object LayoutEmptyMessage: TLayout
+          Align = Center
+          Size.Width = 520.000000000000000000
+          Size.Height = 160.000000000000000000
+          Size.PlatformDefault = False
+          object LabelEmpty: TLabel
+            Align = Top
+            StyledSettings = []
+            Margins.Bottom = 16.000000000000000000
+            Size.Height = 92.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 18.000000000000000000
+            TextSettings.FontColor = xFFE8ECF1
+            TextSettings.HorzAlign = Center
+            TextSettings.VertAlign = Center
+            Text = 'No games found.'
+          end
+          object LayoutConfigureLibraryAction: TLayout
+            Align = Top
+            Size.Height = 42.000000000000000000
+            Size.PlatformDefault = False
+            object ButtonConfigureLibrary: TButton
+              Align = Center
+              Size.Width = 260.000000000000000000
+              Size.Height = 42.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'buttonstyle_accent'
+              Text = 'Configure library'
             end
           end
         end

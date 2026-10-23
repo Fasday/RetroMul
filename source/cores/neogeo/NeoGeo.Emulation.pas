@@ -32,6 +32,10 @@ type
     FInput, FInput2: TEmulatorButtons;
     FPause, FReset, FAudioEnabled: Boolean;
     FVolume: Single;
+    FCabinetDIPs: Byte;
+    FRequestedCardPath: string;
+    FRequestedCardSize: Integer;
+    FReplaceCard: Boolean;
     FFrame: TEmulatorFrame;
     FAvailable: Boolean;
     FError, FAudioError, FFinalSaveError: string;
@@ -51,6 +55,8 @@ type
     destructor Destroy; override;
     procedure WakeSetEvent;
     procedure Configure(const Input: TEmulatorButtons; Paused, AudioEnabled: Boolean; Volume: Single; const Input2: TEmulatorButtons = []);
+    procedure ConfigureCard(const Path: string; NewCardSize: Integer);
+    procedure ConfigureCabinet(DIPs: Byte);
     procedure ConfigureMedia(CardInserted, CardReadOnly, DiscPresent, TrayOpen: Boolean);
     procedure SaveSnapshot(const Name: string);
     procedure LoadSnapshot(const Name: string);
@@ -97,6 +103,7 @@ begin
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil, False, False, '');
   FCartridge := Cartridge;
+  FCabinetDIPs := Cartridge.CabinetDIPs;
   FCardInserted := Cartridge.CardInserted;
   FCardReadOnly := Cartridge.CardReadOnly;
   FDiscPresent := True;
@@ -190,6 +197,30 @@ begin
   finally
     FLock.Release;
   end;
+end;
+
+procedure TNeoGeoWorker.ConfigureCard(const Path: string; NewCardSize: Integer);
+begin
+  FLock.Acquire;
+  try
+    FRequestedCardPath := Path;
+    FRequestedCardSize := NewCardSize;
+    FReplaceCard := True;
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
+end;
+
+procedure TNeoGeoWorker.ConfigureCabinet(DIPs: Byte);
+begin
+  FLock.Acquire;
+  try
+    FCabinetDIPs := DIPs;
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
 end;
 
 procedure TNeoGeoWorker.ConfigureMedia(CardInserted, CardReadOnly, DiscPresent, TrayOpen: Boolean);
@@ -441,9 +472,17 @@ begin
             Deadline := TStopwatch.GetTimeStamp;
           end);
 
+        var ReplaceCard: Boolean;
+        var CardPath: string;
+        var CardSize: Integer;
         var Input, Input2: TEmulatorButtons;
         FLock.Acquire;
         try
+          ReplaceCard := FReplaceCard;
+          CardPath := FRequestedCardPath;
+          CardSize := FRequestedCardSize;
+          FReplaceCard := False;
+          FCartridge.CabinetDIPs := FCabinetDIPs;
           Input := FInput;
           Input2 := FInput2;
           Paused := FPause;
@@ -466,6 +505,29 @@ begin
           FLock.Release;
         end;
 
+        if ReplaceCard and (Console.CDController = nil) and
+          (CardPath <> FMemoryCardPath) then
+        begin
+          // Read and validate the replacement before touching the active card.
+          var Card: TBytes;
+          if FStorage.Exists(CardPath) then
+            Card := FStorage.ReadBytes(CardPath)
+          else
+          begin
+            SetLength(Card, CardSize);
+            FillChar(Card[0], Length(Card), $FF);
+          end;
+          if (Length(Card) < 2048) or (Length(Card) > 16384) or
+            (Length(Card) mod 2048 <> 0) then
+            raise EReadError.Create('Invalid Neo Geo memory card size');
+          SaveBattery(Console, LastBattery);
+          if FCardSaveError <> '' then
+            raise EInOutError.Create('Neo Geo memory card: ' + FCardSaveError);
+          Console.LoadMemoryCard(Card);
+          FMemoryCardPath := CardPath;
+          FLastCard := Copy(Card);
+          FPendingCard := nil;
+        end;
         if ResetRequested then
         begin
           FrameHints.Pause;

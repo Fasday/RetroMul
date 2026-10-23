@@ -414,6 +414,8 @@ uses
   SMS.Sound.SN76489 in '..\..\source\hardware\audio\SMS.Sound.SN76489.pas',
   ZX.Sound.DAC in '..\..\source\hardware\audio\ZX.Sound.DAC.pas',
   ZX.Sound.YM2149 in '..\..\source\hardware\audio\ZX.Sound.YM2149.pas',
+  ZX.NextDAC in '..\..\source\cores\zx\ZX.NextDAC.pas',
+  ZX.TurboSoundFM in '..\..\source\cores\zx\ZX.TurboSoundFM.pas',
   ZX.Sound.YM2203 in '..\..\source\hardware\audio\ZX.Sound.YM2203.pas',
   HW.PIC16C5x in '..\..\source\hardware\cpu\HW.PIC16C5x.pas',
   HW.SH2 in '..\..\source\hardware\cpu\HW.SH2.pas',
@@ -439,7 +441,20 @@ uses
   Core.Adapter.SG1000 in '..\..\source\runtime\adapters\Core.Adapter.SG1000.pas',
   Core.Adapter.SNES in '..\..\source\runtime\adapters\Core.Adapter.SNES.pas',
   Core.PS1.Playback in '..\..\source\runtime\adapters\Core.PS1.Playback.pas',
-  Core.Adapter.PS1 in '..\..\source\runtime\adapters\Core.Adapter.PS1.pas';
+  Core.Adapter.PS1 in '..\..\source\runtime\adapters\Core.Adapter.PS1.pas',
+  ZX.BlockImage in '..\..\source\cores\zx\ZX.BlockImage.pas',
+  ZX.DivStorage in '..\..\source\cores\zx\ZX.DivStorage.pas',
+  ZX.Timex in '..\..\source\cores\zx\ZX.Timex.pas',
+  ZX.Machine in '..\..\source\cores\zx\ZX.Machine.pas',
+  ZX.Configuration in '..\..\source\cores\zx\ZX.Configuration.pas',
+  ZX.Console in '..\..\source\cores\zx\ZX.Console.pas',
+  ZX.Tape in '..\..\source\cores\zx\ZX.Tape.pas',
+  ZX.BetaDisk in '..\..\source\cores\zx\ZX.BetaDisk.pas',
+  ZX.CMOS in '..\..\source\cores\zx\ZX.CMOS.pas',
+  ZX.Emulation in '..\..\source\cores\zx\ZX.Emulation.pas',
+  Core.Adapter.ZX in '..\..\source\runtime\adapters\Core.Adapter.ZX.pas',
+  RM.Settings.ZX in 'settings\RM.Settings.ZX.pas',
+  RM.Gamepad.ZX in 'devices\gamepads\RM.Gamepad.ZX.pas';
 
 {$R *.res}
 
