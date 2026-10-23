@@ -51,6 +51,10 @@ type
     GDROMHLE: TDCGDROMHLE;
     Flash: TDCFlash;
     Disc: TDCDisc;
+    // Optional diagnostics: device register accesses (not memory), limited
+    // to IOTraceLimit lines.
+    IOTrace: TStrings;
+    IOTraceLimit: Integer;
     constructor Create(const Config: TDCConsoleConfig);
     destructor Destroy; override;
     procedure Reset;
@@ -74,13 +78,23 @@ implementation
 uses
   System.Math, DC.ELF;
 
+procedure TraceIO(Console: TDCConsole; const Kind: string; Address: Cardinal; Value: UInt64; Size: Integer);
+begin
+  if Console.IOTrace.Count < Console.IOTraceLimit then
+    Console.IOTrace.Add(Format('%s%d %.8x=%x pc=%.8x', [Kind, Size, Address, Value, Console.CPU.S.PC]));
+end;
+
 function BusRead(User: Pointer; Address: Cardinal; Size: Integer): UInt64;
 begin
   Result := TDCConsole(User).ReadBus(Address, Size);
+  if TDCConsole(User).IOTrace <> nil then
+    TraceIO(TDCConsole(User), 'R', Address, Result, Size);
 end;
 
 procedure BusWrite(User: Pointer; Address: Cardinal; Value: UInt64; Size: Integer);
 begin
+  if TDCConsole(User).IOTrace <> nil then
+    TraceIO(TDCConsole(User), 'W', Address, Value, Size);
   TDCConsole(User).WriteBus(Address, Value, Size);
 end;
 
@@ -97,10 +111,14 @@ end;
 function OnChipRead(User: Pointer; Address: Cardinal; Size: Integer): Cardinal;
 begin
   Result := TDCConsole(User).Periph.Read(Address, Size);
+  if TDCConsole(User).IOTrace <> nil then
+    TraceIO(TDCConsole(User), 'r', Address, Result, Size);
 end;
 
 procedure OnChipWrite(User: Pointer; Address, Value: Cardinal; Size: Integer);
 begin
+  if TDCConsole(User).IOTrace <> nil then
+    TraceIO(TDCConsole(User), 'w', Address, Value, Size);
   TDCConsole(User).Periph.Write(Address, Value, Size);
 end;
 

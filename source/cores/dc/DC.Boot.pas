@@ -12,7 +12,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.PVR, DC.Disc;
+  System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.PVR, DC.Disc,
+  DC.Flash;
 
 const
   DCStubBase = $8C000800;
@@ -193,11 +194,26 @@ end;
 
 procedure TDCBoot.Sysinfo;
 begin
-  // 8C000068: an eight-byte console ID followed by zeroed fields.
-  var RAM := FMemory.RAM;
+  // 8C000068..8C00007F from the flash: the console ID (1A056), the factory
+  // settings ("00", region, language, broadcast at 1A000), three zero bytes,
+  // then eight bytes of the newest system configuration block (time,
+  // language, sound and autostart). Programs tell a retail console by the
+  // "00" at 8C000070.
+  var Info := FMemory.RAM + (DCSystemIDAddress and $FFFFFF);
+  FillChar(Info^, 24, 0);
   for var I := 0 to 7 do
-    (RAM + (DCSystemIDAddress and $FFFFFF) + Cardinal(I))^ := FMemory.Flash[$1A056 + I];
-  FMemory.TouchRAM(DCSystemIDAddress, 8);
+    Info[I] := FMemory.Flash[$1A056 + I];
+  for var I := 0 to 4 do
+    Info[8 + I] := FMemory.Flash[$1A000 + I];
+  var Block := FMemory.Flash + $1C040;
+  var Last := FMemory.Flash + $20000 - 64;
+  while Block < Last do
+  begin
+    if (Block[0] = 5) and (Block[1] = 0) and (PWord(Block + 62)^ = DCFlashCRC(Block, 62)) then
+      Move(Block[2], Info[16], 8);
+    Inc(Block, 64);
+  end;
+  FMemory.TouchRAM(DCSystemIDAddress, 24);
 end;
 
 function TDCBoot.FlashPartition(Index: Integer; out Offset, Size: Integer): Boolean;

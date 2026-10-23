@@ -31,7 +31,7 @@ type
     FLeadOut: Integer;
     FIdentity: TBytes;
     FCompressedHash: TBytes;
-    FHighDensity: Boolean;
+    FHighDensity, FOverburn: Boolean;
     procedure LoadGDI(Stream: TStream; const Storage: IStorage; const Location: string);
     procedure LoadCDI(const Storage: IStorage; const Location: string);
     procedure LoadCHD(const Storage: IStorage; const Location: string);
@@ -618,7 +618,7 @@ begin
           raise EReadError.Create('Unsupported CDI sector size');
         end;
         if (Mode > 2) or (Pregap < 0) or (Length_ <= 0) or (Total < Pregap + Length_) or (StartLBA < 0) or
-          (StartLBA > 450000) then
+          (StartLBA > 560000) then
           raise EReadError.Create('Invalid CDI track');
         Skip(29);
         if not V2 then
@@ -675,6 +675,8 @@ begin
     if System.Length(FTracks) = 0 then
       raise EReadError.Create('CDI has no tracks');
     FLeadOut := FTracks[High(FTracks)].EndLBA;
+    // Images of overburned CD-Rs may run past 99 minutes.
+    FOverburn := True;
   finally
     Input.Free;
   end;
@@ -802,7 +804,7 @@ end;
 
 procedure TCDDisc.ValidateAndHash;
 begin
-  if (Length(FTracks) = 0) or ((LeadOut > 100 * 60 * 75) and not FHighDensity) or (LeadOut > 560000) then
+  if (Length(FTracks) = 0) or ((LeadOut > 100 * 60 * 75) and not (FHighDensity or FOverburn)) or (LeadOut > 560000) then
     raise EReadError.Create('CD requires a valid track table shorter than 100 minutes');
 
   var Hash := THashSHA2.Create;

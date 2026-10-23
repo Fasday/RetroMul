@@ -242,7 +242,8 @@ begin
       if Func = MapleFuncStorage then
       begin
         // Media information: last block, partition, system/FAT/directory
-        // locations and sizes, icon, save area.
+        // locations and sizes, icon and a reserved byte, then the save area
+        // (user blocks start at 200 and down, executable area of 31 blocks).
         FillChar(Reply^, 7 * 4, 0);
         Reply[0] := MapleFuncStorage;
         var W := PWord(@Reply[1]);
@@ -254,9 +255,8 @@ begin
         W[5] := 253;
         W[6] := 13;
         W[7] := 0;
-        W[8] := 0;
-        W[9] := 200;
-        W[10] := 31;
+        W[8] := 200;
+        W[9] := 31;
         Response := 8;
         Exit(7);
       end;
@@ -453,13 +453,21 @@ begin
   for var Guard := 0 to 63 do
   begin
     var Control := PCardinal(RAM + (Address and $FFFFFC))^;
-    var Destination := PCardinal(RAM + ((Address + 4) and $FFFFFC))^;
     var Pattern := (Control shr 8) and 7;
     var Port := Integer((Control shr 16) and 3);
     var Words := Integer(Control and $FF) + 1;
-    Inc(Address, 8);
     if (Trace <> nil) and (Pattern <> 0) then
       Trace.Add(Format('maple pattern %d control %.8x', [Pattern, Control]));
+    // Only normal transfers carry a receive address and a frame; other
+    // patterns (light gun mode, NOP) are a single instruction word.
+    var Destination: Cardinal := 0;
+    if Pattern = 0 then
+    begin
+      Destination := PCardinal(RAM + ((Address + 4) and $FFFFFC))^;
+      Inc(Address, 8);
+    end
+    else
+      Inc(Address, 4);
     if Pattern = 0 then
     begin
       for var I := 0 to Words - 1 do
