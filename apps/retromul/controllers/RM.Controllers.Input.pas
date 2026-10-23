@@ -828,6 +828,13 @@ begin
           Pad.Buttons := Pad.Buttons or PS1PadL2;
         if (Auxiliary and (1 shl Ord(TPS1Extra.Analog))) <> 0 then
           Pad.AnalogButton := True;
+        // The on-screen right stick (the left one arrives as Analog[0]).
+        var Right := FState.Input.Gamepad.RightAnalogInput;
+        if Right.Valid then
+        begin
+          Pad.RightX := EnsureRange(Integer(Pad.RightX) + Right.X, -32768, 32767);
+          Pad.RightY := EnsureRange(Integer(Pad.RightY) + Right.Y, -32768, 32767);
+        end;
       end;
       PS1Input.SetPS1Controller(Port, Pad);
     end;
