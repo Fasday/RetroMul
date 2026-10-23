@@ -72,7 +72,7 @@ type
 implementation
 
 uses
-  DC.ELF;
+  System.Math, DC.ELF;
 
 function BusRead(User: Pointer; Address: Cardinal; Size: Integer): UInt64;
 begin
@@ -457,8 +457,19 @@ end;
 procedure TDCConsole.StartRender(Sender: Pointer);
 begin
   // The scene renders at once; completion is signalled after a nominal time.
-  var Tiles := Renderer.Render;
-  Renderer.RenderTiles(0, Tiles, 0);
+  // The rasterizer uses nearest rounding without traps on every thread,
+  // whatever FPSCR mode the CPU loop has applied here.
+  var SavedMask := GetExceptionMask;
+  var SavedRound := GetRoundMode;
+  SetExceptionMask(exAllArithmeticExceptions);
+  SetRoundMode(rmNearest);
+  try
+    Renderer.Render;
+    Renderer.RenderAll;
+  finally
+    SetExceptionMask(SavedMask);
+    SetRoundMode(SavedRound);
+  end;
   var Stride := (PVR.R[PVRFBWLineStride shr 2] and $1FF) * 8;
   var Base := PVR.R[PVRFBWSOF1 shr 2] and $7FFFFF;
   var Size := Stride * 1024;

@@ -17,7 +17,8 @@
 interface
 
 uses
-  System.SysUtils, System.Math, System.Classes, DC.Types, DC.Memory, DC.PVR, DC.PVR.TA, DC.PVR.Texture;
+  System.SysUtils, System.Math, System.Classes, System.SyncObjs, DC.Types, DC.Memory, DC.PVR, DC.PVR.TA,
+  DC.PVR.Texture;
 
 const
   TileSize = 32;
@@ -35,6 +36,8 @@ type
     MinX, MinY, MaxX, MaxY: Integer;
     // Modifier volume membership.
     Volume: Integer;
+    // Edges owning the samples on them (left and top edges).
+    TopLeft: array[0..2] of Boolean;
   end;
   PRenderTri = ^TRenderTri;
 
@@ -60,10 +63,37 @@ type
   end;
   PTileBuffers = ^TTileBuffers;
 
+  // Translucent fragments of a tile, linked per pixel in submission order,
+  // for sorting by depth.
+  TFragmentBuffer = record
+    Head, Tail: array[0..TileSize * TileSize - 1] of Integer;
+    Z: TArray<Single>;
+    Tag, Next: TArray<Integer>;
+    Count: Integer;
+    SortZ: TArray<Single>;
+    SortTag: TArray<Integer>;
+  end;
+  PFragmentBuffer = ^TFragmentBuffer;
+
   TRegionEntry = record
     Control: Cardinal;
     Lists: array[0..4] of Cardinal;
     Pass: Integer;
+  end;
+
+  TDCRenderer = class;
+
+  // Renders groups of region entries on its own tile buffers.
+  TDCRenderWorker = class(TThread)
+  private
+    FOwner: TDCRenderer;
+    FSlot: Integer;
+    FStart: TEvent;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(Owner: TDCRenderer; Slot: Integer);
+    destructor Destroy; override;
   end;
 
   TDCRenderer = class
@@ -89,9 +119,21 @@ type
     FPaletteHash: UInt64;
     FFogTable: array[0..127] of Word;
     FBuffers: TArray<TTileBuffers>;
+    FFragments: TArray<TFragmentBuffer>;
+    // Runs of region entries for one tile; workers take them in any order.
+    FGroups: TArray<Integer>;
+    FGroupCount: Integer;
+    FNextGroup: Integer;
+    FPending: Integer;
+    FWorkers: TArray<TDCRenderWorker>;
+    FDone: TEvent;
+    FThreads: Integer;
     // Closing instruction of each modifier volume (1 inside, 2 outside).
     FVolumeMode: TArray<Byte>;
     FScaleX: Integer;
+    procedure SetThreads(Value: Integer);
+    procedure RenderGroups(Slot: Integer);
+    function BuildGroups: Boolean;
     procedure Prepare;
     procedure AddTriangle(Poly: Integer; I0, I1, I2: Integer; Volume: Integer);
     procedure Bin;
@@ -102,9 +144,8 @@ type
     procedure RasterOpaque(B: PTileBuffers; TileX, TileY, List, Pass: Integer);
     procedure ApplyVolumes(B: PTileBuffers; TileX, TileY, List, Pass: Integer; Translucent: Boolean);
     procedure ShadeOpaque(B: PTileBuffers; TileX, TileY: Integer);
-    procedure RasterTranslucent(B: PTileBuffers; TileX, TileY, Pass: Integer; Presort: Boolean);
+    procedure RasterTranslucent(B: PTileBuffers; F: PFragmentBuffer; TileX, TileY, Pass: Integer; Presort: Boolean);
     procedure WriteTile(B: PTileBuffers; TileX, TileY: Integer);
-    function Covers(const T: TRenderTri; PX, PY: Single; out Z: Single): Boolean;
     function DepthPass(Mode: Cardinal; Z, Stored: Single): Boolean; inline;
   public
     PolygonsRendered: Integer;
@@ -115,7 +156,11 @@ type
     function Render: Integer;
     // Tiles of the current render for worker threads (0..TileCount-1).
     procedure RenderTiles(First, Count, Slot: Integer);
+    // Every tile of the current render, on Threads threads (the caller's
+    // included). Tiles are independent, so the result does not depend on it.
+    procedure RenderAll;
     function TileCount: Integer;
+    property Threads: Integer read FThreads write SetThreads;
   end;
 
 implementation
@@ -166,13 +211,120 @@ begin
   FPVR := PVR;
   FTA := TA;
   FTextures := TPVRTextureCache.Create(Memory);
-  SetLength(FBuffers, 1);
+  FDone := TEvent.Create(nil, False, False, '');
+  SetThreads(Min(8, Max(1, TThread.ProcessorCount - 1)));
 end;
 
 destructor TDCRenderer.Destroy;
 begin
+  SetThreads(1);
+  FDone.Free;
   FTextures.Free;
   inherited;
+end;
+
+procedure TDCRenderer.SetThreads(Value: Integer);
+begin
+  Value := EnsureRange(Value, 1, 32);
+  for var W in FWorkers do
+  begin
+    W.Terminate;
+    W.FStart.SetEvent;
+    W.WaitFor;
+    W.Free;
+  end;
+  FWorkers := nil;
+  FThreads := Value;
+  SetLength(FBuffers, Value);
+  SetLength(FFragments, Value);
+  SetLength(FWorkers, Value - 1);
+  for var I := 0 to Value - 2 do
+    FWorkers[I] := TDCRenderWorker.Create(Self, I + 1);
+end;
+
+{ TDCRenderWorker }
+
+constructor TDCRenderWorker.Create(Owner: TDCRenderer; Slot: Integer);
+begin
+  FOwner := Owner;
+  FSlot := Slot;
+  FStart := TEvent.Create(nil, False, False, '');
+  inherited Create(False);
+end;
+
+destructor TDCRenderWorker.Destroy;
+begin
+  inherited;
+  FStart.Free;
+end;
+
+procedure TDCRenderWorker.Execute;
+begin
+  // The rasterizer's floating point: nearest rounding, no traps.
+  SetExceptionMask(exAllArithmeticExceptions);
+  SetRoundMode(rmNearest);
+  while True do
+  begin
+    FStart.WaitFor(INFINITE);
+    if Terminated then
+      Break;
+    FOwner.RenderGroups(FSlot);
+    if TInterlocked.Decrement(FOwner.FPending) = 0 then
+      FOwner.FDone.SetEvent;
+  end;
+end;
+
+function TDCRenderer.BuildGroups: Boolean;
+begin
+  // A tile listed again after another tile starts over with the background,
+  // and the later list wins its framebuffer area; such renders stay serial.
+  if Length(FGroups) < Length(FEntries) + 1 then
+    SetLength(FGroups, Length(FEntries) + 1);
+  var Seen: TArray<Boolean>;
+  SetLength(Seen, 64 * 64);
+  FGroupCount := 0;
+  var Last := -1;
+  for var N := 0 to High(FEntries) do
+  begin
+    var Tile := Integer((FEntries[N].Control shr 8) and $3F) * 64 + Integer((FEntries[N].Control shr 2) and $3F);
+    if Tile = Last then
+      Continue;
+    if Seen[Tile] then
+      Exit(False);
+    Seen[Tile] := True;
+    Last := Tile;
+    FGroups[FGroupCount] := N;
+    Inc(FGroupCount);
+  end;
+  FGroups[FGroupCount] := Length(FEntries);
+  Result := True;
+end;
+
+procedure TDCRenderer.RenderGroups(Slot: Integer);
+begin
+  while True do
+  begin
+    var G := TInterlocked.Increment(FNextGroup) - 1;
+    if G >= FGroupCount then
+      Break;
+    RenderTiles(FGroups[G], FGroups[G + 1] - FGroups[G], Slot);
+  end;
+end;
+
+procedure TDCRenderer.RenderAll;
+begin
+  if (Length(FWorkers) = 0) or (Length(FEntries) < 2) or not BuildGroups then
+  begin
+    RenderTiles(0, Length(FEntries), 0);
+    Exit;
+  end;
+  FNextGroup := 0;
+  FPending := Length(FWorkers);
+  FDone.ResetEvent;
+  for var W in FWorkers do
+    W.FStart.SetEvent;
+  RenderGroups(0);
+  FDone.WaitFor(INFINITE);
 end;
 
 function TDCRenderer.TileCount: Integer;
@@ -226,6 +378,8 @@ begin
   T.EA[0] := (Y1 - Y2) * S; T.EB[0] := (X2 - X1) * S; T.EC[0] := (X1 * Y2 - X2 * Y1) * S;
   T.EA[1] := (Y2 - Y0) * S; T.EB[1] := (X0 - X2) * S; T.EC[1] := (X2 * Y0 - X0 * Y2) * S;
   T.EA[2] := (Y0 - Y1) * S; T.EB[2] := (X1 - X0) * S; T.EC[2] := (X0 * Y1 - X1 * Y0) * S;
+  for var K := 0 to 2 do
+    T.TopLeft[K] := (T.EA[K] > 0) or ((T.EA[K] = 0) and (T.EB[K] > 0));
   T.InvArea := 1 / Abs(Area);
   // Z plane from the barycentric weights.
   var Z0 := V[I0].Z;
@@ -451,21 +605,71 @@ begin
   Result := Length(FEntries);
 end;
 
-function TDCRenderer.Covers(const T: TRenderTri; PX, PY: Single; out Z: Single): Boolean;
+function IsNaNSingle(const V: Single): Boolean; inline;
 begin
-  // A sample on an edge belongs to the triangle only for left/top edges, so
-  // triangles sharing an edge cover each pixel once.
+  Result := (PCardinal(@V)^ and $7FFFFFFF) > $7F800000;
+end;
+
+function IsNaNDouble(const V: Double): Boolean; inline;
+begin
+  Result := (PUInt64(@V)^ and $7FFFFFFFFFFFFFFF) > $7FF0000000000000;
+end;
+
+// A sample on an edge belongs to the triangle only for left/top edges, so
+// triangles sharing an edge cover each pixel once.
+function Covers(const T: TRenderTri; PX, PY: Single; out Z: Single): Boolean; inline;
+begin
   Result := False;
-  for var K := 0 to 2 do
-  begin
-    var E := T.EA[K] * PX + T.EB[K] * PY + T.EC[K];
-    if E < 0 then
-      Exit;
-    if (E = 0) and not ((T.EA[K] > 0) or ((T.EA[K] = 0) and (T.EB[K] > 0))) then
-      Exit;
-  end;
+  var E := T.EA[0] * PX + T.EB[0] * PY + T.EC[0];
+  if (E < 0) or ((E = 0) and not T.TopLeft[0]) then
+    Exit;
+  E := T.EA[1] * PX + T.EB[1] * PY + T.EC[1];
+  if (E < 0) or ((E = 0) and not T.TopLeft[1]) then
+    Exit;
+  E := T.EA[2] * PX + T.EB[2] * PY + T.EC[2];
+  if (E < 0) or ((E = 0) and not T.TopLeft[2]) then
+    Exit;
   Result := True;
   Z := T.ZC + T.ZA * (PX - T.X0) + T.ZB * (PY - T.Y0);
+end;
+
+// Conservative range of tile columns X0..X1 whose sample centres can be
+// inside the triangle on the row at PY (Left: the tile's first column);
+// coverage is still tested exactly per sample. The margin exceeds the
+// rounding of the single-precision edge functions.
+function RowSpan(const T: TRenderTri; PY: Single; Left: Integer; var X0, X1: Integer): Boolean;
+begin
+  for var K := 0 to 2 do
+  begin
+    var A: Double := T.EA[K];
+    var Magnitude := Abs(Double(T.EB[K]) * PY) + Abs(Double(T.EC[K]));
+    var C := Double(T.EB[K]) * PY + T.EC[K];
+    if A = 0 then
+    begin
+      if C < -(Magnitude * 1E-6 + 1E-30) then
+        Exit(False);
+      Continue;
+    end;
+    var Margin := 1 + Magnitude * 1E-6 / Abs(A);
+    var Bound := -C / A - Left - 0.5;
+    if A > 0 then
+    begin
+      Bound := Bound - Margin;
+      if Bound > X1 then
+        Exit(False);
+      if Bound > X0 then
+        X0 := Floor(Bound);
+    end
+    else
+    begin
+      Bound := Bound + Margin;
+      if Bound < X0 then
+        Exit(False);
+      if Bound < X1 then
+        X1 := Ceil(Bound);
+    end;
+  end;
+  Result := X0 <= X1;
 end;
 
 function TDCRenderer.DepthPass(Mode: Cardinal; Z, Stored: Single): Boolean;
@@ -530,50 +734,51 @@ begin
   end;
 end;
 
-function SampleTexture(T: TPVRTexture; U, V: Single; TSP: Cardinal; Level: Integer): Cardinal;
-var
-  W, H: Integer;
-
-  function Wrap(C, Size: Integer; Clamp, Flip: Boolean): Integer;
+function WrapCoord(C, Size: Integer; Clamp, Flip: Boolean): Integer; inline;
+begin
+  if Clamp then
   begin
-    if Clamp then
-      Exit(EnsureRange(C, 0, Size - 1));
-    if Flip then
-    begin
-      var Period := C mod (Size * 2);
-      if Period < 0 then
-        Inc(Period, Size * 2);
-      if Period >= Size then
-        Result := Size * 2 - 1 - Period
-      else
-        Result := Period;
-    end
+    if C < 0 then
+      Exit(0);
+    if C > Size - 1 then
+      Exit(Size - 1);
+    Exit(C);
+  end;
+  if Flip then
+  begin
+    var Period := C mod (Size * 2);
+    if Period < 0 then
+      Inc(Period, Size * 2);
+    if Period >= Size then
+      Result := Size * 2 - 1 - Period
     else
-    begin
-      Result := C mod Size;
-      if Result < 0 then
-        Inc(Result, Size);
-    end;
-  end;
-
-  function Fetch(X, Y: Integer): Cardinal;
+      Result := Period;
+  end
+  else
   begin
-    X := Wrap(X, W, (TSP and $10000) <> 0, (TSP and $40000) <> 0);
-    Y := Wrap(Y, H, (TSP and $8000) <> 0, (TSP and $20000) <> 0);
-    Result := T.Texels[T.LevelOffset[Level] + Y * W + X];
+    Result := C mod Size;
+    if Result < 0 then
+      Inc(Result, Size);
   end;
+end;
 
+function SampleTexture(T: TPVRTexture; U, V: Single; TSP: Cardinal; Level: Integer): Cardinal;
 begin
   if Level >= T.Levels then
     Level := T.Levels - 1;
-  W := Max(1, T.Width shr Level);
-  H := Max(1, T.Height shr Level);
+  var W := Max(1, T.Width shr Level);
+  var H := Max(1, T.Height shr Level);
+  var ClampU := (TSP and $10000) <> 0;
+  var FlipU := (TSP and $40000) <> 0;
+  var ClampV := (TSP and $8000) <> 0;
+  var FlipV := (TSP and $20000) <> 0;
+  var Texels: PCardinal := @T.Texels[T.LevelOffset[Level]];
   var FU := U * W;
   var FV := V * H;
-  if IsNan(FU) or IsNan(FV) or (Abs(FU) > 1E8) or (Abs(FV) > 1E8) then
+  if IsNaNDouble(FU) or IsNaNDouble(FV) or (Abs(FU) > 1E8) or (Abs(FV) > 1E8) then
     Exit(T.Texels[0]);
   if ((TSP shr 13) and 3) = 0 then
-    Exit(Fetch(Floor(FU), Floor(FV)));
+    Exit(Texels[WrapCoord(Floor(FV), H, ClampV, FlipV) * W + WrapCoord(Floor(FU), W, ClampU, FlipU)]);
   // Bilinear (trilinear passes are treated as bilinear on one level).
   FU := FU - 0.5;
   FV := FV - 0.5;
@@ -581,10 +786,14 @@ begin
   var Y0 := Floor(FV);
   var FX := Round((FU - X0) * 256);
   var FY := Round((FV - Y0) * 256);
-  var C00 := Fetch(X0, Y0);
-  var C10 := Fetch(X0 + 1, Y0);
-  var C01 := Fetch(X0, Y0 + 1);
-  var C11 := Fetch(X0 + 1, Y0 + 1);
+  var XA := WrapCoord(X0, W, ClampU, FlipU);
+  var XB := WrapCoord(X0 + 1, W, ClampU, FlipU);
+  var YA := WrapCoord(Y0, H, ClampV, FlipV) * W;
+  var YB := WrapCoord(Y0 + 1, H, ClampV, FlipV) * W;
+  var C00 := Texels[YA + XA];
+  var C10 := Texels[YA + XB];
+  var C01 := Texels[YB + XA];
+  var C11 := Texels[YB + XB];
   Result := 0;
   for var Shift := 0 to 3 do
   begin
@@ -601,7 +810,7 @@ begin
   var T: PRenderTri := @FTris[Tri];
   var P: PPVRPoly := @FContext.Polys[T.Poly];
   var RP: PRenderPoly := @FPolys[T.Poly];
-  var Vs := FContext.Vertices;
+  var Vs: PPVRVertex := @FContext.Vertices[0];
   var VA: PPVRVertex := @Vs[T.V0];
   var VB: PPVRVertex := @Vs[T.V1];
   var VC: PPVRVertex := @Vs[T.V2];
@@ -611,7 +820,7 @@ begin
   var W2 := 1 - W0 - W1;
   var Z := W0 * VA.Z + W1 * VB.Z + W2 * VC.Z;
   var P0, P1, P2: Single;
-  if (Z <> 0) and not IsNan(Z) and (VA.Z > 0) and (VB.Z > 0) and (VC.Z > 0) then
+  if (Z <> 0) and not IsNaNDouble(Z) and (VA.Z > 0) and (VB.Z > 0) and (VC.Z > 0) then
   begin
     P0 := W0 * VA.Z / Z;
     P1 := W1 * VB.Z / Z;
@@ -781,7 +990,11 @@ begin
     for var Y := Y0 to Y1 do
     begin
       var PY := TileY * TileSize + Y + 0.5;
-      for var X := X0 to X1 do
+      var SX0 := X0;
+      var SX1 := X1;
+      if not RowSpan(T^, PY, TileX * TileSize, SX0, SX1) then
+        Continue;
+      for var X := SX0 to SX1 do
       begin
         var PX := TileX * TileSize + X + 0.5;
         var Z: Single;
@@ -851,13 +1064,19 @@ begin
     var Y0 := Max(T.MinY - TileY * TileSize, 0);
     var Y1 := Min(T.MaxY - TileY * TileSize, TileSize - 1);
     for var Y := Y0 to Y1 do
-      for var X := X0 to X1 do
+    begin
+      var SX0 := X0;
+      var SX1 := X1;
+      if not RowSpan(T^, TileY * TileSize + Y + 0.5, TileX * TileSize, SX0, SX1) then
+        Continue;
+      for var X := SX0 to SX1 do
       begin
         var Z: Single;
         var I := Y * TileSize + X;
         if Covers(T^, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, Z) and (Z > B.Depth[I]) then
           B.Stencil[I] := B.Stencil[I] xor 1;
       end;
+    end;
   end;
 
 end;
@@ -913,7 +1132,8 @@ begin
   end;
 end;
 
-procedure TDCRenderer.RasterTranslucent(B: PTileBuffers; TileX, TileY, Pass: Integer; Presort: Boolean);
+procedure TDCRenderer.RasterTranslucent(B: PTileBuffers; F: PFragmentBuffer; TileX, TileY, Pass: Integer;
+  Presort: Boolean);
 begin
   var Bin := (TileY * FTilesX + TileX) * 5 + TAListTranslucent;
   if FBinCount[Bin] = 0 then
@@ -934,7 +1154,12 @@ begin
       var Y0 := Max(T.MinY - TileY * TileSize, 0);
       var Y1 := Min(T.MaxY - TileY * TileSize, TileSize - 1);
       for var Y := Y0 to Y1 do
-        for var X := X0 to X1 do
+      begin
+        var SX0 := X0;
+        var SX1 := X1;
+        if not RowSpan(T^, TileY * TileSize + Y + 0.5, TileX * TileSize, SX0, SX1) then
+          Continue;
+        for var X := SX0 to SX1 do
         begin
           var PX := TileX * TileSize + X + 0.5;
           var PY := TileY * TileSize + Y + 0.5;
@@ -950,71 +1175,103 @@ begin
           var Src := ShadePixel(Index, PX, PY, B.Modified[I] <> 0, B.Color[I], Alpha);
           B.Color[I] := Blend(Src, B.Color[I], P.TSP);
         end;
+      end;
     end;
     Exit;
   end;
-  // Autosort: repeatedly pick, per pixel, the farthest fragment behind the
-  // previous layer (smaller 1/w is farther); ties follow submission order.
+  // Autosort: per pixel, the fragments behind the opaque surface blend from
+  // the farthest (smaller 1/w) to the nearest; ties follow submission order.
+  // At most 256 layers, as the hardware's sorting depth.
   for var I := 0 to TileSize * TileSize - 1 do
   begin
-    B.PeelDepth[I] := -1E30;
-    B.PeelTag[I] := -1;
+    F.Head[I] := -1;
+    F.Tail[I] := -1;
   end;
-  for var Layer := 0 to 255 do
+  F.Count := 0;
+  for var K := FBinStart[Bin] to FBinStart[Bin] + FBinCount[Bin] - 1 do
   begin
-    var Any := False;
-    for var I := 0 to TileSize * TileSize - 1 do
+    var Index := FBinItems[K];
+    var T: PRenderTri := @FTris[Index];
+    if FContext.Polys[T.Poly].Pass <> Pass then
+      Continue;
+    var X0 := Max(T.MinX - TileX * TileSize, 0);
+    var X1 := Min(T.MaxX - TileX * TileSize, TileSize - 1);
+    var Y0 := Max(T.MinY - TileY * TileSize, 0);
+    var Y1 := Min(T.MaxY - TileY * TileSize, TileSize - 1);
+    for var Y := Y0 to Y1 do
     begin
-      B.BestDepth[I] := 1E30;
-      B.BestTag[I] := -1;
-    end;
-    for var K := FBinStart[Bin] to FBinStart[Bin] + FBinCount[Bin] - 1 do
-    begin
-      var Index := FBinItems[K];
-      var T: PRenderTri := @FTris[Index];
-      var P: PPVRPoly := @FContext.Polys[T.Poly];
-      if P.Pass <> Pass then
+      var SX0 := X0;
+      var SX1 := X1;
+      if not RowSpan(T^, TileY * TileSize + Y + 0.5, TileX * TileSize, SX0, SX1) then
         Continue;
-      var X0 := Max(T.MinX - TileX * TileSize, 0);
-      var X1 := Min(T.MaxX - TileX * TileSize, TileSize - 1);
-      var Y0 := Max(T.MinY - TileY * TileSize, 0);
-      var Y1 := Min(T.MaxY - TileY * TileSize, TileSize - 1);
-      for var Y := Y0 to Y1 do
-        for var X := X0 to X1 do
+      for var X := SX0 to SX1 do
+      begin
+        var Z: Single;
+        if not Covers(T^, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, Z) then
+          Continue;
+        var I := Y * TileSize + X;
+        // In front of the opaque surface.
+        if (Z < B.Depth[I]) or (Z < -1E30) or IsNaNSingle(Z) then
+          Continue;
+        var N := F.Count;
+        if N >= Length(F.Z) then
         begin
-          var Z: Single;
-          if not Covers(T^, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, Z) then
-            Continue;
-          var I := Y * TileSize + X;
-          // In front of the opaque surface.
-          if Z < B.Depth[I] then
-            Continue;
-          // Strictly after the previous layer in (depth, order).
-          if (Z < B.PeelDepth[I]) or ((Z = B.PeelDepth[I]) and (Index <= B.PeelTag[I])) then
-            Continue;
-          if (Z < B.BestDepth[I]) or ((Z = B.BestDepth[I]) and (Index < B.BestTag[I])) then
-          begin
-            B.BestDepth[I] := Z;
-            B.BestTag[I] := Index;
-          end;
+          var Size := Max(4096, N * 2);
+          SetLength(F.Z, Size);
+          SetLength(F.Tag, Size);
+          SetLength(F.Next, Size);
         end;
+        F.Z[N] := Z;
+        F.Tag[N] := Index;
+        F.Next[N] := -1;
+        if F.Tail[I] < 0 then
+          F.Head[I] := N
+        else
+          F.Next[F.Tail[I]] := N;
+        F.Tail[I] := N;
+        F.Count := N + 1;
+      end;
     end;
-    for var I := 0 to TileSize * TileSize - 1 do
+  end;
+  if F.Count = 0 then
+    Exit;
+  for var I := 0 to TileSize * TileSize - 1 do
+  begin
+    var Link := F.Head[I];
+    if Link < 0 then
+      Continue;
+    // Stable insertion by depth over fragments in submission order.
+    var Count := 0;
+    while Link >= 0 do
     begin
-      var Tag := B.BestTag[I];
-      if Tag < 0 then
-        Continue;
-      Any := True;
-      B.PeelDepth[I] := B.BestDepth[I];
-      B.PeelTag[I] := Tag;
-      var X := I mod TileSize;
-      var Y := I div TileSize;
+      if Count >= Length(F.SortZ) then
+      begin
+        SetLength(F.SortZ, Max(64, Count * 2));
+        SetLength(F.SortTag, Length(F.SortZ));
+      end;
+      var Z := F.Z[Link];
+      var Tag := F.Tag[Link];
+      var J := Count;
+      while (J > 0) and (F.SortZ[J - 1] > Z) do
+      begin
+        F.SortZ[J] := F.SortZ[J - 1];
+        F.SortTag[J] := F.SortTag[J - 1];
+        Dec(J);
+      end;
+      F.SortZ[J] := Z;
+      F.SortTag[J] := Tag;
+      Inc(Count);
+      Link := F.Next[Link];
+    end;
+    var PX := TileX * TileSize + (I mod TileSize) + 0.5;
+    var PY := TileY * TileSize + (I div TileSize) + 0.5;
+    for var L := 0 to Min(Count, 256) - 1 do
+    begin
+      var Tag := F.SortTag[L];
       var Alpha: Integer;
-      var Src := ShadePixel(Tag, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, B.Modified[I] <> 0, B.Color[I], Alpha);
+      var Src := ShadePixel(Tag, PX, PY, B.Modified[I] <> 0, B.Color[I], Alpha);
       B.Color[I] := Blend(Src, B.Color[I], FContext.Polys[FTris[Tag].Poly].TSP);
     end;
-    if not Any then
-      Break;
   end;
 end;
 
@@ -1158,7 +1415,7 @@ begin
       FillChar(B.Modified, SizeOf(B.Modified), 0);
       if (E.Lists[3] and $80000000) = 0 then
         ApplyVolumes(B, TX, TY, TAListTranslucentMod, E.Pass, True);
-      RasterTranslucent(B, TX, TY, E.Pass, (E.Control and $20000000) <> 0);
+      RasterTranslucent(B, @FFragments[Slot], TX, TY, E.Pass, (E.Control and $20000000) <> 0);
     end;
     // no_writeout (bit 28) keeps the tile for a following pass.
     if (E.Control and $10000000) = 0 then
