@@ -89,7 +89,7 @@ type
     FInterrupts: TDCInterrupts;
     FFIFO: array[0..7] of Cardinal;
     FFIFOCount: Integer;
-    FFrame: TArray<Cardinal>;
+    FFrame, FLine: TArray<Cardinal>;
     FFrameWidth, FFrameHeight: Integer;
     FFrameReady: Boolean;
     FPAL: Boolean;
@@ -257,25 +257,43 @@ begin
     Width := Words;
   end;
   var Interlaced := (R[PVRSPGControl shr 2] and $10) <> 0;
+  // Each line shown twice (fb_line_double) or each pixel (pixel_double, for
+  // half-width buffers).
+  var LineDouble := not Interlaced and ((Ctrl and 2) <> 0);
+  var PixelDouble := ((R[PVRVOControl shr 2] and $100) <> 0) and (Width <= 400);
   var Height := Lines;
-  if Interlaced then
+  if Interlaced or LineDouble then
     Height := Lines * 2;
   if (Width < 16) or (Width > 1024) or (Height < 16) or (Height > 1024) then
   begin
     Width := 640;
     Height := 480;
+    PixelDouble := False;
   end;
-  if (Width <> FFrameWidth) or (Height <> FFrameHeight) then
+  // Buffers a few lines or pixels short of the standard picture sit in it
+  // with the border colour around, so the output size stays put.
+  var OutWidth := Width;
+  if PixelDouble then
+    OutWidth := Width * 2;
+  var OutHeight := Height;
+  if (OutHeight >= 470) and (OutHeight < 480) then
+    OutHeight := 480;
+  if (OutWidth >= 630) and (OutWidth < 640) then
+    OutWidth := 640;
+  var PadX := (OutWidth - Width * (1 + Ord(PixelDouble))) div 2;
+  var PadY := (OutHeight - Height) div 2;
+  if (OutWidth <> FFrameWidth) or (OutHeight <> FFrameHeight) then
   begin
-    FFrameWidth := Width;
-    FFrameHeight := Height;
-    SetLength(FFrame, Width * Height);
+    FFrameWidth := OutWidth;
+    FFrameHeight := OutHeight;
+    SetLength(FFrame, OutWidth * OutHeight);
   end;
   var Border := $FF000000 or (R[PVRBorderColor shr 2] and $FFFFFF);
-  if (Ctrl and 1) = 0 then
-  begin
+  if ((Ctrl and 1) = 0) or (PadX > 0) or (PadY > 0) then
     for var I := 0 to High(FFrame) do
       FFrame[I] := Border;
+  if (Ctrl and 1) = 0 then
+  begin
     FFrameReady := True;
     Exit;
   end;
@@ -286,6 +304,8 @@ begin
   if Interlaced then
     FMemory.Observe(R[PVRFBRSOF2 shr 2] and $7FFFFF, Span);
   var VRAM := FMemory.VRAM;
+  if Length(FLine) < Width then
+    SetLength(FLine, Width);
   for var Y := 0 to Height - 1 do
   begin
     var Base: Cardinal;
@@ -297,9 +317,11 @@ begin
         Base := R[PVRFBRSOF2 shr 2];
       Base := Base + Cardinal((Y shr 1) * Stride);
     end
+    else if LineDouble then
+      Base := R[PVRFBRSOF1 shr 2] + Cardinal((Y shr 1) * Stride)
     else
       Base := R[PVRFBRSOF1 shr 2] + Cardinal(Y * Stride);
-    var Row := Y * Width;
+    var Line: PCardinal := @FLine[0];
     case Depth of
       0:
         for var X := 0 to Width - 1 do
@@ -308,7 +330,7 @@ begin
           var RR := ((P shr 10) and 31) shl 3 or Concat;
           var GG := ((P shr 5) and 31) shl 3 or Concat;
           var BB := (P and 31) shl 3 or Concat;
-          FFrame[Row + X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
+          Line[X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
         end;
       1:
         for var X := 0 to Width - 1 do
@@ -317,7 +339,7 @@ begin
           var RR := ((P shr 11) and 31) shl 3 or Concat;
           var GG := ((P shr 5) and 63) shl 2 or (Concat shr 1);
           var BB := (P and 31) shl 3 or Concat;
-          FFrame[Row + X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
+          Line[X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
         end;
       2:
         for var X := 0 to Width - 1 do
@@ -326,12 +348,22 @@ begin
           var BB := (VRAM + (A and $7FFFFF))^;
           var GG := (VRAM + ((A + 1) and $7FFFFF))^;
           var RR := (VRAM + ((A + 2) and $7FFFFF))^;
-          FFrame[Row + X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
+          Line[X] := $FF000000 or (Cardinal(RR) shl 16) or (Cardinal(GG) shl 8) or Cardinal(BB);
         end;
     else
       for var X := 0 to Width - 1 do
-        FFrame[Row + X] := $FF000000 or (PCardinal(VRAM + ((Base + Cardinal(X) * 4) and $7FFFFC))^ and $FFFFFF);
+        Line[X] := $FF000000 or (PCardinal(VRAM + ((Base + Cardinal(X) * 4) and $7FFFFC))^ and $FFFFFF);
     end;
+    // Into the picture, doubled if asked.
+    var Row := (Y + PadY) * OutWidth + PadX;
+    if PixelDouble then
+      for var X := 0 to Width - 1 do
+      begin
+        FFrame[Row + X * 2] := FLine[X];
+        FFrame[Row + X * 2 + 1] := FLine[X];
+      end
+    else
+      Move(FLine[0], FFrame[Row], Width * SizeOf(Cardinal));
   end;
   FFrameReady := True;
 end;
