@@ -5,9 +5,9 @@ This native Delphi core models the Dreamcast console: the SH-4 CPU, Holly
 the GD-ROM drive, the AICA sound processor with its ARM7DI, and the Maple bus
 with controllers, Visual Memory units and jump packs.
 
-Open a `.gdi`, `.cdi`, `.chd`, `.cue` or `.iso` image, or a homebrew `.elf`
-program, from the `dc` folder of the library. `.gdi` and `.cdi` are always
-Dreamcast discs; `.cue`, `.iso` and `.chd` are recognised by the
+Open a `.gdi`, `.cdi`, `.chd`, `.cue`, `.iso` or `.mds` image, or a homebrew
+`.elf` program, from the `dc` folder of the library. `.gdi` and `.cdi` are always
+Dreamcast discs; `.cue`, `.iso`, `.chd` and `.mds` are recognised by the
 `SEGA SEGAKATANA` hardware identifier in their boot track. Archives are not
 supported for disc images.
 
