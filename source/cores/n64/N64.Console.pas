@@ -176,7 +176,11 @@ type
     // SP DMA transfers one window may know of (the list never grows, so the
     // beats may read it while the window runs on another thread).
       RSPMaxTransfers = 4096;
-      SpinRounds = 4000;
+    // Spins of the RSP handshake before a thread sleeps (the RSP thread for a
+    // window, the emulation thread for its clocks). Short: a spinning thread
+    // takes from the other one where both share a core (SMT), and they wait
+    // for each other.
+      SpinRounds = 1000;
   private
     type
     // Runs the windows the emulation thread requests (RunThreadedWindow).
