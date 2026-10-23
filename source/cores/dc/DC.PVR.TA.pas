@@ -9,6 +9,7 @@ unit DC.PVR.TA;
 // References: Marcus Comstedt's PowerVR pages, KallistiOS pvr.h.
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$POINTERMATH ON}
+{$TYPEDADDRESS ON}
 {$EXCESSPRECISION OFF}
 
 interface
@@ -40,6 +41,8 @@ type
 
   TPVRPoly = record
     Kind, List: Byte;
+    // TA pass (list continuation) the polygon belongs to.
+    Pass: Byte;
     TwoVolume: Boolean;
     ISP, TSP, TCW: Cardinal;
     TSP1, TCW1: Cardinal;
@@ -87,6 +90,7 @@ type
     FStripOpen: Boolean;
     FStripPoly: Integer;
     FModVolumeStart: Integer;
+    FPass: Integer;
     FClipMode: Byte;
     FClip: array[0..3] of Word;
     // YUV converter.
@@ -248,11 +252,13 @@ begin
   FPendingKind := 0;
   FStripOpen := False;
   FClipMode := 0;
+  FPass := 0;
 end;
 
 procedure TDCTA.ListContinue;
 begin
   // Multipass: further lists append to the current context.
+  Inc(FPass);
   FList := -1;
   FListsDone := 0;
   FVertexType := -1;
@@ -312,6 +318,7 @@ begin
   var P := FCurrent.AddPoly;
   P.Kind := Kind;
   P.List := FList;
+  P.Pass := Byte(FPass);
   P.PCW := FPCW;
   P.ISP := FISP;
   P.TSP := FTSP;
@@ -338,7 +345,8 @@ begin
       FList := TAListOpaque;
   end;
   FPCW := PCW;
-  FISP := P[1];
+  // The TA takes the texture/offset/Gouraud/16-bit UV flags from the PCW.
+  FISP := (P[1] and not Cardinal($03C00000)) or ((PCW and 15) shl 22);
   FTSP := P[2];
   FTCW := P[3];
   FStripOpen := False;
@@ -800,6 +808,7 @@ begin
   Archive.Field(FStripOpen, SizeOf(FStripOpen));
   Archive.Field(FStripPoly, SizeOf(FStripPoly));
   Archive.Field(FModVolumeStart, SizeOf(FModVolumeStart));
+  Archive.Field(FPass, SizeOf(FPass));
   Archive.Field(FList, SizeOf(FList));
   Archive.Field(FListsDone, SizeOf(FListsDone));
   Archive.Field(FPCW, SizeOf(FPCW));

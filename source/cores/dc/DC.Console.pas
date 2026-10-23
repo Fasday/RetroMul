@@ -10,7 +10,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.Scheduler,
-  DC.Interrupts, DC.PVR, DC.PVR.TA, DC.GDROM, DC.AICA, DC.Maple, DC.Holly, DC.Boot;
+  DC.Interrupts, DC.PVR, DC.PVR.TA, DC.PVR.Render, DC.GDROM, DC.AICA, DC.Maple, DC.Holly, DC.Boot;
 
 type
   TDCConsoleConfig = record
@@ -30,6 +30,7 @@ type
     FHalted: Boolean;
     FFrameCount: Int64;
     procedure DispatchEvent(Event: TDCEvent);
+    procedure StartRender(Sender: Pointer);
     procedure Build;
   public
     Memory: TDCMemory;
@@ -39,6 +40,7 @@ type
     Interrupts: TDCInterrupts;
     PVR: TDCPVR;
     TA: TDCTA;
+    Renderer: TDCRenderer;
     GDROM: TDCGDROM;
     AICA: TDCAICA;
     Maple: TDCMaple;
@@ -164,6 +166,8 @@ begin
   PVR := TDCPVR.Create(Memory, Scheduler, Interrupts);
   TA := TDCTA.Create(Memory, Interrupts, PVR);
   PVR.TA := TA;
+  Renderer := TDCRenderer.Create(Memory, PVR, TA);
+  PVR.OnStartRender := StartRender;
   GDROM := TDCGDROM.Create(Scheduler, Interrupts);
   AICA := TDCAICA.Create(Memory, Scheduler, Interrupts);
   Maple := TDCMaple.Create(Memory);
@@ -178,6 +182,7 @@ begin
   Maple.Free;
   AICA.Free;
   GDROM.Free;
+  Renderer.Free;
   TA.Free;
   PVR.Free;
   Interrupts.Free;
@@ -392,7 +397,11 @@ begin
         end;
       end;
     TDCEvent.Render:
-      ;
+      begin
+        Interrupts.RaiseNormal(HollyRenderDoneISP);
+        Interrupts.RaiseNormal(HollyRenderDoneTSP);
+        Interrupts.RaiseNormal(HollyRenderDoneVideo);
+      end;
     TDCEvent.Ch2DMA, TDCEvent.SortDMA, TDCEvent.PVRDMA, TDCEvent.MapleDMA, TDCEvent.GDDMA, TDCEvent.G2DMA:
       Holly.Event(Event);
     TDCEvent.GDROM:
@@ -400,6 +409,30 @@ begin
     TDCEvent.AICA:
       AICA.Event;
   end;
+end;
+
+procedure TDCConsole.StartRender(Sender: Pointer);
+begin
+  // The scene renders at once; completion is signalled after a nominal time.
+  var Tiles := Renderer.Render;
+  Renderer.RenderTiles(0, Tiles, 0);
+  var Stride := (PVR.R[PVRFBWLineStride shr 2] and $1FF) * 8;
+  var Base := PVR.R[PVRFBWSOF1 shr 2] and $7FFFFF;
+  var Size := Stride * 1024;
+  if (PVR.R[PVRFBWSOF1 shr 2] and $1000000) <> 0 then
+  begin
+    // Render to texture: the 64-bit range covers both banks.
+    Memory.TouchVRAM(TDCMemory.VRAM64(Base), 4096);
+    for var P := 0 to Integer(Size shr 13) do
+    begin
+      Inc(Memory.VRAMGens[((Base shr 1) shr 12 + Cardinal(P)) and 1023]);
+      Inc(Memory.VRAMGens[(((Base shr 1) shr 12 + Cardinal(P)) and 1023) + 1024]);
+    end;
+  end
+  else
+    for var P := 0 to Integer(Size shr 12) do
+      Inc(Memory.VRAMGens[((Base shr 12) + Cardinal(P)) and High(Memory.VRAMGens)]);
+  Scheduler.Schedule(TDCEvent.Render, Scheduler.Now + 40000 + Int64(Renderer.PolygonsRendered) * 200);
 end;
 
 procedure TDCConsole.RunFrame;
