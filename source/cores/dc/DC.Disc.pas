@@ -1,4 +1,4 @@
-unit DC.Disc;
+﻿unit DC.Disc;
 
 // Dreamcast view of a disc image: GD-ROM (high-density area from LBA 45000)
 // or CD-ROM/CD-R (MIL-CD, multi-session), the boot track holding IP.BIN,

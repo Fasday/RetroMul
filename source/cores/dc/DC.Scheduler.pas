@@ -1,4 +1,4 @@
-unit DC.Scheduler;
+﻿unit DC.Scheduler;
 
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 

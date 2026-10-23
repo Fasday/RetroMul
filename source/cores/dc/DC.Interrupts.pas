@@ -1,4 +1,4 @@
-unit DC.Interrupts;
+﻿unit DC.Interrupts;
 
 // Holly's interrupt status (SB_ISTNRM/EXT/ERR) and the three level masks
 // (IML2/4/6) that drive the SH-4 IRL inputs at priorities 2, 4 and 6.

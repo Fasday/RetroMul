@@ -1,4 +1,4 @@
-unit DC.Memory;
+﻿unit DC.Memory;
 
 // Dreamcast memories and the SH-4 physical page tables. VRAM is stored in
 // its 32-bit (linear) arrangement; the 64-bit bus interleaves the two 4 MiB

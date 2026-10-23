@@ -1,4 +1,4 @@
-unit DC.PVR.Texture;
+﻿unit DC.PVR.Texture;
 
 // PowerVR2 textures decoded to ARGB8888: twiddled and scan-order layouts,
 // stride textures, VQ compression, 4/8-bit palettes, ARGB1555/RGB565/

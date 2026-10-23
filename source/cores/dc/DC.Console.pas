@@ -1,4 +1,4 @@
-unit DC.Console;
+﻿unit DC.Console;
 
 // The Dreamcast machine: owns the SH-4 and every device, decodes the
 // physical address map for device accesses and runs one video field per

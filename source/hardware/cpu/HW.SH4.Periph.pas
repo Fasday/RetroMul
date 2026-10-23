@@ -1,4 +1,4 @@
-unit HW.SH4.Periph;
+﻿unit HW.SH4.Periph;
 
 // SH7750-series on-chip modules outside the CPU core: INTC, TMU, DMAC, SCIF,
 // BSC (ports and refresh), CPG/WDT, RTC, SCI and UBC registers. Time is in
@@ -339,7 +339,6 @@ begin
   // Each pin has two control bits: bit 2n set = output. Pins 0 and 1 are
   // looped together (pull-ups when both are inputs); pins 8-9 sense the
   // A/V cable. Outputs read back their latch.
-  Result := 0;
   var Pin0Out := (S.PCTRA and 1) <> 0;
   var Pin1Out := (S.PCTRA and 4) <> 0;
   var Level0 := Cardinal(1);

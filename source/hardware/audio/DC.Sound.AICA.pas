@@ -1,4 +1,4 @@
-unit DC.Sound.AICA;
+﻿unit DC.Sound.AICA;
 
 interface
 

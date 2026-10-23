@@ -1,4 +1,4 @@
-unit DC.GDROM.HLE;
+﻿unit DC.GDROM.HLE;
 
 // High-level GD-ROM system calls (vector 8C0000BC, superfunction 0): the
 // boot ROM's command queue (REQ_CMD, GET_CMD_STAT, EXEC_SERVER), drive

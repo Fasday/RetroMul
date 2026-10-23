@@ -1,4 +1,4 @@
-unit Core.CD.Disc;
+﻿unit Core.CD.Disc;
 
 interface
 

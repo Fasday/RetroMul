@@ -1,4 +1,4 @@
-unit DC.PVR;
+﻿unit DC.PVR;
 
 // PowerVR2 (CLX2) register file, sync pulse generator and framebuffer
 // scanout. Rendering and the tile accelerator live in separate units and

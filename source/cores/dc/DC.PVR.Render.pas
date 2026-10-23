@@ -1,4 +1,4 @@
-unit DC.PVR.Render;
+﻿unit DC.PVR.Render;
 
 // Software CORE (ISP/TSP) for PowerVR2: walks the region array, renders each
 // 32x32 tile from the decoded display lists and writes it to the framebuffer.
@@ -383,36 +383,33 @@ end;
 
 procedure TDCRenderer.ReadBackground;
 begin
-  // ISP_BACKGND_T: parameter word offset (bits 23..3) from PARAM_BASE and
-  // extra words per vertex (26..24). The plane takes its first vertex colour.
+  // ISP_BACKGND_T: parameter word offset (bits 23..3) from PARAM_BASE. The
+  // ISP, TSP and TCW words precede three vertices; the plane takes the colour
+  // of the first, after X, Y, Z and the texture coordinates (one word when
+  // packed as 16 bits).
   var Tag := FPVR.R[PVRISPBackgndT shr 2];
   var Base := (FPVR.R[PVRParamBase shr 2] and $F00000) + ((Tag shr 3) and $1FFFFF) * 4;
   var ISP := FMemory.VRAMRead32(Base);
-  var Skip := (Tag shr 24) and 7;
-  var VertexWords := 3 + Skip;
-  var Textured := (ISP and $02000000) <> 0;
-  if Textured then
-    Inc(VertexWords, 0);
-  // Colour follows X, Y, Z (and UV when textured).
   var ColorWord := 3;
-  if Textured then
-    ColorWord := 5;
+  if (ISP and $02000000) <> 0 then
+  begin
+    Inc(ColorWord, 2);
+    if (ISP and $00400000) <> 0 then
+      Dec(ColorWord);
+  end;
   FBackground := FMemory.VRAMRead32(Base + 12 + Cardinal(ColorWord) * 4);
-  if (FPVR.R[PVRFPUParamCfg shr 2] and 0) <> 0 then
-    FBackground := 0;
   FBackgroundDepth := PSingle(@FPVR.R[PVRISPBackgndD shr 2])^;
 end;
 
 {$Q-}{$R-}
 function HashStep(Hash: UInt64; Value: Cardinal): UInt64;
 begin
-  Result := Hash * 1099511628211 + Value;
+  Result := Hash * UInt64(1099511628211) + Value;
 end;
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ENDIF}
 
 function TDCRenderer.Render: Integer;
 begin
-  Result := 0;
   PolygonsRendered := 0;
   FContext := FTA.Find(FPVR.R[PVRParamBase shr 2] and $7FFFFF);
   // Palette and fog table snapshots.
@@ -754,7 +751,7 @@ begin
     var Scale := FPVR.R[PVRFPUShadScale shr 2];
     if (Scale and $100) <> 0 then
     begin
-      var F := Integer(Scale and $FF);
+      var F := Scale and $FF;
       Color := ARGB(Color shr 24, ((Color shr 16) and $FF) * F div 256, ((Color shr 8) and $FF) * F div 256,
         (Color and $FF) * F div 256);
     end;

@@ -1,4 +1,4 @@
-unit HW.SH4;
+﻿unit HW.SH4;
 
 // Hitachi SH-4 (SH7750/SH7091) instruction interpreter: integer and FPU
 // instructions, delay slots, exceptions and interrupt acceptance, store

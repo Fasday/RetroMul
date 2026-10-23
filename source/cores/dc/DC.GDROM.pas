@@ -1,4 +1,4 @@
-unit DC.GDROM;
+﻿unit DC.GDROM;
 
 // GD-ROM drive on the G1 ATA interface (005F7000..): status registers and
 // the CD-DA playback state shared by the system calls and the AICA mixer

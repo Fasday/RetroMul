@@ -1,4 +1,4 @@
-unit DC.AICA;
+﻿unit DC.AICA;
 
 // AICA in the console: 2 MiB wave RAM shared with the ARM7DI, the sound
 // generator/DSP (DC.Sound.AICA, also used by the DSF player), the ARM reset

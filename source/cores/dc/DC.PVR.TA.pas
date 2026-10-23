@@ -1,4 +1,4 @@
-unit DC.PVR.TA;
+﻿unit DC.PVR.TA;
 
 // Tile accelerator input: parses the 32-byte parameter stream (global
 // polygon/sprite/modifier-volume parameters and vertices of every type) into

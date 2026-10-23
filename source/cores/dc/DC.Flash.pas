@@ -1,4 +1,4 @@
-unit DC.Flash;
+﻿unit DC.Flash;
 
 // The 128 KiB system flash ROM: generated contents (factory region/broadcast
 // settings and the user system configuration block) and the command
@@ -81,8 +81,8 @@ begin
   var DefaultLanguage: AnsiChar := '1';
   if Region = TDCRegion.Japan then
     DefaultLanguage := '0';
-  var Factory: AnsiString := '00' + AnsiChar(Ord('0') + Ord(Region)) + DefaultLanguage +
-    AnsiChar(Ord('0') + Ord(Broadcast)) + 'Dreamcast';
+  var Factory: AnsiString := AnsiString('00') + AnsiChar(Ord('0') + Ord(Region)) + DefaultLanguage +
+    AnsiChar(Ord('0') + Ord(Broadcast)) + AnsiString('Dreamcast');
   while Length(Factory) < 53 do
     Factory := Factory + ' ';
   Factory := Factory + '00000000000000000000000000000000';

@@ -1,4 +1,4 @@
-unit DC.CPU.ARM7;
+﻿unit DC.CPU.ARM7;
 
 // ARM7DI (ARMv3) interpreter. Bus accesses use integer addresses, never pointers.
 
