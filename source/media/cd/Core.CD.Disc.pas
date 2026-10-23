@@ -20,6 +20,8 @@ type
     SubStream: TStream;
     SubRaw: Boolean;
     SubchannelStored: Boolean;
+    // Recording session (multi-session CD-R images); 1 otherwise.
+    Session: Integer;
   end;
 
   // Immutable TOC; streams are owned here and accessed by the emulation worker.
@@ -409,12 +411,13 @@ begin
 end;
 
 // Alcohol 120% images (psx-spx "CDROM Disk Images MDS/MDF"). The binary .mds
-// holds one session block, a data block per TOC point (A0h..A2h, then the
+// holds a block per session, a data block per TOC point (A0h..A2h, then the
 // tracks) with an index block (INDEX 00 and INDEX 01 lengths) and the name
 // of the sector file ("*.mdf" stands for the .mds name). The .mdf stores the
 // sectors from 00:02:00 on, 2048 or 2352 bytes each; 2352-byte sectors may
 // carry 96 interleaved P..W subchannel bytes. Pregaps are stored when the
-// file continues seamlessly from the previous track.
+// file continues seamlessly from the previous track of the same session;
+// later sessions (multi-session CD-R) start after their lead-in.
 procedure TCDDisc.LoadMDS(Stream: TStream; const Storage: IStorage; const Location, FileName: string);
 var
   Data: TBytes;
@@ -496,92 +499,108 @@ begin
     raise EReadError.Create('Not an Alcohol MDS file');
   if U16($12) >= $10 then
     raise EReadError.Create('MDS images of DVD media are not CD images');
-  if U16($14) <> 1 then
-    raise EReadError.Create('Multi-session MDS images are not supported');
-
-  var Session := Int64(U32($50));
-  var Blocks := U8(Session + $0A);
-  var LastTrack := U16(Session + $0E);
-  var FirstBlock := Int64(U32(Session + $14));
-  if (U16(Session + $0C) <> 1) or (LastTrack < 1) or (LastTrack > 99) then
-    raise EReadError.Create('Invalid MDS track range');
+  // Session blocks of 24 bytes; tracks are numbered on across sessions and the
+  // last session's lead-out ends the disc.
+  var Sessions := U16($14);
+  if (Sessions < 1) or (Sessions > 99) then
+    raise EReadError.Create('Invalid MDS session count');
+  var SessionTable := Int64(U32($50));
+  var LastTrack := 0;
+  for var S := 0 to Sessions - 1 do
+  begin
+    var Session := SessionTable + Int64(S) * 24;
+    var First := U16(Session + $0C);
+    var Last := U16(Session + $0E);
+    if (First <> LastTrack + 1) or (Last < First) or (Last > 99) then
+      raise EReadError.Create('Invalid MDS track range');
+    LastTrack := Last;
+  end;
 
   SetLength(FTracks, LastTrack);
   FillChar(Seen, SizeOf(Seen), 0);
   var LeadOut := -1;
-  for var B := 0 to Blocks - 1 do
+  for var S := 0 to Sessions - 1 do
   begin
-    var Block := FirstBlock + Int64(B) * $50;
-    var Point := U8(Block + 4);
-    if Point = $A2 then
-      LeadOut := BlockLBA(Block);
-    if (Point < 1) or (Point > LastTrack) then
-      Continue;
-    var I := Point - 1;
-    if Seen[I] then
-      raise EReadError.Create('Duplicate MDS track');
-    Seen[I] := True;
-
-    var Item := Default(TCDTrack);
-    Item.Number := Point;
-    Item.Audio := (U8(Block + 2) and 4) = 0;
-    Item.LittleEndian := True;
-    Item.StartLBA := BlockLBA(Block);
-    // The PLBA counts from 00:02:00 (sometimes from 00:00:00).
-    var Start := Integer(U32(Block + $24));
-    if (Start <> Item.StartLBA) and (Start <> Item.StartLBA + 150) then
-      raise EReadError.Create('Inconsistent MDS track start');
-
-    var Size := U16(Block + $10);
-    var Subchannels := U8(Block + 1);
-    if not (((Subchannels = 0) and ((Size = 2352) or ((Size = 2048) and not Item.Audio))) or
-      ((Subchannels = 8) and (Size = 2448))) then
-      raise EReadError.CreateFmt('Unsupported MDS sector layout (%d bytes, %d subchannels)', [Size, Subchannels]);
-    Item.SectorSize := Size;
-    Item.SubchannelStored := Subchannels = 8;
-    Item.SubRaw := Item.SubchannelStored;
-
-    var Index := Int64(U32(Block + $0C));
-    if Index = 0 then
-      raise EReadError.Create('MDS track without index block');
-    Pregaps[I] := Integer(U32(Index));
-    var Length1 := Int64(U32(Index + 4));
-    if (Pregaps[I] < 0) or (Pregaps[I] > 450000) or (Length1 <= 0) or (Length1 > 450000) then
-      raise EReadError.Create('Invalid MDS track length');
-    Item.EndLBA := Item.StartLBA + Integer(Length1);
-
-    var Offset := Int64(U32(Block + $28)) or (Int64(U32(Block + $2C)) shl 32);
-    if (Offset < 0) or (Offset mod Size <> 0) then
-      raise EReadError.Create('Misaligned MDS track offset');
-    Item.FileSector := Integer(Offset div Size);
-    Item.SourceName := TrackFileName(Block);
-    Item.Stream := Storage.OpenRead(CDSibling(Storage, Location, Item.SourceName));
-    FTracks[I] := Item;
-    FTracks[I].ByteSize := FTracks[I].Stream.Size;
-    if FTracks[I].ByteSize > Int64(800) * 1024 * 1024 then
-      raise EReadError.Create('CD track exceeds 800 MiB');
-
-    // Raw data sectors: user data after the Mode 1 or Mode 2 header; the
-    // track mode (low nibble Ah Mode 1, Bh..Dh Mode 2) when the header is
-    // not readable.
-    if not Item.Audio and (Size >= 2352) then
+    var Session := SessionTable + Int64(S) * 24;
+    var Blocks := U8(Session + $0A);
+    var FirstTrack := U16(Session + $0C);
+    var SessionLast := U16(Session + $0E);
+    var FirstBlock := Int64(U32(Session + $14));
+    for var B := 0 to Blocks - 1 do
     begin
-      var Mode: Byte := 0;
-      if Offset + 16 <= FTracks[I].ByteSize then
+      var Block := FirstBlock + Int64(B) * $50;
+      var Point := U8(Block + 4);
+      if Point = $A2 then
+        LeadOut := BlockLBA(Block);
+      if (Point < FirstTrack) or (Point > SessionLast) then
+        Continue;
+      var I := Point - 1;
+      if Seen[I] then
+        raise EReadError.Create('Duplicate MDS track');
+      Seen[I] := True;
+
+      var Item := Default(TCDTrack);
+      Item.Number := Point;
+      Item.Audio := (U8(Block + 2) and 4) = 0;
+      Item.LittleEndian := True;
+      Item.StartLBA := BlockLBA(Block);
+      // The PLBA counts from 00:02:00 (sometimes from 00:00:00).
+      var Start := Integer(U32(Block + $24));
+      if (Start <> Item.StartLBA) and (Start <> Item.StartLBA + 150) then
+        raise EReadError.Create('Inconsistent MDS track start');
+
+      var Size := U16(Block + $10);
+      var Subchannels := U8(Block + 1);
+      if not (((Subchannels = 0) and ((Size = 2352) or ((Size = 2048) and not Item.Audio))) or
+        ((Subchannels = 8) and (Size = 2448))) then
+        raise EReadError.CreateFmt('Unsupported MDS sector layout (%d bytes, %d subchannels)', [Size, Subchannels]);
+      Item.SectorSize := Size;
+      Item.SubchannelStored := Subchannels = 8;
+      Item.SubRaw := Item.SubchannelStored;
+
+      var Index := Int64(U32(Block + $0C));
+      if Index = 0 then
+        raise EReadError.Create('MDS track without index block');
+      Pregaps[I] := Integer(U32(Index));
+      var Length1 := Int64(U32(Index + 4));
+      if (Pregaps[I] < 0) or (Pregaps[I] > 450000) or (Length1 <= 0) or (Length1 > 450000) then
+        raise EReadError.Create('Invalid MDS track length');
+      Item.EndLBA := Item.StartLBA + Integer(Length1);
+
+      var Offset := Int64(U32(Block + $28)) or (Int64(U32(Block + $2C)) shl 32);
+      if (Offset < 0) or (Offset mod Size <> 0) then
+        raise EReadError.Create('Misaligned MDS track offset');
+      Item.FileSector := Integer(Offset div Size);
+      Item.SourceName := TrackFileName(Block);
+      Item.Stream := Storage.OpenRead(CDSibling(Storage, Location, Item.SourceName));
+      FTracks[I] := Item;
+      FTracks[I].ByteSize := FTracks[I].Stream.Size;
+      if FTracks[I].ByteSize > Int64(800) * 1024 * 1024 then
+        raise EReadError.Create('CD track exceeds 800 MiB');
+
+      // Raw data sectors: user data after the Mode 1 or Mode 2 header; the
+      // track mode (low nibble Ah Mode 1, Bh..Dh Mode 2) when the header is
+      // not readable.
+      if not Item.Audio and (Size >= 2352) then
       begin
-        FTracks[I].Stream.Position := Offset + 15;
-        FTracks[I].Stream.ReadBuffer(Mode, 1);
-      end;
-      if not (Mode in [1, 2]) then
-        case U8(Block) and $0F of
-          $A: Mode := 1;
-          $B..$D: Mode := 2;
-        else
-          raise EReadError.Create('Unknown MDS data track mode');
+        var Mode: Byte := 0;
+        if Offset + 16 <= FTracks[I].ByteSize then
+        begin
+          FTracks[I].Stream.Position := Offset + 15;
+          FTracks[I].Stream.ReadBuffer(Mode, 1);
         end;
-      FTracks[I].DataOffset := 16;
-      if Mode = 2 then
-        FTracks[I].DataOffset := 24;
+        if not (Mode in [1, 2]) then
+          case U8(Block) and $0F of
+            $A: Mode := 1;
+            $B..$D: Mode := 2;
+          else
+            raise EReadError.Create('Unknown MDS data track mode');
+          end;
+        FTracks[I].DataOffset := 16;
+        if Mode = 2 then
+          FTracks[I].DataOffset := 24;
+      end;
+      FTracks[I].Session := Integer(U16(Session + 8));
     end;
   end;
 
@@ -595,6 +614,12 @@ begin
       var Previous := FTracks[I - 1];
       if PregapLBA < Previous.EndLBA then
         raise EReadError.Create('Overlapping MDS tracks');
+      // A new session follows its lead-in; nothing in between is recorded.
+      if Previous.Session <> FTracks[I].Session then
+      begin
+        FTracks[I].PregapLBA := PregapLBA;
+        Continue;
+      end;
       // Sectors between the TOC entries belong to the previous track.
       FTracks[I - 1].EndLBA := PregapLBA;
       // In one continuous file the pregap lies between the previous track and
