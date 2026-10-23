@@ -116,6 +116,7 @@ type
     constructor Create(Memory: TDCMemory; Interrupts: TDCInterrupts; PVR: TDCPVR);
     destructor Destroy; override;
     procedure Reset; override;
+    procedure SoftReset; override;
     procedure ListInit; override;
     procedure ListContinue; override;
     procedure Write32Bytes(Data: PCardinal); override;
@@ -213,7 +214,13 @@ begin
     C.Base := $FFFFFFFF;
     C.Used := 0;
   end;
-  // Rendering stays: a soft reset must not reuse the context a render reads.
+  SoftReset;
+end;
+
+procedure TDCTA.SoftReset;
+begin
+  // Decoded contexts mirror parameter memory, which a reset does not erase:
+  // programs reset the accelerator between building a list and rendering it.
   FCurrent := nil;
   FList := -1;
   FListsDone := 0;

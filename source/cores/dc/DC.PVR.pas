@@ -75,6 +75,9 @@ type
   TDCTAInput = class
   public
     procedure Reset; virtual; abstract;
+    // SOFTRESET: the accelerator's input state only; lists already stored
+    // (parameter memory) stay renderable.
+    procedure SoftReset; virtual; abstract;
     procedure ListInit; virtual; abstract;
     procedure ListContinue; virtual; abstract;
     procedure Write32Bytes(Data: PCardinal); virtual; abstract;
@@ -413,7 +416,7 @@ begin
       begin
         R[Offset shr 2] := Value and 7;
         if (Value and 1) <> 0 then
-          TA.Reset;
+          TA.SoftReset;
       end;
     PVRStartRender:
       if Assigned(OnStartRender) then
