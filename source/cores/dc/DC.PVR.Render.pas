@@ -118,11 +118,15 @@ type
     FPaletteGen: Cardinal;
     FPaletteHash: UInt64;
     FFogTable: array[0..127] of Word;
+    FFogScale: Double;
+    FFogColorRAM, FFogColorVert: Cardinal;
     FBuffers: TArray<TTileBuffers>;
     FFragments: TArray<TFragmentBuffer>;
-    // Runs of region entries for one tile; workers take them in any order.
-    FGroups: TArray<Integer>;
-    FGroupCount: Integer;
+    // Region entries grouped per tile (work items, in any order on the
+    // workers) and whether an entry starts its tile from the background.
+    FEntryTile, FItemStart, FItemEntries: TArray<Integer>;
+    FEntryReset: TArray<Boolean>;
+    FItemCount: Integer;
     FNextGroup: Integer;
     FPending: Integer;
     FWorkers: TArray<TDCRenderWorker>;
@@ -133,7 +137,8 @@ type
     FScaleX: Integer;
     procedure SetThreads(Value: Integer);
     procedure RenderGroups(Slot: Integer);
-    function BuildGroups: Boolean;
+    procedure PrepareEntries;
+    procedure RenderEntry(N, Slot: Integer);
     procedure Prepare;
     procedure AddTriangle(Poly: Integer; I0, I1, I2: Integer; Volume: Integer);
     procedure Bin;
@@ -274,46 +279,21 @@ begin
   end;
 end;
 
-function TDCRenderer.BuildGroups: Boolean;
-begin
-  // A tile listed again after another tile starts over with the background,
-  // and the later list wins its framebuffer area; such renders stay serial.
-  if Length(FGroups) < Length(FEntries) + 1 then
-    SetLength(FGroups, Length(FEntries) + 1);
-  var Seen: TArray<Boolean>;
-  SetLength(Seen, 64 * 64);
-  FGroupCount := 0;
-  var Last := -1;
-  for var N := 0 to High(FEntries) do
-  begin
-    var Tile := Integer((FEntries[N].Control shr 8) and $3F) * 64 + Integer((FEntries[N].Control shr 2) and $3F);
-    if Tile = Last then
-      Continue;
-    if Seen[Tile] then
-      Exit(False);
-    Seen[Tile] := True;
-    Last := Tile;
-    FGroups[FGroupCount] := N;
-    Inc(FGroupCount);
-  end;
-  FGroups[FGroupCount] := Length(FEntries);
-  Result := True;
-end;
-
 procedure TDCRenderer.RenderGroups(Slot: Integer);
 begin
   while True do
   begin
     var G := TInterlocked.Increment(FNextGroup) - 1;
-    if G >= FGroupCount then
+    if G >= FItemCount then
       Break;
-    RenderTiles(FGroups[G], FGroups[G + 1] - FGroups[G], Slot);
+    for var K := FItemStart[G] to FItemStart[G + 1] - 1 do
+      RenderEntry(FItemEntries[K], Slot);
   end;
 end;
 
 procedure TDCRenderer.RenderAll;
 begin
-  if (Length(FWorkers) = 0) or (Length(FEntries) < 2) or not BuildGroups then
+  if (Length(FWorkers) = 0) or (FItemCount < 2) then
   begin
     RenderTiles(0, Length(FEntries), 0);
     Exit;
@@ -580,6 +560,11 @@ begin
   end;
   for var I := 0 to 127 do
     FFogTable[I] := Word(FPVR.R[(PVRFogTable shr 2) + I]);
+  // FOG_DENSITY: an 8-bit mantissa (1.7 fixed point) and a signed exponent.
+  var Density := FPVR.R[PVRFogDensity shr 2];
+  FFogScale := ((Density shr 8) and $FF) / 128.0 * IntPower(2, ShortInt(Density and $FF));
+  FFogColorRAM := FPVR.R[PVRFogColRAM shr 2];
+  FFogColorVert := FPVR.R[PVRFogColVert shr 2];
   FScaleX := 1;
   if (FPVR.R[PVRScalerCtlReg shr 2] and $10000) <> 0 then
     FScaleX := 2;
@@ -594,6 +579,7 @@ begin
   end;
   FTilesX := MaxX + 1;
   FTilesY := MaxY + 1;
+  PrepareEntries;
   if FContext <> nil then
   begin
     Prepare;
@@ -604,6 +590,35 @@ begin
     FTriCount := 0;
   Result := Length(FEntries);
 end;
+
+{$IFDEF CPUX64}
+// Conversions as Round and Floor give them under the rasterizer's nearest
+// rounding, without calls into the runtime.
+function RoundInt(X: Double): Int64;
+asm
+  cvtsd2si rax, xmm0
+end;
+
+function FloorInt(X: Double): Integer;
+asm
+  cvttsd2si eax, xmm0
+  cvtsi2sd xmm1, eax
+  comisd xmm1, xmm0
+  jbe @Done
+  dec eax
+@Done:
+end;
+{$ELSE}
+function RoundInt(X: Double): Int64; inline;
+begin
+  Result := Round(X);
+end;
+
+function FloorInt(X: Double): Integer; inline;
+begin
+  Result := Floor(X);
+end;
+{$ENDIF}
 
 function IsNaNSingle(const V: Single): Boolean; inline;
 begin
@@ -693,24 +708,25 @@ begin
   case (TSP shr 22) and 3 of
     0, 3:
       begin
-        // Look-up table indexed by FOG_DENSITY * (1/w) on a log scale.
-        var DensityReg := FPVR.R[PVRFogDensity shr 2];
-        var Mantissa := ((DensityReg shr 8) and $FF) / 128.0;
-        var Exponent := ShortInt(DensityReg and $FF);
-        var X := Mantissa * Power(2, Exponent) * Z;
+        // Look-up table indexed by FOG_DENSITY * (1/w) on a log scale: for
+        // X = 1.m * 2^E (X >= 1) the index is E * 16 plus the top four
+        // mantissa bits; the bits below interpolate between the entry's
+        // two values.
+        var X: Double := FFogScale * Z;
         var Index := 0;
         var Fraction := 0;
         if X >= 1 then
         begin
-          var E := Floor(Log2(X));
-          var M := X / Power(2, E);
-          var Position := E * 16 + (M - 1) * 16;
-          Index := EnsureRange(Floor(Position), 0, 127);
-          Fraction := EnsureRange(Round((Position - Floor(Position)) * 255), 0, 255);
+          var Bits := PUInt64(@X)^;
+          var E := Integer((Bits shr 52) and $7FF) - 1023;
+          Index := E * 16 + Integer((Bits shr 48) and 15);
+          if Index > 127 then
+            Index := 127;
+          Fraction := Integer(((Bits and UInt64($FFFFFFFFFFFF)) * UInt64(255) + UInt64($800000000000)) shr 48);
         end;
         var Entry := FFogTable[Index];
         var Factor := Lerp8(Entry shr 8, Entry and $FF, Fraction);
-        var FogColor := FPVR.R[PVRFogColRAM shr 2];
+        var FogColor := FFogColorRAM;
         if ((TSP shr 22) and 3) = 3 then
         begin
           Result := (Cardinal(Factor) shl 24) or (FogColor and $FFFFFF);
@@ -725,7 +741,7 @@ begin
       begin
         // Per vertex: the offset colour's alpha blends towards FOG_COL_VERT.
         var Factor := Integer(V.Offset shr 24);
-        var FogColor := FPVR.R[PVRFogColVert shr 2];
+        var FogColor := FFogColorVert;
         Result := ARGB(Color shr 24,
           Lerp8((Color shr 16) and $FF, (FogColor shr 16) and $FF, Factor),
           Lerp8((Color shr 8) and $FF, (FogColor shr 8) and $FF, Factor),
@@ -778,14 +794,14 @@ begin
   if IsNaNDouble(FU) or IsNaNDouble(FV) or (Abs(FU) > 1E8) or (Abs(FV) > 1E8) then
     Exit(T.Texels[0]);
   if ((TSP shr 13) and 3) = 0 then
-    Exit(Texels[WrapCoord(Floor(FV), H, ClampV, FlipV) * W + WrapCoord(Floor(FU), W, ClampU, FlipU)]);
+    Exit(Texels[WrapCoord(FloorInt(FV), H, ClampV, FlipV) * W + WrapCoord(FloorInt(FU), W, ClampU, FlipU)]);
   // Bilinear (trilinear passes are treated as bilinear on one level).
   FU := FU - 0.5;
   FV := FV - 0.5;
-  var X0 := Floor(FU);
-  var Y0 := Floor(FV);
-  var FX := Round((FU - X0) * 256);
-  var FY := Round((FV - Y0) * 256);
+  var X0 := FloorInt(FU);
+  var Y0 := FloorInt(FV);
+  var FX := Integer(RoundInt((FU - X0) * 256));
+  var FY := Integer(RoundInt((FV - Y0) * 256));
   var XA := WrapCoord(X0, W, ClampU, FlipU);
   var XB := WrapCoord(X0 + 1, W, ClampU, FlipU);
   var YA := WrapCoord(Y0, H, ClampV, FlipV) * W;
@@ -852,9 +868,9 @@ begin
       for var S := 0 to 3 do
       begin
         var Sh := S * 8;
-        Base := Base or (Cardinal(Clamp255(Round(((VA.Base1 shr Sh) and $FF) * P0 + ((VB.Base1 shr Sh) and $FF) * P1 +
+        Base := Base or (Cardinal(Clamp255(RoundInt(((VA.Base1 shr Sh) and $FF) * P0 + ((VB.Base1 shr Sh) and $FF) * P1 +
           ((VC.Base1 shr Sh) and $FF) * P2))) shl Sh);
-        Offset := Offset or (Cardinal(Clamp255(Round(((VA.Offset1 shr Sh) and $FF) * P0 + ((VB.Offset1 shr Sh) and $FF) * P1 +
+        Offset := Offset or (Cardinal(Clamp255(RoundInt(((VA.Offset1 shr Sh) and $FF) * P0 + ((VB.Offset1 shr Sh) and $FF) * P1 +
           ((VC.Offset1 shr Sh) and $FF) * P2))) shl Sh);
       end;
     end
@@ -871,9 +887,9 @@ begin
     for var S := 0 to 3 do
     begin
       var Sh := S * 8;
-      Base := Base or (Cardinal(Clamp255(Round(((VA.Base shr Sh) and $FF) * P0 + ((VB.Base shr Sh) and $FF) * P1 +
+      Base := Base or (Cardinal(Clamp255(RoundInt(((VA.Base shr Sh) and $FF) * P0 + ((VB.Base shr Sh) and $FF) * P1 +
         ((VC.Base shr Sh) and $FF) * P2))) shl Sh);
-      Offset := Offset or (Cardinal(Clamp255(Round(((VA.Offset shr Sh) and $FF) * P0 + ((VB.Offset shr Sh) and $FF) * P1 +
+      Offset := Offset or (Cardinal(Clamp255(RoundInt(((VA.Offset shr Sh) and $FF) * P0 + ((VB.Offset shr Sh) and $FF) * P1 +
         ((VC.Offset shr Sh) and $FF) * P2))) shl Sh);
     end;
   end
@@ -1116,20 +1132,36 @@ begin
   end;
 end;
 
+function BlendChannel(Src, Dst: Cardinal; Sh, FS, FD: Integer): Cardinal; inline;
+begin
+  var V := (Integer((Src shr Sh) and $FF) * FS + Integer((Dst shr Sh) and $FF) * FD + 127) div 255;
+  if V > 255 then
+    V := 255;
+  Result := Cardinal(V) shl Sh;
+end;
+
 function Blend(Src, Dst, TSP: Cardinal): Cardinal;
 begin
   var SrcInstr := TSP shr 29;
   var DstInstr := (TSP shr 26) and 7;
-  Result := 0;
-  for var S := 0 to 3 do
+  // The source factor's "other" colour is the destination and vice versa;
+  // only those two instructions differ per channel.
+  if (SrcInstr in [2, 3]) or (DstInstr in [2, 3]) then
   begin
-    var Sh := S * 8;
-    // The source factor's "other" colour is the destination and vice versa.
-    var FS := BlendFactor(SrcInstr, Src, Dst, Sh, Dst);
-    var FD := BlendFactor(DstInstr, Src, Dst, Sh, Src);
-    var V := (Integer((Src shr Sh) and $FF) * FS + Integer((Dst shr Sh) and $FF) * FD + 127) div 255;
-    Result := Result or (Cardinal(Clamp255(V)) shl Sh);
+    Result := 0;
+    for var S := 0 to 3 do
+    begin
+      var Sh := S * 8;
+      var FS := BlendFactor(SrcInstr, Src, Dst, Sh, Dst);
+      var FD := BlendFactor(DstInstr, Src, Dst, Sh, Src);
+      Result := Result or BlendChannel(Src, Dst, Sh, FS, FD);
+    end;
+    Exit;
   end;
+  var FS := BlendFactor(SrcInstr, Src, Dst, 0, Dst);
+  var FD := BlendFactor(DstInstr, Src, Dst, 0, Src);
+  Result := BlendChannel(Src, Dst, 0, FS, FD) or BlendChannel(Src, Dst, 8, FS, FD) or
+    BlendChannel(Src, Dst, 16, FS, FD) or BlendChannel(Src, Dst, 24, FS, FD);
 end;
 
 procedure TDCRenderer.RasterTranslucent(B: PTileBuffers; F: PFragmentBuffer; TileX, TileY, Pass: Integer;
@@ -1371,56 +1403,110 @@ begin
   end;
 end;
 
+procedure TDCRenderer.PrepareEntries;
+begin
+  // A tile starts from the background (colour and depth) unless it follows
+  // its own previous entry; entries are then grouped per tile, in order, as
+  // independent work items.
+  var Count := Length(FEntries);
+  SetLength(FEntryReset, Count);
+  SetLength(FEntryTile, Count);
+  var Last := -1;
+  for var N := 0 to Count - 1 do
+  begin
+    var TX := Integer((FEntries[N].Control shr 2) and $3F);
+    var TY := Integer((FEntries[N].Control shr 8) and $3F);
+    if (TX >= FTilesX) or (TY >= FTilesY) then
+    begin
+      FEntryTile[N] := -1;
+      Continue;
+    end;
+    var Tile := TY * FTilesX + TX;
+    FEntryTile[N] := Tile;
+    FEntryReset[N] := Tile <> Last;
+    Last := Tile;
+  end;
+  var Tiles := FTilesX * FTilesY;
+  var Counts: TArray<Integer>;
+  SetLength(Counts, Tiles + 1);
+  for var N := 0 to Count - 1 do
+    if FEntryTile[N] >= 0 then
+      Inc(Counts[FEntryTile[N]]);
+  SetLength(FItemStart, Tiles + 1);
+  SetLength(FItemEntries, Count);
+  FItemCount := 0;
+  var Sum := 0;
+  var Slot: TArray<Integer>;
+  SetLength(Slot, Tiles);
+  for var T := 0 to Tiles - 1 do
+    if Counts[T] > 0 then
+    begin
+      FItemStart[FItemCount] := Sum;
+      Slot[T] := Sum;
+      Inc(Sum, Counts[T]);
+      Inc(FItemCount);
+    end;
+  FItemStart[FItemCount] := Sum;
+  for var N := 0 to Count - 1 do
+    if FEntryTile[N] >= 0 then
+    begin
+      FItemEntries[Slot[FEntryTile[N]]] := N;
+      Inc(Slot[FEntryTile[N]]);
+    end;
+end;
+
+procedure TDCRenderer.RenderEntry(N, Slot: Integer);
+begin
+  var B: PTileBuffers := @FBuffers[Slot];
+  var E := FEntries[N];
+  var TX := FEntryTile[N] mod FTilesX;
+  var TY := FEntryTile[N] div FTilesX;
+  if FEntryReset[N] then
+    for var I := 0 to TileSize * TileSize - 1 do
+    begin
+      B.Color[I] := FBackground;
+      B.Depth[I] := FBackgroundDepth;
+      B.Tag[I] := -1;
+      B.Fresh[I] := 1;
+    end
+  else if (E.Control and $40000000) = 0 then
+    // Depth clears unless z_keep (bit 30); colour persists within a tile.
+    for var I := 0 to TileSize * TileSize - 1 do
+    begin
+      B.Depth[I] := FBackgroundDepth;
+      B.Tag[I] := -1;
+      B.Fresh[I] := 1;
+    end;
+  FillChar(B.Modified, SizeOf(B.Modified), 0);
+  if FContext <> nil then
+  begin
+    if (E.Lists[0] and $80000000) = 0 then
+      RasterOpaque(B, TX, TY, TAListOpaque, E.Pass);
+    if (E.Lists[4] and $80000000) = 0 then
+      RasterOpaque(B, TX, TY, TAListPunchThrough, E.Pass);
+    if (E.Lists[1] and $80000000) = 0 then
+      ApplyVolumes(B, TX, TY, TAListOpaqueMod, E.Pass, False);
+  end;
+  ShadeOpaque(B, TX, TY);
+  if (FContext <> nil) and ((E.Lists[2] and $80000000) = 0) then
+  begin
+    FillChar(B.Modified, SizeOf(B.Modified), 0);
+    if (E.Lists[3] and $80000000) = 0 then
+      ApplyVolumes(B, TX, TY, TAListTranslucentMod, E.Pass, True);
+    RasterTranslucent(B, @FFragments[Slot], TX, TY, E.Pass, (E.Control and $20000000) <> 0);
+  end;
+  // no_writeout (bit 28) keeps the tile for a following pass.
+  if (E.Control and $10000000) = 0 then
+    WriteTile(B, TX, TY);
+end;
+
 procedure TDCRenderer.RenderTiles(First, Count, Slot: Integer);
 begin
   if Slot >= Length(FBuffers) then
     Exit;
-  var B: PTileBuffers := @FBuffers[Slot];
-  var LastTile := -1;
   for var N := First to First + Count - 1 do
-  begin
-    var E := FEntries[N];
-    var TX := Integer((E.Control shr 2) and $3F);
-    var TY := Integer((E.Control shr 8) and $3F);
-    if (TX >= FTilesX) or (TY >= FTilesY) then
-      Continue;
-    var Tile := TY * FTilesX + TX;
-    // Depth clears unless z_keep (bit 30); colour persists within a tile.
-    if Tile <> LastTile then
-    begin
-      for var I := 0 to TileSize * TileSize - 1 do
-        B.Color[I] := FBackground;
-      LastTile := Tile;
-    end;
-    if (E.Control and $40000000) = 0 then
-      for var I := 0 to TileSize * TileSize - 1 do
-      begin
-        B.Depth[I] := FBackgroundDepth;
-        B.Tag[I] := -1;
-        B.Fresh[I] := 1;
-      end;
-    FillChar(B.Modified, SizeOf(B.Modified), 0);
-    if FContext <> nil then
-    begin
-      if (E.Lists[0] and $80000000) = 0 then
-        RasterOpaque(B, TX, TY, TAListOpaque, E.Pass);
-      if (E.Lists[4] and $80000000) = 0 then
-        RasterOpaque(B, TX, TY, TAListPunchThrough, E.Pass);
-      if (E.Lists[1] and $80000000) = 0 then
-        ApplyVolumes(B, TX, TY, TAListOpaqueMod, E.Pass, False);
-    end;
-    ShadeOpaque(B, TX, TY);
-    if (FContext <> nil) and ((E.Lists[2] and $80000000) = 0) then
-    begin
-      FillChar(B.Modified, SizeOf(B.Modified), 0);
-      if (E.Lists[3] and $80000000) = 0 then
-        ApplyVolumes(B, TX, TY, TAListTranslucentMod, E.Pass, True);
-      RasterTranslucent(B, @FFragments[Slot], TX, TY, E.Pass, (E.Control and $20000000) <> 0);
-    end;
-    // no_writeout (bit 28) keeps the tile for a following pass.
-    if (E.Control and $10000000) = 0 then
-      WriteTile(B, TX, TY);
-  end;
+    if FEntryTile[N] >= 0 then
+      RenderEntry(N, Slot);
 end;
 
 end.
