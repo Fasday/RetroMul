@@ -19,7 +19,7 @@ uses
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
-  Core.Adapter.CPS, CPS.RomSets;
+  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.DC;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -39,6 +39,24 @@ begin
   if (Storage <> nil) and RomName.StartsWith('content://', True) then
     SourceName := Storage.Describe(RomName).Name;
 
+  // GD-ROM and DiscJuggler images only hold Dreamcast discs.
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_GDI) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CDI) then
+  begin
+    var DiscStorage := Storage;
+    if DiscStorage = nil then
+      DiscStorage := TStorage.Default;
+    var Disc := TCDDisc.Create(Stream, DiscStorage, RomName);
+    try
+      if not TDCCoreAdapter.IsDCDisc(Disc) then
+        raise EReadError.Create('Not a Dreamcast disc: the boot track lacks the SEGA SEGAKATANA identifier');
+    except
+      Disc.Free;
+      raise;
+    end;
+    Exit(TDCCoreAdapter.Create(Stream, DiscStorage, RomName, Disc));
+  end;
+
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CUE) or
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ISO) or
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) then
@@ -53,6 +71,12 @@ begin
     var IsSegaCD := False;
     var IsSaturn := False;
     try
+      if TDCCoreAdapter.IsDCDisc(Disc) then
+      begin
+        var OwnedDisc := Disc;
+        Disc := nil;
+        Exit(TDCCoreAdapter.Create(Stream, DiscStorage, RomName, OwnedDisc));
+      end;
       for var T := 1 to Disc.TrackCount do
       begin
         var Track := Disc.Track(T);
@@ -267,6 +291,8 @@ begin
         Result := TMDCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.Saturn:
         Result := TSaturnCoreAdapter.Create(Input, Storage, RomName);
+      TRomSystem.DC:
+        Result := TDCCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.SNES:
         Result := TSnesCoreAdapter.Create(Input, Storage, RomName);
     end;

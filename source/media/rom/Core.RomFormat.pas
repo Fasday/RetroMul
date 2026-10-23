@@ -26,6 +26,7 @@ const
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_SATURN = 'saturn';
+  ROM_SYSTEM_DC = 'dc';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
   ROM_SYSTEM_NEOGEOAES = 'neogeoaes';
@@ -55,6 +56,7 @@ const
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_SATURN = 'SATURN';
+  ROM_CORE_ID_DC = 'DC';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
   ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
 
@@ -96,6 +98,9 @@ const
   ROM_EXTENSION_CUE = '.cue';
   ROM_EXTENSION_ISO = '.iso';
   ROM_EXTENSION_CHD = '.chd';
+  ROM_EXTENSION_GDI = '.gdi';
+  ROM_EXTENSION_CDI = '.cdi';
+  ROM_EXTENSION_ELF = '.elf';
 
 const
   ROM_MAX_SIZE = 64 * 1024 * 1024;
@@ -378,6 +383,14 @@ begin
     Result.System := TRomSystem.NeoGeoPocket;
     if Data[$23] = $10 then
       Result.System := TRomSystem.NeoGeoPocketColor;
+    Exit;
+  end;
+
+  // Dreamcast homebrew: 32-bit little-endian SuperH (machine 42) ELF executables.
+  if (Length(Data) >= 52) and Signature(0, #$7F'ELF'#1#1) and (Data[16] = 2) and (Data[17] = 0) and
+    (Data[18] = 42) and (Data[19] = 0) then
+  begin
+    Result.System := TRomSystem.DC;
     Exit;
   end;
 

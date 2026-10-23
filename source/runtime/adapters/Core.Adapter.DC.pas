@@ -1,0 +1,1231 @@
+﻿unit Core.Adapter.DC;
+
+interface
+
+uses
+  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs, Core.Storage,
+  Core.Emulation, Core.Snapshots, Core.CD.Disc, DC.Types, DC.Flash, DC.Maple, DC.Console, Core.DC.Playback;
+
+{$SCOPEDENUMS ON}
+
+type
+  // Analog stick directions beyond the logical pad (whose Select and Mode are
+  // the L and R triggers); frontends number their actions in this order.
+  TDCExtra = (StickUp, StickDown, StickLeft, StickRight);
+
+  TDCKeyMap = array[0..3, TEmulatorButton] of UInt32;
+  TDCExtraKeyMap = array[0..3, TDCExtra] of UInt32;
+
+  // Host analog input of a controller: stick -32768..32767 (zero centered,
+  // positive right/down) and triggers 0..255.
+  TDCAnalogPad = record
+    StickX, StickY: SmallInt;
+    LeftTrigger, RightTrigger: Byte;
+  end;
+
+  IDCControllerInput = interface
+    ['{3F1A7C52-9B0E-4D86-A2C4-58E1D7B9F036}']
+    procedure SetDCController(Port: Integer; const Pad: TDCAnalogPad);
+  end;
+
+  TDCConfig = class(TEmulatorConfigBase)
+  private
+    FKeys: TDCKeyMap;
+    FExtraKeys: TDCExtraKeyMap;
+    FBIOSMode, FBIOSFile, FFlashFile, FRegion, FLanguage, FCable, FVideo, FVMUScreen: string;
+    FRumble: Boolean;
+  protected
+    procedure LoadCoreSettings(Ini: TCustomIniFile); override;
+    procedure SaveCoreSettings(Ini: TCustomIniFile); override;
+  public
+    constructor Create(const FileName: string; const Storage: IStorage = nil);
+    class function ExtraKeyName(Extra: TDCExtra): string; static;
+    function ExtraKey(Port: Integer; Extra: TDCExtra): UInt32;
+    procedure SetExtraKey(Port: Integer; Extra: TDCExtra; Key: UInt32);
+    // 'hle' (built-in high-level boot), 'auto' (external boot ROM when found)
+    // or 'external'.
+    property BIOSMode: string read FBIOSMode write FBIOSMode;
+    // Empty: dc_boot.bin beside the image or in the dc ROM folder.
+    property BIOSFile: string read FBIOSFile write FBIOSFile;
+    property FlashFile: string read FFlashFile write FFlashFile;
+    // 'auto' (from the disc), 'japan', 'usa' or 'europe'.
+    property Region: string read FRegion write FRegion;
+    // 'english', 'japanese', 'german', 'french', 'spanish' or 'italian'.
+    property Language: string read FLanguage write FLanguage;
+    // 'composite', 'rgb' or 'vga'.
+    property Cable: string read FCable write FCable;
+    // 'auto', 'ntsc' or 'pal'.
+    property Video: string read FVideo write FVideo;
+    // 'off', 'top-left', 'top-right', 'bottom-left' or 'bottom-right'.
+    property VMUScreen: string read FVMUScreen write FVMUScreen;
+    property Rumble: Boolean read FRumble write FRumble;
+    property Keys: TDCKeyMap read FKeys;
+  end;
+
+  TDCPadInputs = array[0..3] of TDCPad;
+
+  // The VMU display of port A for an overlay: 48x32, one byte per pixel
+  // (0 off, 1 on), upright as seen through the controller window (the unit
+  // sits upside down in the controller). False when unchanged or absent.
+  IDCVMUScreen = interface
+    ['{6B2C3D8E-5F41-4A7B-9C0D-2E1F3A4B5C6D}']
+    function TakeVMUScreen(out Pixels: TBytes): Boolean;
+    function VMUScreenCorner: string;
+  end;
+
+  TDCWorker = class(TThread)
+  private
+    FLock: TCriticalSection;
+    FWake: TEvent;
+    FSnapshots: TSnapshotQueue;
+    FInputPortsCommand: TInputPortsCommand;
+    FStorage: IStorage;
+    FConfig: TDCConsoleConfig;
+    FProgram, FIdentity: TBytes;
+    FDisc: TCDDisc;
+    FVMUFiles: array[0..3] of string;
+    FFlashSave: string;
+    FSnapshotDirectory, FError, FAudioError: string;
+    FInputs: TDCPadInputs;
+    FPause, FReset, FAudioEnabled, FAvailable, FRumbleEnabled: Boolean;
+    FVolume: Single;
+    FFrame: TEmulatorFrame;
+    FRumbleLevel: Byte;
+    FVMUScreen: TBytes;
+    FVMUChanged: Boolean;
+    FConsole: TDCConsole;
+    FAudio: TDCAudioPlayback;
+    FAudioFailed: Boolean;
+    FRate: TEmulationFrameRate;
+    FDeadline: Double;
+    FClockGuest: Int64;
+    FConnected, FWithVMU: array[0..3] of Boolean;
+    procedure ReportError(const Text: string);
+    procedure SaveVMU(Port: Integer);
+    procedure AudioFailure(E: Exception);
+    procedure ClearAudio;
+    procedure Restart;
+    procedure ApplyPorts(const Ports: TCoreInputPorts);
+    procedure AttachDevices;
+    procedure TransferSnapshot(const Name: string; Loading: Boolean);
+    function GetInputPorts: TCoreInputPorts;
+    procedure SetInputPorts(const Ports: TCoreInputPorts);
+    procedure Publish;
+    procedure SaveMemories;
+    procedure StartMachine;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const Config: TDCConsoleConfig; const ProgramData, Identity: TBytes; Disc: TCDDisc;
+      const Storage: IStorage; const VMUFiles: array of string; const FlashSave, SnapshotDirectory: string;
+      Rumble: Boolean);
+    destructor Destroy; override;
+    procedure Configure(const Inputs: TDCPadInputs; Paused, AudioEnabled: Boolean; Volume: Single);
+    procedure RequestReset;
+    procedure StopAndSave;
+    function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
+    function TakeError(Audio: Boolean): string;
+    procedure Snapshot(const Name: string; Loading: Boolean);
+    function RumbleLevel: Byte;
+    function TakeVMUScreen(out Pixels: TBytes): Boolean;
+    property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
+  end;
+
+  TDCCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation,
+    IEmulationAudioDiagnostics, IEmulationRumbleOutput, IDCControllerInput, IDCVMUScreen)
+  private
+    FStorage: IStorage;
+    FConfig: IEmulatorConfig;
+    FConfigObject: TDCConfig;
+    FWorker: TDCWorker;
+    FDisc: TCDDisc;
+    FProgram, FIdentity: TBytes;
+    FMachine: TDCConsoleConfig;
+    FPorts: TCoreInputPorts;
+    FKeyboard, FGamepad: TEmulatorInput;
+    FKeyboardExtra: array[0..3, TDCExtra] of Boolean;
+    FControllers: array[0..3] of TDCAnalogPad;
+    FPaused: Boolean;
+    FVMUFiles: array[0..3] of string;
+    FFlashSave, FSnapshotDirectory, FError: string;
+    procedure LoadFirmware(const RomName: string);
+    procedure Configure;
+  public
+    // Stream holds an ELF or binary program when no disc is given.
+    constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; OwnedDisc: TCDDisc = nil);
+    destructor Destroy; override;
+    class function IsDCDisc(Disc: TCDDisc): Boolean; static;
+    function GetSystemId: string;
+    function GetName: string;
+    function GetSupportsSnapshots: Boolean;
+    function GetUsesSuborKeyboard: Boolean;
+    function GetHasCoinAcceptor: Boolean;
+    procedure InsertCoin1;
+    procedure InsertCoin2;
+    procedure Start;
+    procedure Stop;
+    procedure Pause;
+    procedure Resume;
+    procedure Reset;
+    procedure ApplyInputPorts(const Ports: TCoreInputPorts);
+    procedure ClearInput;
+    procedure SetKeyState(Code: UInt32; Pressed: Boolean);
+    procedure SetGamepadInput(const Input: TEmulatorInput);
+    procedure SetDCController(Port: Integer; const Pad: TDCAnalogPad);
+    function GetInputState: TEmulatorInput;
+    function GetSnapshotDirectory: string;
+    procedure SaveSnapshot(const Name: string);
+    procedure LoadSnapshot(const Name: string);
+    function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
+    function TakeError: string;
+    function TakeAudioError: string;
+    function GetConfig: IEmulatorConfig;
+    function IsPaused: Boolean;
+    function GetHasRumble: Boolean;
+    function GetRumbleLevel: Byte;
+    function TakeVMUScreen(out Pixels: TBytes): Boolean;
+    function VMUScreenCorner: string;
+  end;
+
+implementation
+
+uses
+  {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF}
+  System.Math, System.Diagnostics, System.UITypes, System.IOUtils, System.DateUtils, Core.RomFormat, Core.SavePaths,
+  DC.Disc, DC.ELF;
+
+const
+  KeyNames: array[TEmulatorButton] of string =
+    ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+  // Select and Mode are the L and R triggers.
+  DefaultKeys: array[0..1, TEmulatorButton] of UInt32 = (
+    (vkUp, vkDown, vkLeft, vkRight, vkX, vkC, vkQ, vkReturn, 0, vkZ, vkS, 0, vkW),
+    (vkNumpad8, vkNumpad5, vkNumpad4, vkNumpad6, vkNumpad1, vkNumpad2, vkDivide, vkNumpad0, 0, vkNumpad7, vkNumpad9,
+    0, vkMultiply));
+  ExtraKeyNames: array[TDCExtra] of string = ('StickUp', 'StickDown', 'StickLeft', 'StickRight');
+  DefaultExtraKeys: array[TDCExtra] of UInt32 = (vkI, vkK, vkJ, vkL);
+  ButtonBits: array[TEmulatorButton] of Word = (MapleUp, MapleDown, MapleLeft, MapleRight, MapleA, MapleB, 0,
+    MapleStart, 0, MapleX, MapleY, 0, 0);
+
+function StickByte(Value: Integer): Byte;
+begin
+  Result := EnsureRange(128 + EnsureRange(Value, -32768, 32767) div 256, 0, 255);
+end;
+
+{ TDCConfig }
+
+constructor TDCConfig.Create(const FileName: string; const Storage: IStorage);
+begin
+  inherited Create(FileName, Storage);
+  for var P := 0 to 3 do
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      if P < 2 then
+        FKeys[P, B] := DefaultKeys[P, B]
+      else
+        FKeys[P, B] := 0;
+  for var P := 0 to 3 do
+    for var Extra := Low(TDCExtra) to High(TDCExtra) do
+      if P = 0 then
+        FExtraKeys[P, Extra] := DefaultExtraKeys[Extra]
+      else
+        FExtraKeys[P, Extra] := 0;
+  FBIOSMode := 'hle';
+  FRegion := 'auto';
+  FLanguage := 'english';
+  FCable := 'composite';
+  FVideo := 'auto';
+  FVMUScreen := 'top-right';
+  FRumble := True;
+end;
+
+class function TDCConfig.ExtraKeyName(Extra: TDCExtra): string;
+begin
+  Result := ExtraKeyNames[Extra];
+end;
+
+function TDCConfig.ExtraKey(Port: Integer; Extra: TDCExtra): UInt32;
+begin
+  Result := FExtraKeys[Port, Extra];
+end;
+
+procedure TDCConfig.SetExtraKey(Port: Integer; Extra: TDCExtra; Key: UInt32);
+begin
+  FExtraKeys[Port, Extra] := Key;
+end;
+
+function OneOf(const Value: string; const Allowed: array of string; const Default: string): string;
+begin
+  Result := Value.ToLower;
+  for var A in Allowed do
+    if Result = A then
+      Exit;
+  Result := Default;
+end;
+
+procedure TDCConfig.LoadCoreSettings(Ini: TCustomIniFile);
+begin
+  FBIOSMode := OneOf(Ini.ReadString('Hardware', 'BIOSMode', 'hle'), ['hle', 'auto', 'external'], 'hle');
+  FBIOSFile := Ini.ReadString('Hardware', 'BIOS', '');
+  FFlashFile := Ini.ReadString('Hardware', 'Flash', '');
+  FRegion := OneOf(Ini.ReadString('System', 'Region', 'auto'), ['auto', 'japan', 'usa', 'europe'], 'auto');
+  FLanguage := OneOf(Ini.ReadString('System', 'Language', 'english'),
+    ['japanese', 'english', 'german', 'french', 'spanish', 'italian'], 'english');
+  FCable := OneOf(Ini.ReadString('System', 'Cable', 'composite'), ['composite', 'rgb', 'vga'], 'composite');
+  FVideo := OneOf(Ini.ReadString('System', 'Video', 'auto'), ['auto', 'ntsc', 'pal'], 'auto');
+  FVMUScreen := OneOf(Ini.ReadString('Peripherals', 'VMUScreen', 'top-right'),
+    ['off', 'top-left', 'top-right', 'bottom-left', 'bottom-right'], 'top-right');
+  FRumble := Ini.ReadBool('Peripherals', 'Rumble', True);
+  for var P := 0 to 3 do
+  begin
+    var Section := 'Keys';
+    if P > 0 then
+      Section := Section + IntToStr(P + 1);
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      FKeys[P, B] := ReadEmulatorKey(Ini, Section, KeyNames[B], FKeys[P, B]);
+    for var Extra := Low(TDCExtra) to High(TDCExtra) do
+      FExtraKeys[P, Extra] := ReadEmulatorKey(Ini, Section, ExtraKeyNames[Extra], FExtraKeys[P, Extra]);
+  end;
+end;
+
+procedure TDCConfig.SaveCoreSettings(Ini: TCustomIniFile);
+begin
+  Ini.WriteString('Hardware', 'BIOSMode', FBIOSMode);
+  Ini.WriteString('Hardware', 'BIOS', FBIOSFile);
+  Ini.WriteString('Hardware', 'Flash', FFlashFile);
+  Ini.WriteString('System', 'Region', FRegion);
+  Ini.WriteString('System', 'Language', FLanguage);
+  Ini.WriteString('System', 'Cable', FCable);
+  Ini.WriteString('System', 'Video', FVideo);
+  Ini.WriteString('Peripherals', 'VMUScreen', FVMUScreen);
+  Ini.WriteBool('Peripherals', 'Rumble', FRumble);
+  for var P := 0 to 3 do
+  begin
+    var Section := 'Keys';
+    if P > 0 then
+      Section := Section + IntToStr(P + 1);
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      Ini.WriteInteger(Section, KeyNames[B], FKeys[P, B]);
+    for var Extra := Low(TDCExtra) to High(TDCExtra) do
+      Ini.WriteInteger(Section, ExtraKeyNames[Extra], FExtraKeys[P, Extra]);
+  end;
+end;
+
+{ TDCWorker }
+
+constructor TDCWorker.Create(const Config: TDCConsoleConfig; const ProgramData, Identity: TBytes; Disc: TCDDisc;
+  const Storage: IStorage; const VMUFiles: array of string; const FlashSave, SnapshotDirectory: string;
+  Rumble: Boolean);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FConfig := Config;
+  FProgram := Copy(ProgramData);
+  FIdentity := Copy(Identity);
+  FDisc := Disc;
+  FStorage := Storage;
+  for var I := 0 to 3 do
+    FVMUFiles[I] := VMUFiles[I];
+  FFlashSave := FlashSave;
+  FSnapshotDirectory := SnapshotDirectory;
+  FRumbleEnabled := Rumble;
+  FLock := TCriticalSection.Create;
+  FWake := TEvent.Create(nil, False, False, '');
+  FSnapshots := TSnapshotQueue.Create;
+  FInputPortsCommand := TInputPortsCommand.Create;
+end;
+
+destructor TDCWorker.Destroy;
+begin
+  Terminate;
+  if FWake <> nil then
+    FWake.SetEvent;
+  inherited;
+  FInputPortsCommand.Free;
+  FSnapshots.Free;
+  FWake.Free;
+  FLock.Free;
+end;
+
+function TDCWorker.GetInputPorts: TCoreInputPorts;
+begin
+  Result := FInputPortsCommand.GetPorts;
+end;
+
+procedure TDCWorker.SetInputPorts(const Ports: TCoreInputPorts);
+begin
+  FInputPortsCommand.Apply(Self, Ports, FWake);
+end;
+
+procedure TDCWorker.Configure(const Inputs: TDCPadInputs; Paused, AudioEnabled: Boolean; Volume: Single);
+begin
+  var Wake: Boolean;
+  FLock.Acquire;
+  try
+    Wake := FPause <> Paused;
+    FInputs := Inputs;
+    FPause := Paused;
+    FAudioEnabled := AudioEnabled;
+    FVolume := EnsureRange(Volume, 0.0, 1.0);
+  finally
+    FLock.Release;
+  end;
+  if Wake then
+    FWake.SetEvent;
+end;
+
+procedure TDCWorker.RequestReset;
+begin
+  FLock.Acquire;
+  try
+    FReset := True;
+    FAvailable := False;
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
+end;
+
+procedure TDCWorker.StopAndSave;
+begin
+  Terminate;
+  FWake.SetEvent;
+  if Suspended then
+    Start;
+  WaitFor;
+end;
+
+function TDCWorker.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
+begin
+  FLock.Acquire;
+  try
+    Result := FAvailable;
+    if Result then
+    begin
+      Frame := FFrame;
+      FAvailable := False;
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TDCWorker.TakeError(Audio: Boolean): string;
+begin
+  FLock.Acquire;
+  try
+    if Audio then
+    begin
+      Result := FAudioError;
+      FAudioError := '';
+    end
+    else
+    begin
+      Result := FError;
+      FError := '';
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TDCWorker.Snapshot(const Name: string; Loading: Boolean);
+begin
+  FWake.SetEvent;
+  FSnapshots.Execute(Self, Name, Loading);
+end;
+
+function TDCWorker.RumbleLevel: Byte;
+begin
+  FLock.Acquire;
+  try
+    Result := FRumbleLevel;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TDCWorker.TakeVMUScreen(out Pixels: TBytes): Boolean;
+begin
+  FLock.Acquire;
+  try
+    Result := FVMUChanged;
+    FVMUChanged := False;
+    Pixels := Copy(FVMUScreen);
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TDCWorker.Publish;
+begin
+  var Frame: TEmulatorFrame;
+  Frame.Width := FConsole.PVR.FrameWidth;
+  Frame.Height := FConsole.PVR.FrameHeight;
+  SetLength(Frame.Pixels, Frame.Width * Frame.Height);
+  var Source := FConsole.PVR.Frame;
+  if Length(Source) >= Length(Frame.Pixels) then
+    Move(Source[0], Frame.Pixels[0], Length(Frame.Pixels) * SizeOf(Cardinal));
+  Frame.FrameNumber := FConsole.FrameCount;
+  Frame.FramesPerSecond := FRate.Update(Frame.FrameNumber, TStopwatch.GetTimeStamp, TStopwatch.Frequency);
+  // Port A's VMU display for the frontend overlay, turned upright: the unit
+  // sits upside down in the controller.
+  var Screen: TBytes := nil;
+  var Changed := False;
+  var VMU := FConsole.Maple.Devices[0, 1];
+  if (VMU is TDCVMU) and TDCVMU(VMU).LCDChanged then
+  begin
+    TDCVMU(VMU).LCDChanged := False;
+    SetLength(Screen, 48 * 32);
+    for var Y := 0 to 31 do
+      for var X := 0 to 47 do
+      begin
+        var SX := 47 - X;
+        var SY := 31 - Y;
+        Screen[Y * 48 + X] := (TDCVMU(VMU).LCD[SY * 6 + SX div 8] shr (7 - SX mod 8)) and 1;
+      end;
+    Changed := True;
+  end;
+  var Level: Byte := 0;
+  var Pack := FConsole.Maple.Devices[0, 2];
+  if FRumbleEnabled and (Pack is TDCPuruPuru) then
+    Level := TDCPuruPuru(Pack).Level;
+  FLock.Acquire;
+  try
+    FFrame := Frame;
+    FAvailable := True;
+    FRumbleLevel := Level;
+    if Changed then
+    begin
+      FVMUScreen := Screen;
+      FVMUChanged := True;
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TDCWorker.ReportError(const Text: string);
+begin
+  FLock.Acquire;
+  try
+    if FError = '' then
+      FError := Text
+    else
+      FError := FError + #13#10 + Text;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TDCWorker.AudioFailure(E: Exception);
+begin
+  FLock.Acquire;
+  try
+    FAudioError := 'Dreamcast audio: ' + E.Message;
+  finally
+    FLock.Release;
+  end;
+  FAudioFailed := True;
+  FreeAndNil(FAudio);
+  Restart;
+end;
+
+procedure TDCWorker.ClearAudio;
+begin
+  if FAudio = nil then
+    Exit;
+  try
+    FAudio.Clear;
+  except
+    on E: Exception do
+      AudioFailure(E);
+  end;
+end;
+
+procedure TDCWorker.Restart;
+begin
+  FDeadline := TStopwatch.GetTimeStamp;
+  FClockGuest := FConsole.Scheduler.Now;
+  FRate.Reset(FConsole.FrameCount, TStopwatch.GetTimeStamp);
+end;
+
+procedure TDCWorker.ApplyPorts(const Ports: TCoreInputPorts);
+begin
+  // 'auto': controllers on every port, a VMU in the first one.
+  for var Port := 0 to 3 do
+  begin
+    var Device := Ports.Devices[Port];
+    FConnected[Port] := Device <> 'none';
+    FWithVMU[Port] := (Device = 'pad-vmu') or ((Device = 'auto') and (Port = 0));
+  end;
+  if FConsole <> nil then
+    AttachDevices;
+end;
+
+procedure TDCWorker.SaveVMU(Port: Integer);
+begin
+  var VMU := FConsole.Maple.Devices[Port, 1];
+  if (VMU is TDCVMU) and TDCVMU(VMU).Dirty and (FVMUFiles[Port] <> '') then
+  begin
+    FStorage.EnsureFolder(ExtractFilePath(FVMUFiles[Port]));
+    FStorage.WriteBytes(FVMUFiles[Port], TDCVMU(VMU).Data);
+    TDCVMU(VMU).Dirty := False;
+  end;
+end;
+
+procedure TDCWorker.AttachDevices;
+begin
+  // A controller per connected port, a VMU in its first socket on request and
+  // a jump pack in the second socket of port A.
+  for var Port := 0 to 3 do
+  begin
+    if not FConnected[Port] or not FWithVMU[Port] then
+    begin
+      SaveVMU(Port);
+      FConsole.Maple.Attach(Port, 1, nil);
+    end;
+    if not FConnected[Port] then
+    begin
+      for var U := 0 to 5 do
+        FConsole.Maple.Attach(Port, U, nil);
+      Continue;
+    end;
+    if not (FConsole.Maple.Devices[Port, 0] is TDCController) then
+      FConsole.Maple.Attach(Port, 0, TDCController.Create);
+    if FWithVMU[Port] and (FVMUFiles[Port] <> '') and not (FConsole.Maple.Devices[Port, 1] is TDCVMU) then
+    begin
+      var VMU := TDCVMU.Create;
+      try
+        if FStorage.Exists(FVMUFiles[Port]) then
+        begin
+          var Image := FStorage.ReadBytes(FVMUFiles[Port]);
+          if Length(Image) = Length(VMU.Data) then
+            VMU.Data := Image;
+        end;
+        VMU.Dirty := False;
+      except
+        VMU.Free;
+        raise;
+      end;
+      FConsole.Maple.Attach(Port, 1, VMU);
+    end;
+    if (Port = 0) and FRumbleEnabled and not (FConsole.Maple.Devices[Port, 2] is TDCPuruPuru) then
+      FConsole.Maple.Attach(Port, 2, TDCPuruPuru.Create);
+  end;
+end;
+
+procedure TDCWorker.SaveMemories;
+begin
+  if FConsole = nil then
+    Exit;
+  for var Port := 0 to 3 do
+    SaveVMU(Port);
+  if FConsole.Flash.S.Dirty and (FFlashSave <> '') then
+  begin
+    var Data: TBytes;
+    SetLength(Data, DCFlashSize);
+    Move(FConsole.Memory.Flash^, Data[0], DCFlashSize);
+    FStorage.EnsureFolder(ExtractFilePath(FFlashSave));
+    FStorage.WriteBytes(FFlashSave, Data);
+    FConsole.Flash.S.Dirty := False;
+  end;
+end;
+
+procedure TDCWorker.TransferSnapshot(const Name: string; Loading: Boolean);
+begin
+  var Path := ResolveSnapshotPath(FSnapshotDirectory, Name);
+  var Console := FConsole;
+  var Transfer: TStateTransfer :=
+    procedure(State: TStateArchive)
+    begin
+      Console.SerializeState(State);
+    end;
+  if Loading then
+  begin
+    LoadCoreSnapshot(Path, ROM_CORE_ID_DC, FIdentity, Transfer, FStorage);
+    Console.AICA.TakeSamples;
+    ClearAudio;
+    Publish;
+  end
+  else
+  begin
+    SaveCoreSnapshot(Path, ROM_CORE_ID_DC, FIdentity, Transfer, FStorage);
+    SaveSnapshotPreview(Path, Console.PVR.FrameWidth, Console.PVR.FrameHeight, Console.PVR.FrameWidth,
+      @Console.PVR.Frame[0], FStorage);
+  end;
+  Restart;
+end;
+
+procedure TDCWorker.StartMachine;
+begin
+  FConsole.InsertDisc(FDisc);
+  AttachDevices;
+  // A saved system flash keeps settings and game data between sessions.
+  if (Length(FConfig.Flash) = 0) and (FFlashSave <> '') and FStorage.Exists(FFlashSave) then
+  begin
+    var Saved := FStorage.ReadBytes(FFlashSave);
+    if Length(Saved) = DCFlashSize then
+      Move(Saved[0], FConsole.Memory.Flash^, DCFlashSize);
+  end;
+  if Length(FConfig.BootROM) = 0 then
+  begin
+    if FDisc <> nil then
+      FConsole.BootDisc
+    else
+      FConsole.LoadProgram(FProgram);
+  end;
+end;
+
+procedure TDCWorker.Execute;
+begin
+  FConsole := nil;
+  FAudio := nil;
+  FAudioFailed := False;
+  var WasPaused := False;
+  var WasEnabled := False;
+  {$IFDEF MSWINDOWS}
+  var TimerSet := timeBeginPeriod(1) = TIMERR_NOERROR;
+  {$ENDIF}
+  try
+    try
+      ApplyPorts(InputPorts);
+      FConsole := TDCConsole.Create(FConfig);
+      StartMachine;
+      Restart;
+      while not Terminated do
+      begin
+        FInputPortsCommand.Process(
+          procedure(const Ports: TCoreInputPorts)
+          begin
+            ApplyPorts(Ports);
+          end);
+        FSnapshots.Process(
+          procedure(const Name: string; Loading: Boolean)
+          begin
+            TransferSnapshot(Name, Loading);
+          end);
+
+        var Inputs: TDCPadInputs;
+        var Paused, Enabled, ResetRequested: Boolean;
+        var Volume: Single;
+        FLock.Acquire;
+        try
+          Inputs := FInputs;
+          Paused := FPause;
+          Enabled := FAudioEnabled;
+          Volume := FVolume;
+          ResetRequested := FReset;
+          FReset := False;
+        finally
+          FLock.Release;
+        end;
+
+        if ResetRequested then
+        begin
+          SaveMemories;
+          FConsole.Reset;
+          StartMachine;
+          FConsole.AICA.TakeSamples;
+          ClearAudio;
+          Restart;
+        end;
+
+        if Paused then
+        begin
+          if not WasPaused then
+          begin
+            SaveMemories;
+            ClearAudio;
+          end;
+          WasPaused := True;
+          FWake.WaitFor(10);
+          Restart;
+          Continue;
+        end;
+        WasPaused := False;
+
+        if WasEnabled <> Enabled then
+        begin
+          if not Enabled then
+            ClearAudio;
+          Restart;
+        end;
+        WasEnabled := Enabled;
+
+        // The audio queue is the real-time clock.
+        if Enabled and not FAudioFailed and (FAudio <> nil) then
+        try
+          if not FAudio.CanAdvance then
+          begin
+            FWake.WaitFor(1);
+            Continue;
+          end;
+        except
+          on E: Exception do
+            AudioFailure(E);
+        end;
+
+        for var Port := 0 to 3 do
+          if FConsole.Maple.Devices[Port, 0] is TDCController then
+            TDCController(FConsole.Maple.Devices[Port, 0]).Pad := Inputs[Port];
+        FConsole.RunFrame;
+        if FConsole.Halted then
+        begin
+          ReportError('Dreamcast: the program returned to the system menu');
+          Break;
+        end;
+        if Terminated then
+          Break;
+
+        var Samples := FConsole.AICA.TakeSamples;
+        if Enabled and not FAudioFailed then
+        try
+          if FAudio = nil then
+            FAudio := TDCAudioPlayback.Create;
+          FAudio.Enqueue(Samples, Volume);
+        except
+          on E: Exception do
+            AudioFailure(E);
+        end;
+        Publish;
+
+        if not Enabled or FAudioFailed then
+        begin
+          var Target := FDeadline + (FConsole.Scheduler.Now - FClockGuest) * (TStopwatch.Frequency / DCCPUClock);
+          var Remaining := (Target - TStopwatch.GetTimeStamp) * 1000 / TStopwatch.Frequency;
+          if Remaining > 0 then
+            FWake.WaitFor(Min(100, Ceil(Remaining)))
+          else if Remaining < -250 then
+          begin
+            FDeadline := TStopwatch.GetTimeStamp;
+            FClockGuest := FConsole.Scheduler.Now;
+          end;
+        end;
+      end;
+    except
+      on E: Exception do
+        ReportError('Dreamcast: ' + E.Message);
+    end;
+    try
+      SaveMemories;
+    except
+      on E: Exception do
+        ReportError('Dreamcast memory card: ' + E.Message);
+    end;
+  finally
+    FreeAndNil(FAudio);
+    FreeAndNil(FConsole);
+    {$IFDEF MSWINDOWS}
+    if TimerSet then
+      timeEndPeriod(1);
+    {$ENDIF}
+  end;
+end;
+
+{ TDCCoreAdapter }
+
+class function TDCCoreAdapter.IsDCDisc(Disc: TCDDisc): Boolean;
+begin
+  Result := IsDreamcastDisc(Disc);
+end;
+
+// Seconds since 1950-01-01 (the AICA RTC epoch).
+function DCSeconds(Value: TDateTime): Cardinal;
+begin
+  Result := Cardinal(Max(Int64(0), SecondsBetween(Value, EncodeDate(1950, 1, 1))));
+end;
+
+constructor TDCCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName: string; OwnedDisc: TCDDisc);
+begin
+  inherited Create;
+  FDisc := OwnedDisc;
+  FStorage := Storage;
+  if FStorage = nil then
+    FStorage := TStorage.Default;
+  FConfigObject := TDCConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_DC), FStorage);
+  FConfig := FConfigObject;
+  FConfig.Load;
+  if FDisc = nil then
+  begin
+    var Size := Stream.Size - Stream.Position;
+    if (Size < 16) or (Size > DCRAMSize) then
+      raise EReadError.Create('Dreamcast program must fit in 16 MiB');
+    SetLength(FProgram, Size);
+    Stream.ReadBuffer(FProgram[0], Size);
+    FIdentity := Copy(FProgram);
+  end
+  else
+    FIdentity := FDisc.Identity;
+
+  FMachine := Default(TDCConsoleConfig);
+  // Region: setting, else the disc's area symbols (IP.BIN 30h: J, U, E).
+  var Areas := 'JUE';
+  if FDisc <> nil then
+  begin
+    var Wrapper := TDCDisc.Create(FDisc);
+    try
+      var Sector := Wrapper.ReadBootSector(0);
+      Areas := TEncoding.ANSI.GetString(Sector, $30, 8).ToUpper;
+    finally
+      Wrapper.Free;
+    end;
+  end;
+  if FConfigObject.Region = 'japan' then
+    FMachine.Region := TDCRegion.Japan
+  else if FConfigObject.Region = 'usa' then
+    FMachine.Region := TDCRegion.USA
+  else if FConfigObject.Region = 'europe' then
+    FMachine.Region := TDCRegion.Europe
+  else if Areas.Contains('U') then
+    FMachine.Region := TDCRegion.USA
+  else if Areas.Contains('E') then
+    FMachine.Region := TDCRegion.Europe
+  else
+    FMachine.Region := TDCRegion.Japan;
+  if FConfigObject.Video = 'pal' then
+    FMachine.PAL := True
+  else if FConfigObject.Video = 'ntsc' then
+    FMachine.PAL := False
+  else
+    FMachine.PAL := FMachine.Region = TDCRegion.Europe;
+  if FConfigObject.Cable = 'vga' then
+  begin
+    FMachine.Cable := TDCCable.VGA;
+    FMachine.PAL := False;
+  end
+  else if FConfigObject.Cable = 'rgb' then
+    FMachine.Cable := TDCCable.RGB
+  else
+    FMachine.Cable := TDCCable.Composite;
+  var Languages: array of string := ['japanese', 'english', 'german', 'french', 'spanish', 'italian'];
+  for var I := 0 to High(Languages) do
+    if FConfigObject.Language = Languages[I] then
+      FMachine.Language := TDCLanguage(I);
+  FMachine.RTCSeconds := DCSeconds(Now);
+  LoadFirmware(RomName);
+
+  var Identity := SnapshotIdentity(FIdentity);
+  FSnapshotDirectory := FStorage.GameSnapshots(ROM_SYSTEM_DC, RomName, Identity);
+  // Visual Memory units and the system flash belong to the console, not a game.
+  var Folder := TPath.Combine(FStorage.SaveRoot, ROM_SYSTEM_DC);
+  for var Port := 0 to 3 do
+    FVMUFiles[Port] := TPath.Combine(Folder, Format('vmu_%s1.bin', [Chr(Ord('A') + Port)]));
+  FFlashSave := TPath.Combine(Folder, 'dc_flash.bin');
+end;
+
+destructor TDCCoreAdapter.Destroy;
+begin
+  Stop;
+  FDisc.Free;
+  inherited;
+end;
+
+procedure TDCCoreAdapter.LoadFirmware(const RomName: string);
+begin
+  // External boot ROM: setting, else dc_boot.bin beside the image or in the
+  // dc ROM folder. The high-level boot is used without one, or by choice.
+  if FConfigObject.BIOSMode = 'hle' then
+    Exit;
+  var Path := FConfigObject.BIOSFile;
+  var FlashPath := FConfigObject.FlashFile;
+  if Path = '' then
+    for var Folder in [ExtractFilePath(RomName), TPath.Combine(FStorage.RomFolder, ROM_SYSTEM_DC)] do
+    begin
+      if (Folder = '') or Folder.StartsWith('content://', True) then
+        Continue;
+      var Candidate := TPath.Combine(Folder, 'dc_boot.bin');
+      if FStorage.Exists(Candidate) then
+      begin
+        Path := Candidate;
+        if FlashPath = '' then
+        begin
+          var Flash := TPath.Combine(Folder, 'dc_flash.bin');
+          if FStorage.Exists(Flash) then
+            FlashPath := Flash;
+        end;
+        Break;
+      end;
+    end;
+  if Path = '' then
+  begin
+    if FConfigObject.BIOSMode = 'external' then
+      raise EReadError.Create('Select a Dreamcast boot ROM (dc_boot.bin) in Dreamcast settings');
+    Exit;
+  end;
+  FMachine.BootROM := FStorage.ReadBytes(Path);
+  if Length(FMachine.BootROM) <> DCBootSize then
+    raise EReadError.CreateFmt('Dreamcast boot ROM must contain exactly 2 MiB: %s', [Path]);
+  if FlashPath <> '' then
+  begin
+    FMachine.Flash := FStorage.ReadBytes(FlashPath);
+    if Length(FMachine.Flash) <> DCFlashSize then
+      raise EReadError.CreateFmt('Dreamcast flash ROM must contain exactly 128 KiB: %s', [FlashPath]);
+  end;
+end;
+
+procedure TDCCoreAdapter.Configure;
+begin
+  if FWorker = nil then
+    Exit;
+  var Input := GetInputState;
+  var Inputs: TDCPadInputs;
+  for var Port := 0 to 3 do
+  begin
+    var Buttons: TEmulatorButtons;
+    case Port of
+      0: Buttons := Input.Buttons;
+      1: Buttons := Input.Buttons2;
+      2: Buttons := Input.Buttons3;
+    else
+      Buttons := Input.Buttons4;
+    end;
+    var Pad := Default(TDCPad);
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      if B in Buttons then
+        Pad.Buttons := Pad.Buttons or ButtonBits[B];
+    var Keys := FKeyboardExtra[Port];
+    var Host := FControllers[Port];
+    var X := Integer(Host.StickX);
+    var Y := Integer(Host.StickY);
+    var LT := Integer(Host.LeftTrigger);
+    var RT := Integer(Host.RightTrigger);
+    if Input.Analog[Port].Valid then
+    begin
+      Inc(X, Input.Analog[Port].X);
+      Inc(Y, Input.Analog[Port].Y);
+      LT := Max(LT, Input.Analog[Port].LeftTrigger);
+      RT := Max(RT, Input.Analog[Port].RightTrigger);
+    end;
+    X := X + 32767 * (Ord(Keys[TDCExtra.StickRight]) - Ord(Keys[TDCExtra.StickLeft]));
+    Y := Y + 32767 * (Ord(Keys[TDCExtra.StickDown]) - Ord(Keys[TDCExtra.StickUp]));
+    // Select and Mode are the triggers: keys press them fully, while host
+    // bindings and the on-screen pad report their travel above.
+    var KeyButtons: TEmulatorButtons;
+    case Port of
+      0: KeyButtons := FKeyboard.Buttons;
+      1: KeyButtons := FKeyboard.Buttons2;
+      2: KeyButtons := FKeyboard.Buttons3;
+    else
+      KeyButtons := FKeyboard.Buttons4;
+    end;
+    if TEmulatorButton.Select in KeyButtons then
+      LT := 255;
+    if TEmulatorButton.Mode in KeyButtons then
+      RT := 255;
+    Pad.StickX := StickByte(X);
+    Pad.StickY := StickByte(Y);
+    Pad.LeftTrigger := Byte(EnsureRange(LT, 0, 255));
+    Pad.RightTrigger := Byte(EnsureRange(RT, 0, 255));
+    Inputs[Port] := Pad;
+  end;
+  FWorker.Configure(Inputs, FPaused, FConfig.AudioEnabled, FConfig.AudioVolume);
+end;
+
+procedure TDCCoreAdapter.Start;
+begin
+  if FWorker <> nil then
+    Exit;
+  FWorker := TDCWorker.Create(FMachine, FProgram, FIdentity, FDisc, FStorage, FVMUFiles, FFlashSave,
+    FSnapshotDirectory, FConfigObject.Rumble);
+  FPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_DC);
+  FWorker.InputPorts := FPorts;
+  Configure;
+  FWorker.Start;
+end;
+
+procedure TDCCoreAdapter.Stop;
+begin
+  if FWorker = nil then
+    Exit;
+  FWorker.StopAndSave;
+  FError := FWorker.TakeError(False);
+  FreeAndNil(FWorker);
+end;
+
+procedure TDCCoreAdapter.Pause;
+begin
+  FPaused := True;
+  Configure;
+end;
+
+procedure TDCCoreAdapter.Resume;
+begin
+  FPaused := False;
+  Configure;
+end;
+
+procedure TDCCoreAdapter.Reset;
+begin
+  FPaused := False;
+  if FWorker <> nil then
+    FWorker.RequestReset;
+  Configure;
+end;
+
+procedure TDCCoreAdapter.ApplyInputPorts(const Ports: TCoreInputPorts);
+begin
+  ClearInput;
+  if FWorker <> nil then
+    FWorker.InputPorts := Ports;
+  FPorts := Ports;
+end;
+
+procedure TDCCoreAdapter.ClearInput;
+begin
+  FKeyboard := Default(TEmulatorInput);
+  FGamepad := Default(TEmulatorInput);
+  FillChar(FKeyboardExtra, SizeOf(FKeyboardExtra), 0);
+  FillChar(FControllers, SizeOf(FControllers), 0);
+  Configure;
+end;
+
+procedure TDCCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
+begin
+  if Code = 0 then
+    Exit;
+  for var Port := 0 to 3 do
+  begin
+    for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
+      if Code = FConfigObject.Keys[Port, Button] then
+        case Port of
+          0: if Pressed then Include(FKeyboard.Buttons, Button) else Exclude(FKeyboard.Buttons, Button);
+          1: if Pressed then Include(FKeyboard.Buttons2, Button) else Exclude(FKeyboard.Buttons2, Button);
+          2: if Pressed then Include(FKeyboard.Buttons3, Button) else Exclude(FKeyboard.Buttons3, Button);
+        else
+          if Pressed then Include(FKeyboard.Buttons4, Button) else Exclude(FKeyboard.Buttons4, Button);
+        end;
+    for var Extra := Low(TDCExtra) to High(TDCExtra) do
+      if Code = FConfigObject.ExtraKey(Port, Extra) then
+        FKeyboardExtra[Port, Extra] := Pressed;
+  end;
+  Configure;
+end;
+
+procedure TDCCoreAdapter.SetGamepadInput(const Input: TEmulatorInput);
+begin
+  FGamepad := Input;
+  Configure;
+end;
+
+procedure TDCCoreAdapter.SetDCController(Port: Integer; const Pad: TDCAnalogPad);
+begin
+  if (Port < 0) or (Port > 3) then
+    Exit;
+  FControllers[Port] := Pad;
+  Configure;
+end;
+
+function TDCCoreAdapter.GetInputState: TEmulatorInput;
+begin
+  Result := FGamepad;
+  Result.Buttons := FKeyboard.Buttons + FGamepad.Buttons;
+  Result.Buttons2 := FKeyboard.Buttons2 + FGamepad.Buttons2;
+  Result.Buttons3 := FKeyboard.Buttons3 + FGamepad.Buttons3;
+  Result.Buttons4 := FKeyboard.Buttons4 + FGamepad.Buttons4;
+end;
+
+function TDCCoreAdapter.GetSnapshotDirectory: string;
+begin
+  Result := FSnapshotDirectory;
+end;
+
+procedure TDCCoreAdapter.SaveSnapshot(const Name: string);
+begin
+  if FWorker <> nil then
+    FWorker.Snapshot(Name, False);
+end;
+
+procedure TDCCoreAdapter.LoadSnapshot(const Name: string);
+begin
+  if FWorker <> nil then
+    FWorker.Snapshot(Name, True);
+end;
+
+function TDCCoreAdapter.TryGetFrame(out Frame: TEmulatorFrame): Boolean;
+begin
+  Configure;
+  Result := (FWorker <> nil) and FWorker.TryGetFrame(Frame);
+end;
+
+function TDCCoreAdapter.TakeError: string;
+begin
+  Result := FError;
+  FError := '';
+  if (Result = '') and (FWorker <> nil) then
+    Result := FWorker.TakeError(False);
+end;
+
+function TDCCoreAdapter.TakeAudioError: string;
+begin
+  Result := '';
+  if FWorker <> nil then
+    Result := FWorker.TakeError(True);
+end;
+
+function TDCCoreAdapter.GetConfig: IEmulatorConfig;
+begin
+  Result := FConfig;
+end;
+
+function TDCCoreAdapter.GetSystemId: string;
+begin
+  Result := ROM_SYSTEM_DC;
+end;
+
+function TDCCoreAdapter.GetName: string;
+begin
+  Result := 'Dreamcast';
+end;
+
+function TDCCoreAdapter.GetSupportsSnapshots: Boolean;
+begin
+  Result := True;
+end;
+
+function TDCCoreAdapter.GetUsesSuborKeyboard: Boolean;
+begin
+  Result := False;
+end;
+
+function TDCCoreAdapter.GetHasCoinAcceptor: Boolean;
+begin
+  Result := False;
+end;
+
+procedure TDCCoreAdapter.InsertCoin1;
+begin
+end;
+
+procedure TDCCoreAdapter.InsertCoin2;
+begin
+end;
+
+function TDCCoreAdapter.IsPaused: Boolean;
+begin
+  Result := FPaused;
+end;
+
+function TDCCoreAdapter.GetHasRumble: Boolean;
+begin
+  Result := FConfigObject.Rumble and (FPorts.Devices[0] <> 'none');
+end;
+
+function TDCCoreAdapter.GetRumbleLevel: Byte;
+begin
+  Result := 0;
+  if GetHasRumble and not FPaused and (FWorker <> nil) then
+    Result := FWorker.RumbleLevel;
+end;
+
+function TDCCoreAdapter.TakeVMUScreen(out Pixels: TBytes): Boolean;
+begin
+  Pixels := nil;
+  Result := (FWorker <> nil) and (FConfigObject.VMUScreen <> 'off') and FWorker.TakeVMUScreen(Pixels);
+end;
+
+function TDCCoreAdapter.VMUScreenCorner: string;
+begin
+  Result := FConfigObject.VMUScreen;
+end;
+
+end.

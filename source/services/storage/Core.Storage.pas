@@ -836,7 +836,7 @@ begin
         Continue;
 
       // Prefer the CUE with its complete TOC/audio over the paired data ISO.
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and SameText(ExtractFileExt(Item.Name), '.iso') then
+      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn, TRomSystem.DC]) and SameText(ExtractFileExt(Item.Name), '.iso') then
       begin
         var HasCue := False;
         for var Candidate in Candidates do
@@ -851,6 +851,9 @@ begin
       var MaxSize := FMaxRomFileSize;
       if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := Int64(800) * 1024 * 1024;
+      // GD-ROM images (CHD, DiscJuggler) hold about 1.2 GB.
+      if (RomSystem = TRomSystem.DC) and (MaxSize = ROM_MAX_SIZE) then
+        MaxSize := Int64(1600) * 1024 * 1024;
       if (RomSystem in [TRomSystem.NeoGeo, TRomSystem.NeoGeoAES]) and (MaxSize = ROM_MAX_SIZE) then
         MaxSize := 256 * 1024 * 1024;
       if (FCheckRomFileSize and (Item.Size > MaxSize)) or not MatchText(ExtractFileExt(Item.Name), Extensions) then
