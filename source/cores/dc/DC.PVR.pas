@@ -103,6 +103,7 @@ type
     function LineTime(Line: Integer): Int64;
     procedure StartField(At: Int64);
     procedure ScheduleLine;
+    procedure LineInterrupts;
     procedure Scanout;
   public
     R: TDCPVRRegs;
@@ -205,6 +206,7 @@ begin
   end;
   if SPG.FieldLines < 16 then
     SPG.FieldLines := 16;
+  LineInterrupts;
   ScheduleLine;
 end;
 
@@ -222,6 +224,14 @@ begin
     StartField(LineTime(SPG.FieldLines));
     Exit;
   end;
+  LineInterrupts;
+  ScheduleLine;
+end;
+
+// The interrupts of the current line, line 0 included (KallistiOS of 2016
+// takes its vertical blank from an HBlank interrupt at line 0).
+procedure TDCPVR.LineInterrupts;
+begin
   var VBlankInt := R[PVRSPGVBlankInt shr 2];
   if SPG.Line = Integer(VBlankInt and $3FF) then
   begin
@@ -243,7 +253,6 @@ begin
     2:
       FInterrupts.RaiseNormal(HollyHBlank);
   end;
-  ScheduleLine;
 end;
 
 procedure TDCPVR.Scanout;
