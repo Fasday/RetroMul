@@ -59,8 +59,13 @@ the date (it does when the clock is behind that time or 30 days ahead).
 
 ## Controls and peripherals
 
-Each of the four ports holds a controller with a VMU, a controller alone, or
-nothing; `Automatic` connects controllers to all ports and a VMU to port A.
+Each of the four ports holds a controller with a VMU, a controller alone, a
+keyboard, a mouse, a light gun, or nothing; `Automatic` connects controllers to
+all ports and a VMU to port A. A keyboard takes the host keys (US layout, or
+Japanese on Japanese consoles); the mouse follows the host mouse; the light
+gun aims with the mouse pointer over the picture and fires with its left
+button (right: B, middle: Start), its position latched in SPG_TRIGGER_POS when
+the program puts the Maple bus in light gun mode.
 The analog stick uses host axes or four bindable directions; the L and R
 triggers are the logical Select and Mode buttons and report analog travel from
 host triggers. A jump pack occupies port A's second slot when rumble is on.
