@@ -6,8 +6,9 @@
 // shading, opaque modifier volumes, then translucent lists either presorted
 // or sorted per pixel back to front (depth peeling), translucent modifier
 // volumes, fog, blending and the framebuffer packing with optional dither.
-// Tiles are independent; a render prepares triangles and textures first so
-// tiles can run on worker threads.
+// Tiles are independent; a render prepares textures first and triangles
+// (on a worker, when the tiles run there) before the tiles, so tiles can run
+// on worker threads.
 // References: Marcus Comstedt's PowerVR pages, KallistiOS pvr headers.
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$POINTERMATH ON}
@@ -152,7 +153,14 @@ type
     // Closing instruction of each modifier volume (1 inside, 2 outside).
     FVolumeMode: TArray<Byte>;
     FScaleX: Integer;
+    FCullValue: Single;
+    // Triangles still to set up for the current render (by the first thread
+    // rendering tiles).
+    FSetupPending: Boolean;
+    FSetupLock: TCriticalSection;
     procedure SetThreads(Value: Integer);
+    procedure Setup;
+    procedure EnsureSetup;
     procedure RenderGroups(Slot: Integer);
     procedure PrepareEntries;
     procedure RenderEntry(N, Slot: Integer);
@@ -244,12 +252,14 @@ begin
   FTA := TA;
   FTextures := TPVRTextureCache.Create(Memory);
   FDone := TEvent.Create(nil, False, False, '');
+  FSetupLock := TCriticalSection.Create;
   SetThreads(Min(8, Max(1, TThread.ProcessorCount - 1)));
 end;
 
 destructor TDCRenderer.Destroy;
 begin
   SetThreads(1);
+  FSetupLock.Free;
   FDone.Free;
   FTextures.Free;
   inherited;
@@ -307,8 +317,23 @@ begin
   end;
 end;
 
+procedure TDCRenderer.EnsureSetup;
+begin
+  FSetupLock.Enter;
+  try
+    if FSetupPending then
+    begin
+      FSetupPending := False;
+      Setup;
+    end;
+  finally
+    FSetupLock.Leave;
+  end;
+end;
+
 procedure TDCRenderer.RenderGroups(Slot: Integer);
 begin
+  EnsureSetup;
   while True do
   begin
     var G := TInterlocked.Increment(FNextGroup) - 1;
@@ -358,6 +383,7 @@ procedure TDCRenderer.RenderAll;
 begin
   if (Length(FWorkers) = 0) or (FItemCount < 2) then
   begin
+    EnsureSetup;
     RenderTiles(0, Length(FEntries), 0);
     Exit;
   end;
@@ -416,8 +442,7 @@ begin
   if P.Kind <> PolyModifier then
   begin
     var Cull := (P.ISP shr 27) and 3;
-    var CullValue := PSingle(@FPVR.R[PVRFPUCullVal shr 2])^;
-    if (Cull = 1) and (Abs(Area) < CullValue) then
+    if (Cull = 1) and (Abs(Area) < FCullValue) then
       Exit;
     if (Cull = 2) and (Area < 0) then
       Exit;
@@ -479,9 +504,7 @@ end;
 procedure TDCRenderer.Prepare;
 begin
   var Mark := FTextures.Clock;
-  FTriCount := 0;
   SetLength(FPolys, FContext.PolyCount);
-  var Volume := 0;
   var Stride := Integer(FPVR.R[PVRTextControl shr 2] and 31) * 32;
   var PalFormat := FPVR.R[PVRPalRamCtrl shr 2] and 3;
   for var I := 0 to FContext.PolyCount - 1 do
@@ -509,6 +532,17 @@ begin
           FChannels[K].Offset[S] := (FContext.Vertices[K].Offset shr (S * 8)) and $FF;
         end;
     end;
+  end;
+  FTextures.Trim(4096, Mark);
+end;
+
+procedure TDCRenderer.Setup;
+begin
+  FTriCount := 0;
+  var Volume := 0;
+  for var I := 0 to FContext.PolyCount - 1 do
+  begin
+    var P: PPVRPoly := @FContext.Polys[I];
     case P.Kind of
       PolyStrip:
         // Every other strip triangle is reversed to keep one winding;
@@ -536,7 +570,7 @@ begin
         end;
     end;
   end;
-  FTextures.Trim(4096, Mark);
+  Bin;
 end;
 
 procedure TDCRenderer.Bin;
@@ -674,6 +708,7 @@ begin
   FFBBase := FPVR.R[PVRFBWSOF1 shr 2] and $1FFFFFF;
   FFBClipX := FPVR.R[PVRFBXClip shr 2];
   FFBClipY := FPVR.R[PVRFBYClip shr 2];
+  FCullValue := PSingle(@FPVR.R[PVRFPUCullVal shr 2])^;
   FScaleX := 1;
   if (FPVR.R[PVRScalerCtlReg shr 2] and $10000) <> 0 then
     FScaleX := 2;
@@ -707,10 +742,11 @@ begin
   FTilesX := MaxX + 1;
   FTilesY := MaxY + 1;
   PrepareEntries;
+  FSetupPending := False;
   if FContext <> nil then
   begin
     Prepare;
-    Bin;
+    FSetupPending := True;
     PolygonsRendered := FContext.PolyCount;
   end
   else
