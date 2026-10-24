@@ -30,6 +30,7 @@ type
     procedure SetButtonMask(const Value: TEmulatorButtons);
     procedure SetCoreButtons(const Value: TEmulatorButtons);
     function GetAnalogInput: TEmulatorAnalogPad;
+    function GetRightAnalogInput: TEmulatorAnalogPad;
     function GetAuxiliaryButtons: Cardinal;
     function GetButtons: TEmulatorButtons;
     function GetCoreButtons: TEmulatorButtons;
@@ -61,6 +62,7 @@ type
     property PlatformPad: TPlatformGamepad read FPad;
     property LayoutScale: Single read FLayoutScale write SetLayoutScale;
     property AnalogInput: TEmulatorAnalogPad read GetAnalogInput;
+    property RightAnalogInput: TEmulatorAnalogPad read GetRightAnalogInput;
     property Buttons: TEmulatorButtons read GetButtons;
     property CoreButtons: TEmulatorButtons read GetCoreButtons write SetCoreButtons;
     property HighlightedButtons: TEmulatorButtons read GetHighlightedButtons;
@@ -233,6 +235,7 @@ begin
     TScreenGamepadLayout.GameBoyColor: System := TRomSystem.GBC;
     TScreenGamepadLayout.GameBoyAdvance: System := TRomSystem.GBA;
     TScreenGamepadLayout.Nintendo64: System := TRomSystem.N64;
+    TScreenGamepadLayout.PlayStation: System := TRomSystem.PS1;
     TScreenGamepadLayout.NeoGeo: System := TRomSystem.NeoGeo;
     TScreenGamepadLayout.PCE:
       begin
@@ -275,6 +278,12 @@ function TScreenGamepad.GetAnalogInput: TEmulatorAnalogPad;
 begin
   Result := Default(TEmulatorAnalogPad);
   if FPad <> nil then Result := FPad.AnalogInput;
+end;
+
+function TScreenGamepad.GetRightAnalogInput: TEmulatorAnalogPad;
+begin
+  Result := Default(TEmulatorAnalogPad);
+  if FPad <> nil then Result := FPad.RightAnalogInput;
 end;
 
 function TScreenGamepad.GetAuxiliaryButtons: Cardinal;

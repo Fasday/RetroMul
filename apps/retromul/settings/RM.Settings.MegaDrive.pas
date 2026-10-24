@@ -21,9 +21,9 @@ uses
 procedure TMegaDriveSettings.Audio(Context: TSettingsPageContext);
 begin
   Context.Heading('GroupMDCDAudio');
-  Context.Check('RowMDCDAudio', 'SegaCD', 'AudioEnabled', True);
+  Context.Number('RowMDCDAudio', 'SegaCD', 'Volume', 100, 100);
   Context.Heading('GroupMD32XAudio');
-  Context.Check('RowMD32XAudio', 'Sega32X', 'AudioEnabled', True);
+  Context.Number('RowMD32XAudio', 'Sega32X', 'Volume', 100, 100);
 end;
 
 procedure TMegaDriveSettings.Expansion(Context: TSettingsPageContext);

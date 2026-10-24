@@ -25,6 +25,8 @@ type
     FState: TSGFDCState;
     FBuffer: TBytes;
     FDisk: TSGDisk;
+    FByteCycles, FClock: Integer;
+    FTimedTransfers: Boolean;
     procedure ResultBytes(const Bytes: array of Byte; IRQ: Boolean = False);
     procedure Complete;
     procedure ExecuteCommand;
@@ -34,6 +36,7 @@ type
     function GetInterrupt: Boolean;
     function CommandLength(Command: Byte): Integer;
   public
+    constructor Create(ClockHz: Integer = 3579545);
     procedure Reset;
     procedure Mount(Disk: TSGDisk);
     procedure SetLines(Selected, Motor, ResetLine, TerminalCount: Boolean);
@@ -43,6 +46,7 @@ type
     procedure WriteData(Value: Byte);
     procedure SerializeState(State: TStateArchive);
     function IndexPulse: Boolean;
+    property TimedTransfers: Boolean read FTimedTransfers write FTimedTransfers;
     property Interrupt: Boolean read GetInterrupt;
     property Disk: TSGDisk read FDisk;
   end;
@@ -57,7 +61,17 @@ const
   phFormat = 4;
   phScan = 5;
   phResult = 6;
-  ByteCycles = 114; // 250 kbit/s MFM data rate at the Z80 clock.
+
+constructor TSGFDC.Create(ClockHz: Integer);
+begin
+  inherited Create;
+  if ClockHz <= 0 then
+    raise EArgumentOutOfRangeException.Create('FDC host clock');
+  FClock := ClockHz;
+  FByteCycles := Round(ClockHz * 32.0 / 1000000);
+  if ClockHz = 3579545 then
+    FByteCycles := 114; // Preserve the established SF-7000 schedule.
+end;
 
 procedure TSGFDC.Reset;
 begin
@@ -216,7 +230,7 @@ begin
       SetLength(FBuffer, FState.Command[8]);
     FState.Phase := phRead;
   end;
-  FState.Delay := ByteCycles;
+  FState.Delay := FByteCycles;
 end;
 
 procedure TSGFDC.NextSector;
@@ -273,7 +287,11 @@ begin
         FState.SeekTarget := 0;
         if Op = $0F then
           FState.SeekTarget := FState.Command[2];
-        FState.SeekDelay := 7000 + Abs(FState.SeekTarget - FState.Cylinder[Drive]) * 3500;
+        if FClock = 3579545 then
+          FState.SeekDelay := 7000 + Abs(FState.SeekTarget - FState.Cylinder[Drive]) * 3500
+        else
+          FState.SeekDelay := Round((2 + Abs(FState.SeekTarget - FState.Cylinder[Drive]) *
+            (16 - (FState.Specify1 shr 4)) * 2) * FClock / 1000);
         FState.Pending := FState.Pending and ($0F xor (1 shl Drive));
         FState.IRQ := FState.Pending <> 0;
         FState.Phase := phIdle;
@@ -343,7 +361,7 @@ begin
         SetLength(FBuffer, FState.Command[3] * 4);
         FState.Position := 0;
         FState.Phase := phFormat;
-        FState.Delay := ByteCycles;
+        FState.Delay := FByteCycles;
       end;
     $02, $05, $06, $09, $0C, $11, $19, $1D:
       begin
@@ -368,7 +386,17 @@ begin
   if FState.ResetLine then
     Exit;
 
-  if FState.Delay > 0 then
+  if FTimedTransfers and (FState.Phase in [phRead, phWrite, phFormat, phScan]) and not FState.NextPending then
+  begin
+    // A byte left unserviced for another byte period is lost (765 ST1 OR).
+    Dec(FState.Delay, Cycles);
+    if FState.Delay <= -FByteCycles then
+    begin
+      FState.ST1 := FState.ST1 or $10;
+      Complete;
+    end;
+  end
+  else if FState.Delay > 0 then
     FState.Delay := System.Math.Max(0, FState.Delay - Cycles);
   if (FState.Delay = 0) and FState.NextPending then
   begin
@@ -429,7 +457,7 @@ begin
   begin
     Result := FBuffer[FState.Position];
     Inc(FState.Position);
-    FState.Delay := ByteCycles;
+    FState.Delay := FByteCycles;
     if FState.Position = Length(FBuffer) then
     begin
       if (FState.ST1 <> 0) or (FState.ST2 <> 0) then
@@ -475,7 +503,7 @@ begin
     else
       FBuffer[FState.Position] := Value;
     Inc(FState.Position);
-    FState.Delay := ByteCycles;
+    FState.Delay := FByteCycles;
     if FState.Position < Length(FBuffer) then
       Exit;
 
@@ -533,7 +561,13 @@ begin
     (FState.Position < 0) or (FState.Position > Size) or
     (FState.ResultIndex < 0) or (FState.ResultCount < 0) or (FState.ResultCount > 7) or
     (FState.ResultIndex > FState.ResultCount) or (FState.SeekDrive < 0) or (FState.SeekDrive > 3) or
-    (FState.CommandCount < 0) or (FState.CommandCount > 16)) then
+    (FState.CommandCount < 0) or (FState.CommandCount > 16) or
+    (FState.CommandSize < 0) or (FState.CommandSize > 16) or
+    (FState.CommandCount > FState.CommandSize) or
+    ((FState.Phase = phCommand) and ((FState.CommandSize = 0) or (FState.CommandCount >= FState.CommandSize))) or
+    ((FState.Phase = phResult) and ((FState.ResultCount = 0) or (FState.ResultIndex >= FState.ResultCount))) or
+    ((FState.Phase in [phRead, phWrite, phFormat, phScan]) and
+    ((Size = 0) or ((FState.Position = Size) and not FState.NextPending)))) then
     raise EReadError.Create('Invalid FDC snapshot state');
 end;
 

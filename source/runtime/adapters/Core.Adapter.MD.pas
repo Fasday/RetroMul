@@ -13,11 +13,14 @@ type
   private
     FKeys, FKeys2, FKeys3, FKeys4: TMDKeyMap;
     FMicrophoneEnabled, FCDAudioEnabled, F32XAudioEnabled: Boolean;
+    FCDVolume, F32XVolume: Integer;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
   public
     constructor Create(const FileName: string; const Storage: IStorage = nil);
+    property CDVolume: Integer read FCDVolume;
+    property Volume32X: Integer read F32XVolume;
     property MicrophoneEnabled: Boolean read FMicrophoneEnabled;
     property CDAudioEnabled: Boolean read FCDAudioEnabled;
     property Audio32XEnabled: Boolean read F32XAudioEnabled;
@@ -27,7 +30,7 @@ type
     property Keys4: TMDKeyMap read FKeys4;
   end;
 
-  TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMicrophoneInput)
+  TMDCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationMicrophoneInput)
   private
     FThread: TMDWorker;
     FData: TBytes;
@@ -44,6 +47,7 @@ type
     FPaused: Boolean;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; IsCD: Boolean = False); overload;
     destructor Destroy; override;
@@ -79,13 +83,22 @@ type
 implementation
 
 uses
-  System.IOUtils, System.UITypes, System.Hash, MD.Cartridge, Core.RomFormat,
-  Core.CD.Disc, MD.MegaCD;
+  System.IOUtils, System.UITypes, System.Hash, System.Math, MD.Cartridge,
+  Core.RomFormat, Core.CD.Disc, MD.MegaCD;
 
 const
   KeyNames: array[TMDButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'C', 'Start', 'X', 'Y', 'Z', 'Mode');
 
 { TMDConfig }
+
+procedure TMDCoreAdapter.ApplyLiveSettings;
+begin
+  FKeys := FMDConfig.Keys;
+  FKeys2 := FMDConfig.Keys2;
+  FKeys3 := FMDConfig.Keys3;
+  FKeys4 := FMDConfig.Keys4;
+  ApplySettings;
+end;
 
 constructor TMDConfig.Create(const FileName: string; const Storage: IStorage);
 const
@@ -95,6 +108,8 @@ const
     vkDecimal, vkMultiply);
 begin
   inherited Create(FileName, Storage);
+  FCDVolume := 100;
+  F32XVolume := 100;
   FCDAudioEnabled := True;
   F32XAudioEnabled := True;
   FKeys := Defaults;
@@ -104,8 +119,10 @@ end;
 procedure TMDConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
   FMicrophoneEnabled := Ini.ReadBool('SegaCD', 'MicrophoneEnabled', False);
-  FCDAudioEnabled := Ini.ReadBool('SegaCD', 'AudioEnabled', True);
-  F32XAudioEnabled := Ini.ReadBool('Sega32X', 'AudioEnabled', True);
+  FCDAudioEnabled := True;
+  F32XAudioEnabled := True;
+  FCDVolume := EnsureRange(Ini.ReadInteger('SegaCD', 'Volume', 100), 0, 100);
+  F32XVolume := EnsureRange(Ini.ReadInteger('Sega32X', 'Volume', 100), 0, 100);
   for var Button := Low(TMDButton) to High(TMDButton) do
   begin
     FKeys[Button] := ReadEmulatorKey(Ini, 'Keys', KeyNames[Button], FKeys[Button]);
@@ -118,8 +135,10 @@ end;
 procedure TMDConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
   Ini.WriteBool('SegaCD', 'MicrophoneEnabled', FMicrophoneEnabled);
-  Ini.WriteBool('SegaCD', 'AudioEnabled', FCDAudioEnabled);
-  Ini.WriteBool('Sega32X', 'AudioEnabled', F32XAudioEnabled);
+  Ini.DeleteKey('SegaCD', 'AudioEnabled');
+  Ini.DeleteKey('Sega32X', 'AudioEnabled');
+  Ini.WriteInteger('SegaCD', 'Volume', FCDVolume);
+  Ini.WriteInteger('Sega32X', 'Volume', F32XVolume);
   for var Button := Low(TMDButton) to High(TMDButton) do
   begin
     Ini.WriteInteger('Keys', KeyNames[Button], FKeys[Button]);
@@ -211,8 +230,8 @@ procedure TMDCoreAdapter.ApplySettings;
 begin
   if FThread <> nil then
   begin
-    FThread.ConfigureExpansion(FMDConfig.CDAudioEnabled, FMDConfig.Audio32XEnabled,
-      FMDConfig.MicrophoneEnabled, FMicrophone);
+    FThread.ConfigureExpansionVolume(FMDConfig.CDVolume, FMDConfig.Volume32X);
+    FThread.ConfigureExpansion(True, True, FMDConfig.MicrophoneEnabled, FMicrophone);
     FThread.Configure(FKeyboard + FGamepad, FPaused,
       FConfig.AudioEnabled, FConfig.AudioVolume, FKeyboard2 + FGamepad2,
       FKeyboard3 + FGamepad3, FKeyboard4 + FGamepad4);

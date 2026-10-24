@@ -33,7 +33,6 @@ end;
 procedure TMasterSystemSettings.Audio(Context: TSettingsPageContext);
 begin
   inherited;
-  Context.Check('RowSegaFMEnabled', 'Audio', 'FMEnabled', True);
   Context.Number('RowSegaFMVolume', 'Audio', 'FMVolume', 100, 100);
 end;
 

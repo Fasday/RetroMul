@@ -1,4 +1,4 @@
-object FormMain: TFormMain
+﻿object FormMain: TFormMain
   Left = 0
   Top = 0
   Caption = 'RetroMul'
@@ -28329,6 +28329,57 @@ object FormMain: TFormMain
             Size.Width = 600.000000000000000000
             Size.Height = 32.000000000000000000
             Size.PlatformDefault = False
+            object ButtonReset: TButton
+              Align = Left
+              CanFocus = False
+              StyledSettings = []
+              Hint = 'Reset; hold Shift for hard restart'
+              Margins.Right = 8.000000000000000000
+              Size.Width = 130.000000000000000000
+              Size.Height = 32.000000000000000000
+              Size.PlatformDefault = False
+              StyleLookup = 'buttonstyle'
+              Text = 'Reset'
+              TextSettings.Font.Size = 13.000000000000000000
+              TextSettings.FontColor = xFFE8ECF1
+              TextSettings.Trimming = Character
+              ParentShowHint = False
+              ShowHint = True
+              object PathResetIcon: TPath
+                Align = LeftCenter
+                Data.Path = {
+                  39000000000000000000404100009040020000009773FB400000904002000000
+                  000090409773FB40020000000000904000004041020000000000904005238141
+                  020000009773FB4000009C41020000000000404100009C410200000005238141
+                  00009C410200000000009C41052381410200000000009C410000404102000000
+                  00009C4144FA39410200000045C79B41910F344102000000B4599B41DC462E41
+                  02000000DFCF9A41DE02274102000000A1789D410000204102000000A924A141
+                  0000204102000000431CA441000020410200000046B6A6416519244102000000
+                  9329A741FDF6294102000000AEB6A74118263141020000000000A841D8813841
+                  020000000000A84100004041020000000000A841CAC3874102000000CAC38741
+                  0000A84102000000000040410000A841020000002CF1E0400000A84102000000
+                  00004040CAC3874102000000000040400000404102000000000040402CF1E040
+                  020000002CF1E0400000404002000000000040410000404002000000B1E16441
+                  0000404002000000F8428341B875774002000000000090417155A94001000000
+                  00009041000088400200000000009041957D754002000000B8AF924100006040
+                  0200000000009641000060400200000048509941000060400200000000009C41
+                  957D75400200000000009C41000088400100000000009C410000E84002000000
+                  00009C413541F540020000004850994100000041020000000000964100000041
+                  0100000000007C410000004102000000705F7541000000410200000000007041
+                  3541F54002000000000070410000E8400200000000007041CBBEDA4002000000
+                  705F75410000D0400200000000007C410000D04001000000F5CA88410000D040
+                  02000000A52C7C415648A840020000006F815F41000090400200000000004041
+                  00009040030000000000404100009040}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Margins.Left = 12.000000000000000000
+                Size.Width = 20.000000000000000000
+                Size.Height = 20.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
             object GamePause: TButton
               Align = Left
               CanFocus = False

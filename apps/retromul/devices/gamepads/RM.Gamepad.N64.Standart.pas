@@ -28,10 +28,10 @@ begin
   AddButton(TEmulatorButton.Mode, 'R', TVirtualSide.Right, 120, 20, 104, 36, True);
   AddButton(TEmulatorButton.B, 'B', TVirtualSide.Right, 12, 180, 60, 60);
   AddButton(TEmulatorButton.A, 'A', TVirtualSide.Right, 72, 244, 64, 64);
-  AddButton(TEmulatorButton.X, 'C-L', TVirtualSide.Right, 86, 134, 40, 40);
-  AddButton(TEmulatorButton.Y, 'C-U', TVirtualSide.Right, 130, 90, 40, 40);
-  AddButton(TEmulatorButton.Z, 'C-R', TVirtualSide.Right, 174, 134, 40, 40);
-  AddButton(TEmulatorButton.C, 'C-D', TVirtualSide.Right, 130, 178, 40, 40);
+  AddButton(TEmulatorButton.X, 'C-L', TVirtualSide.Right, 86, 134, 40, 40, False, VirtualIconLeft);
+  AddButton(TEmulatorButton.Y, 'C-U', TVirtualSide.Right, 130, 90, 40, 40, False, VirtualIconUp);
+  AddButton(TEmulatorButton.Z, 'C-R', TVirtualSide.Right, 174, 134, 40, 40, False, VirtualIconRight);
+  AddButton(TEmulatorButton.C, 'C-D', TVirtualSide.Right, 130, 178, 40, 40, False, VirtualIconDown);
 end;
 
 end.

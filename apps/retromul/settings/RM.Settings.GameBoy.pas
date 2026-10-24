@@ -25,8 +25,10 @@ procedure TGameBoySettings.Initialize(Context: TSettingsPageContext);
 begin
   Context.CreateGroup('BootROM', 'Boot ROM');
   Context.CreateOption('RowBootModel', 'Boot ROM model', 'Select a console boot sequence, or start the game directly.', sekCombo);
-  for var Model := TGBBootModel.DMG to High(TGBBootModel) do
+  for var Model := Low(TGBBootModel) to High(TGBBootModel) do
   begin
+    if Model = TGBBootModel.Skip then
+      Continue;
     var Detail := 'Choose your boot ROM file for this model.';
     if Model in [TGBBootModel.DMG, TGBBootModel.MGB] then
       Detail := 'Leave empty to use the built-in boot ROM.';

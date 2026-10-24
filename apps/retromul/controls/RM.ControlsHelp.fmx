@@ -96,17 +96,17 @@
       Position.X = 24.000000000000000000
       Position.Y = 642.000000000000000000
       Size.Width = 1032.000000000000000000
-      Size.Height = 78.000000000000000000
+      Size.Height = 102.000000000000000000
       Size.PlatformDefault = False
       object LabelNote: TLabel
         Align = Top
         StyledSettings = []
         Opacity = 0.600000023841857900
         Size.Width = 1032.000000000000000000
-        Size.Height = 24.000000000000000000
+        Size.Height = 48.000000000000000000
         Size.PlatformDefault = False
         TextSettings.FontColor = xFFE8ECF1
-        TextSettings.WordWrap = False
+        TextSettings.WordWrap = True
         Text = 'Change bindings in the controls settings.'
       end
       object LayoutHelpActions: TLayout
@@ -477,8 +477,115 @@
             Size.Width = 425.799987792968800000
             Size.Height = 440.000000000000000000
             Size.PlatformDefault = False
+            object LayoutFunctionTapePlay: TLayout
+              Visible = False
+              Align = Top
+              Position.Y = 132.000000000000000000
+              Size.Width = 425.799987792968800000
+              Size.Height = 44.000000000000000000
+              Size.PlatformDefault = False
+              object LabelFunctionCaptionTapePlay: TLabel
+                Align = Client
+                StyledSettings = []
+                Size.Width = 295.799987792968800000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 13.000000000000000000
+                TextSettings.FontColor = xFFE8ECF1
+                TextSettings.WordWrap = False
+                Text = 'Play / pause tape'
+              end
+              object RectangleFunctionKeyBoxTapePlay: TRectangle
+                Align = Right
+                Fill.Color = xFF1B2126
+                HitTest = False
+                Margins.Left = 8.000000000000000000
+                Margins.Top = 4.000000000000000000
+                Margins.Bottom = 4.000000000000000000
+                Position.X = 337.799987792968800000
+                Position.Y = 4.000000000000000000
+                Size.Width = 88.000000000000000000
+                Size.Height = 36.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Color = xFF586572
+                XRadius = 5.000000000000000000
+                YRadius = 5.000000000000000000
+                object LabelFunctionKeyTapePlay: TLabel
+                  Tag = -1
+                  Align = Client
+                  StyledSettings = []
+                  Hint = 'F7'
+                  HitTest = True
+                  Margins.Left = 8.000000000000000000
+                  Margins.Right = 8.000000000000000000
+                  Size.Width = 72.000000000000000000
+                  Size.Height = 36.000000000000000000
+                  Size.PlatformDefault = False
+                  TextSettings.FontColor = xFFE8ECF1
+                  TextSettings.HorzAlign = Center
+                  TextSettings.WordWrap = False
+                  Text = 'F7'
+                  ParentShowHint = False
+                  ShowHint = True
+                end
+              end
+            end
+            object LayoutFunctionNMI: TLayout
+              Visible = False
+              Align = Top
+              Position.Y = 220.000000000000000000
+              Size.Width = 425.799987792968800000
+              Size.Height = 44.000000000000000000
+              Size.PlatformDefault = False
+              object LabelFunctionCaptionNMI: TLabel
+                Align = Client
+                StyledSettings = []
+                Size.Width = 295.799987792968800000
+                Size.Height = 44.000000000000000000
+                Size.PlatformDefault = False
+                TextSettings.Font.Size = 13.000000000000000000
+                TextSettings.FontColor = xFFE8ECF1
+                TextSettings.WordWrap = False
+                Text = 'NMI / Magic button'
+              end
+              object RectangleFunctionKeyBoxNMI: TRectangle
+                Align = Right
+                Fill.Color = xFF1B2126
+                HitTest = False
+                Margins.Left = 8.000000000000000000
+                Margins.Top = 4.000000000000000000
+                Margins.Bottom = 4.000000000000000000
+                Position.X = 337.799987792968800000
+                Position.Y = 4.000000000000000000
+                Size.Width = 88.000000000000000000
+                Size.Height = 36.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Color = xFF586572
+                XRadius = 5.000000000000000000
+                YRadius = 5.000000000000000000
+                object LabelFunctionKeyNMI: TLabel
+                  Tag = -1
+                  Align = Client
+                  StyledSettings = []
+                  Hint = 'F9'
+                  HitTest = True
+                  Margins.Left = 8.000000000000000000
+                  Margins.Right = 8.000000000000000000
+                  Size.Width = 72.000000000000000000
+                  Size.Height = 36.000000000000000000
+                  Size.PlatformDefault = False
+                  TextSettings.FontColor = xFFE8ECF1
+                  TextSettings.HorzAlign = Center
+                  TextSettings.WordWrap = False
+                  Text = 'F9'
+                  ParentShowHint = False
+                  ShowHint = True
+                end
+              end
+            end
             object LayoutFunction0: TLayout
               Align = Top
+              Position.Y = 0.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -704,7 +811,7 @@
             end
             object LayoutFunction3: TLayout
               Align = Top
-              Position.Y = 132.000000000000000000
+              Position.Y = 176.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -779,7 +886,7 @@
             end
             object LayoutFunction4: TLayout
               Align = Top
-              Position.Y = 176.000000000000000000
+              Position.Y = 264.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -849,7 +956,7 @@
             end
             object LayoutFunction5: TLayout
               Align = Top
-              Position.Y = 220.000000000000000000
+              Position.Y = 308.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -922,7 +1029,7 @@
             end
             object LayoutFunction6: TLayout
               Align = Top
-              Position.Y = 264.000000000000000000
+              Position.Y = 352.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -995,7 +1102,7 @@
             end
             object LayoutFunctionHardRestart: TLayout
               Align = Top
-              Position.Y = 308.000000000000000000
+              Position.Y = 396.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -1068,7 +1175,7 @@
             end
             object LayoutFunction7: TLayout
               Align = Top
-              Position.Y = 352.000000000000000000
+              Position.Y = 440.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -1139,7 +1246,7 @@
             end
             object LayoutFunction8: TLayout
               Align = Top
-              Position.Y = 396.000000000000000000
+              Position.Y = 484.000000000000000000
               Size.Width = 425.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False
@@ -1212,7 +1319,7 @@
             end
             object LayoutFunction9: TLayout
               Align = Top
-              Position.Y = 440.000000000000000000
+              Position.Y = 528.000000000000000000
               Size.Width = 426.799987792968800000
               Size.Height = 44.000000000000000000
               Size.PlatformDefault = False

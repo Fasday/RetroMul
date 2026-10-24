@@ -23,7 +23,8 @@ type
     function TrackIndex(Cylinder, Head: Integer): Integer;
     function SectorIndex(Track, ID, SizeCode: Integer): Integer;
   public
-    constructor Create(const Image: TBytes; WriteProtected: Boolean = False);
+    constructor Create(const Image: TBytes; WriteProtected: Boolean = False); overload;
+    constructor Create; overload;
     function Read(Cylinder, Head, ID, SizeCode: Integer; out Data: TBytes; out Status1, Status2: Byte): Boolean;
     function Write(Cylinder, Head, ID, SizeCode: Integer; const Data: TBytes; Deleted: Boolean): Boolean;
     function ReadID(Cylinder, Head, Position: Integer; out Sector: TSGSector): Boolean;
@@ -45,6 +46,11 @@ begin
   for var i := 1 to Length(Text) do
     if Data[Offset + i - 1] <> Ord(Text[i]) then
       Exit(False);
+end;
+
+constructor TSGDisk.Create;
+begin
+  inherited Create;
 end;
 
 constructor TSGDisk.Create(const Image: TBytes; WriteProtected: Boolean);
@@ -72,11 +78,12 @@ begin
 
   var Extended := Signature(Image, 0, 'EXTENDED CPC DSK File');
   if (Length(Image) < 256) or not (Extended or Signature(Image, 0, 'MV - CPCEMU Disk-File')) then
-    raise EReadError.Create('SF-7000 disk must be a 160 KiB .sf7 or a CPC DSK image');
+    raise EReadError.Create('Disk must be a 160 KiB .sf7 or a standard/extended DSK image');
 
   var Cylinders := Integer(Image[$30]);
   var Heads := Integer(Image[$31]);
-  if (Cylinders < 1) or (Cylinders > 84) or (Heads < 1) or (Heads > 2) then
+  if (Cylinders < 1) or (Cylinders > 84) or (Heads < 1) or (Heads > 2) or
+    (Extended and (Cylinders * Heads > 204)) then
     raise EReadError.Create('Invalid DSK geometry');
 
   SetLength(FTracks, Cylinders * Heads);

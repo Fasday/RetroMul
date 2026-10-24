@@ -93,7 +93,7 @@ type
     procedure SetKeys4(const Value: TKeyMap);
   end;
 
-  TNesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, INesPeripheralCore, INesTapeCore, INesMiraclePianoCore)
+  TNesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, INesPeripheralCore, INesTapeCore, INesMiraclePianoCore)
   private
     FThread: TNesEmulationThread;
     FGamepadInput: TEmulatorInput;
@@ -107,6 +107,7 @@ type
     function GetSupportsSnapshots: Boolean;
     function GetUsesSuborKeyboard: Boolean;
   public
+    procedure ApplyLiveSettings;
     constructor Create(const FileName: string; const ConfigFileName: string = ''); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; const ConfigFileName: string = ''); overload;
     destructor Destroy; override;
@@ -157,6 +158,12 @@ uses
   Core.RomFormat, System.SysUtils, System.UITypes;
 
 { TNesCoreAdapter }
+
+procedure TNesCoreAdapter.ApplyLiveSettings;
+begin
+  if FThread <> nil then
+    FThread.ConfigureAudio(FConfig.AudioVolume);
+end;
 
 function TNesCoreAdapter.UsesMiraclePiano: Boolean;
 begin

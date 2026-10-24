@@ -26,7 +26,7 @@ type
     property Keys2: TNeoGeoKeyMap read FKeys2;
   end;
 
-  TNeoGeoCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TNeoGeoCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FThread: TNeoGeoWorker;
     FCartridge: TNeoGeoCartridge;
@@ -39,6 +39,7 @@ type
     FSavePath, FSnapshotDirectory, FError: string;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; CD: Boolean = False);
     destructor Destroy; override;
     function GetSystemId: string;
@@ -80,6 +81,30 @@ const
       TEmulatorButton.Start, TEmulatorButton.Select];
   KeyNames: array[TEmulatorButton] of string =
     ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'D', 'Y', 'Z', 'Mode');
+
+procedure TNeoGeoCoreAdapter.ApplyLiveSettings;
+begin
+  FKeys := FNeoConfig.Keys;
+  FKeys2 := FNeoConfig.Keys2;
+  var DIPs: Byte := $FF;
+  if FNeoConfig.FDIPSettings then
+    DIPs := DIPs and $FE;
+  if FNeoConfig.FDIPSingleCoin then
+    DIPs := DIPs and $FD;
+  if FNeoConfig.FDIPFreePlay then
+    DIPs := DIPs and $BF;
+  if FNeoConfig.FDIPFreeze then
+    DIPs := DIPs and $7F;
+  if FThread <> nil then
+  begin
+    FThread.ConfigureCabinet(DIPs);
+    var Path := FNeoConfig.FCardPath;
+    if Path = '' then
+      Path := FStorage.SaveRoot + PathDelim + 'neogeo-memorycard.bin';
+    FThread.ConfigureCard(Path, FNeoConfig.FCardSize);
+  end;
+  ApplySettings;
+end;
 
 constructor TNeoGeoConfig.Create(const FileName: string; const Storage: IStorage);
 const
@@ -321,8 +346,7 @@ begin
     Exit;
   end;
 
-  if (FCartridge.Disc = nil) and not FCartridge.AES and
-    (FCartridge.Protection <> 'vliner') then
+  if (FCartridge.Disc = nil) and not FCartridge.AES and (FCartridge.Protection <> 'vliner') then
   begin
     if Code = vkF3 then
       if Pressed then

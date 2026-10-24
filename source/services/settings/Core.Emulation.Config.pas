@@ -106,7 +106,7 @@ begin
       FFilter := Ini.ReadString('Video', 'Filter', FFilter).Trim;
       if FFilter.IsEmpty then
         FFilter := 'nearest';
-      FAudioEnabled := Ini.ReadBool('Audio', 'Enabled', FAudioEnabled);
+      FAudioEnabled := True;
       SetAudioVolume(Ini.ReadFloat('Audio', 'Volume', FAudioVolume));
       LoadCoreSettings(Ini);
     finally
@@ -128,7 +128,7 @@ begin
   try
     Ini.WriteInteger('Video', 'Scale', FScale);
     Ini.WriteString('Video', 'Filter', FFilter);
-    Ini.WriteBool('Audio', 'Enabled', FAudioEnabled);
+    Ini.DeleteKey('Audio', 'Enabled');
     Ini.WriteFloat('Audio', 'Volume', FAudioVolume);
     SaveCoreSettings(Ini);
     FStorage.WriteConfig(Ini);

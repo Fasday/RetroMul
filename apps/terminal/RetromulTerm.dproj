@@ -96,7 +96,7 @@
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <SanitizedProjectName>RetromulTerm</SanitizedProjectName>
-        <DCC_UnitSearchPath>..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\..\source\hardware\audio\mp3;..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>1049</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
     </PropertyGroup>
@@ -230,6 +230,32 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\..\source\cores\zx\ZX.BlockImage.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.DivStorage.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Timex.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Machine.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Configuration.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.GeneralSound.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.NeoGS.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.DMAUSC.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.PIT8253.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.VS1011.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.AM29F040.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\mp3\Audio.MP3.Types.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\mp3\Audio.MP3.BitStream.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\mp3\Audio.MP3.Frame.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\mp3\Audio.MP3.Huffman.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\mp3\Audio.MP3.ScaleFactors.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\mp3\Audio.MP3.Layer3.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.SDCard.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.NextDAC.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.TurboSoundFM.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Console.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Tape.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.BetaDisk.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.CMOS.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.Emulation.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.ZX.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS.Medal.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS.MSMSound.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS1.MSM.pas"/>
@@ -274,6 +300,25 @@
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Console.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Emulation.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.Saturn.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Types.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Scheduler.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Bus.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.GTE.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.CPU.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.DMA.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Timers.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.SIO.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.GPU.Raster.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.GPU.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.CDROM.Audio.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.CDROM.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.SPU.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.MDEC.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Exe.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Firmware.pas"/>
+        <DCCReference Include="..\..\source\cores\ps1\PS1.Console.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.PS1.Playback.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.PS1.pas"/>
         <DCCReference Include="..\..\source\ui\fmx\gamewatch\GW.Artwork.FMX.pas"/>
         <DCCReference Include="..\..\source\contracts\Core.Emulation.Types.pas"/>
         <DCCReference Include="..\..\source\contracts\Core.Storage.Types.pas"/>

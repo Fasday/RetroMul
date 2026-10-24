@@ -65,7 +65,7 @@ type
 
   TMainHelpState = record
     View: TControlsHelpView;
-    WasPaused, Closing, FullScreen: Boolean;
+    WasPaused, Closing: Boolean;
   end;
 
   TMainSettingsState = record

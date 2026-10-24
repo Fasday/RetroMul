@@ -24,7 +24,13 @@ type
     constructor Create(Clock: Integer = 3500000; SampleRate: Integer = 44100);
     destructor Destroy; override;
     procedure Reset;
+    // Address strobes can change the prescaler without a data write.
+    procedure SelectRegister(Index: Byte);
     procedure WriteRegister(Index, Value: Byte);
+    procedure ClockTimers(Ticks: Integer; TimerMask: Byte = 3);
+    procedure SampleParts(out FM: Integer; out SSGLeft, SSGRight: SmallInt; AdvanceTimers: Boolean = True);
+    procedure SetSSGPan(Channel: Integer; Left, Right: Double);
+    property NativeDivider: Integer read FDivider;
     function ReadRegister(Index: Byte): Byte;
     function ReadStatus: Byte;
     function Sample: SmallInt;
@@ -60,7 +66,7 @@ begin
 
   FClock := Clock;
   FSampleRate := SampleRate;
-  FSSG := TYM2149F.Create(Clock div 4, SampleRate);
+  FSSG := TYM2149F.Create(Clock div 2, SampleRate);
   for var C := 0 to 2 do
     FSSG.SetPan(C, 1, 1);
   FFilter.Configure(Clock / 72.0, Min(14000, SampleRate * 0.4));
@@ -105,8 +111,31 @@ const
   SSGClockDividers: array[0..3] of Integer = (1, 1, 4, 2);
 begin
   FDivider := FMClockDividers[FPrescaler];
-  FSSG.SetClock(FClock div SSGClockDividers[FPrescaler]);
+  // YM2149 input clock has a further divide-by-eight. The OPN SSG
+  // reference clock is twice master/SSGpres (YM2203 /2 at reset).
+  FSSG.SetClock(FClock * 2 div SSGClockDividers[FPrescaler]);
   FFilter.Configure(FClock / FDivider, Min(14000, FSampleRate * 0.4));
+end;
+
+procedure TYM2203.SelectRegister(Index: Byte);
+begin
+  case Index of
+    $2D:
+      FPrescaler := 2;
+    $2E:
+      if FPrescaler = 2 then
+        FPrescaler := 3;
+    $2F:
+      FPrescaler := 0;
+  else
+    Exit;
+  end;
+  SelectPrescaler;
+end;
+
+procedure TYM2203.SetSSGPan(Channel: Integer; Left, Right: Double);
+begin
+  FSSG.SetPan(Channel, Left, Right);
 end;
 
 procedure TYM2203.WriteRegister(Index, Value: Byte);
@@ -114,15 +143,7 @@ begin
   FRegisters[Index] := Value;
   if Index in [$2D, $2E, $2F] then
   begin
-    case Index of
-      $2D:
-        FPrescaler := FPrescaler or 2;
-      $2E:
-        FPrescaler := FPrescaler or 1;
-      $2F:
-        FPrescaler := 0;
-    end;
-    SelectPrescaler;
+    SelectRegister(Index);
     Exit;
   end;
 
@@ -131,8 +152,8 @@ begin
   else if ((Index >= $24) and (Index <= $28)) or
     ((Index >= $30) and (Index <= $B2)) then
   begin
-    // A compiled TFM dump may use the OPN2 channel bit in chip 2 keys.
-    // Each YM2203 itself has channels 0..2 only.
+    // YM2203 ignores the unused key-on bits 2/3. The shared OPN2 engine
+    // treats bit 2 as a bank selector, so clear it before forwarding.
     if Index = $28 then
       Value := Value and $F3;
     FMDoAddress(FFM, 0, Index);
@@ -202,40 +223,55 @@ begin
       if (Carriers[Algorithm] and (1 shl Op)) <> 0 then
         Inc(Result, Values[Op]);
   end;
-  for var Timer := 0 to 1 do
-    if (FRegisters[$27] and (1 shl Timer)) <> 0 then
-    begin
-      Dec(FFM.State.Timers[Timer].Counter);
-      if FFM.State.Timers[Timer].Counter = 0 then
-      begin
-        FFM.State.Timers[Timer].Counter := FFM.State.Timers[Timer].Value;
-        if FFM.State.Timers[Timer].Enabled <> 0 then
-          FFM.State.Status := FFM.State.Status or (1 shl Timer);
-        if (Timer = 0) and (FFM.State.Channel3Metadata.CsmModeEnabled <> 0) then
-          for var Op := 0 to 3 do
-          begin
-            FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
-            FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 0);
-          end;
-      end;
-    end;
-
   // YM2203 has no YM2612 9-bit DAC quantization or per-channel clipping.
   Result := Result div 2;
 end;
 
-function TYM2203.Sample: SmallInt;
-var
-  L, R: SmallInt;
+procedure TYM2203.ClockTimers(Ticks: Integer; TimerMask: Byte);
+begin
+  for var Tick := 1 to Ticks do
+  begin
+    for var Timer := 0 to 1 do
+      if ((TimerMask and (1 shl Timer)) <> 0) and ((FRegisters[$27] and (1 shl Timer)) <> 0) then
+      begin
+        Dec(FFM.State.Timers[Timer].Counter);
+        if FFM.State.Timers[Timer].Counter = 0 then
+        begin
+          FFM.State.Timers[Timer].Counter := FFM.State.Timers[Timer].Value;
+          if FFM.State.Timers[Timer].Enabled <> 0 then
+            FFM.State.Status := FFM.State.Status or (1 shl Timer);
+          if (Timer = 0) and (FFM.State.Channel3Metadata.CsmModeEnabled <> 0) then
+            for var Op := 0 to 3 do
+            begin
+              FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 1);
+              FMOperatorSetKeyOn(FFM.State.Channels[2].State.Operators[Op], 0);
+            end;
+        end;
+      end;
+  end;
+end;
+
+procedure TYM2203.SampleParts(out FM: Integer; out SSGLeft, SSGRight: SmallInt; AdvanceTimers: Boolean);
 begin
   FPhase := FPhase + FClock / (Double(FDivider) * FSampleRate);
   while FPhase >= 1 do
   begin
     FPhase := FPhase - 1;
     FFiltered := FFilter.Process(GenerateFM / 32768.0);
+    if AdvanceTimers then
+      ClockTimers(1);
   end;
-  FSSG.Sample(L, R);
-  Result := EnsureRange(Round(FDC.Process(FFiltered) * 32767) + Integer(L), -32768, 32767);
+  FM := Round(FDC.Process(FFiltered) * 32767);
+  FSSG.Sample(SSGLeft, SSGRight);
+end;
+
+function TYM2203.Sample: SmallInt;
+var
+  FM: Integer;
+  L, R: SmallInt;
+begin
+  SampleParts(FM, L, R);
+  Result := EnsureRange(Integer(FM) + Integer(L), -32768, 32767);
 end;
 
 end.

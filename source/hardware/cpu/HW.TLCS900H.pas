@@ -7,8 +7,6 @@ interface
 uses
   System.SysUtils, Core.Snapshots;
 
-{$Q+}{$R+}
-
 type
   TDivision = record
     quot, rem: Int64;

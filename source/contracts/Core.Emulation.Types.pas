@@ -65,6 +65,13 @@ type
 
   // Values are screen-space acceleration in g, including gravity. A missing
   // host sensor supplies zero; sensor input is independent of joypad input.
+  // Relative host counts: X right, Y down. Buttons: bit 0 left, 1 right, 2 middle.
+  // Frontends call once per input poll. Cores queue deltas; never replay per frame.
+  IEmulationMouseInput = interface
+    ['{B4BCB7D6-937B-4D82-8A03-B98D2DC22385}']
+    procedure SendMouseDelta(DX, DY: Integer; Buttons: Byte);
+  end;
+
   IEmulationMotionInput = interface
     ['{1B7C1D32-86B7-4DCC-BD4B-20B1D41120A7}']
     function GetHasAccelerometer: Boolean;
@@ -91,6 +98,17 @@ type
     property RumbleLevel: Byte read GetRumbleLevel;
   end;
 
+  // Frontend-thread API. Media changes are applied synchronously by the worker.
+  IEmulationDiscControl = interface
+    ['{3DC6D68E-C452-4CB1-862F-8FDDC606A9C1}']
+    function GetDiscCount: Integer;
+    function GetDiscName(Index: Integer): string;
+    function GetDiscIndex: Integer; // -1 while the lid is open.
+    procedure ChangeDisc(Index: Integer);
+    procedure OpenDisc(const Location: string);
+    procedure EjectDisc;
+  end;
+
   IEmulationSnapshotLocation = interface
     ['{E6C77DB0-6B7D-43F9-9C16-C9985DA992E9}']
     function GetSnapshotDirectory: string;
@@ -101,6 +119,13 @@ type
   IEmulationVirtualControls = interface
     ['{7DB70A11-8A90-4EA4-95E7-586D24CF66A7}']
     function GetVirtualButtons: TEmulatorButtons;
+  end;
+
+  // Called on the frontend thread after Config.Load. Workers receive copies
+  // under their locks and apply hardware changes at frame boundaries.
+  IEmulationLiveSettings = interface
+    ['{EF393DA0-69D0-4CEA-86D3-23D9AF0F159E}']
+    procedure ApplyLiveSettings;
   end;
 
   IEmulationCore = interface

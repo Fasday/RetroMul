@@ -2670,7 +2670,8 @@ begin
   // stopped where FastRun could go on (no block there: RDP work queued on
   // the code page, or an unusual PC). COUNT and Random updates at the end.
   Result := 0;
-  Clocks := 0;
+  // (Clocks at the end.)
+  var Clk: UInt64 := 0;
   FPlainNext := False;
   var Status := CP0[12];
   var Cop1Usable := (Status and $20000000) <> 0;
@@ -2823,7 +2824,7 @@ begin
         if Kind = KindLuiPair then
         begin
           // Room for both (else the LUI alone, as FastRun ends after it).
-          if (Clocks + 1 >= Limit) or (Result + 1 >= MaxSteps) then
+          if (Clk + 1 >= Limit) or (Result + 1 >= MaxSteps) then
             Kind := 15;
         end
         else if Kind = KindCop1Branch then
@@ -3016,7 +3017,7 @@ begin
           begin
             // The ORI/ADDIU after the LUI: its Step as FastRun takes it.
             Inc(Result);
-            Inc(Clocks);
+            Inc(Clk);
             FInstructionPC := FPC;
             FInDelay := False;
             FPC := FNextPC;
@@ -3113,7 +3114,7 @@ begin
             // A canonical NOP after successful arithmetic has no reads or
             // side effects beyond its PC, one clock and clearing FP hazards.
             // Retain the decoded NOP for exact budget/resume boundaries.
-            if (Step <> Last) and (Clocks + C < Limit) and (Result + 1 < MaxSteps) then
+            if (Step <> Last) and (Clk + C < Limit) and (Result + 1 < MaxSteps) then
             begin
               var Tail := PN64CPUStep(NativeUInt(Step) + SizeOf(TN64CPUStep));
               if (Tail.Op = 0) and (Tail.Flags = 0) and (Tail.Clocks = 1) then
@@ -3140,8 +3141,8 @@ begin
       // (47, CACHE: nothing.)
       GPR[0] := 0;
       Inc(Result);
-      Inc(Clocks, C);
-      if (Clocks >= Limit) or (Result >= MaxSteps) or (((Step.Flags and StepMayIdle) <> 0) and IdleHead) then
+      Inc(Clk, C);
+      if (Clk >= Limit) or (Result >= MaxSteps) or (((Step.Flags and StepMayIdle) <> 0) and IdleHead) then
       begin
         Stop := True;
         // The next call may go on here.
@@ -3183,7 +3184,8 @@ begin
       Rewritten := False;
     end;
   end;
-  FastFlush(Cardinal(Clocks), Result);
+  Clocks := Clk;
+  FastFlush(Cardinal(Clk), Result);
 end;
 
 function TN64CPU.RunBatch(MaxSteps: Integer; Budget: UInt64; out Cycles: UInt64): Integer;

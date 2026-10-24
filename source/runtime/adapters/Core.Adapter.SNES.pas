@@ -26,7 +26,7 @@ type
     property Keys2: TSnesKeyMap read FKeys2;
   end;
 
-  TSnesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TSnesCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FThread: TSnesWorker;
     FData, FFirmware: TBytes;
@@ -39,6 +39,7 @@ type
     FPaused, FCropOverscan: Boolean;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string); overload;
     destructor Destroy; override;
@@ -79,6 +80,20 @@ const
   KeyNames: array[TSnesButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'X', 'Y', 'L', 'R');
 
 { TSnesConfig }
+
+procedure TSnesCoreAdapter.ApplyLiveSettings;
+begin
+  var Config := FConfig as TSnesConfig;
+  for var Port := 0 to 7 do
+    FKeys[Port] := Config.KeyMap(Port);
+  var Ini := FStorage.ReadConfig(FConfig.FileName);
+  try
+    FCropOverscan := Ini.ReadBool('Video', 'CropOverscan', False);
+  finally
+    Ini.Free;
+  end;
+  ApplySettings;
+end;
 
 constructor TSnesConfig.Create(const FileName: string; const Storage: IStorage);
 const

@@ -51,9 +51,10 @@ uses
   System.SysUtils, System.Types, System.IOUtils, System.Math, FMX.Types,
   FMX.Forms, FMX.Objects, FMX.Dialogs, FMX.Platform, FMX.Edit, FMX.OpenDialog,
   FMXInput, RM.Input, RM.Rumble, Core.Adapter.NES, Core.Adapter.N64, N64.Console,
-  Core.InputConfig, Core.RomFormat, Core.Adapter.SG1000, SG1000.Keyboard,
-  NES.Controller, RM.Gamepad, NES.SuborKeyboard, NES.FamicomKeyboard,
-  NES.MiraclePiano, NES.PowerPad, RM.Dialogs, RM.Styles
+  Core.Adapter.PS1, PS1.SIO, Core.InputConfig, Core.RomFormat,
+  Core.Adapter.SG1000, SG1000.Keyboard, NES.Controller, RM.Gamepad,
+  NES.SuborKeyboard, NES.FamicomKeyboard, NES.MiraclePiano, NES.PowerPad,
+  RM.Dialogs, RM.Styles
   {$IFDEF MSWINDOWS}
     , Winapi.Windows
   {$ENDIF}
@@ -437,6 +438,13 @@ end;
 
 procedure TInputController.PollHostInput;
 begin
+  var MouseInput: IEmulationMouseInput;
+  var HasMouse := Supports(FState.Session.Emulation, IEmulationMouseInput, MouseInput);
+  if HasMouse and ((FState.Input.Manager = nil) or FState.Input.PollingFailed or not FView.InputHasFocus or
+    FState.Session.OpeningRom or (FState.Settings.View <> nil) or FState.Browser.ViewingLibrary or
+    (FState.Help.View <> nil) or FState.Session.Emulation.IsPaused or FState.Session.EmulationFaulted or
+    RetroDialogVisible(FView) or ((FView.Focused <> nil) and (FView.Focused.GetObject is TCustomEdit))) then
+    MouseInput.SendMouseDelta(0, 0, 0);
   if (FState.Input.Manager = nil) or FState.Input.PollingFailed then
     Exit;
 
@@ -510,6 +518,13 @@ begin
   if (ssCtrl in Shift) then
     Input := Default(TEmulatorInput);
   FState.Session.Emulation.SetGamepadInput(Input);
+  if HasMouse then
+  begin
+    var DX, DY: Integer;
+    var Buttons: Byte;
+    ReadRelativeMouse(FState.Input.Manager, DX, DY, Buttons);
+    MouseInput.SendMouseDelta(DX, DY, Buttons);
+  end;
   FView.UpdatePeripheralInput;
   var Peripheral: INesPeripheralCore;
   if Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) then
@@ -564,6 +579,8 @@ begin
     (Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) and Peripheral.UsesFamicomKeyboard) or
     (Supports(FState.Session.Emulation, INesMiraclePianoCore, Piano) and Piano.UsesMiraclePiano);
 
+  var ZXActive := FState.Input.SystemId = ROM_SYSTEM_ZX;
+
   var WasDown: Boolean := False;
   if Code <= High(FState.Input.KeysDown) then
   begin
@@ -601,36 +618,20 @@ begin
     begin
       if ssShift in Shift then
       begin
-        FView.HardRestart;
+        FView.ResetConsole(True);
         // InstallCore clears held keys; keep this shortcut down until key-up.
         FState.Input.KeysDown[Code] := True;
         Key := 0;
         KeyChar := #0;
         Exit;
       end;
-      FView.TimerUpdate.Enabled := False;
-      try
-        if FState.Input.Rumble <> nil then
-          FState.Input.Rumble.Reset;
-        FState.Session.Emulation.Reset;
-        FState.Session.UserPaused := False;
-        FState.Session.EmulationFaulted := False;
-        {$IFDEF ISMOBILE}
-        if FState.Mobile.ActivityPaused then
-          FState.Session.Emulation.Pause;
-        {$ENDIF}
-        FView.SyncActivity;
-        FView.SetStatus(FState.Session.RomDisplayName);
-      except
-        FView.StopOnError;
-        raise;
-      end;
+      FView.ResetConsole(False);
     end
     else if (Code = vkP) and not KeyboardActive then
       FView.SwitchPause
-    else if (Code = vkF9) and not KeyboardActive then
+    else if (Code = vkF9) and not KeyboardActive and not ZXActive then
       FView.InsertCoinClick(FView)
-    else if (Code = vkF8) and (FState.Session.Emulation <> nil) and not KeyboardActive then
+    else if (Code = vkF8) and (FState.Session.Emulation <> nil) and not KeyboardActive and not ZXActive then
     begin
       try
         FView.SetStatus(Translate('Screenshot: ') + FView.SaveScreenshot);
@@ -639,7 +640,7 @@ begin
           ShowRetroMessage(FView, E.Message);
       end;
     end
-    else if (Code in [vkF5, vkF6]) and (FState.Session.Emulation <> nil) and not KeyboardActive then
+    else if (Code in [vkF5, vkF6]) and (FState.Session.Emulation <> nil) and (not KeyboardActive or ZXActive) then
     begin
       try
         if Code = vkF5 then
@@ -653,8 +654,9 @@ begin
     end;
   end;
 
-  if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift)) then
-    if (FState.Session.Emulation <> nil) and ((FState.Input.Manager = nil) or ((SGKeyboard <> nil) and SGKeyboard.HasKeyboard)) then
+  var ZXControlKey := ZXActive and (Code in [vkF7, vkF8, vkF9]);
+  if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift) or ZXControlKey) then
+    if (FState.Session.Emulation <> nil) and ((FState.Input.Manager = nil) or ZXControlKey or ((SGKeyboard <> nil) and SGKeyboard.HasKeyboard)) then
       FView.ForwardKeyState(Code, True);
 
   Key := 0;
@@ -732,7 +734,8 @@ begin
 
   var SGKeyboard: ISGKeyboardCore;
   if (FState.Help.View = nil) and (FState.Session.Emulation <> nil) and
-    ((FState.Input.Manager = nil) or (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard)) then
+    ((FState.Input.Manager = nil) or ((FState.Input.SystemId = ROM_SYSTEM_ZX) and (Code in [vkF7, vkF8, vkF9])) or
+    (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard)) then
     FView.ForwardKeyState(Code, False);
 
   Key := 0;
@@ -789,7 +792,8 @@ begin
     Result.Buttons12 := Host.Buttons12;
     var VirtualAnalog := Result.Analog[0];
     Result.Analog := Host.Analog;
-    if VirtualAnalog.Valid then Result.Analog[0] := VirtualAnalog;
+    if VirtualAnalog.Valid then
+      Result.Analog[0] := VirtualAnalog;
   end;
 
   if FState.Input.Ports.Devices[0] = 'none' then
@@ -812,6 +816,35 @@ begin
         Pad.StickY := -Round(Result.Analog[Port].Y / 32767 * 80);
       end;
       N64Input.SetN64Controller(Port, Pad);
+    end;
+
+  // PlayStation L2/L3/R3, ANALOG and the right stick sit outside the logical
+  // pad; on-screen auxiliary button N is TPS1Extra(N).
+  var PS1Input: IPS1ControllerInput;
+  if Supports(FState.Session.Emulation, IPS1ControllerInput, PS1Input) then
+    for var Port := 0 to 1 do
+    begin
+      var Pad := ReadPS1Pad(FState.Input.Manager, Port);
+      if Port = 0 then
+      begin
+        var Auxiliary := FState.Input.Gamepad.AuxiliaryButtons;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.L2))) <> 0 then
+          Pad.Buttons := Pad.Buttons or PS1PadL2;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.L3))) <> 0 then
+          Pad.Buttons := Pad.Buttons or PS1PadL3;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.R3))) <> 0 then
+          Pad.Buttons := Pad.Buttons or PS1PadR3;
+        if (Auxiliary and (1 shl Ord(TPS1Extra.Analog))) <> 0 then
+          Pad.AnalogButton := True;
+        // The on-screen right stick (the left one arrives as Analog[0]).
+        var Right := FState.Input.Gamepad.RightAnalogInput;
+        if Right.Valid then
+        begin
+          Pad.RightX := EnsureRange(Integer(Pad.RightX) + Right.X, -32768, 32767);
+          Pad.RightY := EnsureRange(Integer(Pad.RightY) + Right.Y, -32768, 32767);
+        end;
+      end;
+      PS1Input.SetPS1Controller(Port, Pad);
     end;
 
   var Piano: INesMiraclePianoCore;
