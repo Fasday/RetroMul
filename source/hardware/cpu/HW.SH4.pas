@@ -18,6 +18,13 @@ uses
   System.SysUtils, System.Math, Core.Snapshots;
 
 const
+  // TSH4TLBPage.Flags: device memory reached through the bus (reads,
+  // writes), not accessible in user mode, valid in every address space.
+  SH4PageDeviceRead = 1;
+  SH4PageDeviceWrite = 2;
+  SH4PagePrivileged = 4;
+  SH4PageShared = 8;
+
   // Exception codes (EXPEVT) and vector offsets from VBR.
   SH4ExcTLBMissRead = $040;
   SH4ExcTLBMissWrite = $060;
@@ -141,14 +148,13 @@ type
   end;
 
   // A 4 KiB page of P0/P3 with a cached translation: host memory for reads
-  // and (when allowed) writes, the physical page and its write generation;
-  // for device memory, whether reads or writes may go to the bus.
+  // and (when allowed) writes, the physical page and its write generation,
+  // SH4Page* flags and the address space (PTEH.ASID) it was translated in.
   TSH4TLBPage = record
     Read, Write: PByte;
     Gen: PCardinal;
     Phys: Cardinal;
-    Privileged: Boolean; // not accessible in user mode
-    DeviceRead, DeviceWrite: Boolean;
+    Flags, ASID: Byte;
   end;
   PSH4TLBPage = ^TSH4TLBPage;
 
@@ -233,6 +239,11 @@ type
     FTLBEntry: Integer;
     FTLBEpoch: Cardinal;
     FMapStale: Boolean;
+    // The UTLB as Address and Mask = Key per entry (invalid: Mask 0, Key 1),
+    // updated with the array, for a quick search.
+    FUTLBKey, FUTLBMask: array[0..63] of Cardinal;
+    procedure UpdateUTLBKey(Index: Integer);
+    procedure UpdateUTLBKeys;
     procedure AssociativeWrite(Value: Cardinal);
     function TLBIndex(Address: Cardinal): Integer; inline;
     procedure TLBFill(Address, Physical: Cardinal; Writing: Boolean);
@@ -246,6 +257,10 @@ type
     function PhysicalPage(Virtual: Cardinal; Writing: Boolean): PByte;
     function SlowRead(Address: Cardinal; Size: Integer): UInt64;
     procedure SlowWrite(Address: Cardinal; Value: UInt64; Size: Integer);
+    // Accesses that miss the direct maps while translation pages are cached:
+    // translated RAM without the general slow path.
+    function TranslatedRead(Address: Cardinal; Size: Integer): UInt64;
+    procedure TranslatedWrite(Address: Cardinal; Value: UInt64; Size: Integer);
     function ReadControl(Address: Cardinal; Size: Integer): Cardinal;
     procedure WriteControl(Address, Value: Cardinal; Size: Integer);
     function Translate(Address: Cardinal; Writing: Boolean; out Physical: Cardinal): Boolean;
@@ -672,7 +687,10 @@ begin
   if P <> nil then
     Result := (P + (A and $FFFF))^
   else
-    Result := Cardinal(SlowRead(A, 1));
+    if FTLBChunks <> nil then
+      Result := Cardinal(TranslatedRead(A, 1))
+    else
+      Result := Cardinal(SlowRead(A, 1));
 end;
 
 function TSH4.Read16(A: Cardinal): Cardinal;
@@ -681,7 +699,10 @@ begin
   if (P <> nil) and ((A and 1) = 0) then
     Result := PWord(P + (A and $FFFF))^
   else
-    Result := Cardinal(SlowRead(A, 2));
+    if FTLBChunks <> nil then
+      Result := Cardinal(TranslatedRead(A, 2))
+    else
+      Result := Cardinal(SlowRead(A, 2));
 end;
 
 function TSH4.Read32(A: Cardinal): Cardinal;
@@ -690,7 +711,10 @@ begin
   if (P <> nil) and ((A and 3) = 0) then
     Result := PCardinal(P + (A and $FFFF))^
   else
-    Result := Cardinal(SlowRead(A, 4));
+    if FTLBChunks <> nil then
+      Result := Cardinal(TranslatedRead(A, 4))
+    else
+      Result := Cardinal(SlowRead(A, 4));
 end;
 
 function TSH4.Read64(A: Cardinal): UInt64;
@@ -698,6 +722,8 @@ begin
   var P := FReadMap[A shr 16];
   if (P <> nil) and ((A and 7) = 0) then
     Result := PUInt64(P + (A and $FFFF))^
+  else if FTLBChunks <> nil then
+    Result := TranslatedRead(A, 8)
   else
     Result := SlowRead(A, 8);
 end;
@@ -712,6 +738,8 @@ begin
     (P + (A and $FFFF))^ := Byte(V);
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
+  else if FTLBChunks <> nil then
+    TranslatedWrite(A, V and $FF, 1)
   else
     SlowWrite(A, V and $FF, 1);
 end;
@@ -726,6 +754,8 @@ begin
     PWord(P + (A and $FFFF))^ := Word(V);
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
+  else if FTLBChunks <> nil then
+    TranslatedWrite(A, V and $FFFF, 2)
   else
     SlowWrite(A, V and $FFFF, 2);
 end;
@@ -740,6 +770,8 @@ begin
     PCardinal(P + (A and $FFFF))^ := V;
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
+  else if FTLBChunks <> nil then
+    TranslatedWrite(A, V, 4)
   else
     SlowWrite(A, V, 4);
 end;
@@ -754,6 +786,8 @@ begin
     PUInt64(P + (A and $FFFF))^ := V;
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
+  else if FTLBChunks <> nil then
+    TranslatedWrite(A, V, 8)
   else
     SlowWrite(A, V, 8);
 end;
@@ -778,19 +812,10 @@ begin
   var Found := -1;
   for var I := 0 to 63 do
   begin
+    if (Address and FUTLBMask[I]) <> FUTLBKey[I] then
+      Continue;
     var E := S.UTLB[I];
-    if (E.Flags and $100) = 0 then
-      Continue;
-    var Mask: Cardinal;
-    case ((E.Flags shr 6) and 2) or ((E.Flags shr 4) and 1) of
-      0: Mask := $FFFFFC00;
-      1: Mask := $FFFFF000;
-      2: Mask := $FFFF0000;
-    else
-      Mask := $FFF00000;
-    end;
-    if ((E.VPN xor Address) and Mask) <> 0 then
-      Continue;
+    var Mask := FUTLBMask[I];
     if ((E.Flags and 2) = 0) and not (Shared and ((S.SR and SRMD) <> 0)) and (E.ASID <> ASID) then
       Continue;
     if Found >= 0 then
@@ -839,6 +864,33 @@ begin
   FTLBEntry := Found;
 end;
 
+procedure TSH4.UpdateUTLBKey(Index: Integer);
+begin
+  var Flags := S.UTLB[Index].Flags;
+  if (Flags and $100) = 0 then
+  begin
+    FUTLBMask[Index] := 0;
+    FUTLBKey[Index] := 1;
+    Exit;
+  end;
+  var Mask: Cardinal;
+  case ((Flags shr 6) and 2) or ((Flags shr 4) and 1) of
+    0: Mask := $FFFFFC00;
+    1: Mask := $FFFFF000;
+    2: Mask := $FFFF0000;
+  else
+    Mask := $FFF00000;
+  end;
+  FUTLBMask[Index] := Mask;
+  FUTLBKey[Index] := S.UTLB[Index].VPN and Mask;
+end;
+
+procedure TSH4.UpdateUTLBKeys;
+begin
+  for var I := 0 to 63 do
+    UpdateUTLBKey(I);
+end;
+
 procedure TSH4.AssociativeWrite(Value: Cardinal);
 begin
   // UTLB address array write with A set: the valid entries that translate
@@ -862,6 +914,7 @@ begin
     if ((E.Flags and 2) = 0) and not Shared and (E.ASID <> (Value and $FF)) then
       Continue;
     S.UTLB[I].Flags := (E.Flags and not Cardinal($104)) or (Value and $100) or ((Value shr 7) and 4);
+    UpdateUTLBKey(I);
   end;
 end;
 
@@ -903,7 +956,13 @@ begin
   if FTLBChunks[Index shr 12] = nil then
     SetLength(FTLBChunks[Index shr 12], 4096);
   var Page: PSH4TLBPage := @FTLBChunks[Index shr 12][Index and 4095];
-  if (Page.Read = nil) and (Page.Write = nil) and not Page.DeviceRead and not Page.DeviceWrite then
+  var ASID := Byte(S.PTEH);
+  var Flags: Byte := 0;
+  if ((E.Flags shr 5) and 3) < 2 then
+    Flags := SH4PagePrivileged;
+  if (E.Flags and 2) <> 0 then
+    Flags := Flags or SH4PageShared;
+  if (Page.Read = nil) and (Page.Write = nil) and (Page.Flags = 0) then
   begin
     if FTLBFilledCount < Length(FTLBFilled) then
     begin
@@ -913,15 +972,18 @@ begin
     else
       FTLBOverflow := True;
   end
-  else if Page.Phys <> Base then
+  else if (Page.Phys <> Base) or (Page.ASID <> ASID) or
+    ((Page.Flags and (SH4PagePrivileged or SH4PageShared)) <> Flags) then
     Page^ := Default(TSH4TLBPage);
   Page.Phys := Base;
+  Page.ASID := ASID;
+  Page.Flags := Page.Flags or Flags;
   if Host = nil then
   begin
     if Writing then
-      Page.DeviceWrite := True
+      Page.Flags := Page.Flags or SH4PageDeviceWrite
     else
-      Page.DeviceRead := True;
+      Page.Flags := Page.Flags or SH4PageDeviceRead;
   end
   else if Writing then
   begin
@@ -934,7 +996,6 @@ begin
   end
   else
     Page.Read := Host + (Base and $FFFF);
-  Page.Privileged := ((E.Flags shr 5) and 3) < 2;
 end;
 
 function TSH4.TLBPage(Address: Cardinal): PSH4TLBPage;
@@ -947,8 +1008,10 @@ begin
   if (Index < 0) or (FTLBChunks[Index shr 12] = nil) then
     Exit;
   Result := @FTLBChunks[Index shr 12][Index and 4095];
-  // SR.MD (SRMD) clear: user mode.
-  if Result.Privileged and ((S.SR and $40000000) = 0) then
+  // Another address space's translation, or a privileged-only page in user
+  // mode (SR.MD, SRMD, clear).
+  if (((Result.Flags and SH4PageShared) = 0) and (Result.ASID <> Byte(S.PTEH))) or
+    (((Result.Flags and SH4PagePrivileged) <> 0) and ((S.SR and $40000000) = 0)) then
     Result := nil;
 end;
 
@@ -1055,6 +1118,44 @@ begin
     Result := Integer(Address and $1FFF);
 end;
 
+function TSH4.TranslatedRead(Address: Cardinal; Size: Integer): UInt64;
+begin
+  var Page := TLBPage(Address);
+  if (Page <> nil) and (Page.Read <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
+  begin
+    var H := Page.Read + (Address and $FFF);
+    case Size of
+      1: Result := H^;
+      2: Result := PWord(H)^;
+      4: Result := PCardinal(H)^;
+    else
+      Result := PUInt64(H)^;
+    end;
+  end
+  else
+    Result := SlowRead(Address, Size);
+end;
+
+procedure TSH4.TranslatedWrite(Address: Cardinal; Value: UInt64; Size: Integer);
+begin
+  var Page := TLBPage(Address);
+  // The wait-loop journal keeps the old contents of direct-mapped RAM only.
+  if (Page <> nil) and (Page.Write <> nil) and ((Address and Cardinal(Size - 1)) = 0) and not FJournalOn then
+  begin
+    var H := Page.Write + (Address and $FFF);
+    case Size of
+      1: H^ := Byte(Value);
+      2: PWord(H)^ := Word(Value);
+      4: PCardinal(H)^ := Cardinal(Value);
+    else
+      PUInt64(H)^ := Value;
+    end;
+    Inc(Page.Gen^);
+  end
+  else
+    SlowWrite(Address, Value, Size);
+end;
+
 function TSH4.SlowRead(Address: Cardinal; Size: Integer): UInt64;
 begin
   // Translated RAM first: most data accesses of programs using the MMU.
@@ -1074,7 +1175,7 @@ begin
         end;
         Exit;
       end
-      else if Page.DeviceRead then
+      else if (Page.Flags and SH4PageDeviceRead) <> 0 then
       begin
         Inc(FSideEffects);
         var Physical := Page.Phys or (Address and $FFF);
@@ -1153,7 +1254,7 @@ begin
   begin
     var Page := TLBPage(Address);
     if (Page <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
-      if Page.Write <> nil then
+      if (Page.Write <> nil) and not FJournalOn then
       begin
         var H := Page.Write + (Address and $FFF);
         case Size of
@@ -1166,7 +1267,7 @@ begin
         Inc(Page.Gen^);
         Exit;
       end
-      else if Page.DeviceWrite then
+      else if (Page.Flags and SH4PageDeviceWrite) <> 0 then
       begin
         Inc(FSideEffects);
         var Physical := Page.Phys or (Address and $FFF);
@@ -1371,15 +1472,17 @@ begin
         end
         else
           S.UTLB[Index].PTEA := Value and $F;
+        UpdateUTLBKey(Index);
         TLBFlush;
       end;
     $FF, $1F:
       case Address and $00FFFFFF of
         $000000:
           begin
-            // Another address space: cached translations of the old one go.
+            // Another address space: cached translations keep theirs (see
+            // TLBPage); code blocks check their mapping again.
             if ((S.PTEH xor Value) and $FF) <> 0 then
-              TLBFlush;
+              Inc(FTLBEpoch);
             S.PTEH := Value and $FFFFFCFF;
           end;
         $000004: S.PTEL := Value and $1FFFFDFF;
@@ -1396,6 +1499,7 @@ begin
                 S.UTLB[I].Flags := S.UTLB[I].Flags and not Cardinal($100);
               for var I := 0 to 3 do
                 S.ITLB[I].Flags := S.ITLB[I].Flags and not Cardinal($100);
+              UpdateUTLBKeys;
             end;
             // TI, AT or SV change what addresses map to.
             if ((Value and 4) <> 0) or (((Old xor S.MMUCR) and $101) <> 0) then
@@ -3627,6 +3731,7 @@ begin
   S.UTLB[Index].PPN := S.PTEL and $1FFFFC00;
   S.UTLB[Index].Flags := S.PTEL and $1FF;
   S.UTLB[Index].PTEA := S.PTEA and $F;
+  UpdateUTLBKey(Index);
 end;
 
 function TSH4.OpMOVCAL(I: PSH4Inst): Boolean;
@@ -4916,6 +5021,7 @@ begin
   FExitRequest := False;
   BuildMaps;
   ClearBlocks;
+  UpdateUTLBKeys;
   TLBFlush;
 end;
 
@@ -5148,7 +5254,7 @@ begin
         end;
         if (B <> nil) and ((B.GenPtr^ <> B.Gen) or (B.GenPtr2^ <> B.Gen2)) and not BlockValid(B) then
           B := nil;
-        if (B <> nil) and B.Translated and not BlockMapped(B) then
+        if (B <> nil) and B.Translated and (B.Epoch <> FTLBEpoch) and not BlockMapped(B) then
           B := nil;
       end;
       if B = nil then
@@ -5263,6 +5369,7 @@ begin
     FFault := False;
     BuildMaps;
     ClearBlocks;
+    UpdateUTLBKeys;
     TLBFlush;
   end;
 end;
