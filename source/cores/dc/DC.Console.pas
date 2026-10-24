@@ -229,6 +229,7 @@ begin
   GDROM := TDCGDROM.Create(Scheduler, Interrupts);
   AICA := TDCAICA.Create(Memory, Scheduler, Interrupts);
   Maple := TDCMaple.Create(Memory);
+  Maple.OnLightGun := PVR.LatchLightGun;
   Holly := TDCHolly.Create(Memory, Scheduler, Interrupts, Periph, PVR, GDROM, AICA, Maple);
   Holly.OnSoftReset := RequestSoftReset;
   Boot := TDCBoot.Create(CPU, Memory, Periph, PVR);

@@ -35,7 +35,8 @@ begin
   Context.CreateOption('RowDCVideo', 'Video standard', 'Automatic uses 50 Hz PAL for European consoles.', sekCombo);
   for var Port := 1 to 4 do
     Context.CreateOption('RowDCControllerPort' + IntToStr(Port), 'Controller',
-      'Dreamcast controller, with a Visual Memory unit, or disconnected.', sekCombo);
+      'Dreamcast controller (with a Visual Memory unit), keyboard, mouse, light gun or nothing. The keyboard ' +
+      'takes the host keys; the light gun aims with the mouse pointer and fires with its left button.', sekCombo);
   Context.CreateGroup('DCPeripherals', 'Visual Memory and rumble');
   Context.CreateOption('RowDCVMUScreen', 'VMU screen',
     'Show the Visual Memory display of the first controller in a corner of the picture.', sekCombo);
@@ -70,8 +71,8 @@ end;
 function TDCSettings.PortOptions(Port: Integer): TSettingsPortOptions;
 begin
   Result.RowName := 'RowDCControllerPort' + IntToStr(Port + 1);
-  Result.Labels := ['Controller + VMU', 'Controller', 'None'];
-  Result.Values := ['pad-vmu', 'pad', 'none'];
+  Result.Labels := ['Controller + VMU', 'Controller', 'Keyboard', 'Mouse', 'Light gun', 'None'];
+  Result.Values := ['pad-vmu', 'pad', 'keyboard', 'mouse', 'lightgun', 'none'];
   // As 'auto' in the core: a VMU in the first controller only.
   Result.Default := 'pad';
   if Port = 0 then

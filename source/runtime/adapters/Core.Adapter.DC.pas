@@ -4,7 +4,8 @@ interface
 
 uses
   Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs, System.Threading, Core.Storage,
-  Core.Emulation, Core.Snapshots, Core.CD.Disc, DC.Types, DC.Flash, DC.Maple, DC.Console, Core.DC.Playback;
+  Core.Emulation, Core.Snapshots, Core.CD.Disc, Core.Adapter.SG1000, SG1000.Console, DC.Types, DC.Flash, DC.Maple,
+  DC.Console, Core.DC.Playback;
 
 {$SCOPEDENUMS ON}
 
@@ -64,6 +65,21 @@ type
 
   TDCPadInputs = array[0..3] of TDCPad;
 
+  // What a port holds (Dreamcast settings: controller, keyboard, mouse,
+  // light gun or nothing).
+  TDCPortKind = (None, Pad, Keyboard, Mouse, LightGun);
+
+  // Keyboard, mouse and light gun input of the frontend thread: held keys
+  // (USB HID usage codes, oldest first) and modifier bits, the mouse buttons
+  // (bit 0 left, 1 right, 2 middle) and the pointer over the picture.
+  TDCHostPeripherals = record
+    Keys: array[0..5] of Byte;
+    Modifiers: Byte;
+    MouseButtons: Byte;
+    PointerX, PointerY: Integer;
+    PointerValid: Boolean;
+  end;
+
   // The VMU display of port A for an overlay: 48x32, one byte per pixel
   // (0 off, 1 on), upright as seen through the controller window (the unit
   // sits upside down in the controller). False when unchanged or absent.
@@ -99,7 +115,11 @@ type
     FRate: TEmulationFrameRate;
     FDeadline: Double;
     FClockGuest: Int64;
-    FConnected, FWithVMU: array[0..3] of Boolean;
+    FKinds: array[0..3] of TDCPortKind;
+    FWithVMU: array[0..3] of Boolean;
+    FKeyboardRegion: Byte;
+    FPeripherals: TDCHostPeripherals;
+    FMouseDX, FMouseDY: Integer;
     // Disc change requested by the frontend thread (nil disc: eject).
     FMediaDone: TEvent;
     FMediaPending: Boolean;
@@ -128,6 +148,9 @@ type
       Rumble: Boolean);
     destructor Destroy; override;
     procedure Configure(const Inputs: TDCPadInputs; Paused, AudioEnabled: Boolean; Volume: Single);
+    procedure SetPeripherals(const Value: TDCHostPeripherals);
+    // Relative host mouse movement, queued for the next frame.
+    procedure AddMouseDelta(DX, DY: Integer);
     procedure RequestReset;
     procedure StopAndSave;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -143,7 +166,8 @@ type
   end;
 
   TDCCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation,
-    IEmulationAudioDiagnostics, IEmulationRumbleOutput, IDCControllerInput, IDCVMUScreen, IEmulationDiscControl)
+    IEmulationAudioDiagnostics, IEmulationRumbleOutput, IDCControllerInput, IDCVMUScreen, IEmulationDiscControl,
+    ISGKeyboardCore, IEmulationMouseInput, IEmulationPointerInput)
   private
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
@@ -166,8 +190,17 @@ type
     // Reads a newly chosen disc for its identity, then inserts it; the lid is
     // open meanwhile.
     FDiscTask: ITask;
+    // Keyboard, mouse and light gun: host keys held (HID codes, oldest first)
+    // and on-screen keys, mouse buttons and the pointer.
+    FHostKeys: TArray<Byte>;
+    FModifiers: Byte;
+    FScreenKeys: TSGHostKeys;
+    FPeripherals: TDCHostPeripherals;
     procedure LoadFirmware(const RomName: string);
     procedure Configure;
+    function PortHolds(Device: string): Boolean;
+    procedure HostKey(Code: UInt32; Pressed: Boolean);
+    procedure PushPeripherals;
     procedure ReplaceDisc(const Location: string; Index: Integer);
     procedure WaitDiscTask;
   public
@@ -211,6 +244,12 @@ type
     procedure ChangeDisc(Index: Integer);
     procedure OpenDisc(const Location: string);
     procedure EjectDisc;
+    // A keyboard on a port takes the host keys.
+    procedure SetScreenKeys(const Keys: TSGHostKeys);
+    function GetHasKeyboard: Boolean;
+    procedure SendMouseDelta(DX, DY: Integer; Buttons: Byte);
+    function GetUsesPointer: Boolean;
+    procedure SetPointer(X, Y: Integer; Valid: Boolean);
   end;
 
 implementation
@@ -345,6 +384,10 @@ begin
   inherited Create(True);
   FreeOnTerminate := False;
   FConfig := Config;
+  // Keyboard layout: Japanese on Japanese consoles, else US.
+  FKeyboardRegion := 2;
+  if Config.Region = TDCRegion.Japan then
+    FKeyboardRegion := 1;
   FProgram := Copy(ProgramData);
   FIdentity := Copy(Identity);
   FDisc := Disc;
@@ -643,11 +686,41 @@ begin
   for var Port := 0 to 3 do
   begin
     var Device := Ports.Devices[Port];
-    FConnected[Port] := Device <> 'none';
+    if Device = 'none' then
+      FKinds[Port] := TDCPortKind.None
+    else if Device = 'keyboard' then
+      FKinds[Port] := TDCPortKind.Keyboard
+    else if Device = 'mouse' then
+      FKinds[Port] := TDCPortKind.Mouse
+    else if Device = 'lightgun' then
+      FKinds[Port] := TDCPortKind.LightGun
+    else
+      FKinds[Port] := TDCPortKind.Pad;
     FWithVMU[Port] := (Device = 'pad-vmu') or ((Device = 'auto') and (Port = 0));
   end;
   if FConsole <> nil then
     AttachDevices;
+end;
+
+procedure TDCWorker.SetPeripherals(const Value: TDCHostPeripherals);
+begin
+  FLock.Acquire;
+  try
+    FPeripherals := Value;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TDCWorker.AddMouseDelta(DX, DY: Integer);
+begin
+  FLock.Acquire;
+  try
+    FMouseDX := EnsureRange(Int64(FMouseDX) + DX, -32768, 32767);
+    FMouseDY := EnsureRange(Int64(FMouseDY) + DY, -32768, 32767);
+  finally
+    FLock.Release;
+  end;
 end;
 
 procedure TDCWorker.SaveVMU(Port: Integer);
@@ -663,22 +736,40 @@ end;
 
 procedure TDCWorker.AttachDevices;
 begin
-  // A controller per connected port, a VMU in its first socket on request and
-  // a jump pack in the second socket of port A.
+  // A controller, keyboard, mouse or light gun per connected port; with a
+  // controller, a VMU in its first socket on request and a jump pack in the
+  // second socket of port A.
   for var Port := 0 to 3 do
   begin
-    if not FConnected[Port] or not FWithVMU[Port] then
+    var Kind := FKinds[Port];
+    if (Kind <> TDCPortKind.Pad) or not FWithVMU[Port] then
     begin
       SaveVMU(Port);
       FConsole.Maple.Attach(Port, 1, nil);
     end;
-    if not FConnected[Port] then
-    begin
-      for var U := 0 to 5 do
+    if Kind <> TDCPortKind.Pad then
+      for var U := 2 to 5 do
         FConsole.Maple.Attach(Port, U, nil);
-      Continue;
+    var Main := FConsole.Maple.Devices[Port, 0];
+    case Kind of
+      TDCPortKind.None:
+        FConsole.Maple.Attach(Port, 0, nil);
+      TDCPortKind.Keyboard:
+        begin
+          if not (Main is TDCKeyboard) then
+            FConsole.Maple.Attach(Port, 0, TDCKeyboard.Create);
+          TDCKeyboard(FConsole.Maple.Devices[Port, 0]).Region := FKeyboardRegion;
+        end;
+      TDCPortKind.Mouse:
+        if not (Main is TDCMouse) then
+          FConsole.Maple.Attach(Port, 0, TDCMouse.Create);
+      TDCPortKind.LightGun:
+        if not (Main is TDCLightGun) then
+          FConsole.Maple.Attach(Port, 0, TDCLightGun.Create);
     end;
-    if not (FConsole.Maple.Devices[Port, 0] is TDCController) then
+    if Kind <> TDCPortKind.Pad then
+      Continue;
+    if (Main = nil) or (Main.ClassType <> TDCController) then
       FConsole.Maple.Attach(Port, 0, TDCController.Create);
     if FWithVMU[Port] and (FVMUFiles[Port] <> '') and not (FConsole.Maple.Devices[Port, 1] is TDCVMU) then
     begin
@@ -802,9 +893,16 @@ begin
         var Inputs: TDCPadInputs;
         var Paused, Enabled, ResetRequested: Boolean;
         var Volume: Single;
+        var Host: TDCHostPeripherals;
+        var MouseDX, MouseDY: Integer;
         FLock.Acquire;
         try
           Inputs := FInputs;
+          Host := FPeripherals;
+          MouseDX := FMouseDX;
+          MouseDY := FMouseDY;
+          FMouseDX := 0;
+          FMouseDY := 0;
           Paused := FPause;
           Enabled := FAudioEnabled;
           Volume := FVolume;
@@ -860,8 +958,45 @@ begin
         end;
 
         for var Port := 0 to 3 do
-          if FConsole.Maple.Devices[Port, 0] is TDCController then
-            TDCController(FConsole.Maple.Devices[Port, 0]).Pad := Inputs[Port];
+        begin
+          var Device := FConsole.Maple.Devices[Port, 0];
+          if Device is TDCController then
+            TDCController(Device).Pad := Inputs[Port];
+          if Device is TDCLightGun then
+          begin
+            // The mouse aims and its buttons are the trigger, B and Start.
+            var Gun := TDCLightGun(Device);
+            Gun.X := Host.PointerX;
+            Gun.Y := Host.PointerY;
+            Gun.OnScreen := Host.PointerValid;
+            if (Host.MouseButtons and 1) <> 0 then
+              Gun.Pad.Buttons := Gun.Pad.Buttons or MapleA;
+            if (Host.MouseButtons and 2) <> 0 then
+              Gun.Pad.Buttons := Gun.Pad.Buttons or MapleB;
+            if (Host.MouseButtons and 4) <> 0 then
+              Gun.Pad.Buttons := Gun.Pad.Buttons or MapleStart;
+          end
+          else if Device is TDCKeyboard then
+          begin
+            var Kbd := TDCKeyboard(Device);
+            Move(Host.Keys, Kbd.Keys, SizeOf(Kbd.Keys));
+            Kbd.Modifiers := Host.Modifiers;
+          end
+          else if Device is TDCMouse then
+          begin
+            var Mouse := TDCMouse(Device);
+            // Movement the program does not read yet stays (within bounds).
+            Mouse.DX := EnsureRange(Mouse.DX + MouseDX, -4096, 4096);
+            Mouse.DY := EnsureRange(Mouse.DY + MouseDY, -4096, 4096);
+            Mouse.Buttons := 0;
+            if (Host.MouseButtons and 1) <> 0 then
+              Mouse.Buttons := Mouse.Buttons or MapleMouseLeft;
+            if (Host.MouseButtons and 2) <> 0 then
+              Mouse.Buttons := Mouse.Buttons or MapleMouseRight;
+            if (Host.MouseButtons and 4) <> 0 then
+              Mouse.Buttons := Mouse.Buttons or MapleMouseSide;
+          end;
+        end;
         FConsole.RunFrame;
         if FConsole.Halted then
         begin
@@ -1275,6 +1410,7 @@ begin
   FPorts := LoadCoreInputPorts(FStorage, ROM_SYSTEM_DC);
   FWorker.InputPorts := FPorts;
   Configure;
+  PushPeripherals;
   FWorker.Start;
 end;
 
@@ -1322,13 +1458,180 @@ begin
   FGamepad := Default(TEmulatorInput);
   FillChar(FKeyboardExtra, SizeOf(FKeyboardExtra), 0);
   FillChar(FControllers, SizeOf(FControllers), 0);
+  FHostKeys := nil;
+  FModifiers := 0;
+  FillChar(FScreenKeys, SizeOf(FScreenKeys), 0);
+  FPeripherals.MouseButtons := 0;
+  PushPeripherals;
   Configure;
+end;
+
+// USB HID usage code of a host key; modifiers and unknown keys give 0.
+function HostKeyToHID(Code: UInt32): Byte;
+begin
+  Result := 0;
+  case Code of
+    vkA..vkZ: Result := 4 + (Code - vkA);
+    vk1..vk9: Result := 30 + (Code - vk1);
+    vk0: Result := 39;
+    vkReturn: Result := 40;
+    vkEscape: Result := 41;
+    vkBack: Result := 42;
+    vkTab: Result := 43;
+    vkSpace: Result := 44;
+    vkMinus: Result := 45;
+    vkEqual: Result := 46;
+    vkLeftBracket: Result := 47;
+    vkRightBracket: Result := 48;
+    vkBackslash: Result := 49;
+    vkSemicolon: Result := 51;
+    vkQuote: Result := 52;
+    vkTilde: Result := 53;
+    vkComma: Result := 54;
+    vkPeriod: Result := 55;
+    vkSlash: Result := 56;
+    vkCapital: Result := 57;
+    vkF1..vkF12: Result := 58 + (Code - vkF1);
+    vkSnapshot: Result := 70;
+    vkScroll: Result := 71;
+    vkPause: Result := 72;
+    vkInsert: Result := 73;
+    vkHome: Result := 74;
+    vkPrior: Result := 75;
+    vkDelete: Result := 76;
+    vkEnd: Result := 77;
+    vkNext: Result := 78;
+    vkRight: Result := 79;
+    vkLeft: Result := 80;
+    vkDown: Result := 81;
+    vkUp: Result := 82;
+    vkNumLock: Result := 83;
+    vkDivide: Result := 84;
+    vkMultiply: Result := 85;
+    vkSubtract: Result := 86;
+    vkAdd: Result := 87;
+    vkNumpad1..vkNumpad9: Result := 89 + (Code - vkNumpad1);
+    vkNumpad0: Result := 98;
+    vkDecimal: Result := 99;
+    vkOem102: Result := 100;
+    vkApps: Result := 101;
+  end;
+end;
+
+// Keyboard modifier bit of a host key (left/right Ctrl, Shift, Alt and the
+// S1/S2 keys for the system keys), 0 for others.
+function HostKeyModifier(Code: UInt32): Byte;
+begin
+  case Code of
+    vkControl, vkLControl: Result := $01;
+    vkShift, vkLShift: Result := $02;
+    vkMenu, vkLMenu: Result := $04;
+    vkLWin: Result := $08;
+    vkRControl: Result := $10;
+    vkRShift: Result := $20;
+    vkRMenu: Result := $40;
+    vkRWin: Result := $80;
+  else
+    Result := 0;
+  end;
+end;
+
+function TDCCoreAdapter.PortHolds(Device: string): Boolean;
+begin
+  Result := False;
+  for var Port := 0 to 3 do
+    if FPorts.Devices[Port] = Device then
+      Exit(True);
+end;
+
+procedure TDCCoreAdapter.PushPeripherals;
+begin
+  FillChar(FPeripherals.Keys, SizeOf(FPeripherals.Keys), 0);
+  for var I := 0 to Min(High(FHostKeys), 5) do
+    FPeripherals.Keys[I] := FHostKeys[I];
+  FPeripherals.Modifiers := FModifiers;
+  if FWorker <> nil then
+    FWorker.SetPeripherals(FPeripherals);
+end;
+
+procedure TDCCoreAdapter.HostKey(Code: UInt32; Pressed: Boolean);
+begin
+  var Modifier := HostKeyModifier(Code);
+  if Modifier <> 0 then
+  begin
+    if Pressed then
+      FModifiers := FModifiers or Modifier
+    else
+      FModifiers := FModifiers and not Modifier;
+  end
+  else
+  begin
+    var HID := HostKeyToHID(Code);
+    if HID = 0 then
+      Exit;
+    var Index := -1;
+    for var I := 0 to High(FHostKeys) do
+      if FHostKeys[I] = HID then
+        Index := I;
+    if Pressed and (Index < 0) then
+      FHostKeys := FHostKeys + [HID]
+    else if not Pressed and (Index >= 0) then
+      Delete(FHostKeys, Index, 1);
+  end;
+  PushPeripherals;
+end;
+
+procedure TDCCoreAdapter.SetScreenKeys(const Keys: TSGHostKeys);
+begin
+  for var Code := 0 to 255 do
+    if Keys[Code] <> FScreenKeys[Code] then
+    begin
+      FScreenKeys[Code] := Keys[Code];
+      HostKey(Code, Keys[Code]);
+    end;
+end;
+
+function TDCCoreAdapter.GetHasKeyboard: Boolean;
+begin
+  Result := PortHolds('keyboard');
+end;
+
+procedure TDCCoreAdapter.SendMouseDelta(DX, DY: Integer; Buttons: Byte);
+begin
+  if FPeripherals.MouseButtons <> Buttons then
+  begin
+    FPeripherals.MouseButtons := Buttons;
+    PushPeripherals;
+  end;
+  if (FWorker <> nil) and ((DX <> 0) or (DY <> 0)) and PortHolds('mouse') then
+    FWorker.AddMouseDelta(DX, DY);
+end;
+
+function TDCCoreAdapter.GetUsesPointer: Boolean;
+begin
+  Result := PortHolds('lightgun');
+end;
+
+procedure TDCCoreAdapter.SetPointer(X, Y: Integer; Valid: Boolean);
+begin
+  if (FPeripherals.PointerX = X) and (FPeripherals.PointerY = Y) and (FPeripherals.PointerValid = Valid) then
+    Exit;
+  FPeripherals.PointerX := X;
+  FPeripherals.PointerY := Y;
+  FPeripherals.PointerValid := Valid;
+  PushPeripherals;
 end;
 
 procedure TDCCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 begin
   if Code = 0 then
     Exit;
+  // With a keyboard connected the host keys type on it.
+  if GetHasKeyboard then
+  begin
+    HostKey(Code, Pressed);
+    Exit;
+  end;
   for var Port := 0 to 3 do
   begin
     for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do

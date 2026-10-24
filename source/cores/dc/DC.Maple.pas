@@ -1,8 +1,9 @@
 ﻿unit DC.Maple;
 
 // Maple bus: DMA command lists and the devices on ports A-D. The standard
-// controller and its expansion devices (VMU, Puru Puru) answer the frame
-// protocol: device info, get/set condition, block read/write, reset.
+// controller and its expansion devices (VMU, Puru Puru), the keyboard, mouse
+// and light gun answer the frame protocol: device info, get/set condition,
+// block read/write, reset.
 // Reference: Marcus Comstedt, "Maple bus" and "Controller" pages.
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$POINTERMATH ON}
@@ -18,6 +19,14 @@ const
   MapleFuncLCD = $04000000;
   MapleFuncClock = $08000000;
   MapleFuncVibration = $00010000;
+  MapleFuncMouse = $00020000;
+  MapleFuncKeyboard = $40000000;
+  MapleFuncLightGun = $80000000;
+
+  // Mouse buttons (active low on the bus).
+  MapleMouseRight = $0002;
+  MapleMouseLeft = $0004;
+  MapleMouseSide = $0008;
 
   // Controller buttons (active low on the bus).
   MapleC = $0001;
@@ -55,6 +64,39 @@ type
       out Response: Byte): Integer; override;
   end;
 
+  // Light gun: a controller (trigger on A, B, Start, D-pad) whose position
+  // comes from the video counters latched when the Maple bus is put into
+  // light gun mode for its port.
+  TDCLightGun = class(TDCController)
+  public
+    // Aim in frame pixels; OnScreen False when pointing off the picture.
+    X, Y: Integer;
+    OnScreen: Boolean;
+    function Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+      out Response: Byte): Integer; override;
+  end;
+
+  // Keyboard: up to six keys (USB HID usage codes) and the modifier bits.
+  TDCKeyboard = class(TDCMapleDevice)
+  public
+    // 1 Japanese, 2 US, 3 UK, 4 German, 5 French, 6 Italian, 7 Spanish layout.
+    Region: Byte;
+    Modifiers, LEDs: Byte;
+    Keys: array[0..5] of Byte;
+    function Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+      out Response: Byte): Integer; override;
+  end;
+
+  // Mouse: buttons (MapleMouse* bits while pressed) and the movement since
+  // the previous condition read.
+  TDCMouse = class(TDCMapleDevice)
+  public
+    Buttons: Word;
+    DX, DY, DZ: Integer;
+    function Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+      out Response: Byte): Integer; override;
+  end;
+
   // Visual Memory: 128 KiB flash (256 blocks of 512 bytes), the 48x32
   // monochrome LCD and the clock.
   TDCVMU = class(TDCMapleDevice)
@@ -88,6 +130,8 @@ type
     Devices: array[0..3, 0..5] of TDCMapleDevice;
     // Optional diagnostics: one line per frame.
     Trace: TStrings;
+    // Latches the video counters for a light gun aimed at frame pixel X, Y.
+    OnLightGun: procedure(X, Y: Integer) of object;
     constructor Create(Memory: TDCMemory);
     destructor Destroy; override;
     procedure Attach(Port, AUnit: Integer; Device: TDCMapleDevice);
@@ -160,6 +204,124 @@ begin
         Reply[2] := Cardinal(Pad.StickX) or (Cardinal(Pad.StickY) shl 8) or (Cardinal($80) shl 16) or (Cardinal($80) shl 24);
         Response := 8;
         Exit(3);
+      end;
+  end;
+end;
+
+// Device info: functions, three function data words, area, direction, product
+// name, license, standby and maximum power (0.1 mA).
+function DeviceInfo(Reply: PCardinal; Functions, Data0, Data1: Cardinal; const Name: AnsiString;
+  Standby, MaxPower: Word): Integer;
+begin
+  FillChar(Reply^, 28 * 4, 0);
+  Reply[0] := Functions;
+  Reply[1] := Data0;
+  Reply[2] := Data1;
+  var B := PByte(@Reply[4]);
+  B[0] := $FF;
+  B[1] := 0;
+  MapleText(B + 2, Name, 30);
+  MapleText(B + 32, 'Produced By or Under License From SEGA ENTERPRISES,LTD.', 60);
+  PWord(B + 92)^ := Standby;
+  PWord(B + 94)^ := MaxPower;
+  Result := 28;
+end;
+
+{ TDCLightGun }
+
+function TDCLightGun.Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+  out Response: Byte): Integer;
+begin
+  if Command in [1, 2] then
+  begin
+    // Function data in descending function order: light gun, controller.
+    Response := 5;
+    Exit(DeviceInfo(Reply, MapleFuncLightGun or MapleFuncController, 0, $FE060F00, 'Dreamcast Gun',
+      $0069, $0120));
+  end;
+  Result := inherited Handle(Command, Address, Data, Words, Reply, Response);
+end;
+
+{ TDCKeyboard }
+
+function TDCKeyboard.Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+  out Response: Byte): Integer;
+begin
+  Response := $FD;
+  Result := 0;
+  case Command of
+    1, 2:
+      begin
+        // The function data's low byte gives the layout.
+        Response := 5;
+        Exit(DeviceInfo(Reply, MapleFuncKeyboard, Region, 0, 'Keyboard', $012C, $01F4));
+      end;
+    3:
+      Response := 7;
+    9:
+      begin
+        if (Words < 1) or (Data[0] <> MapleFuncKeyboard) then
+        begin
+          Response := $FE;
+          Exit(0);
+        end;
+        Reply[0] := MapleFuncKeyboard;
+        Reply[1] := Cardinal(Modifiers) or (Cardinal(LEDs) shl 8) or (Cardinal(Keys[0]) shl 16) or
+          (Cardinal(Keys[1]) shl 24);
+        Reply[2] := Cardinal(Keys[2]) or (Cardinal(Keys[3]) shl 8) or (Cardinal(Keys[4]) shl 16) or
+          (Cardinal(Keys[5]) shl 24);
+        Response := 8;
+        Exit(3);
+      end;
+    14:
+      begin
+        // SETCOND: the LED state.
+        if (Words >= 2) and (Data[0] = MapleFuncKeyboard) then
+          LEDs := Byte(Data[1]);
+        Response := 7;
+      end;
+  end;
+end;
+
+{ TDCMouse }
+
+function TDCMouse.Handle(Command, Address: Byte; Data: PCardinal; Words: Integer; Reply: PCardinal;
+  out Response: Byte): Integer;
+
+  // Ten-bit axis centred on 200h; what does not fit stays for the next read.
+  function Take(var Delta: Integer): Cardinal;
+  begin
+    var Part := EnsureRange(Delta, -$1FF, $1FF);
+    Dec(Delta, Part);
+    Result := Cardinal(Part + $200);
+  end;
+
+begin
+  Response := $FD;
+  Result := 0;
+  case Command of
+    1, 2:
+      begin
+        Response := 5;
+        Exit(DeviceInfo(Reply, MapleFuncMouse, 0, 0, 'Dreamcast Mouse', $0069, $0120));
+      end;
+    3:
+      Response := 7;
+    9:
+      begin
+        if (Words < 1) or (Data[0] <> MapleFuncMouse) then
+        begin
+          Response := $FE;
+          Exit(0);
+        end;
+        Reply[0] := MapleFuncMouse;
+        Reply[1] := not Cardinal(Buttons) and $FFFF;
+        Reply[2] := Take(DX) or (Take(DY) shl 16);
+        Reply[3] := Take(DZ) or ($200 shl 16);
+        Reply[4] := $02000200;
+        Reply[5] := $02000200;
+        Response := 8;
+        Exit(6);
       end;
   end;
 end;
@@ -466,6 +628,11 @@ begin
     var Words := Integer(Control and $FF) + 1;
     if (Trace <> nil) and (Pattern <> 0) then
       Trace.Add(Format('maple pattern %d control %.8x', [Pattern, Control]));
+    // Light gun mode: a gun on the port that sees the picture latches the
+    // video counters.
+    if (Pattern = 2) and (Devices[Port, 0] is TDCLightGun) and TDCLightGun(Devices[Port, 0]).OnScreen and
+      Assigned(OnLightGun) then
+      OnLightGun(TDCLightGun(Devices[Port, 0]).X, TDCLightGun(Devices[Port, 0]).Y);
     // Only normal transfers carry a receive address and a frame; other
     // patterns (light gun mode, NOP) are a single instruction word.
     var Destination: Cardinal := 0;

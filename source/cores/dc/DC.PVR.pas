@@ -10,7 +10,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, Core.Snapshots, DC.Types, DC.Memory, DC.Scheduler, DC.Interrupts;
+  System.SysUtils, System.Classes, System.Math, Core.Snapshots, DC.Types, DC.Memory, DC.Scheduler, DC.Interrupts;
 
 const
   PVRID = $000;
@@ -30,6 +30,7 @@ const
   PVRFBWSOF2 = $064;
   PVRFBXClip = $068;
   PVRFBYClip = $06C;
+  PVRSPGTriggerPos = $0C4;
   PVRSPGHBlankInt = $0C8;
   PVRSPGVBlankInt = $0CC;
   PVRSPGControl = $0D0;
@@ -99,6 +100,8 @@ type
     FFrameWidth, FFrameHeight: Integer;
     FFrameReady: Boolean;
     FPAL: Boolean;
+    // Placement of the last scanned-out buffer in the frame (for light guns).
+    FScanPadX, FScanPadY, FScanLineStep: Integer;
     function PixelClock: Int64;
     function LineTime(Line: Integer): Int64;
     procedure StartField(At: Int64);
@@ -117,6 +120,9 @@ type
     function ReadRegister(Offset: Cardinal): Cardinal;
     procedure WriteRegister(Offset, Value: Cardinal);
     procedure LineEvent;
+    // A light gun aimed at frame pixel X, Y: SPG_TRIGGER_POS takes the
+    // horizontal and vertical counters of that spot.
+    procedure LatchLightGun(X, Y: Integer);
     // TA FIFO bus (00000000..007FFFFF within area 4 polygon path).
     procedure WriteFIFO(Value: Cardinal);
     procedure WriteFIFOBurst(Data: PCardinal; Count: Integer);
@@ -255,6 +261,16 @@ begin
   end;
 end;
 
+procedure TDCPVR.LatchLightGun(X, Y: Integer);
+begin
+  // Frame pixels advance the horizontal counter by one pixel clock; a field
+  // line holds two frame lines when interlaced or line doubled. The picture
+  // starts at VO_STARTX/VO_STARTY.
+  var H := Integer(R[PVRVOStartX shr 2] and $3FF) + (X - FScanPadX);
+  var V := Integer(R[PVRVOStartY shr 2] and $3FF) + (Y - FScanPadY) div Max(1, FScanLineStep);
+  R[PVRSPGTriggerPos shr 2] := (Cardinal(EnsureRange(V, 0, $3FF)) shl 16) or Cardinal(EnsureRange(H, 0, $3FF));
+end;
+
 procedure TDCPVR.Scanout;
 begin
   var Ctrl := R[PVRFBRCtrl shr 2];
@@ -297,6 +313,11 @@ begin
     OutWidth := 640;
   var PadX := (OutWidth - Width * (1 + Ord(PixelDouble))) div 2;
   var PadY := (OutHeight - Height) div 2;
+  FScanPadX := PadX;
+  FScanPadY := PadY;
+  FScanLineStep := 1;
+  if Interlaced or LineDouble then
+    FScanLineStep := 2;
   if (OutWidth <> FFrameWidth) or (OutHeight <> FFrameHeight) then
   begin
     FFrameWidth := OutWidth;
