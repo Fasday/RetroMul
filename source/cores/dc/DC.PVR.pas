@@ -378,14 +378,27 @@ begin
       Base := R[PVRFBRSOF1 shr 2] + Cardinal((Y shr 1) * Stride)
     else
       Base := R[PVRFBRSOF1 shr 2] + Cardinal(Y * Stride);
+    // Straight into the picture unless doubled.
+    var Row := (Y + PadY) * OutWidth + PadX;
     var Line: PCardinal := @FLine[0];
+    if not PixelDouble then
+      Line := @FFrame[Row];
     case Depth of
       0, 1:
         begin
           // 16-bit pixels through a table of the 65536 colours.
           var Table: PCardinal := @FPixels16[0];
-          for var X := 0 to Width - 1 do
-            Line[X] := Table[PWord(VRAM + ((Base + Cardinal(X) * 2) and $7FFFFE))^];
+          var First := Base and $7FFFFE;
+          if First + Cardinal(Width) * 2 <= DCVRAMSize then
+          begin
+            // The line does not wrap around VRAM.
+            var Src: PWord := PWord(VRAM + First);
+            for var X := 0 to Width - 1 do
+              Line[X] := Table[Src[X]];
+          end
+          else
+            for var X := 0 to Width - 1 do
+              Line[X] := Table[PWord(VRAM + ((Base + Cardinal(X) * 2) and $7FFFFE))^];
         end;
       2:
         for var X := 0 to Width - 1 do
@@ -400,16 +413,13 @@ begin
       for var X := 0 to Width - 1 do
         Line[X] := $FF000000 or (PCardinal(VRAM + ((Base + Cardinal(X) * 4) and $7FFFFC))^ and $FFFFFF);
     end;
-    // Into the picture, doubled if asked.
-    var Row := (Y + PadY) * OutWidth + PadX;
+    // Into the picture, doubled.
     if PixelDouble then
       for var X := 0 to Width - 1 do
       begin
         FFrame[Row + X * 2] := FLine[X];
         FFrame[Row + X * 2 + 1] := FLine[X];
-      end
-    else
-      Move(FLine[0], FFrame[Row], Width * SizeOf(Cardinal));
+      end;
   end;
   FFrameReady := True;
 end;
