@@ -41,8 +41,9 @@ type
     TopLeft: array[0..2] of Boolean;
     // Mipmap level of the texture and of the second parameter set's.
     Level, Level1: SmallInt;
-    // For RowSpan, per edge with EA <> 0: 1 / EA and 1E-6 / |EA|.
-    SpanInv, SpanRel: array[0..2] of Double;
+    // For RowSpan, per edge with EA <> 0: the edge's X at Y = 0 and its
+    // slope (EA * X + EB * Y + EC = 0).
+    SpanBase, SpanSlope: array[0..2] of Double;
   end;
   PRenderTri = ^TRenderTri;
 
@@ -469,8 +470,8 @@ begin
     T.TopLeft[K] := (T.EA[K] > 0) or ((T.EA[K] = 0) and (T.EB[K] > 0));
     if T.EA[K] <> 0 then
     begin
-      T.SpanInv[K] := 1 / Double(T.EA[K]);
-      T.SpanRel[K] := 1E-6 / Abs(Double(T.EA[K]));
+      T.SpanBase[K] := -T.EC[K] / Double(T.EA[K]);
+      T.SpanSlope[K] := -T.EB[K] / Double(T.EA[K]);
     end;
   end;
   T.InvArea := 1 / Abs(Area);
@@ -832,41 +833,63 @@ begin
 end;
 
 // A sample on an edge belongs to the triangle only for left/top edges, so
-// triangles sharing an edge cover each pixel once.
-function Covers(const T: TRenderTri; PX, PY: Single; out Z: Single): Boolean; inline;
+// triangles sharing an edge cover each pixel once. The terms that depend on
+// the row only (EB * PY per edge, ZB * (PY - Y0)) are computed per row.
+type
+  TCoverRow = record
+    BY: array[0..2] of Single;
+    ZY: Single;
+  end;
+
+const
+  SingleZero: Single = 0;
+
+function CoverRow(const T: TRenderTri; PY: Single): TCoverRow; inline;
+begin
+  Result.BY[0] := T.EB[0] * PY;
+  Result.BY[1] := T.EB[1] * PY;
+  Result.BY[2] := T.EB[2] * PY;
+  Result.ZY := T.ZB * (PY - T.Y0);
+end;
+
+function CoversRow(const T: TRenderTri; const R: TCoverRow; PX: Single; var Z: Single): Boolean; inline;
 begin
   Result := False;
-  var E := T.EA[0] * PX + T.EB[0] * PY + T.EC[0];
-  if (E < 0) or ((E = 0) and not T.TopLeft[0]) then
+  var E: Single := T.EA[0] * PX + R.BY[0] + T.EC[0];
+  if (E < SingleZero) or ((E = SingleZero) and not T.TopLeft[0]) then
     Exit;
-  E := T.EA[1] * PX + T.EB[1] * PY + T.EC[1];
-  if (E < 0) or ((E = 0) and not T.TopLeft[1]) then
+  E := T.EA[1] * PX + R.BY[1] + T.EC[1];
+  if (E < SingleZero) or ((E = SingleZero) and not T.TopLeft[1]) then
     Exit;
-  E := T.EA[2] * PX + T.EB[2] * PY + T.EC[2];
-  if (E < 0) or ((E = 0) and not T.TopLeft[2]) then
+  E := T.EA[2] * PX + R.BY[2] + T.EC[2];
+  if (E < SingleZero) or ((E = SingleZero) and not T.TopLeft[2]) then
     Exit;
   Result := True;
-  Z := T.ZC + T.ZA * (PX - T.X0) + T.ZB * (PY - T.Y0);
+  Z := T.ZC + T.ZA * (PX - T.X0) + R.ZY;
 end;
 
 // Conservative range of tile columns X0..X1 whose sample centres can be
 // inside the triangle on the row at PY (Left: the tile's first column);
-// coverage is still tested exactly per sample. The margin exceeds the
-// rounding of the single-precision edge functions (and of the reciprocals).
+// coverage is still tested exactly per sample. The margin, 1 + (|EB * PY| +
+// |EC|) * 1E-6 / |EA|, exceeds the rounding of the single-precision edge
+// functions. Narrow ranges are left to the per-sample tests.
 function RowSpan(const T: TRenderTri; PY: Single; Left: Integer; var X0, X1: Integer): Boolean;
 begin
+  if X1 - X0 < 4 then
+    Exit(True);
   for var K := 0 to 2 do
   begin
-    var Magnitude := Abs(Double(T.EB[K]) * PY) + Abs(Double(T.EC[K]));
-    var C := Double(T.EB[K]) * PY + T.EC[K];
     if T.EA[K] = 0 then
     begin
+      var Magnitude := Abs(Double(T.EB[K]) * PY) + Abs(Double(T.EC[K]));
+      var C := Double(T.EB[K]) * PY + T.EC[K];
       if C < -(Magnitude * 1E-6 + 1E-30) then
         Exit(False);
       Continue;
     end;
-    var Margin := 1 + Magnitude * T.SpanRel[K];
-    var Bound := -C * T.SpanInv[K] - Left - 0.5;
+    var Along := T.SpanSlope[K] * PY;
+    var Margin := 1 + (Abs(Along) + Abs(T.SpanBase[K])) * 1E-6;
+    var Bound := Along + T.SpanBase[K] - Left - 0.5;
     // Within X0..X1 (0..TileSize-1) where rounded.
     if T.EA[K] > 0 then
     begin
@@ -1233,16 +1256,17 @@ begin
     var Y1 := Min(T.MaxY - TileY * TileSize, TileSize - 1);
     for var Y := Y0 to Y1 do
     begin
-      var PY := TileY * TileSize + Y + 0.5;
+      var PY: Single := TileY * TileSize + Y + 0.5;
       var SX0 := X0;
       var SX1 := X1;
       if not RowSpan(T^, PY, TileX * TileSize, SX0, SX1) then
         Continue;
+      var Row := CoverRow(T^, PY);
       for var X := SX0 to SX1 do
       begin
-        var PX := TileX * TileSize + X + 0.5;
-        var Z: Single;
-        if not Covers(T^, PX, PY, Z) then
+        var PX: Single := TileX * TileSize + X + 0.5;
+        var Z: Single := 0;
+        if not CoversRow(T^, Row, PX, Z) then
           Continue;
         var I := Y * TileSize + X;
         // Depth equal to the background plane passes greater-than tests.
@@ -1313,11 +1337,12 @@ begin
       var SX1 := X1;
       if not RowSpan(T^, TileY * TileSize + Y + 0.5, TileX * TileSize, SX0, SX1) then
         Continue;
+      var Row := CoverRow(T^, TileY * TileSize + Y + 0.5);
       for var X := SX0 to SX1 do
       begin
-        var Z: Single;
+        var Z: Single := 0;
         var I := Y * TileSize + X;
-        if Covers(T^, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, Z) and (Z > B.Depth[I]) then
+        if CoversRow(T^, Row, TileX * TileSize + X + 0.5, Z) and (Z > B.Depth[I]) then
           B.Stencil[I] := B.Stencil[I] xor 1;
       end;
     end;
@@ -1419,12 +1444,13 @@ begin
         var SX1 := X1;
         if not RowSpan(T^, TileY * TileSize + Y + 0.5, TileX * TileSize, SX0, SX1) then
           Continue;
+        var PY: Single := TileY * TileSize + Y + 0.5;
+        var Row := CoverRow(T^, PY);
         for var X := SX0 to SX1 do
         begin
-          var PX := TileX * TileSize + X + 0.5;
-          var PY := TileY * TileSize + Y + 0.5;
-          var Z: Single;
-          if not Covers(T^, PX, PY, Z) then
+          var PX: Single := TileX * TileSize + X + 0.5;
+          var Z: Single := 0;
+          if not CoversRow(T^, Row, PX, Z) then
             Continue;
           var I := Y * TileSize + X;
           if not DepthPass(Mode, Z, B.Depth[I]) then
@@ -1464,10 +1490,11 @@ begin
       var SX1 := X1;
       if not RowSpan(T^, TileY * TileSize + Y + 0.5, TileX * TileSize, SX0, SX1) then
         Continue;
+      var Row := CoverRow(T^, TileY * TileSize + Y + 0.5);
       for var X := SX0 to SX1 do
       begin
-        var Z: Single;
-        if not Covers(T^, TileX * TileSize + X + 0.5, TileY * TileSize + Y + 0.5, Z) then
+        var Z: Single := 0;
+        if not CoversRow(T^, Row, TileX * TileSize + X + 0.5, Z) then
           Continue;
         var I := Y * TileSize + X;
         // In front of the opaque surface.
