@@ -4574,11 +4574,12 @@ begin
   M := I.M;
   DN := (S.FPSCR and FPSCRDN) <> 0;
   // FIPR/FTRV: a rounded first product, then fused multiply-adds with one
-  // rounding each (the order matches SingleStepTests).
-  F := SingleProduct(S.FR.S[N xor 1], S.FR.S[M xor 1]);
-  F := FusedSingle(S.FR.S[(N + 1) xor 1], S.FR.S[(M + 1) xor 1], F);
-  F := FusedSingle(S.FR.S[(N + 2) xor 1], S.FR.S[(M + 2) xor 1], F);
-  F := FusedSingle(S.FR.S[(N + 3) xor 1], S.FR.S[(M + 3) xor 1], F);
+  // rounding each (the order matches SingleStepTests): as SingleProduct and
+  // FusedSingle, written out.
+  F := S.FR.S[N xor 1] * S.FR.S[M xor 1];
+  F := Double(S.FR.S[(N + 1) xor 1]) * Double(S.FR.S[(M + 1) xor 1]) + Double(F);
+  F := Double(S.FR.S[(N + 2) xor 1]) * Double(S.FR.S[(M + 2) xor 1]) + Double(F);
+  F := Double(S.FR.S[(N + 3) xor 1]) * Double(S.FR.S[(M + 3) xor 1]) + Double(F);
   if DN then
     F := FlushSingle(F);
   S.FR.S[(N + 3) xor 1] := F;
@@ -4593,16 +4594,17 @@ begin
   Result := False;
   N := I.N;
   DN := (S.FPSCR and FPSCRDN) <> 0;
-  var X0 := S.FR.S[N xor 1];
-  var X1 := S.FR.S[(N + 1) xor 1];
-  var X2 := S.FR.S[(N + 2) xor 1];
-  var X3 := S.FR.S[(N + 3) xor 1];
+  var X0: Double := S.FR.S[N xor 1];
+  var X1: Single := S.FR.S[(N + 1) xor 1];
+  var X2: Double := S.FR.S[(N + 2) xor 1];
+  var X3: Double := S.FR.S[(N + 3) xor 1];
+  // As FIPR (SingleProduct, then FusedSingle), per row.
   for var Row := 0 to 3 do
   begin
-    F := SingleProduct(S.XF.S[(Row + 4) xor 1], X1);
-    F := FusedSingle(S.XF.S[Row xor 1], X0, F);
-    F := FusedSingle(S.XF.S[(Row + 8) xor 1], X2, F);
-    F := FusedSingle(S.XF.S[(Row + 12) xor 1], X3, F);
+    F := S.XF.S[(Row + 4) xor 1] * X1;
+    F := Double(S.XF.S[Row xor 1]) * X0 + Double(F);
+    F := Double(S.XF.S[(Row + 8) xor 1]) * X2 + Double(F);
+    F := Double(S.XF.S[(Row + 12) xor 1]) * X3 + Double(F);
     if DN then
       F := FlushSingle(F);
     S.FR.S[(N + Row) xor 1] := F;
