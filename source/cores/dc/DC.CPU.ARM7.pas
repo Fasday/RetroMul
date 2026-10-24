@@ -25,6 +25,9 @@ type
     function Shift(Value: Cardinal; Kind, Count: Integer; Immediate: Boolean; var Carry: Cardinal): Cardinal;
     function Operand(Op: Cardinal; var Carry: Cardinal): Cardinal;
     procedure ExceptionEntry(Mode: Integer; Vector: Cardinal);
+    // User mode view of R0..R14 from any mode (LDM/STM with the S bit).
+    function UserReg(Index: Integer): Cardinal;
+    procedure SetUserReg(Index: Integer; Value: Cardinal);
   public
     R: array[0..15] of Cardinal;
     PSR, SPSR: Cardinal;
@@ -135,6 +138,25 @@ begin
     SPSR := FSaved[New];
   end;
   PSR := Value;
+end;
+
+// R8..R12 are banked in FIQ mode only, R13/R14 in every privileged mode.
+function TARM7.UserReg(Index: Integer): Cardinal;
+begin
+  var Current := Bank(PSR and 31);
+  if (Current <> 0) and ((Index >= 13) or ((Index >= 8) and (Current = 1))) then
+    Result := FBanked[0, Index - 8]
+  else
+    Result := R[Index];
+end;
+
+procedure TARM7.SetUserReg(Index: Integer; Value: Cardinal);
+begin
+  var Current := Bank(PSR and 31);
+  if (Current <> 0) and ((Index >= 13) or ((Index >= 8) and (Current = 1))) then
+    FBanked[0, Index - 8] := Value
+  else
+    R[Index] := Value;
 end;
 
 procedure TARM7.NZ(Value: Cardinal);
@@ -349,6 +371,8 @@ begin
       Writeback := ARMAdd(Base, Count * 4)
     else
       Writeback := ARMSub(Base, Count * 4);
+    // S bit: STM, and LDM without R15, transfer the user mode registers.
+    var UserBank := (Op and $00400000 <> 0) and not (Load and (List and $8000 <> 0));
 
     for var i := 0 to 15 do
       if List and (1 shl i) <> 0 then
@@ -358,12 +382,18 @@ begin
           var V := FRead(Address, 4);
           if i = 15 then
             Next := V and $FFFFFFFC
+          else if UserBank then
+            SetUserReg(i, V)
           else
             R[i] := V;
         end
         else
         begin
-          var V := Reg(i);
+          var V: Cardinal;
+          if UserBank and (i < 15) then
+            V := UserReg(i)
+          else
+            V := Reg(i);
           if i = 15 then
             V := ARMAdd(V, 4);
           FWrite(Address, V, 4);
@@ -393,9 +423,13 @@ begin
     var Size := 4;
     if Op and $00400000 <> 0 then
       Size := 1;
+    var WriteBack := (Op and $00200000 <> 0) or (Op and $01000000 = 0);
     if Load then
     begin
       var Value := FRead(Address, Size);
+      // With the base as destination the loaded value wins over writeback.
+      if WriteBack then
+        R[RN] := Adjusted;
       if RD = 15 then
         Next := Value and $FFFFFFFC
       else
@@ -407,9 +441,9 @@ begin
       if RD = 15 then
         Value := ARMAdd(Value, 4);
       FWrite(Address, Value, Size);
+      if WriteBack then
+        R[RN] := Adjusted;
     end;
-    if (Op and $00200000 <> 0) or (Op and $01000000 = 0) then
-      R[RN] := Adjusted;
     Result := 3;
   end
   else if Op and $0FBF0FFF = $010F0000 then
