@@ -214,6 +214,9 @@ type
     // probe phase and its starting point, writes logged while probing and a
     // count of accesses that rule a loop out (device memory, exceptions).
     FIdleHead, FIdleRejected: Cardinal;
+    // The loop last skipped: probed again at once when reached after an
+    // event (until rejected).
+    FIdleSkipped: Cardinal;
     FIdleHits, FIdlePhase: Integer;
     FIdleStart: TSH4State;
     FIdleNow0, FIdleCycles: Int64;
@@ -5320,6 +5323,8 @@ begin
     ((Now^ - FIdleNow0 <> FIdleCycles) or (Counter <> FIdleCounter))) then
   begin
     FIdleRejected := FIdleHead;
+    if FIdleSkipped = FIdleHead then
+      FIdleSkipped := 0;
     FIdlePhase := 0;
     FIdleHits := 0;
     FJournalOn := False;
@@ -5364,6 +5369,7 @@ begin
   end;
   if Iterations <= 0 then
     Exit;
+  FIdleSkipped := FIdleHead;
   Inc(Now^, Iterations * FIdleCycles);
   Inc(InstructionsExecuted, Iterations * FIdleCycles);
   Inc(IdleCyclesSkipped, Iterations * FIdleCycles);
@@ -5461,7 +5467,8 @@ begin
         else
         begin
           Inc(FIdleHits);
-          if (FIdleHits >= 16) and IdleSkipping and (Next <> FIdleRejected) and not S.DelaySlot then
+          if ((FIdleHits >= 16) or (Next = FIdleSkipped)) and IdleSkipping and (Next <> FIdleRejected) and
+            not S.DelaySlot then
           begin
             FIdlePhase := 1;
             KeepIdleStart;
