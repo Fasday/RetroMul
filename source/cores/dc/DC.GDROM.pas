@@ -42,6 +42,9 @@ type
     Pending: Integer;
     IRQ: Boolean;
     SenseKey, SenseCode: Byte;
+    // Lid open (drive status 6); a disc inserted since the last command
+    // makes the next packet command report UNIT ATTENTION once.
+    LidOpen, MediaChanged: Boolean;
     CurrentFAD: Cardinal;
     Mode: array[0..31] of Byte;
     CDDA: TDCCDDAState;
@@ -89,8 +92,13 @@ type
     function CDDAPosition: Cardinal;
     // Sub-channel audio status (11h playing, 12h paused, 13h ended, 15h none).
     function AudioStatus: Byte;
-    // Drive status code: 1 paused, 2 standby, 3 playing, 7 no disc.
+    // Drive status code: 1 paused, 2 standby, 3 playing, 6 lid open,
+    // 7 no disc.
     function DriveStatus: Cardinal;
+    // Disc change: the lid opens (reads stop, the disc is gone), then closes
+    // on another disc wrapper (or none).
+    procedure OpenLid;
+    procedure CloseLid(NewDisc: TDCDisc);
     // Next CD-DA output sample; silence unless playing.
     procedure NextSample(out Left, Right: SmallInt);
     procedure SerializeState(Archive: TStateArchive);
@@ -152,6 +160,8 @@ end;
 
 function TDCGDROM.DriveStatus: Cardinal;
 begin
+  if S.LidOpen then
+    Exit(6);
   if (Disc = nil) or not Disc.HasBootTrack then
     Exit(7);
   case S.CDDA.Status of
@@ -286,6 +296,33 @@ begin
         S.CDDA.Status := 3;
     end;
   end;
+end;
+
+procedure TDCGDROM.OpenLid;
+begin
+  if S.LidOpen then
+    Exit;
+  StopCDDA;
+  // A transfer in progress ends with an error.
+  if (S.Phase <> PhaseIdle) or (S.Pending <> 0) then
+  begin
+    FScheduler.Cancel(TDCEvent.GDROM);
+    S.Pending := 0;
+    S.ReadLeft := 0;
+    Fail(2, $3A);
+  end;
+  S.LidOpen := True;
+  S.CurrentFAD := 0;
+  Disc := nil;
+  FAudioValid := False;
+end;
+
+procedure TDCGDROM.CloseLid(NewDisc: TDCDisc);
+begin
+  S.LidOpen := False;
+  Disc := NewDisc;
+  S.MediaChanged := Disc <> nil;
+  FAudioValid := False;
 end;
 
 { ATA }
@@ -473,10 +510,20 @@ begin
   var P := S.Packet;
   S.SenseKey := 0;
   S.SenseCode := 0;
+  // After a disc change the first medium command reports it.
+  if S.MediaChanged and (P[0] in [$00, $14, $15, $20, $21, $30, $31, $40, $70, $71]) then
+  begin
+    S.MediaChanged := False;
+    Fail(6, $28);
+    Exit;
+  end;
   case P[0] of
     $00, $16, $22, $70:
       // Test unit, tray, scan and security unlock need no data.
-      Complete(CommandDelay);
+      if (Disc = nil) and (P[0] = $00) then
+        Fail(2, $3A)
+      else
+        Complete(CommandDelay);
     $10:
       begin
         var Data: array[0..9] of Byte;
@@ -527,7 +574,12 @@ begin
     $14:
       begin
         var Words: TArray<Cardinal>;
-        if (Disc = nil) or not Disc.TOC(P[1] and 1, Words) then
+        if Disc = nil then
+        begin
+          Fail(2, $3A);
+          Exit;
+        end;
+        if not Disc.TOC(P[1] and 1, Words) then
         begin
           Fail(5, $24);
           Exit;

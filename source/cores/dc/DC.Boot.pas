@@ -303,7 +303,16 @@ begin
     Exit(False);
   var S: ^TSH4State := @FCPU.S;
   if Trace <> nil then
-    Trace.Add(Format('syscall %.8x r4=%.8x r5=%.8x r6=%.8x r7=%.8x r1=%.8x pr=%.8x', [Address, S.R[4], S.R[5], S.R[6], S.R[7], S.R[1], S.PR]));
+  begin
+    var Line := Format('syscall %.8x r4=%.8x r5=%.8x r6=%.8x r7=%.8x r1=%.8x pr=%.8x', [Address, S.R[4], S.R[5], S.R[6],
+      S.R[7], S.R[1], S.PR]);
+    // GD-ROM commands: their parameter words.
+    if (Address = DCStubGDROM) and (S.R[6] = 0) and (S.R[7] = 0) and (S.R[5] <> 0) and
+      (((S.R[5] shr 24) and $1F) in [$0C..$0F]) then
+      for var I := 0 to 3 do
+        Line := Line + Format(' p%d=%.8x', [I, PCardinal(FMemory.RAM + ((S.R[5] + Cardinal(I) * 4) and $FFFFFF))^]);
+    Trace.Add(Line);
+  end;
   case Address of
     DCStubSysinfo:
       case S.R[7] of
@@ -334,6 +343,8 @@ begin
       else
         S.R[0] := 0;
   end;
+  if (Trace <> nil) and (Trace.Count > 0) then
+    Trace[Trace.Count - 1] := Trace[Trace.Count - 1] + Format(' -> r0=%.8x', [S.R[0]]);
   // Return to the caller.
   S.PC := S.PR;
   Result := True;

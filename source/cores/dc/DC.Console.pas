@@ -73,6 +73,12 @@ type
     // boots it through IP.BIN.
     procedure InsertDisc(Image: TCDDisc);
     procedure BootDisc;
+    // Disc change while running: the lid opens (the drive reports status 6,
+    // reads fail), then closes on another image (not owned; nil: no disc).
+    // Programs notice through the drive status and restart their disc access.
+    procedure OpenLid;
+    procedure CloseLid(Image: TCDDisc);
+    function LidOpen: Boolean;
     procedure RunFrame;
     // Waits for a render still running on worker threads.
     procedure JoinRender;
@@ -316,6 +322,26 @@ begin
   if Image <> nil then
     Disc := TDCDisc.Create(Image);
   GDROM.Disc := Disc;
+end;
+
+procedure TDCConsole.OpenLid;
+begin
+  GDROM.OpenLid;
+  GDROMHLE.LidOpened;
+  FreeAndNil(Disc);
+end;
+
+procedure TDCConsole.CloseLid(Image: TCDDisc);
+begin
+  FreeAndNil(Disc);
+  if Image <> nil then
+    Disc := TDCDisc.Create(Image);
+  GDROM.CloseLid(Disc);
+end;
+
+function TDCConsole.LidOpen: Boolean;
+begin
+  Result := GDROM.S.LidOpen;
 end;
 
 procedure TDCConsole.BootDisc;
@@ -609,6 +635,12 @@ begin
   Interrupts.SerializeState(Archive);
   PVR.SerializeState(Archive);
   GDROM.SerializeState(Archive);
+  // The drive holds the inserted disc unless the snapshot has the lid open.
+  if Archive.Loading then
+    if GDROM.S.LidOpen then
+      GDROM.Disc := nil
+    else
+      GDROM.Disc := Disc;
   AICA.SerializeState(Archive);
   Maple.SerializeState(Archive);
   Holly.SerializeState(Archive);

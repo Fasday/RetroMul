@@ -59,6 +59,8 @@ type
     procedure Reset; override;
     function Call(CPU: TSH4; Memory: TDCMemory): Boolean; override;
     procedure SerializeState(Archive: TStateArchive); override;
+    // The lid opened: a command in progress ends with "not ready".
+    procedure LidOpened;
   end;
 
 implementation
@@ -117,6 +119,17 @@ begin
   S.DriveMode[1] := $B4;
   S.DriveMode[2] := $19;
   S.DriveMode[3] := 8;
+end;
+
+procedure TDCGDROMHLE.LidOpened;
+begin
+  S.StreamBytes := 0;
+  if (S.Status = GDC_BUSY) or (S.Status = GDC_CONTINUE) then
+  begin
+    S.Status := GDC_ERR;
+    S.Result[0] := 2;
+  end;
+  S.CurrentSector := 0;
 end;
 
 function TDCGDROMHLE.DiscPresent: Boolean;
@@ -446,7 +459,7 @@ begin
       end;
     4:
       begin
-        // GET_DRV_STAT: drive status and disc type at R4.
+        // GET_DRV_STAT: drive status (6 with the lid open) and disc type at R4.
         if DiscPresent then
         begin
           var Status := FDrive.DriveStatus;
@@ -457,7 +470,7 @@ begin
         end
         else
         begin
-          Store32(R[4], 7);
+          Store32(R[4], FDrive.DriveStatus);
           Store32(R[4] + 4, 0);
         end;
         R[0] := 0;
