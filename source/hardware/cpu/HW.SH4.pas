@@ -217,7 +217,7 @@ type
     FIdleHits, FIdlePhase: Integer;
     FIdleStart: TSH4State;
     FIdleNow0, FIdleCycles: Int64;
-    FIdleSide0: Cardinal;
+    FIdleSide0, FIdleEpoch: Cardinal;
     FIdleCounter: Cardinal;
     // The counter's host memory and write generation (IdleIteration).
     FIdleCounterHost: PByte;
@@ -510,6 +510,7 @@ type
     function BuildBlock(PC, AMode: Cardinal): PSH4Block;
     function BlockValid(B: PSH4Block): Boolean;
     procedure RunBlocks;
+    procedure KeepIdleStart;
     procedure JournalWrite(A: Cardinal; Size: Integer);
     procedure JournalHost(A: Cardinal; Host: PByte; Gen: PCardinal; Phys: Cardinal; Size: Integer);
     function IdleIteration(out Counter: Cardinal; out Delta: Int64): Boolean;
@@ -5296,8 +5297,17 @@ begin
   for var I := 0 to 15 do
     if (S.R[I] <> FIdleStart.R[I]) and not ((Counter <> 0) and (FIdleStart.R[I] = OldValue) and (S.R[I] = NewValue)) then
       Exit;
-  var Rest := NativeUInt(@S.RBank) - NativeUInt(@S);
-  Result := CompareMem(@S.RBank, @FIdleStart.RBank, SizeOf(TSH4State) - Rest);
+  // The TLB arrays change through P4 writes (side effects) or LDTLB, which
+  // moves the translation epoch; the operand-cache RAM through the bus path.
+  Result := (FTLBEpoch = FIdleEpoch) and
+    CompareMem(@S.RBank, @FIdleStart.RBank, NativeUInt(@S.UTLB) - NativeUInt(@S.RBank));
+end;
+
+procedure TSH4.KeepIdleStart;
+begin
+  // The state up to the TLB arrays (see IdleIteration).
+  Move(S, FIdleStart, NativeUInt(@S.UTLB) - NativeUInt(@S));
+  FIdleEpoch := FTLBEpoch;
 end;
 
 procedure TSH4.IdleCheck;
@@ -5321,7 +5331,7 @@ begin
     FIdlePhase := 2;
     FIdleCycles := Now^ - FIdleNow0;
     FIdleCounter := Counter;
-    FIdleStart := S;
+    KeepIdleStart;
     FIdleNow0 := Now^;
     FIdleSide0 := FSideEffects;
     FJournalCount := 0;
@@ -5454,7 +5464,7 @@ begin
           if (FIdleHits >= 16) and IdleSkipping and (Next <> FIdleRejected) and not S.DelaySlot then
           begin
             FIdlePhase := 1;
-            FIdleStart := S;
+            KeepIdleStart;
             FIdleNow0 := Now^;
             FIdleSide0 := FSideEffects;
             FJournalCount := 0;
