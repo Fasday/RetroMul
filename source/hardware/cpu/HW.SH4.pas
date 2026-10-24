@@ -141,12 +141,14 @@ type
   end;
 
   // A 4 KiB page of P0/P3 with a cached translation: host memory for reads
-  // and (when allowed) writes, the physical page and its write generation.
+  // and (when allowed) writes, the physical page and its write generation;
+  // for device memory, whether reads or writes may go to the bus.
   TSH4TLBPage = record
     Read, Write: PByte;
     Gen: PCardinal;
     Phys: Cardinal;
     Privileged: Boolean; // not accessible in user mode
+    DeviceRead, DeviceWrite: Boolean;
   end;
   PSH4TLBPage = ^TSH4TLBPage;
 
@@ -234,7 +236,7 @@ type
     procedure AssociativeWrite(Value: Cardinal);
     function TLBIndex(Address: Cardinal): Integer; inline;
     procedure TLBFill(Address, Physical: Cardinal; Writing: Boolean);
-    function TLBPage(Address: Cardinal): PSH4TLBPage;
+    function TLBPage(Address: Cardinal): PSH4TLBPage; inline;
     procedure TLBFlush;
     procedure TLBInvalidate(const E: TSH4TLBEntry);
     // Sets FMapStale when the block's code moved (rather than not mapped now).
@@ -876,8 +878,8 @@ end;
 
 procedure TSH4.TLBFill(Address, Physical: Cardinal; Writing: Boolean);
 begin
-  // After a successful Translate: pages of host memory mapped by entries of
-  // 4 KiB or more are cached for later accesses of the same kind.
+  // After a successful Translate: pages mapped by entries of 4 KiB or more
+  // are cached for later accesses of the same kind.
   if FTLBEntry < 0 then
     Exit;
   var Index := TLBIndex(Address);
@@ -887,15 +889,12 @@ begin
   if (((E.Flags shr 6) and 2) or ((E.Flags shr 4) and 1)) = 0 then
     Exit;
   var Base := Physical and $1FFFF000;
-  if Base >= $1C000000 then
-    Exit;
-  var Host: PByte;
-  if Writing then
-    Host := FBus.WritePages[Base shr 16]
-  else
-    Host := FBus.ReadPages[Base shr 16];
-  if Host = nil then
-    Exit;
+  var Host: PByte := nil;
+  if Base < $1C000000 then
+    if Writing then
+      Host := FBus.WritePages[Base shr 16]
+    else
+      Host := FBus.ReadPages[Base shr 16];
   if FTLBChunks = nil then
   begin
     SetLength(FTLBChunks, $A0);
@@ -904,7 +903,7 @@ begin
   if FTLBChunks[Index shr 12] = nil then
     SetLength(FTLBChunks[Index shr 12], 4096);
   var Page: PSH4TLBPage := @FTLBChunks[Index shr 12][Index and 4095];
-  if (Page.Read = nil) and (Page.Write = nil) then
+  if (Page.Read = nil) and (Page.Write = nil) and not Page.DeviceRead and not Page.DeviceWrite then
   begin
     if FTLBFilledCount < Length(FTLBFilled) then
     begin
@@ -915,12 +914,16 @@ begin
       FTLBOverflow := True;
   end
   else if Page.Phys <> Base then
-  begin
-    Page.Read := nil;
-    Page.Write := nil;
-  end;
+    Page^ := Default(TSH4TLBPage);
   Page.Phys := Base;
-  if Writing then
+  if Host = nil then
+  begin
+    if Writing then
+      Page.DeviceWrite := True
+    else
+      Page.DeviceRead := True;
+  end
+  else if Writing then
   begin
     Page.Write := Host + (Base and $FFFF);
     var G := FBus.Gens[Base shr 16];
@@ -944,7 +947,8 @@ begin
   if (Index < 0) or (FTLBChunks[Index shr 12] = nil) then
     Exit;
   Result := @FTLBChunks[Index shr 12][Index and 4095];
-  if Result.Privileged and ((S.SR and SRMD) = 0) then
+  // SR.MD (SRMD) clear: user mode.
+  if Result.Privileged and ((S.SR and $40000000) = 0) then
     Result := nil;
 end;
 
@@ -1053,6 +1057,32 @@ end;
 
 function TSH4.SlowRead(Address: Cardinal; Size: Integer): UInt64;
 begin
+  // Translated RAM first: most data accesses of programs using the MMU.
+  if FTLBChunks <> nil then
+  begin
+    var Page := TLBPage(Address);
+    if (Page <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
+      if Page.Read <> nil then
+      begin
+        var H := Page.Read + (Address and $FFF);
+        case Size of
+          1: Result := H^;
+          2: Result := PWord(H)^;
+          4: Result := PCardinal(H)^;
+        else
+          Result := PUInt64(H)^;
+        end;
+        Exit;
+      end
+      else if Page.DeviceRead then
+      begin
+        Inc(FSideEffects);
+        var Physical := Page.Phys or (Address and $FFF);
+        if Physical >= $1C000000 then
+          Exit(ReadControl(Physical or $E0000000, Size));
+        Exit(FBus.Read(FBus.User, Physical, Size));
+      end;
+  end;
   Inc(FSideEffects);
   Result := 0;
   if FLenient then
@@ -1093,21 +1123,6 @@ begin
     end;
     Exit;
   end;
-  var Page: PSH4TLBPage := nil;
-  if FTLBChunks <> nil then
-    Page := TLBPage(Address);
-  if (Page <> nil) and (Page.Read <> nil) then
-  begin
-    var H := Page.Read + (Address and $FFF);
-    case Size of
-      1: Result := H^;
-      2: Result := PWord(H)^;
-      4: Result := PCardinal(H)^;
-    else
-      Result := PUInt64(H)^;
-    end;
-    Exit;
-  end;
   var Physical: Cardinal;
   if not Translate(Address, False, Physical) then
     Exit;
@@ -1133,6 +1148,35 @@ end;
 
 procedure TSH4.SlowWrite(Address: Cardinal; Value: UInt64; Size: Integer);
 begin
+  // Translated RAM first: most data accesses of programs using the MMU.
+  if FTLBChunks <> nil then
+  begin
+    var Page := TLBPage(Address);
+    if (Page <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
+      if Page.Write <> nil then
+      begin
+        var H := Page.Write + (Address and $FFF);
+        case Size of
+          1: H^ := Byte(Value);
+          2: PWord(H)^ := Word(Value);
+          4: PCardinal(H)^ := Cardinal(Value);
+        else
+          PUInt64(H)^ := Value;
+        end;
+        Inc(Page.Gen^);
+        Exit;
+      end
+      else if Page.DeviceWrite then
+      begin
+        Inc(FSideEffects);
+        var Physical := Page.Phys or (Address and $FFF);
+        if Physical >= $1C000000 then
+          WriteControl(Physical or $E0000000, Cardinal(Value), Size)
+        else
+          FBus.Write(FBus.User, Physical, Value, Size);
+        Exit;
+      end;
+  end;
   Inc(FSideEffects);
   if FLenient then
   begin
@@ -1175,22 +1219,6 @@ begin
     else
       PUInt64(@S.OCRAM[Offset])^ := Value;
     end;
-    Exit;
-  end;
-  var Page: PSH4TLBPage := nil;
-  if FTLBChunks <> nil then
-    Page := TLBPage(Address);
-  if (Page <> nil) and (Page.Write <> nil) then
-  begin
-    var H := Page.Write + (Address and $FFF);
-    case Size of
-      1: H^ := Byte(Value);
-      2: PWord(H)^ := Word(Value);
-      4: PCardinal(H)^ := Cardinal(Value);
-    else
-      PUInt64(H)^ := Value;
-    end;
-    Inc(Page.Gen^);
     Exit;
   end;
   var Physical: Cardinal;
