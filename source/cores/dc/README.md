@@ -45,6 +45,12 @@ and the menu call. In Dreamcast settings:
   decodes: GD-ROM, or MIL-CD for CD media. Soul Calibur (self-booting CD) does
   not find its VMU in this mode; it does with the high-level boot.
 
+Windows CE games (`0WINCEOS.BIN` boot file) run with the high-level boot: the
+kernel enables the MMU, calls the GD-ROM system call entry 8C0010F0 directly
+and is served its PIO transfers from the drive interrupt. Images whose data
+track holds the GD-ROM file system with IP.BIN as a file (some single-track
+`.mds` rips) boot from that file.
+
 The system flash (region, language, broadcast standard and saved settings) is
 generated for the selected region unless a 128 KiB flash file is given, and is
 saved per console as `saves/dc/dc_flash.bin`. At power-on the time in its
@@ -65,8 +71,11 @@ it is not part of frames, screenshots or frame hashes.
 ## Implementation notes
 
 - SH-4: block interpreter with code-page invalidation, linked blocks and
-  table-dispatched operations; FPU, exceptions, store queues, OCRAM, UTLB
-  scaffolding, INTC, TMU, DMAC, SCIF, BSC and RTC. SingleStepTests/sh4 pass
+  table-dispatched operations; FPU, exceptions, store queues, OCRAM, address
+  translation (UTLB, with translated 4 KiB pages cached until the TLB
+  changes), INTC, TMU, DMAC, SCIF, BSC and RTC. High-level system calls reach
+  the caller's memory through the MMU and let the CPU take TLB misses, then
+  run again. SingleStepTests/sh4 pass
   except TRAPA (treated as a no-op by the test generator) and two double NaN
   payload cases.
 - PowerVR2: the tile accelerator decodes display lists into contexts; the
@@ -83,8 +92,8 @@ it is not part of frames, screenshots or frame hashes.
   arm7wrestler DC passes.
 - Snapshots contain the full machine, decoded TA contexts and VMU contents.
 
-Not implemented: the MMU address translation used by Windows CE games, the
-modem and broadband adapter, and NAOMI/Atomiswave.
+Not implemented: the modem and broadband adapter, and NAOMI/Atomiswave.
+Windows CE games run slower than others (every memory access is translated).
 
 ## References
 
