@@ -100,6 +100,13 @@ type
     FDeadline: Double;
     FClockGuest: Int64;
     FConnected, FWithVMU: array[0..3] of Boolean;
+    // Disc change requested by the frontend thread (nil disc: eject).
+    FMediaDone: TEvent;
+    FMediaPending: Boolean;
+    FNextDisc: TCDDisc;
+    FNextIdentity: TBytes;
+    FMediaError: string;
+    procedure ProcessMediaChange;
     procedure ReportError(const Text: string);
     procedure SaveVMU(Port: Integer);
     procedure AudioFailure(E: Exception);
@@ -128,17 +135,25 @@ type
     procedure Snapshot(const Name: string; Loading: Boolean);
     function RumbleLevel: Byte;
     function TakeVMUScreen(out Pixels: TBytes): Boolean;
+    // Opens the lid and, with a disc, closes it on that disc a second later
+    // (machine time); returns once the lid is open. The disc must stay alive
+    // until the next change or the end of the worker.
+    procedure ChangeDisc(Disc: TCDDisc; const Identity: TBytes);
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   end;
 
   TDCCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation,
-    IEmulationAudioDiagnostics, IEmulationRumbleOutput, IDCControllerInput, IDCVMUScreen)
+    IEmulationAudioDiagnostics, IEmulationRumbleOutput, IDCControllerInput, IDCVMUScreen, IEmulationDiscControl)
   private
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
     FConfigObject: TDCConfig;
     FWorker: TDCWorker;
     FDisc: TCDDisc;
+    // Discs of the session (an M3U playlist, else the started image and any
+    // opened later); FDiscIndex is -1 with the lid open and no disc.
+    FDiscLocations, FDiscNames: TArray<string>;
+    FDiscIndex: Integer;
     FProgram, FIdentity: TBytes;
     FMachine: TDCConsoleConfig;
     FPorts: TCoreInputPorts;
@@ -150,6 +165,7 @@ type
     FFlashSave, FSnapshotDirectory, FError: string;
     procedure LoadFirmware(const RomName: string);
     procedure Configure;
+    procedure ReplaceDisc(const Location: string; Index: Integer);
   public
     // Stream holds an ELF or binary program when no disc is given.
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; OwnedDisc: TCDDisc = nil);
@@ -185,6 +201,12 @@ type
     function GetRumbleLevel: Byte;
     function TakeVMUScreen(out Pixels: TBytes): Boolean;
     function VMUScreenCorner: string;
+    function GetDiscCount: Integer;
+    function GetDiscName(Index: Integer): string;
+    function GetDiscIndex: Integer;
+    procedure ChangeDisc(Index: Integer);
+    procedure OpenDisc(const Location: string);
+    procedure EjectDisc;
   end;
 
 implementation
@@ -332,6 +354,7 @@ begin
   FWake := TEvent.Create(nil, False, False, '');
   FSnapshots := TSnapshotQueue.Create;
   FInputPortsCommand := TInputPortsCommand.Create;
+  FMediaDone := TEvent.Create(nil, True, False, '');
 end;
 
 destructor TDCWorker.Destroy;
@@ -342,8 +365,69 @@ begin
   inherited;
   FInputPortsCommand.Free;
   FSnapshots.Free;
+  FMediaDone.Free;
   FWake.Free;
   FLock.Free;
+end;
+
+procedure TDCWorker.ChangeDisc(Disc: TCDDisc; const Identity: TBytes);
+begin
+  if Suspended or Finished then
+    raise EInvalidOpException.Create('Emulation worker is not running');
+  FLock.Acquire;
+  try
+    if FMediaPending then
+      raise EInvalidOpException.Create('A disc change is already pending');
+    FMediaDone.ResetEvent;
+    FNextDisc := Disc;
+    FNextIdentity := Copy(Identity);
+    FMediaError := '';
+    FMediaPending := True;
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
+  while FMediaDone.WaitFor(50) <> wrSignaled do
+    if Finished then
+      raise EInvalidOpException.Create('Emulation stopped before changing the disc');
+  FLock.Acquire;
+  try
+    if FMediaError <> '' then
+      raise EReadError.Create(FMediaError);
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TDCWorker.ProcessMediaChange;
+const
+  // Machine time with the lid open, so that programs polling the drive
+  // notice the change.
+  LidSeconds = 1.0;
+begin
+  FLock.Acquire;
+  try
+    if not FMediaPending then
+      Exit;
+    try
+      // RAM, CPU, VMUs and flash stay; only the drive changes media.
+      if FNextDisc = nil then
+        FConsole.OpenLid
+      else
+        FConsole.ChangeDisc(FNextDisc, LidSeconds);
+      FDisc := FNextDisc;
+      FIdentity := FNextIdentity;
+    except
+      on E: Exception do
+        FMediaError := E.Message;
+    end;
+    FNextDisc := nil;
+    FNextIdentity := nil;
+    FMediaPending := False;
+    FMediaDone.SetEvent;
+  finally
+    FLock.Release;
+  end;
 end;
 
 function TDCWorker.GetInputPorts: TCoreInputPorts;
@@ -667,11 +751,12 @@ begin
     if Length(Saved) = DCFlashSize then
       Move(Saved[0], FConsole.Memory.Flash^, DCFlashSize);
   end;
+  // Without a disc (ejected) the high-level boot has nothing to start.
   if FConsole.HighLevelBoot then
   begin
     if FDisc <> nil then
       FConsole.BootDisc
-    else
+    else if Length(FProgram) > 0 then
       FConsole.LoadProgram(FProgram);
   end;
 end;
@@ -704,6 +789,7 @@ begin
           begin
             TransferSnapshot(Name, Loading);
           end);
+        ProcessMediaChange;
 
         var Inputs: TDCPadInputs;
         var Paused, Enabled, ResetRequested: Boolean;
@@ -845,6 +931,33 @@ begin
   FConfigObject := TDCConfig.Create(FStorage.ConfigFile(ROM_SYSTEM_DC), FStorage);
   FConfig := FConfigObject;
   FConfig.Load;
+  FDiscIndex := -1;
+  var SourceName := RomName;
+  if RomName.StartsWith('content://', True) then
+    SourceName := FStorage.Describe(RomName).Name;
+  var Playlist := (FDisc = nil) and SameText(ExtractFileExt(SourceName), ROM_EXTENSION_M3U);
+  if Playlist then
+  begin
+    FDiscLocations := ReadCDPlaylist(Stream, FStorage, RomName, ROM_SYSTEM_DC);
+    SetLength(FDiscNames, Length(FDiscLocations));
+    for var I := 0 to High(FDiscLocations) do
+      FDiscNames[I] := FStorage.Describe(FDiscLocations[I]).Name;
+    var DiscStream := FStorage.OpenRead(FDiscLocations[0]);
+    try
+      FDisc := TCDDisc.Create(DiscStream, FStorage, FDiscLocations[0]);
+      if not IsDCDisc(FDisc) then
+        raise EReadError.Create('M3U disc is not a Dreamcast image: ' + FDiscNames[0]);
+    finally
+      DiscStream.Free;
+    end;
+  end
+  else if FDisc <> nil then
+  begin
+    FDiscLocations := TArray<string>.Create(RomName);
+    FDiscNames := TArray<string>.Create(ExtractFileName(SourceName.Replace('/', PathDelim)));
+  end;
+  if FDisc <> nil then
+    FDiscIndex := 0;
   if FDisc = nil then
   begin
     var Size := Stream.Size - Stream.Position;
@@ -905,6 +1018,10 @@ begin
   LoadFirmware(RomName);
 
   var Identity := SnapshotIdentity(FIdentity);
+  // A playlist owns a stable snapshot namespace, independent of the inserted
+  // disc; snapshot headers still carry the inserted disc's identity.
+  if Playlist then
+    Identity := SnapshotIdentity(TEncoding.UTF8.GetBytes('DC M3U/' + ExtractFileName(SourceName) + '/' + Identity));
   FSnapshotDirectory := FStorage.GameSnapshots(ROM_SYSTEM_DC, RomName, Identity);
   // Visual Memory units and the system flash belong to the console, not a game.
   var Folder := TPath.Combine(FStorage.SaveRoot, ROM_SYSTEM_DC);
@@ -918,6 +1035,85 @@ begin
   Stop;
   FDisc.Free;
   inherited;
+end;
+
+function TDCCoreAdapter.GetDiscCount: Integer;
+begin
+  Result := Length(FDiscLocations);
+end;
+
+function TDCCoreAdapter.GetDiscName(Index: Integer): string;
+begin
+  if (Index < 0) or (Index >= Length(FDiscNames)) then
+    raise EArgumentOutOfRangeException.Create('Invalid disc index');
+  Result := FDiscNames[Index];
+end;
+
+function TDCCoreAdapter.GetDiscIndex: Integer;
+begin
+  Result := FDiscIndex;
+end;
+
+procedure TDCCoreAdapter.ReplaceDisc(const Location: string; Index: Integer);
+begin
+  var Stream := FStorage.OpenRead(Location);
+  var Disc: TCDDisc := nil;
+  try
+    Disc := TCDDisc.Create(Stream, FStorage, Location);
+    if not IsDCDisc(Disc) then
+      raise EReadError.Create('Not a Dreamcast disc: ' + FStorage.Describe(Location).Name);
+    var Identity := Disc.Identity;
+    if FWorker <> nil then
+      FWorker.ChangeDisc(Disc, Identity);
+    var OldDisc := FDisc;
+    FDisc := Disc;
+    Disc := nil;
+    FIdentity := Identity;
+    FDiscIndex := Index;
+    OldDisc.Free;
+  finally
+    Disc.Free;
+    Stream.Free;
+  end;
+end;
+
+procedure TDCCoreAdapter.ChangeDisc(Index: Integer);
+begin
+  if (Index < 0) or (Index >= GetDiscCount) then
+    raise EArgumentOutOfRangeException.Create('Invalid disc index');
+  if Index = FDiscIndex then
+    Exit;
+  ReplaceDisc(FDiscLocations[Index], Index);
+end;
+
+procedure TDCCoreAdapter.OpenDisc(const Location: string);
+begin
+  if GetDiscCount = 0 then
+    raise EInvalidOpException.Create('This Dreamcast session runs a program, not a disc');
+  for var I := 0 to High(FDiscLocations) do
+    if FDiscLocations[I] = Location then
+    begin
+      ChangeDisc(I);
+      Exit;
+    end;
+  // A failed load leaves the running session and the disc list unchanged.
+  var Index := Length(FDiscLocations);
+  var Locations := FDiscLocations + TArray<string>.Create(Location);
+  var Names := FDiscNames + TArray<string>.Create(FStorage.Describe(Location).Name);
+  ReplaceDisc(Location, Index);
+  FDiscLocations := Locations;
+  FDiscNames := Names;
+end;
+
+procedure TDCCoreAdapter.EjectDisc;
+begin
+  if (GetDiscCount = 0) or (FDiscIndex < 0) then
+    Exit;
+  if FWorker <> nil then
+    FWorker.ChangeDisc(nil, nil);
+  FreeAndNil(FDisc);
+  FDiscIndex := -1;
+  FIdentity := nil;
 end;
 
 procedure TDCCoreAdapter.LoadFirmware(const RomName: string);

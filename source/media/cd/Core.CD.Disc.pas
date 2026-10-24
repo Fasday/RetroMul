@@ -74,9 +74,14 @@ type
   end;
 
 // UTF-8 playlist; paths are relative to its location. Nested playlists are rejected.
-function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string): TArray<string>;
+// SystemId names the ROM folder that resolves document (content://) locations.
+function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string;
+  const SystemId: string = 'ps1'): TArray<string>;
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
+// File names of the tracks a GDI lists (as written, relative to the GDI);
+// malformed lines are skipped.
+function ReadGDITrackNames(Stream: TStream): TArray<string>;
 // A single-track raw image (.bin without a CUE): 2352-byte sectors starting
 // with a Mode 1 or Mode 2 data sector. Restores the stream position.
 
@@ -155,7 +160,7 @@ begin
   end;
 end;
 
-function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string): TArray<string>;
+function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location, SystemId: string): TArray<string>;
 
   function RelativeName(const Name: string): string;
   begin
@@ -187,7 +192,7 @@ function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location
       // Resolve SAF document IDs through folder metadata, never by editing a URI.
       if Name.Contains(':') or Name.StartsWith('/') or Name.StartsWith('\') then
         raise EReadError.Create('M3U requires relative paths in a document folder');
-      var Folder := Storage.RomFolder('ps1');
+      var Folder := Storage.RomFolder(SystemId);
       var Items: TArray<TStorageFile>;
       {$IFDEF ANDROID}
       Items := TAndroidStorage.Enumerate(Folder, True);
@@ -213,7 +218,7 @@ function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location
             Exit(Candidate.Location);
         Break;
       end;
-      raise EReadError.Create('Missing M3U disc in the selected PS1 ROM folder: ' + Name);
+      raise EReadError.Create('Missing M3U disc in the selected ROM folder: ' + Name);
     end;
     var NativeName := Name.Replace('\', PathDelim).Replace('/', PathDelim);
     if NativeName.Contains('://') then
@@ -238,8 +243,8 @@ begin
       if (Length(Line) >= 2) and Line.StartsWith('"') and Line.EndsWith('"') then
         Line := Line.Substring(1, Length(Line) - 2);
       var Ext := ExtractFileExt(Line);
-      if not MatchText(Ext, ['.cue', '.chd', '.iso', '.bin', '.zip']) then
-        raise EReadError.Create('M3U expects CUE, CHD, ISO, raw BIN or disc ZIP: ' + Line);
+      if not MatchText(Ext, ['.cue', '.chd', '.iso', '.bin', '.zip', '.gdi', '.cdi', '.mds']) then
+        raise EReadError.Create('M3U expects CUE, CHD, ISO, raw BIN, disc ZIP, GDI, CDI or MDS: ' + Line);
       if Entries.Count >= 99 then
         raise EReadError.Create('M3U playlist exceeds 99 discs');
       Entries.Add(ResolveEntry(Line));
@@ -854,6 +859,61 @@ begin
   Result := (Stream.Read(Text, SizeOf(Text)) = SizeOf(Text)) and CompareMem(@Text[0], PAnsiChar(AnsiString('SEGA SEGAKATANA ')), 16);
 end;
 
+// A GDI track line: "number LBA type sectorsize file offset"; the file name
+// may be quoted and contain spaces. Tokens holds the four numbers first.
+function GDITrackLine(const Value: string; out Tokens: TArray<string>; out FileName: string): Boolean;
+begin
+  FileName := '';
+  var Head := Value;
+  var Quote := Pos('"', Value);
+  if Quote > 0 then
+  begin
+    Head := Copy(Value, 1, Quote - 1);
+    var Rest := Copy(Value, Quote + 1, MaxInt);
+    var Close := Pos('"', Rest);
+    if Close = 0 then
+      Exit(False);
+    FileName := Copy(Rest, 1, Close - 1);
+  end;
+  Tokens := Head.Split([' ', #9], TStringSplitOptions.ExcludeEmpty);
+  if Quote = 0 then
+  begin
+    if Length(Tokens) < 5 then
+      Exit(False);
+    FileName := Tokens[4];
+  end
+  else if Length(Tokens) < 4 then
+    Exit(False);
+  Result := FileName <> '';
+end;
+
+function ReadGDITrackNames(Stream: TStream): TArray<string>;
+begin
+  Result := nil;
+  if Stream.Size - Stream.Position > 65536 then
+    Exit;
+  var Data: TBytes;
+  SetLength(Data, Stream.Size - Stream.Position);
+  if Length(Data) > 0 then
+    Stream.ReadBuffer(Data[0], Length(Data));
+  var First := True;
+  for var Line in TEncoding.UTF8.GetString(Data).TrimLeft([#$FEFF]).Split([#10]) do
+  begin
+    var Value := Line.Trim;
+    if Value = '' then
+      Continue;
+    if First then
+    begin
+      First := False;
+      Continue;
+    end;
+    var Tokens: TArray<string>;
+    var FileName: string;
+    if GDITrackLine(Value, Tokens, FileName) then
+      Result := Result + [FileName];
+  end;
+end;
+
 // GD-ROM track list: count, then "number LBA type sectorsize file offset".
 procedure TCDDisc.LoadGDI(Stream: TStream; const Storage: IStorage; const Location: string);
 begin
@@ -877,29 +937,9 @@ begin
         raise EReadError.Create('Invalid GDI track count');
       Continue;
     end;
-    // The file name may be quoted and contain spaces.
-    var FileName := '';
-    var Head := Value;
-    var Tail := '';
-    var Quote := Pos('"', Value);
-    if Quote > 0 then
-    begin
-      Head := Copy(Value, 1, Quote - 1);
-      var Rest := Copy(Value, Quote + 1, MaxInt);
-      var Close := Pos('"', Rest);
-      if Close = 0 then
-        raise EReadError.Create('Unterminated GDI file name');
-      FileName := Copy(Rest, 1, Close - 1);
-      Tail := Copy(Rest, Close + 1, MaxInt);
-    end;
-    var Tokens := Head.Split([' ', #9], TStringSplitOptions.ExcludeEmpty);
-    if Quote = 0 then
-    begin
-      if Length(Tokens) < 5 then
-        raise EReadError.Create('Invalid GDI track line');
-      FileName := Tokens[4];
-    end
-    else if Length(Tokens) < 4 then
+    var Tokens: TArray<string>;
+    var FileName: string;
+    if not GDITrackLine(Value, Tokens, FileName) then
       raise EReadError.Create('Invalid GDI track line');
     var Number := StrToInt(Tokens[0]);
     var Start := StrToInt(Tokens[1]);
