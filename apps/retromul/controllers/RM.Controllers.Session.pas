@@ -713,7 +713,7 @@ begin
     SourceName := FState.Session.Storage.Describe(FileName).Name;
   var Ext := ExtractFileExt(SourceName);
   if not (SameText(Ext, ROM_EXTENSION_M3U) or SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD) or
-    SameText(Ext, ROM_EXTENSION_MDS)) then
+    SameText(Ext, ROM_EXTENSION_MDS) or SameText(Ext, ROM_EXTENSION_NRG)) then
   begin
     InstallCore(FView.NewCore(FileName), FileName, DisplayName, StartPaused);
     if SnapshotName <> '' then
