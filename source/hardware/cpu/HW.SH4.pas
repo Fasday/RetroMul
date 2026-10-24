@@ -296,6 +296,9 @@ type
     // translated RAM without the general slow path.
     function TranslatedRead(Address: Cardinal; Size: Integer): UInt64;
     procedure TranslatedWrite(Address: Cardinal; Value: UInt64; Size: Integer);
+    // Writes that miss the direct maps: store queues here, the rest through
+    // TranslatedWrite or SlowWrite.
+    procedure WriteMiss(Address: Cardinal; Value: UInt64; Size: Integer);
     function ReadControl(Address: Cardinal; Size: Integer): Cardinal;
     procedure WriteControl(Address, Value: Cardinal; Size: Integer);
     function Translate(Address: Cardinal; Writing: Boolean; out Physical: Cardinal): Boolean;
@@ -787,10 +790,8 @@ begin
     (P + (A and $FFFF))^ := Byte(V);
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
-  else if FTLBChunks <> nil then
-    TranslatedWrite(A, V and $FF, 1)
   else
-    SlowWrite(A, V and $FF, 1);
+    WriteMiss(A, V and $FF, 1);
 end;
 
 procedure TSH4.Write16(A, V: Cardinal);
@@ -803,10 +804,8 @@ begin
     PWord(P + (A and $FFFF))^ := Word(V);
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
-  else if FTLBChunks <> nil then
-    TranslatedWrite(A, V and $FFFF, 2)
   else
-    SlowWrite(A, V and $FFFF, 2);
+    WriteMiss(A, V and $FFFF, 2);
 end;
 
 procedure TSH4.Write32(A, V: Cardinal);
@@ -819,10 +818,8 @@ begin
     PCardinal(P + (A and $FFFF))^ := V;
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
-  else if FTLBChunks <> nil then
-    TranslatedWrite(A, V, 4)
   else
-    SlowWrite(A, V, 4);
+    WriteMiss(A, V, 4);
 end;
 
 procedure TSH4.Write64(A: Cardinal; V: UInt64);
@@ -835,10 +832,8 @@ begin
     PUInt64(P + (A and $FFFF))^ := V;
     Inc(FGenMap[A shr 16][(A shr 12) and 15]);
   end
-  else if FTLBChunks <> nil then
-    TranslatedWrite(A, V, 8)
   else
-    SlowWrite(A, V, 8);
+    WriteMiss(A, V, 8);
 end;
 
 function TSH4.Translate(Address: Cardinal; Writing: Boolean; out Physical: Cardinal): Boolean;
@@ -1265,6 +1260,26 @@ begin
   FFastFilledCount := 0;
   FFastOverflow := False;
   FastSelect;
+end;
+
+procedure TSH4.WriteMiss(Address: Cardinal; Value: UInt64; Size: Integer);
+begin
+  // As SlowWrite does them: the word of the queue at bit 5, index at bits
+  // 4..2 (a 64-bit write fills two).
+  if ((Address and $FC000000) = $E0000000) and ((Address and Cardinal(Size - 1)) = 0) and not FLenient then
+  begin
+    Inc(FSideEffects);
+    var Q := (Address shr 5) and 1;
+    var Index := (Address shr 2) and 7;
+    S.SQ[Q, Index] := Cardinal(Value);
+    if Size = 8 then
+      S.SQ[Q, (Index + 1) and 7] := Cardinal(Value shr 32);
+    Exit;
+  end;
+  if FTLBChunks <> nil then
+    TranslatedWrite(Address, Value, Size)
+  else
+    SlowWrite(Address, Value, Size);
 end;
 
 procedure TSH4.TranslatedWrite(Address: Cardinal; Value: UInt64; Size: Integer);
