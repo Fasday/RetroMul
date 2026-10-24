@@ -40,6 +40,8 @@ type
     TopLeft: array[0..2] of Boolean;
     // Mipmap level of the texture and of the second parameter set's.
     Level, Level1: SmallInt;
+    // For RowSpan, per edge with EA <> 0: 1 / EA and 1E-6 / |EA|.
+    SpanInv, SpanRel: array[0..2] of Double;
   end;
   PRenderTri = ^TRenderTri;
 
@@ -50,6 +52,14 @@ type
   end;
 
   PRenderPoly = ^TRenderPoly;
+
+  // A Gouraud vertex's base and offset colour channels (B, G, R, A) as
+  // floating point.
+  TChannels = array[0..3] of Single;
+  TVertexChannels = record
+    Base, Offset: TChannels;
+  end;
+  PVertexChannels = ^TVertexChannels;
 
   TTileBuffers = record
     Depth: array[0..TileSize * TileSize - 1] of Single;
@@ -108,6 +118,8 @@ type
     FTris: TArray<TRenderTri>;
     FTriCount: Integer;
     FPolys: TArray<TRenderPoly>;
+    // Per vertex of Gouraud strips.
+    FChannels: TArray<TVertexChannels>;
     // Triangles per tile and list: Bins[tile][list] -> indices.
     FBinStart: TArray<Integer>;
     FBinCount: TArray<Integer>;
@@ -428,7 +440,14 @@ begin
   T.EA[1] := (Y2 - Y0) * S; T.EB[1] := (X0 - X2) * S; T.EC[1] := (X2 * Y0 - X0 * Y2) * S;
   T.EA[2] := (Y0 - Y1) * S; T.EB[2] := (X1 - X0) * S; T.EC[2] := (X0 * Y1 - X1 * Y0) * S;
   for var K := 0 to 2 do
+  begin
     T.TopLeft[K] := (T.EA[K] > 0) or ((T.EA[K] = 0) and (T.EB[K] > 0));
+    if T.EA[K] <> 0 then
+    begin
+      T.SpanInv[K] := 1 / Double(T.EA[K]);
+      T.SpanRel[K] := 1E-6 / Abs(Double(T.EA[K]));
+    end;
+  end;
   T.InvArea := 1 / Abs(Area);
   // Z plane from the barycentric weights.
   var Z0 := V[I0].Z;
@@ -479,6 +498,17 @@ begin
         RP.Texture1 := FTextures.Get(P.TCW1, P.TSP1, FPalette, PalFormat, FPaletteGen, Stride);
     end;
     FPolys[I] := RP;
+    if (P.Kind = PolyStrip) and ((P.ISP and $00800000) <> 0) then
+    begin
+      if Length(FChannels) < Length(FContext.Vertices) then
+        SetLength(FChannels, Length(FContext.Vertices));
+      for var K := P.First to P.First + P.Count - 1 do
+        for var S := 0 to 3 do
+        begin
+          FChannels[K].Base[S] := (FContext.Vertices[K].Base shr (S * 8)) and $FF;
+          FChannels[K].Offset[S] := (FContext.Vertices[K].Offset shr (S * 8)) and $FF;
+        end;
+    end;
     case P.Kind of
       PolyStrip:
         // Every other strip triangle is reversed to keep one winding;
@@ -717,6 +747,43 @@ begin
 end;
 {$ENDIF}
 
+{$IFDEF CPUX64}
+const
+  RoundMagic: Single = 12582912; // 1.5 * 2^23: sums round to integers
+  ChannelLow: Single = 0.5;
+  ChannelHigh: Single = 255;
+
+// Clamp255(RoundInt(X)); between 0.5 and 255 by single-precision addition,
+// which rounds as the conversion does (the current rounding mode): the sum
+// is 1.5 * 2^23 + the integer, which its low mantissa bits hold.
+function ChannelRound(X: Single): Cardinal; inline;
+begin
+  if (X > ChannelLow) and (X < ChannelHigh) then
+  begin
+    var S: Single := X + RoundMagic;
+    Result := (PCardinal(@S)^ and $7FFFFF) - $400000;
+  end
+  else
+    Result := Cardinal(Clamp255(RoundInt(X)));
+end;
+{$ELSE}
+function ChannelRound(X: Single): Cardinal; inline;
+begin
+  Result := Cardinal(Clamp255(RoundInt(X)));
+end;
+{$ENDIF}
+
+// Perspective-correct Gouraud colour from the vertices' channels.
+function GouraudColor(const A, B, C: TChannels; P0, P1, P2: Single): Cardinal; inline;
+begin
+  // (Locals: inlined, ChannelRound would evaluate an expression per use.)
+  var X0: Single := A[0] * P0 + B[0] * P1 + C[0] * P2;
+  var X1: Single := A[1] * P0 + B[1] * P1 + C[1] * P2;
+  var X2: Single := A[2] * P0 + B[2] * P1 + C[2] * P2;
+  var X3: Single := A[3] * P0 + B[3] * P1 + C[3] * P2;
+  Result := ChannelRound(X0) or (ChannelRound(X1) shl 8) or (ChannelRound(X2) shl 16) or (ChannelRound(X3) shl 24);
+end;
+
 
 function IsNaNSingle(const V: Single): Boolean; inline;
 begin
@@ -749,29 +816,29 @@ end;
 // Conservative range of tile columns X0..X1 whose sample centres can be
 // inside the triangle on the row at PY (Left: the tile's first column);
 // coverage is still tested exactly per sample. The margin exceeds the
-// rounding of the single-precision edge functions.
+// rounding of the single-precision edge functions (and of the reciprocals).
 function RowSpan(const T: TRenderTri; PY: Single; Left: Integer; var X0, X1: Integer): Boolean;
 begin
   for var K := 0 to 2 do
   begin
-    var A: Double := T.EA[K];
     var Magnitude := Abs(Double(T.EB[K]) * PY) + Abs(Double(T.EC[K]));
     var C := Double(T.EB[K]) * PY + T.EC[K];
-    if A = 0 then
+    if T.EA[K] = 0 then
     begin
       if C < -(Magnitude * 1E-6 + 1E-30) then
         Exit(False);
       Continue;
     end;
-    var Margin := 1 + Magnitude * 1E-6 / Abs(A);
-    var Bound := -C / A - Left - 0.5;
-    if A > 0 then
+    var Margin := 1 + Magnitude * T.SpanRel[K];
+    var Bound := -C * T.SpanInv[K] - Left - 0.5;
+    // Within X0..X1 (0..TileSize-1) where rounded.
+    if T.EA[K] > 0 then
     begin
       Bound := Bound - Margin;
       if Bound > X1 then
         Exit(False);
       if Bound > X0 then
-        X0 := Floor(Bound);
+        X0 := FloorInt(Bound);
     end
     else
     begin
@@ -779,7 +846,7 @@ begin
       if Bound < X0 then
         Exit(False);
       if Bound < X1 then
-        X1 := Ceil(Bound);
+        X1 := -FloorInt(-Bound);
     end;
   end;
   Result := X0 <= X1;
@@ -858,6 +925,19 @@ begin
       Exit(Size - 1);
     Exit(C);
   end;
+  // Power-of-two sizes: the remainders by masking.
+  if (Size and (Size - 1)) = 0 then
+  begin
+    if Flip then
+    begin
+      Result := C and (Size * 2 - 1);
+      if Result >= Size then
+        Result := Size * 2 - 1 - Result;
+    end
+    else
+      Result := C and (Size - 1);
+    Exit;
+  end;
   if Flip then
   begin
     var Period := C mod (Size * 2);
@@ -896,10 +976,15 @@ begin
   // Bilinear (trilinear passes are treated as bilinear on one level).
   FU := FU - 0.5;
   FV := FV - 0.5;
-  var X0 := FloorInt(FU);
-  var Y0 := FloorInt(FV);
-  var FX := Integer(RoundInt((FU - X0) * 256));
-  var FY := Integer(RoundInt((FV - Y0) * 256));
+  // Texel and weight from one rounding: X0 = Floor(FU), FX = Round((FU - X0)
+  // * 256) except that FX = 256 becomes X0 + 1, FX = 0, the same blend.
+  // (Bits 8..39 of the 64-bit product hold the integer part.)
+  var NU := RoundInt(FU * 256);
+  var NV := RoundInt(FV * 256);
+  var X0 := Integer(NU shr 8);
+  var Y0 := Integer(NV shr 8);
+  var FX := Integer(NU and 255);
+  var FY := Integer(NV and 255);
   var XA := WrapCoord(X0, W, ClampU, FlipU);
   var XB := WrapCoord(X0 + 1, W, ClampU, FlipU);
   var YA := WrapCoord(Y0, H, ClampV, FlipV) * W;
@@ -908,15 +993,21 @@ begin
   var C10 := Texels[YA + XB];
   var C01 := Texels[YB + XA];
   var C11 := Texels[YB + XB];
-  Result := 0;
-  for var Shift := 0 to 3 do
-  begin
-    var S := Shift * 8;
-    var A := Integer((C00 shr S) and $FF) * (256 - FX) + Integer((C10 shr S) and $FF) * FX;
-    var B := Integer((C01 shr S) and $FF) * (256 - FX) + Integer((C11 shr S) and $FF) * FX;
-    var C := (A * (256 - FY) + B * FY + 32768) shr 16;
-    Result := Result or (Cardinal(Clamp255(C)) shl S);
-  end;
+  // Per channel (A * (256 - FY) + B * FY + 32768) shr 16 of the row blends
+  // A, B = C0 * (256 - FX) + C1 * FX (at most 255 * 256): two channels at a
+  // time, 16-bit lanes for the rows, 32-bit lanes for the columns.
+  var GX := Cardinal(256 - FX);
+  var GY := UInt64(256 - FY);
+  var AE := (C00 and $00FF00FF) * GX + (C10 and $00FF00FF) * Cardinal(FX);
+  var AO := ((C00 shr 8) and $00FF00FF) * GX + ((C10 shr 8) and $00FF00FF) * Cardinal(FX);
+  var BE := (C01 and $00FF00FF) * GX + (C11 and $00FF00FF) * Cardinal(FX);
+  var BO := ((C01 shr 8) and $00FF00FF) * GX + ((C11 shr 8) and $00FF00FF) * Cardinal(FX);
+  var E := ((UInt64(AE and $FFFF) or (UInt64(AE shr 16) shl 32)) * GY +
+    (UInt64(BE and $FFFF) or (UInt64(BE shr 16) shl 32)) * UInt64(FY) + UInt64($0000800000008000));
+  var O := ((UInt64(AO and $FFFF) or (UInt64(AO shr 16) shl 32)) * GY +
+    (UInt64(BO and $FFFF) or (UInt64(BO shr 16) shl 32)) * UInt64(FY) + UInt64($0000800000008000));
+  Result := Cardinal((E shr 16) and $FF) or Cardinal((E shr 32) and $FF0000) or
+    (Cardinal((O shr 16) and $FF) shl 8) or (Cardinal((O shr 32) and $FF0000) shl 8);
 end;
 
 function TDCRenderer.ShadePixel(Tri: Integer; PX, PY: Single; Modified: Boolean; Dest: Cardinal; out Alpha: Integer): Cardinal;
@@ -980,16 +1071,11 @@ begin
   end
   else if Gouraud and (P.Kind = PolyStrip) then
   begin
-    Base := 0;
-    Offset := 0;
-    for var S := 0 to 3 do
-    begin
-      var Sh := S * 8;
-      Base := Base or (Cardinal(Clamp255(RoundInt(((VA.Base shr Sh) and $FF) * P0 + ((VB.Base shr Sh) and $FF) * P1 +
-        ((VC.Base shr Sh) and $FF) * P2))) shl Sh);
-      Offset := Offset or (Cardinal(Clamp255(RoundInt(((VA.Offset shr Sh) and $FF) * P0 + ((VB.Offset shr Sh) and $FF) * P1 +
-        ((VC.Offset shr Sh) and $FF) * P2))) shl Sh);
-    end;
+    var CA: PVertexChannels := @FChannels[T.V0];
+    var CB: PVertexChannels := @FChannels[T.V1];
+    var CC: PVertexChannels := @FChannels[T.V2];
+    Base := GouraudColor(CA.Base, CB.Base, CC.Base, P0, P1, P2);
+    Offset := GouraudColor(CA.Offset, CB.Offset, CC.Offset, P0, P1, P2);
   end
   else
   begin
