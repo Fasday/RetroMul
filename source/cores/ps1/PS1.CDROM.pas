@@ -1,4 +1,4 @@
-unit PS1.CDROM;
+﻿unit PS1.CDROM;
 
 interface
 
@@ -277,10 +277,7 @@ begin
   if FDisc = nil then
     Exit;
 
-  var Stored := False;
-  for var T := 1 to FDisc.TrackCount do
-    Stored := Stored or (FDisc.Track(T).SubStream <> nil) or FDisc.Track(T).SubchannelStored;
-  if not Stored then
+  if not FDisc.HasSubchannelQ then
     Exit;
 
   // A subchannel file whose Q checksums mostly fail is ignored.
@@ -895,6 +892,7 @@ end;
 procedure TPS1CDROM.ReadSector;
 var
   Sector: TPS1CDSector;
+  Q: array[0..11] of Byte;
 begin
   var LBA := FPosition;
   if LBA >= LeadOut then
@@ -905,6 +903,8 @@ begin
   end;
 
   var IsData := ReadDisc(LBA, Sector);
+  // Q advances with the head even when software is not polling GetlocP.
+  PositionQ(LBA, Q);
   FLastRead := LBA;
   FPosition := LBA + 1;
   if not IsData then
@@ -1002,10 +1002,9 @@ begin
     end;
   end;
 
+  PositionQ(LBA, Q);
   if (FMode and ModeReport) = 0 then
     Exit;
-
-  PositionQ(LBA, Q);
   var Frame := FromBCD(Q[9]);
   if not (Frame in [0, 10, 20, 30, 40, 50, 60, 70]) then
     Exit;

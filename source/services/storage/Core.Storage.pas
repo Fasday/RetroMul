@@ -80,7 +80,7 @@ implementation
 
 uses
   System.IOUtils, System.StrUtils, System.Generics.Collections, Core.Platforms,
-  Core.RomFormat,
+  Core.RomFormat, Core.CD.Disc,
   {$IFDEF ANDROID}
   Core.Storage.Android, {$ENDIF}
   {$IFDEF IOS} Macapi.Helpers, System.Hash, {$ENDIF}
@@ -390,9 +390,9 @@ begin
     var LegacyRoot := Ini.ReadString('General', 'Path', '');
     if LegacyRoot <> '' then
     begin
-      for var Platform in TPlatformRegistry.All do
-        if not Ini.ValueExists('RomFolders', Platform.Id) then
-          Ini.WriteString('RomFolders', Platform.Id, DetectRomFolder(LegacyRoot, Platform.Id));
+      for var platform in TPlatformRegistry.All do
+        if not Ini.ValueExists('RomFolders', platform.Id) then
+          Ini.WriteString('RomFolders', platform.Id, DetectRomFolder(LegacyRoot, platform.Id));
       Ini.DeleteKey('General', 'Path');
       WriteConfig(Ini);
     end;
@@ -414,10 +414,10 @@ end;
 
 function TStorage.RomFolder(const SystemId: string): string;
 begin
-  var Platform := TPlatformRegistry.Require(SystemId);
+  var platform := TPlatformRegistry.Require(SystemId);
   var Ini := ReadConfig(ConfigFile('config'));
   try
-    Result := Ini.ReadString('RomFolders', Platform.Id, '').Trim;
+    Result := Ini.ReadString('RomFolders', platform.Id, '').Trim;
   finally
     Ini.Free;
   end;
@@ -426,15 +426,15 @@ end;
 function TStorage.DetectRomFolder(const Location, SystemId: string): string;
 begin
   Result := '';
-  var Platform := TPlatformRegistry.Require(SystemId);
+  var platform := TPlatformRegistry.Require(SystemId);
   // Alias order is significant: prefer a platform's own folder.
   var Children := Folders(Location);
-  for var Alias in Platform.ScanFolders do
+  for var Alias in platform.ScanFolders do
   begin
     // Former shared scan folders relied on extension filters. They are not
     // aliases when the entire folder now belongs to a different platform.
     var OwnerPlatform: TPlatformInfo;
-    if TPlatformRegistry.Find(Alias, OwnerPlatform) and (OwnerPlatform.Id <> Platform.Id) then
+    if TPlatformRegistry.Find(Alias, OwnerPlatform) and (OwnerPlatform.Id <> platform.Id) then
       Continue;
     for var Child in Children do
     begin
@@ -826,24 +826,97 @@ begin
     Exit(nil);
   var Items := TList<TStorageFile>.Create;
   var Extensions := TStringList.Create;
+  var CueNames := TStringList.Create;
+  var PlaylistDiscs := TStringList.Create;
   try
+    PlaylistDiscs.Sorted := True;
+    PlaylistDiscs.Duplicates := dupIgnore;
+    {$IFDEF MSWINDOWS}
+    PlaylistDiscs.CaseSensitive := False;
+    {$ELSE}
+    PlaylistDiscs.CaseSensitive := True;
+    {$ENDIF}
+    CueNames.CaseSensitive := False;
+    CueNames.Sorted := True;
+    CueNames.Duplicates := dupIgnore;
     // Accept known ROM extensions from every platform, regardless of folder.
     Extensions.CaseSensitive := False;
     Extensions.Sorted := True;
     Extensions.Duplicates := dupIgnore;
-    for var Platform in TPlatformRegistry.All do
-      for var Extension in Platform.Extensions do
+    for var platform in TPlatformRegistry.All do
+      for var Extension in platform.Extensions do
         Extensions.Add(Extension);
-    for var Location in Files(Folder) do
+    var Candidates: TArray<TStorageFile>;
+    {$IFDEF ANDROID}
+    if Folder.StartsWith('content://', True) then
+      Candidates := TAndroidStorage.Enumerate(Folder, True)
+    else
+    {$ENDIF}
     begin
-      var Item := Describe(Location);
+      var Locations := Files(Folder, True);
+      SetLength(Candidates, Length(Locations));
+      for var i := 0 to High(Locations) do
+      begin
+        Candidates[i] := Describe(Locations[i]);
+        Candidates[i].RelativePath := ExtractRelativePath(IncludeTrailingPathDelimiter(ExpandFileName(Folder)),
+            ExpandFileName(Locations[i])).Replace('\', '/');
+      end;
+    end;
+    if SameText(SystemId, ROM_SYSTEM_PS1) then
+      for var Candidate in Candidates do
+        if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_M3U) then
+        try
+          var Stream := OpenRead(Candidate.Location);
+          try
+            for var Disc in ReadCDPlaylist(Stream, Self, Candidate.Location) do
+              PlaylistDiscs.Add(Disc);
+          finally
+            Stream.Free;
+          end;
+        except
+          on E: EAbort do
+            raise;
+          // Keep malformed playlists visible so opening them reports the error.
+          // Their individual discs also remain available.
+          on E: Exception do
+            Continue;
+        end;
+    for var Candidate in Candidates do
+      if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_CUE) then
+        CueNames.Add(ChangeFileExt(Candidate.RelativePath, ''));
+    for var Candidate in Candidates do
+    begin
+      var Item := Candidate;
+      if PlaylistDiscs.IndexOf(Item.Location) >= 0 then
+        Continue;
       if Extensions.IndexOf(ExtractFileExt(Item.Name)) < 0 then
         Continue;
-      Item.RelativePath := Item.Name;
+      // A PlayStation CUE is the library entry for its paired data/audio files.
+      // Match complete names, so Game.cue never hides an unrelated Game2.bin.
+      if SameText(SystemId, ROM_SYSTEM_PS1) and
+        (SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_BIN) or
+        SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_ISO)) then
+      begin
+        var BaseName := ChangeFileExt(Item.Name, '');
+        var Directory := Item.RelativePath.Substring(0, Length(Item.RelativePath) - Length(Item.Name));
+        if CueNames.IndexOf(Directory + BaseName) >= 0 then
+          Continue;
+        if SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_BIN) and BaseName.EndsWith(')') then
+        begin
+          var TrackStart := BaseName.ToLower.LastIndexOf(' (track ');
+          var TrackNumber: Integer;
+          if (TrackStart > 0) and
+            TryStrToInt(BaseName.Substring(TrackStart + 8, Length(BaseName) - TrackStart - 9), TrackNumber) and
+            (TrackNumber > 0) and (CueNames.IndexOf(Directory + BaseName.Substring(0, TrackStart)) >= 0) then
+            Continue;
+        end;
+      end;
       Items.Add(Item);
     end;
     Result := Items.ToArray;
   finally
+    PlaylistDiscs.Free;
+    CueNames.Free;
     Extensions.Free;
     Items.Free;
   end;

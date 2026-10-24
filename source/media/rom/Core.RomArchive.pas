@@ -26,7 +26,7 @@ begin
     not ExtractFileName(Name).StartsWith('._') and
     MatchText(Ext, ['.sna', '.z80', '.tap', '.tzx', '.trd', '.scl', '.pro', '.kdi', '.ngp',
         '.ngc', '.pce', '.sgx', '.sg', '.sc', '.sf7', '.sf', '.dsk',
-        '.mv', '.sms', '.gg', '.nes', '.gb', '.gbc', '.gbx', '.gba', '.sfc', '.smc', '.swc',
+        '.mv', '.sms', '.gg', '.nes', '.gb', '.gbc', '.gbx', '.gba', '.exe', '.sfc', '.smc', '.swc',
         '.fig', '.z64', '.n64', '.v64', '.smd', '.gen', '.md', '.32x', '.neo', '.gw', '.mgw']);
   Result := Result or ((Ext = '.bin') and (Size = $2000) and Name.ToLower.Contains('initial program loader'));
 end;

@@ -27,16 +27,18 @@ begin
   AddPad;
   Find('dpad').Bounds := RectF(12, 88, 132, 208);
   AddStick(RectF(128, 208, 228, 308));
+  AddAuxiliaryButton(Ord(TPS1Extra.L3), 'L3', TVirtualSide.Left, RectF(16, 216, 112, 252));
   AddAuxiliaryButton(Ord(TPS1Extra.Analog), 'ANALOG', TVirtualSide.Left, RectF(16, 268, 112, 300));
 
   AddButton(TEmulatorButton.Mode, 'R2', TVirtualSide.Right, 128, 8, 96, 32, True);
   AddButton(TEmulatorButton.Z, 'R1', TVirtualSide.Right, 128, 48, 96, 32, True);
   AddButton(TEmulatorButton.Start, 'START', TVirtualSide.Right, 16, 48, 88, 32, True);
-  AddButton(TEmulatorButton.Y, 'Tri', TVirtualSide.Right, 139, 81, 54, 54);
-  AddButton(TEmulatorButton.X, 'Sq', TVirtualSide.Right, 95, 125, 54, 54);
-  AddButton(TEmulatorButton.B, 'O', TVirtualSide.Right, 183, 125, 54, 54);
-  AddButton(TEmulatorButton.A, 'X', TVirtualSide.Right, 139, 169, 54, 54);
+  AddButton(TEmulatorButton.Y, 'Tri', TVirtualSide.Right, 139, 81, 54, 54, False, VirtualIconTriangle);
+  AddButton(TEmulatorButton.X, 'Sq', TVirtualSide.Right, 95, 125, 54, 54, False, VirtualIconSquare);
+  AddButton(TEmulatorButton.B, 'O', TVirtualSide.Right, 183, 125, 54, 54, False, VirtualIconCircle);
+  AddButton(TEmulatorButton.A, 'X', TVirtualSide.Right, 139, 169, 54, 54, False, VirtualIconCross);
   AddRightStick(RectF(12, 208, 112, 308));
+  AddAuxiliaryButton(Ord(TPS1Extra.R3), 'R3', TVirtualSide.Right, RectF(128, 216, 224, 252));
 end;
 
 end.

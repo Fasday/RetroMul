@@ -39,11 +39,15 @@ begin
   if (Storage <> nil) and RomName.StartsWith('content://', True) then
     SourceName := Storage.Describe(RomName).Name;
 
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_M3U) then
+    Exit(TPS1CoreAdapter.Create(Stream, Storage, RomName));
+
   // A raw single-track .bin is a disc, not a cartridge (CD sync at sector 0).
   var RawDisc := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_BIN) and IsCDRawImage(Stream);
+  var ZipDisc := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ZIP) and TCDDisc.IsDiscZip(Stream);
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CUE) or
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ISO) or
-    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) or RawDisc then
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) or RawDisc or ZipDisc then
   begin
     // A location is only a hint. Confirm the native NEC boot string in the first
     // data track so generic .cue/.iso/.chd still select the correct CD family.

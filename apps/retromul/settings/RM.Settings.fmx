@@ -1554,7 +1554,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 248.000000000000000000
+      Position.Y = 326.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 2200.000000000000000000
       Size.PlatformDefault = False
@@ -3432,7 +3432,7 @@ object SettingsView: TSettingsView
           end
         end
       end
-      object PanelRowRomFolderOmv: TPanel
+      object PanelRowRomFolderPs1: TPanel
         Align = Top
         Padding.Left = 16.000000000000000000
         Padding.Top = 12.000000000000000000
@@ -3441,6 +3441,101 @@ object SettingsView: TSettingsView
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
         Position.Y = 1616.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderPs1Text: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderPs1Title: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'PlayStation'
+          end
+          object LabelRowRomFolderPs1Detail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderPs1EditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderPs1Editor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderPs1Browse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderPs1BrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+                  2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+                  6E17B64000003441020000000000A040000034410200000092E8894000003441
+                  0200000000007040E10B2B410200000000007040000020410200000000007040
+                  49F414410200000092E8894000000C41020000000000A04000000C4102000000
+                  6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+                  030000000000C840000020410000000000003441000020410200000000003441
+                  E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+                  49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+                  0200000000000C4149F414410200000049F4144100000C410200000000002041
+                  00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+                  0000344100002041030000000000344100002041000000000000704100003441
+                  02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+                  00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+                  0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+                  0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+                  00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
+      object PanelRowRomFolderOmv: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 1694.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -3535,7 +3630,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 1694.000000000000000000
+        Position.Y = 1772.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -3630,7 +3725,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 1772.000000000000000000
+        Position.Y = 1850.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -3725,7 +3820,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 1850.000000000000000000
+        Position.Y = 1928.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -3820,7 +3915,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 1928.000000000000000000
+        Position.Y = 2006.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -3915,7 +4010,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 2006.000000000000000000
+        Position.Y = 2084.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -4010,7 +4105,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 2084.000000000000000000
+        Position.Y = 2162.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -4105,7 +4200,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 2162.000000000000000000
+        Position.Y = 2240.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -4200,7 +4295,7 @@ object SettingsView: TSettingsView
         Padding.Bottom = 12.000000000000000000
         Margins.Bottom = 6.000000000000000000
         Position.X = 16.000000000000000000
-        Position.Y = 2240.000000000000000000
+        Position.Y = 2318.000000000000000000
         Size.Width = 868.000000000000000000
         Size.Height = 72.000000000000000000
         Size.PlatformDefault = False
@@ -4295,7 +4390,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2464.000000000000000000
+      Position.Y = 2542.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 458.000000000000000000
       Size.PlatformDefault = False
@@ -4552,7 +4647,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 5758.000000000000000000
+      Position.Y = 6562.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 146.000000000000000000
       Size.PlatformDefault = False
@@ -4621,7 +4716,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 5920.000000000000000000
+      Position.Y = 6724.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 458.000000000000000000
       Size.PlatformDefault = False
@@ -5673,7 +5768,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 6394.000000000000000000
+      Position.Y = 7198.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 424.000000000000000000
       Size.PlatformDefault = False
@@ -5762,7 +5857,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 6834.000000000000000000
+      Position.Y = 7638.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 224.000000000000000000
       Size.PlatformDefault = False
@@ -5864,7 +5959,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 7074.000000000000000000
+      Position.Y = 7878.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 146.000000000000000000
       Size.PlatformDefault = False
@@ -5948,7 +6043,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 7236.000000000000000000
+      Position.Y = 8040.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 302.000000000000000000
       Size.PlatformDefault = False
@@ -6151,7 +6246,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 7554.000000000000000000
+      Position.Y = 8358.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 302.000000000000000000
       Size.PlatformDefault = False
@@ -6383,7 +6478,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 7872.000000000000000000
+      Position.Y = 8676.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 68.000000000000000000
       Size.PlatformDefault = False
@@ -6410,7 +6505,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 7956.000000000000000000
+      Position.Y = 8760.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 68.000000000000000000
       Size.PlatformDefault = False
@@ -6437,7 +6532,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8040.000000000000000000
+      Position.Y = 8844.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6469,7 +6564,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8116.000000000000000000
+      Position.Y = 8920.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6501,7 +6596,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8192.000000000000000000
+      Position.Y = 8996.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6533,7 +6628,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8268.000000000000000000
+      Position.Y = 9072.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6565,7 +6660,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8344.000000000000000000
+      Position.Y = 9148.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6597,7 +6692,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8420.000000000000000000
+      Position.Y = 9224.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6629,7 +6724,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8496.000000000000000000
+      Position.Y = 9300.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6661,7 +6756,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9256.000000000000000000
+      Position.Y = 10060.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -6716,7 +6811,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9334.000000000000000000
+      Position.Y = 10138.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -6771,7 +6866,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9568.000000000000000000
+      Position.Y = 10372.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -6874,7 +6969,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4510.000000000000000000
+      Position.Y = 5314.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -6931,7 +7026,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8572.000000000000000000
+      Position.Y = 9376.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -6963,7 +7058,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4588.000000000000000000
+      Position.Y = 5392.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7020,7 +7115,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4666.000000000000000000
+      Position.Y = 5470.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7077,7 +7172,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9646.000000000000000000
+      Position.Y = 10450.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7180,7 +7275,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9412.000000000000000000
+      Position.Y = 10216.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7235,7 +7330,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8648.000000000000000000
+      Position.Y = 9452.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7267,7 +7362,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4744.000000000000000000
+      Position.Y = 5548.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7324,7 +7419,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4822.000000000000000000
+      Position.Y = 5626.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7381,7 +7476,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8724.000000000000000000
+      Position.Y = 9528.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7413,7 +7508,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4900.000000000000000000
+      Position.Y = 5704.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7470,7 +7565,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4978.000000000000000000
+      Position.Y = 5782.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7527,7 +7622,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5056.000000000000000000
+      Position.Y = 5860.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7584,7 +7679,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5134.000000000000000000
+      Position.Y = 5938.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7641,7 +7736,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8800.000000000000000000
+      Position.Y = 9604.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7673,7 +7768,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8876.000000000000000000
+      Position.Y = 9680.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7705,7 +7800,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 8952.000000000000000000
+      Position.Y = 9756.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7737,7 +7832,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5212.000000000000000000
+      Position.Y = 6016.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7791,7 +7886,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5290.000000000000000000
+      Position.Y = 6094.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7845,7 +7940,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5368.000000000000000000
+      Position.Y = 6172.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -7904,7 +7999,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 9028.000000000000000000
+      Position.Y = 9832.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7936,7 +8031,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 9104.000000000000000000
+      Position.Y = 9908.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -7968,7 +8063,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 9180.000000000000000000
+      Position.Y = 9984.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 60.000000000000000000
       Size.PlatformDefault = False
@@ -8000,7 +8095,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9490.000000000000000000
+      Position.Y = 10294.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -8055,7 +8150,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9724.000000000000000000
+      Position.Y = 10528.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -8158,7 +8253,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9958.000000000000000000
+      Position.Y = 10840.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -8214,7 +8309,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 10036.000000000000000000
+      Position.Y = 10918.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -8270,7 +8365,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 10114.000000000000000000
+      Position.Y = 10996.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -8328,7 +8423,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 10192.000000000000000000
+      Position.Y = 11074.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -8384,7 +8479,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 10270.000000000000000000
+      Position.Y = 11152.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -9052,7 +9147,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 11444.000000000000000000
+      Position.Y = 12326.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -9720,7 +9815,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 12618.000000000000000000
+      Position.Y = 13500.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -10388,7 +10483,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 13792.000000000000000000
+      Position.Y = 14674.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -11056,7 +11151,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 14966.000000000000000000
+      Position.Y = 15848.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -11724,7 +11819,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 16140.000000000000000000
+      Position.Y = 17022.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -12392,7 +12487,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 17314.000000000000000000
+      Position.Y = 18196.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -13060,7 +13155,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 18488.000000000000000000
+      Position.Y = 19370.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 1158.000000000000000000
       Size.PlatformDefault = False
@@ -13721,6 +13816,394 @@ object SettingsView: TSettingsView
         end
       end
     end
+    object PanelGroupPS1System: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Position.Y = 3016.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 230.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LabelGroupPS1SystemTitle: TLabel
+        Align = Top
+        StyledSettings = [Family, Style, FontColor]
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 14.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Font.Size = 20.000000000000000000
+        Text = 'System'
+      end
+    end
+    object PanelRowPS1BIOS: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 10684.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowPS1BIOSText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowPS1BIOSTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'BIOS file'
+        end
+        object LabelRowPS1BIOSDetail: TLabel
+          Align = Client
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.WordWrap = False
+          Text = 
+            'Optional 512 KiB PlayStation BIOS. Without it, a BIOS beside the' +
+            ' game or the built-in one is used.'
+        end
+      end
+      object LayoutRowPS1BIOSEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object EditRowPS1BIOSEditor: TEdit
+          Touch.InteractiveGestures = [LongTap, DoubleTap]
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+          object EditButtonRowPS1BIOSBrowse: TEditButton
+            Touch.InteractiveGestures = [LongTap]
+            CanFocus = False
+            Cursor = crArrow
+            Size.Width = 32.000000000000000000
+            Size.Height = 50.000000000000000000
+            Size.PlatformDefault = False
+            TabOrder = 0
+            Text = #8230
+          end
+          object EditButtonRowPS1BIOSClear: TEditButton
+            Touch.InteractiveGestures = [LongTap]
+            CanFocus = False
+            Cursor = crArrow
+            Position.X = 32.000000000000000000
+            Size.Width = 32.000000000000000000
+            Size.Height = 50.000000000000000000
+            Size.PlatformDefault = False
+            TabOrder = 1
+            object PathPS1BIOSClear: TPath
+              Align = Center
+              Data.Path = {
+                280000000000000075AB2540DDCD2D4001000000705F2940705F294002000000
+                0B7B3440AA431E400200000063B94540C8071D40020000002332524075AB2540
+                0100000090A05640705F294001000000000000414260E94001000000A8574A41
+                705F2940020000009A774D4122E01C40020000006688524122E01C4002000000
+                58A85541705F294002000000E3C7584194DE354002000000E3C758416C214A40
+                0200000058A8554190A0564001000000DF4F0B41000000410100000058A85541
+                A8574A4102000000006F5841B81E4D41020000000EBE58412F6E514102000000
+                189556417E8C54410100000058A8554158A855410200000048E15241006F5841
+                02000000D1914E410EBE58410200000082734B411895564101000000A8574A41
+                58A855410100000000000041DF4F0B410100000090A0564058A8554102000000
+                6C214A40E3C758410200000094DE3540E3C7584102000000705F294058A85541
+                0200000022E01C40668852410200000022E01C409A774D4102000000705F2940
+                A8574A41010000004260E9400000004101000000705F294090A0564002000000
+                AA431E40F5844B4002000000C8071D409D463A400200000075AB2540DDCD2D40
+                01000000705F2940705F29400100000075AB2540DDCD2D400300000075AB2540
+                DDCD2D40}
+              Fill.Color = xFFE8ECF1
+              HitTest = False
+              Size.Width = 14.000000000000000000
+              Size.Height = 14.000000000000000000
+              Size.PlatformDefault = False
+              Stroke.Kind = None
+              WrapMode = Fit
+            end
+          end
+        end
+      end
+    end
+    object PanelRowPS1Video: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 3754.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowPS1VideoText: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowPS1VideoTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Video standard'
+        end
+        object LabelRowPS1VideoDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 'Automatic follows the BIOS or the disc region.'
+        end
+      end
+      object LayoutRowPS1VideoEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 20.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 32.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowPS1VideoEditorSlot: TLayout
+          Align = Client
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowPS1ControllerPort1: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 4222.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowPS1ControllerPort1Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowPS1ControllerPort1Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowPS1ControllerPort1Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 
+            'Digital pad, DualShock (press ANALOG for analog mode) or disconn' +
+            'ected.'
+        end
+      end
+      object LayoutRowPS1ControllerPort1EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowPS1ControllerPort1EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelRowPS1ControllerPort2: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 4378.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowPS1ControllerPort2Text: TLayout
+        Align = Client
+        Size.Width = 632.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowPS1ControllerPort2Title: TLabel
+          Align = Top
+          StyledSettings = [Family, Style, FontColor]
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.WordWrap = False
+          Text = 'Controller'
+        end
+        object LabelRowPS1ControllerPort2Detail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style, FontColor]
+          Opacity = 0.720000028610229500
+          Size.Width = 632.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          Text = 
+            'Digital pad, DualShock (press ANALOG for analog mode) or disconn' +
+            'ected.'
+        end
+      end
+      object LayoutRowPS1ControllerPort2EditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 664.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 220.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LayoutRowPS1ControllerPort2EditorSlot: TLayout
+          Align = Client
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
+    object PanelGroupPS1Rumble: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 14.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 16.000000000000000000
+      Position.Y = 3262.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 230.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_card'
+      object LabelGroupPS1RumbleTitle: TLabel
+        Align = Top
+        StyledSettings = [Family, Style, FontColor]
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 14.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Font.Size = 20.000000000000000000
+        Text = 'Rumble'
+      end
+    end
+    object PanelRowPS1Rumble: TPanel
+      Align = Top
+      Padding.Left = 16.000000000000000000
+      Padding.Top = 12.000000000000000000
+      Padding.Right = 16.000000000000000000
+      Padding.Bottom = 12.000000000000000000
+      Margins.Bottom = 6.000000000000000000
+      Position.Y = 248.000000000000000000
+      Size.Width = 900.000000000000000000
+      Size.Height = 72.000000000000000000
+      Size.PlatformDefault = False
+      StyleLookup = 'retromul_row'
+      object LayoutRowPS1RumbleText: TLayout
+        Align = Client
+        Size.Width = 788.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object LabelRowPS1RumbleTitle: TLabel
+          Align = Top
+          StyledSettings = [Family, Style]
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 15.000000000000000000
+          TextSettings.FontColor = claWhite
+          TextSettings.WordWrap = False
+          Text = 'DualShock rumble'
+        end
+        object LabelRowPS1RumbleDetail: TLabel
+          Align = Client
+          StyledSettings = [Family, Style]
+          Opacity = 0.720000028610229500
+          Size.Width = 788.000000000000000000
+          Size.Height = 24.000000000000000000
+          Size.PlatformDefault = False
+          TextSettings.Font.Size = 14.000000000000000000
+          TextSettings.FontColor = claWhite
+          Text = 
+            'Vibrate the gamepad when the game runs the motors of the first D' +
+            'ualShock.'
+        end
+      end
+      object LayoutRowPS1RumbleEditorContainer: TLayout
+        Align = Right
+        Margins.Left = 16.000000000000000000
+        Position.X = 820.000000000000000000
+        Position.Y = 12.000000000000000000
+        Size.Width = 64.000000000000000000
+        Size.Height = 48.000000000000000000
+        Size.PlatformDefault = False
+        object SwitchRowPS1RumbleEditor: TSwitch
+          Align = Client
+          IsChecked = False
+          Margins.Top = 8.000000000000000000
+          Margins.Bottom = 8.000000000000000000
+          Size.Width = 64.000000000000000000
+          Size.Height = 32.000000000000000000
+          Size.PlatformDefault = False
+        end
+      end
+    end
     object PanelGroupSaturnSystem: TPanel
       Align = Top
       Padding.Left = 16.000000000000000000
@@ -13728,7 +14211,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 16.000000000000000000
-      Position.Y = 2938.000000000000000000
+      Position.Y = 3508.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 230.000000000000000000
       Size.PlatformDefault = False
@@ -13753,7 +14236,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3184.000000000000000000
+      Position.Y = 3832.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -13809,7 +14292,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3262.000000000000000000
+      Position.Y = 3910.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -13867,7 +14350,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3340.000000000000000000
+      Position.Y = 3988.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -13926,7 +14409,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9802.000000000000000000
+      Position.Y = 10606.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14031,7 +14514,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3574.000000000000000000
+      Position.Y = 4300.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14087,7 +14570,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3652.000000000000000000
+      Position.Y = 4456.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14143,7 +14626,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3730.000000000000000000
+      Position.Y = 4534.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14199,7 +14682,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3808.000000000000000000
+      Position.Y = 4612.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14255,7 +14738,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3886.000000000000000000
+      Position.Y = 4690.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14311,7 +14794,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3964.000000000000000000
+      Position.Y = 4768.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14367,7 +14850,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4042.000000000000000000
+      Position.Y = 4846.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14423,7 +14906,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4120.000000000000000000
+      Position.Y = 4924.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14479,7 +14962,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4198.000000000000000000
+      Position.Y = 5002.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14535,7 +15018,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4276.000000000000000000
+      Position.Y = 5080.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14591,7 +15074,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4354.000000000000000000
+      Position.Y = 5158.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14647,7 +15130,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 4432.000000000000000000
+      Position.Y = 5236.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14703,7 +15186,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5446.000000000000000000
+      Position.Y = 6250.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14759,7 +15242,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5524.000000000000000000
+      Position.Y = 6328.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14815,7 +15298,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5602.000000000000000000
+      Position.Y = 6406.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14871,7 +15354,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 5680.000000000000000000
+      Position.Y = 6484.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14927,7 +15410,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3418.000000000000000000
+      Position.Y = 4066.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -14983,7 +15466,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 9880.000000000000000000
+      Position.Y = 10762.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False
@@ -15086,7 +15569,7 @@ object SettingsView: TSettingsView
       Padding.Right = 16.000000000000000000
       Padding.Bottom = 12.000000000000000000
       Margins.Bottom = 6.000000000000000000
-      Position.Y = 3496.000000000000000000
+      Position.Y = 4144.000000000000000000
       Size.Width = 900.000000000000000000
       Size.Height = 72.000000000000000000
       Size.PlatformDefault = False

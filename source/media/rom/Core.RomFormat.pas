@@ -96,6 +96,7 @@ const
   ROM_EXTENSION_NEO = '.neo';
   ROM_EXTENSION_NGP = '.ngp';
   ROM_EXTENSION_NGPC = '.ngc';
+  ROM_EXTENSION_M3U = '.m3u';
   ROM_EXTENSION_CUE = '.cue';
   ROM_EXTENSION_ISO = '.iso';
   ROM_EXTENSION_CHD = '.chd';

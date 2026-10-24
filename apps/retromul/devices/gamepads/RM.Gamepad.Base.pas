@@ -59,8 +59,8 @@ type
     // A second stick on the right side (X/Y in RightAnalogInput).
     procedure AddRightStick(const Bounds: TRectF);
     procedure AddAnalogTriggers;
-    function AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean = False): TVirtualElement;
-    procedure AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF);
+    function AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean = False; const IconData: string = ''): TVirtualElement;
+    procedure AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF; const IconData: string = '');
     procedure AddMenus(const SelectCaption: string = 'SELECT'; const StartCaption: string = 'START');
   public
     constructor Create(AOwner: TComponent); override;
@@ -267,7 +267,7 @@ begin
   Bind(FRightTrigger, 0, TEmulatorButton.Mode);
 end;
 
-function TPlatformGamepad.AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean): TVirtualElement;
+function TPlatformGamepad.AddButton(Button: TEmulatorButton; const Caption: string; Side: TVirtualSide; X, Y, Width, Height: Single; Rectangular: Boolean; const IconData: string): TVirtualElement;
 begin
   if Rectangular then
     Result := TVirtualKey.Create('button' + IntToStr(Ord(Button)), Caption, Side, RectF(X, Y, X + Width, Y + Height))
@@ -277,6 +277,7 @@ begin
       TEmulatorButton.X, TEmulatorButton.Y, TEmulatorButton.Z]) then
     Result.CaptureGroup := 'actions';
   Add(Result);
+  Result.IconData := IconData;
   Bind(Result, 0, Button);
 end;
 
@@ -285,14 +286,19 @@ begin
   if SelectCaption <> '' then
     AddButton(TEmulatorButton.Select, SelectCaption, TVirtualSide.Left, 16, 74, 88, 36, True);
   if StartCaption <> '' then
-    AddButton(TEmulatorButton.Start, StartCaption, TVirtualSide.Right, 136, 74, 88, 36, True);
+  begin
+    var Button := AddButton(TEmulatorButton.Start, StartCaption, TVirtualSide.Right, 136, 74, 88, 36, True);
+    if SameText(StartCaption, 'PAUSE') then
+      Button.IconData := VirtualIconPause;
+  end;
 end;
 
-procedure TPlatformGamepad.AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF);
+procedure TPlatformGamepad.AddAuxiliaryButton(Index: Integer; const Caption: string; Side: TVirtualSide; const Bounds: TRectF; const IconData: string);
 begin
   if (Index < Low(FAuxiliary)) or (Index > High(FAuxiliary)) or (FAuxiliary[Index] <> nil) then
     raise EArgumentOutOfRangeException.Create('Auxiliary button');
   FAuxiliary[Index] := Add(TVirtualKey.Create('auxiliary' + IntToStr(Index), Caption, Side, Bounds));
+  FAuxiliary[Index].IconData := IconData;
 end;
 
 function TPlatformGamepad.AuxiliaryButtonBounds(Index: Integer): TRectF;

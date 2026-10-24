@@ -3,8 +3,9 @@
 interface
 
 uses
-  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs, Core.Storage,
-  Core.Emulation, Core.Snapshots, Core.CD.Disc, PS1.Console, PS1.SIO, Core.PS1.Playback;
+  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles,
+  System.SyncObjs, Core.Storage, Core.Emulation, Core.Snapshots, Core.CD.Disc,
+  PS1.Console, PS1.SIO, Core.PS1.Playback;
 
 {$SCOPEDENUMS ON}
 
@@ -61,6 +62,10 @@ type
     FLock: TCriticalSection;
     FWake: TEvent;
     FSnapshots: TSnapshotQueue;
+    FMediaDone: TEvent;
+    FMediaPending: Boolean;
+    FNextDisc: TCDDisc;
+    FMediaError: string;
     FInputPortsCommand: TInputPortsCommand;
     FStorage: IStorage;
     FBIOS, FExe, FIdentity: TBytes;
@@ -82,6 +87,7 @@ type
     FClockGuest: Int64;
     FConnected: array[0..1] of Boolean;
     FKinds: array[0..1] of TPS1PadKind;
+    procedure ProcessMediaChange;
     procedure ReportError(const Text: string);
     procedure AudioFailure(E: Exception);
     procedure ClearAudio;
@@ -96,10 +102,10 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(const BIOS, Exe, Identity: TBytes; PAL: Boolean; Disc: TCDDisc; const Storage: IStorage;
-      const CardFile1, CardFile2, SnapshotDirectory: string);
+    constructor Create(const BIOS, Exe, Identity: TBytes; PAL: Boolean; Disc: TCDDisc; const Storage: IStorage; const CardFile1, CardFile2, SnapshotDirectory: string);
     destructor Destroy; override;
     procedure Configure(const Inputs: TPS1PadInputs; Paused, AudioEnabled: Boolean; Volume: Single);
+    procedure ChangeDisc(Disc: TCDDisc);
     procedure RequestReset;
     procedure StopAndSave;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -110,8 +116,7 @@ type
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
   end;
 
-  TPS1CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation,
-    IEmulationAudioDiagnostics, IPS1ControllerInput, IEmulationRumbleOutput)
+  TPS1CoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IPS1ControllerInput, IEmulationRumbleOutput, IEmulationDiscControl)
   private
     FStorage: IStorage;
     FConfig: IEmulatorConfig;
@@ -127,10 +132,19 @@ type
     FPaused: Boolean;
     FCardFiles: array[0..1] of string;
     FSnapshotDirectory, FError: string;
+    FDiscLocations, FDiscNames: TArray<string>;
+    FDiscIndex: Integer;
+    procedure ReplaceDisc(const Location: string; Index: Integer);
     procedure LoadBIOS(const RomName: string);
     procedure Configure;
   public
-    // Stream holds a PS-X EXE when no disc is given.
+    function GetDiscCount: Integer;
+    function GetDiscName(Index: Integer): string;
+    function GetDiscIndex: Integer;
+    procedure ChangeDisc(Index: Integer);
+    procedure OpenDisc(const Location: string);
+    procedure EjectDisc;
+    // Stream holds a PS-X EXE or an M3U when no disc is given.
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; OwnedDisc: TCDDisc = nil);
     destructor Destroy; override;
     // A PlayStation disc: PVD system identifier, licence sector or boot files.
@@ -168,9 +182,10 @@ type
 implementation
 
 uses
-  {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF}
-  System.Math, System.Diagnostics, System.UITypes, System.IOUtils, Core.RomFormat, Core.SavePaths,
-  PS1.Types, PS1.Firmware;
+  {$IFDEF MSWINDOWS}
+  Winapi.MMSystem, {$ENDIF}
+  System.Math, System.Diagnostics, System.UITypes, System.IOUtils,
+  Core.RomFormat, Core.SavePaths, PS1.Types, PS1.Firmware;
 
 const
   KeyNames: array[TEmulatorButton] of string =
@@ -264,8 +279,7 @@ end;
 
 { TPS1Worker }
 
-constructor TPS1Worker.Create(const BIOS, Exe, Identity: TBytes; PAL: Boolean; Disc: TCDDisc; const Storage: IStorage;
-  const CardFile1, CardFile2, SnapshotDirectory: string);
+constructor TPS1Worker.Create(const BIOS, Exe, Identity: TBytes; PAL: Boolean; Disc: TCDDisc; const Storage: IStorage; const CardFile1, CardFile2, SnapshotDirectory: string);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
@@ -281,6 +295,7 @@ begin
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil, False, False, '');
   FSnapshots := TSnapshotQueue.Create;
+  FMediaDone := TEvent.Create(nil, True, False, '');
   FInputPortsCommand := TInputPortsCommand.Create;
 end;
 
@@ -293,8 +308,74 @@ begin
   inherited;
   FInputPortsCommand.Free;
   FSnapshots.Free;
+  FMediaDone.Free;
   FWake.Free;
   FLock.Free;
+end;
+
+procedure TPS1Worker.ChangeDisc(Disc: TCDDisc);
+begin
+  if Suspended or Finished then
+    raise EInvalidOpException.Create('Emulation worker is not running');
+  FLock.Acquire;
+  try
+    if FMediaPending then
+      raise EInvalidOpException.Create('A disc change is already pending');
+    FMediaDone.ResetEvent;
+    FNextDisc := Disc;
+    FMediaError := '';
+    FMediaPending := True;
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
+  while FMediaDone.WaitFor(50) <> wrSignaled do
+    if Finished then
+      raise EInvalidOpException.Create('Emulation stopped before changing the disc');
+  FLock.Acquire;
+  try
+    if FMediaError <> '' then
+      raise EReadError.Create(FMediaError);
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TPS1Worker.ProcessMediaChange;
+begin
+  FLock.Acquire;
+  try
+    if not FMediaPending then
+      Exit;
+    try
+      // Keep RAM, CPU and memory cards intact. Only the drive changes media.
+      var Identity: TBytes;
+      if FNextDisc <> nil then
+        Identity := FNextDisc.Identity;
+      FConsole.CDROM.OpenShell;
+      try
+        if FNextDisc <> nil then
+          FConsole.CDROM.CloseShell(FNextDisc);
+      except
+        // Restore the borrowed old disc before the caller can free the candidate.
+        FConsole.CDROM.CloseShell(FDisc);
+        raise;
+      end;
+      FDisc := FNextDisc;
+      FIdentity := Identity;
+      ClearAudio;
+      FConsole.SPU.TakeSamples;
+      Restart;
+    except
+      on E: Exception do
+        FMediaError := E.Message;
+    end;
+    FNextDisc := nil;
+    FMediaPending := False;
+    FMediaDone.SetEvent;
+  finally
+    FLock.Release;
+  end;
 end;
 
 function TPS1Worker.GetInputPorts: TCoreInputPorts;
@@ -535,6 +616,8 @@ end;
 
 procedure TPS1Worker.TransferSnapshot(const Name: string; Loading: Boolean);
 begin
+  if (FDisc = nil) and (Length(FExe) = 0) then
+    raise EInvalidOpException.Create('Insert a disc before saving or loading a PS1 snapshot');
   var Path := ResolveSnapshotPath(FSnapshotDirectory, Name);
   var Console := FConsole;
   var Transfer: TStateTransfer :=
@@ -590,6 +673,7 @@ begin
       Restart;
       while not Terminated do
       begin
+        ProcessMediaChange;
         FInputPortsCommand.Process(
           procedure(const Ports: TCoreInputPorts)
           begin
@@ -763,6 +847,33 @@ begin
   FConfigObject := TPS1Config.Create(FStorage.ConfigFile(ROM_SYSTEM_PS1), FStorage);
   FConfig := FConfigObject;
   FConfig.Load;
+  FDiscIndex := -1;
+  var SourceName := RomName;
+  if RomName.StartsWith('content://', True) then
+    SourceName := FStorage.Describe(RomName).Name;
+  var Playlist := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_M3U);
+  if Playlist then
+  begin
+    FDiscLocations := ReadCDPlaylist(Stream, FStorage, RomName);
+    SetLength(FDiscNames, Length(FDiscLocations));
+    for var I := 0 to High(FDiscLocations) do
+      FDiscNames[I] := FStorage.Describe(FDiscLocations[I]).Name;
+    var DiscStream := FStorage.OpenRead(FDiscLocations[0]);
+    try
+      FDisc := TCDDisc.Create(DiscStream, FStorage, FDiscLocations[0]);
+      if not IsPS1Disc(FDisc) then
+        raise EReadError.Create('M3U disc is not a PlayStation image: ' + FDiscNames[0]);
+    finally
+      DiscStream.Free;
+    end;
+  end
+  else if FDisc <> nil then
+  begin
+    FDiscLocations := TArray<string>.Create(RomName);
+    FDiscNames := TArray<string>.Create(ExtractFileName(SourceName));
+  end;
+  if FDisc <> nil then
+    FDiscIndex := 0;
   if FDisc = nil then
   begin
     var Size := Stream.Size - Stream.Position;
@@ -803,6 +914,10 @@ begin
   end;
 
   var Identity := SnapshotIdentity(FIdentity);
+  // A playlist owns a stable save namespace, independent of the inserted disc.
+  // Disc identities remain unmodified in snapshot headers for compatibility checks.
+  if Playlist then
+    Identity := SnapshotIdentity(TEncoding.UTF8.GetBytes('PS1 M3U/' + ExtractFileName(SourceName) + '/' + Identity));
   FSnapshotDirectory := FStorage.GameSnapshots(ROM_SYSTEM_PS1, RomName, Identity);
   FCardFiles[0] := FStorage.GameSave(ROM_SYSTEM_PS1, RomName, Identity);
   FCardFiles[1] := FStorage.GameSave(ROM_SYSTEM_PS1, RomName, Identity + '-2');
@@ -813,6 +928,86 @@ begin
   Stop;
   FDisc.Free;
   inherited;
+end;
+
+function TPS1CoreAdapter.GetDiscCount: Integer;
+begin
+  Result := Length(FDiscLocations);
+end;
+
+function TPS1CoreAdapter.GetDiscName(Index: Integer): string;
+begin
+  if (Index < 0) or (Index >= Length(FDiscNames)) then
+    raise EArgumentOutOfRangeException.Create('Invalid disc index');
+  Result := FDiscNames[Index];
+end;
+
+function TPS1CoreAdapter.GetDiscIndex: Integer;
+begin
+  Result := FDiscIndex;
+end;
+
+procedure TPS1CoreAdapter.ReplaceDisc(const Location: string; Index: Integer);
+begin
+  var Stream := FStorage.OpenRead(Location);
+  var Disc: TCDDisc := nil;
+  try
+    Disc := TCDDisc.Create(Stream, FStorage, Location);
+    if not IsPS1Disc(Disc) then
+      raise EReadError.Create('Not a PlayStation disc: ' + Location);
+    var Identity := Disc.Identity;
+    if FWorker <> nil then
+      FWorker.ChangeDisc(Disc);
+    var OldDisc := FDisc;
+    FDisc := Disc;
+    Disc := nil;
+    FIdentity := Identity;
+    FDiscIndex := Index;
+    OldDisc.Free;
+  finally
+    Disc.Free;
+    Stream.Free;
+  end;
+end;
+
+procedure TPS1CoreAdapter.ChangeDisc(Index: Integer);
+begin
+  if (Index < 0) or (Index >= GetDiscCount) then
+    raise EArgumentOutOfRangeException.Create('Invalid disc index');
+  if Index = FDiscIndex then
+    Exit;
+  ReplaceDisc(FDiscLocations[Index], Index);
+end;
+
+procedure TPS1CoreAdapter.OpenDisc(const Location: string);
+begin
+  if GetDiscCount = 0 then
+    raise EInvalidOpException.Create('This PS1 session has no CD game');
+  for var I := 0 to High(FDiscLocations) do
+    if FDiscLocations[I] = Location then
+    begin
+      ChangeDisc(I);
+      Exit;
+    end;
+  var Name := FStorage.Describe(Location).Name;
+  var Index := Length(FDiscLocations);
+  // Allocate metadata first; a failed load leaves the running session unchanged.
+  var Locations := FDiscLocations + TArray<string>.Create(Location);
+  var Names := FDiscNames + TArray<string>.Create(Name);
+  ReplaceDisc(Location, Index);
+  FDiscLocations := Locations;
+  FDiscNames := Names;
+end;
+
+procedure TPS1CoreAdapter.EjectDisc;
+begin
+  if (GetDiscCount = 0) or (FDiscIndex < 0) then
+    Exit;
+  if FWorker <> nil then
+    FWorker.ChangeDisc(nil);
+  FreeAndNil(FDisc);
+  FDiscIndex := -1;
+  FIdentity := nil;
 end;
 
 // Setting (path or builtin:<name>), else a BIOS beside the game or in the
@@ -1105,3 +1300,4 @@ begin
 end;
 
 end.
+

@@ -1,4 +1,4 @@
-﻿object LibraryView: TLibraryView
+object LibraryView: TLibraryView
   Size.Width = 1224.000000000000000000
   Size.Height = 818.000000000000000000
   Size.PlatformDefault = False
@@ -410,20 +410,22 @@
         TabOrder = 2
       end
       object EditRomPath: TEdit
+        Touch.InteractiveGestures = [LongTap, DoubleTap]
         Align = Top
+        StyleLookup = 'transparentedit'
+        TabOrder = 3
+        ReadOnly = True
+        TextSettings.Font.Size = 13.000000000000000000
+        TextSettings.FontColor = xFFB9C2CC
+        Position.Y = 410.000000000000000000
         Margins.Right = 12.000000000000000000
         Margins.Bottom = 8.000000000000000000
-        Position.Y = 410.000000000000000000
         Size.Width = 232.000000000000000000
         Size.Height = 32.000000000000000000
         Size.PlatformDefault = False
-        StyleLookup = 'transparentedit'
         StyledSettings = []
-        TextSettings.Font.Size = 13.000000000000000000
-        TextSettings.FontColor = xFFB9C2CC
-        ReadOnly = True
+        ParentShowHint = False
         ShowHint = True
-        TabOrder = 3
       end
       object ButtonPlay: TButton
         Align = Top
@@ -1054,7 +1056,6 @@
       end
       object LayoutLibraryEmptyState: TLayout
         Align = Contents
-        HitTest = False
         Size.Width = 604.000000000000000000
         Size.Height = 608.000000000000000000
         Size.PlatformDefault = False
@@ -1068,16 +1069,18 @@
             Align = Top
             StyledSettings = []
             Margins.Bottom = 16.000000000000000000
+            Size.Width = 520.000000000000000000
             Size.Height = 92.000000000000000000
             Size.PlatformDefault = False
             TextSettings.Font.Size = 18.000000000000000000
             TextSettings.FontColor = xFFE8ECF1
             TextSettings.HorzAlign = Center
-            TextSettings.VertAlign = Center
             Text = 'No games found.'
           end
           object LayoutConfigureLibraryAction: TLayout
             Align = Top
+            Position.Y = 108.000000000000000000
+            Size.Width = 520.000000000000000000
             Size.Height = 42.000000000000000000
             Size.PlatformDefault = False
             object ButtonConfigureLibrary: TButton

@@ -314,9 +314,9 @@ begin
   if Parent = LayoutFunctions then
     Row.Height := 44;
   Row.Position.Y := Y; // Top-alignment ordering key for generated bindings.
-  var L := GameplayLabel(Row, Row, Caption, 13);
+  var L := GameplayLabel(Row, Row, Translate(Caption), 13);
   L.Align := TAlignLayout.Left;
-  L.Width := 66;
+  L.Width := 160;
   if Parent = LayoutFunctions then
     L.Width := 260;
   var Key := TRectangle.Create(Row);

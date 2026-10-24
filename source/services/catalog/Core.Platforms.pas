@@ -106,7 +106,8 @@ begin
     'GameGear', 'gg', 1);
   RegisterPlatform(TRomSystem.PS1, ROM_SYSTEM_PS1, 'PlayStation', 'PS1',
     'Sony', 'PS1 PSX PSone PlayStation', 'ps1', ['ps1', 'psx', 'playstation'],
-    [ROM_EXTENSION_CUE, ROM_EXTENSION_CHD, ROM_EXTENSION_ISO, ROM_EXTENSION_BIN, ROM_EXTENSION_EXE], 'PS1', 'ps1', 2);
+    [ROM_EXTENSION_M3U, ROM_EXTENSION_CUE, ROM_EXTENSION_CHD, ROM_EXTENSION_ISO, ROM_EXTENSION_BIN, ROM_EXTENSION_EXE,
+     ROM_EXTENSION_ZIP], 'PS1', 'ps1', 2);
   RegisterPlatform(TRomSystem.Saturn, ROM_SYSTEM_SATURN, 'SEGA Saturn', 'Saturn',
     'Sega', 'Saturn SH2 CD', 'saturn', ['saturn'], [ROM_EXTENSION_BIN, ROM_EXTENSION_GENERIC, '.bios', ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD],
     'Saturn', 'saturn', 2);

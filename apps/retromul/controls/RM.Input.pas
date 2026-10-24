@@ -898,6 +898,8 @@ begin
       Port := 0;
     if B.Action >= ExtraPadAction then
       Port := 4 + (B.Action - ExtraPadAction) div 32;
+    if (B.Action >= PS1ExtraAction) and (B.Action < PS1ExtraAction + 2 * 16) then
+      Port := (B.Action - PS1ExtraAction) div 16;
     var Source := '';
     if (Port >= 0) and (Port < 12) then
       Source := Ini.ReadString('Ports', 'Source' + IntToStr(Port + 1), '');

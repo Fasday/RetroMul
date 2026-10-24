@@ -626,7 +626,7 @@ begin
           TEmulatorButton.Mode];
       if (Core = ROM_SYSTEM_SNES) and (B = TEmulatorButton.C) then
         Left := True;
-      var Name := CoreButtonName(Core, B);
+      var Name := Translate(CoreButtonName(Core, B));
       AddCallout(Ord(B), PadAction(Port, B), Name, Translate('Button ') + Name, Left, Click);
     end;
   if (Core = ROM_SYSTEM_N64) and (Device is TScreenGamepad) and
@@ -635,8 +635,8 @@ begin
   if (Core = ROM_SYSTEM_PS1) and (Device is TScreenGamepad) then
     for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
       if not TScreenGamepad(Device).AuxiliaryButtonBounds(Ord(Extra)).IsEmpty then
-        AddCallout(-1 - Ord(Extra), PS1Action(Port, Extra), PS1ExtraName(Extra),
-          Translate('Button ') + PS1ExtraName(Extra), True, Click);
+        AddCallout(-1 - Ord(Extra), PS1Action(Port, Extra), Translate(PS1ExtraName(Extra)),
+          Translate('Button ') + Translate(PS1ExtraName(Extra)), True, Click);
   Refresh;
   Resize;
 end;
@@ -1021,6 +1021,12 @@ begin
     FContext.PageId := platform.PageId;
     platform.Initialize(FContext);
   end;
+  ReplaceRuntime('RowPS1VideoEditor', TSettingsComboBox);
+  for var PS1Port := 1 to 2 do
+    ReplaceRuntime('RowPS1ControllerPort' + IntToStr(PS1Port) + 'Editor', TSettingsComboBox);
+  var PS1Clear := FindComponent('EditButtonRowPS1BIOSClear') as TEditButton;
+  PS1Clear.TagObject := FindComponent('EditRowPS1BIOSEditor');
+  PS1Clear.OnClick := ClearPathClick;
   ReplaceRuntime('RowNGModelEditor', TSettingsComboBox);
   ReplaceRuntime('RowShaderModeEditor', TSettingsComboBox);
   ReplaceRuntime('RowShaderScanlinesEditor', TSettingsTrackBar);
@@ -2239,7 +2245,7 @@ procedure TSettingsView.BuildDevice(Port: Integer; const Device: string);
     Binding.Tag := Action;
     Binding.TagObject := D;
     Binding.TagString := Caption;
-    Binding.Text := Caption + '   ·   ' + BindingCaption(FInput, Action);
+    Binding.Text := Translate(Caption) + '   ·   ' + BindingCaption(FInput, Action);
     Binding.OnClick := AssignmentClick;
     Binding.Enabled := FInput <> nil;
   end;
@@ -2365,7 +2371,7 @@ begin
         if D.AssignmentList.Children[i] is TButton then
         begin
           var B := TButton(D.AssignmentList.Children[i]);
-          B.Text := B.TagString + '   ·   ' + BindingCaption(FInput, B.Tag);
+          B.Text := Translate(B.TagString) + '   ·   ' + BindingCaption(FInput, B.Tag);
         end;
     if (D.Capture.Tag >= 0) and (D.Capture <> FCaptureButton) then
       D.Capture.Text := Translate('Assign · ') + BindingCaption(FInput, D.Capture.Tag);
@@ -2432,13 +2438,13 @@ begin
             if (TScreenGamepad(Sender).AuxiliaryButtons and (1 shl Ord(Extra))) <> 0 then
             begin
               Action := PS1Action(D.Port, Extra);
-              Caption := Translate('Button ') + PS1ExtraName(Extra);
+              Caption := Translate('Button ') + Translate(PS1ExtraName(Extra));
             end;
         for var B in TScreenGamepad(Sender).Buttons do
           if B in CoreButtons(SettingsCoreIds[FPage], D.Device) then
           begin
             Action := PadAction(D.Port, B);
-            Caption := Translate('Button ') + CoreButtonName(SettingsCoreIds[FPage], B);
+            Caption := Translate('Button ') + Translate(CoreButtonName(SettingsCoreIds[FPage], B));
             Break;
           end;
       end;

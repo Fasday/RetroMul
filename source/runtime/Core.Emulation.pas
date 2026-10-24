@@ -29,6 +29,8 @@ type
 
   IEmulationRumbleOutput = Core.Emulation.Types.IEmulationRumbleOutput;
 
+  IEmulationDiscControl = Core.Emulation.Types.IEmulationDiscControl;
+
   IEmulationSnapshotLocation = Core.Emulation.Types.IEmulationSnapshotLocation;
 
   IEmulationVirtualControls = Core.Emulation.Types.IEmulationVirtualControls;

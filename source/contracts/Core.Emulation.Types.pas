@@ -98,6 +98,17 @@ type
     property RumbleLevel: Byte read GetRumbleLevel;
   end;
 
+  // Frontend-thread API. Media changes are applied synchronously by the worker.
+  IEmulationDiscControl = interface
+    ['{3DC6D68E-C452-4CB1-862F-8FDDC606A9C1}']
+    function GetDiscCount: Integer;
+    function GetDiscName(Index: Integer): string;
+    function GetDiscIndex: Integer; // -1 while the lid is open.
+    procedure ChangeDisc(Index: Integer);
+    procedure OpenDisc(const Location: string);
+    procedure EjectDisc;
+  end;
+
   IEmulationSnapshotLocation = interface
     ['{E6C77DB0-6B7D-43F9-9C16-C9985DA992E9}']
     function GetSnapshotDirectory: string;

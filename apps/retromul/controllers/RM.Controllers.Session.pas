@@ -254,7 +254,6 @@ begin
   if FState.Browser.Tools[0] <> nil then
   begin
     FState.Browser.Tools[1].Enabled := (FState.Session.Emulation <> nil) and FState.Session.Emulation.SupportsSnapshots and not FState.Session.OpeningRom;
-    FState.Browser.Tools[2].Enabled := FState.Browser.Tools[1].Enabled;
     FState.Browser.Tools[4].Enabled := not FState.Session.OpeningRom;
   end;
   if FState.Browser.ScreenshotTool <> nil then
@@ -699,7 +698,7 @@ begin
   if FileName.StartsWith('content://', True) then
     SourceName := FState.Session.Storage.Describe(FileName).Name;
   var Ext := ExtractFileExt(SourceName);
-  if not (SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD)) then
+  if not (SameText(Ext, ROM_EXTENSION_M3U) or SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD)) then
   begin
     InstallCore(FView.NewCore(FileName), FileName, DisplayName, StartPaused);
     if SnapshotName <> '' then
