@@ -749,7 +749,10 @@ begin
   begin
     var Saved := FStorage.ReadBytes(FFlashSave);
     if Length(Saved) = DCFlashSize then
+    begin
       Move(Saved[0], FConsole.Memory.Flash^, DCFlashSize);
+      FConsole.Flash.Upgrade;
+    end;
   end;
   // Without a disc (ejected) the high-level boot has nothing to start.
   if FConsole.HighLevelBoot then
