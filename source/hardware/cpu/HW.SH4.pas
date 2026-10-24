@@ -219,11 +219,20 @@ type
     FIdleNow0, FIdleCycles: Int64;
     FIdleSide0: Cardinal;
     FIdleCounter: Cardinal;
+    // The counter's host memory and write generation (IdleIteration).
+    FIdleCounterHost: PByte;
+    FIdleCounterGen: PCardinal;
     FJournalOn, FJournalFull: Boolean;
+    // Writes while probing: the address written, the host memory and write
+    // generation behind it, its physical address (FFFFFFFFh when not one
+    // the probe accepts) and the contents before the first write.
     FJournal: array[0..15] of record
       Address: Cardinal;
       Size: Integer;
       Old: UInt64;
+      Host: PByte;
+      Gen: PCardinal;
+      Phys: Cardinal;
     end;
     FJournalCount: Integer;
     FSideEffects: Cardinal;
@@ -502,6 +511,7 @@ type
     function BlockValid(B: PSH4Block): Boolean;
     procedure RunBlocks;
     procedure JournalWrite(A: Cardinal; Size: Integer);
+    procedure JournalHost(A: Cardinal; Host: PByte; Gen: PCardinal; Phys: Cardinal; Size: Integer);
     function IdleIteration(out Counter: Cardinal; out Delta: Int64): Boolean;
     procedure IdleCheck;
     function Read8(A: Cardinal): Cardinal; inline;
@@ -1264,10 +1274,11 @@ begin
     if (Page <> nil) and (Page.Write <> nil) and (Address < $80000000) then
       FastFill(Address, nil, Page);
   end;
-  // The wait-loop journal keeps the old contents of direct-mapped RAM only.
-  if (Page <> nil) and (Page.Write <> nil) and ((Address and Cardinal(Size - 1)) = 0) and not FJournalOn then
+  if (Page <> nil) and (Page.Write <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
   begin
     var H := Page.Write + (Address and $FFF);
+    if FJournalOn then
+      JournalHost(Address, H, Page.Gen, Page.Phys or (Address and $FFF), Size);
     case Size of
       1: H^ := Byte(Value);
       2: PWord(H)^ := Word(Value);
@@ -1379,9 +1390,11 @@ begin
   begin
     var Page := TLBPage(Address);
     if (Page <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
-      if (Page.Write <> nil) and not FJournalOn then
+      if Page.Write <> nil then
       begin
         var H := Page.Write + (Address and $FFF);
+        if FJournalOn then
+          JournalHost(Address, H, Page.Gen, Page.Phys or (Address and $FFF), Size);
         case Size of
           1: H^ := Byte(Value);
           2: PWord(H)^ := Word(Value);
@@ -5199,8 +5212,23 @@ end;
 
 procedure TSH4.JournalWrite(A: Cardinal; Size: Integer);
 begin
+  // Direct-mapped memory: system RAM through P0 (untranslated), P1 or P2.
+  var P := FReadMap[A shr 16];
+  if P = nil then
+  begin
+    FJournalFull := True;
+    Exit;
+  end;
+  var Phys := A and $1FFFFFFF;
+  if not ((A shr 29) in [0, 4, 5]) then
+    Phys := $FFFFFFFF;
+  JournalHost(A, P + (A and $FFFF), @FGenMap[A shr 16][(A shr 12) and 15], Phys, Size);
+end;
+
+procedure TSH4.JournalHost(A: Cardinal; Host: PByte; Gen: PCardinal; Phys: Cardinal; Size: Integer);
+begin
   for var K := 0 to FJournalCount - 1 do
-    if FJournal[K].Address = A then
+    if FJournal[K].Host = Host then
     begin
       if FJournal[K].Size <> Size then
         FJournalFull := True;
@@ -5211,21 +5239,20 @@ begin
     FJournalFull := True;
     Exit;
   end;
-  var P := FReadMap[A shr 16];
-  var Old: UInt64 := 0;
-  if P = nil then
-    FJournalFull := True
+  var Old: UInt64;
+  case Size of
+    1: Old := Host^;
+    2: Old := PWord(Host)^;
+    4: Old := PCardinal(Host)^;
   else
-    case Size of
-      1: Old := (P + (A and $FFFF))^;
-      2: Old := PWord(P + (A and $FFFF))^;
-      4: Old := PCardinal(P + (A and $FFFF))^;
-    else
-      Old := PUInt64(P + (A and $FFFF))^;
-    end;
+    Old := PUInt64(Host)^;
+  end;
   FJournal[FJournalCount].Address := A;
   FJournal[FJournalCount].Size := Size;
   FJournal[FJournalCount].Old := Old;
+  FJournal[FJournalCount].Host := Host;
+  FJournal[FJournalCount].Gen := Gen;
+  FJournal[FJournalCount].Phys := Phys;
   Inc(FJournalCount);
 end;
 
@@ -5243,10 +5270,10 @@ begin
   for var K := 0 to FJournalCount - 1 do
   begin
     var A := FJournal[K].Address;
-    // System RAM only (through P0, P1 or P2 without translation).
-    if not ((A shr 29) in [0, 4, 5]) or ((A and $1FFFFFFF) < $0C000000) or ((A and $1FFFFFFF) >= $10000000) then
+    // System RAM only.
+    if (FJournal[K].Phys < $0C000000) or (FJournal[K].Phys >= $10000000) then
       Exit;
-    var P := FReadMap[A shr 16] + (A and $FFFF);
+    var P := FJournal[K].Host;
     var Current: UInt64;
     case FJournal[K].Size of
       1: Current := P^;
@@ -5260,6 +5287,8 @@ begin
     if (FJournal[K].Size <> 4) or (Counter <> 0) or (Cardinal(Current) <> Cardinal(FJournal[K].Old) - 1) then
       Exit;
     Counter := A;
+    FIdleCounterHost := P;
+    FIdleCounterGen := FJournal[K].Gen;
     OldValue := Cardinal(FJournal[K].Old);
     NewValue := Cardinal(Current);
     Delta := -1;
@@ -5308,7 +5337,7 @@ begin
   var Value: Cardinal := 0;
   if Counter <> 0 then
   begin
-    Value := PCardinal(FReadMap[Counter shr 16] + (Counter and $FFFF))^;
+    Value := PCardinal(FIdleCounterHost)^;
     for var I := 0 to 15 do
       if (S.R[I] = Value) and (FIdleStart.R[I] = Value + 1) then
         Copies := Copies or (Cardinal(1) shl I);
@@ -5331,8 +5360,8 @@ begin
   if Counter <> 0 then
   begin
     var NewValue := Value - Cardinal(Iterations);
-    PCardinal(FWriteMap[Counter shr 16] + (Counter and $FFFF))^ := NewValue;
-    Inc(FGenMap[Counter shr 16][(Counter shr 12) and 15], Cardinal(Iterations));
+    PCardinal(FIdleCounterHost)^ := NewValue;
+    Inc(FIdleCounterGen^, Cardinal(Iterations));
     for var I := 0 to 15 do
       if (Copies shr I) and 1 <> 0 then
         S.R[I] := NewValue;
@@ -5422,7 +5451,7 @@ begin
         else
         begin
           Inc(FIdleHits);
-          if (FIdleHits >= 16) and IdleSkipping and (Next <> FIdleRejected) and not S.DelaySlot and ((S.MMUCR and 1) = 0) then
+          if (FIdleHits >= 16) and IdleSkipping and (Next <> FIdleRejected) and not S.DelaySlot then
           begin
             FIdlePhase := 1;
             FIdleStart := S;
