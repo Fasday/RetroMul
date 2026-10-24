@@ -219,6 +219,10 @@ begin
   Bus.WritePages := @Memory.WritePages;
   Bus.Gens := @Memory.Gens;
   CPU := TSH4.Create(Bus, @Scheduler.Now, @Scheduler.NextDue);
+  // The 32-bit VRAM view, withdrawn over a render in flight (SetRenderPages).
+  for var Area in [$0500, $0700] do
+    for var P := 0 to 255 do
+      CPU.SetVolatile(Area + P);
   Periph := TSH4Periph.Create(CPU, @Scheduler.Now, DMACopy, PeriphSchedule, Self);
   Interrupts := TDCInterrupts.Create(IRLChanged, Self);
   PVR := TDCPVR.Create(Memory, Scheduler, Interrupts);

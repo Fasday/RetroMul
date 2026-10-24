@@ -235,6 +235,8 @@ type
     FTLBChunks: TArray<TArray<TSH4TLBPage>>;
     FTLBFilled: TArray<Integer>;
     FTLBFilledCount: Integer;
+    // Physical 64 KiB pages marked by SetVolatile.
+    FVolatile: array[0..8191] of Boolean;
     FTLBOverflow: Boolean;
     FTLBEntry: Integer;
     FTLBEpoch: Cardinal;
@@ -508,6 +510,11 @@ type
     procedure RemapMemory;
     // One physical 64 KiB page's table entries changed.
     procedure RemapPhysical(Page: Integer);
+    // Physical 64 KiB pages whose host memory the bus may withdraw and give
+    // back while code runs (RemapPhysical): translated accesses to them
+    // always go through the bus, so remapping them leaves cached
+    // translations (and so the UTLB accesses that advance MMUCR.URC) alone.
+    procedure SetVolatile(Page: Integer);
     procedure InvalidateBlocks;
     procedure SetFetchHook(Fetch: TSH4Fetch; User: Pointer);
     // Called with the PC of each instruction; code then runs by steps.
@@ -677,6 +684,13 @@ begin
   // The eight virtual 64 KiB pages that alias a physical one.
   for var Top := 0 to 7 do
     MapPage((Top shl 13) or (Page and $1FFF));
+  if (FTLBFilledCount > 0) and not FVolatile[Page and $1FFF] then
+    TLBFlush;
+end;
+
+procedure TSH4.SetVolatile(Page: Integer);
+begin
+  FVolatile[Page and $1FFF] := True;
   if FTLBFilledCount > 0 then
     TLBFlush;
 end;
@@ -943,7 +957,7 @@ begin
     Exit;
   var Base := Physical and $1FFFF000;
   var Host: PByte := nil;
-  if Base < $1C000000 then
+  if (Base < $1C000000) and not FVolatile[Base shr 16] then
     if Writing then
       Host := FBus.WritePages[Base shr 16]
     else
