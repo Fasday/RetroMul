@@ -111,6 +111,9 @@ type
     procedure CloseLid(NewDisc: TDCDisc);
     procedure CloseLidLater(NewDisc: TDCDisc; Delay: Int64);
     procedure Settle;
+    // For the high-level system calls: INTRQ as the drive raises it when
+    // data is ready, and its acknowledgement by a status read.
+    procedure SetInterrupt(Active: Boolean);
     // Next CD-DA output sample; silence unless playing.
     procedure NextSample(out Left, Right: SmallInt);
     procedure SerializeState(Archive: TStateArchive);
@@ -365,6 +368,17 @@ begin
   // nIEN (device control bit 1) keeps INTRQ low.
   if (S.DeviceControl and 2) = 0 then
     FInterrupts.SetExternal(HollyExtGDROM, True);
+end;
+
+procedure TDCGDROM.SetInterrupt(Active: Boolean);
+begin
+  if Active then
+    RaiseIRQ
+  else
+  begin
+    S.IRQ := False;
+    FInterrupts.SetExternal(HollyExtGDROM, False);
+  end;
 end;
 
 procedure TDCGDROM.SetPending(Kind: Integer; Delay: Int64);

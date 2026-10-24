@@ -626,6 +626,24 @@ begin
   if (FPVR.R[PVRScalerCtlReg shr 2] and $10000) <> 0 then
     FScaleX := 2;
   ReadRegions;
+  // Lists built for another parameter base (TA_ISP_BASE <> PARAM_BASE): by
+  // where the regions point, when that context is newer than one built for
+  // this base.
+  for var E in FEntries do
+  begin
+    var Found := False;
+    for var L := 0 to 4 do
+      if (E.Lists[L] and $80000000) = 0 then
+      begin
+        var ByList := FTA.FindByObjectList(E.Lists[L] and $7FFFFC);
+        if (ByList <> nil) and ((FContext = nil) or (ByList.Used > FContext.Used)) then
+          FContext := ByList;
+        Found := True;
+        Break;
+      end;
+    if Found then
+      Break;
+  end;
   ReadBackground;
   var MaxX := 0;
   var MaxY := 0;

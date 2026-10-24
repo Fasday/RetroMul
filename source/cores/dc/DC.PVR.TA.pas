@@ -65,6 +65,9 @@ type
     // Polygon index ranges per list in submission order.
     ListOrder: TArray<Integer>;
     Used: Int64;
+    // TA_OL_BASE..TA_OL_LIMIT at list init (not saved): where the region
+    // array of a render with another parameter base points.
+    OLBase, OLLimit: Cardinal;
     procedure Clear;
     function AddVertex: PPVRVertex; inline;
     function AddPoly: PPVRPoly; inline;
@@ -124,6 +127,9 @@ type
     procedure SerializeState(Archive: TStateArchive); override;
     // The context last built for a parameter base, or nil.
     function Find(Base: Cardinal): TPVRContext;
+    // The context last built with its object lists around Address, or nil
+    // (renders whose PARAM_BASE differs from TA_ISP_BASE, as Windows CE's).
+    function FindByObjectList(Address: Cardinal): TPVRContext;
   end;
 
 function FloatColor(A, R, G, B: Single): Cardinal;
@@ -262,6 +268,15 @@ begin
       Exit(C);
 end;
 
+function TDCTA.FindByObjectList(Address: Cardinal): TPVRContext;
+begin
+  Result := nil;
+  for var C in FContexts do
+    if (C.Used > 0) and (Address >= C.OLBase) and (Address < C.OLLimit) and
+      ((Result = nil) or (C.Used > Result.Used)) then
+      Result := C;
+end;
+
 procedure TDCTA.WaitIdle(Context: TPVRContext);
 begin
   if (Context <> nil) and (Context = Rendering) and Assigned(OnBusy) then
@@ -273,6 +288,8 @@ begin
   FCurrent := ContextFor(FPVR.R[PVRTAISPBase shr 2] and $7FFFFF);
   WaitIdle(FCurrent);
   FCurrent.Clear;
+  FCurrent.OLBase := FPVR.R[PVRTAOLBase shr 2] and $7FFFFF;
+  FCurrent.OLLimit := FPVR.R[PVRTAOLLimit shr 2] and $7FFFFF;
   FList := -1;
   FListsDone := 0;
   FVertexType := -1;

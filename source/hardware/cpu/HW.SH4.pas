@@ -2,9 +2,10 @@
 
 // Hitachi SH-4 (SH7750/SH7091) instruction interpreter: integer and FPU
 // instructions, delay slots, exceptions and interrupt acceptance, store
-// queues, operand-cache RAM and the UTLB/ITLB arrays. Decoded blocks are
+// queues, operand-cache RAM and address translation through the UTLB (with
+// translated 4 KiB pages cached until the TLB changes). Decoded blocks are
 // cached per virtual PC and execution mode and validated against write
-// generations of their 4 KiB code pages.
+// generations of their 4 KiB code pages (and, translated, their mapping).
 // References: Renesas SH-4 Software Manual (REJ09B0318) and SH7750 Series
 // Hardware Manual (REJ09B0366). Define DC_CHECKED for range/overflow checks.
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
@@ -47,6 +48,8 @@ type
   TSH4OnChipWrite = procedure(User: Pointer; Address, Value: Cardinal; Size: Integer);
   // Optional instruction fetch hook for test harnesses (all fetches when set).
   TSH4Fetch = function(User: Pointer; Address: Cardinal): Word;
+  // Optional observer of instructions run by steps (diagnostics).
+  TSH4StepHook = procedure(User: Pointer; PC: Cardinal);
   // Called for an illegal instruction; True when the owner handled it (HLE
   // firmware entry points) and set PC itself.
   TSH4IllegalHook = function(User: Pointer; Address: Cardinal): Boolean;
@@ -121,16 +124,31 @@ type
   TSH4Block = record
     PC, Mode: Cardinal;
     Count: Integer;
+    // Code reached through the UTLB (Translated): its physical address,
+    // checked again when translations changed since Epoch. Phys and Epoch
+    // fill alignment gaps.
+    Phys: Cardinal;
     Insts: PSH4Inst;
     Code: PWord;
     Words: Integer;
+    Epoch: Cardinal;
     GenPtr, GenPtr2: PCardinal;
     Gen, Gen2: Cardinal;
     Next: PSH4Block;
     // Recently followed successors (validated by PC, mode and code).
     Link: array[0..1] of PSH4Block;
-    Idle: Boolean;
+    Idle, Translated: Boolean;
   end;
+
+  // A 4 KiB page of P0/P3 with a cached translation: host memory for reads
+  // and (when allowed) writes, the physical page and its write generation.
+  TSH4TLBPage = record
+    Read, Write: PByte;
+    Gen: PCardinal;
+    Phys: Cardinal;
+    Privileged: Boolean; // not accessible in user mode
+  end;
+  PSH4TLBPage = ^TSH4TLBPage;
 
   TSH4 = class
   private
@@ -150,6 +168,8 @@ type
     FBus: TSH4Bus;
     FFetch: TSH4Fetch;
     FFetchUser: Pointer;
+    FStepHook: TSH4StepHook;
+    FStepUser: Pointer;
     FIllegalHook: TSH4IllegalHook;
     FIllegalUser: Pointer;
     // Virtual 64 KiB pages for direct access (nil: slow path).
@@ -200,6 +220,25 @@ type
     FBlocksEnabled: Boolean;
     FLenient: Boolean;
     FScratch: array[0..1] of TSH4Inst;
+    // Address translation (MMUCR.AT): translated 4 KiB pages of P0 and P3
+    // in chunks of 16 MiB allocated when first used, the indexes filled
+    // since the last flush, the UTLB entry Translate last matched and a
+    // counter bumped whenever translations change.
+    FTLBChunks: TArray<TArray<TSH4TLBPage>>;
+    FTLBFilled: TArray<Integer>;
+    FTLBFilledCount: Integer;
+    FTLBOverflow: Boolean;
+    FTLBEntry: Integer;
+    FTLBEpoch: Cardinal;
+    FMapStale: Boolean;
+    procedure AssociativeWrite(Value: Cardinal);
+    function TLBIndex(Address: Cardinal): Integer; inline;
+    procedure TLBFill(Address, Physical: Cardinal; Writing: Boolean);
+    function TLBPage(Address: Cardinal): PSH4TLBPage;
+    procedure TLBFlush;
+    procedure TLBInvalidate(const E: TSH4TLBEntry);
+    // Sets FMapStale when the block's code moved (rather than not mapped now).
+    function BlockMapped(B: PSH4Block): Boolean;
     procedure BuildMaps;
     procedure MapPage(Page: Integer);
     function PhysicalPage(Virtual: Cardinal; Writing: Boolean): PByte;
@@ -454,6 +493,8 @@ type
     procedure RemapPhysical(Page: Integer);
     procedure InvalidateBlocks;
     procedure SetFetchHook(Fetch: TSH4Fetch; User: Pointer);
+    // Called with the PC of each instruction; code then runs by steps.
+    procedure SetStepHook(Hook: TSH4StepHook; User: Pointer);
     procedure SetIllegalHook(Hook: TSH4IllegalHook; User: Pointer);
     // Highest pending INTC request: priority level 1..15 and INTEVT code.
     procedure SetInterrupt(Level: Integer; Code: Cardinal);
@@ -462,10 +503,19 @@ type
     procedure Run;
     // Executes exactly one instruction (a delay slot is a separate step).
     procedure Step;
-    // Physical address from a virtual one with the current MMU state, for DMA.
+    // Physical address from a virtual one with the current MMU state (the
+    // low 29 bits where nothing maps it).
     function PhysicalAddress(Virtual: Cardinal): Cardinal;
-    function ReadVirtual32(Address: Cardinal): Cardinal;
-    procedure WriteVirtual32(Address, Value: Cardinal);
+    // For high-level code standing in for the instruction at PC (system
+    // calls): the physical address of a virtual one. Where the MMU cannot
+    // translate it, the CPU takes the exception that instruction would and
+    // the result is False; the handler returns to PC to run it again.
+    function TranslateOrFault(Address: Cardinal; Writing: Boolean; out Physical: Cardinal): Boolean;
+    // Accesses on behalf of the instruction at PC (1, 2 or 4 bytes); then
+    // AccessFaulted is True when one failed and the CPU took its exception.
+    function LoadVirtual(Address: Cardinal; Size: Integer): Cardinal;
+    procedure StoreVirtual(Address, Value: Cardinal; Size: Integer);
+    function AccessFaulted: Boolean;
     procedure SerializeState(Archive: TStateArchive);
     function SRValue: Cardinal;
     procedure SetSR(Value: Cardinal);
@@ -601,6 +651,8 @@ end;
 procedure TSH4.RemapMemory;
 begin
   BuildMaps;
+  if FTLBFilledCount > 0 then
+    TLBFlush;
 end;
 
 procedure TSH4.RemapPhysical(Page: Integer);
@@ -608,6 +660,8 @@ begin
   // The eight virtual 64 KiB pages that alias a physical one.
   for var Top := 0 to 7 do
     MapPage((Top shl 13) or (Page and $1FFF));
+  if FTLBFilledCount > 0 then
+    TLBFlush;
 end;
 
 function TSH4.Read8(A: Cardinal): Cardinal;
@@ -706,9 +760,17 @@ function TSH4.Translate(Address: Cardinal; Writing: Boolean; out Physical: Cardi
 begin
   // UTLB search (ITLB shares it). Without AT, P0..P3 map to the low 29 bits.
   Result := True;
+  FTLBEntry := -1;
   Physical := Address and $1FFFFFFF;
   if ((S.MMUCR and 1) = 0) or ((Address >= $80000000) and (Address < $C0000000)) then
     Exit;
+  // URC, the entry LDTLB replaces, advances on every UTLB access and wraps
+  // at URB (when set) or 64.
+  var URC := ((S.MMUCR shr 10) and 63) + 1;
+  var URB := (S.MMUCR shr 18) and 63;
+  if (URC = 64) or ((URB > 0) and (URC = URB)) then
+    URC := 0;
+  S.MMUCR := (S.MMUCR and not Cardinal($FC00)) or (URC shl 10);
   var ASID := S.PTEH and $FF;
   var Shared := (S.MMUCR and $100) <> 0; // SV: single virtual memory
   var Found := -1;
@@ -772,6 +834,159 @@ begin
     Exit(False);
   end;
   Physical := Physical and $1FFFFFFF;
+  FTLBEntry := Found;
+end;
+
+procedure TSH4.AssociativeWrite(Value: Cardinal);
+begin
+  // UTLB address array write with A set: the valid entries that translate
+  // the VPN for the ASID in Value (by the usual rules) take its V and D.
+  var Shared := ((S.MMUCR and $100) <> 0) and ((S.SR and SRMD) <> 0);
+  for var I := 0 to 63 do
+  begin
+    var E := S.UTLB[I];
+    if (E.Flags and $100) = 0 then
+      Continue;
+    var Mask: Cardinal;
+    case ((E.Flags shr 6) and 2) or ((E.Flags shr 4) and 1) of
+      0: Mask := $FFFFFC00;
+      1: Mask := $FFFFF000;
+      2: Mask := $FFFF0000;
+    else
+      Mask := $FFF00000;
+    end;
+    if ((E.VPN xor Value) and Mask) <> 0 then
+      Continue;
+    if ((E.Flags and 2) = 0) and not Shared and (E.ASID <> (Value and $FF)) then
+      Continue;
+    S.UTLB[I].Flags := (E.Flags and not Cardinal($104)) or (Value and $100) or ((Value shr 7) and 4);
+  end;
+end;
+
+function TSH4.TLBIndex(Address: Cardinal): Integer;
+begin
+  // P0 (00000000..7FFFFFFF), then P3 (C0000000..DFFFFFFF); -1 elsewhere.
+  if Address < $80000000 then
+    Result := Integer(Address shr 12)
+  else if (Address >= $C0000000) and (Address < $E0000000) then
+    Result := $80000 + Integer((Address - $C0000000) shr 12)
+  else
+    Result := -1;
+end;
+
+procedure TSH4.TLBFill(Address, Physical: Cardinal; Writing: Boolean);
+begin
+  // After a successful Translate: pages of host memory mapped by entries of
+  // 4 KiB or more are cached for later accesses of the same kind.
+  if FTLBEntry < 0 then
+    Exit;
+  var Index := TLBIndex(Address);
+  if Index < 0 then
+    Exit;
+  var E := S.UTLB[FTLBEntry];
+  if (((E.Flags shr 6) and 2) or ((E.Flags shr 4) and 1)) = 0 then
+    Exit;
+  var Base := Physical and $1FFFF000;
+  if Base >= $1C000000 then
+    Exit;
+  var Host: PByte;
+  if Writing then
+    Host := FBus.WritePages[Base shr 16]
+  else
+    Host := FBus.ReadPages[Base shr 16];
+  if Host = nil then
+    Exit;
+  if FTLBChunks = nil then
+  begin
+    SetLength(FTLBChunks, $A0);
+    SetLength(FTLBFilled, 16384);
+  end;
+  if FTLBChunks[Index shr 12] = nil then
+    SetLength(FTLBChunks[Index shr 12], 4096);
+  var Page: PSH4TLBPage := @FTLBChunks[Index shr 12][Index and 4095];
+  if (Page.Read = nil) and (Page.Write = nil) then
+  begin
+    if FTLBFilledCount < Length(FTLBFilled) then
+    begin
+      FTLBFilled[FTLBFilledCount] := Index;
+      Inc(FTLBFilledCount);
+    end
+    else
+      FTLBOverflow := True;
+  end
+  else if Page.Phys <> Base then
+  begin
+    Page.Read := nil;
+    Page.Write := nil;
+  end;
+  Page.Phys := Base;
+  if Writing then
+  begin
+    Page.Write := Host + (Base and $FFFF);
+    var G := FBus.Gens[Base shr 16];
+    if G <> nil then
+      Page.Gen := @G[(Base shr 12) and 15]
+    else
+      Page.Gen := @FSinkGens[0];
+  end
+  else
+    Page.Read := Host + (Base and $FFFF);
+  Page.Privileged := ((E.Flags shr 5) and 3) < 2;
+end;
+
+function TSH4.TLBPage(Address: Cardinal): PSH4TLBPage;
+begin
+  // The cached translation usable now, if any.
+  Result := nil;
+  if (FTLBChunks = nil) or ((S.MMUCR and 1) = 0) then
+    Exit;
+  var Index := TLBIndex(Address);
+  if (Index < 0) or (FTLBChunks[Index shr 12] = nil) then
+    Exit;
+  Result := @FTLBChunks[Index shr 12][Index and 4095];
+  if Result.Privileged and ((S.SR and SRMD) = 0) then
+    Result := nil;
+end;
+
+procedure TSH4.TLBFlush;
+begin
+  if FTLBOverflow then
+  begin
+    for var Chunk in FTLBChunks do
+      if Chunk <> nil then
+        FillChar(Chunk[0], Length(Chunk) * SizeOf(TSH4TLBPage), 0);
+  end
+  else
+    for var I := 0 to FTLBFilledCount - 1 do
+      FTLBChunks[FTLBFilled[I] shr 12][FTLBFilled[I] and 4095] := Default(TSH4TLBPage);
+  FTLBFilledCount := 0;
+  FTLBOverflow := False;
+  Inc(FTLBEpoch);
+end;
+
+procedure TSH4.TLBInvalidate(const E: TSH4TLBEntry);
+begin
+  // The pages an entry being replaced may have cached (any ASID).
+  Inc(FTLBEpoch);
+  if (FTLBChunks = nil) or ((E.Flags and $100) = 0) then
+    Exit;
+  var Size: Cardinal;
+  case ((E.Flags shr 6) and 2) or ((E.Flags shr 4) and 1) of
+    0: Size := $400;
+    1: Size := $1000;
+    2: Size := $10000;
+  else
+    Size := $100000;
+  end;
+  var First := E.VPN and not (Size - 1);
+  var Address := First and $FFFFF000;
+  while Address - First < Size do
+  begin
+    var Index := TLBIndex(Address);
+    if (Index >= 0) and (FTLBChunks[Index shr 12] <> nil) then
+      FTLBChunks[Index shr 12][Index and 4095] := Default(TSH4TLBPage);
+    Inc(Address, $1000);
+  end;
 end;
 
 function TSH4.PhysicalAddress(Virtual: Cardinal): Cardinal;
@@ -783,16 +998,48 @@ begin
   end;
 end;
 
-function TSH4.ReadVirtual32(Address: Cardinal): Cardinal;
+function TSH4.TranslateOrFault(Address: Cardinal; Writing: Boolean; out Physical: Cardinal): Boolean;
 begin
-  Result := Read32(Address);
-  FFault := False;
+  // P4 and the operand-cache RAM are not translated.
+  if (Address >= $E0000000) or (((Address and $FC000000) = $7C000000) and ((S.CCR and $21) = $21)) then
+  begin
+    Physical := Address and $1FFFFFFF;
+    Exit(True);
+  end;
+  Result := Translate(Address, Writing, Physical) or not AccessFaulted;
 end;
 
-procedure TSH4.WriteVirtual32(Address, Value: Cardinal);
+function TSH4.LoadVirtual(Address: Cardinal; Size: Integer): Cardinal;
 begin
-  Write32(Address, Value);
+  case Size of
+    1: Result := Read8(Address) and $FF;
+    2: Result := Read16(Address) and $FFFF;
+  else
+    Result := Read32(Address);
+  end;
+end;
+
+procedure TSH4.StoreVirtual(Address, Value: Cardinal; Size: Integer);
+begin
+  case Size of
+    1: Write8(Address, Value);
+    2: Write16(Address, Value);
+  else
+    Write32(Address, Value);
+  end;
+end;
+
+function TSH4.AccessFaulted: Boolean;
+begin
+  Result := FFault;
+  if not Result then
+    Exit;
   FFault := False;
+  // TLB misses have their own vector.
+  var Offset: Cardinal := $100;
+  if (S.EXPEVT = SH4ExcTLBMissRead) or (S.EXPEVT = SH4ExcTLBMissWrite) then
+    Offset := $400;
+  EnterException(S.EXPEVT, Offset, S.PC);
 end;
 
 function OCRAMOffset(Address, CCR: Cardinal): Integer; inline;
@@ -846,9 +1093,26 @@ begin
     end;
     Exit;
   end;
+  var Page: PSH4TLBPage := nil;
+  if FTLBChunks <> nil then
+    Page := TLBPage(Address);
+  if (Page <> nil) and (Page.Read <> nil) then
+  begin
+    var H := Page.Read + (Address and $FFF);
+    case Size of
+      1: Result := H^;
+      2: Result := PWord(H)^;
+      4: Result := PCardinal(H)^;
+    else
+      Result := PUInt64(H)^;
+    end;
+    Exit;
+  end;
   var Physical: Cardinal;
   if not Translate(Address, False, Physical) then
     Exit;
+  if FTLBEntry >= 0 then
+    TLBFill(Address, Physical, False);
   if Physical >= $1C000000 then
     Exit(ReadControl(Physical or $E0000000, Size));
   var P := FBus.ReadPages[Physical shr 16];
@@ -913,9 +1177,27 @@ begin
     end;
     Exit;
   end;
+  var Page: PSH4TLBPage := nil;
+  if FTLBChunks <> nil then
+    Page := TLBPage(Address);
+  if (Page <> nil) and (Page.Write <> nil) then
+  begin
+    var H := Page.Write + (Address and $FFF);
+    case Size of
+      1: H^ := Byte(Value);
+      2: PWord(H)^ := Word(Value);
+      4: PCardinal(H)^ := Cardinal(Value);
+    else
+      PUInt64(H)^ := Value;
+    end;
+    Inc(Page.Gen^);
+    Exit;
+  end;
   var Physical: Cardinal;
   if not Translate(Address, True, Physical) then
     Exit;
+  if FTLBEntry >= 0 then
+    TLBFill(Address, Physical, True);
   if Physical >= $1C000000 then
   begin
     WriteControl(Physical or $E0000000, Cardinal(Value), Size);
@@ -1052,10 +1334,7 @@ begin
               (Value and $100) or ((Value shr 7) and 4);
           end
           else
-            for var I := 0 to 63 do
-              if (S.UTLB[I].VPN and $FFFFFC00) = (Value and $FFFFFC00) then
-                S.UTLB[I].Flags := (S.UTLB[I].Flags and not Cardinal($104)) or
-                  (Value and $100) or ((Value shr 7) and 4);
+            AssociativeWrite(Value);
         end
         else if (Address and $00800000) = 0 then
         begin
@@ -1064,11 +1343,17 @@ begin
         end
         else
           S.UTLB[Index].PTEA := Value and $F;
-        InvalidateBlocks;
+        TLBFlush;
       end;
     $FF, $1F:
       case Address and $00FFFFFF of
-        $000000: S.PTEH := Value and $FFFFFCFF;
+        $000000:
+          begin
+            // Another address space: cached translations of the old one go.
+            if ((S.PTEH xor Value) and $FF) <> 0 then
+              TLBFlush;
+            S.PTEH := Value and $FFFFFCFF;
+          end;
         $000004: S.PTEL := Value and $1FFFFDFF;
         $000008: S.TTB := Value;
         $00000C: S.TEA := Value;
@@ -1084,6 +1369,9 @@ begin
               for var I := 0 to 3 do
                 S.ITLB[I].Flags := S.ITLB[I].Flags and not Cardinal($100);
             end;
+            // TI, AT or SV change what addresses map to.
+            if ((Value and 4) <> 0) or (((Old xor S.MMUCR) and $101) <> 0) then
+              TLBFlush;
             if ((Old xor S.MMUCR) and 1) <> 0 then
             begin
               BuildMaps;
@@ -3303,13 +3591,14 @@ function TSH4.OpLDTLB(I: PSH4Inst): Boolean;
 begin
   Result := False;
   var Index := (S.MMUCR shr 10) and 63;
+  // Pages cached from the entry being replaced; code blocks recheck their
+  // translation (see BlockMapped).
+  TLBInvalidate(S.UTLB[Index]);
   S.UTLB[Index].VPN := S.PTEH and $FFFFFC00;
   S.UTLB[Index].ASID := S.PTEH and $FF;
   S.UTLB[Index].PPN := S.PTEL and $1FFFFC00;
   S.UTLB[Index].Flags := S.PTEL and $1FF;
   S.UTLB[Index].PTEA := S.PTEA and $F;
-  if (S.MMUCR and 1) <> 0 then
-    InvalidateBlocks;
 end;
 
 function TSH4.OpMOVCAL(I: PSH4Inst): Boolean;
@@ -4322,17 +4611,64 @@ begin
   if (B.GenPtr^ = B.Gen) and (B.GenPtr2^ = B.Gen2) then
     Exit(True);
   var Code := B.Code;
-  var Address := B.PC;
-  for var I := 0 to B.Words - 1 do
+  if B.Translated then
   begin
-    var P := FReadMap[Address shr 16];
-    if (P = nil) or (PWord(P + (Address and $FFFF))^ <> Code^) then
+    // Within one physical 4 KiB page.
+    var P := FBus.ReadPages[B.Phys shr 16];
+    if P = nil then
       Exit(False);
-    Inc(Code);
-    Inc(Address, 2);
+    P := P + (B.Phys and $FFFF);
+    for var I := 0 to B.Words - 1 do
+      if PWord(P + I * 2)^ <> Code[I] then
+        Exit(False);
+  end
+  else
+  begin
+    var Address := B.PC;
+    for var I := 0 to B.Words - 1 do
+    begin
+      var P := FReadMap[Address shr 16];
+      if (P = nil) or (PWord(P + (Address and $FFFF))^ <> Code^) then
+        Exit(False);
+      Inc(Code);
+      Inc(Address, 2);
+    end;
   end;
   B.Gen := B.GenPtr^;
   B.Gen2 := B.GenPtr2^;
+  Result := True;
+end;
+
+function TSH4.BlockMapped(B: PSH4Block): Boolean;
+begin
+  // Translated code is reused while its virtual address still maps to the
+  // physical address it was read from. Code whose page is not mapped now
+  // (the fetch takes a TLB miss) is kept for when it is again.
+  FMapStale := False;
+  if not B.Translated or (B.Epoch = FTLBEpoch) then
+    Exit(True);
+  Result := False;
+  FMapStale := True;
+  if (S.MMUCR and 1) = 0 then
+    Exit;
+  FMapStale := False;
+  var Page := TLBPage(B.PC);
+  var Phys: Cardinal;
+  if (Page <> nil) and (Page.Read <> nil) then
+    Phys := Page.Phys or (B.PC and $FFF)
+  else
+  begin
+    if not Translate(B.PC, False, Phys) then
+    begin
+      FFault := False;
+      Exit;
+    end;
+    TLBFill(B.PC, Phys, False);
+  end;
+  FMapStale := Phys <> B.Phys;
+  if FMapStale then
+    Exit;
+  B.Epoch := FTLBEpoch;
   Result := True;
 end;
 
@@ -4343,10 +4679,16 @@ begin
   begin
     if (Result.PC = PC) and (Result.Mode = AMode) then
     begin
-      if BlockValid(Result) then
-        Exit;
+      FMapStale := True;
+      if not Result.Translated or BlockMapped(Result) then
+      begin
+        if BlockValid(Result) then
+          Exit;
+        FMapStale := True;
+      end;
       // Stale code: unlink by marking an impossible mode; rebuilt below.
-      Result.Mode := $FFFFFFFF;
+      if FMapStale then
+        Result.Mode := $FFFFFFFF;
       Exit(nil);
     end;
     Result := Result.Next;
@@ -4356,9 +4698,37 @@ end;
 function TSH4.BuildBlock(PC, AMode: Cardinal): PSH4Block;
 begin
   Result := nil;
-  // Only directly mapped code is cached; device memory runs by steps.
-  if (FReadMap[PC shr 16] = nil) or ((PC and 1) <> 0) then
+  if (PC and 1) <> 0 then
     Exit;
+  // Only code in host memory is cached; device memory runs by steps. With
+  // address translation, a block of P0/P3 code stays within one 4 KiB page
+  // mapped by an entry of at least that size.
+  var Translated := False;
+  var CodePage: PByte := nil;
+  var Phys: Cardinal := 0;
+  if FReadMap[PC shr 16] = nil then
+  begin
+    if ((S.MMUCR and 1) = 0) or (TLBIndex(PC) < 0) then
+      Exit;
+    var Page := TLBPage(PC);
+    if (Page = nil) or (Page.Read = nil) then
+    begin
+      var Target: Cardinal;
+      if not Translate(PC, False, Target) then
+      begin
+        // The fetch faults when it runs by steps.
+        FFault := False;
+        Exit;
+      end;
+      TLBFill(PC, Target, False);
+      Page := TLBPage(PC);
+      if (Page = nil) or (Page.Read = nil) then
+        Exit;
+    end;
+    Translated := True;
+    CodePage := Page.Read;
+    Phys := Page.Phys or (PC and $FFF);
+  end;
   if FInstUsed + MaxBlockInsts + 1 > InstChunkSize then
   begin
     Inc(FInstChunk);
@@ -4395,10 +4765,20 @@ begin
   var Slot := False;
   while Count < MaxBlockInsts + 1 do
   begin
-    var Page := FReadMap[Address shr 16];
-    if Page = nil then
-      Break;
-    var Op := PWord(Page + (Address and $FFFF))^;
+    var Op: Word;
+    if Translated then
+    begin
+      if ((Address xor PC) and $FFFFF000) <> 0 then
+        Break;
+      Op := PWord(CodePage + (Address and $FFF))^;
+    end
+    else
+    begin
+      var Page := FReadMap[Address shr 16];
+      if Page = nil then
+        Break;
+      Op := PWord(Page + (Address and $FFFF))^;
+    end;
     var Delayed := Decode(Op, Address, AMode, Slot, Insts[Count]);
     Code[Count] := Op;
     Inc(Count);
@@ -4428,9 +4808,24 @@ begin
   B.Words := Count;
   B.Insts := Insts;
   B.Code := Code;
-  B.GenPtr := @FGenMap[PC shr 16][(PC shr 12) and 15];
-  var Last := PC + Cardinal(Count - 1) * 2;
-  B.GenPtr2 := @FGenMap[Last shr 16][(Last shr 12) and 15];
+  B.Translated := Translated;
+  B.Phys := Phys;
+  B.Epoch := FTLBEpoch;
+  if Translated then
+  begin
+    var G := FBus.Gens[Phys shr 16];
+    if G <> nil then
+      B.GenPtr := @G[(Phys shr 12) and 15]
+    else
+      B.GenPtr := @FZeroGens[0];
+    B.GenPtr2 := B.GenPtr;
+  end
+  else
+  begin
+    B.GenPtr := @FGenMap[PC shr 16][(PC shr 12) and 15];
+    var Last := PC + Cardinal(Count - 1) * 2;
+    B.GenPtr2 := @FGenMap[Last shr 16][(Last shr 12) and 15];
+  end;
   B.Gen := B.GenPtr^;
   B.Gen2 := B.GenPtr2^;
   B.Idle := False;
@@ -4460,6 +4855,13 @@ begin
   Reset;
 end;
 
+procedure TSH4.SetStepHook(Hook: TSH4StepHook; User: Pointer);
+begin
+  FStepHook := Hook;
+  FStepUser := User;
+  ClearBlocks;
+end;
+
 procedure TSH4.SetFetchHook(Fetch: TSH4Fetch; User: Pointer);
 begin
   FFetch := Fetch;
@@ -4486,6 +4888,7 @@ begin
   FExitRequest := False;
   BuildMaps;
   ClearBlocks;
+  TLBFlush;
 end;
 
 procedure TSH4.SetInterrupt(Level: Integer; Code: Cardinal);
@@ -4702,7 +5105,7 @@ begin
       Break;
     end;
     B := nil;
-    if FBlocksEnabled and not S.DelaySlot and not Assigned(FFetch) then
+    if FBlocksEnabled and not S.DelaySlot and not Assigned(FFetch) and not Assigned(FStepHook) then
     begin
       var AMode := Mode;
       // The previous block remembers its last two successors.
@@ -4716,6 +5119,8 @@ begin
             B := nil;
         end;
         if (B <> nil) and ((B.GenPtr^ <> B.Gen) or (B.GenPtr2^ <> B.Gen2)) and not BlockValid(B) then
+          B := nil;
+        if (B <> nil) and B.Translated and not BlockMapped(B) then
           B := nil;
       end;
       if B = nil then
@@ -4794,6 +5199,8 @@ begin
     Inc(Now^);
     if S.Sleeping then
       Exit;
+    if Assigned(FStepHook) then
+      FStepHook(FStepUser, S.PC);
     var Op: Word;
     var Slot := S.DelaySlot;
     if not FetchWord(S.PC, Op) then
@@ -4828,6 +5235,7 @@ begin
     FFault := False;
     BuildMaps;
     ClearBlocks;
+    TLBFlush;
   end;
 end;
 

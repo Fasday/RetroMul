@@ -47,9 +47,11 @@ type
     FCPU: TSH4;
     procedure Store32(Address, Value: Cardinal);
     function Load32(Address: Cardinal): Cardinal;
-    procedure StoreBytes(Address: Cardinal; Data: PByte; Count: Integer);
-    procedure ReadSectors(FAD, Count, Address: Cardinal);
+    // DMA writes physical memory; the CPU's (PIO) view goes through the MMU.
+    procedure StoreBytes(Address: Cardinal; Data: PByte; Count: Integer; DMA: Boolean = False);
+    procedure ReadSectors(FAD, Count, Address: Cardinal; DMA: Boolean);
     procedure Execute;
+    procedure Serve;
     procedure StreamTransfer(Address, Count: Cardinal; DMA: Boolean);
     function DiscPresent: Boolean;
   public
@@ -146,42 +148,68 @@ end;
 
 procedure TDCGDROMHLE.Store32(Address, Value: Cardinal);
 begin
-  FWrite(FCPU.PhysicalAddress(Address), Value, 4);
+  FCPU.StoreVirtual(Address, Value, 4);
+  if FCPU.AccessFaulted then
+    raise EDCSyscallFault.Create('');
 end;
 
 function TDCGDROMHLE.Load32(Address: Cardinal): Cardinal;
 begin
-  Result := Cardinal(FRead(FCPU.PhysicalAddress(Address), 4));
+  Result := FCPU.LoadVirtual(Address, 4);
+  if FCPU.AccessFaulted then
+    raise EDCSyscallFault.Create('');
 end;
 
-procedure TDCGDROMHLE.StoreBytes(Address: Cardinal; Data: PByte; Count: Integer);
+procedure TDCGDROMHLE.StoreBytes(Address: Cardinal; Data: PByte; Count: Integer; DMA: Boolean);
 begin
-  // System RAM directly; other targets byte by byte through the bus.
-  var Physical := FCPU.PhysicalAddress(Address);
-  if (Physical >= $0C000000) and (Physical < $10000000) then
+  while Count > 0 do
   begin
-    var Offset := Physical and (DCRAMSize - 1);
-    var First := Count;
-    if Int64(Offset) + Count > DCRAMSize then
-      First := DCRAMSize - Integer(Offset);
-    Move(Data^, (FMemory.RAM + Offset)^, First);
-    if First < Count then
-      Move(Data[First], FMemory.RAM^, Count - First);
-    FMemory.TouchRAM(Offset, Count);
-    Exit;
+    // Translated a 4 KiB page at a time.
+    var Chunk := Count;
+    var Physical := Address and $1FFFFFFF;
+    if not DMA then
+    begin
+      if Chunk > $1000 - Integer(Address and $FFF) then
+        Chunk := $1000 - Integer(Address and $FFF);
+      if not FCPU.TranslateOrFault(Address, True, Physical) then
+        raise EDCSyscallFault.Create('');
+    end;
+    // System RAM directly; other targets byte by byte.
+    if (Physical >= $0C000000) and (Physical < $10000000) then
+    begin
+      var Offset := Physical and (DCRAMSize - 1);
+      var First := Chunk;
+      if Int64(Offset) + Chunk > DCRAMSize then
+        First := DCRAMSize - Integer(Offset);
+      Move(Data^, (FMemory.RAM + Offset)^, First);
+      if First < Chunk then
+        Move(Data[First], FMemory.RAM^, Chunk - First);
+      FMemory.TouchRAM(Offset, Chunk);
+    end
+    else if DMA then
+      for var I := 0 to Chunk - 1 do
+        FWrite(Physical + Cardinal(I), Data[I], 1)
+    else
+      for var I := 0 to Chunk - 1 do
+      begin
+        FCPU.StoreVirtual(Address + Cardinal(I), Data[I], 1);
+        if FCPU.AccessFaulted then
+          raise EDCSyscallFault.Create('');
+      end;
+    Inc(Address, Chunk);
+    Inc(Data, Chunk);
+    Dec(Count, Chunk);
   end;
-  for var I := 0 to Count - 1 do
-    FWrite(Physical + Cardinal(I), Data[I], 1);
 end;
 
-procedure TDCGDROMHLE.ReadSectors(FAD, Count, Address: Cardinal);
+procedure TDCGDROMHLE.ReadSectors(FAD, Count, Address: Cardinal; DMA: Boolean);
 var
   Buffer: array[0..2047] of Byte;
 begin
   for var I := 0 to Integer(Count) - 1 do
   begin
     FDrive.Disc.ReadData(Integer(FAD) - 150 + I, @Buffer[0]);
-    StoreBytes(Address + Cardinal(I) * 2048, @Buffer[0], 2048);
+    StoreBytes(Address + Cardinal(I) * 2048, @Buffer[0], 2048, DMA);
   end;
   S.CurrentSector := FAD + Count - 1;
 end;
@@ -199,9 +227,15 @@ begin
     var Chunk := 2048 - S.StreamOffset;
     if Chunk > Count then
       Chunk := Count;
-    StoreBytes(Address, @Buffer[S.StreamOffset], Chunk);
+    StoreBytes(Address, @Buffer[S.StreamOffset], Chunk, DMA);
     Inc(Address, Chunk);
     Dec(Count, Chunk);
+    if not DMA then
+    begin
+      // A PIO transfer stopped by an MMU exception continues from here.
+      S.Params[0] := Address;
+      S.Params[1] := Count;
+    end;
     Dec(S.StreamBytes, Chunk);
     Inc(S.StreamOffset, Chunk);
     if S.StreamOffset = 2048 then
@@ -244,10 +278,23 @@ begin
           Exit;
         end;
         FDrive.StopCDDA;
-        ReadSectors(P[0] and $FFFFFF, P[1], P[2]);
-        S.Result[2] := P[1] * 2048;
         if S.Command = CMD_DMAREAD then
+        begin
+          ReadSectors(P[0] and $FFFFFF, P[1], P[2], True);
+          S.Result[2] := P[1] * 2048;
           FInterrupts.RaiseNormal(HollyGDDMA);
+        end
+        else
+          // Sector by sector with the parameters following the progress, so
+          // that a read stopped by an MMU exception continues from there.
+          while S.Params[1] > 0 do
+          begin
+            ReadSectors(S.Params[0] and $FFFFFF, 1, S.Params[2], False);
+            Inc(S.Params[0]);
+            Dec(S.Params[1]);
+            Inc(S.Params[2], 2048);
+            Inc(S.Result[2], 2048);
+          end;
       end;
     CMD_GETTOC, CMD_GETTOC2:
       begin
@@ -406,7 +453,15 @@ begin
   FCPU := CPU;
   Result := True;
   FDrive.Settle;
-  var R: ^TSH4Registers := @CPU.S.R;
+  // A call that makes the CPU take an MMU exception (EDCSyscallFault) runs
+  // again: registers and state change only after the accesses that can
+  // fail, except for PIO transfers, which keep their progress.
+  Serve;
+end;
+
+procedure TDCGDROMHLE.Serve;
+begin
+  var R: ^TSH4Registers := @FCPU.S.R;
   // Superfunction -1: MISC (vector initialization and handlers).
   if R[6] <> 0 then
   begin
@@ -457,9 +512,13 @@ begin
         end;
       end;
     2:
-      // EXEC_SERVER: queued commands run here.
-      if (S.Status = GDC_BUSY) or ((S.Status = GDC_CONTINUE) and (S.Command = CMD_PIO_TRANSFER)) then
-        Execute;
+      begin
+        // EXEC_SERVER: queued commands run here. The boot ROM reads the
+        // drive status, which acknowledges its interrupt.
+        FDrive.SetInterrupt(False);
+        if (S.Status = GDC_BUSY) or ((S.Status = GDC_CONTINUE) and (S.Command = CMD_PIO_TRANSFER)) then
+          Execute;
+      end;
     3:
       begin
         Reset;
@@ -560,6 +619,9 @@ begin
           S.Params[1] := Size;
           S.Command := CMD_PIO_TRANSFER;
           R[0] := 0;
+          // The drive interrupts when the data is ready; Windows CE serves
+          // the transfer from its interrupt thread.
+          FDrive.SetInterrupt(True);
         end;
       end;
   else

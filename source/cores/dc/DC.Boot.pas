@@ -24,6 +24,9 @@ const
   DCStubGDROM2 = DCStubBase + $40;
   DCStubMisc = DCStubBase + $50;
   DCStubEnd = DCStubBase + $60;
+  // The boot ROM's GD-ROM entry point, which Windows CE calls directly
+  // rather than through vector 8C0000BC.
+  DCGDROMEntry = $8C0010F0;
   DCFontAddress = $A0100020;
   DCSystemIDAddress = $8C000068;
   DCHLEOpcode = $FFFF;
@@ -31,6 +34,10 @@ const
 type
   // Requests the console cannot satisfy inside a system call.
   TDCBootRequest = (None, ExitToMenu);
+
+  // Raised by system call code when one of its accesses made the CPU take an
+  // MMU exception (see TSH4.TranslateOrFault); the call runs again later.
+  EDCSyscallFault = class(Exception);
 
   TDCGDROMSyscalls = class
   public
@@ -48,6 +55,8 @@ type
     FPeriph: TSH4Periph;
     FPVR: TDCPVR;
     FRequest: TDCBootRequest;
+    // A store for the calling program (through the MMU).
+    procedure Store(Address, Value: Cardinal; Size: Integer);
     procedure Flashrom;
     procedure Sysinfo;
     procedure CheckDisc;
@@ -99,15 +108,17 @@ begin
   PCardinal(RAM + $E0)^ := DCStubMisc;
   // Stubs: the HLE opcode, then RTS/NOP should a handler decline.
   var Stub := DCStubBase;
-  while Stub < DCStubEnd do
+  while Stub <= DCStubEnd do
   begin
     var P := PWord(RAM + (Stub and $FFFFFF));
+    if Stub = DCStubEnd then
+      P := PWord(RAM + (DCGDROMEntry and $FFFFFF));
     P[0] := DCHLEOpcode;
     P[1] := $000B;
     P[2] := $0009;
     Inc(Stub, $10);
   end;
-  FMemory.TouchRAM(0, $1000);
+  FMemory.TouchRAM(0, $1100);
   Sysinfo;
 end;
 
@@ -188,7 +199,7 @@ begin
   if Length(Data) = 0 then
     raise EReadError.CreateFmt('Boot file %s not found on the disc', [Name]);
   // The boot ROM descrambles boot files read from CD media (MIL-CD, CD-R).
-  if not Disc.IsGDROM then
+  if Disc.ScrambledBootFile then
     DCDescramble(Data);
   Move(Data[0], (RAM + $10000)^, Length(Data));
   FMemory.TouchRAM($8000, $8000 + Cardinal(Length(Data)));
@@ -259,6 +270,13 @@ begin
   end;
 end;
 
+procedure TDCBoot.Store(Address, Value: Cardinal; Size: Integer);
+begin
+  FCPU.StoreVirtual(Address, Value, Size);
+  if FCPU.AccessFaulted then
+    raise EDCSyscallFault.Create('');
+end;
+
 procedure TDCBoot.Flashrom;
 begin
   var S: ^TSH4State := @FCPU.S;
@@ -268,8 +286,8 @@ begin
         var Offset, Size: Integer;
         if FlashPartition(Integer(S.R[4]), Offset, Size) then
         begin
-          FCPU.WriteVirtual32(S.R[5], Cardinal(Offset));
-          FCPU.WriteVirtual32(S.R[5] + 4, Cardinal(Size));
+          Store(S.R[5], Cardinal(Offset), 4);
+          Store(S.R[5] + 4, Cardinal(Size), 4);
           S.R[0] := 0;
         end
         else
@@ -279,24 +297,19 @@ begin
       begin
         var Offset := S.R[4] and (DCFlashSize - 1);
         for var I := 0 to Integer(S.R[6]) - 1 do
-        begin
-          var Dest := FCPU.PhysicalAddress(S.R[5] + Cardinal(I));
-          if (Dest >= $0C000000) and (Dest < $10000000) then
-            FMemory.RAM[Dest and (DCRAMSize - 1)] := FMemory.Flash[(Offset + Cardinal(I)) and (DCFlashSize - 1)];
-        end;
-        FMemory.TouchRAM(FCPU.PhysicalAddress(S.R[5]), S.R[6]);
+          Store(S.R[5] + Cardinal(I), FMemory.Flash[(Offset + Cardinal(I)) and (DCFlashSize - 1)], 1);
         S.R[0] := 0;
       end;
     2:
       begin
-        // Programming can only clear bits.
+        // Programming can only clear bits; a call run again after an MMU
+        // exception repeats it harmlessly.
         var Offset := S.R[4] and (DCFlashSize - 1);
         for var I := 0 to Integer(S.R[6]) - 1 do
         begin
-          var Source := FCPU.PhysicalAddress(S.R[5] + Cardinal(I));
-          var Value: Byte := $FF;
-          if (Source >= $0C000000) and (Source < $10000000) then
-            Value := FMemory.RAM[Source and (DCRAMSize - 1)];
+          var Value := Byte(FCPU.LoadVirtual(S.R[5] + Cardinal(I), 1));
+          if FCPU.AccessFaulted then
+            raise EDCSyscallFault.Create('');
           var F := (Offset + Cardinal(I)) and (DCFlashSize - 1);
           FMemory.Flash[F] := FMemory.Flash[F] and Value;
         end;
@@ -326,64 +339,79 @@ function TDCBoot.Syscall(Address: Cardinal): Boolean;
 begin
   // Stubs are reached through P1 or P2.
   Address := (Address and $1FFFFFFF) or $80000000;
-  if (Address < DCStubBase) or (Address >= DCStubEnd) or ((Address and $F) <> 0) then
+  if ((Address < DCStubBase) or (Address >= DCStubEnd) or ((Address and $F) <> 0)) and (Address <> DCGDROMEntry) then
     Exit(False);
   var S: ^TSH4State := @FCPU.S;
+  var Entry := S.PC;
   if Trace <> nil then
   begin
     var Line := Format('syscall %.8x r4=%.8x r5=%.8x r6=%.8x r7=%.8x r1=%.8x pr=%.8x', [Address, S.R[4], S.R[5], S.R[6],
       S.R[7], S.R[1], S.PR]);
     // GD-ROM commands: their parameter words.
-    if (Address = DCStubGDROM) and (S.R[6] = 0) and (S.R[7] = 0) and (S.R[5] <> 0) and
+    if ((Address = DCStubGDROM) or (Address = DCGDROMEntry)) and (S.R[6] = 0) and (S.R[7] = 0) and (S.R[5] <> 0) and
       (((S.R[5] shr 24) and $1F) in [$0C..$0F]) then
       for var I := 0 to 3 do
         Line := Line + Format(' p%d=%.8x', [I, PCardinal(FMemory.RAM + ((S.R[5] + Cardinal(I) * 4) and $FFFFFF))^]);
     Trace.Add(Line);
   end;
-  case Address of
-    DCStubSysinfo:
-      case S.R[7] of
-        0:
-          begin
-            Sysinfo;
-            S.R[0] := 0;
-          end;
-        3:
-          S.R[0] := DCSystemIDAddress;
-      else
-        S.R[0] := 0;
-      end;
-    DCStubFont:
-      case S.R[1] of
-        0: S.R[0] := DCFontAddress;
-      else
-        S.R[0] := 0;
-      end;
-    DCStubFlash:
-      Flashrom;
-    DCStubGDROM, DCStubGDROM2:
-      if (GDROM = nil) or not GDROM.Call(FCPU, FMemory) then
-        S.R[0] := $FFFFFFFF;
-    DCStubMisc:
-      case S.R[4] of
-        1:
-          FRequest := TDCBootRequest.ExitToMenu;
-        2:
-          CheckDisc;
-      else
-        S.R[0] := 0;
-      end;
+  try
+    case Address of
+      DCStubSysinfo:
+        case S.R[7] of
+          0:
+            begin
+              Sysinfo;
+              S.R[0] := 0;
+            end;
+          3:
+            S.R[0] := DCSystemIDAddress;
+        else
+          S.R[0] := 0;
+        end;
+      DCStubFont:
+        case S.R[1] of
+          0: S.R[0] := DCFontAddress;
+        else
+          S.R[0] := 0;
+        end;
+      DCStubFlash:
+        Flashrom;
+      DCStubGDROM, DCStubGDROM2, DCGDROMEntry:
+        if (GDROM = nil) or not GDROM.Call(FCPU, FMemory) then
+          S.R[0] := $FFFFFFFF;
+      DCStubMisc:
+        case S.R[4] of
+          1:
+            FRequest := TDCBootRequest.ExitToMenu;
+          2:
+            CheckDisc;
+        else
+          S.R[0] := 0;
+        end;
+    end;
+  except
+    // The CPU took an MMU exception for an access; the call runs again
+    // when the handler returns to it.
+    on EDCSyscallFault do
+    begin
+      if (Trace <> nil) and (Trace.Count > 0) then
+        Trace[Trace.Count - 1] := Trace[Trace.Count - 1] + Format(' -> fault %.3x tea=%.8x', [S.EXPEVT, S.TEA]);
+      Exit(True);
+    end;
   end;
   if (Trace <> nil) and (Trace.Count > 0) then
   begin
     var Tail := Format(' -> r0=%.8x', [S.R[0]]);
     // GDROM_CHECK_DRIVE: the drive status it stored.
-    if (Address = DCStubGDROM) and (S.R[6] = 0) and (S.R[7] = 4) then
+    if ((Address = DCStubGDROM) or (Address = DCGDROMEntry)) and (S.R[6] = 0) and (S.R[7] = 4) and
+      (((S.R[4] shr 24) and $1F) in [$0C..$0F]) then
       Tail := Tail + Format(' status=%d', [PCardinal(FMemory.RAM + (S.R[4] and $FFFFFF))^]);
     Trace[Trace.Count - 1] := Trace[Trace.Count - 1] + Tail;
   end;
-  // Return to the caller.
-  S.PC := S.PR;
+  // Return to the caller, unless a handler passed control to a callback
+  // (which returns there itself).
+  if S.PC = Entry then
+    S.PC := S.PR;
   Result := True;
 end;
 

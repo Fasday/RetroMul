@@ -72,6 +72,7 @@ const
   SB_SDLAS = $005F681C;
   SB_SDST = $005F6820;
   SB_SDDIV = $005F6824;
+  SB_TFREM = $005F6880;
   SB_LMMODE0 = $005F6884;
   SB_LMMODE1 = $005F6888;
   SB_FFST = $005F688C;
@@ -465,6 +466,8 @@ begin
     SB_ISTEXT: Result := FInterrupts.S.External;
     SB_ISTERR: Result := FInterrupts.S.Error;
     SB_FFST: Result := 0;
+    // Free TA FIFO entries: the FIFO is always drained (8 = empty).
+    SB_TFREM: Result := 8;
     SB_SBREV: Result := $0B;
     SB_IML2NRM..SB_IML2NRM + $28:
       begin
@@ -521,7 +524,7 @@ begin
     SB_ADSTAG + $18, SB_ADSTAG + $38, SB_ADSTAG + $58, SB_ADSTAG + $78:
       if (Value and 1) <> 0 then
         StartG2((Aligned - SB_ADSTAG) div $20);
-    SB_FFST, SB_SBREV, SB_GDSTARD, SB_GDLEND:
+    SB_TFREM, SB_FFST, SB_SBREV, SB_GDSTARD, SB_GDLEND:
       ;
     SB_SFRES:
       begin

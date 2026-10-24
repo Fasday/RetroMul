@@ -23,8 +23,11 @@ type
   private
     FDisc: TCDDisc;
     FBootTrack: Integer;
+    // First sector of IP.BIN: the boot track's start, or an IP.BIN file.
+    FBootLBA: Integer;
     FSector: TBytes;
     function FindBootTrack: Integer;
+    function StartsWithHardwareID(LBA: Integer): Boolean;
   public
     // The image remains owned by the caller.
     constructor Create(Disc: TCDDisc);
@@ -42,6 +45,9 @@ type
     // high-density area of a GD-ROM. Words are (CTRL<<28)|(ADR<<24)|FAD.
     function TOC(Area: Integer; out Words: TArray<Cardinal>): Boolean;
     function ReadBootSector(Index: Integer): TBytes;
+    // The boot ROM descrambles boot files of CD media; images whose boot
+    // area is an IP.BIN file hold GD-ROM software as it is.
+    function ScrambledBootFile: Boolean;
     // Root-directory file of the boot track's ISO 9660 volume.
     function FindFile(const Name: string; out LBA: Integer; out Size: Cardinal): Boolean;
     function ReadFile(const Name: string; MaximumSize: Integer): TBytes;
@@ -85,6 +91,24 @@ begin
   FDisc := Disc;
   SetLength(FSector, 2048);
   FBootTrack := FindBootTrack;
+  if FBootTrack > 0 then
+  begin
+    FBootLBA := BootTrack.StartLBA;
+    // Some single-session images of GD-ROM software keep the boot area as
+    // the file IP.BIN of an ISO volume that starts at sector 0.
+    var LBA: Integer;
+    var Size: Cardinal;
+    if not StartsWithHardwareID(FBootLBA) and FindFile('IP.BIN', LBA, Size) and (Size >= 16 * 2048) and
+      StartsWithHardwareID(LBA) then
+      FBootLBA := LBA;
+  end;
+end;
+
+function TDCDisc.StartsWithHardwareID(LBA: Integer): Boolean;
+begin
+  var Sector: TBytes;
+  SetLength(Sector, 2048);
+  Result := ReadData(LBA, @Sector[0]) and CompareMem(@Sector[0], PAnsiChar(HardwareID), 16);
 end;
 
 function TDCDisc.FindBootTrack: Integer;
@@ -176,8 +200,13 @@ end;
 function TDCDisc.ReadBootSector(Index: Integer): TBytes;
 begin
   SetLength(Result, 2048);
-  if (FBootTrack = 0) or not ReadData(BootTrack.StartLBA + Index, @Result[0]) then
+  if (FBootTrack = 0) or not ReadData(FBootLBA + Index, @Result[0]) then
     FillChar(Result[0], 2048, 0);
+end;
+
+function TDCDisc.ScrambledBootFile: Boolean;
+begin
+  Result := not FDisc.HighDensity and (FBootTrack > 0) and (FBootLBA = BootTrack.StartLBA);
 end;
 
 function TDCDisc.TOC(Area: Integer; out Words: TArray<Cardinal>): Boolean;
