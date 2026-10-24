@@ -335,6 +335,7 @@
         <DCCReference Include="..\..\source\cores\dc\DC.GDROM.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.GDROM.HLE.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.ELF.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Font.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Boot.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Console.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH4.pas"/>

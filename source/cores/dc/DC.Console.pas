@@ -99,7 +99,7 @@ type
 implementation
 
 uses
-  System.Math, DC.ELF;
+  System.Math, DC.ELF, DC.Font;
 
 procedure TraceIO(Console: TDCConsole; const Kind: string; Address: Cardinal; Value: UInt64; Size: Integer);
 begin
@@ -266,8 +266,11 @@ begin
   FillChar(Memory.VRAM^, DCVRAMSize, 0);
   FillChar(Memory.ARAM^, DCARAMSize, 0);
   FillChar(Memory.Boot^, DCBootSize, 0);
+  // Without a boot ROM image the high-level boot provides a font of its own.
   if Length(FConfig.BootROM) = DCBootSize then
-    Move(FConfig.BootROM[0], Memory.Boot^, DCBootSize);
+    Move(FConfig.BootROM[0], Memory.Boot^, DCBootSize)
+  else
+    DCWriteFont(Memory.Boot + (DCFontAddress and $1FFFFF));
   // A supplied flash image is kept; otherwise one is generated for the region.
   if Length(FConfig.Flash) = DCFlashSize then
     Move(FConfig.Flash[0], Memory.Flash^, DCFlashSize)

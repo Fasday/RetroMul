@@ -273,6 +273,7 @@ uses
   DC.GDROM in '..\..\source\cores\dc\DC.GDROM.pas',
   DC.GDROM.HLE in '..\..\source\cores\dc\DC.GDROM.HLE.pas',
   DC.ELF in '..\..\source\cores\dc\DC.ELF.pas',
+  DC.Font in '..\..\source\cores\dc\DC.Font.pas',
   DC.Boot in '..\..\source\cores\dc\DC.Boot.pas',
   DC.Console in '..\..\source\cores\dc\DC.Console.pas',
   RM.Settings.DC in 'settings\RM.Settings.DC.pas',
