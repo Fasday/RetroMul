@@ -417,14 +417,20 @@ begin
         Break;
       end;
   var Device := Devices[Port, AUnit];
+  if Trace <> nil then
+  begin
+    var Line := Format('maple port %d unit %d cmd %d words %d data0 %.8x', [Port, AUnit, Command, Words,
+      Frame[Min(1, Words - 1)]]);
+    if (Device = nil) or (Devices[Port, 0] = nil) then
+      Line := Line + ' (none)';
+    Trace.Add(Line);
+  end;
   if (Device = nil) or (Devices[Port, 0] = nil) then
   begin
     Reply[0] := $FFFFFFFF;
     Exit(1);
   end;
   var Response: Byte;
-  if Trace <> nil then
-    Trace.Add(Format('maple port %d unit %d cmd %d words %d data0 %.8x', [Port, AUnit, Command, Words, Frame[Min(1, Words - 1)]]));
   var Length := Device.Handle(Command, Recipient, @Frame[1], Words - 1, @Reply[1], Response);
   // The sender field names the device and the sockets that hold expansions.
   var Sender := Byte(Port shl 6);
@@ -440,6 +446,8 @@ begin
   Reply[0] := Cardinal(Response) or (Cardinal(Byte(Header shr 16)) shl 8) or (Cardinal(Sender) shl 16) or
     (Cardinal(Length) shl 24);
   Result := Length + 1;
+  if (Trace <> nil) and (Command = 1) then
+    Trace.Add(Format('  reply %.8x %.8x %.8x %.8x %.8x', [Reply[0], Reply[1], Reply[2], Reply[3], Reply[4]]));
 end;
 
 function TDCMaple.RunDMA(Table: Cardinal): Integer;

@@ -7,8 +7,8 @@
 // stereo from audio sectors, 588 samples each).
 // References: ATA/ATAPI-4 packet protocol; Marcus Comstedt's GD-ROM notes
 // and the GD-ROM command list documented by the Dreamcast homebrew
-// community. The security commands (70h/71h) are acknowledged without the
-// drive's authentication data, so a real boot ROM rejects GD-ROM media.
+// community. The security commands (70h/71h) report a media check result
+// built from the disc (see SecurityReply).
 {$IFDEF DC_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
@@ -73,6 +73,7 @@ type
     procedure WriteDataWord(Value: Cardinal);
     function MediaType: Cardinal;
     function TrackControl(FAD: Cardinal; out Track: Integer): Byte;
+    function SecurityReply: TBytes;
   public
     S: TDCGDROMState;
     // Not owned; nil without a disc or with the lid open.
@@ -80,6 +81,8 @@ type
     // The disc in the tray (not owned): Disc, or the one inserted when the
     // lid closes.
     Tray: TDCDisc;
+    // Diagnostics: packet commands are listed here when assigned.
+    Trace: TStrings;
     constructor Create(Scheduler: TDCScheduler; Interrupts: TDCInterrupts);
     procedure Reset;
     function Read(Offset: Cardinal; Size: Integer): Cardinal;
@@ -379,6 +382,8 @@ end;
 
 procedure TDCGDROM.Fail(Key, Code: Byte);
 begin
+  if Trace <> nil then
+    Trace.Add(Format('fail %d %.2x', [Key, Code]));
   S.SenseKey := Key;
   S.SenseCode := Code;
   S.Phase := PhaseIdle;
@@ -482,9 +487,24 @@ end;
 procedure TDCGDROM.ATACommand(Command: Cardinal);
 begin
   FScheduler.Cancel(TDCEvent.GDROM);
+  if (Trace <> nil) and (Command <> $A0) then
+    Trace.Add(Format('ata %.2x', [Command]));
   S.Pending := 0;
   S.Error := 0;
   case Command of
+    $00:
+      begin
+        // NOP: aborts the command in progress (ABRT), as the system calls do
+        // to cancel a transfer.
+        S.Phase := PhaseIdle;
+        S.ReadLeft := 0;
+        S.DataPos := 0;
+        S.DataLen := 0;
+        S.Error := $04;
+        S.Status := ATAStatusDRDY or ATAStatusCHECK;
+        S.Reason := ReasonCommand or ReasonToHost;
+        RaiseIRQ;
+      end;
     $08:
       begin
         // Soft reset: the packet device signature, no interrupt.
@@ -529,6 +549,49 @@ begin
   Result := (Cardinal(P[Offset]) shl 16) or (Cardinal(P[Offset + 1]) shl 8) or P[Offset + 2];
 end;
 
+// SYS_REQ_SECU (71h): the result of the drive's media check, obfuscated.
+// Each result byte is preceded by a filler byte, a byte holding the distance
+// N + 2 to the result byte and N - 1 more fillers, so the host extracts it
+// by skipping (as documented with MAME's GD-ROM drive). The 43-byte result
+// is a check byte (1Fh GD-ROM, 10h MIL-CD; the boot ROM tests bit 4) and,
+// for GD-ROM, the disc ID, maker and hardware ID strings of its IP.BIN.
+// Filler and distances come from a fixed generator; the length varies
+// between about 300 and 700 bytes, as real replies vary in length.
+function TDCGDROM.SecurityReply: TBytes;
+begin
+  var Plain: array[0..42] of Byte;
+  FillChar(Plain, SizeOf(Plain), 0);
+  Plain[0] := $10;
+  if (Disc <> nil) and Disc.IsGDROM and Disc.HasBootTrack then
+  begin
+    Plain[0] := $1F;
+    var IP := Disc.ReadBootSector(0);
+    Move(IP[$40], Plain[1], 10);
+    Move(IP[$70], Plain[11], 16);
+    Move(IP[$00], Plain[27], 16);
+  end;
+  Result := nil;
+  var Seed: Cardinal := $2C1F7A63;
+  var Next :=
+    function: Cardinal
+    begin
+      Seed := Seed * 1103515245 + 12345;
+      Result := Seed shr 16;
+    end;
+  for var I := 0 to High(Plain) do
+  begin
+    var Distance := 1 + Integer(Next() mod 14);
+    var Part: TBytes;
+    SetLength(Part, Distance + 2);
+    Part[0] := Byte(Next());
+    Part[1] := Byte(Distance + 2);
+    for var K := 2 to Distance do
+      Part[K] := Byte(Next());
+    Part[Distance + 1] := Plain[I];
+    Result := Result + Part;
+  end;
+end;
+
 function MSFToFAD(M, S, F: Byte): Cardinal;
 begin
   Result := (Cardinal(M) * 60 + S) * 75 + F;
@@ -538,6 +601,13 @@ procedure TDCGDROM.PacketCommand;
 begin
   Settle;
   var P := S.Packet;
+  if Trace <> nil then
+  begin
+    var Line := 'packet';
+    for var I := 0 to 11 do
+      Line := Line + ' ' + IntToHex(P[I], 2);
+    Trace.Add(Line + Format(' limit %d', [S.ByteLimit]));
+  end;
   S.SenseKey := 0;
   S.SenseCode := 0;
   // After a disc change the first medium command reports it.
@@ -719,14 +789,8 @@ begin
       end;
     $71:
       begin
-        // Authentication data is not available: zeros, as many as the host
-        // accepts.
-        var Data: TBytes;
-        SetLength(Data, S.ByteLimit and $FFFF);
-        if Length(Data) = 0 then
-          Complete(CommandDelay)
-        else
-          SendData(Data, 0, Length(Data));
+        var Data := SecurityReply;
+        SendData(Data, 0, Length(Data));
       end;
   else
     Fail(5, $20);

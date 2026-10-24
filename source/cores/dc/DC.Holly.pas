@@ -44,6 +44,8 @@ type
     function RAMPointer(Address: Cardinal): PByte; inline;
   public
     S: TDCHollyState;
+    // SB_SFRES written with 7611h.
+    OnSoftReset: procedure of object;
     constructor Create(Memory: TDCMemory; Scheduler: TDCScheduler; Interrupts: TDCInterrupts; Periph: TSH4Periph;
       PVR: TDCPVR; GDROM: TDCGDROM; AICA: TDCAICA; Maple: TDCMaple);
     procedure Reset;
@@ -308,9 +310,18 @@ begin
     SetLength(Buffer, Length);
     if Length > 0 then
       Moved := FGDROM.DMARead(@Buffer[0], Length);
-    for var I := 0 to Moved - 1 do
-      RAMPointer(Address + Cardinal(I))^ := Buffer[I];
-    FMemory.TouchRAM(Address, Moved);
+    // Programs also load sound data straight into the AICA's wave RAM.
+    if (Address >= $00800000) and (Address < $00A00000) then
+    begin
+      for var I := 0 to Moved div 4 - 1 do
+        FAICA.WriteRAM(Address - $00800000 + Cardinal(I) * 4, PCardinal(@Buffer[I * 4])^, 4);
+    end
+    else
+    begin
+      for var I := 0 to Moved - 1 do
+        RAMPointer(Address + Cardinal(I))^ := Buffer[I];
+      FMemory.TouchRAM(Address, Moved);
+    end;
   end;
   SetReg(SB_GDSTARD, Address + Cardinal(Moved));
   SetReg(SB_GDLEND, Moved);
@@ -513,7 +524,12 @@ begin
     SB_FFST, SB_SBREV, SB_GDSTARD, SB_GDLEND:
       ;
     SB_SFRES:
-      SetReg(Aligned, Value);
+      begin
+        SetReg(Aligned, Value);
+        // 7611h resets the SH-4 (the boot ROM starts a disc this way).
+        if ((Value and $FFFF) = $7611) and Assigned(OnSoftReset) then
+          OnSoftReset;
+      end;
   else
     SetReg(Aligned, Value);
   end;

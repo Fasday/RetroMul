@@ -37,13 +37,19 @@ and the menu call. In Dreamcast settings:
   then returns the boot ROM's font glyphs. Without it the font area holds the
   12x24 ISO 8859-1 glyphs drawn from the public domain Hershey Simplex
   strokes; full-width (Japanese) glyphs stay blank.
-- `Boot ROM file` starts the console from `dc_boot.bin`. Without a disc it
-  shows the system menu; the GD-ROM drive does not provide the authentication
-  data a boot ROM checks, so discs start through the high-level boot only.
+- `Boot ROM file` starts the console from `dc_boot.bin`: the startup
+  animation, then the disc (or the system menu without one). Programs then use
+  the boot ROM's own system calls, which drive the GD-ROM drive by ATA packet
+  commands. The drive answers the security commands (70h/71h) with a media
+  check result built from the disc, in the obfuscated form the boot ROM
+  decodes: GD-ROM, or MIL-CD for CD media. Soul Calibur (self-booting CD) does
+  not find its VMU in this mode; it does with the high-level boot.
 
 The system flash (region, language, broadcast standard and saved settings) is
 generated for the selected region unless a 128 KiB flash file is given, and is
-saved per console as `saves/dc/dc_flash.bin`.
+saved per console as `saves/dc/dc_flash.bin`. At power-on the time in its
+system configuration is set to the clock's, so the boot ROM does not ask for
+the date (it does when the clock is behind that time or 30 days ahead).
 
 ## Controls and peripherals
 
@@ -78,14 +84,15 @@ it is not part of frames, screenshots or frame hashes.
 - Snapshots contain the full machine, decoded TA contexts and VMU contents.
 
 Not implemented: the MMU address translation used by Windows CE games, the
-modem and broadband adapter, NAOMI/Atomiswave, and the GD-ROM authentication
-a real boot ROM requires.
+modem and broadband adapter, and NAOMI/Atomiswave.
 
 ## References
 
 Marcus Comstedt's Dreamcast pages (Maple, VMU, GD-ROM, IP.BIN, system calls,
 scrambling), the Hitachi SH-4 software manual, SingleStepTests/sh4 (MIT),
 KallistiOS examples and headers as usage references, ATA/ATAPI-4 for the
-packet protocol, public PowerVR2/Holly/AICA register descriptions, the
+packet protocol, the notes on the GD-ROM security commands in MAME's GD-ROM
+drive (BSD-3-Clause, format description only), public PowerVR2/Holly/AICA
+register descriptions, the
 240p Test Suite and arm7wrestler DC as test programs, and the Hershey fonts
 (public domain). Code from GPL emulators was not used.

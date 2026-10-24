@@ -33,9 +33,12 @@ type
     FConfig: TDCConsoleConfig;
     FFrameDone: Boolean;
     FHalted: Boolean;
+    FSoftReset: Boolean;
     FFrameCount: Int64;
     FRenderFirst, FRenderLast: Cardinal;
     procedure DispatchEvent(Event: TDCEvent);
+    procedure RequestSoftReset;
+    procedure SoftReset;
     procedure SetRenderPages(Direct: Boolean);
     procedure JoinForMemory;
     procedure JoinForTA;
@@ -227,6 +230,7 @@ begin
   AICA := TDCAICA.Create(Memory, Scheduler, Interrupts);
   Maple := TDCMaple.Create(Memory);
   Holly := TDCHolly.Create(Memory, Scheduler, Interrupts, Periph, PVR, GDROM, AICA, Maple);
+  Holly.OnSoftReset := RequestSoftReset;
   Boot := TDCBoot.Create(CPU, Memory, Periph, PVR);
   GDROMHLE := TDCGDROMHLE.Create(GDROM, Memory, Interrupts, ReadBus, WriteBus);
   Boot.GDROM := GDROMHLE;
@@ -282,6 +286,8 @@ begin
     Flash.Generate(FConfig.Region, Broadcast, FConfig.Language, FConfig.RTCSeconds);
   end;
   Flash.Reset;
+  // The clock is right: the boot ROM need not ask for the date.
+  Flash.SetConfigTime(FConfig.RTCSeconds);
   for var I := 0 to High(Memory.RAMGens) do
     Inc(Memory.RAMGens[I]);
   for var I := 0 to High(Memory.VRAMGens) do
@@ -623,6 +629,31 @@ begin
   Scheduler.Schedule(TDCEvent.Render, Scheduler.Now + 40000 + Int64(Renderer.PolygonsRendered) * 200);
 end;
 
+procedure TDCConsole.RequestSoftReset;
+begin
+  FSoftReset := True;
+  CPU.RequestExit;
+end;
+
+// SB_SFRES: the SH-4 and its on-chip modules restart at the boot ROM; memory,
+// Holly, PVR, AICA and the drive keep their state. Without a boot ROM image
+// there is nothing to restart into, so the program has left to the menu.
+procedure TDCConsole.SoftReset;
+begin
+  FSoftReset := False;
+  if HighLevelBoot then
+  begin
+    FHalted := True;
+    Exit;
+  end;
+  JoinRender;
+  CPU.Reset;
+  Periph.Reset;
+  // Holly keeps driving its interrupt lines.
+  if Interrupts.Level > 0 then
+    Periph.SetIRL(Interrupts.Level);
+end;
+
 procedure TDCConsole.RunFrame;
 begin
   FFrameDone := False;
@@ -632,6 +663,8 @@ begin
       CPU.Run;
     var Event: TDCEvent;
     var At: Int64;
+    if FSoftReset then
+      SoftReset;
     while Scheduler.TakeDue(Event, At) do
       DispatchEvent(Event);
     if Boot.TakeRequest = TDCBootRequest.ExitToMenu then
