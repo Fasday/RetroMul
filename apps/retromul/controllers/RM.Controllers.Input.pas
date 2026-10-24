@@ -525,6 +525,20 @@ begin
     ReadRelativeMouse(FState.Input.Manager, DX, DY, Buttons);
     MouseInput.SendMouseDelta(DX, DY, Buttons);
   end;
+  var PointerInput: IEmulationPointerInput;
+  if Supports(FState.Session.Emulation, IEmulationPointerInput, PointerInput) and PointerInput.UsesPointer then
+  begin
+    var PixelX := 0;
+    var PixelY := 0;
+    var Valid := False;
+    var Mouse: IFMXMouseService;
+    if TPlatformServices.Current.SupportsPlatformService(IFMXMouseService, Mouse) then
+    begin
+      var Point := FView.ImageCanvas.AbsoluteToLocal(FView.ScreenToClient(Mouse.GetMousePos));
+      Valid := TryGetImagePixel(FView.ImageCanvas, Point.X, Point.Y, PixelX, PixelY);
+    end;
+    PointerInput.SetPointer(PixelX, PixelY, Valid);
+  end;
   FView.UpdatePeripheralInput;
   var Peripheral: INesPeripheralCore;
   if Supports(FState.Session.Emulation, INesPeripheralCore, Peripheral) then
