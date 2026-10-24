@@ -158,6 +158,12 @@ type
   end;
   PSH4TLBPage = ^TSH4TLBPage;
 
+  // Host memory of the 4 KiB pages of P0, or their cached translations.
+  TSH4FastPages = array[0..$7FFFF] of PByte;
+  PSH4FastPages = ^TSH4FastPages;
+  TSH4FastWrites = array[0..$7FFFF] of PSH4TLBPage;
+  PSH4FastWrites = ^TSH4FastWrites;
+
   TSH4 = class
   private
     const
@@ -235,8 +241,6 @@ type
     FTLBChunks: TArray<TArray<TSH4TLBPage>>;
     FTLBFilled: TArray<Integer>;
     FTLBFilledCount: Integer;
-    // Physical 64 KiB pages marked by SetVolatile.
-    FVolatile: array[0..8191] of Boolean;
     FTLBOverflow: Boolean;
     FTLBEntry: Integer;
     FTLBEpoch: Cardinal;
@@ -244,6 +248,23 @@ type
     // The UTLB as Address and Mask = Key per entry (invalid: Mask 0, Key 1),
     // updated with the array, for a quick search.
     FUTLBKey, FUTLBMask: array[0..63] of Cardinal;
+    // Physical 64 KiB pages marked by SetVolatile.
+    FVolatile: array[0..8191] of Boolean;
+    // Readable and writable pages of P0 as TLBPage found them, per processor
+    // mode (user, privileged) and only for the current address space, so
+    // translated accesses take one look-up; FFastRead and FFastWrite are the
+    // current mode's. The entries set since the last clear are listed
+    // (Mode shl 31 or Writing shl 30 or page).
+    FFastMaps: array[0..1] of TArray<PByte>;
+    FFastWriteMaps: array[0..1] of TArray<PSH4TLBPage>;
+    FFastRead: PSH4FastPages;
+    FFastWrite: PSH4FastWrites;
+    FFastFilled: TArray<Cardinal>;
+    FFastFilledCount: Integer;
+    FFastOverflow: Boolean;
+    procedure FastFill(Address: Cardinal; Host: PByte; Page: PSH4TLBPage);
+    procedure FastSelect; inline;
+    procedure FastClear;
     procedure UpdateUTLBKey(Index: Integer);
     procedure UpdateUTLBKeys;
     procedure AssociativeWrite(Value: Cardinal);
@@ -1042,6 +1063,7 @@ begin
       FTLBChunks[FTLBFilled[I] shr 12][FTLBFilled[I] and 4095] := Default(TSH4TLBPage);
   FTLBFilledCount := 0;
   FTLBOverflow := False;
+  FastClear;
   Inc(FTLBEpoch);
 end;
 
@@ -1066,6 +1088,12 @@ begin
     var Index := TLBIndex(Address);
     if (Index >= 0) and (FTLBChunks[Index shr 12] <> nil) then
       FTLBChunks[Index shr 12][Index and 4095] := Default(TSH4TLBPage);
+    if (Index >= 0) and (Index < $80000) and (FFastMaps[0] <> nil) then
+      for var M := 0 to 1 do
+      begin
+        FFastMaps[M][Index] := nil;
+        FFastWriteMaps[M][Index] := nil;
+      end;
     Inc(Address, $1000);
   end;
 end;
@@ -1134,10 +1162,22 @@ end;
 
 function TSH4.TranslatedRead(Address: Cardinal; Size: Integer): UInt64;
 begin
-  var Page := TLBPage(Address);
-  if (Page <> nil) and (Page.Read <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
+  var H: PByte := nil;
+  if (FFastRead <> nil) and (Address < $80000000) then
+    H := FFastRead[Address shr 12];
+  if H = nil then
   begin
-    var H := Page.Read + (Address and $FFF);
+    var Page := TLBPage(Address);
+    if Page <> nil then
+    begin
+      H := Page.Read;
+      if (H <> nil) and (Address < $80000000) then
+        FastFill(Address, H, nil);
+    end;
+  end;
+  if (H <> nil) and ((Address and Cardinal(Size - 1)) = 0) then
+  begin
+    H := H + (Address and $FFF);
     case Size of
       1: Result := H^;
       2: Result := PWord(H)^;
@@ -1150,9 +1190,80 @@ begin
     Result := SlowRead(Address, Size);
 end;
 
+procedure TSH4.FastFill(Address: Cardinal; Host: PByte; Page: PSH4TLBPage);
+begin
+  // A readable page's host memory, or (Host nil) a writable page.
+  if FFastMaps[0] = nil then
+  begin
+    for var M := 0 to 1 do
+    begin
+      SetLength(FFastMaps[M], High(TSH4FastPages) + 1);
+      SetLength(FFastWriteMaps[M], High(TSH4FastWrites) + 1);
+    end;
+    SetLength(FFastFilled, 16384);
+  end;
+  var Mode := (S.SR shr 30) and 1;
+  var Index := Address shr 12;
+  var Tag := (Mode shl 31) or Index;
+  if Host <> nil then
+    FFastMaps[Mode][Index] := Host
+  else
+  begin
+    FFastWriteMaps[Mode][Index] := Page;
+    Tag := Tag or $40000000;
+  end;
+  FastSelect;
+  if FFastFilledCount < Length(FFastFilled) then
+  begin
+    FFastFilled[FFastFilledCount] := Tag;
+    Inc(FFastFilledCount);
+  end
+  else
+    FFastOverflow := True;
+end;
+
+procedure TSH4.FastSelect;
+begin
+  var Mode := (S.SR shr 30) and 1;
+  FFastRead := @FFastMaps[Mode][0];
+  FFastWrite := @FFastWriteMaps[Mode][0];
+end;
+
+procedure TSH4.FastClear;
+begin
+  if FFastMaps[0] = nil then
+    Exit;
+  if FFastOverflow then
+    for var M := 0 to 1 do
+    begin
+      FillChar(FFastMaps[M][0], Length(FFastMaps[M]) * SizeOf(PByte), 0);
+      FillChar(FFastWriteMaps[M][0], Length(FFastWriteMaps[M]) * SizeOf(PSH4TLBPage), 0);
+    end
+  else
+    for var I := 0 to FFastFilledCount - 1 do
+    begin
+      var Tag := FFastFilled[I];
+      if (Tag and $40000000) = 0 then
+        FFastMaps[Tag shr 31][Tag and $7FFFF] := nil
+      else
+        FFastWriteMaps[Tag shr 31][Tag and $7FFFF] := nil;
+    end;
+  FFastFilledCount := 0;
+  FFastOverflow := False;
+  FastSelect;
+end;
+
 procedure TSH4.TranslatedWrite(Address: Cardinal; Value: UInt64; Size: Integer);
 begin
-  var Page := TLBPage(Address);
+  var Page: PSH4TLBPage := nil;
+  if (FFastWrite <> nil) and (Address < $80000000) then
+    Page := FFastWrite[Address shr 12];
+  if Page = nil then
+  begin
+    Page := TLBPage(Address);
+    if (Page <> nil) and (Page.Write <> nil) and (Address < $80000000) then
+      FastFill(Address, nil, Page);
+  end;
   // The wait-loop journal keeps the old contents of direct-mapped RAM only.
   if (Page <> nil) and (Page.Write <> nil) and ((Address and Cardinal(Size - 1)) = 0) and not FJournalOn then
   begin
@@ -1496,7 +1607,11 @@ begin
             // Another address space: cached translations keep theirs (see
             // TLBPage); code blocks check their mapping again.
             if ((S.PTEH xor Value) and $FF) <> 0 then
+            begin
               Inc(FTLBEpoch);
+              S.PTEH := Value and $FFFFFCFF;
+              FastClear;
+            end;
             S.PTEH := Value and $FFFFFCFF;
           end;
         $000004: S.PTEL := Value and $1FFFFDFF;
@@ -1586,6 +1701,8 @@ begin
     SwapBanks;
   S.T := Value and SRT;
   S.SR := Value and not Cardinal(SRT);
+  if FFastRead <> nil then
+    FastSelect;
 end;
 
 procedure TSH4.SetSR(Value: Cardinal);
