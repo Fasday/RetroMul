@@ -37,6 +37,8 @@ type
     Gens: TArray<Cardinal>;
     PaletteGen: Cardinal;
     LastUse: Int64;
+    // The scene it was last validated in.
+    Checked: Int64;
   end;
 
   TPVRTextureCache = class
@@ -44,12 +46,19 @@ type
     FMemory: TDCMemory;
     FTextures: TDictionary<UInt64, TPVRTexture>;
     FClock: Int64;
+    // The current scene and the texture Get returned last in it.
+    FScene: Int64;
+    FLast: TPVRTexture;
+    FLastKey: UInt64;
     procedure Decode(T: TPVRTexture; const Palette: array of Cardinal; PalFormat: Cardinal; Stride: Integer);
     function Valid(T: TPVRTexture; PaletteGen: Cardinal): Boolean;
   public
     constructor Create(Memory: TDCMemory);
     destructor Destroy; override;
     procedure Clear;
+    // Starts a scene: textures are validated against VRAM and the palette
+    // once per scene, which must not change them until the next.
+    procedure NewScene;
     // Texture for a TCW and the TSP size bits (U size 5..3, V size 2..0).
     function Get(TCW, TSP: Cardinal; const Palette: array of Cardinal; PalFormat, PaletteGen: Cardinal;
       Stride: Integer): TPVRTexture;
@@ -162,6 +171,13 @@ begin
   for var T in FTextures.Values do
     T.Free;
   FTextures.Clear;
+  FLast := nil;
+end;
+
+procedure TPVRTextureCache.NewScene;
+begin
+  Inc(FScene);
+  FLast := nil;
 end;
 
 procedure TPVRTextureCache.Trim(MaxTextures: Integer; Mark: Int64);
@@ -187,6 +203,8 @@ begin
     var T := FTextures[K];
     if T.LastUse <= Limit then
     begin
+      if T = FLast then
+        FLast := nil;
       T.Free;
       FTextures.Remove(K);
     end;
@@ -214,22 +232,33 @@ begin
     PalKey := ((TCW shr 21) and $3F) or (PalFormat shl 8);
   var Key := (UInt64(TCW) shl 32) or (UInt64(TSP and $3F) shl 16) or (UInt64(Stride and $FF) shl 8) or (PalKey and $FF) or
     (UInt64(PalKey shr 8) shl 14);
-  if FTextures.TryGetValue(Key, Result) then
+  // Polygons in a row often share a texture.
+  if (FLast <> nil) and (Key = FLastKey) then
   begin
-    if not Valid(Result, PaletteGen) then
-      Decode(Result, Palette, PalFormat, Stride);
-    Result.PaletteGen := PaletteGen;
+    Result := FLast;
     Result.LastUse := FClock;
     Exit;
   end;
-  Result := TPVRTexture.Create;
-  Result.TCW := TCW;
-  Result.SizeBits := TSP and $3F;
-  Result.PaletteKey := PalKey;
+  if FTextures.TryGetValue(Key, Result) then
+  begin
+    if (Result.Checked <> FScene) and not Valid(Result, PaletteGen) then
+      Decode(Result, Palette, PalFormat, Stride);
+  end
+  else
+  begin
+    Result := TPVRTexture.Create;
+    Result.TCW := TCW;
+    Result.SizeBits := TSP and $3F;
+    Result.PaletteKey := PalKey;
+    Result.PaletteGen := PaletteGen;
+    Decode(Result, Palette, PalFormat, Stride);
+    FTextures.Add(Key, Result);
+  end;
   Result.PaletteGen := PaletteGen;
-  Decode(Result, Palette, PalFormat, Stride);
   Result.LastUse := FClock;
-  FTextures.Add(Key, Result);
+  Result.Checked := FScene;
+  FLast := Result;
+  FLastKey := Key;
 end;
 
 procedure TPVRTextureCache.Decode(T: TPVRTexture; const Palette: array of Cardinal; PalFormat: Cardinal; Stride: Integer);

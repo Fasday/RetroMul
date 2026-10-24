@@ -511,6 +511,7 @@ end;
 procedure TDCRenderer.Prepare;
 begin
   var Mark := FTextures.Clock;
+  FTextures.NewScene;
   SetLength(FPolys, FContext.PolyCount);
   var Stride := Integer(FPVR.R[PVRTextControl shr 2] and 31) * 32;
   var PalFormat := FPVR.R[PVRPalRamCtrl shr 2] and 3;
