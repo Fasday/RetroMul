@@ -79,6 +79,20 @@ type
   end;
 
   TN64CPU = class
+  private type
+    // The floating-point inputs RunBlocks works out for a COP1 step.
+    TStepFP = record
+      A, B: UInt64;
+      Res: TSoftFloatResult;
+      Cycles: Cardinal;
+      Target: Integer;
+    end;
+    PStepFP = ^TStepFP;
+    // A block step's routine by its Kind (FStepRoutines; RunBlocks calls it
+    // with Self after doing what every step shares): the instruction itself.
+    // Physical: its data access (Step.Size <> 0); FP: the COP1 inputs.
+    // Returns PClocks to add to the step's own.
+    TStepRoutine = function(CPU: TObject; Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
   private
     const
       KSeg0Base = UInt64($FFFFFFFF80000000);
@@ -176,6 +190,89 @@ type
     function BlockValid(B: PN64CPUBlock): Boolean; inline;
     function FastFloat(Op: Cardinal; A, B: UInt64; out R: TSoftFloatResult; out Cycles: Cardinal; out Target: Integer): Boolean;
     function RunBlocks(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
+    // Block step routines (TStepRoutine), by Kind.
+    class var FStepRoutines: array[Byte] of Pointer;
+    function StepNop(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSLL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSRL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSRA(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSLLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSRLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSRAV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepJR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepJALR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMFHI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMTHI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMFLO(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMTLO(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSLLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSRLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSRAV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMULT(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMULTU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDIV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDIVU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDMULT(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDMULTU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDDIV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDDIVU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepADDU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSUBU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepAND(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepOR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepXOR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepNOR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSLT(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSLTU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDADDU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSUBU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSLL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSRL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSRA(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSLL32(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSRL32(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDSRA32(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepRegimm(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepJ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepJAL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBEQ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBEQL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBNE(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBNEL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBLEZ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBLEZL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBGTZ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBGTZL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepADDIU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSLTI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSLTIU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepANDI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepORI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepXORI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLUI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLB(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLH(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLW(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLBU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLHU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLWU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLWC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLDC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepLD(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSB(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSH(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSW(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSD(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSWC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepSDC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMFC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDMFC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepMTC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepDMTC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepFPCompare(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepFPArith(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepFPMov(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+    function StepBC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
     procedure DeviceAccess; inline;
     function FastCode(PC: UInt64; Context: Cardinal): Boolean;
     function FastData(Address: UInt64; Size: Integer; Writing: Boolean; Context: Cardinal; out Physical: Cardinal; out Cached: Boolean): Boolean; inline;
@@ -2664,8 +2761,540 @@ begin
   Inc(FWordUsed, Words);
 end;
 
+// Block step routines: what RunBlocks's steps did by Kind, one routine each.
+// RunBlocks has already moved the PC on (FInstructionPC is the step's own)
+// and zeroes GPR[0] after; A is read before anything is written.
+
+function TN64CPU.StepNop(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Result := 0;
+end;
+
+function TN64CPU.StepSLL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32(GPR[Step.T] shl Step.N);
+  Result := 0;
+end;
+
+function TN64CPU.StepSRL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32((GPR[Step.T] and $FFFFFFFF) shr Step.N);
+  Result := 0;
+end;
+
+function TN64CPU.StepSRA(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32(SAR(GPR[Step.T], Step.N, 32));
+  Result := 0;
+end;
+
+function TN64CPU.StepSLLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32(GPR[Step.T] shl (GPR[Step.S] and 31));
+  Result := 0;
+end;
+
+function TN64CPU.StepSRLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32((GPR[Step.T] and $FFFFFFFF) shr (GPR[Step.S] and 31));
+  Result := 0;
+end;
+
+function TN64CPU.StepSRAV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32(SAR(GPR[Step.T], GPR[Step.S] and 31, 32));
+  Result := 0;
+end;
+
+function TN64CPU.StepJR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(True, False, GPR[Step.S]);
+  Result := 0;
+end;
+
+function TN64CPU.StepJALR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var A := GPR[Step.S];
+  GPR[Step.D] := Add64(FInstructionPC, 8);
+  Branch(True, False, A);
+  Result := 0;
+end;
+
+function TN64CPU.StepMFHI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := HI;
+  Result := 0;
+end;
+
+function TN64CPU.StepMTHI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  HI := GPR[Step.S];
+  Result := 0;
+end;
+
+function TN64CPU.StepMFLO(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := LO;
+  Result := 0;
+end;
+
+function TN64CPU.StepMTLO(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  LO := GPR[Step.S];
+  Result := 0;
+end;
+
+function TN64CPU.StepDSLLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.T] shl (GPR[Step.S] and 63);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSRLV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.T] shr (GPR[Step.S] and 63);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSRAV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SAR(GPR[Step.T], GPR[Step.S] and 63, 64);
+  Result := 0;
+end;
+
+function TN64CPU.StepMULT(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var V: UInt64;
+  Multiply64(SX(GPR[Step.S], 32), SX(GPR[Step.T], 32), True, HI, V);
+  LO := SX(V, 32);
+  HI := SX(V shr 32, 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepMULTU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var V := (GPR[Step.S] and $FFFFFFFF) * (GPR[Step.T] and $FFFFFFFF);
+  LO := SX(V, 32);
+  HI := SX(V shr 32, 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepDIV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Divide64(SX(GPR[Step.S], 32), SX(GPR[Step.T], 32), True, HI, LO);
+  HI := SX(HI, 32);
+  LO := SX(LO, 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepDIVU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Divide64(GPR[Step.S] and $FFFFFFFF, GPR[Step.T] and $FFFFFFFF, False, HI, LO);
+  HI := SX(HI, 32);
+  LO := SX(LO, 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepDMULT(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Multiply64(GPR[Step.S], GPR[Step.T], True, HI, LO);
+  Result := 0;
+end;
+
+function TN64CPU.StepDMULTU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Multiply64(GPR[Step.S], GPR[Step.T], False, HI, LO);
+  Result := 0;
+end;
+
+function TN64CPU.StepDDIV(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Divide64(GPR[Step.S], GPR[Step.T], True, HI, LO);
+  Result := 0;
+end;
+
+function TN64CPU.StepDDIVU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Divide64(GPR[Step.S], GPR[Step.T], False, HI, LO);
+  Result := 0;
+end;
+
+function TN64CPU.StepADDU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32(Add64(GPR[Step.S], GPR[Step.T]));
+  Result := 0;
+end;
+
+function TN64CPU.StepSUBU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SX32(Sub64(GPR[Step.S], GPR[Step.T]));
+  Result := 0;
+end;
+
+function TN64CPU.StepAND(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.S] and GPR[Step.T];
+  Result := 0;
+end;
+
+function TN64CPU.StepOR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.S] or GPR[Step.T];
+  Result := 0;
+end;
+
+function TN64CPU.StepXOR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.S] xor GPR[Step.T];
+  Result := 0;
+end;
+
+function TN64CPU.StepNOR(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := not (GPR[Step.S] or GPR[Step.T]);
+  Result := 0;
+end;
+
+function TN64CPU.StepSLT(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := Ord(SignedLess(GPR[Step.S], GPR[Step.T]));
+  Result := 0;
+end;
+
+function TN64CPU.StepSLTU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := Ord(GPR[Step.S] < GPR[Step.T]);
+  Result := 0;
+end;
+
+function TN64CPU.StepDADDU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := Add64(GPR[Step.S], GPR[Step.T]);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSUBU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := Sub64(GPR[Step.S], GPR[Step.T]);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSLL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.T] shl Step.N;
+  Result := 0;
+end;
+
+function TN64CPU.StepDSRL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.T] shr Step.N;
+  Result := 0;
+end;
+
+function TN64CPU.StepDSRA(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SAR(GPR[Step.T], Step.N, 64);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSLL32(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.T] shl (Step.N + 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSRL32(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := GPR[Step.T] shr (Step.N + 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepDSRA32(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.D] := SAR(GPR[Step.T], Step.N + 32, 64);
+  Result := 0;
+end;
+
+function TN64CPU.StepRegimm(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var T := Integer(Step.T);
+  var Taken := SignedLess(GPR[Step.S], 0);
+  if (T and 1) <> 0 then
+    Taken := not Taken;
+  if T >= 16 then
+    GPR[31] := Add64(FInstructionPC, 8);
+  Branch(Taken, (T and 2) <> 0, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepJ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Step.Op and $3FFFFFF) shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepJAL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[31] := Add64(FInstructionPC, 8);
+  Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Step.Op and $3FFFFFF) shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBEQ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(GPR[Step.S] = GPR[Step.T], False, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBEQL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(GPR[Step.S] = GPR[Step.T], True, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBNE(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(GPR[Step.S] <> GPR[Step.T], False, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBNEL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(GPR[Step.S] <> GPR[Step.T], True, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBLEZ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(not SignedLess(0, GPR[Step.S]), False, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBLEZL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(not SignedLess(0, GPR[Step.S]), True, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBGTZ(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(SignedLess(0, GPR[Step.S]), False, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepBGTZL(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  Branch(SignedLess(0, GPR[Step.S]), True, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
+function TN64CPU.StepADDIU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := SX32(Add64(GPR[Step.S], Step.Value));
+  Result := 0;
+end;
+
+function TN64CPU.StepSLTI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := Ord(SignedLess(GPR[Step.S], Step.Value));
+  Result := 0;
+end;
+
+function TN64CPU.StepSLTIU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := Ord(GPR[Step.S] < Step.Value);
+  Result := 0;
+end;
+
+function TN64CPU.StepANDI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := GPR[Step.S] and (Step.Op and $FFFF);
+  Result := 0;
+end;
+
+function TN64CPU.StepORI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := GPR[Step.S] or (Step.Op and $FFFF);
+  Result := 0;
+end;
+
+function TN64CPU.StepXORI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := GPR[Step.S] xor (Step.Op and $FFFF);
+  Result := 0;
+end;
+
+function TN64CPU.StepLUI(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := SX32((Step.Op and $FFFF) shl 16);
+  Result := 0;
+end;
+
+function TN64CPU.StepLB(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := SX8(FBus.ReadRAM8(Physical));
+  Result := 0;
+end;
+
+function TN64CPU.StepLH(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := SX16(FBus.ReadRAM16(Physical));
+  Result := 0;
+end;
+
+function TN64CPU.StepLW(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := SX32(FBus.ReadRAM32(Physical));
+  Result := 0;
+end;
+
+function TN64CPU.StepLBU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := FBus.ReadRAM8(Physical);
+  Result := 0;
+end;
+
+function TN64CPU.StepLHU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := FBus.ReadRAM16(Physical);
+  Result := 0;
+end;
+
+function TN64CPU.StepLWU(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := FBus.ReadRAM32(Physical);
+  Result := 0;
+end;
+
+function TN64CPU.StepLWC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  SetFPBits(Integer(Step.T), 16, FBus.ReadRAM32(Physical));
+  Result := 0;
+end;
+
+function TN64CPU.StepLDC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  SetFPBits(Integer(Step.T), 17, (UInt64(FBus.ReadRAM32(Physical)) shl 32) or FBus.ReadRAM32(Physical + 4));
+  Result := 0;
+end;
+
+function TN64CPU.StepLD(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := (UInt64(FBus.ReadRAM32(Physical)) shl 32) or FBus.ReadRAM32(Physical + 4);
+  Result := 0;
+end;
+
+function TN64CPU.StepSB(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  FBus.WriteRAM8(Physical, Byte(GPR[Step.T] and $FF));
+  Result := 0;
+end;
+
+function TN64CPU.StepSH(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  FBus.WriteRAM8(Physical, Byte((GPR[Step.T] shr 8) and $FF));
+  FBus.WriteRAM8(Physical + 1, Byte(GPR[Step.T] and $FF));
+  Result := 0;
+end;
+
+function TN64CPU.StepSW(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  FBus.WriteRAM32(Physical, Cardinal(GPR[Step.T] and $FFFFFFFF));
+  Result := 0;
+end;
+
+function TN64CPU.StepSD(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var V := GPR[Step.T];
+  FBus.WriteRAM32(Physical, Cardinal(V shr 32));
+  FBus.WriteRAM32(Physical + 4, Cardinal(V and $FFFFFFFF));
+  Result := 0;
+end;
+
+function TN64CPU.StepSWC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var V := FPBits(Integer(Step.T), 16);
+  FBus.WriteRAM32(Physical, Cardinal(V and $FFFFFFFF));
+  Result := 0;
+end;
+
+function TN64CPU.StepSDC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var V := FPBits(Integer(Step.T), 17);
+  FBus.WriteRAM32(Physical, Cardinal(V shr 32));
+  FBus.WriteRAM32(Physical + 4, Cardinal(V and $FFFFFFFF));
+  Result := 0;
+end;
+
+function TN64CPU.StepMFC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := SX(FPBits(Step.D, 16), 32);
+  Result := 0;
+end;
+
+function TN64CPU.StepDMFC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  GPR[Step.T] := FPBits(Step.D, 17);
+  Result := 0;
+end;
+
+function TN64CPU.StepMTC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  SetFPBits(Step.D, 16, GPR[Step.T]);
+  Result := 0;
+end;
+
+function TN64CPU.StepDMTC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  SetFPBits(Step.D, 17, GPR[Step.T]);
+  Result := 0;
+end;
+
+function TN64CPU.StepFPCompare(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var F := Integer(Step.S);
+  var Fn := Integer(Step.Op and 63);
+  FCR31 := FCR31 and not $3F000;
+  Result := FPClocks(FP.A, FP.B, F, Fn) - 1;
+  var Unordered, Equal, Less: Boolean;
+  SFCompare(FP.A, FP.B, F, Unordered, Equal, Less);
+  FCR31 := FCR31 and not $800000;
+  if (((Fn and 1) <> 0) and Unordered) or (((Fn and 2) <> 0) and Equal) or (((Fn and 4) <> 0) and Less) then
+    FCR31 := FCR31 or $800000;
+end;
+
+function TN64CPU.StepFPArith(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  // As Cop1, which FastFloat found takes no special path.
+  FCR31 := FCR31 and not $3F000;
+  Result := FP.Cycles - 1;
+  // FPExceptions of the result's events (none traps).
+  FCR31 := FCR31 or ((FP.Res.Events and 31) shl 12);
+  FCR31 := FCR31 or (((FP.Res.Events and not (FCR31 shr 7)) and 31) shl 2);
+  var D := Integer(Step.N);
+  if (FP.Target in [16, 20]) and ((CP0[12] and $4000000) <> 0) then
+    FPR[D] := FP.Res.Bits and $FFFFFFFF
+  else
+    SetFPBits(D, FP.Target, FP.Res.Bits);
+end;
+
+function TN64CPU.StepFPMov(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  SetFPBits(Integer(Step.N), 17, FPBits(Integer(Step.D), 17));
+  Result := 0;
+end;
+
+function TN64CPU.StepBC1(Step: PN64CPUStep; Physical: Cardinal; FP: PStepFP): Cardinal;
+begin
+  var T := Integer(Step.T);
+  FCR31 := FCR31 and not $3F000;
+  Branch(((FCR31 and $800000) <> 0) = ((T and 1) <> 0), (T and 2) <> 0, Add64(FPC, Step.Value shl 2));
+  Result := 0;
+end;
+
 function TN64CPU.RunBlocks(MaxSteps: Integer; Limit: UInt64; Context: Cardinal; out Clocks: UInt64): Integer;
 begin
+  var FP: TStepFP;
   // FastRun's steps (after FastReady), exactly as it takes them, from blocks:
   // at most MaxSteps, up to the one that brings their PClocks to Limit or
   // more or after which IdleLimit may find an idle loop's head, or before
@@ -2806,11 +3435,6 @@ begin
       var Physical2: Cardinal := 0;
       var Cached := False;
       var Kind := Step.Kind;
-      var FPA: UInt64 := 0;
-      var FPB: UInt64 := 0;
-      var FPResult: TSoftFloatResult;
-      var FPCycles: Cardinal;
-      var FPTarget: Integer;
       if Step.Size <> 0 then
       begin
         if not FastData(Add64(GPR[Step.S], Step.Value), Step.Size, (Step.Flags and StepWriting) <> 0, Context,
@@ -2843,34 +3467,29 @@ begin
           // FR is fixed for this batch. A unary operation/conversion never
           // consumes FT; a compare and arithmetic 0..3 do.
           var Binary := (Kind = KindCop1Compare) or ((Step.Op and 63) <= 3);
-          FPB := 0;
+          FP.B := 0;
           if (BaseMode and ModeFR) <> 0 then
           begin
-            FPA := FPR[Step.D];
-            if Binary then
-              FPB := FPR[Step.T];
+            FP.A := FPR[Step.D];
+            if Binary then FP.B := FPR[Step.T];
             if F in [16, 20] then
-            begin
-              FPA := FPA and $FFFFFFFF;
-              FPB := FPB and $FFFFFFFF
-            end;
+            begin FP.A := FP.A and $FFFFFFFF; FP.B := FP.B and $FFFFFFFF end;
           end
           else
           begin
-            FPA := FPBits(Integer(Step.D), F);
-            if Binary then
-              FPB := FPBits(Integer(Step.T), F);
+            FP.A := FPBits(Integer(Step.D), F);
+            if Binary then FP.B := FPBits(Integer(Step.T), F);
           end;
           if Kind = KindCop1Compare then
           begin
-            if SFIsNaN(FPA, F) or SFIsNaN(FPB, F) then
+            if SFIsNaN(FP.A, F) or SFIsNaN(FP.B, F) then
             begin
               FSlowSafe := True;
               Stop := True;
               Break;
             end;
           end
-          else if not FastFloat(Step.Op, FPA, FPB, FPResult, FPCycles, FPTarget) then
+          else if not FastFloat(Step.Op, FP.A, FP.B, FP.Res, FP.Cycles, FP.Target) then
           begin
             FSlowSafe := True;
             Stop := True;
@@ -2884,262 +3503,43 @@ begin
       FPreviousCondition := (Step.Flags and StepCondition) <> 0;
       FPreviousException := False;
       FPreviousStore := ((Step.Flags and StepStore) <> 0) and Cached;
-      var PC2 := FPC;
-      FInstructionPC := PC2;
+      FInstructionPC := FPC;
       FInDelay := FDelay;
       FDelay := False;
       FPC := FNextPC;
       FNextPC := Add64(FNextPC, 4);
-      var T := Integer(Step.T);
-      var A := GPR[Step.S];
-      case Kind of
-        KindSpecial + 0:
-          GPR[Step.D] := SX32(GPR[T] shl Step.N);
-        KindSpecial + 2:
-          GPR[Step.D] := SX32((GPR[T] and $FFFFFFFF) shr Step.N);
-        KindSpecial + 3:
-          GPR[Step.D] := SX32(SAR(GPR[T], Step.N, 32));
-        KindSpecial + 4:
-          GPR[Step.D] := SX32(GPR[T] shl (A and 31));
-        KindSpecial + 6:
-          GPR[Step.D] := SX32((GPR[T] and $FFFFFFFF) shr (A and 31));
-        KindSpecial + 7:
-          GPR[Step.D] := SX32(SAR(GPR[T], A and 31, 32));
-        KindSpecial + 8:
-          Branch(True, False, A);
-        KindSpecial + 9:
+      if Kind = KindLuiPair then
+      begin
+        // The ORI/ADDIU after the LUI: its Step as FastRun takes it.
+        Inc(Result);
+        Inc(Clk);
+        FInstructionPC := FPC;
+        FInDelay := False;
+        FPC := FNextPC;
+        FNextPC := Add64(FNextPC, 4);
+        GPR[Step.T] := Step.Value;
+      end
+      else
+      begin
+        Inc(C, TStepRoutine(FStepRoutines[Kind])(Self, Step, Physical2, @FP));
+        // A canonical NOP after successful arithmetic has no reads or
+        // side effects beyond its PC, one clock and clearing FP hazards.
+        // Retain the decoded NOP for exact budget/resume boundaries.
+        if (Kind = KindCop1Arith) and (Step <> Last) and (Clk + C < Limit) and (Result + 1 < MaxSteps) then
+        begin
+          var Tail := PN64CPUStep(NativeUInt(Step) + SizeOf(TN64CPUStep));
+          if (Tail.Op = 0) and (Tail.Flags = 0) and (Tail.Clocks = 1) then
           begin
-            GPR[Step.D] := Add64(PC2, 8);
-            Branch(True, False, A);
-          end;
-        KindSpecial + 15:
-          ; // SYNC
-          KindSpecial + 16:
-          GPR[Step.D] := HI;
-        KindSpecial + 17:
-          HI := A;
-        KindSpecial + 18:
-          GPR[Step.D] := LO;
-        KindSpecial + 19:
-          LO := A;
-        KindSpecial + 20:
-          GPR[Step.D] := GPR[T] shl (A and 63);
-        KindSpecial + 22:
-          GPR[Step.D] := GPR[T] shr (A and 63);
-        KindSpecial + 23:
-          GPR[Step.D] := SAR(GPR[T], A and 63, 64);
-        KindSpecial + 24, KindSpecial + 25:
-          begin
-            var BB := GPR[T];
-            var V: UInt64;
-            if Kind = KindSpecial + 24 then
-              Multiply64(SX(A, 32), SX(BB, 32), True, HI, V)
-            else
-              V := (A and $FFFFFFFF) * (BB and $FFFFFFFF);
-            LO := SX(V, 32);
-            HI := SX(V shr 32, 32);
-          end;
-        KindSpecial + 26, KindSpecial + 27:
-          begin
-            var BB := GPR[T];
-            if Kind = KindSpecial + 26 then
-              Divide64(SX(A, 32), SX(BB, 32), True, HI, LO)
-            else
-              Divide64(A and $FFFFFFFF, BB and $FFFFFFFF, False, HI, LO);
-            HI := SX(HI, 32);
-            LO := SX(LO, 32);
-          end;
-        KindSpecial + 28, KindSpecial + 29:
-          Multiply64(A, GPR[T], Kind = KindSpecial + 28, HI, LO);
-        KindSpecial + 30, KindSpecial + 31:
-          Divide64(A, GPR[T], Kind = KindSpecial + 30, HI, LO);
-        KindSpecial + 33:
-          GPR[Step.D] := SX32(Add64(A, GPR[T]));
-        KindSpecial + 35:
-          GPR[Step.D] := SX32(Sub64(A, GPR[T]));
-        KindSpecial + 36:
-          GPR[Step.D] := A and GPR[T];
-        KindSpecial + 37:
-          GPR[Step.D] := A or GPR[T];
-        KindSpecial + 38:
-          GPR[Step.D] := A xor GPR[T];
-        KindSpecial + 39:
-          GPR[Step.D] := not (A or GPR[T]);
-        KindSpecial + 42:
-          GPR[Step.D] := Ord(SignedLess(A, GPR[T]));
-        KindSpecial + 43:
-          GPR[Step.D] := Ord(A < GPR[T]);
-        KindSpecial + 45:
-          GPR[Step.D] := Add64(A, GPR[T]);
-        KindSpecial + 47:
-          GPR[Step.D] := Sub64(A, GPR[T]);
-        KindSpecial + 56:
-          GPR[Step.D] := GPR[T] shl Step.N;
-        KindSpecial + 58:
-          GPR[Step.D] := GPR[T] shr Step.N;
-        KindSpecial + 59:
-          GPR[Step.D] := SAR(GPR[T], Step.N, 64);
-        KindSpecial + 60:
-          GPR[Step.D] := GPR[T] shl (Step.N + 32);
-        KindSpecial + 62:
-          GPR[Step.D] := GPR[T] shr (Step.N + 32);
-        KindSpecial + 63:
-          GPR[Step.D] := SAR(GPR[T], Step.N + 32, 64);
-        1:
-          begin
-            var Taken2 := SignedLess(A, 0);
-            if (T and 1) <> 0 then
-              Taken2 := not Taken2;
-            if T >= 16 then
-              GPR[31] := Add64(PC2, 8);
-            Branch(Taken2, (T and 2) <> 0, Add64(FPC, Step.Value shl 2));
-          end;
-        2, 3:
-          begin
-            if Kind = 3 then
-              GPR[31] := Add64(PC2, 8);
-            Branch(True, False, (FPC and $FFFFFFFFF0000000) or ((Step.Op and $3FFFFFF) shl 2));
-          end;
-        4, 20:
-          Branch(A = GPR[T], Kind = 20, Add64(FPC, Step.Value shl 2));
-        5, 21:
-          Branch(A <> GPR[T], Kind = 21, Add64(FPC, Step.Value shl 2));
-        6, 22:
-          Branch(not SignedLess(0, A), Kind = 22, Add64(FPC, Step.Value shl 2));
-        7, 23:
-          Branch(SignedLess(0, A), Kind = 23, Add64(FPC, Step.Value shl 2));
-        9:
-          GPR[T] := SX32(Add64(A, Step.Value));
-        10:
-          GPR[T] := Ord(SignedLess(A, Step.Value));
-        11:
-          GPR[T] := Ord(A < Step.Value);
-        12:
-          GPR[T] := A and (Step.Op and $FFFF);
-        13:
-          GPR[T] := A or (Step.Op and $FFFF);
-        14:
-          GPR[T] := A xor (Step.Op and $FFFF);
-        15:
-          GPR[T] := SX32((Step.Op and $FFFF) shl 16);
-        KindLuiPair:
-          begin
-            // The ORI/ADDIU after the LUI: its Step as FastRun takes it.
             Inc(Result);
-            Inc(Clk);
+            Inc(C);
+            Step := Tail;
+            FPreviousFP := -1;
             FInstructionPC := FPC;
             FInDelay := False;
             FPC := FNextPC;
             FNextPC := Add64(FNextPC, 4);
-            GPR[T] := Step.Value;
           end;
-        32:
-          GPR[T] := SX8(FBus.ReadRAM8(Physical2));
-        33:
-          GPR[T] := SX16(FBus.ReadRAM16(Physical2));
-        35:
-          GPR[T] := SX32(FBus.ReadRAM32(Physical2));
-        36:
-          GPR[T] := FBus.ReadRAM8(Physical2);
-        37:
-          GPR[T] := FBus.ReadRAM16(Physical2);
-        39:
-          GPR[T] := FBus.ReadRAM32(Physical2);
-        49:
-          SetFPBits(T, 16, FBus.ReadRAM32(Physical2));
-        53:
-          SetFPBits(T, 17, (UInt64(FBus.ReadRAM32(Physical2)) shl 32) or FBus.ReadRAM32(Physical2 + 4));
-        55:
-          GPR[T] := (UInt64(FBus.ReadRAM32(Physical2)) shl 32) or FBus.ReadRAM32(Physical2 + 4);
-        63:
-          begin
-            var V := GPR[T];
-            FBus.WriteRAM32(Physical2, Cardinal(V shr 32));
-            FBus.WriteRAM32(Physical2 + 4, Cardinal(V and $FFFFFFFF));
-          end;
-        40:
-          begin
-            FBus.WriteRAM8(Physical2, Byte(GPR[T] and $FF));
-          end;
-        41:
-          begin
-            FBus.WriteRAM8(Physical2, Byte((GPR[T] shr 8) and $FF));
-            FBus.WriteRAM8(Physical2 + 1, Byte(GPR[T] and $FF));
-          end;
-        43:
-          begin
-            FBus.WriteRAM32(Physical2, Cardinal(GPR[T] and $FFFFFFFF));
-          end;
-        57:
-          begin
-            var V := FPBits(T, 16);
-            FBus.WriteRAM32(Physical2, Cardinal(V and $FFFFFFFF));
-          end;
-        61:
-          begin
-            var V := FPBits(T, 17);
-            FBus.WriteRAM32(Physical2, Cardinal(V shr 32));
-            FBus.WriteRAM32(Physical2 + 4, Cardinal(V and $FFFFFFFF));
-          end;
-        KindCop1Move + 0:
-          GPR[T] := SX(FPBits(Step.D, 16), 32);
-        KindCop1Move + 1:
-          GPR[T] := FPBits(Step.D, 17);
-        KindCop1Move + 4:
-          SetFPBits(Step.D, 16, GPR[T]);
-        KindCop1Move + 5:
-          SetFPBits(Step.D, 17, GPR[T]);
-        KindCop1Compare:
-          begin
-            var F := Integer(Step.S);
-            var Fn := Integer(Step.Op and 63);
-            FCR31 := FCR31 and not $3F000;
-            Inc(C, FPClocks(FPA, FPB, F, Fn) - 1);
-            var Unordered, Equal, Less: Boolean;
-            SFCompare(FPA, FPB, F, Unordered, Equal, Less);
-            FCR31 := FCR31 and not $800000;
-            if (((Fn and 1) <> 0) and Unordered) or (((Fn and 2) <> 0) and Equal) or (((Fn and 4) <> 0) and Less) then
-              FCR31 := FCR31 or $800000;
-          end;
-        KindCop1Arith:
-          begin
-            // As Cop1, which FastFloat found takes no special path.
-            FCR31 := FCR31 and not $3F000;
-            Inc(C, FPCycles - 1);
-            // FPExceptions of the result's events (none traps).
-            FCR31 := FCR31 or ((FPResult.Events and 31) shl 12);
-            FCR31 := FCR31 or (((FPResult.Events and not (FCR31 shr 7)) and 31) shl 2);
-            var D := Integer(Step.N);
-            if (FPTarget in [16, 20]) and ((CP0[12] and $4000000) <> 0) then
-              FPR[D] := FPResult.Bits and $FFFFFFFF
-            else
-              SetFPBits(D, FPTarget, FPResult.Bits);
-            // A canonical NOP after successful arithmetic has no reads or
-            // side effects beyond its PC, one clock and clearing FP hazards.
-            // Retain the decoded NOP for exact budget/resume boundaries.
-            if (Step <> Last) and (Clk + C < Limit) and (Result + 1 < MaxSteps) then
-            begin
-              var Tail := PN64CPUStep(NativeUInt(Step) + SizeOf(TN64CPUStep));
-              if (Tail.Op = 0) and (Tail.Flags = 0) and (Tail.Clocks = 1) then
-              begin
-                Inc(Result);
-                Inc(C);
-                Step := Tail;
-                FPreviousFP := -1;
-                FInstructionPC := FPC;
-                FInDelay := False;
-                FPC := FNextPC;
-                FNextPC := Add64(FNextPC, 4);
-              end;
-            end;
-          end;
-        KindCop1Mov:
-          SetFPBits(Integer(Step.N), 17, FPBits(Integer(Step.D), 17));
-        KindCop1Branch:
-          begin
-            FCR31 := FCR31 and not $3F000;
-            Branch(((FCR31 and $800000) <> 0) = ((T and 1) <> 0), (T and 2) <> 0, Add64(FPC, Step.Value shl 2));
-          end;
+        end;
       end;
       // (47, CACHE: nothing.)
       GPR[0] := 0;
@@ -3718,6 +4118,92 @@ begin
     (FPreviousFP < -1) or (FPreviousFP > 63)) then
     raise EReadError.Create('Invalid N64 CPU snapshot');
 end;
+
+initialization
+  // Block step routines by Kind (BuildBlock's kinds; any other does nothing,
+  // as CACHE).
+  for var K := 0 to 255 do
+    TN64CPU.FStepRoutines[K] := @TN64CPU.StepNop;
+  TN64CPU.FStepRoutines[KindSpecial + 0] := @TN64CPU.StepSLL;
+  TN64CPU.FStepRoutines[KindSpecial + 2] := @TN64CPU.StepSRL;
+  TN64CPU.FStepRoutines[KindSpecial + 3] := @TN64CPU.StepSRA;
+  TN64CPU.FStepRoutines[KindSpecial + 4] := @TN64CPU.StepSLLV;
+  TN64CPU.FStepRoutines[KindSpecial + 6] := @TN64CPU.StepSRLV;
+  TN64CPU.FStepRoutines[KindSpecial + 7] := @TN64CPU.StepSRAV;
+  TN64CPU.FStepRoutines[KindSpecial + 8] := @TN64CPU.StepJR;
+  TN64CPU.FStepRoutines[KindSpecial + 9] := @TN64CPU.StepJALR;
+  TN64CPU.FStepRoutines[KindSpecial + 16] := @TN64CPU.StepMFHI;
+  TN64CPU.FStepRoutines[KindSpecial + 17] := @TN64CPU.StepMTHI;
+  TN64CPU.FStepRoutines[KindSpecial + 18] := @TN64CPU.StepMFLO;
+  TN64CPU.FStepRoutines[KindSpecial + 19] := @TN64CPU.StepMTLO;
+  TN64CPU.FStepRoutines[KindSpecial + 20] := @TN64CPU.StepDSLLV;
+  TN64CPU.FStepRoutines[KindSpecial + 22] := @TN64CPU.StepDSRLV;
+  TN64CPU.FStepRoutines[KindSpecial + 23] := @TN64CPU.StepDSRAV;
+  TN64CPU.FStepRoutines[KindSpecial + 24] := @TN64CPU.StepMULT;
+  TN64CPU.FStepRoutines[KindSpecial + 25] := @TN64CPU.StepMULTU;
+  TN64CPU.FStepRoutines[KindSpecial + 26] := @TN64CPU.StepDIV;
+  TN64CPU.FStepRoutines[KindSpecial + 27] := @TN64CPU.StepDIVU;
+  TN64CPU.FStepRoutines[KindSpecial + 28] := @TN64CPU.StepDMULT;
+  TN64CPU.FStepRoutines[KindSpecial + 29] := @TN64CPU.StepDMULTU;
+  TN64CPU.FStepRoutines[KindSpecial + 30] := @TN64CPU.StepDDIV;
+  TN64CPU.FStepRoutines[KindSpecial + 31] := @TN64CPU.StepDDIVU;
+  TN64CPU.FStepRoutines[KindSpecial + 33] := @TN64CPU.StepADDU;
+  TN64CPU.FStepRoutines[KindSpecial + 35] := @TN64CPU.StepSUBU;
+  TN64CPU.FStepRoutines[KindSpecial + 36] := @TN64CPU.StepAND;
+  TN64CPU.FStepRoutines[KindSpecial + 37] := @TN64CPU.StepOR;
+  TN64CPU.FStepRoutines[KindSpecial + 38] := @TN64CPU.StepXOR;
+  TN64CPU.FStepRoutines[KindSpecial + 39] := @TN64CPU.StepNOR;
+  TN64CPU.FStepRoutines[KindSpecial + 42] := @TN64CPU.StepSLT;
+  TN64CPU.FStepRoutines[KindSpecial + 43] := @TN64CPU.StepSLTU;
+  TN64CPU.FStepRoutines[KindSpecial + 45] := @TN64CPU.StepDADDU;
+  TN64CPU.FStepRoutines[KindSpecial + 47] := @TN64CPU.StepDSUBU;
+  TN64CPU.FStepRoutines[KindSpecial + 56] := @TN64CPU.StepDSLL;
+  TN64CPU.FStepRoutines[KindSpecial + 58] := @TN64CPU.StepDSRL;
+  TN64CPU.FStepRoutines[KindSpecial + 59] := @TN64CPU.StepDSRA;
+  TN64CPU.FStepRoutines[KindSpecial + 60] := @TN64CPU.StepDSLL32;
+  TN64CPU.FStepRoutines[KindSpecial + 62] := @TN64CPU.StepDSRL32;
+  TN64CPU.FStepRoutines[KindSpecial + 63] := @TN64CPU.StepDSRA32;
+  TN64CPU.FStepRoutines[1] := @TN64CPU.StepRegimm;
+  TN64CPU.FStepRoutines[2] := @TN64CPU.StepJ;
+  TN64CPU.FStepRoutines[3] := @TN64CPU.StepJAL;
+  TN64CPU.FStepRoutines[4] := @TN64CPU.StepBEQ;
+  TN64CPU.FStepRoutines[20] := @TN64CPU.StepBEQL;
+  TN64CPU.FStepRoutines[5] := @TN64CPU.StepBNE;
+  TN64CPU.FStepRoutines[21] := @TN64CPU.StepBNEL;
+  TN64CPU.FStepRoutines[6] := @TN64CPU.StepBLEZ;
+  TN64CPU.FStepRoutines[22] := @TN64CPU.StepBLEZL;
+  TN64CPU.FStepRoutines[7] := @TN64CPU.StepBGTZ;
+  TN64CPU.FStepRoutines[23] := @TN64CPU.StepBGTZL;
+  TN64CPU.FStepRoutines[9] := @TN64CPU.StepADDIU;
+  TN64CPU.FStepRoutines[10] := @TN64CPU.StepSLTI;
+  TN64CPU.FStepRoutines[11] := @TN64CPU.StepSLTIU;
+  TN64CPU.FStepRoutines[12] := @TN64CPU.StepANDI;
+  TN64CPU.FStepRoutines[13] := @TN64CPU.StepORI;
+  TN64CPU.FStepRoutines[14] := @TN64CPU.StepXORI;
+  TN64CPU.FStepRoutines[15] := @TN64CPU.StepLUI;
+  TN64CPU.FStepRoutines[32] := @TN64CPU.StepLB;
+  TN64CPU.FStepRoutines[33] := @TN64CPU.StepLH;
+  TN64CPU.FStepRoutines[35] := @TN64CPU.StepLW;
+  TN64CPU.FStepRoutines[36] := @TN64CPU.StepLBU;
+  TN64CPU.FStepRoutines[37] := @TN64CPU.StepLHU;
+  TN64CPU.FStepRoutines[39] := @TN64CPU.StepLWU;
+  TN64CPU.FStepRoutines[49] := @TN64CPU.StepLWC1;
+  TN64CPU.FStepRoutines[53] := @TN64CPU.StepLDC1;
+  TN64CPU.FStepRoutines[55] := @TN64CPU.StepLD;
+  TN64CPU.FStepRoutines[40] := @TN64CPU.StepSB;
+  TN64CPU.FStepRoutines[41] := @TN64CPU.StepSH;
+  TN64CPU.FStepRoutines[43] := @TN64CPU.StepSW;
+  TN64CPU.FStepRoutines[63] := @TN64CPU.StepSD;
+  TN64CPU.FStepRoutines[57] := @TN64CPU.StepSWC1;
+  TN64CPU.FStepRoutines[61] := @TN64CPU.StepSDC1;
+  TN64CPU.FStepRoutines[KindCop1Move + 0] := @TN64CPU.StepMFC1;
+  TN64CPU.FStepRoutines[KindCop1Move + 1] := @TN64CPU.StepDMFC1;
+  TN64CPU.FStepRoutines[KindCop1Move + 4] := @TN64CPU.StepMTC1;
+  TN64CPU.FStepRoutines[KindCop1Move + 5] := @TN64CPU.StepDMTC1;
+  TN64CPU.FStepRoutines[KindCop1Compare] := @TN64CPU.StepFPCompare;
+  TN64CPU.FStepRoutines[KindCop1Arith] := @TN64CPU.StepFPArith;
+  TN64CPU.FStepRoutines[KindCop1Mov] := @TN64CPU.StepFPMov;
+  TN64CPU.FStepRoutines[KindCop1Branch] := @TN64CPU.StepBC1;
 
 end.
 
