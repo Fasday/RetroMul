@@ -35,6 +35,7 @@ type
     FIRQ: Integer;
     FNoise: Cardinal;
     FDC: array[0..1] of TPCMDCBlocker;
+    FExternal: array[0..1] of Integer;
     function WordAt(Address: Integer): Integer;
     procedure PutWord(Address, Value: Integer);
     procedure KeyOn(Channel: Integer);
@@ -53,6 +54,10 @@ type
     procedure WriteRegister(Address: Integer; Value: Byte);
     procedure Sample(out Left, Right: SmallInt);
     function FIQ: Boolean;
+    // EXT inputs (CD-DA on the Dreamcast) for the next Sample, 16-bit: the
+    // DSP reads them as EXTS0/1 and they reach the output through the
+    // EFSDL/EFPAN slots 16 and 17. Zero without an external source.
+    procedure SetExternal(Left, Right: Integer);
     procedure SerializeState(Archive: TStateArchive);
   end;
 
@@ -489,6 +494,13 @@ begin
   Result := FIRQ <> 0;
 end;
 
+procedure TAICA.SetExternal(Left, Right: Integer);
+begin
+  FExternal[0] := Left;
+  FExternal[1] := Right;
+  FDSP.SetExternal(Left, Right);
+end;
+
 procedure TAICA.Sample(out Left, Right: SmallInt);
 begin
   Timers;
@@ -515,6 +527,13 @@ begin
     L := L + FDSP.Effect(E) * Gain((Pan shr 8) and 15, Pan and 31, 0);
     R := R + FDSP.Effect(E) * Gain((Pan shr 8) and 15, Pan and 31, 1);
   end;
+  if (FExternal[0] <> 0) or (FExternal[1] <> 0) then
+    for var E := 0 to 1 do
+    begin
+      var Pan := WordAt($2040 + E * 4);
+      L := L + FExternal[E] * Gain((Pan shr 8) and 15, Pan and 31, 0);
+      R := R + FExternal[E] * Gain((Pan shr 8) and 15, Pan and 31, 1);
+    end;
   var Master := Gain(WordAt($2800) and 15, 0, 0);
   Left := EnsureRange(Round(FDC[0].Process(L * Master / 2)), -32768, 32767);
   Right := EnsureRange(Round(FDC[1].Process(R * Master / 2)), -32768, 32767);

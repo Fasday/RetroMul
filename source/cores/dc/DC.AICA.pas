@@ -178,15 +178,15 @@ begin
     while S.Debt > 0 do
       Dec(S.Debt, FARM.Step(FAICA.FIQ));
   end;
-  var L, R: SmallInt;
-  FAICA.Sample(L, R);
+  // CD-DA enters through the EXT inputs.
   if GDROM <> nil then
   begin
     var CL, CR: SmallInt;
     GDROM.NextSample(CL, CR);
-    L := SmallInt(EnsureRange(Integer(L) + CL, -32768, 32767));
-    R := SmallInt(EnsureRange(Integer(R) + CR, -32768, 32767));
+    FAICA.SetExternal(CL, CR);
   end;
+  var L, R: SmallInt;
+  FAICA.Sample(L, R);
   if FSampleCount + 2 > Length(FSamples) then
     SetLength(FSamples, FSampleCount * 2 + 4096);
   FSamples[FSampleCount] := L;

@@ -20,6 +20,7 @@ type
     FMix: array[0..15] of Integer;
     FEffects: array[0..15] of SmallInt;
     FDelay: Integer;
+    FExternal: array[0..1] of Integer;
     // Program words per step, decoded from MPRO, and the last step that is
     // not all zero (-1: none). An all-zero step changes only the step-local
     // accumulator, so steps after the last one have no effect.
@@ -36,6 +37,8 @@ type
     function ReadRegister(Address: Integer): Byte;
     procedure Mix(Channel, Sample: Integer);
     procedure Step;
+    // EXTS0/1 inputs (16-bit) for the next steps.
+    procedure SetExternal(Left, Right: Integer);
     function Effect(Channel: Integer): Integer;
     procedure SerializeState(Archive: TStateArchive);
   end;
@@ -203,6 +206,12 @@ begin
   Result := FEffects[Channel and 15];
 end;
 
+procedure TAICADSP.SetExternal(Left, Right: Integer);
+begin
+  FExternal[0] := Left;
+  FExternal[1] := Right;
+end;
+
 procedure TAICADSP.Step;
 begin
   FillChar(FEffects, SizeOf(FEffects), 0);
@@ -226,7 +235,9 @@ begin
     if InputIndex < 32 then
       Input := FMemory[InputIndex]
     else if InputIndex < 48 then
-      Input := SignedBits(Int64(FMix[InputIndex - 32]) * 16, 24);
+      Input := SignedBits(Int64(FMix[InputIndex - 32]) * 16, 24)
+    else if InputIndex < 50 then
+      Input := FExternal[InputIndex - 48] * 256;
     if I1 and $40 <> 0 then
     begin
       var IW := (I1 shr 1) and 31;
