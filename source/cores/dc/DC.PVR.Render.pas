@@ -38,6 +38,8 @@ type
     Volume: Integer;
     // Edges owning the samples on them (left and top edges).
     TopLeft: array[0..2] of Boolean;
+    // Mipmap level of the texture and of the second parameter set's.
+    Level, Level1: SmallInt;
   end;
   PRenderTri = ^TRenderTri;
 
@@ -361,6 +363,24 @@ begin
   Result := Length(FEntries);
 end;
 
+// Mipmap level from the texel footprint of one pixel (constant over a
+// triangle: the screen derivatives of the texture coordinates).
+function MipLevel(const T: TRenderTri; const VA, VB, VC: TPVRVertex; Texture: TPVRTexture; TSP: Cardinal): Integer;
+begin
+  Result := 0;
+  if (Texture = nil) or (Texture.Levels <= 1) then
+    Exit;
+  var DUX := (VA.U * T.EA[0] + VB.U * T.EA[1] - VC.U * (T.EA[0] + T.EA[1])) * T.InvArea * Texture.Width;
+  var DVY := (VA.V * T.EB[0] + VB.V * T.EB[1] - VC.V * (T.EB[0] + T.EB[1])) * T.InvArea * Texture.Height;
+  var Footprint := Max(Abs(DUX), Abs(DVY));
+  var DAdjust := ((TSP shr 8) and 15) / 4.0;
+  if DAdjust = 0 then
+    DAdjust := 1;
+  Footprint := Footprint * DAdjust;
+  if Footprint > 1 then
+    Result := EnsureRange(Floor(Log2(Footprint)), 0, Texture.Levels - 1);
+end;
+
 procedure TDCRenderer.AddTriangle(Poly: Integer; I0, I1, I2: Integer; Volume: Integer);
 begin
   var V := FContext.Vertices;
@@ -432,6 +452,8 @@ begin
   T.MaxX := EnsureRange(Ceil(MaxXF), 0, Width - 1);
   T.MinY := EnsureRange(Floor(MinYF), 0, Height - 1);
   T.MaxY := EnsureRange(Ceil(MaxYF), 0, Height - 1);
+  T.Level := MipLevel(T^, V[I0], V[I1], V[I2], FPolys[Poly].Texture, P.TSP);
+  T.Level1 := MipLevel(T^, V[I0], V[I1], V[I2], FPolys[Poly].Texture1, P.TSP1);
   Inc(FTriCount);
 end;
 
@@ -694,6 +716,7 @@ begin
   Result := Floor(X);
 end;
 {$ENDIF}
+
 
 function IsNaNSingle(const V: Single): Boolean; inline;
 begin
@@ -991,20 +1014,9 @@ begin
       U := VA.U * P0 + VB.U * P1 + VC.U * P2;
       V := VA.V * P0 + VB.V * P1 + VC.V * P2;
     end;
-    // Mipmap level from the texel footprint of one pixel.
-    var Level := 0;
-    if Texture.Levels > 1 then
-    begin
-      var DUX := (VA.U * T.EA[0] + VB.U * T.EA[1] - VC.U * (T.EA[0] + T.EA[1])) * T.InvArea * Texture.Width;
-      var DVY := (VA.V * T.EB[0] + VB.V * T.EB[1] - VC.V * (T.EB[0] + T.EB[1])) * T.InvArea * Texture.Height;
-      var Footprint := Max(Abs(DUX), Abs(DVY));
-      var DAdjust := ((TSP shr 8) and 15) / 4.0;
-      if DAdjust = 0 then
-        DAdjust := 1;
-      Footprint := Footprint * DAdjust;
-      if Footprint > 1 then
-        Level := EnsureRange(Floor(Log2(Footprint)), 0, Texture.Levels - 1);
-    end;
+    var Level: Integer := T.Level;
+    if UseSecond then
+      Level := T.Level1;
     var Tex := SampleTexture(Texture, U, V, TSP, Level);
     // Bump maps: texels hold an elevation S (high byte, 0..pi/2) and a
     // rotation R (low byte, 0..2pi) of the surface normal; the offset colour
