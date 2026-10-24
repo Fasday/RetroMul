@@ -40,6 +40,7 @@ type
     procedure LoadCHD(const Storage: IStorage; const Location: string);
     procedure LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
     procedure LoadMDS(Stream: TStream; const Storage: IStorage; const Location, FileName: string);
+    procedure LoadNRG(const Storage: IStorage; const Location: string);
     procedure LoadRaw(const Storage: IStorage; const Location: string);
     procedure ValidateAndHash;
   public
@@ -341,10 +342,12 @@ begin
     LoadCHD(Storage, Location)
   else if SameText(ExtractFileExt(SourceName), '.mds') then
     LoadMDS(Stream, Storage, Location, ExtractFileName(SourceName.Replace('/', PathDelim)))
+  else if SameText(ExtractFileExt(SourceName), '.nrg') then
+    LoadNRG(Storage, Location)
   else if SameText(ExtractFileExt(SourceName), '.bin') then
     LoadRaw(Storage, Location)
   else
-    raise EReadError.Create('CD expects ISO, CUE, MDS, CHD, a raw BIN or a disc ZIP');
+    raise EReadError.Create('CD expects ISO, CUE, MDS, NRG, CHD, a raw BIN or a disc ZIP');
 
   if (FLeadOut = 0) and (Length(FTracks) > 0) then
     FLeadOut := FTracks[High(FTracks)].EndLBA;
@@ -1055,6 +1058,250 @@ begin
     end;
     FTracks[I].PregapLBA := PregapLBA;
   end;
+  FLeadOut := Max(LeadOut, FTracks[High(FTracks)].EndLBA);
+end;
+
+// Nero Burning ROM images. The sectors come first; a footer ("NER5" and a
+// 64-bit offset, or "NERO" and a 32-bit one in version 1) points to big-endian
+// chunks after them. Per disc-at-once session a CUEX (LBA) or CUES (MSF) cue
+// sheet lists INDEX 00/01 positions and a DAOX or DAOI block, for each track,
+// the sector size and mode and the file offsets of INDEX 00, INDEX 01 and the
+// track end. Track-at-once sessions have an ETN2 or ETNF list (offset, length,
+// mode, LBA) instead. Tracks are numbered on across sessions.
+procedure TCDDisc.LoadNRG(const Storage: IStorage; const Location: string);
+type
+  TCuePoint = record
+    Track, Index, LBA: Integer;
+  end;
+var
+  Data: TBytes;
+  Cues: TArray<TCuePoint>;
+  LeadOut, Session: Integer;
+
+  function BE(Offset, Size: Integer): Int64;
+  begin
+    if (Offset < 0) or (Offset + Size > Length(Data)) then
+      raise EReadError.Create('Truncated NRG chunk');
+    Result := 0;
+    for var I := 0 to Size - 1 do
+      Result := (Result shl 8) or Data[Offset + I];
+  end;
+
+  function FromBCD(Value: Integer): Integer;
+  begin
+    Result := (Value shr 4) * 10 + (Value and 15);
+  end;
+
+  function CueLBA(Track, Index: Integer; out LBA: Integer): Boolean;
+  begin
+    for var Cue in Cues do
+      if (Cue.Track = Track) and (Cue.Index = Index) then
+      begin
+        LBA := Cue.LBA;
+        Exit(True);
+      end;
+    Result := False;
+  end;
+
+  // Sector layout of a Nero mode code: size, user data offset, audio.
+  procedure Layout(Mode: Integer; var Item: TCDTrack);
+  begin
+    Item.Audio := Mode in [$07, $10];
+    case Mode of
+      $00, $02:
+        Item.SectorSize := 2048;
+      $03:
+        begin
+          Item.SectorSize := 2336;
+          Item.DataOffset := 8;
+        end;
+      $05, $06, $07:
+        Item.SectorSize := 2352;
+      $0F, $10, $11:
+        begin
+          Item.SectorSize := 2448;
+          Item.SubchannelStored := True;
+          Item.SubRaw := True;
+        end;
+    else
+      raise EReadError.CreateFmt('Unsupported NRG track mode %.2xh', [Mode]);
+    end;
+    if Mode in [$05, $0F] then
+      Item.DataOffset := 16
+    else if Mode in [$06, $11] then
+      Item.DataOffset := 24;
+  end;
+
+  procedure AddTrack(var Item: TCDTrack; PregapOffset, StartOffset, EndOffset: Int64; PregapLBA: Integer);
+  begin
+    var Size := Item.SectorSize;
+    if (StartOffset < 0) or (EndOffset <= StartOffset) or (PregapOffset > StartOffset) or
+      ((EndOffset - StartOffset) mod Size <> 0) or ((StartOffset - PregapOffset) mod Size <> 0) then
+      raise EReadError.Create('Invalid NRG track offsets');
+    Item.Number := Length(FTracks) + 1;
+    Item.LittleEndian := True;
+    Item.Session := Session;
+    Item.EndLBA := Item.StartLBA + Integer((EndOffset - StartOffset) div Size);
+    Item.PregapLBA := Max(0, Min(PregapLBA, Item.StartLBA));
+    // Stored INDEX 00 sectors that lie on the disc (not in the lead-in).
+    Item.StoredPregap := Integer(Min(Int64(Item.StartLBA - Item.PregapLBA), (StartOffset - PregapOffset) div Size));
+    Item.PregapAudio := Item.Audio and (Item.StoredPregap > 0);
+    Item.ByteOffset := StartOffset - Int64(Item.StoredPregap) * Size;
+    Item.FileSector := Item.StoredPregap;
+    Item.ByteSize := EndOffset - Item.ByteOffset;
+    Item.SourceName := ExtractFileName(Location);
+    if (Length(FTracks) > 0) and (Item.PregapLBA < FTracks[High(FTracks)].EndLBA) then
+      raise EReadError.Create('Overlapping NRG tracks');
+    Item.Stream := Storage.OpenRead(Location);
+    SetLength(FTracks, Length(FTracks) + 1);
+    FTracks[High(FTracks)] := Item;
+    if EndOffset > FTracks[High(FTracks)].Stream.Size then
+      raise EReadError.Create('Truncated NRG track');
+  end;
+
+begin
+  var Input := Storage.OpenRead(Location);
+  try
+    var Size := Input.Size;
+    if Size < 12 then
+      raise EReadError.Create('Not a Nero NRG image');
+    var Tail: array[0..11] of Byte;
+    Input.Position := Size - 12;
+    Input.ReadBuffer(Tail, 12);
+    var V2 := CompareMem(@Tail[0], PAnsiChar(AnsiString('NER5')), 4);
+    var Chunks: Int64 := 0;
+    if V2 then
+      for var I := 4 to 11 do
+        Chunks := (Chunks shl 8) or Tail[I]
+    else if CompareMem(@Tail[4], PAnsiChar(AnsiString('NERO')), 4) then
+      for var I := 8 to 11 do
+        Chunks := (Chunks shl 8) or Tail[I]
+    else
+      raise EReadError.Create('Not a Nero NRG image');
+    if (Chunks <= 0) or (Chunks >= Size) or (Size - Chunks > 1024 * 1024) then
+      raise EReadError.Create('Invalid NRG chunk offset');
+    SetLength(Data, Size - Chunks);
+    Input.Position := Chunks;
+    Input.ReadBuffer(Data[0], Length(Data));
+  finally
+    Input.Free;
+  end;
+
+  LeadOut := 0;
+  Session := 0;
+  var Pos := 0;
+  while Pos + 8 <= Length(Data) do
+  begin
+    var Id := TEncoding.ASCII.GetString(Data, Pos, 4);
+    var Count := Integer(BE(Pos + 4, 4));
+    var Body := Pos + 8;
+    if (Count < 0) or (Body + Count > Length(Data)) then
+      raise EReadError.Create('Truncated NRG chunk');
+    if Id = 'END!' then
+      Break;
+    if (Id = 'CUEX') or (Id = 'CUES') then
+    begin
+      Cues := nil;
+      var Entry := Body;
+      while Entry + 8 <= Body + Count do
+      begin
+        var Cue: TCuePoint;
+        Cue.Track := FromBCD(Data[Entry + 1]);
+        if Data[Entry + 1] = $AA then
+          Cue.Track := $AA;
+        Cue.Index := FromBCD(Data[Entry + 2]);
+        if Id = 'CUEX' then
+          Cue.LBA := Integer(Cardinal(BE(Entry + 4, 4)))
+        else
+          Cue.LBA := (FromBCD(Data[Entry + 5]) * 60 + FromBCD(Data[Entry + 6])) * 75 + FromBCD(Data[Entry + 7]) - 150;
+        Cues := Cues + [Cue];
+        if Cue.Track = $AA then
+          LeadOut := Max(LeadOut, Cue.LBA);
+        Inc(Entry, 8);
+      end;
+    end
+    else if (Id = 'DAOX') or (Id = 'DAOI') then
+    begin
+      Inc(Session);
+      if Count < 22 then
+        raise EReadError.Create('Invalid NRG session');
+      var First := Data[Body + 20];
+      var Last := Data[Body + 21];
+      if (First < 1) or (Last < First) or (Last > 99) then
+        raise EReadError.Create('Invalid NRG session');
+      // Per track: ISRC, sector size, mode and three file offsets (64-bit in
+      // DAOX, 32-bit in DAOI; some writers use 32-bit size and mode fields).
+      var Entry := (Count - 22) div (Last - First + 1);
+      var Wide := 0;
+      var Head := 18;
+      case Entry of
+        42: Wide := 8;
+        30: Wide := 4;
+        32:
+          begin
+            Wide := 4;
+            Head := 20;
+          end;
+      else
+        raise EReadError.Create('Invalid NRG track entry');
+      end;
+      for var T := First to Last do
+      begin
+        var Rec := Body + 22 + (T - First) * Entry;
+        var Item := Default(TCDTrack);
+        var SectorSize: Integer;
+        var Mode: Integer;
+        if Head = 18 then
+        begin
+          SectorSize := Integer(BE(Rec + 12, 2));
+          Mode := Data[Rec + 14];
+        end
+        else
+        begin
+          SectorSize := Integer(BE(Rec + 12, 4));
+          Mode := Data[Rec + 16];
+        end;
+        Layout(Mode, Item);
+        if SectorSize <> Item.SectorSize then
+          raise EReadError.Create('NRG sector size does not match the track mode');
+        var Index0 := BE(Rec + Head, Wide);
+        var Index1 := BE(Rec + Head + Wide, Wide);
+        var Stop := BE(Rec + Head + 2 * Wide, Wide);
+        var Pregap: Integer;
+        if not CueLBA(T, 1, Item.StartLBA) then
+          raise EReadError.Create('NRG cue sheet lacks a track start');
+        if not CueLBA(T, 0, Pregap) then
+          Pregap := Item.StartLBA;
+        if T <> Length(FTracks) + 1 then
+          raise EReadError.Create('NRG tracks are not numbered in order');
+        AddTrack(Item, Index0, Index1, Stop, Pregap);
+      end;
+    end
+    else if (Id = 'ETN2') or (Id = 'ETNF') then
+    begin
+      Inc(Session);
+      var Entry := 20;
+      if Id = 'ETN2' then
+        Entry := 32;
+      var Rec := Body;
+      while Rec + Entry <= Body + Count do
+      begin
+        var Wide := 4;
+        if Id = 'ETN2' then
+          Wide := 8;
+        var Offset := BE(Rec, Wide);
+        var Bytes := BE(Rec + Wide, Wide);
+        var Item := Default(TCDTrack);
+        Layout(Integer(BE(Rec + 2 * Wide, 4)), Item);
+        Item.StartLBA := Integer(BE(Rec + 2 * Wide + 4, 4));
+        AddTrack(Item, Offset, Offset, Offset + Bytes, Item.StartLBA);
+        Inc(Rec, Entry);
+      end;
+    end;
+    Pos := Body + Count;
+  end;
+  if Length(FTracks) = 0 then
+    raise EReadError.Create('NRG image has no tracks');
   FLeadOut := Max(LeadOut, FTracks[High(FTracks)].EndLBA);
 end;
 
