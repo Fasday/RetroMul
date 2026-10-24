@@ -26,6 +26,14 @@ type
       FAttack, FDecay: array[0..63] of Integer;
     class var
       FEnvelope: array[0..1023] of Double;
+      // Per-sample factors, computed once with the same expressions:
+      // send level/pan gains, octave steps, filter cutoffs (by FLV) and
+      // total level attenuations (by TL).
+      FGains: array[0..15, 0..31, 0..1] of Double;
+      FOctaves: array[-8..7] of Double;
+      // Extended like the expressions they replace (x87 precision on Win32).
+      FCutoffs: array[0..8191] of Extended;
+      FLevels: array[0..255] of Extended;
   private
     FRead: TAICARead;
     FDSP: TAICADSP;
@@ -43,7 +51,8 @@ type
     function Voice(Channel: Integer): Double;
     function PCM(Address, Kind, Position: Integer): Integer;
     procedure DecodeADPCM(Channel, Position: Integer);
-    function Gain(Level, Pan, Side: Integer): Double;
+    function Gain(Level, Pan, Side: Integer): Double; inline;
+    class function GainOf(Level, Pan, Side: Integer): Double; static;
     procedure Timers;
   public
     class constructor Create;
@@ -96,6 +105,22 @@ begin
     else
       FAttack[i] := Trunc((1023 * 1000.0 * 65536) / (44100 * AttackTimes[i]));
     FDecay[i] := Trunc((1023 * 1000.0 * 65536) / (44100 * DecayTimes[i]));
+  end;
+  for var Level := 0 to 15 do
+    for var Pan := 0 to 31 do
+      for var Side := 0 to 1 do
+        FGains[Level, Pan, Side] := GainOf(Level, Pan, Side);
+  for var Oct := -8 to 7 do
+    FOctaves[Oct] := Power(2, Oct);
+  for var Volume := 0 to 8191 do
+    FCutoffs[Volume] := Min(0.95, Power(2, (Volume - 8191) / 256.0));
+  for var TL := 0 to 255 do
+  begin
+    var DB := 0.0;
+    for var i := 0 to 7 do
+      if TL and (1 shl i) <> 0 then
+        DB := DB + Att[i];
+    FLevels[TL] := Power(10, -DB / 20);
   end;
 end;
 
@@ -386,7 +411,7 @@ begin
   var Pitch := WordAt(Base + $18);
   var Oct := ((Pitch shr 11) and 15) xor 8;
   Dec(Oct, 8);
-  var Step: Double := (1024 + (Pitch and 1023)) * 4 * Power(2, Oct);
+  var Step: Double := (1024 + (Pitch and 1023)) * 4 * FOctaves[Oct];
   if (LFO shr 5) and 7 <> 0 then
     Step := Step * Power(2, Wave[(LFO shr 8) and 3] * PitchDepth[(LFO shr 5) and 7] / 1200);
   FVoices[Channel].Phase := FVoices[Channel].Phase + Max(0, Trunc(Step));
@@ -422,20 +447,20 @@ begin
   var Filter := WordAt(Base + $28);
   if Filter and $20 = 0 then
   begin
-    var Cut := Min(0.95, Power(2, (FVoices[Channel].FilterVolume - 8191) / 256.0));
+    var Cut := FCutoffs[FVoices[Channel].FilterVolume and 8191];
     FVoices[Channel].Filter1 := FVoices[Channel].Filter1 + Cut * (Result - FVoices[Channel].Filter1);
     FVoices[Channel].Filter2 := FVoices[Channel].Filter2 + Cut * (FVoices[Channel].Filter1 - FVoices[Channel].Filter2);
     Result := FVoices[Channel].Filter2;
   end;
-  var TL := Filter shr 8;
-  var DB := 0.0;
-  for var i := 0 to 7 do
-    if TL and (1 shl i) <> 0 then
-      DB := DB + Att[i];
-  Result := Result * Power(10, -DB / 20);
+  Result := Result * FLevels[(Filter shr 8) and 255];
 end;
 
 function TAICA.Gain(Level, Pan, Side: Integer): Double;
+begin
+  Result := FGains[Level, Pan, Side];
+end;
+
+class function TAICA.GainOf(Level, Pan, Side: Integer): Double;
 begin
   Result := 0;
   if Level = 0 then
