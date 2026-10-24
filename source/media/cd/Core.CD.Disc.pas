@@ -32,6 +32,7 @@ type
     FLeadOut: Integer;
     FIdentity: TBytes;
     FCompressedHash: TBytes;
+    FIdentityPending: Boolean;
     FHighDensity, FOverburn: Boolean;
     FArchiveDirectory: string;
     FSBIInvalidCRC: TArray<Integer>;
@@ -45,11 +46,14 @@ type
     procedure LoadMDS(Stream: TStream; const Storage: IStorage; const Location, FileName: string);
     procedure LoadNRG(const Storage: IStorage; const Location: string);
     procedure LoadRaw(const Storage: IStorage; const Location: string);
-    procedure ValidateAndHash;
+    procedure ValidateAndHash(HashContent: Boolean);
   public
     // Generic CD media: TOC, companion streams and sectors. Filesystem/boot
     // requirements are selected by the caller after construction.
-    constructor Create(Stream: TStream; const Storage: IStorage; const Location: string);
+    // DeferIdentity skips reading the whole image here; the first Identity
+    // call does it instead, and must come before another thread reads sectors.
+    constructor Create(Stream: TStream; const Storage: IStorage; const Location: string;
+      DeferIdentity: Boolean = False);
     // Inspect ZIP directory metadata without loading cartridge/disc payloads.
     class function IsDiscZip(Stream: TStream): Boolean; static;
     procedure RequireISO9660;
@@ -320,7 +324,8 @@ begin
     raise EReadError.Create('CD audio WAV requires 44100 Hz, stereo, 16-bit PCM');
 end;
 
-constructor TCDDisc.Create(Stream: TStream; const Storage: IStorage; const Location: string);
+constructor TCDDisc.Create(Stream: TStream; const Storage: IStorage; const Location: string;
+  DeferIdentity: Boolean);
 begin
   inherited Create;
   if (Stream = nil) or (Storage = nil) or (Location = '') then
@@ -366,7 +371,7 @@ begin
   if (FLeadOut = 0) and (Length(FTracks) > 0) then
     FLeadOut := FTracks[High(FTracks)].EndLBA;
   LoadSBI(Storage, Location, SourceName);
-  ValidateAndHash;
+  ValidateAndHash(not DeferIdentity);
 end;
 
 destructor TCDDisc.Destroy;
@@ -1784,11 +1789,24 @@ begin
   FLeadOut := Cursor;
 end;
 
-procedure TCDDisc.ValidateAndHash;
+procedure TCDDisc.ValidateAndHash(HashContent: Boolean);
 begin
   if (Length(FTracks) = 0) or ((LeadOut > 100 * 60 * 75) and not (FHighDensity or FOverburn)) or (LeadOut > 560000) then
     raise EReadError.Create('CD requires a valid track table shorter than 100 minutes');
 
+  if not HashContent then
+  begin
+    for var Item in FTracks do
+    begin
+      var FirstSector := Item.FileSector - Item.StoredPregap;
+      var Remaining := Int64(Item.EndLBA - Item.StartLBA + Item.StoredPregap) * Item.SectorSize;
+      if (FirstSector < 0) or (Remaining > Item.ByteSize - Int64(FirstSector) * Item.SectorSize) then
+        raise EReadError.Create('Truncated CUE track');
+    end;
+    FIdentityPending := True;
+    Exit;
+  end;
+  FIdentityPending := False;
   var Hash := THashSHA2.Create;
   var Buffer: array[0..65535] of Byte;
   for var Item in FTracks do
@@ -2323,6 +2341,8 @@ end;
 
 function TCDDisc.Identity: TBytes;
 begin
+  if FIdentityPending then
+    ValidateAndHash(True);
   Result := Copy(FIdentity);
 end;
 

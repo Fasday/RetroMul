@@ -3,7 +3,7 @@
 interface
 
 uses
-  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs, Core.Storage,
+  Core.InputConfig, System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs, System.Threading, Core.Storage,
   Core.Emulation, Core.Snapshots, Core.CD.Disc, DC.Types, DC.Flash, DC.Maple, DC.Console, Core.DC.Playback;
 
 {$SCOPEDENUMS ON}
@@ -163,9 +163,13 @@ type
     FPaused: Boolean;
     FVMUFiles: array[0..3] of string;
     FFlashSave, FSnapshotDirectory, FError: string;
+    // Reads a newly chosen disc for its identity, then inserts it; the lid is
+    // open meanwhile.
+    FDiscTask: ITask;
     procedure LoadFirmware(const RomName: string);
     procedure Configure;
     procedure ReplaceDisc(const Location: string; Index: Integer);
+    procedure WaitDiscTask;
   public
     // Stream holds an ELF or binary program when no disc is given.
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; OwnedDisc: TCDDisc = nil);
@@ -1058,27 +1062,65 @@ begin
   Result := FDiscIndex;
 end;
 
+procedure TDCCoreAdapter.WaitDiscTask;
+begin
+  if FDiscTask <> nil then
+  begin
+    FDiscTask.Wait;
+    FDiscTask := nil;
+  end;
+end;
+
 procedure TDCCoreAdapter.ReplaceDisc(const Location: string; Index: Integer);
 begin
+  WaitDiscTask;
+  // The image is checked here; reading all of it for its identity (seconds
+  // for a large image) happens on a task while the lid stays open, as a
+  // player swapping discs takes a moment.
   var Stream := FStorage.OpenRead(Location);
   var Disc: TCDDisc := nil;
   try
-    Disc := TCDDisc.Create(Stream, FStorage, Location);
+    Disc := TCDDisc.Create(Stream, FStorage, Location, FWorker <> nil);
     if not IsDCDisc(Disc) then
       raise EReadError.Create('Not a Dreamcast disc: ' + FStorage.Describe(Location).Name);
-    var Identity := Disc.Identity;
-    if FWorker <> nil then
-      FWorker.ChangeDisc(Disc, Identity);
-    var OldDisc := FDisc;
-    FDisc := Disc;
-    Disc := nil;
-    FIdentity := Identity;
-    FDiscIndex := Index;
-    OldDisc.Free;
-  finally
+  except
     Disc.Free;
     Stream.Free;
+    raise;
   end;
+  Stream.Free;
+  if FWorker = nil then
+  begin
+    FDisc.Free;
+    FDisc := Disc;
+    FIdentity := Disc.Identity;
+    FDiscIndex := Index;
+    Exit;
+  end;
+  try
+    FWorker.ChangeDisc(nil, nil);
+  except
+    Disc.Free;
+    raise;
+  end;
+  // The worker has let go of the previous disc.
+  FDisc.Free;
+  FDisc := Disc;
+  FIdentity := nil;
+  FDiscIndex := Index;
+  var Worker := FWorker;
+  FDiscTask := TTask.Run(
+    procedure
+    begin
+      // A disc that cannot be read to the end stays out (no disc selected).
+      try
+        var Identity := Disc.Identity;
+        Worker.ChangeDisc(Disc, Identity);
+        FIdentity := Identity;
+      except
+        FDiscIndex := -1;
+      end;
+    end);
 end;
 
 procedure TDCCoreAdapter.ChangeDisc(Index: Integer);
@@ -1111,6 +1153,7 @@ end;
 
 procedure TDCCoreAdapter.EjectDisc;
 begin
+  WaitDiscTask;
   if (GetDiscCount = 0) or (FDiscIndex < 0) then
     Exit;
   if FWorker <> nil then
@@ -1237,6 +1280,7 @@ end;
 
 procedure TDCCoreAdapter.Stop;
 begin
+  WaitDiscTask;
   if FWorker = nil then
     Exit;
   FWorker.StopAndSave;
@@ -1333,12 +1377,15 @@ end;
 
 procedure TDCCoreAdapter.SaveSnapshot(const Name: string);
 begin
+  // A snapshot records the inserted disc: let a pending change finish.
+  WaitDiscTask;
   if FWorker <> nil then
     FWorker.Snapshot(Name, False);
 end;
 
 procedure TDCCoreAdapter.LoadSnapshot(const Name: string);
 begin
+  WaitDiscTask;
   if FWorker <> nil then
     FWorker.Snapshot(Name, True);
 end;
