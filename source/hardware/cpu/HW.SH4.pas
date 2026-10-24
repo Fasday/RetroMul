@@ -4269,6 +4269,9 @@ begin
       SetSRValue(S.RTESR);
     end;
   end
+  else if TOp(I.Kind) in [oROTDIV, oDIVROT] then
+    // A fused run of division steps ends the block (at a page boundary).
+    Next := I.Addr + (I.Imm and $FFFF) * 4
   else
     Next := I.Addr + 2;
 end;
