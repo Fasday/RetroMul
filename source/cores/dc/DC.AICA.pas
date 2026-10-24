@@ -127,7 +127,28 @@ end;
 
 function TDCAICA.ARMRead(Address: Cardinal; Size: Integer): Cardinal;
 begin
-  // ARM7 view: wave RAM at 000000, registers at 800000.
+  // ARM7 view: wave RAM at 000000, registers at 800000. Aligned wave RAM
+  // accesses (most, and every fetch) at once; words rotate as below.
+  var Wave := Address and $FFFFFF;
+  if Wave < $800000 then
+  begin
+    Wave := Wave and (DCARAMSize - 1);
+    case Size of
+      1:
+        Exit(FMemory.ARAM[Wave]);
+      2:
+        if (Wave and 1) = 0 then
+          Exit(PWord(FMemory.ARAM + Wave)^);
+      4:
+        begin
+          Result := PCardinal(FMemory.ARAM + (Wave and not Cardinal(3)))^;
+          var Bits := Integer(Address and 3) * 8;
+          if Bits <> 0 then
+            Result := (Result shr Bits) or (Result shl (32 - Bits));
+          Exit;
+        end;
+    end;
+  end;
   var Rotate := 0;
   if Size = 4 then
   begin
@@ -156,6 +177,29 @@ end;
 
 procedure TDCAICA.ARMWrite(Address, Value: Cardinal; Size: Integer);
 begin
+  var Wave := Address and $FFFFFF;
+  if Wave < $800000 then
+  begin
+    Wave := Wave and (DCARAMSize - 1);
+    case Size of
+      1:
+        begin
+          FMemory.ARAM[Wave] := Byte(Value);
+          Exit;
+        end;
+      2:
+        if (Wave and 1) = 0 then
+        begin
+          PWord(FMemory.ARAM + Wave)^ := Word(Value);
+          Exit;
+        end;
+      4:
+        begin
+          PCardinal(FMemory.ARAM + (Wave and not Cardinal(3)))^ := Value;
+          Exit;
+        end;
+    end;
+  end;
   if Size = 4 then
     Address := Address and $FFFFFFFC;
   for var I := 0 to Size - 1 do
