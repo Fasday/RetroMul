@@ -673,6 +673,7 @@ object LibraryView: TLibraryView
         Tag = 1
         Align = Right
         Hint = 'List'
+        Margins.Left = 8.000000000000000000
         Margins.Top = 8.000000000000000000
         Margins.Bottom = 8.000000000000000000
         Position.X = 528.000000000000000000
@@ -736,10 +737,57 @@ object LibraryView: TLibraryView
           WrapMode = Fit
         end
       end
+      object ButtonReloadLibrary: TButton
+        Align = Right
+        Hint = 'Reload'
+        Margins.Top = 8.000000000000000000
+        Margins.Bottom = 8.000000000000000000
+        Position.X = 478.000000000000000000
+        Position.Y = 50.000000000000000000
+        Size.Width = 42.000000000000000000
+        Size.Height = 34.000000000000000000
+        Size.PlatformDefault = False
+        TextSettings.Trimming = Character
+        ParentShowHint = False
+        ShowHint = True
+        object PathReloadLibraryIcon: TPath
+          Align = Center
+          Data.Path = {
+            39000000000000000000804000002041020000000000804016F6D54002000000
+            16F6D5400000804002000000000020410000804002000000F46C3C4100008040
+            02000000A1F855417DB39840020000008A8E67410000C0400100000000004841
+            0000C04002000000189543410000C0400200000000004041DC29C74002000000
+            000040410000D040020000000000404124D6D84002000000189543410000E040
+            02000000000048410000E04001000000000078410000E04002000000E86A7C41
+            0000E040020000000000804124D6D84002000000000080410000D04001000000
+            00008041000060400200000000008041B9534E4002000000E86A7C4100004040
+            0200000000007841000040400200000018957341000040400200000000007041
+            B9534E400200000000007041000060400100000000007041213CA34002000000
+            ACAD5B41F58473400200000079583F4100004040020000000000204100004040
+            02000000CF49C440000040400200000000004040CF49C4400200000000004040
+            00002041020000000000404023DB5D4102000000CF49C4400000884102000000
+            00002041000088410200000023DB5D4100008841020000000000884123DB5D41
+            0200000000008841000020410200000000008841091B1D4102000000DEF18741
+            363C1A410200000039D68741A4641741020000006BAB8741D9FC124102000000
+            7DBF854116B00F4102000000788B8341E605104102000000A8578141B65B1041
+            020000004E627F41873314410200000052B87F415C9B184102000000D5E77F41
+            A20B1B410200000000008041C9821D4102000000000080410000204102000000
+            00008041EA04554102000000EA04554100008041020000000000204100008041
+            0200000016F6D540000080410200000000008040EA0455410200000000008040
+            00002041030000000000804000002041}
+          Fill.Color = xFFE8ECF1
+          HitTest = False
+          Size.Width = 16.000000000000000000
+          Size.Height = 16.000000000000000000
+          Size.PlatformDefault = False
+          Stroke.Kind = None
+          WrapMode = Fit
+        end
+      end
       object LayoutSearchHost: TLayout
         Align = Client
         Margins.Right = 12.000000000000000000
-        Size.Width = 516.000000000000000000
+        Size.Width = 466.000000000000000000
         Size.Height = 50.000000000000000000
         Size.PlatformDefault = False
       end
@@ -1051,6 +1099,43 @@ object LibraryView: TLibraryView
               TextSettings.Trimming = Character
               Visible = False
             end
+          end
+        end
+      end
+      object LayoutLibraryLoading: TLayout
+        Align = Contents
+        Size.Width = 620.000000000000000000
+        Size.Height = 608.000000000000000000
+        Size.PlatformDefault = False
+        Visible = False
+        object LayoutLibraryLoadingMessage: TLayout
+          Align = Center
+          Size.Width = 260.000000000000000000
+          Size.Height = 100.000000000000000000
+          Size.PlatformDefault = False
+          object LayoutLibraryLoadingIndicator: TLayout
+            Align = Top
+            Size.Width = 260.000000000000000000
+            Size.Height = 48.000000000000000000
+            Size.PlatformDefault = False
+            object AniIndicatorLibraryLoading: TAniIndicator
+              Align = Center
+              Size.Width = 40.000000000000000000
+              Size.Height = 40.000000000000000000
+              Size.PlatformDefault = False
+            end
+          end
+          object LabelLibraryLoading: TLabel
+            Align = Client
+            StyledSettings = []
+            Margins.Top = 12.000000000000000000
+            Size.Width = 260.000000000000000000
+            Size.Height = 40.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 18.000000000000000000
+            TextSettings.FontColor = xFFE8ECF1
+            TextSettings.HorzAlign = Center
+            Text = 'Loading library...'
           end
         end
       end
