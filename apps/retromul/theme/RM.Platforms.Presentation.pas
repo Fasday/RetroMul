@@ -9,7 +9,7 @@ uses
 
 type
   TPlatformPadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64, PCE, CPS,
-    Dreamcast);
+    PlayStation, Dreamcast);
 
 const
   SETTINGS_PAGE_MAIN = 0;
@@ -39,7 +39,9 @@ const
   SETTINGS_PAGE_CPS1 = 24;
   SETTINGS_PAGE_CPS2 = 25;
   SETTINGS_PAGE_CPS3 = 26;
-  SETTINGS_PAGE_DC = 28;
+  SETTINGS_PAGE_PS1 = 28;
+  SETTINGS_PAGE_ZX = 27;
+  SETTINGS_PAGE_DC = 29;
 
 type
   TPlatformPresentation = record
@@ -61,6 +63,12 @@ function PlatformPresentation(System: TRomSystem): TPlatformPresentation;
 begin
   Result := Default(TPlatformPresentation);
   case System of
+    TRomSystem.ZXSpectrum:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_ZX;
+        Result.PadLayout := TPlatformPadLayout.Nes;
+        Result.IconData := PlatformIconSC3000;
+      end;
     TRomSystem.CPS1, TRomSystem.CPS2, TRomSystem.CPS3:
       begin
         case System of
@@ -112,6 +120,12 @@ begin
         Result.SettingsPageId := SETTINGS_PAGE_SATURN;
         Result.PadLayout := TPlatformPadLayout.Sega;
         Result.IconData := PlatformIconSaturn;
+      end;
+    TRomSystem.PS1:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_PS1;
+        Result.PadLayout := TPlatformPadLayout.PlayStation;
+        Result.IconData := PlatformIconPS1;
       end;
     TRomSystem.DC:
       begin

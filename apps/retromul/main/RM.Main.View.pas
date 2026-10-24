@@ -44,6 +44,7 @@ type
     SettingsScreen: TTabItem;
     ButtonLibrary: TButton;
     GamePause: TButton;
+    ButtonReset: TButton;
     GamePauseIcon: TPath;
     GameResumeIcon: TPath;
     GameFullscreen: TButton;
@@ -183,6 +184,8 @@ type
     procedure SaveSnapshot(const Name: string); virtual; abstract;
     procedure LoadSnapshot(const Name: string); virtual; abstract;
     procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = ''); virtual; abstract;
+    procedure ResetConsole(Hard: Boolean); virtual; abstract;
+    procedure ResetClick(Sender: TObject); virtual; abstract;
     procedure HardRestart; virtual; abstract;
     procedure SelectTapeFile(const FileName: string); virtual; abstract;
     function SaveScreenshot: string; virtual; abstract;

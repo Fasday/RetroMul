@@ -6,6 +6,7 @@ uses
   System.Classes, System.SysUtils, Core.Platforms;
 
 const
+  ROM_SYSTEM_ZX = 'zx';
   ROM_SYSTEM_NES = 'nes';
   ROM_SYSTEM_GB = 'gb';
   ROM_SYSTEM_GBC = 'gbc';
@@ -26,6 +27,7 @@ const
   ROM_SYSTEM_SNES = 'snes';
   ROM_SYSTEM_N64 = 'n64';
   ROM_SYSTEM_SATURN = 'saturn';
+  ROM_SYSTEM_PS1 = 'ps1';
   ROM_SYSTEM_DC = 'dc';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
@@ -56,6 +58,7 @@ const
   ROM_CORE_ID_SNES = 'SNES';
   ROM_CORE_ID_N64 = 'N64';
   ROM_CORE_ID_SATURN = 'SATURN';
+  ROM_CORE_ID_PS1 = 'PS1';
   ROM_CORE_ID_DC = 'DC';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
   ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
@@ -95,9 +98,11 @@ const
   ROM_EXTENSION_NEO = '.neo';
   ROM_EXTENSION_NGP = '.ngp';
   ROM_EXTENSION_NGPC = '.ngc';
+  ROM_EXTENSION_M3U = '.m3u';
   ROM_EXTENSION_CUE = '.cue';
   ROM_EXTENSION_ISO = '.iso';
   ROM_EXTENSION_CHD = '.chd';
+  ROM_EXTENSION_EXE = '.exe';
   ROM_EXTENSION_GDI = '.gdi';
   ROM_EXTENSION_CDI = '.cdi';
   ROM_EXTENSION_ELF = '.elf';
@@ -384,6 +389,13 @@ begin
     Result.System := TRomSystem.NeoGeoPocket;
     if Data[$23] = $10 then
       Result.System := TRomSystem.NeoGeoPocketColor;
+    Exit;
+  end;
+
+  // PlayStation executables (PS-X EXE header).
+  if (Length(Data) >= $800) and Signature(0, 'PS-X EXE') then
+  begin
+    Result.System := TRomSystem.PS1;
     Exit;
   end;
 

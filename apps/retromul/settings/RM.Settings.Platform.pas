@@ -75,11 +75,15 @@ type
     Ports: Integer;
     constructor Create(const Info: TPlatformInfo);
     procedure Initialize(Context: TSettingsPageContext); virtual;
+    procedure Configuration(Context: TSettingsPageContext); virtual;
     procedure Video(Context: TSettingsPageContext); virtual;
     procedure Audio(Context: TSettingsPageContext); virtual;
     procedure Peripherals(Context: TSettingsPageContext); virtual;
     procedure Expansion(Context: TSettingsPageContext); virtual;
     procedure Validate(Draft: TMemIniFile); virtual;
+    function HasConfiguration: Boolean; virtual;
+    function ChangeConfiguration(Draft: TMemIniFile; const Section, Key: string): Boolean; virtual;
+    function ConfigurationNotice(Draft: TMemIniFile): string; virtual;
     function PlayerCount(Draft: TMemIniFile): Integer; virtual;
     function PortOptions(Port: Integer): TSettingsPortOptions; virtual;
   end;
@@ -90,7 +94,7 @@ type
   public
     constructor Create;
     destructor Destroy; override;
-    procedure Add(platform: TSettingsPlatform);
+    procedure Add(SettingsPlatform: TSettingsPlatform);
     function Find(PageId: Integer): TSettingsPlatform;
     function MaxPageId: Integer;
     function Matching(const Query: string): TArray<TSettingsPlatform>;
@@ -232,6 +236,10 @@ procedure TSettingsPlatform.Initialize(Context: TSettingsPageContext);
 begin
 end;
 
+procedure TSettingsPlatform.Configuration(Context: TSettingsPageContext);
+begin
+end;
+
 procedure TSettingsPlatform.Video(Context: TSettingsPageContext);
 begin
 end;
@@ -250,6 +258,21 @@ end;
 
 procedure TSettingsPlatform.Validate(Draft: TMemIniFile);
 begin
+end;
+
+function TSettingsPlatform.HasConfiguration: Boolean;
+begin
+  Result := False;
+end;
+
+function TSettingsPlatform.ChangeConfiguration(Draft: TMemIniFile; const Section, Key: string): Boolean;
+begin
+  Result := False;
+end;
+
+function TSettingsPlatform.ConfigurationNotice(Draft: TMemIniFile): string;
+begin
+  Result := '';
 end;
 
 function TSettingsPlatform.PlayerCount(Draft: TMemIniFile): Integer;
@@ -279,18 +302,20 @@ begin
   inherited;
 end;
 
-procedure TSettingsPlatformRegistry.Add(platform: TSettingsPlatform);
+procedure TSettingsPlatformRegistry.Add(SettingsPlatform: TSettingsPlatform);
 begin
   try
-    if (platform.PageId <= 0) or (platform.CoreId = '') or (platform.Brand = '') or
-      (platform.Ports < 1) or (platform.Ports > 8) or (Find(platform.PageId) <> nil) then
-      raise EArgumentException.Create('Invalid or duplicate settings platform: ' + platform.Name);
+    if (SettingsPlatform.PageId <= 0) or (SettingsPlatform.CoreId = '') or (SettingsPlatform.Brand = '') or
+      (SettingsPlatform.Ports < 1) or (SettingsPlatform.Ports > 8) or (Find(SettingsPlatform.PageId) <> nil) then
+      raise EArgumentException.Create('Invalid or duplicate settings platform: ' + SettingsPlatform.Name);
+
     for var Item in FItems do
-      if SameText(Item.CoreId, platform.CoreId) then
-        raise EArgumentException.Create('Duplicate settings core: ' + platform.CoreId);
-    FItems.Add(platform);
+      if SameText(Item.CoreId, SettingsPlatform.CoreId) then
+        raise EArgumentException.Create('Duplicate settings core: ' + SettingsPlatform.CoreId);
+
+    FItems.Add(SettingsPlatform);
   except
-    platform.Free;
+    SettingsPlatform.Free;
     raise;
   end;
 end;

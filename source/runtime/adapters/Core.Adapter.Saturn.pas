@@ -35,7 +35,7 @@ type
     property Keys2: TSaturnKeyMap read FKeys2;
   end;
 
-  TSaturnCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TSaturnCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FBIOS, FIdentity: TBytes;
     FCartROM: TBytes;
@@ -49,6 +49,7 @@ type
     FError, FSnapshotDirectory, FSaveFile: string;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; OwnedDisc: TCDDisc = nil);
     destructor Destroy; override;
     function GetSystemId: string;
@@ -85,6 +86,11 @@ uses
 
 const
   KeyNames: array[TEmulatorButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+
+procedure TSaturnCoreAdapter.ApplyLiveSettings;
+begin
+  ApplySettings;
+end;
 
 constructor TSaturnConfig.Create(const FileName: string; const Storage: IStorage);
 const
@@ -177,7 +183,7 @@ begin
           Break;
         end;
 
-        Candidate := TPath.Combine(FStorage.RomFolder, TPath.Combine('saturn', Name));
+        Candidate := TPath.Combine(FStorage.RomFolder('saturn'), Name);
         if not Candidate.StartsWith('content://', True) and FStorage.Exists(Candidate) then
         begin
           BIOSPath := Candidate;

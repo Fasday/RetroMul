@@ -151,6 +151,8 @@ type
     procedure SaveSnapshot(const Name: string); override;
     procedure LoadSnapshot(const Name: string); override;
     procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = ''); override;
+    procedure ResetConsole(Hard: Boolean); override;
+    procedure ResetClick(Sender: TObject); override;
     procedure HardRestart; override;
     procedure SelectTapeFile(const FileName: string); override;
     function SaveScreenshot: string; override;
@@ -570,6 +572,21 @@ begin
   finally
     Stream.Free;
   end;
+end;
+
+procedure TFormMain.ResetConsole(Hard: Boolean);
+begin
+  FSessionController.ResetConsole(Hard);
+end;
+
+procedure TFormMain.ResetClick(Sender: TObject);
+begin
+  {$IFDEF MSWINDOWS}
+  var Hard := Winapi.Windows.GetKeyState(vkShift) < 0;
+  {$ELSE}
+  var Hard := State.Input.KeysDown[vkShift] or State.Input.KeysDown[vkLShift] or State.Input.KeysDown[vkRShift];
+  {$ENDIF}
+  ResetConsole(Hard);
 end;
 
 procedure TFormMain.HardRestart;

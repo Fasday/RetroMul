@@ -931,7 +931,7 @@ begin
   var Path := FConfigObject.BIOSFile;
   var FlashPath := FConfigObject.FlashFile;
   if Path = '' then
-    for var Folder in [ExtractFilePath(RomName), TPath.Combine(FStorage.RomFolder, ROM_SYSTEM_DC)] do
+    for var Folder in [ExtractFilePath(RomName), FStorage.RomFolder(ROM_SYSTEM_DC)] do
     begin
       if (Folder = '') or Folder.StartsWith('content://', True) then
         Continue;

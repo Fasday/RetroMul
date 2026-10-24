@@ -21,12 +21,11 @@ type
 
   TStorage = class(TInterfacedObject, IStorage)
   private
-    FRoot, FRomFolder: string;
+    FRoot: string;
     FPicker: IStoragePicker;
     FCheckRomFileSize: Boolean;
     FMaxRomFileSize: Int64;
     function GetRoot: string;
-    function GetRomFolder: string;
     function GetCheckRomFileSize: Boolean;
     procedure SetCheckRomFileSize(Value: Boolean);
     function GetMaxRomFileSize: Int64;
@@ -37,7 +36,9 @@ type
     // Keep the returned scope alive on the calling thread during loading.
     class function BeginReadCancellation(const CheckCancelled: TProc): IInterface; static;
     class procedure CheckReadCancelled; static;
-    procedure SetRomFolder(const Value: string);
+    function RomFolder(const SystemId: string): string;
+    procedure SetRomFolder(const SystemId, Value: string);
+    function DetectRomFolder(const Location, SystemId: string): string;
     function OpenRead(const Location: string): TStream; virtual;
     function OpenWrite(const Location: string): TStream;
     function Exists(const Location: string): Boolean;
@@ -65,9 +66,7 @@ type
     function Snapshots(const SystemId, RomName, Identity: string): TArray<TStorageSnapshot>;
     function Roms(const SystemId: string): TArray<TStorageFile>;
     function Describe(const Location: string): TStorageFile;
-    procedure SelectRomFolder(const Callback: TStorageSelectionCallback);
     procedure SelectRom(const Callback: TStorageSelectionCallback);
-    property RomFolder: string read GetRomFolder write SetRomFolder;
     property CheckRomFileSize: Boolean read GetCheckRomFileSize write SetCheckRomFileSize;
     property MaxRomFileSize: Int64 read GetMaxRomFileSize write SetMaxRomFileSize;
   end;
@@ -81,7 +80,7 @@ implementation
 
 uses
   System.IOUtils, System.StrUtils, System.Generics.Collections, Core.Platforms,
-  Core.RomFormat,
+  Core.RomFormat, Core.CD.Disc,
   {$IFDEF ANDROID}
   Core.Storage.Android, {$ENDIF}
   {$IFDEF IOS} Macapi.Helpers, System.Hash, {$ENDIF}
@@ -387,7 +386,16 @@ begin
   FPicker := Picker;
   var Ini := ReadConfig(ConfigFile('config'));
   try
-    FRomFolder := Ini.ReadString('General', 'Path', '');
+    // Migrate the former root once; only individual platform folders persist.
+    var LegacyRoot := Ini.ReadString('General', 'Path', '');
+    if LegacyRoot <> '' then
+    begin
+      for var platform in TPlatformRegistry.All do
+        if not Ini.ValueExists('RomFolders', platform.Id) then
+          Ini.WriteString('RomFolders', platform.Id, DetectRomFolder(LegacyRoot, platform.Id));
+      Ini.DeleteKey('General', 'Path');
+      WriteConfig(Ini);
+    end;
   finally
     Ini.Free;
   end;
@@ -404,9 +412,41 @@ begin
   Result := FRoot;
 end;
 
-function TStorage.GetRomFolder: string;
+function TStorage.RomFolder(const SystemId: string): string;
 begin
-  Result := FRomFolder;
+  var platform := TPlatformRegistry.Require(SystemId);
+  var Ini := ReadConfig(ConfigFile('config'));
+  try
+    Result := Ini.ReadString('RomFolders', platform.Id, '').Trim;
+  finally
+    Ini.Free;
+  end;
+end;
+
+function TStorage.DetectRomFolder(const Location, SystemId: string): string;
+begin
+  Result := '';
+  var platform := TPlatformRegistry.Require(SystemId);
+  // Alias order is significant: prefer a platform's own folder.
+  var Children := Folders(Location);
+  for var Alias in platform.ScanFolders do
+  begin
+    // Former shared scan folders relied on extension filters. They are not
+    // aliases when the entire folder now belongs to a different platform.
+    var OwnerPlatform: TPlatformInfo;
+    if TPlatformRegistry.Find(Alias, OwnerPlatform) and (OwnerPlatform.Id <> platform.Id) then
+      Continue;
+    for var Child in Children do
+    begin
+      var Name := ExtractFileName(ExcludeTrailingPathDelimiter(Child));
+      {$IFDEF ANDROID}
+      if Child.StartsWith('content://', True) then
+        Name := TAndroidStorage.Describe(Child).Name;
+      {$ENDIF}
+      if SameText(Name, Alias) then
+        Exit(Child);
+    end;
+  end;
 end;
 
 function TStorage.GetCheckRomFileSize: Boolean;
@@ -432,13 +472,13 @@ begin
   FMaxRomFileSize := Value;
 end;
 
-procedure TStorage.SetRomFolder(const Value: string);
+procedure TStorage.SetRomFolder(const SystemId, Value: string);
 begin
   var Ini := ReadConfig(ConfigFile('config'));
   try
-    Ini.WriteString('General', 'Path', Value);
+    Ini.WriteString('RomFolders', TPlatformRegistry.Require(SystemId).Id, Value.Trim);
+    Ini.DeleteKey('General', 'Path');
     WriteConfig(Ini);
-    FRomFolder := Value;
   finally
     Ini.Free;
   end;
@@ -781,130 +821,105 @@ end;
 
 function TStorage.Roms(const SystemId: string): TArray<TStorageFile>;
 begin
-  if FRomFolder = '' then
+  var Folder := RomFolder(SystemId);
+  if Folder = '' then
     Exit(nil);
-
-  var RomSystem := RomSystemFromId(LowerCase(SafeName(SystemId)));
-  if RomSystem = TRomSystem.Unknown then
-    Exit(nil);
-
-  var platform := TPlatformRegistry.Require(SystemId);
-  var FolderName := platform.Folder;
-  var Extensions := platform.Extensions;
-  var FolderNames := platform.ScanFolders;
-  var Candidates: TArray<TStorageFile>;
-  {$IFDEF ANDROID}
-  if FRomFolder.StartsWith('content://') then
-  begin
-    // Query only root directories, then the selected system's direct children.
-    for var Folder in TAndroidStorage.Enumerate(FRomFolder, False, True) do
-      if MatchText(Folder.Name, FolderNames) then
-      begin
-        var Items := TAndroidStorage.Enumerate(Folder.Location, False);
-        for var i := 0 to High(Items) do
-          Items[i].RelativePath := Folder.Name + '/' + Items[i].Name;
-        Candidates := Candidates + Items;
-      end;
-  end
-  else
-  {$ENDIF}
-  begin
-    var List := TList<TStorageFile>.Create;
-    try
-      for var CandidateFolder in FolderNames do
-        for var Path in Files(TPath.Combine(FRomFolder, CandidateFolder)) do
-        begin
-          if not MatchText(ExtractFileExt(Path), Extensions) then
-            Continue;
-
-          var Item := Describe(Path);
-          Item.RelativePath := ExtractRelativePath(IncludeTrailingPathDelimiter(FRomFolder), Path);
-          List.Add(Item);
-        end;
-      Candidates := List.ToArray;
-    finally
-      List.Free;
-    end;
-  end;
-  var Matches := TList<TStorageFile>.Create;
+  var Items := TList<TStorageFile>.Create;
+  var Extensions := TStringList.Create;
+  var CueNames := TStringList.Create;
+  var PlaylistDiscs := TStringList.Create;
   try
-    for var Item in Candidates do
+    PlaylistDiscs.Sorted := True;
+    PlaylistDiscs.Duplicates := dupIgnore;
+    {$IFDEF MSWINDOWS}
+    PlaylistDiscs.CaseSensitive := False;
+    {$ELSE}
+    PlaylistDiscs.CaseSensitive := True;
+    {$ENDIF}
+    CueNames.CaseSensitive := False;
+    CueNames.Sorted := True;
+    CueNames.Duplicates := dupIgnore;
+    // Accept known ROM extensions from every platform, regardless of folder.
+    Extensions.CaseSensitive := False;
+    Extensions.Sorted := True;
+    Extensions.Duplicates := dupIgnore;
+    for var platform in TPlatformRegistry.All do
+      for var Extension in platform.Extensions do
+        Extensions.Add(Extension);
+    var Candidates: TArray<TStorageFile>;
+    {$IFDEF ANDROID}
+    if Folder.StartsWith('content://', True) then
+      Candidates := TAndroidStorage.Enumerate(Folder, True)
+    else
+    {$ENDIF}
     begin
-      if (RomSystem in [TRomSystem.NeoGeo, TRomSystem.NeoGeoAES]) and (SameText(Item.Name, 'neogeo.zip') or SameText(Item.Name, 'gg-bios.zip') or
-        SameText(Item.Name, 'neocd.zip') or SameText(Item.Name, 'neogeo.7z') or
-        SameText(Item.Name, 'gg-bios.7z') or SameText(Item.Name, 'neocd.7z')) then
-        Continue;
-
-      // Prefer the CUE with its complete TOC/audio over the paired data ISO.
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn, TRomSystem.DC]) and SameText(ExtractFileExt(Item.Name), '.iso') then
+      var Locations := Files(Folder, True);
+      SetLength(Candidates, Length(Locations));
+      for var i := 0 to High(Locations) do
       begin
-        var HasCue := False;
-        for var Candidate in Candidates do
-          if SameText(Candidate.Name, ChangeFileExt(Item.Name, '.cue')) and
-            (ExtractFilePath(Candidate.RelativePath) = ExtractFilePath(Item.RelativePath)) then
-            HasCue := True;
-        if HasCue then
-          Continue;
+        Candidates[i] := Describe(Locations[i]);
+        Candidates[i].RelativePath := ExtractRelativePath(IncludeTrailingPathDelimiter(ExpandFileName(Folder)),
+            ExpandFileName(Locations[i])).Replace('\', '/');
       end;
-
-      // Listing never opens ROM streams. Header validation belongs to loading.
-      var MaxSize := FMaxRomFileSize;
-      if (RomSystem in [TRomSystem.NeoGeoCD, TRomSystem.PCECD, TRomSystem.SegaCD, TRomSystem.Saturn]) and (MaxSize = ROM_MAX_SIZE) then
-        MaxSize := Int64(800) * 1024 * 1024;
-      // GD-ROM images (CHD, DiscJuggler) hold about 1.2 GB.
-      if (RomSystem = TRomSystem.DC) and (MaxSize = ROM_MAX_SIZE) then
-        MaxSize := Int64(1600) * 1024 * 1024;
-      if (RomSystem in [TRomSystem.NeoGeo, TRomSystem.NeoGeoAES]) and (MaxSize = ROM_MAX_SIZE) then
-        MaxSize := 256 * 1024 * 1024;
-      if (FCheckRomFileSize and (Item.Size > MaxSize)) or not MatchText(ExtractFileExt(Item.Name), Extensions) then
-        Continue;
-
-      if (RomSystem = TRomSystem.SuperGrafx) and
-        not SameText(ExtractFileExt(Item.Name), '.sgx') and
-        not Item.Name.ToLower.Contains('(sgx)') and not Item.Name.ToLower.Contains('supergrafx') and
-        not Item.RelativePath.ToLower.StartsWith('sgx/') and not Item.RelativePath.ToLower.StartsWith('supergrafx/') and
-        not Item.RelativePath.ToLower.StartsWith('sgx\') and not Item.RelativePath.ToLower.StartsWith('supergrafx\') then
-        Continue;
-
-      if RomSystem = TRomSystem.PCE then
-      begin
-        if Item.Name.ToLower.Contains('(sgx)') or Item.Name.ToLower.Contains('supergrafx') then
-          Continue;
-        if Item.Name.ToLower.Contains('[bios]') or Item.Name.ToLower.StartsWith('syscard') then
-          Continue;
-      end;
-
-      var Match := Item;
-      if Match.RelativePath = '' then
-        Match.RelativePath := FolderName + '/' + Item.Name;
-      Matches.Add(Match);
     end;
-    Result := Matches.ToArray;
-  finally
-    Matches.Free;
-  end;
-end;
-
-procedure TStorage.SelectRomFolder(const Callback: TStorageSelectionCallback);
-begin
-  if FPicker = nil then
-    raise ENotSupportedException.Create('No storage picker is configured');
-
-  var Storage: IStorage := Self;
-  FPicker.Select(True,
-    procedure(const Selection: TStorageSelection)
+    if SameText(SystemId, ROM_SYSTEM_PS1) then
+      for var Candidate in Candidates do
+        if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_M3U) then
+        try
+          var Stream := OpenRead(Candidate.Location);
+          try
+            for var Disc in ReadCDPlaylist(Stream, Self, Candidate.Location) do
+              PlaylistDiscs.Add(Disc);
+          finally
+            Stream.Free;
+          end;
+        except
+          on E: EAbort do
+            raise;
+          // Keep malformed playlists visible so opening them reports the error.
+          // Their individual discs also remain available.
+          on E: Exception do
+            Continue;
+        end;
+    for var Candidate in Candidates do
+      if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_CUE) then
+        CueNames.Add(ChangeFileExt(Candidate.RelativePath, ''));
+    for var Candidate in Candidates do
     begin
-      var Result := Selection;
-      if not Result.Cancelled and (Result.Error = '') then
-      try
-        Storage.RomFolder := Result.Location;
-      except
-        on E: Exception do
-          Result.Error := E.Message;
+      var Item := Candidate;
+      if PlaylistDiscs.IndexOf(Item.Location) >= 0 then
+        Continue;
+      if Extensions.IndexOf(ExtractFileExt(Item.Name)) < 0 then
+        Continue;
+      // A PlayStation CUE is the library entry for its paired data/audio files.
+      // Match complete names, so Game.cue never hides an unrelated Game2.bin.
+      if SameText(SystemId, ROM_SYSTEM_PS1) and
+        (SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_BIN) or
+        SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_ISO)) then
+      begin
+        var BaseName := ChangeFileExt(Item.Name, '');
+        var Directory := Item.RelativePath.Substring(0, Length(Item.RelativePath) - Length(Item.Name));
+        if CueNames.IndexOf(Directory + BaseName) >= 0 then
+          Continue;
+        if SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_BIN) and BaseName.EndsWith(')') then
+        begin
+          var TrackStart := BaseName.ToLower.LastIndexOf(' (track ');
+          var TrackNumber: Integer;
+          if (TrackStart > 0) and
+            TryStrToInt(BaseName.Substring(TrackStart + 8, Length(BaseName) - TrackStart - 9), TrackNumber) and
+            (TrackNumber > 0) and (CueNames.IndexOf(Directory + BaseName.Substring(0, TrackStart)) >= 0) then
+            Continue;
+        end;
       end;
-      if Assigned(Callback) then
-        Callback(Result);
-    end);
+      Items.Add(Item);
+    end;
+    Result := Items.ToArray;
+  finally
+    PlaylistDiscs.Free;
+    CueNames.Free;
+    Extensions.Free;
+    Items.Free;
+  end;
 end;
 
 procedure TStorage.SelectRom(const Callback: TStorageSelectionCallback);

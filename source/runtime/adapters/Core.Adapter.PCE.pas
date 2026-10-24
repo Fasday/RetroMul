@@ -28,7 +28,7 @@ type
     property Keys2: TPCEKeyMap read FKeys2;
   end;
 
-  TPCECoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
+  TPCECoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics)
   private
     FCartridge: TPCECartridge;
     FDisc: TCDDisc;
@@ -44,6 +44,7 @@ type
     FError, FSnapshotDirectory, FSaveFile: string;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; Disc: TCDDisc = nil; const SourceHint: string = '');
     destructor Destroy; override;
     function GetSystemId: string;
@@ -80,6 +81,11 @@ uses
 
 const
   KeyNames: array[TEmulatorButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+
+procedure TPCECoreAdapter.ApplyLiveSettings;
+begin
+  ApplySettings;
+end;
 
 constructor TPCEConfig.Create(const FileName: string; const Storage: IStorage);
 const
@@ -192,8 +198,8 @@ begin
           Break;
         end;
 
-        Candidate := TPath.Combine(FStorage.RomFolder, TPath.Combine('pcecd', N));
-        if not FStorage.RomFolder.StartsWith('content://', True) and FStorage.Exists(Candidate) then
+        Candidate := TPath.Combine(FStorage.RomFolder('pcecd'), N);
+        if not FStorage.RomFolder('pcecd').StartsWith('content://', True) and FStorage.Exists(Candidate) then
         begin
           BIOS := Candidate;
           Break;

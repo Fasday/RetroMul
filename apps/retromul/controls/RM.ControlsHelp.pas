@@ -46,9 +46,9 @@ implementation
 
 uses
   System.SysUtils, System.Math, System.Generics.Collections,
-  System.Generics.Defaults, FMX.Graphics, FMX.BehaviorManager, RM.LibraryView,
+  System.Generics.Defaults, FMX.Graphics, FMX.TextLayout, FMX.BehaviorManager, RM.LibraryView,
   RM.Settings, RM.Input, RM.Gamepad, Core.Emulation, RM.Icons, RM.Styles,
-  NES.PowerPad, Core.Adapter.DC;
+  NES.PowerPad, Core.Adapter.PS1, Core.Adapter.DC;
 
 {$R *.fmx}
 
@@ -106,10 +106,16 @@ begin
   if SystemId = ROM_SYSTEM_GW then
     (FindComponent('LabelControllerTitle') as TLabel).Text := LibrarySystemName(SystemId);
   LabelSubtitle.Text := Translate('Current bindings · ') + LibrarySystemName(SystemId) + Translate(' · game paused');
+  var ZXActive := SystemId = ROM_SYSTEM_ZX;
   if KeyboardPeripheral then
     LabelNote.Text := Translate('Letter shortcuts, F5, F6 and F8 are unavailable with keyboard peripherals.');
   if KeyboardPeripheral and HasCoinAcceptor then
     LabelNote.Text := Translate('Letter shortcuts, F5, F6, F8 and F9 are unavailable with keyboard peripherals.');
+  if ZXActive then
+    if KeyboardPeripheral then
+      LabelNote.Text := Translate('ZX: F5/F6 save/load; F7 tape; F8 rewind; F9 NMI. P, R, Shift+R and Ctrl+O go to ZX. Use toolbar buttons for emulator actions.')
+    else
+      LabelNote.Text := Translate('ZX: F5/F6 save/load; F7 tape; F8 rewind; F9 NMI.');
   ButtonSettings.OnClick := SettingsClick;
   ButtonSettings.StylesData['text.Margins.Left'] := 36;
   ButtonSettings.StylesData['text.Margins.Right'] := 10;
@@ -124,14 +130,21 @@ begin
   for var i := 0 to 9 do
   begin
     var Row := FindComponent('LayoutFunction' + IntToStr(i)) as TLayout;
-    if KeyboardPeripheral and (i in [1, 2, 3, 4, 6, 7, 9]) then
+    if KeyboardPeripheral and ((i in [4, 6, 7, 9]) or (not ZXActive and (i in [1, 2, 3]))) then
       Row.Opacity := 0.4;
     if i = 9 then
       Row.Visible := HasCoinAcceptor;
   end;
   if KeyboardPeripheral then
     (FindComponent('LayoutFunctionHardRestart') as TLayout).Opacity := 0.4;
-  LayoutFunctions.Height := (10 + Ord(HasCoinAcceptor)) * 44;
+  (FindComponent('LayoutFunctionTapePlay') as TLayout).Visible := ZXActive;
+  (FindComponent('LayoutFunctionNMI') as TLayout).Visible := ZXActive;
+  if ZXActive then
+  begin
+    (FindComponent('LabelFunctionCaption3') as TLabel).Text := Translate('Rewind tape');
+    (FindComponent('PathFunctionIcon3') as TPath).Visible := False;
+  end;
+  LayoutFunctions.Height := (10 + Ord(HasCoinAcceptor) + 2 * Ord(ZXActive)) * 44;
   BuildPlayer;
 end;
 
@@ -222,6 +235,14 @@ begin
       AssignmentRow(LayoutAssignments, 'L', Assignments(N64LAction + FPlayer), Y, N64LAction + FPlayer);
       Y := Y + 34;
     end;
+    if FSystemId = ROM_SYSTEM_PS1 then
+      for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
+        if (Extra = TPS1Extra.L2) or (FPorts.Devices[FPlayer] = 'pad-analog') then
+        begin
+          var Action := PS1Action(FPlayer, Extra);
+          AssignmentRow(LayoutAssignments, PS1ExtraName(Extra), Assignments(Action), Y, Action);
+          Y := Y + 34;
+        end;
     if FSystemId = ROM_SYSTEM_DC then
       for var Extra := Low(TDCExtra) to High(TDCExtra) do
       begin
@@ -300,9 +321,9 @@ begin
   if Parent = LayoutFunctions then
     Row.Height := 44;
   Row.Position.Y := Y; // Top-alignment ordering key for generated bindings.
-  var L := GameplayLabel(Row, Row, Caption, 13);
+  var L := GameplayLabel(Row, Row, Translate(Caption), 13);
   L.Align := TAlignLayout.Left;
-  L.Width := 66;
+  L.Width := 160;
   if Parent = LayoutFunctions then
     L.Width := 260;
   var Key := TRectangle.Create(Row);
@@ -335,6 +356,19 @@ begin
     var H := Max(1, Min(740, Height - 40));
     RectangleSurface.Width := W;
     RectangleSurface.Height := H;
+    var NoteLayout := TTextLayoutManager.DefaultTextLayout.Create;
+    try
+      NoteLayout.BeginUpdate;
+      NoteLayout.Font.Assign(LabelNote.TextSettings.Font);
+      NoteLayout.MaxSize := PointF(Max(1, W - 48), 100000);
+      NoteLayout.WordWrap := True;
+      NoteLayout.Text := LabelNote.Text;
+      NoteLayout.EndUpdate;
+      LabelNote.Height := Max(24, Ceil(NoteLayout.TextHeight) + 8);
+      LayoutFooter.Height := LabelNote.Height + 54;
+    finally
+      NoteLayout.Free;
+    end;
     LabelTitle.TextSettings.Font.Size := IfThen(W < 650, 18, 25);
     var CloseW := IfThen(W < 500, 100, 144);
     ButtonFooterClose.Width := CloseW;

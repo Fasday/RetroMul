@@ -5,9 +5,8 @@
 interface
 
 uses
-  RM.BitmapShaders,
-  RM.Platforms.Presentation,
-  System.SysUtils, FMX.Types, Core.Emulation, RM.Controllers.Base, RM.VMUOverlay;
+  RM.BitmapShaders, RM.Platforms.Presentation, System.SysUtils, FMX.Types,
+  Core.Emulation, RM.Controllers.Base, RM.VMUOverlay;
 
 type
   TSessionController = class(TMainController)
@@ -20,8 +19,7 @@ type
     procedure UpdateVMUOverlay;
     procedure EndCoreLoading;
     procedure CancelCoreLoading;
-    procedure BeginGameLoading(const FileName, DisplayName: string;
-      StartPaused: Boolean; const SnapshotName: string);
+    procedure BeginGameLoading(const FileName, DisplayName: string; StartPaused: Boolean; const SnapshotName: string);
     procedure InstallCore(const NewEmulation: IEmulationCore; const FileName, DisplayName: string; StartPaused: Boolean);
   public
     destructor Destroy; override;
@@ -38,6 +36,7 @@ type
     procedure FinishFileSelection;
     function CanAcceptRomDrop(const Data: TDragObject): Boolean;
     procedure LoadRom(const FileName: string; const DisplayName: string = ''; StartPaused: Boolean = False; const SnapshotName: string = '');
+    procedure ResetConsole(Hard: Boolean);
     procedure HardRestart;
     procedure ButtonCloseRomClick(Sender: TObject);
     procedure Stop;
@@ -53,12 +52,14 @@ type
 implementation
 
 uses
-  System.Classes, System.SyncObjs, System.UITypes, System.Math, RM.Input, System.IOUtils,
-  FMX.Forms, FMX.Objects, FMX.Graphics, FMX.OpenDialog, Core.Storage,
-  Core.EmulatorFactory, Core.Adapter.SG1000, Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
-  Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.GBA, Core.Adapter.GB, Core.Adapter.GBC, Core.Adapter.NES,
-  Core.InputConfig, Core.Platforms, Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller,
-  RM.Dialogs, RM.Styles, RM.Gamepad.Viewport, Core.SavePaths;
+  System.Classes, System.SyncObjs, System.UITypes, System.Math, RM.Input,
+  System.IOUtils, FMX.Forms, FMX.Objects, FMX.Graphics, FMX.OpenDialog,
+  Core.Storage, Core.EmulatorFactory, Core.Adapter.ZX, Core.Adapter.SG1000,
+  Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.SNES, Core.Adapter.NeoGeo,
+  Core.Adapter.PCE, Core.Adapter.GW, Core.Adapter.GBA, Core.Adapter.GB,
+  Core.Adapter.GBC, Core.Adapter.NES, Core.InputConfig, Core.Platforms,
+  Core.RomFormat, RM.Gamepad, RM.FrameUpload, NES.Controller, RM.Dialogs,
+  RM.Styles, RM.Gamepad.Viewport, Core.SavePaths;
 
 function NewLoadCancellation(out CancelLoad: TProc): TProc;
 begin
@@ -154,7 +155,8 @@ begin
     FState.Input.Gamepad.ReleaseAll;
   if FState.Input.SuborKeyboard <> nil then
     FState.Input.SuborKeyboard.ReleaseAll;
-  if FState.Input.SGKeyboard <> nil then FState.Input.SGKeyboard.ReleaseAll;
+  if FState.Input.SGKeyboard <> nil then
+    FState.Input.SGKeyboard.ReleaseAll;
   if FState.Input.FamicomKeyboard <> nil then
     FState.Input.FamicomKeyboard.ReleaseAll;
   if FState.Input.MiraclePiano <> nil then
@@ -232,6 +234,9 @@ begin
     FState.Session.DialogWasPaused := FState.Session.UserPaused;
     FState.Session.Emulation.Pause;
   end;
+  FView.ButtonReset.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.OpeningRom and
+    not FState.Session.PendingAutosaveChoice and not FState.Browser.ViewingLibrary and
+    (FState.Settings.View = nil) and (FState.Help.View = nil);
   FView.GamePause.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom;
   var UserPaused := (FState.Session.Emulation <> nil) and (FState.Session.UserPaused or FState.Session.AutoPaused);
   FView.GamePauseIcon.Visible := not UserPaused;
@@ -253,7 +258,8 @@ begin
     FView.GamePause.Text := ''
   else
     FView.GamePause.Text := FView.GamePause.Hint;
-  FView.GamePause.Hint := FView.GamePause.Hint + ' · P';
+  if (FState.Input.SystemId <> ROM_SYSTEM_ZX) or not FState.Input.Ports.KeyboardEnabled then
+    FView.GamePause.Hint := FView.GamePause.Hint + ' · P';
   // Changing the style recreates its text resource, including its margins.
   FView.GamePause.ApplyStyleLookup;
   FView.GamePause.StylesData['text.Margins.Left'] := 36;
@@ -262,7 +268,6 @@ begin
   if FState.Browser.Tools[0] <> nil then
   begin
     FState.Browser.Tools[1].Enabled := (FState.Session.Emulation <> nil) and FState.Session.Emulation.SupportsSnapshots and not FState.Session.OpeningRom;
-    FState.Browser.Tools[2].Enabled := FState.Browser.Tools[1].Enabled;
     FState.Browser.Tools[4].Enabled := not FState.Session.OpeningRom;
   end;
   if FState.Browser.ScreenshotTool <> nil then
@@ -281,6 +286,7 @@ begin
   var SGKeyboardActive := Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard;
   if FState.Input.SGKeyboard <> nil then
   begin
+    FState.Input.SGKeyboard.SpectrumMode := FState.Input.SystemId = 'zx';
     FState.Input.SGKeyboard.Visible := SGKeyboardActive;
     FState.Input.SGKeyboard.Enabled := SGKeyboardActive and not FState.Session.EmulationFaulted and not FState.Session.OpeningRom
       and not FState.Browser.ViewingLibrary and (FState.Settings.View = nil) and (FState.Help.View = nil) and not RetroDialogVisible(FView);
@@ -372,8 +378,10 @@ begin
   else
   begin
     FState.Input.PowerPad.AttachToForm(nil);
-    if KeyboardActive then FState.Input.Gamepad.AttachToForm(nil)
-    else FState.Input.Gamepad.AttachToForm(FView);
+    if KeyboardActive then
+      FState.Input.Gamepad.AttachToForm(nil)
+    else
+      FState.Input.Gamepad.AttachToForm(FView);
   end;
   {$ENDIF}
   ArrangeVirtualGamepads(FState.Input.Gamepad, FState.Input.PowerPad, FView.ImageCanvas);
@@ -592,7 +600,8 @@ end;
 
 procedure TSessionController.LoadRom(const FileName: string; const DisplayName: string; StartPaused: Boolean; const SnapshotName: string);
 begin
-  if FLoadingCore or FState.Session.PendingAutosaveChoice then Exit;
+  if FLoadingCore or FState.Session.PendingAutosaveChoice then
+    Exit;
   Inc(FLoadGeneration);
   // The explicit snapshot is already a launch choice. Otherwise consult only
   // the persisted association; never open ROM streams or instantiate a core here.
@@ -635,7 +644,8 @@ begin
           FState.Session.PendingAutosaveChoice := False;
           try
             var Snapshot := '';
-            if Choice = TRetroDialogChoice.Accept then Snapshot := Path;
+            if Choice = TRetroDialogChoice.Accept then
+              Snapshot := Path;
             // Restored games wait for an explicit Resume after the dialog closes.
             BeginGameLoading(FileName, DisplayName, StartPaused or (Choice = TRetroDialogChoice.Accept), Snapshot);
           except
@@ -645,11 +655,42 @@ begin
         end;
       finally
         FState.Session.PendingAutosaveChoice := False;
-        if not FLoadingCore then FState.Session.PreserveOpeningAutosave := False;
+        if not FLoadingCore then
+          FState.Session.PreserveOpeningAutosave := False;
         FView.FinishFileSelection;
         FView.SyncActivity;
       end;
     end, 'Load autosave', 'Start new game', 'Cancel launch');
+end;
+
+procedure TSessionController.ResetConsole(Hard: Boolean);
+begin
+  if (FState.Session.Emulation = nil) or FState.Session.OpeningRom or
+    FLoadingCore or FState.Session.PendingAutosaveChoice or FState.Browser.ViewingLibrary or
+    (FState.Settings.View <> nil) or (FState.Help.View <> nil) then
+    Exit;
+  if Hard then
+  begin
+    HardRestart;
+    Exit;
+  end;
+  FView.TimerUpdate.Enabled := False;
+  try
+    if FState.Input.Rumble <> nil then
+      FState.Input.Rumble.Reset;
+    FState.Session.Emulation.Reset;
+    FState.Session.UserPaused := False;
+    FState.Session.EmulationFaulted := False;
+    {$IFDEF ISMOBILE}
+    if FState.Mobile.ActivityPaused then
+      FState.Session.Emulation.Pause;
+    {$ENDIF}
+    FView.SyncActivity;
+    FView.SetStatus(FState.Session.RomDisplayName);
+  except
+    FView.StopOnError;
+    raise;
+  end;
 end;
 
 procedure TSessionController.HardRestart;
@@ -671,11 +712,12 @@ begin
   if FileName.StartsWith('content://', True) then
     SourceName := FState.Session.Storage.Describe(FileName).Name;
   var Ext := ExtractFileExt(SourceName);
-  if not (SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD) or
+  if not (SameText(Ext, ROM_EXTENSION_M3U) or SameText(Ext, ROM_EXTENSION_CUE) or SameText(Ext, ROM_EXTENSION_ISO) or SameText(Ext, ROM_EXTENSION_CHD) or
     SameText(Ext, ROM_EXTENSION_MDS)) then
   begin
     InstallCore(FView.NewCore(FileName), FileName, DisplayName, StartPaused);
-    if SnapshotName <> '' then FView.LoadSnapshot(SnapshotName);
+    if SnapshotName <> '' then
+      FView.LoadSnapshot(SnapshotName);
     Exit;
   end;
 
@@ -723,7 +765,8 @@ begin
         try
           CheckCancelled();
         except
-          on E: EAbort do Exit;
+          on E: EAbort do
+            Exit;
         end;
         TThread.ForceQueue(nil,
           procedure
@@ -740,7 +783,8 @@ begin
               else
               try
                 InstallCore(Core, Path, Title, Paused);
-                if Snapshot <> '' then FView.LoadSnapshot(Snapshot);
+                if Snapshot <> '' then
+                  FView.LoadSnapshot(Snapshot);
               except
                 on E: Exception do
                   ShowRetroMessage(FView, Translate('Unable to open game: ') + E.Message);
@@ -762,7 +806,8 @@ begin
   // Construct first: an invalid ROM leaves the current worker running.
   if FState.Session.Emulation <> nil then
   begin
-    if not FState.Session.PreserveOpeningAutosave then FView.AutosaveOnExit;
+    if not FState.Session.PreserveOpeningAutosave then
+      FView.AutosaveOnExit;
     FState.Session.Emulation.Stop;
   end;
 
@@ -770,7 +815,8 @@ begin
     FState.Input.Gamepad.ReleaseAll;
   if FState.Input.SuborKeyboard <> nil then
     FState.Input.SuborKeyboard.ReleaseAll;
-  if FState.Input.SGKeyboard <> nil then FState.Input.SGKeyboard.ReleaseAll;
+  if FState.Input.SGKeyboard <> nil then
+    FState.Input.SGKeyboard.ReleaseAll;
   if FState.Input.FamicomKeyboard <> nil then
     FState.Input.FamicomKeyboard.ReleaseAll;
   if FState.Input.MiraclePiano <> nil then
@@ -788,10 +834,10 @@ begin
   FState.Session.PreserveOpeningAutosave := False;
   FState.Session.PendingAutosaveChoice := False;
 
-  var Platform := TPlatformRegistry.Require(FState.Session.Emulation.SystemId);
-  var InputSystem := Platform.Id;
+  var platform := TPlatformRegistry.Require(FState.Session.Emulation.SystemId);
+  var InputSystem := platform.Id;
   FView.LoadHostInput(InputSystem);
-  FState.Input.Gamepad.Configure(Platform.System, FState.Input.Ports.Devices[0],
+  FState.Input.Gamepad.Configure(platform.System, FState.Input.Ports.Devices[0],
     CoreButtons(InputSystem, FState.Input.Ports.Devices[0]));
 
   FView.ImageCanvas.HitTest := False;
@@ -849,7 +895,7 @@ begin
     RecordGameSnapshotDirectory(FState.Session.Storage, FileName, Directory);
     if FState.Browser.View <> nil then
     begin
-      FState.Browser.View.RecordSession(FileName, Directory, Platform.Id, DisplayName);
+      FState.Browser.View.RecordSession(FileName, Directory, platform.Id, DisplayName);
       FState.Browser.View.Visible := False;
       FView.ScreenTabs.ActiveTab := FView.GameScreen;
       FView.LayoutClient.Visible := True;
@@ -1004,6 +1050,13 @@ begin
     if FView.LabelStatus.Text <> FrameStatus then
       FView.SetStatus(FrameStatus);
     {$ENDIF}
+  end;
+  var Tape: IZXTapeCore;
+  if Supports(FState.Session.Emulation, IZXTapeCore, Tape) then
+  begin
+    var Status := Tape.GetTapeStatus;
+    if Status <> '' then
+      FView.SetStatus(Status);
   end;
   if not NewFrame then
     Exit;

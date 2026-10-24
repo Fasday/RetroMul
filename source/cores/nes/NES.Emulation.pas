@@ -81,6 +81,7 @@ type
     constructor Create(const FileName: string; FourScoreEnabled: Boolean = False; RegionOverride: TRegionOverride = TRegionOverride.Auto; AudioEnabled: Boolean = True; AudioVolume: Single = 1; const SaveDirectory: string = ''; const SnapshotRoot: string = ''; const InputConfigFile: string = ''); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; FourScoreEnabled: Boolean = False; RegionOverride: TRegionOverride = TRegionOverride.Auto; AudioEnabled: Boolean = True; AudioVolume: Single = 1; const SaveDirectory: string = ''; const SnapshotRoot: string = ''; const InputConfigFile: string = ''); overload;
     destructor Destroy; override;
+    procedure ConfigureAudio(Volume: Single);
     procedure StopAndSave;
     procedure SetKey(Code: UInt32; Pressed: Boolean; const Keys, Keys2: TKeyMap); overload;
     procedure SetKey(Code: UInt32; Pressed: Boolean; const Keys, Keys2, Keys3, Keys4: TKeyMap); overload;
@@ -208,6 +209,17 @@ begin
   FStatus.TapeProgress.DefaultFile := True;
   FStatus.Region := FConsole.Region;
   FConsole.Apu.SetSampleRate(NES_SAMPLE_RATE);
+end;
+
+procedure TNesEmulationThread.ConfigureAudio(Volume: Single);
+begin
+  FLock.Enter;
+  try
+    FAudioVolume := EnsureRange(Volume, 0.0, 1.0);
+  finally
+    FLock.Leave;
+  end;
+  FWake.SetEvent;
 end;
 
 procedure TNesEmulationThread.StopAndSave;
@@ -875,12 +887,14 @@ begin
           end;
           Failed := False;
         end;
+        var AudioVolume: Single;
         var PianoKeys: TMiracleKeys;
         var ResetRequested: Boolean;
         var PauseRequested: Boolean;
         var ResumeRequested: Boolean;
         FLock.Enter;
         try
+          AudioVolume := FAudioVolume;
           ResetRequested := FResetRequested;
           FResetRequested := False;
           PauseRequested := FPauseRequested;
@@ -997,7 +1011,7 @@ begin
             if FUsesMiraclePiano then
               FConsole.MiraclePiano.MixAudio(Samples, Count, NES_SAMPLE_RATE);
             for var I := 0 to Count - 1 do
-              Samples[I] := Round(Samples[I] * FAudioVolume);
+              Samples[I] := Round(Samples[I] * AudioVolume);
             FAudio.Submit(Samples, Count);
             FLock.Enter;
             try

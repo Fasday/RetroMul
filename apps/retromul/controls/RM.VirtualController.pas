@@ -6,6 +6,53 @@ uses
   System.Classes, System.Types, System.UITypes, System.Generics.Collections,
   FMX.Types, FMX.Controls, FMX.Graphics;
 
+const
+  VirtualIconUp =
+ 'M4.20889,10.7327 C3.9232,11.0326 3.93475,11.5074 4.23467,11.7931 C4.5346,12.0788 5.00933,12.0672 ' +
+    '5.29502,11.7673 L11.2495,5.516 L11.2495,20.25 C11.2495,20.6642 11.5853,21 11.9995,21 C12.4137,21 ' +
+    '12.7495,20.6642 12.7495,20.25 L12.7495,5.51565 L18.7043,11.7673 C18.99,12.0672 19.4648,12.0788 19.7647,11.7931 ' +
+    'C20.0646,11.5074 20.0762,11.0326 19.7905,10.7327 L12.7238,3.31379 C12.5627,3.14474 12.3573,3.04477 ' +
+    '12.1438,3.01386 C12.0971,3.00477 12.0489,3 11.9995,3 C11.9498,3 11.9012,3.00483 11.8543,3.01406 ' +
+    'C11.6412,3.04518 11.4363,3.14509 11.2756,3.31379 L4.20889,10.7327 Z';
+  VirtualIconDown =
+    'M19.7905,13.2673 C20.0762,12.9674 20.0646,12.4926 19.7647,12.2069 C19.4648,11.9212 18.99,11.9328 ' +
+    '18.7043,12.2327 L12.7498,18.484 L12.7498,3.75 C12.7498,3.33579 12.4141,3 11.9998,3 C11.5856,3 11.2498,3.33579 ' +
+    '11.2498,3.75 L11.2498,18.4844 L5.29502,12.2327 C5.00933,11.9328 4.5346,11.9212 4.23467,12.2069 C3.93475,12.4926 ' +
+    '3.9232,12.9674 4.20889,13.2673 L11.2756,20.6862 C11.4366,20.8553 11.642,20.9552 11.8556,20.9861 ' +
+    'C11.9023,20.9952 11.9505,21 11.9998,21 C12.0495,21 12.0981,20.9952 12.1451,20.9859 C12.3582,20.9548 ' +
+    '12.5631,20.8549 12.7238,20.6862 L19.7905,13.2673 Z';
+  VirtualIconLeft =
+    'M10.7327,19.7905 C11.0326,20.0762 11.5074,20.0646 11.7931,19.7647 C12.0788,19.4648 12.0672,18.99 ' +
+    '11.7673,18.7043 L5.51587,12.7497 L20.25,12.7497 C20.6642,12.7497 21,12.4139 21,11.9997 C21,11.5855 ' +
+    '20.6642,11.2497 20.25,11.2497 L5.51577,11.2497 L11.7673,5.29502 C12.0672,5.00933 12.0787,4.5346 11.7931,4.23467 ' +
+    'C11.5074,3.93475 11.0326,3.9232 10.7327,4.20889 L3.31379,11.2756 C3.14486,11.4365 3.04491,11.6417 ' +
+    '3.01393,11.8551 C3.00479,11.9019 3,11.9503 3,11.9997 C3,12.0493 3.00481,12.0977 3.01398,12.1446 ' +
+    'C3.04502,12.3579 3.14496,12.563 3.31379,12.7238 L10.7327,19.7905 Z';
+  VirtualIconRight =
+    'M13.2673,4.20889 C12.9674,3.9232 12.4926,3.93475 12.2069,4.23467 C11.9212,4.5346 11.9328,5.00933 ' +
+    '12.2327,5.29502 L18.4841,11.2496 L3.75,11.2496 C3.33579,11.2496 3,11.5854 3,11.9996 C3,12.4138 3.33579,12.7496 ' +
+    '3.75,12.7496 L18.4842,12.7496 L12.2327,18.7043 C11.9328,18.99 11.9212,19.4648 12.2069,19.7647 C12.4926,20.0646 ' +
+    '12.9674,20.0762 13.2673,19.7905 L20.6862,12.7238 C20.8551,12.5629 20.9551,12.3576 20.9861,12.1443 ' +
+    'C20.9952,12.0975 21,12.0491 21,11.9996 C21,11.9501 20.9952,11.9016 20.986,11.8547 C20.955,11.6415 ' +
+    '20.855,11.4364 20.6862,11.2756 L13.2673,4.20889 Z';
+  VirtualIconPause =
+    'M6.25,3 C5.00736,3 4,4.00736 4,5.25 L4,18.75 C4,19.9926 5.00736,21 6.25,21 L8.75,21 C9.99264,21 11,19.9926 ' +
+    '11,18.75 L11,5.25 C11,4.00736 9.99264,3 8.75,3 L6.25,3 Z M5.5,5.25 C5.5,4.83579 5.83579,4.5 6.25,4.5 L8.75,4.5 ' +
+    'C9.16421,4.5 9.5,4.83579 9.5,5.25 L9.5,18.75 C9.5,19.1642 9.16421,19.5 8.75,19.5 L6.25,19.5 C5.83579,19.5 ' +
+    '5.5,19.1642 5.5,18.75 L5.5,5.25 Z M15.25,3 C14.0074,3 13,4.00736 13,5.25 L13,18.75 C13,19.9926 14.0074,21 ' +
+    '15.25,21 L17.75,21 C18.9926,21 20,19.9926 20,18.75 L20,5.25 C20,4.00736 18.9926,3 17.75,3 L15.25,3 Z M14.5,5.25 ' +
+    'C14.5,4.83579 14.8358,4.5 15.25,4.5 L17.75,4.5 C18.1642,4.5 18.5,4.83579 18.5,5.25 L18.5,18.75 C18.5,19.1642 ' +
+    '18.1642,19.5 17.75,19.5 L15.25,19.5 C14.8358,19.5 14.5,19.1642 14.5,18.75 L14.5,5.25 Z';
+  VirtualIconTriangle =
+    'M12 1 L24 23 L0 23 Z M12 5 L3.4 21 L20.6 21 Z';
+  VirtualIconSquare =
+    'M0 0 L24 0 L24 24 L0 24 Z M2 2 L2 22 L22 22 L22 2 Z';
+  VirtualIconCircle =
+    'M24 12 C24 18.627 18.627 24 12 24 C5.373 24 0 18.627 0 12 C0 5.373 5.373 0 12 0 C18.627 0 24 5.373 24 12 Z M22 12 C22 6.477 17.523 2 12 2 C6' +
+    '.477 2 2 6.477 2 12 C2 17.523 6.477 22 12 22 C17.523 22 22 17.523 22 12 Z';
+  VirtualIconCross =
+    'M1.5 0 L12 10.5 L22.5 0 L24 1.5 L13.5 12 L24 22.5 L22.5 24 L12 13.5 L1.5 24 L0 22.5 L10.5 12 L0 1.5 Z';
+
 type
   TVirtualSide = (Left, Right);
 
@@ -21,12 +68,15 @@ type
   private
     FController: TVirtualController;
     FId, FCaption: string;
+    FIconPath, FPaintPath: TPathData;
     FSide: TVirtualSide;
     FBounds: TRectF;
     FValues, FFeedback: TArray<Single>;
     FPartEnabled: TArray<Boolean>;
     FCaptureGroup: string;
     FRetainOnSlide: Boolean;
+    function GetIconData: string;
+    procedure SetIconData(const Value: string);
     function GetPartEnabled(Part: Integer): Boolean;
     procedure SetPartEnabled(Part: Integer; Value: Boolean);
     function GetFeedback(Part: Integer): Single;
@@ -40,9 +90,12 @@ type
     function InputValue(const P: TPointF): Single; virtual;
     function PartInputValue(Part: Integer; const P: TPointF): Single; virtual;
     procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); virtual; abstract;
+    procedure DrawIcon(Canvas: TCanvas; const R: TRectF; Path: TPathData; Alpha: Single);
+    procedure DrawContent(Canvas: TCanvas; const R: TRectF; Alpha: Single);
     procedure DrawLabel(Canvas: TCanvas; const R: TRectF; const Text: string; Alpha: Single);
   public
     constructor Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer = 1); virtual;
+    destructor Destroy; override;
     function Value(Part: Integer = 0): Single;
     function PartCount: Integer;
     function VisualValue(Part: Integer = 0): Single;
@@ -54,6 +107,8 @@ type
     property RetainOnSlide: Boolean read FRetainOnSlide write FRetainOnSlide;
     property Id: string read FId;
     property Caption: string read FCaption write SetCaption;
+    // Same path syntax as TPath.Data.Data; an empty path displays Caption.
+    property IconData: string read GetIconData write SetIconData;
     property Side: TVirtualSide read FSide write SetSide;
     property Bounds: TRectF read FBounds write SetBounds;
     property Controller: TVirtualController read FController;
@@ -71,6 +126,8 @@ type
   end;
 
   TVirtualDPad = class(TVirtualElement)
+  private
+    FDirectionPaths: array[0..3] of TPathData;
   public
     const
       Up = 0;
@@ -83,6 +140,7 @@ type
     procedure Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single); override;
   public
     constructor Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer = 4); override;
+    destructor Destroy; override;
   end;
 
   TVirtualStick = class(TVirtualElement)
@@ -188,6 +246,8 @@ begin
   if (AId = '') or (PartCount < 1) then
     raise EArgumentException.Create('Element needs an ID and at least one part');
 
+  FIconPath := TPathData.Create;
+  FPaintPath := TPathData.Create;
   FRetainOnSlide := True;
   FId := AId;
   FCaption := ACaption;
@@ -198,6 +258,46 @@ begin
   for var i := 0 to PartCount - 1 do
     FPartEnabled[i] := True;
   SetBounds(ABounds);
+end;
+
+destructor TVirtualElement.Destroy;
+begin
+  FPaintPath.Free;
+  FIconPath.Free;
+  inherited;
+end;
+
+function TVirtualElement.GetIconData: string;
+begin
+  Result := FIconPath.Data;
+end;
+
+procedure TVirtualElement.SetIconData(const Value: string);
+begin
+  FIconPath.Data := Value;
+  if FController <> nil then
+    FController.Repaint;
+end;
+
+procedure TVirtualElement.DrawIcon(Canvas: TCanvas; const R: TRectF; Path: TPathData; Alpha: Single);
+begin
+  if Path.IsEmpty then
+    Exit;
+  var Size := Min(R.Width, R.Height) * 0.44;
+  var Center := R.CenterPoint;
+  FPaintPath.Assign(Path);
+  FPaintPath.FitToRect(RectF(Center.X - Size / 2, Center.Y - Size / 2,
+      Center.X + Size / 2, Center.Y + Size / 2));
+  Canvas.Fill.Color := TAlphaColors.White;
+  Canvas.FillPath(FPaintPath, Alpha);
+end;
+
+procedure TVirtualElement.DrawContent(Canvas: TCanvas; const R: TRectF; Alpha: Single);
+begin
+  if FIconPath.IsEmpty then
+    DrawLabel(Canvas, R, Caption, Alpha)
+  else
+    DrawIcon(Canvas, R, FIconPath, Alpha);
 end;
 
 procedure TVirtualElement.SetBounds(const Value: TRectF);
@@ -389,7 +489,7 @@ begin
   Canvas.Stroke.Thickness := 1.5;
   Canvas.FillRect(Bounds, 8, 8, AllCorners, Alpha * (0.16 + 0.54 * VisualValue));
   Canvas.DrawRect(Bounds, 8, 8, AllCorners, Alpha);
-  DrawLabel(Canvas, Bounds, Caption, Alpha);
+  DrawContent(Canvas, Bounds, Alpha);
 end;
 
 procedure TVirtualElement.DrawLabel(Canvas: TCanvas; const R: TRectF; const Text: string; Alpha: Single);
@@ -415,12 +515,25 @@ begin
   Canvas.Stroke.Thickness := 1.5;
   Canvas.FillEllipse(Bounds, Alpha * (0.16 + 0.54 * VisualValue));
   Canvas.DrawEllipse(Bounds, Alpha);
-  DrawLabel(Canvas, Bounds, Caption, Alpha);
+  DrawContent(Canvas, Bounds, Alpha);
 end;
 
 constructor TVirtualDPad.Create(const AId, ACaption: string; ASide: TVirtualSide; const ABounds: TRectF; PartCount: Integer);
 begin
   inherited Create(AId, ACaption, ASide, ABounds, 4);
+  for var I := 0 to 3 do
+    FDirectionPaths[I] := TPathData.Create;
+  FDirectionPaths[Up].Data := VirtualIconUp;
+  FDirectionPaths[Down].Data := VirtualIconDown;
+  FDirectionPaths[Left].Data := VirtualIconLeft;
+  FDirectionPaths[Right].Data := VirtualIconRight;
+end;
+
+destructor TVirtualDPad.Destroy;
+begin
+  for var Path in FDirectionPaths do
+    Path.Free;
+  inherited;
 end;
 
 function TVirtualDPad.LocalPartBounds(Part: Integer): TRectF;
@@ -461,8 +574,6 @@ begin
 end;
 
 procedure TVirtualDPad.Paint(Canvas: TCanvas; const Bounds: TRectF; Alpha: Single);
-const
-  Labels: array[0..3] of string = ('U', 'D', 'L', 'R');
 begin
   Canvas.Fill.Color := TAlphaColors.White;
   Canvas.FillEllipse(Bounds, Alpha * 0.06);
@@ -477,7 +588,7 @@ begin
     Canvas.Fill.Color := TAlphaColors.White;
     Canvas.FillRect(R, 4, 4, AllCorners, Alpha * (0.16 + 0.54 * VisualValue(i)));
     Canvas.DrawRect(R, 4, 4, AllCorners, Alpha);
-    DrawLabel(Canvas, R, Labels[i], Alpha);
+    DrawIcon(Canvas, R, FDirectionPaths[i], Alpha);
   end;
 end;
 
@@ -493,7 +604,7 @@ begin
   if VisualValue > 0 then
     R.Offset(Bounds.Width - D - 8, 0);
   Canvas.FillEllipse(R, Alpha * 0.8);
-  DrawLabel(Canvas, Bounds, Caption, Alpha);
+  DrawContent(Canvas, Bounds, Alpha);
 end;
 
 function TVirtualTrigger.InputValue(const P: TPointF): Single;
@@ -511,7 +622,7 @@ begin
   R.Top := R.Bottom - R.Height * VisualValue;
   Canvas.FillRect(R, 6, 6, AllCorners, Alpha * 0.6);
   Canvas.DrawRect(Bounds, 8, 8, AllCorners, Alpha);
-  DrawLabel(Canvas, Bounds, Caption, Alpha);
+  DrawContent(Canvas, Bounds, Alpha);
 end;
 
 constructor TVirtualController.Create(AOwner: TComponent);

@@ -120,6 +120,18 @@ begin
   var Magic: AnsiString := 'RMSNAP01';
   Move(Magic[1], Result.Magic, 8);
   Result.Version := 1;
+  // ZX v16 adds Profi CMR1, DS80 latches/palette and variable-sector disk states.
+  // ZX v17 adds Byte PROM gate, VI53, Byte-01 RAM/video and KDI geometry.
+  // ZX v18 adds Didaktik Gama 8255 mode, latches and output/interrupt state.
+  // ZX v19 adds TK90X/TK95 timing and original ROM language selection.
+  // ZX v20 adds the Turbo Sound FM configuration, CPLD and both YM2203 states.
+  // ZX v21 adds Next-DAC startup configuration, gates, selector and sample latches.
+  // ZX v22 adds the independent General Sound CPU, memory, clocks and DAC state.
+  // ZX v23 adds NeoGS and the shared native SPI SD state.
+  // ZX v24 stores VS1011e, MP3 DMA, CPLD/FPGA and programmable flash.
+  // ZX v25 adds DMA USC controller/timers, physical DMA and bus continuation.
+  if SameText(PlatformCore, 'ZX') then
+    Result.Version := 25;
   // CPS v2 adds OKI bank state, enlarged sprite buffers and board peripherals.
   if SameText(PlatformCore, 'CPS1') or SameText(PlatformCore, 'CPS2') then
     Result.Version := 2;
@@ -209,6 +221,12 @@ begin
       CompareMem(@Header.platform, @Expected.platform, 8) and
       (Header.Version <> Expected.Version) then
       raise EReadError.CreateFmt('N64 snapshot version %d is unsupported; expected version %d', [Header.Version, Expected.Version]);
+
+    if SameText(platform, 'PS1') and
+      CompareMem(@Header.Magic, @Expected.Magic, 8) and
+      CompareMem(@Header.platform, @Expected.platform, 8) and
+      not CompareMem(@Header.ROMHash, @Expected.ROMHash, 32) then
+      raise EReadError.Create('This PS1 snapshot belongs to a different disc. Insert the disc used to save it.');
 
     if not CompareMem(@Header.Magic, @Expected.Magic, 8) or
       ((Header.Version <> Expected.Version) and not

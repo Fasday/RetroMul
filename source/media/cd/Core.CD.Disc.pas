@@ -9,6 +9,7 @@ type
   TCDIndex = record
     Number, FileSector, LBA: Integer;
   end;
+
   TCDTrack = record
     Number, StartLBA, EndLBA, PregapLBA, FileSector, SectorSize, DataOffset: Integer;
     StoredPregap: Integer;
@@ -32,16 +33,24 @@ type
     FIdentity: TBytes;
     FCompressedHash: TBytes;
     FHighDensity, FOverburn: Boolean;
+    FArchiveDirectory: string;
+    FSBIInvalidCRC: TArray<Integer>;
     procedure LoadGDI(Stream: TStream; const Storage: IStorage; const Location: string);
     procedure LoadCDI(const Storage: IStorage; const Location: string);
+    procedure LoadSBI(const Storage: IStorage; const Location, SourceName: string);
+    function SBIInvalidCRC(LBA: Integer): Boolean;
+    procedure LoadZip(Stream: TStream; const Storage: IStorage);
     procedure LoadCHD(const Storage: IStorage; const Location: string);
     procedure LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
     procedure LoadMDS(Stream: TStream; const Storage: IStorage; const Location, FileName: string);
+    procedure LoadRaw(const Storage: IStorage; const Location: string);
     procedure ValidateAndHash;
   public
     // Generic CD media: TOC, companion streams and sectors. Filesystem/boot
     // requirements are selected by the caller after construction.
     constructor Create(Stream: TStream; const Storage: IStorage; const Location: string);
+    // Inspect ZIP directory metadata without loading cartridge/disc payloads.
+    class function IsDiscZip(Stream: TStream): Boolean; static;
     procedure RequireISO9660;
     // Optional root-directory file; bounded to avoid trusting corrupt extents.
     function ReadISOFile(const Name: string; MaximumSize: Integer = 65536): TBytes;
@@ -56,21 +65,33 @@ type
     function IndexAt(LBA: Integer): Integer;
     function HasIndexes(LBA: Integer): Boolean;
     procedure ReadRawData(LBA: Integer; var Sector: TBytes);
+    // True for usable measured Q, or reconstructed Q outside SBI bad sectors.
     function ReadSubQ(LBA: Integer; var Q: TBytes): Boolean;
+    function HasSubchannelQ: Boolean;
     function Identity: TBytes;
     // GD-ROM layout: a high-density area from LBA 45000.
     property HighDensity: Boolean read FHighDensity;
   end;
 
+// UTF-8 playlist; paths are relative to its location. Nested playlists are rejected.
+function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string): TArray<string>;
+
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
+// A single-track raw image (.bin without a CUE): 2352-byte sectors starting
+// with a Mode 1 or Mode 2 data sector. Restores the stream position.
+
+function IsCDRawImage(Stream: TStream): Boolean;
+
 function CDDataEDC(const Data: TBytes; Count: Integer): Cardinal;
 // Correct isolated symbol errors using ECMA-130 P/Q parity; commit only on valid EDC.
+
 function CDCorrectMode1(var Sector: TBytes): Boolean;
 
 implementation
 
 uses
-  System.Hash, System.IOUtils, System.Math, System.StrUtils, Core.CD.CHD
+  Core.Platforms, System.Hash, System.IOUtils, System.Math, System.StrUtils,
+  System.Zip, System.Generics.Collections, Core.CD.CHD
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
@@ -83,23 +104,39 @@ begin
   begin
     // SAF document IDs are opaque. Find the source in the selected system
     // folder, then resolve by display name without constructing a URI.
-    for var Folder in Storage.Folders(Storage.RomFolder) do
+    for var platform in TPlatformRegistry.All do
     begin
-      var Files := Storage.Files(Folder);
-      var Found := False;
-      for var Candidate in Files do
-        {$IFDEF ANDROID}
-        if TAndroidStorage.SameDocument(Candidate, Location) then
-        {$ELSE}
-          if Candidate = Location then
-        {$ENDIF}
-            Found := True;
-      if not Found then
+      var Folder := Storage.RomFolder(platform.Id);
+      if Folder = '' then
         Continue;
-
-      for var Candidate in Files do
-        if SameText(Storage.Describe(Candidate).Name, Name) then
-          Exit(Candidate);
+      var Items: TArray<TStorageFile>;
+      {$IFDEF ANDROID}
+      Items := TAndroidStorage.Enumerate(Folder, True);
+      {$ELSE}
+      var Files := Storage.Files(Folder, True);
+      SetLength(Items, Length(Files));
+      for var i := 0 to High(Files) do
+        Items[i] := Storage.Describe(Files[i]);
+      {$ENDIF}
+      for var i := 0 to High(Items) do
+        if Items[i].RelativePath = '' then
+          Items[i].RelativePath := Items[i].Name;
+      var SourceIndex := -1;
+      for var i := 0 to High(Items) do
+        {$IFDEF ANDROID}
+        if TAndroidStorage.SameDocument(Items[i].Location, Location) then
+        {$ELSE}
+          if Items[i].Location = Location then
+        {$ENDIF}
+            SourceIndex := i;
+      if SourceIndex < 0 then
+        Continue;
+      var Relative := Items[SourceIndex].RelativePath;
+      var Directory := Relative.Substring(0, Length(Relative) - Length(Items[SourceIndex].Name));
+      for var Candidate in Items do
+        if SameText(Candidate.Name, Name) and
+          SameText(Candidate.RelativePath, Directory + Name) then
+          Exit(Candidate.Location);
 
       Break;
     end;
@@ -115,6 +152,104 @@ begin
         Exit(Candidate);
 
     raise EReadError.Create('Missing CD file: ' + Name);
+  end;
+end;
+
+function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string): TArray<string>;
+
+  function RelativeName(const Name: string): string;
+  begin
+    var Parts := TList<string>.Create;
+    try
+      for var Part in Name.Replace('\', '/').Split(['/']) do
+      begin
+        if (Part = '') or (Part = '.') then
+          Continue;
+        if Part = '..' then
+        begin
+          if Parts.Count = 0 then
+            raise EReadError.Create('M3U path leaves the ROM folder: ' + Name);
+          Parts.Delete(Parts.Count - 1);
+        end
+        else
+          Parts.Add(Part);
+      end;
+      Result := string.Join('/', Parts.ToArray);
+    finally
+      Parts.Free;
+    end;
+  end;
+
+  function ResolveEntry(const Name: string): string;
+  begin
+    if Location.StartsWith('content://', True) then
+    begin
+      // Resolve SAF document IDs through folder metadata, never by editing a URI.
+      if Name.Contains(':') or Name.StartsWith('/') or Name.StartsWith('\') then
+        raise EReadError.Create('M3U requires relative paths in a document folder');
+      var Folder := Storage.RomFolder('ps1');
+      var Items: TArray<TStorageFile>;
+      {$IFDEF ANDROID}
+      Items := TAndroidStorage.Enumerate(Folder, True);
+      {$ELSE}
+      var Files := Storage.Files(Folder, True);
+      SetLength(Items, Length(Files));
+      for var I := 0 to High(Files) do
+        Items[I] := Storage.Describe(Files[I]);
+      {$ENDIF}
+      for var Source in Items do
+      begin
+        {$IFDEF ANDROID}
+        if not TAndroidStorage.SameDocument(Source.Location, Location) then
+          Continue;
+        {$ELSE}
+        if Source.Location <> Location then
+          Continue;
+        {$ENDIF}
+        var Directory := Source.RelativePath.Substring(0, Length(Source.RelativePath) - Length(Source.Name));
+        var Target := RelativeName(Directory + Name);
+        for var Candidate in Items do
+          if SameText(RelativeName(Candidate.RelativePath), Target) then
+            Exit(Candidate.Location);
+        Break;
+      end;
+      raise EReadError.Create('Missing M3U disc in the selected PS1 ROM folder: ' + Name);
+    end;
+    var NativeName := Name.Replace('\', PathDelim).Replace('/', PathDelim);
+    if NativeName.Contains('://') then
+      raise EReadError.Create('M3U expects a local disc image: ' + Name);
+    Result := TPath.GetFullPath(TPath.Combine(ExtractFilePath(Location), NativeName));
+    if not Storage.Exists(Result) then
+      raise EReadError.Create('Missing M3U disc: ' + Name);
+  end;
+
+begin
+  if (Stream.Size - Stream.Position > 1024 * 1024) then
+    raise EReadError.Create('M3U playlist exceeds 1 MiB');
+  var Entries := TList<string>.Create;
+  var Reader := TStreamReader.Create(Stream, TEncoding.UTF8, True, 1024);
+  try
+    while not Reader.EndOfStream do
+    begin
+      TStorage.CheckReadCancelled;
+      var Line := Reader.ReadLine.Trim;
+      if (Line = '') or Line.StartsWith('#') then
+        Continue;
+      if (Length(Line) >= 2) and Line.StartsWith('"') and Line.EndsWith('"') then
+        Line := Line.Substring(1, Length(Line) - 2);
+      var Ext := ExtractFileExt(Line);
+      if not MatchText(Ext, ['.cue', '.chd', '.iso', '.bin', '.zip']) then
+        raise EReadError.Create('M3U expects CUE, CHD, ISO, raw BIN or disc ZIP: ' + Line);
+      if Entries.Count >= 99 then
+        raise EReadError.Create('M3U playlist exceeds 99 discs');
+      Entries.Add(ResolveEntry(Line));
+    end;
+    if Entries.Count = 0 then
+      raise EReadError.Create('M3U playlist contains no discs');
+    Result := Entries.ToArray;
+  finally
+    Reader.Free;
+    Entries.Free;
   end;
 end;
 
@@ -188,7 +323,12 @@ begin
   var SourceName := Location;
   if Location.StartsWith('content://', True) then
     SourceName := Storage.Describe(Location).Name;
-  if SameText(ExtractFileExt(SourceName), '.cue') then
+  if SameText(ExtractFileExt(SourceName), '.zip') then
+  begin
+    LoadZip(Stream, Storage);
+    Exit;
+  end
+  else if SameText(ExtractFileExt(SourceName), '.cue') then
     LoadCue(Stream, Storage, Location)
   else if SameText(ExtractFileExt(SourceName), '.iso') then
   begin
@@ -210,11 +350,14 @@ begin
     LoadCDI(Storage, Location)
   else if SameText(ExtractFileExt(SourceName), '.mds') then
     LoadMDS(Stream, Storage, Location, ExtractFileName(SourceName.Replace('/', PathDelim)))
+  else if SameText(ExtractFileExt(SourceName), '.bin') then
+    LoadRaw(Storage, Location)
   else
-    raise EReadError.Create('CD expects ISO, CUE, MDS, CHD, GDI or CDI');
+    raise EReadError.Create('CD expects ISO, CUE, MDS, CHD, GDI, CDI, a raw BIN or a disc ZIP');
 
   if (FLeadOut = 0) and (Length(FTracks) > 0) then
     FLeadOut := FTracks[High(FTracks)].EndLBA;
+  LoadSBI(Storage, Location, SourceName);
   ValidateAndHash;
 end;
 
@@ -225,7 +368,277 @@ begin
     Item.SubStream.Free;
     Item.Stream.Free;
   end;
+  if (FArchiveDirectory <> '') and TDirectory.Exists(FArchiveDirectory) then
+  try
+    TDirectory.Delete(FArchiveDirectory, True);
+  except
+    // Cache cleanup must not mask a media error or interrupt shutdown.
+  end;
   inherited;
+end;
+
+function DiscZipEntry(const Name: string): Boolean;
+begin
+  var Normalized := Name.Replace('\', '/');
+  var Leaf := Normalized.Substring(Normalized.LastIndexOf('/') + 1);
+  Result := not Normalized.StartsWith('__MACOSX/') and
+    not Leaf.StartsWith('._') and
+    MatchText(ExtractFileExt(Name), ['.cue', '.iso', '.chd', '.bin']);
+end;
+
+class function TCDDisc.IsDiscZip(Stream: TStream): Boolean;
+begin
+  if Stream = nil then
+    raise EArgumentNilException.Create('Stream');
+  Result := False;
+  var Position := Stream.Position;
+  var Zip := TZipFile.Create;
+  try
+    Stream.Position := 0;
+    var Magic: Cardinal;
+    if (Stream.Read(Magic, SizeOf(Magic)) <> SizeOf(Magic)) or (Magic <> $04034B50) then
+      Exit;
+    Stream.Position := 0;
+    Zip.Open(Stream, zmRead);
+    // BIN is shared with cartridges. Require a descriptor/container, or raw
+    // sector sync in a lone BIN, rather than routing every cartridge ZIP here.
+    var BinIndex := -1;
+    var BinCount := 0;
+    for var i := 0 to Zip.FileCount - 1 do
+    begin
+      TStorage.CheckReadCancelled;
+      if DiscZipEntry(Zip.FileNames[i]) then
+      begin
+        if not SameText(ExtractFileExt(Zip.FileNames[i]), '.bin') then
+          Exit(True);
+        Inc(BinCount);
+        BinIndex := i;
+      end;
+    end;
+    if BinCount = 1 then
+    begin
+      var Entry: TStream;
+      var Header: TZipHeader;
+      Zip.Read(BinIndex, Entry, Header);
+      try
+        var Probe: array[0..15] of Byte;
+        FillChar(Probe, SizeOf(Probe), 0);
+        if Entry.Read(Probe, SizeOf(Probe)) = SizeOf(Probe) then
+          Result := (Probe[0] = 0) and (Probe[11] = 0) and (Probe[15] in [1, 2]);
+        for var i := 1 to 10 do
+          Result := Result and (Probe[i] = $FF);
+      finally
+        Entry.Free;
+      end;
+    end;
+  finally
+    Zip.Free;
+    Stream.Position := Position;
+  end;
+end;
+
+procedure TCDDisc.LoadZip(Stream: TStream; const Storage: IStorage);
+const
+  MaxArchiveSize = Int64(1024) * 1024 * 1024;
+begin
+  var Zip := TZipFile.Create;
+  try
+    Stream.Position := 0;
+    Zip.Open(Stream, zmRead);
+    if Zip.FileCount > 4096 then
+      raise EReadError.Create('CD ZIP contains too many entries');
+    var Selected := -1;
+    var CueCount := 0;
+    var ImageCount := 0;
+    for var i := 0 to Zip.FileCount - 1 do
+      if DiscZipEntry(Zip.FileNames[i]) then
+      begin
+        if SameText(ExtractFileExt(Zip.FileNames[i]), '.cue') then
+        begin
+          Inc(CueCount);
+          Selected := i;
+        end
+        else
+        begin
+          Inc(ImageCount);
+          if CueCount = 0 then
+            Selected := i;
+        end;
+      end;
+    if (Selected < 0) or (CueCount > 1) or ((CueCount = 0) and (ImageCount <> 1)) then
+      raise EReadError.Create('CD ZIP must contain one CUE or one standalone disc image');
+
+    var SelectedName := Zip.FileNames[Selected].Replace('\', '/');
+    var Separator := SelectedName.LastIndexOf('/');
+    var Prefix := SelectedName.Substring(0, Separator + 1);
+    // Every extracted name is a validated leaf. Archive paths cannot escape
+    // the unique cache directory or overwrite an existing user file.
+    FArchiveDirectory := Storage.TemporaryFile('.disc');
+    var LocalStorage: IStorage := TStorage.Create(Storage.Root);
+    LocalStorage.EnsureFolder(FArchiveDirectory);
+    var Names := TStringList.Create;
+    try
+      Names.CaseSensitive := False;
+      Names.Sorted := True;
+      var Total: Int64 := 0;
+      for var i := 0 to Zip.FileCount - 1 do
+      begin
+        TStorage.CheckReadCancelled;
+        var Name := Zip.FileNames[i].Replace('\', '/');
+        var Split := Name.LastIndexOf('/');
+        if not SameText(Name.Substring(0, Split + 1), Prefix) then
+          Continue;
+        var Leaf := Name.Substring(Split + 1);
+        if (Leaf = '') or Leaf.StartsWith('._') or
+          not MatchText(ExtractFileExt(Leaf), ['.cue', '.bin', '.iso', '.chd', '.wav', '.sub', '.sbi']) then
+          Continue;
+        if Leaf.Contains(':') or (Leaf = '.') or (Leaf = '..') then
+          raise EReadError.Create('Invalid CD ZIP filename: ' + Name);
+        if Names.IndexOf(Leaf) >= 0 then
+          raise EReadError.Create('Duplicate CD ZIP filename: ' + Leaf);
+        Names.Add(Leaf);
+        var Size := Zip.FileInfo[i].UncompressedSize64;
+        if Size > UInt64(MaxArchiveSize - Total) then
+          raise EReadError.Create('CD ZIP unpacked data exceeds 1 GiB');
+        Inc(Total, Int64(Size));
+        var Input: TStream;
+        var Header: TZipHeader;
+        Zip.Read(i, Input, Header, True);
+        try
+          var Output := LocalStorage.OpenWrite(TPath.Combine(FArchiveDirectory, Leaf));
+          try
+            var Buffer: array[0..65535] of Byte;
+            var Written: Int64 := 0;
+            while True do
+            begin
+              TStorage.CheckReadCancelled;
+              var Count := Input.Read(Buffer, SizeOf(Buffer));
+              if Count = 0 then
+                Break;
+              Inc(Written, Count);
+              if (Count < 0) or (Written > Int64(Size)) then
+                raise EReadError.Create('CD ZIP entry exceeds its declared size');
+              Output.WriteBuffer(Buffer, Count);
+            end;
+            if Written <> Int64(Size) then
+              raise EReadError.Create('Truncated CD ZIP entry: ' + Leaf);
+          finally
+            Output.Free;
+          end;
+        finally
+          Input.Free;
+        end;
+      end;
+    finally
+      Names.Free;
+    end;
+    var Path := TPath.Combine(FArchiveDirectory, SelectedName.Substring(Separator + 1));
+    var Input := LocalStorage.OpenRead(Path);
+    try
+      var Disc := TCDDisc.Create(Input, LocalStorage, Path);
+      try
+        FTracks := Disc.FTracks;
+        Disc.FTracks := nil;
+        FLeadOut := Disc.FLeadOut;
+        FIdentity := Disc.FIdentity;
+        FCompressedHash := Disc.FCompressedHash;
+        FSBIInvalidCRC := Disc.FSBIInvalidCRC;
+      finally
+        Disc.Free;
+      end;
+    finally
+      Input.Free;
+    end;
+  finally
+    Zip.Free;
+  end;
+end;
+
+// SBI lists absolute BCD positions whose Q checksums were intentionally bad.
+// The payload omits the CRC; the drive must retain its last valid position at
+// these sectors, rather than expose the replacement MSF bytes (psx-spx).
+procedure TCDDisc.LoadSBI(const Storage: IStorage; const Location, SourceName: string);
+
+  function DecodeBCD(Value: Byte; Limit: Integer): Integer;
+  begin
+    Result := (Value shr 4) * 10 + (Value and 15);
+    if ((Value shr 4) > 9) or ((Value and 15) > 9) or (Result >= Limit) then
+      raise EReadError.Create('Invalid SBI sector position');
+  end;
+
+begin
+  var Path: string;
+  try
+    var Name := SourceName.Replace('\', '/');
+    Name := Name.Substring(Name.LastIndexOf('/') + 1);
+    Path := CDSibling(Storage, Location, ChangeFileExt(Name, '.sbi'));
+  except
+    on E: EReadError do
+      Exit; // The sidecar is optional.
+  end;
+  var Input := Storage.OpenRead(Path);
+  try
+    if (Input.Size < 4) or (Input.Size > 65536) then
+      raise EReadError.Create('Invalid SBI file size');
+    var Header: array[0..3] of Byte;
+    Input.ReadBuffer(Header, 4);
+    if (Header[0] <> Ord('S')) or (Header[1] <> Ord('B')) or
+      (Header[2] <> Ord('I')) or (Header[3] <> 0) then
+      raise EReadError.Create('Invalid SBI signature');
+    while Input.Position < Input.Size do
+    begin
+      TStorage.CheckReadCancelled;
+      if Input.Size - Input.Position < 4 then
+        raise EReadError.Create('Truncated SBI sector entry');
+      Input.ReadBuffer(Header, 4);
+      var LBA := (DecodeBCD(Header[0], 100) * 60 + DecodeBCD(Header[1], 60)) * 75 +
+        DecodeBCD(Header[2], 75) - 150;
+      if (LBA < 0) or (LBA >= FLeadOut) then
+        raise EReadError.Create('SBI sector outside disc');
+      var Count: Integer;
+      case Header[3] of
+        1:
+          Count := 10;
+        2, 3:
+          Count := 3;
+      else
+        raise EReadError.Create('Invalid SBI entry type');
+      end;
+      if Input.Size - Input.Position < Count then
+        raise EReadError.Create('Truncated SBI subchannel data');
+      Input.Seek(Count, soCurrent);
+      var N := Length(FSBIInvalidCRC);
+      SetLength(FSBIInvalidCRC, N + 1);
+      FSBIInvalidCRC[N] := LBA;
+    end;
+    TArray.Sort<Integer>(FSBIInvalidCRC);
+  finally
+    Input.Free;
+  end;
+end;
+
+function TCDDisc.SBIInvalidCRC(LBA: Integer): Boolean;
+begin
+  var Left := 0;
+  var Right := High(FSBIInvalidCRC);
+  while Left <= Right do
+  begin
+    var Middle := Left + (Right - Left) div 2;
+    if FSBIInvalidCRC[Middle] = LBA then
+      Exit(True);
+    if FSBIInvalidCRC[Middle] < LBA then
+      Left := Middle + 1
+    else
+      Right := Middle - 1;
+  end;
+  Result := False;
+end;
+
+function TCDDisc.HasSubchannelQ: Boolean;
+begin
+  Result := Length(FSBIInvalidCRC) <> 0;
+  for var Item in FTracks do
+    Result := Result or (Item.SubStream <> nil) or Item.SubchannelStored;
 end;
 
 procedure TCDDisc.LoadCue(Stream: TStream; const Storage: IStorage; const Location: string);
@@ -325,7 +738,8 @@ begin
 
       var N := StrToInt(Tokens[1]);
       var Time := CueTime(Tokens[2]);
-      if (N < 0) or (N > 99) then raise EReadError.Create('Invalid CUE index number');
+      if (N < 0) or (N > 99) then
+        raise EReadError.Create('Invalid CUE index number');
       var Count := Length(FTracks[Current].Indexes);
       if (Count > 0) and ((N <= FTracks[Current].Indexes[Count - 1].Number) or
         (Time < FTracks[Current].Indexes[Count - 1].FileSector)) then
@@ -412,7 +826,8 @@ begin
         raise EReadError.Create('Truncated CD subchannel file');
     except
       on E: EReadError do
-        if FTracks[i].SubStream <> nil then raise;
+        if FTracks[i].SubStream <> nil then
+          raise;
     end;
   end;
   if Length(FTracks) > 0 then
@@ -918,6 +1333,49 @@ begin
   FLeadOut := Max(LeadOut, FTracks[High(FTracks)].EndLBA);
 end;
 
+const
+  CDSync: array[0..11] of Byte = ($00, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $00);
+
+function IsCDRawImage(Stream: TStream): Boolean;
+begin
+  Result := False;
+  var Size := Stream.Size;
+  if (Size < 2352 * 16) or (Size mod 2352 <> 0) or (Size > Int64(800) * 1024 * 1024) then
+    Exit;
+
+  var Position := Stream.Position;
+  try
+    var Header: array[0..15] of Byte;
+    Stream.Position := 0;
+    if Stream.Read(Header, SizeOf(Header)) <> SizeOf(Header) then
+      Exit;
+    Result := CompareMem(@Header[0], @CDSync[0], SizeOf(CDSync)) and (Header[15] in [1, 2]);
+  finally
+    Stream.Position := Position;
+  end;
+end;
+
+// One data track over the whole file; the mode comes from the first sector.
+procedure TCDDisc.LoadRaw(const Storage: IStorage; const Location: string);
+begin
+  SetLength(FTracks, 1);
+  FTracks[0].Number := 1;
+  FTracks[0].SectorSize := 2352;
+  FTracks[0].Stream := Storage.OpenRead(Location);
+  FTracks[0].ByteSize := FTracks[0].Stream.Size;
+  FTracks[0].SourceName := ExtractFileName(Location);
+  if not IsCDRawImage(FTracks[0].Stream) then
+    raise EReadError.Create('BIN without CUE must be a raw 2352-byte data track');
+
+  var Header: array[0..15] of Byte;
+  FTracks[0].Stream.Position := 0;
+  FTracks[0].Stream.ReadBuffer(Header, SizeOf(Header));
+  FTracks[0].DataOffset := 16;
+  if Header[15] = 2 then
+    FTracks[0].DataOffset := 24;
+  FTracks[0].EndLBA := FTracks[0].ByteSize div 2352;
+end;
+
 procedure TCDDisc.LoadCHD(const Storage: IStorage; const Location: string);
 begin
   // GD-ROM images (CHGD track metadata) may exceed a CD's size.
@@ -965,7 +1423,8 @@ begin
     for var Token in Metadata.Split([' '], TStringSplitOptions.ExcludeEmpty) do
     begin
       var Pair := Token.Split([':']);
-      if (Length(Pair) = 2) and (Pair[0] = 'SUBTYPE') then SubKind := Pair[1];
+      if (Length(Pair) = 2) and (Pair[0] = 'SUBTYPE') then
+        SubKind := Pair[1];
       if Length(Pair) <> 2 then
         raise EReadError.Create('Invalid CHD track metadata');
 
@@ -1051,13 +1510,15 @@ begin
           [Item.Number, Item.StartLBA, Item.EndLBA, Item.PregapLBA, Item.FileSector,
             Item.SectorSize, Ord(Item.Audio), Ord(Item.LittleEndian)])));
     for var Index in Item.Indexes do
-      if Index.Number > 1 then Hash.Update(TEncoding.UTF8.GetBytes(Format('/index/%d/%d', [Index.Number, Index.LBA])));
+      if Index.Number > 1 then
+        Hash.Update(TEncoding.UTF8.GetBytes(Format('/index/%d/%d', [Index.Number, Index.LBA])));
     if Item.SubStream <> nil then
     begin
       Item.SubStream.Position := 0;
       repeat
         var N := Item.SubStream.Read(Buffer, SizeOf(Buffer));
-        if N = 0 then Break;
+        if N = 0 then
+          Break;
         Hash.Update(Buffer, N);
       until False;
     end;
@@ -1107,25 +1568,30 @@ begin
 end;
 
 function TCDDisc.ReadISOFile(const Name: string; MaximumSize: Integer): TBytes;
+
   function LE32(const Bytes: TBytes; Offset: Integer): Cardinal;
   begin
     Result := Cardinal(Bytes[Offset]) or (Cardinal(Bytes[Offset + 1]) shl 8) or
       (Cardinal(Bytes[Offset + 2]) shl 16) or (Cardinal(Bytes[Offset + 3]) shl 24);
   end;
+
 begin
   Result := nil;
   if (MaximumSize <= 0) or (MaximumSize > 65536) or (Length(FTracks) = 0) or FTracks[0].Audio then
     Exit;
   var First := FTracks[0];
   var Sectors := First.EndLBA - First.StartLBA;
-  if Sectors < 17 then Exit;
+  if Sectors < 17 then
+    Exit;
   var Sector: TBytes;
   ReadData(First.StartLBA + 16, Sector);
-  if (Sector[0] <> 1) or not CompareMem(@Sector[1], PAnsiChar(AnsiString('CD001')), 5) then Exit;
+  if (Sector[0] <> 1) or not CompareMem(@Sector[1], PAnsiChar(AnsiString('CD001')), 5) then
+    Exit;
   var Root := LE32(Sector, 158);
   var Size := LE32(Sector, 166);
   if (Size = 0) or (Size > 65536) or (Root >= Cardinal(Sectors)) or
-    (Int64(Root) + (Int64(Size) + 2047) div 2048 > Sectors) then Exit;
+    (Int64(Root) + (Int64(Size) + 2047) div 2048 > Sectors) then
+    Exit;
   var Offset := 0;
   while Offset < Integer(Size) do
   begin
@@ -1135,20 +1601,25 @@ begin
     while Cursor < Remaining do
     begin
       var RecordSize := Integer(Sector[Cursor]);
-      if RecordSize = 0 then Break;
-      if (RecordSize < 34) or (Cursor + RecordSize > Remaining) then Exit;
+      if RecordSize = 0 then
+        Break;
+      if (RecordSize < 34) or (Cursor + RecordSize > Remaining) then
+        Exit;
       var NameSize := Integer(Sector[Cursor + 32]);
-      if NameSize > RecordSize - 33 then Exit;
+      if NameSize > RecordSize - 33 then
+        Exit;
       var Identifier := TEncoding.ASCII.GetString(Sector, Cursor + 33, NameSize);
       var Version := Pos(';', Identifier);
-      if Version > 0 then Identifier := Copy(Identifier, 1, Version - 1);
+      if Version > 0 then
+        Identifier := Copy(Identifier, 1, Version - 1);
       if SameText(Identifier, Name) and ((Sector[Cursor + 25] and $82) = 0) then
       begin
         var Extent := LE32(Sector, Cursor + 2);
         var FileSize := LE32(Sector, Cursor + 10);
         if (FileSize = 0) or (FileSize > Cardinal(MaximumSize)) or
           (Extent >= Cardinal(Sectors)) or
-          (Int64(Extent) + (Int64(FileSize) + 2047) div 2048 > Sectors) then Exit;
+          (Int64(Extent) + (Int64(FileSize) + 2047) div 2048 > Sectors) then
+          Exit;
         SetLength(Result, FileSize);
         var Copied := 0;
         while Copied < Integer(FileSize) do
@@ -1240,12 +1711,14 @@ begin
   if (Count < 0) or (Count > Length(Data)) then
     raise EArgumentOutOfRangeException.Create('Invalid CD EDC range');
   Result := 0;
-  for var I := 0 to Count - 1 do
+  for var i := 0 to Count - 1 do
   begin
-    Result := Result xor Data[I];
+    Result := Result xor Data[i];
     for var Bit := 0 to 7 do
-      if (Result and 1) <> 0 then Result := (Result shr 1) xor $D8018001
-      else Result := Result shr 1;
+      if (Result and 1) <> 0 then
+        Result := (Result shr 1) xor $D8018001
+      else
+        Result := Result shr 1;
   end;
 end;
 
@@ -1253,21 +1726,26 @@ function CDCorrectMode1(var Sector: TBytes): Boolean;
 var
   ForwardGF, BackwardGF: array[0..255] of Byte;
   Work: TBytes;
+
   function CRCValid(const Data: TBytes): Boolean;
   begin
     Result := (Data[15] = 1) and (CDDataEDC(Data, 2064) =
       (Cardinal(Data[2064]) or (Cardinal(Data[2065]) shl 8) or
       (Cardinal(Data[2066]) shl 16) or (Cardinal(Data[2067]) shl 24)));
   end;
+
   function Multiply(A, B: Byte): Byte;
   begin
     Result := 0;
     while B <> 0 do
     begin
-      if (B and 1) <> 0 then Result := Result xor A;
-      A := ForwardGF[A]; B := B shr 1;
+      if (B and 1) <> 0 then
+        Result := Result xor A;
+      A := ForwardGF[A];
+      B := B shr 1;
     end;
   end;
+
   function Divide(A, B: Byte): Byte;
   begin
     // Inversion by Fermat: b^-1 = b^254 in GF(256).
@@ -1276,76 +1754,104 @@ var
     var Exponent := 254;
     while Exponent > 0 do
     begin
-      if Odd(Exponent) then Power := Multiply(Power, Base);
-      Base := Multiply(Base, Base); Exponent := Exponent shr 1;
+      if Odd(Exponent) then
+        Power := Multiply(Power, Base);
+      Base := Multiply(Base, Base);
+      Exponent := Exponent shr 1;
     end;
     Result := Multiply(A, Power);
   end;
+
   function Repair(MajorCount, MinorCount, MajorMult, MinorInc, Destination: Integer): Integer;
-  var CoeffA, CoeffB: array[0..44] of Byte;
+  var
+    CoeffA, CoeffB: array[0..44] of Byte;
   begin
     Result := 0;
     for var Position := 0 to MinorCount - 1 do
     begin
-      var A: Byte := 0; var B: Byte := 0;
+      var A: Byte := 0;
+      var B: Byte := 0;
       for var Minor := 0 to MinorCount - 1 do
       begin
         var Value := Byte(Ord(Minor = Position));
-        A := ForwardGF[A xor Value]; B := B xor Value;
+        A := ForwardGF[A xor Value];
+        B := B xor Value;
       end;
       A := BackwardGF[ForwardGF[A] xor B];
-      CoeffA[Position] := A; CoeffB[Position] := A xor B;
+      CoeffA[Position] := A;
+      CoeffB[Position] := A xor B;
     end;
-    CoeffA[MinorCount] := 1; CoeffB[MinorCount] := 0;
-    CoeffA[MinorCount+1] := 0; CoeffB[MinorCount+1] := 1;
+    CoeffA[MinorCount] := 1;
+    CoeffB[MinorCount] := 0;
+    CoeffA[MinorCount + 1] := 0;
+    CoeffB[MinorCount + 1] := 1;
     var Size := MajorCount * MinorCount;
     for var Major := 0 to MajorCount - 1 do
     begin
       var Start := (Major shr 1) * MajorMult + (Major and 1);
       var Index := Start;
-      var A: Byte := 0; var B: Byte := 0;
+      var A: Byte := 0;
+      var B: Byte := 0;
       for var Minor := 0 to MinorCount - 1 do
       begin
         var Value := Work[12 + Index];
-        A := ForwardGF[A xor Value]; B := B xor Value;
+        A := ForwardGF[A xor Value];
+        B := B xor Value;
         Index := (Index + MinorInc) mod Size;
       end;
       A := BackwardGF[ForwardGF[A] xor B];
       var SA := Byte(Work[Destination + Major] xor A);
       var SB := Byte(Work[Destination + MajorCount + Major] xor A xor B);
-      if (SA = 0) and (SB = 0) then Continue;
+      if (SA = 0) and (SB = 0) then
+        Continue;
       for var Position := 0 to MinorCount + 1 do
       begin
         var Delta: Byte;
-        if CoeffA[Position] <> 0 then Delta := Divide(SA, CoeffA[Position])
-        else Delta := Divide(SB, CoeffB[Position]);
+        if CoeffA[Position] <> 0 then
+          Delta := Divide(SA, CoeffA[Position])
+        else
+          Delta := Divide(SB, CoeffB[Position]);
         if (Delta = 0) or (Multiply(Delta, CoeffA[Position]) <> SA) or
-          (Multiply(Delta, CoeffB[Position]) <> SB) then Continue;
+          (Multiply(Delta, CoeffB[Position]) <> SB) then
+          Continue;
         var Address := Destination + Major;
-        if Position < MinorCount then Address := 12 + (Start + Position * MinorInc) mod Size
-        else if Position = MinorCount + 1 then Inc(Address, MajorCount);
+        if Position < MinorCount then
+          Address := 12 + (Start + Position * MinorInc) mod Size
+        else if Position = MinorCount + 1 then
+          Inc(Address, MajorCount);
         Work[Address] := Work[Address] xor Delta;
-        Inc(Result); Break;
+        Inc(Result);
+        Break;
       end;
     end;
   end;
+
 begin
   Result := False;
-  if Length(Sector) <> 2352 then Exit;
-  if CRCValid(Sector) then Exit(True);
+  if Length(Sector) <> 2352 then
+    Exit;
+  if CRCValid(Sector) then
+    Exit(True);
   Work := Copy(Sector);
-  for var I := 0 to 255 do
+  for var i := 0 to 255 do
   begin
-    var J := I shl 1;
-    if (I and $80) <> 0 then J := J xor $11D;
-    ForwardGF[I] := J; BackwardGF[I xor J] := I;
+    var J := i shl 1;
+    if (i and $80) <> 0 then
+      J := J xor $11D;
+    ForwardGF[i] := J;
+    BackwardGF[i xor J] := i;
   end;
   for var Pass := 0 to 3 do
   begin
     var Changes := Repair(86, 24, 2, 86, 2076);
     Inc(Changes, Repair(52, 43, 86, 88, 2248));
-    if CRCValid(Work) then begin Sector := Work; Exit(True); end;
-    if Changes = 0 then Exit;
+    if CRCValid(Work) then
+    begin
+      Sector := Work;
+      Exit(True);
+    end;
+    if Changes = 0 then
+      Exit;
   end;
 end;
 
@@ -1357,12 +1863,14 @@ end;
 function CDQCRC(const Q: TBytes): Word;
 begin
   var CRC: Cardinal := 0;
-  for var I := 0 to 9 do
+  for var i := 0 to 9 do
   begin
-    CRC := CRC xor (Cardinal(Q[I]) shl 8);
+    CRC := CRC xor (Cardinal(Q[i]) shl 8);
     for var Bit := 0 to 7 do
-      if (CRC and $8000) <> 0 then CRC := ((CRC shl 1) xor $1021) and $FFFF
-      else CRC := (CRC shl 1) and $FFFF;
+      if (CRC and $8000) <> 0 then
+        CRC := ((CRC shl 1) xor $1021) and $FFFF
+      else
+        CRC := (CRC shl 1) and $FFFF;
   end;
   Result := Word(CRC xor $FFFF);
 end;
@@ -1370,26 +1878,32 @@ end;
 function TCDDisc.IndexAt(LBA: Integer): Integer;
 begin
   var N := TrackAt(LBA);
-  if N < 0 then Exit(1);
+  if N < 0 then
+    Exit(1);
   var Item := FTracks[N];
-  if LBA < Item.StartLBA then Exit(0);
+  if LBA < Item.StartLBA then
+    Exit(0);
   Result := 1;
   for var Index in Item.Indexes do
-    if (Index.Number > 0) and (Index.LBA <= LBA) then Result := Index.Number;
+    if (Index.Number > 0) and (Index.LBA <= LBA) then
+      Result := Index.Number;
 end;
 
 function TCDDisc.HasIndexes(LBA: Integer): Boolean;
 begin
   Result := False;
   var N := TrackAt(LBA);
-  if N < 0 then Exit;
+  if N < 0 then
+    Exit;
   for var Index in FTracks[N].Indexes do
-    if Index.Number > 1 then Exit(True);
+    if Index.Number > 1 then
+      Exit(True);
 end;
 
 procedure TCDDisc.ReadRawData(LBA: Integer; var Sector: TBytes);
 var
   ForwardGF, BackwardGF: array[0..255] of Byte;
+
   procedure Parity(MajorCount, MinorCount, MajorMult, MinorInc, Destination: Integer);
   begin
     var Size := MajorCount * MinorCount;
@@ -1411,19 +1925,22 @@ var
       Sector[Destination + MajorCount + Major] := A xor B;
     end;
   end;
+
 begin
   var N := TrackAt(LBA);
-  if not IsData(LBA) then raise EReadError.Create('CD raw read outside data track');
+  if not IsData(LBA) then
+    raise EReadError.Create('CD raw read outside data track');
   var Item := FTracks[N];
   SetLength(Sector, 2352);
-  if Item.DataOffset in [16,24] then
+  if Item.DataOffset in [16, 24] then
   begin
     Item.Stream.Position := Item.ByteOffset + Int64(Item.FileSector + LBA - Item.StartLBA) * Item.SectorSize;
     Item.Stream.ReadBuffer(Sector[0], 2352);
     Exit; // Preserve the dumped header, parity and intentional errors.
   end;
   FillChar(Sector[0], Length(Sector), 0);
-  for var I := 1 to 10 do Sector[I] := $FF;
+  for var i := 1 to 10 do
+    Sector[i] := $FF;
   var Position := LBA + 150;
   Sector[12] := CDBCD(Position div 4500);
   Sector[13] := CDBCD((Position div 75) mod 60);
@@ -1433,31 +1950,36 @@ begin
   ReadData(LBA, Data);
   Move(Data[0], Sector[16], 2048);
   var EDC := CDDataEDC(Sector, 2064);
-  for var I := 0 to 3 do Sector[2064 + I] := Byte(EDC shr (I * 8));
+  for var i := 0 to 3 do
+    Sector[2064 + i] := Byte(EDC shr (i * 8));
   // ECMA-130 Mode 1: P(26,24), then Q(45,43) including P parity.
-  for var I := 0 to 255 do
+  for var i := 0 to 255 do
   begin
-    var J := I shl 1;
-    if (I and $80) <> 0 then J := J xor $11D;
-    ForwardGF[I] := J;
-    BackwardGF[I xor J] := I;
+    var J := i shl 1;
+    if (i and $80) <> 0 then
+      J := J xor $11D;
+    ForwardGF[i] := J;
+    BackwardGF[i xor J] := i;
   end;
   Parity(86, 24, 2, 86, 2076);
   Parity(52, 43, 86, 88, 2248);
 end;
 
 function TCDDisc.ReadSubQ(LBA: Integer; var Q: TBytes): Boolean;
+
   function ValidBCD(Value: Byte; Limit: Integer): Boolean;
   begin
     Result := ((Value and 15) <= 9) and ((Value shr 4) <= 9) and
       ((Value shr 4) * 10 + (Value and 15) < Limit);
   end;
+
 begin
   SetLength(Q, 12);
   FillChar(Q[0], 12, 0);
   Result := False;
   var N := TrackAt(LBA);
-  if N < 0 then Exit;
+  if N < 0 then
+    Exit;
   var Item := FTracks[N];
   var FilePosition := Item.FileSector + LBA - Item.StartLBA;
   if (FilePosition >= 0) and (LBA >= Item.StartLBA - Item.StoredPregap) and
@@ -1475,33 +1997,41 @@ begin
       Item.Stream.ReadBuffer(Sub, 96);
     end;
     if Item.SubRaw then
-      for var I := 0 to 95 do Q[I div 8] := Q[I div 8] or (((Sub[I] shr 6) and 1) shl (7 - I mod 8))
-    else Move(Sub[12], Q[0], 12);
+      for var i := 0 to 95 do
+        Q[i div 8] := Q[i div 8] or (((Sub[i] shr 6) and 1) shl (7 - i mod 8))
+    else
+      Move(Sub[12], Q[0], 12);
     var CRC := CDQCRC(Q);
     Result := ((Q[0] and 15) = 1) and (Q[6] = 0) and
       (Q[10] = CRC shr 8) and (Q[11] = (CRC and $FF)) and
       ValidBCD(Q[1], 100) and ValidBCD(Q[2], 100) and
       ValidBCD(Q[3], 100) and ValidBCD(Q[4], 60) and ValidBCD(Q[5], 75) and
-      ValidBCD(Q[7], 100) and ValidBCD(Q[8], 60) and ValidBCD(Q[9], 75);
+      ValidBCD(Q[7], 100) and ValidBCD(Q[8], 60) and ValidBCD(Q[9], 75) and
+      not SBIInvalidCRC(LBA);
     Exit;
   end;
-  // Reconstruct ordinary position Q when no dump is available. False means
-  // synthetic, so callers can distinguish it from measured subchannel data.
+  // Reconstruct ordinary Q around the bad sectors recorded by SBI. Without
+  // any SBI, False still distinguishes synthetic Q from a measured dump.
   Q[0] := $41;
-  if Item.Audio then Q[0] := 1;
+  if Item.Audio then
+    Q[0] := 1;
   Q[1] := CDBCD(Item.Number);
   Q[2] := CDBCD(IndexAt(LBA));
   var Relative := Abs(LBA - Item.StartLBA);
   Q[3] := CDBCD(Relative div 4500);
   Q[4] := CDBCD((Relative div 75) mod 60);
   Q[5] := CDBCD(Relative mod 75);
-  var Absolute := LBA + 150;
-  Q[7] := CDBCD(Absolute div 4500);
-  Q[8] := CDBCD((Absolute div 75) mod 60);
-  Q[9] := CDBCD(Absolute mod 75);
+  var absolute := LBA + 150;
+  Q[7] := CDBCD(absolute div 4500);
+  Q[8] := CDBCD((absolute div 75) mod 60);
+  Q[9] := CDBCD(absolute mod 75);
   var CRC := CDQCRC(Q);
   Q[10] := CRC shr 8;
   Q[11] := CRC and $FF;
+  if SBIInvalidCRC(LBA) then
+    Q[10] := Q[10] xor $80
+  else
+    Result := Length(FSBIInvalidCRC) <> 0;
 end;
 
 function TCDDisc.Identity: TBytes;

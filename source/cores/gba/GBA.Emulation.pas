@@ -43,6 +43,7 @@ type
     constructor Create(const Data: TBytes; const SavePath: string; const Storage: IStorage = nil; const BIOS: TBytes = nil; SaveOverride: Integer = -1; SolarLevel: Integer = 128);
     destructor Destroy; override;
     procedure WakeSetEvent;
+    procedure SetSolarLevel(Value: Integer);
     procedure SetMotion(X, Y, Rotation: Double);
     function GetRumbleLevel: Byte;
     procedure Configure(const Input: TEmulatorButtons; Paused, AudioEnabled: Boolean; Volume: Single);
@@ -105,6 +106,17 @@ begin
   FSnapshots.Free;
   FWake.Free;
   FLock.Free;
+end;
+
+procedure TGBAWorker.SetSolarLevel(Value: Integer);
+begin
+  FLock.Acquire;
+  try
+    FSolarLevel := EnsureRange(Value, 0, 255);
+  finally
+    FLock.Release;
+  end;
+  FWake.SetEvent;
 end;
 
 procedure TGBAWorker.SetMotion(X, Y, Rotation: Double);
@@ -396,6 +408,7 @@ begin
         var Input: TEmulatorButtons;
         FLock.Acquire;
         try
+          Console.Cartridge.Hardware.SetSolar(FSolarLevel);
           Input := FInput;
           MotionX := FMotionX;
           MotionY := FMotionY;

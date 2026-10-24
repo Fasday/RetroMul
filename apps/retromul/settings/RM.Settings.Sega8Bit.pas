@@ -41,7 +41,6 @@ begin
   for var i := 1 to 4 do
     Context.CreateOption('RowSegaChannel' + IntToStr(i) + 'Volume', 'PSG channel ' + IntToStr(i) + ' volume (%)',
       'Channels 1–3 are tones; channel 4 is noise. Zero mutes the channel.', sekNumber);
-  Context.CreateOption('RowSegaFMEnabled', 'FM sound (YM2413)', 'Enable the FM sound expansion for games that support it.', sekSwitch);
   Context.CreateOption('RowSegaFMVolume', 'FM volume (%)', 'Adjust FM sound independently of the PSG channels.', sekNumber);
   Context.CreateOption('RowSegaKeyboardEnabled', 'Physical keyboard', 'Send computer key presses to the emulated keyboard. The screen keyboard remains available.', sekSwitch);
   Context.CreateOption('RowSegaTapeFile', 'Initial cassette', 'Optional PCM WAV cassette loaded when opening a ROM.', sekPath);

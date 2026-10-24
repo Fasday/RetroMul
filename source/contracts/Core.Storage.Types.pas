@@ -30,8 +30,9 @@ type
   IStorage = interface
     ['{93F9CA56-A0BB-45A0-BBD2-F907BAF8CDA1}']
     function GetRoot: string;
-    function GetRomFolder: string;
-    procedure SetRomFolder(const Value: string);
+    function RomFolder(const SystemId: string): string;
+    procedure SetRomFolder(const SystemId, Value: string);
+    function DetectRomFolder(const Location, SystemId: string): string;
     function GetCheckRomFileSize: Boolean;
     procedure SetCheckRomFileSize(Value: Boolean);
     function GetMaxRomFileSize: Int64;
@@ -63,10 +64,8 @@ type
     function Snapshots(const SystemId, RomName, Identity: string): TArray<TStorageSnapshot>;
     function Roms(const SystemId: string): TArray<TStorageFile>;
     function Describe(const Location: string): TStorageFile;
-    procedure SelectRomFolder(const Callback: TStorageSelectionCallback);
     procedure SelectRom(const Callback: TStorageSelectionCallback);
     property Root: string read GetRoot;
-    property RomFolder: string read GetRomFolder write SetRomFolder;
     // Listing filter only; file contents are never read to check the size.
     property CheckRomFileSize: Boolean read GetCheckRomFileSize write SetCheckRomFileSize;
     property MaxRomFileSize: Int64 read GetMaxRomFileSize write SetMaxRomFileSize;

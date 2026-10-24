@@ -21,7 +21,7 @@ type
     property Keys2: TGWKeyMap read FKeys2;
   end;
 
-  TGWCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationVirtualControls)
+  TGWCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationVirtualControls)
   private
     FCartridge: TGWCartridge;
     FThread: TGWWorker;
@@ -33,6 +33,7 @@ type
     FError, FSnapshotDirectory, FSaveFile: string;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
     destructor Destroy; override;
     function GetSystemId: string;
@@ -70,6 +71,11 @@ uses
 
 const
   KeyNames: array[TEmulatorButton] of string = ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
+
+procedure TGWCoreAdapter.ApplyLiveSettings;
+begin
+  ApplySettings;
+end;
 
 constructor TGWConfig.Create(const FileName: string; const Storage: IStorage);
 const

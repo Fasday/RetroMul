@@ -10,7 +10,7 @@ uses
 type
   TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
     SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn, NeoGeoAES, NeoGeoPocket, NeoGeoPocketColor,
-    CPS1, CPS2, CPS3, DC);
+    CPS1, CPS2, CPS3, ZXSpectrum, PS1, DC);
 
 type
   // Stable system IDs and settings keys preserve existing collections and INI files.
@@ -104,6 +104,10 @@ begin
   RegisterPlatform(TRomSystem.GameGear, ROM_SYSTEM_GG, 'Game Gear', 'Game Gear',
     'Sega', 'GG GameGear', 'gamegear', ['gamegear', 'gg'], [ROM_EXTENSION_GG],
     'GameGear', 'gg', 1);
+  RegisterPlatform(TRomSystem.PS1, ROM_SYSTEM_PS1, 'PlayStation', 'PS1',
+    'Sony', 'PS1 PSX PSone PlayStation', 'ps1', ['ps1', 'psx', 'playstation'],
+    [ROM_EXTENSION_M3U, ROM_EXTENSION_CUE, ROM_EXTENSION_CHD, ROM_EXTENSION_ISO, ROM_EXTENSION_BIN, ROM_EXTENSION_EXE,
+     ROM_EXTENSION_ZIP], 'PS1', 'ps1', 2);
   RegisterPlatform(TRomSystem.DC, ROM_SYSTEM_DC, 'Dreamcast', 'Dreamcast',
     'Sega', 'DC Dreamcast GD-ROM', 'dc', ['dc', 'dreamcast'],
     [ROM_EXTENSION_GDI, ROM_EXTENSION_CDI, ROM_EXTENSION_CHD, ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_MDS, ROM_EXTENSION_ELF],
@@ -135,6 +139,9 @@ begin
   RegisterPlatform(TRomSystem.PCECD, ROM_SYSTEM_PCECD, 'PC Engine CD', 'PCE CD',
     'NEC', 'CD-ROM2 Super CD-ROM2 Duo TurboDuo Arcade Card', 'pcenginecd', ['pcenginecd', 'pcecd'], [ROM_EXTENSION_CUE, ROM_EXTENSION_ISO, ROM_EXTENSION_CHD, ROM_EXTENSION_MDS],
     'PCE', 'pcecd', 5);
+  RegisterPlatform(TRomSystem.ZXSpectrum, 'zx', 'ZX Spectrum', 'ZX',
+    'Sinclair', 'ZX Spectrum 48K 128K +2 Pentagon 128K TR-DOS', 'zxspectrum', ['zxspectrum', 'zx', 'spectrum'],
+    ['.sna', '.z80', '.tap', '.tzx', '.trd', '.scl', '.dsk', '.mmc', '.ide', '.dck', '.pro', '.kdi'], 'ZXSpectrum', 'zx', 2);
   FItems.Sort(TComparer<TPlatformInfo>.Construct(
     function(const A, B: TPlatformInfo): Integer
     begin
@@ -177,7 +184,7 @@ begin
   for var i := 0 to High(Extensions) do
     Item.Extensions[i] := Extensions[i];
   if not (System in [TRomSystem.SegaCD, TRomSystem.PCECD, TRomSystem.NeoGeoCD,
-      TRomSystem.Saturn, TRomSystem.DC]) then
+      TRomSystem.Saturn, TRomSystem.PS1, TRomSystem.DC]) then
   begin
     if not MatchText(ROM_EXTENSION_ZIP, Item.Extensions) then
       Item.Extensions := Item.Extensions + [ROM_EXTENSION_ZIP];

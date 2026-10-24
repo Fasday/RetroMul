@@ -20,7 +20,7 @@ uses
   RM.Settings.GameBoyColor, RM.Settings.SG1000, RM.Settings.SC3000,
   RM.Settings.SF7000, RM.Settings.Multivision, RM.Settings.Saturn,
   RM.Settings.PCE, RM.Settings.MasterSystem, RM.Settings.GameGear,
-  RM.Settings.NeoGeo, RM.Settings.NGP, RM.Settings.DC;
+  RM.Settings.NeoGeo, RM.Settings.NGP, RM.Settings.ZX, RM.Settings.PS1, RM.Settings.DC;
 
 type
   TSettingsPlatformClass = class of TSettingsPlatform;
@@ -31,6 +31,7 @@ begin
   var Classes := TDictionary<string, TSettingsPlatformClass>.Create;
   try
     Classes.Add('', TSettingsPlatform);
+    Classes.Add('ZXSpectrum', TZXSettings);
     Classes.Add('CPS1', TSettingsPlatform);
     Classes.Add('CPS2', TSettingsPlatform);
     Classes.Add('CPS3', TSettingsPlatform);
@@ -41,6 +42,7 @@ begin
     Classes.Add('SNES', TSNESSettings);
     Classes.Add('N64', TN64Settings);
     Classes.Add('Saturn', TSaturnSettings);
+    Classes.Add('PS1', TPS1Settings);
     Classes.Add('DC', TDCSettings);
     Classes.Add('MegaDrive', TMegaDriveSettings);
     Classes.Add('SG1000', TSG1000Settings);

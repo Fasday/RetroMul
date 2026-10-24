@@ -54,7 +54,7 @@ type
     property Options: TSGOptions read FOptions;
   end;
 
-  TSGCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, ISGKeyboardCore)
+  TSGCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, ISGKeyboardCore)
   private
     FThread: TSGWorker;
     FData, FBootROM: TBytes;
@@ -71,6 +71,7 @@ type
     FPaused: Boolean;
     procedure ApplySettings;
   public
+    procedure ApplyLiveSettings;
     constructor Create(const FileName: string); overload;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; SC3000: Boolean = False; ModelHint: Integer = -1); overload;
     destructor Destroy; override;
@@ -115,6 +116,16 @@ const
 
 { TSGConfig }
 
+procedure TSGCoreAdapter.ApplyLiveSettings;
+begin
+  var Config := FConfig as TSGConfig;
+  FKeys := Config.Keys;
+  FKeys2 := Config.Keys2;
+  if FThread <> nil then
+    FThread.ConfigureOptions(Config.Options);
+  ApplySettings;
+end;
+
 constructor TSGConfig.Create(const FileName: string; const Storage: IStorage; const SystemId: string);
 const
   Defaults: TSGKeyMap = (vkUp, vkDown, vkLeft, vkRight, vkZ, vkX, vkReturn);
@@ -158,7 +169,7 @@ begin
   FOptions.ShowSprites := Ini.ReadBool('Video', 'ShowSprites', True);
   FOptions.RemoveSpriteLimit := Ini.ReadBool('Video', 'RemoveSpriteLimit', False);
   FOptions.GGRegion := EnsureRange(Ini.ReadInteger('Hardware', 'Territory', 0), 0, 2);
-  FOptions.FMEnabled := Ini.ReadBool('Audio', 'FMEnabled', True);
+  FOptions.FMEnabled := True;
   FOptions.FMVolume := EnsureRange(Ini.ReadInteger('Audio', 'FMVolume', 100), 0, 100);
   FOptions.DiskWriteProtected := Ini.ReadBool('Disk', 'WriteProtected', False);
   for var i := 0 to 3 do
@@ -185,7 +196,7 @@ begin
   Ini.WriteBool('Video', 'ShowSprites', FOptions.ShowSprites);
   Ini.WriteBool('Video', 'RemoveSpriteLimit', FOptions.RemoveSpriteLimit);
   Ini.WriteInteger('Hardware', 'Territory', FOptions.GGRegion);
-  Ini.WriteBool('Audio', 'FMEnabled', FOptions.FMEnabled);
+  Ini.DeleteKey('Audio', 'FMEnabled');
   Ini.WriteInteger('Audio', 'FMVolume', FOptions.FMVolume);
   Ini.WriteBool('Disk', 'WriteProtected', FOptions.DiskWriteProtected);
   for var i := 0 to 3 do
@@ -292,9 +303,7 @@ begin
       if IPL = '' then
       begin
         var Folders: TArray<string> := [ExtractFilePath(RomName)];
-        if FStorage.RomFolder <> '' then
-          Folders := Folders + [TPath.Combine(FStorage.RomFolder, 'sf7000'),
-              TPath.Combine(FStorage.RomFolder, 'sg1000'), TPath.Combine(FStorage.RomFolder, 'Sega SF-7000')];
+        Folders := Folders + [FStorage.RomFolder('sf7000'), FStorage.RomFolder('sg1000')];
         for var Folder in Folders do
         begin
           if not FStorage.FolderExists(Folder) then
