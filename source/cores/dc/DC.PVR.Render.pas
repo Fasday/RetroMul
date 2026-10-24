@@ -988,7 +988,24 @@ begin
         Level := EnsureRange(Floor(Log2(Footprint)), 0, Texture.Levels - 1);
     end;
     var Tex := SampleTexture(Texture, U, V, TSP, Level);
-    if (TSP and $80000) <> 0 then
+    // Bump maps: texels hold an elevation S (high byte, 0..pi/2) and a
+    // rotation R (low byte, 0..2pi) of the surface normal; the offset colour
+    // gives K1 (alpha), K2 (red), K3 (green) and the light rotation Q (blue).
+    // The intensity K1 + K2 sin S + K3 cos S cos(R - Q) becomes the alpha of
+    // a white texel, and the offset colour is not added.
+    var TCW := P.TCW;
+    if UseSecond then
+      TCW := P.TCW1;
+    var Bump := ((TCW shr 27) and 7) = TexBump;
+    if Bump then
+    begin
+      var S := ((Tex shr 8) and $FF) * (Pi / 2 / 255);
+      var R := (Tex and $FF) * (2 * Pi / 255);
+      var Q := (Offset and $FF) * (2 * Pi / 255);
+      var I := ((Offset shr 24) + ((Offset shr 16) and $FF) * Sin(S) + ((Offset shr 8) and $FF) * Cos(S) * Cos(R - Q));
+      Tex := (Cardinal(EnsureRange(Round(I), 0, 255)) shl 24) or $FFFFFF;
+    end
+    else if (TSP and $80000) <> 0 then
       Tex := Tex or $FF000000;
     var TA_ := Integer(Tex shr 24);
     var TR := Integer((Tex shr 16) and $FF);
@@ -1021,7 +1038,7 @@ begin
         A := (CA * TA_ + 127) div 255;
       end;
     end;
-    if (P.ISP and $01000000) <> 0 then
+    if ((P.ISP and $01000000) <> 0) and not Bump then
     begin
       R := Clamp255(R + Integer((Offset shr 16) and $FF));
       G := Clamp255(G + Integer((Offset shr 8) and $FF));
