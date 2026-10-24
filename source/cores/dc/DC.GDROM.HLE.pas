@@ -61,6 +61,7 @@ type
     procedure SerializeState(Archive: TStateArchive); override;
     // The lid opened: a command in progress ends with "not ready".
     procedure LidOpened;
+    function CurrentDisc: TDCDisc; override;
   end;
 
 implementation
@@ -130,6 +131,12 @@ begin
     S.Result[0] := 2;
   end;
   S.CurrentSector := 0;
+end;
+
+function TDCGDROMHLE.CurrentDisc: TDCDisc;
+begin
+  FDrive.Settle;
+  Result := FDrive.Disc;
 end;
 
 function TDCGDROMHLE.DiscPresent: Boolean;
@@ -398,6 +405,7 @@ function TDCGDROMHLE.Call(CPU: TSH4; Memory: TDCMemory): Boolean;
 begin
   FCPU := CPU;
   Result := True;
+  FDrive.Settle;
   var R: ^TSH4Registers := @CPU.S.R;
   // Superfunction -1: MISC (vector initialization and handlers).
   if R[6] <> 0 then

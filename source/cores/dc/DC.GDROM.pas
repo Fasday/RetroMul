@@ -45,6 +45,8 @@ type
     // Lid open (drive status 6); a disc inserted since the last command
     // makes the next packet command report UNIT ATTENTION once.
     LidOpen, MediaChanged: Boolean;
+    // Clock at which an open lid closes on the tray's disc (0: stays open).
+    LidCloseAt: Int64;
     CurrentFAD: Cardinal;
     Mode: array[0..31] of Byte;
     CDDA: TDCCDDAState;
@@ -73,8 +75,11 @@ type
     function TrackControl(FAD: Cardinal; out Track: Integer): Byte;
   public
     S: TDCGDROMState;
-    // Not owned; nil without a disc.
+    // Not owned; nil without a disc or with the lid open.
     Disc: TDCDisc;
+    // The disc in the tray (not owned): Disc, or the one inserted when the
+    // lid closes.
+    Tray: TDCDisc;
     constructor Create(Scheduler: TDCScheduler; Interrupts: TDCInterrupts);
     procedure Reset;
     function Read(Offset: Cardinal; Size: Integer): Cardinal;
@@ -95,10 +100,14 @@ type
     // Drive status code: 1 paused, 2 standby, 3 playing, 6 lid open,
     // 7 no disc.
     function DriveStatus: Cardinal;
-    // Disc change: the lid opens (reads stop, the disc is gone), then closes
-    // on another disc wrapper (or none).
+    // Disc change: the lid opens (reads stop, the disc is gone, the tray is
+    // empty), then closes on another disc wrapper (or none), at once or after
+    // Delay clocks. Settle applies a close that is due; the drive does so
+    // itself before it reports anything.
     procedure OpenLid;
     procedure CloseLid(NewDisc: TDCDisc);
+    procedure CloseLidLater(NewDisc: TDCDisc; Delay: Int64);
+    procedure Settle;
     // Next CD-DA output sample; silence unless playing.
     procedure NextSample(out Left, Right: SmallInt);
     procedure SerializeState(Archive: TStateArchive);
@@ -160,6 +169,7 @@ end;
 
 function TDCGDROM.DriveStatus: Cardinal;
 begin
+  Settle;
   if S.LidOpen then
     Exit(6);
   if (Disc = nil) or not Disc.HasBootTrack then
@@ -300,6 +310,8 @@ end;
 
 procedure TDCGDROM.OpenLid;
 begin
+  S.LidCloseAt := 0;
+  Tray := nil;
   if S.LidOpen then
     Exit;
   StopCDDA;
@@ -320,9 +332,26 @@ end;
 procedure TDCGDROM.CloseLid(NewDisc: TDCDisc);
 begin
   S.LidOpen := False;
+  S.LidCloseAt := 0;
+  Tray := NewDisc;
   Disc := NewDisc;
   S.MediaChanged := Disc <> nil;
   FAudioValid := False;
+end;
+
+procedure TDCGDROM.CloseLidLater(NewDisc: TDCDisc; Delay: Int64);
+begin
+  OpenLid;
+  Tray := NewDisc;
+  if Delay < 1 then
+    Delay := 1;
+  S.LidCloseAt := FScheduler.Now + Delay;
+end;
+
+procedure TDCGDROM.Settle;
+begin
+  if S.LidOpen and (S.LidCloseAt <> 0) and (FScheduler.Now >= S.LidCloseAt) then
+    CloseLid(Tray);
 end;
 
 { ATA }
@@ -507,6 +536,7 @@ end;
 
 procedure TDCGDROM.PacketCommand;
 begin
+  Settle;
   var P := S.Packet;
   S.SenseKey := 0;
   S.SenseCode := 0;

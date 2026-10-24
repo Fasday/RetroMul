@@ -74,10 +74,13 @@ type
     procedure InsertDisc(Image: TCDDisc);
     procedure BootDisc;
     // Disc change while running: the lid opens (the drive reports status 6,
-    // reads fail), then closes on another image (not owned; nil: no disc).
+    // reads fail, the tray is empty), then closes on another image (not
+    // owned; nil: no disc). ChangeDisc does both, keeping the lid open for
+    // Seconds of machine time so that programs polling the drive see it.
     // Programs notice through the drive status and restart their disc access.
     procedure OpenLid;
     procedure CloseLid(Image: TCDDisc);
+    procedure ChangeDisc(Image: TCDDisc; Seconds: Double);
     function LidOpen: Boolean;
     procedure RunFrame;
     // Waits for a render still running on worker threads.
@@ -322,6 +325,7 @@ begin
   if Image <> nil then
     Disc := TDCDisc.Create(Image);
   GDROM.Disc := Disc;
+  GDROM.Tray := Disc;
 end;
 
 procedure TDCConsole.OpenLid;
@@ -337,6 +341,14 @@ begin
   if Image <> nil then
     Disc := TDCDisc.Create(Image);
   GDROM.CloseLid(Disc);
+end;
+
+procedure TDCConsole.ChangeDisc(Image: TCDDisc; Seconds: Double);
+begin
+  OpenLid;
+  if Image <> nil then
+    Disc := TDCDisc.Create(Image);
+  GDROM.CloseLidLater(Disc, Round(Seconds * DCCPUClock));
 end;
 
 function TDCConsole.LidOpen: Boolean;
@@ -635,12 +647,22 @@ begin
   Interrupts.SerializeState(Archive);
   PVR.SerializeState(Archive);
   GDROM.SerializeState(Archive);
-  // The drive holds the inserted disc unless the snapshot has the lid open.
+  // The drive holds the inserted disc unless the snapshot has the lid open;
+  // an open lid that is due to close has it in the tray.
   if Archive.Loading then
-    if GDROM.S.LidOpen then
-      GDROM.Disc := nil
-    else
+    if not GDROM.S.LidOpen then
+    begin
       GDROM.Disc := Disc;
+      GDROM.Tray := Disc;
+    end
+    else
+    begin
+      GDROM.Disc := nil;
+      if GDROM.S.LidCloseAt <> 0 then
+        GDROM.Tray := Disc
+      else
+        GDROM.Tray := nil;
+    end;
   AICA.SerializeState(Archive);
   Maple.SerializeState(Archive);
   Holly.SerializeState(Archive);

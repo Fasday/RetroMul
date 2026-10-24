@@ -37,6 +37,8 @@ type
     function Call(CPU: TSH4; Memory: TDCMemory): Boolean; virtual; abstract;
     procedure Reset; virtual; abstract;
     procedure SerializeState(Archive: TStateArchive); virtual; abstract;
+    // The disc the drive can read now (nil: none, or the lid is open).
+    function CurrentDisc: TDCDisc; virtual; abstract;
   end;
 
   TDCBoot = class
@@ -48,6 +50,7 @@ type
     FRequest: TDCBootRequest;
     procedure Flashrom;
     procedure Sysinfo;
+    procedure CheckDisc;
     function FlashPartition(Index: Integer; out Offset, Size: Integer): Boolean;
   public
     GDROM: TDCGDROMSyscalls;
@@ -190,6 +193,30 @@ begin
   Move(Data[0], (RAM + $10000)^, Length(Data));
   FMemory.TouchRAM($8000, $8000 + Cardinal(Length(Data)));
   EnterProgram($AC008300);
+end;
+
+// Misc system call 2 (check disc), made after a disc change: the boot ROM
+// reads the start of the new disc's IP.BIN to 8C008100, where games compare
+// its disc number (offset 2Bh) and product number (offset 40h) with their
+// own. R0 is 0 when done, negative without a readable disc.
+procedure TDCBoot.CheckDisc;
+begin
+  var S: ^TSH4State := @FCPU.S;
+  var Disc: TDCDisc := nil;
+  if GDROM <> nil then
+    Disc := GDROM.CurrentDisc;
+  if (Disc = nil) or not Disc.HasBootTrack then
+  begin
+    S.R[0] := $FFFFFFFF;
+    Exit;
+  end;
+  for var I := 0 to 6 do
+  begin
+    var Sector := Disc.ReadBootSector(I);
+    Move(Sector[0], (FMemory.RAM + $8100 + Cardinal(I) * 2048)^, 2048);
+  end;
+  FMemory.TouchRAM($8100, $8100 + 7 * 2048);
+  S.R[0] := 0;
 end;
 
 procedure TDCBoot.Sysinfo;
@@ -338,13 +365,23 @@ begin
       if (GDROM = nil) or not GDROM.Call(FCPU, FMemory) then
         S.R[0] := $FFFFFFFF;
     DCStubMisc:
-      if S.R[4] = 1 then
-        FRequest := TDCBootRequest.ExitToMenu
+      case S.R[4] of
+        1:
+          FRequest := TDCBootRequest.ExitToMenu;
+        2:
+          CheckDisc;
       else
         S.R[0] := 0;
+      end;
   end;
   if (Trace <> nil) and (Trace.Count > 0) then
-    Trace[Trace.Count - 1] := Trace[Trace.Count - 1] + Format(' -> r0=%.8x', [S.R[0]]);
+  begin
+    var Tail := Format(' -> r0=%.8x', [S.R[0]]);
+    // GDROM_CHECK_DRIVE: the drive status it stored.
+    if (Address = DCStubGDROM) and (S.R[6] = 0) and (S.R[7] = 4) then
+      Tail := Tail + Format(' status=%d', [PCardinal(FMemory.RAM + (S.R[4] and $FFFFFF))^]);
+    Trace[Trace.Count - 1] := Trace[Trace.Count - 1] + Tail;
+  end;
   // Return to the caller.
   S.PC := S.PR;
   Result := True;
