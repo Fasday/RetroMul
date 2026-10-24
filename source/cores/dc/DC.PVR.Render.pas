@@ -243,6 +243,12 @@ begin
   Result := A + ((B - A) * T + 127) div 255;
 end;
 
+// X div 255 for X >= 0 (unsigned: no sign correction).
+function Div255(X: Integer): Integer; inline;
+begin
+  Result := Integer(Cardinal(X) div 255);
+end;
+
 { TDCRenderer }
 
 constructor TDCRenderer.Create(Memory: TDCMemory; PVR: TDCPVR; TA: TDCTA);
@@ -956,6 +962,9 @@ begin
           Result := (Cardinal(Factor) shl 24) or (FogColor and $FFFFFF);
           Exit;
         end;
+        // (Lerp8 by 0 keeps the colour.)
+        if Factor = 0 then
+          Exit;
         Result := ARGB(Color shr 24,
           Lerp8((Color shr 16) and $FF, (FogColor shr 16) and $FF, Factor),
           Lerp8((Color shr 8) and $FF, (FogColor shr 8) and $FF, Factor),
@@ -966,6 +975,8 @@ begin
         // Per vertex: the offset colour's alpha blends towards FOG_COL_VERT.
         var Factor := Integer(V.Offset shr 24);
         var FogColor := FFogColorVert;
+        if Factor = 0 then
+          Exit;
         Result := ARGB(Color shr 24,
           Lerp8((Color shr 16) and $FF, (FogColor shr 16) and $FF, Factor),
           Lerp8((Color shr 8) and $FF, (FogColor shr 8) and $FF, Factor),
@@ -1198,19 +1209,19 @@ begin
         end;
       1:
         begin
-          R := (CR * TR + 127) div 255; G := (CG * TG + 127) div 255; B := (CB * TB + 127) div 255; A := TA_;
+          R := Div255(CR * TR + 127); G := Div255(CG * TG + 127); B := Div255(CB * TB + 127); A := TA_;
         end;
       2:
         begin
-          R := (TR * TA_ + CR * (255 - TA_) + 127) div 255;
-          G := (TG * TA_ + CG * (255 - TA_) + 127) div 255;
-          B := (TB * TA_ + CB * (255 - TA_) + 127) div 255;
+          R := Div255(TR * TA_ + CR * (255 - TA_) + 127);
+          G := Div255(TG * TA_ + CG * (255 - TA_) + 127);
+          B := Div255(TB * TA_ + CB * (255 - TA_) + 127);
           A := CA;
         end;
     else
       begin
-        R := (CR * TR + 127) div 255; G := (CG * TG + 127) div 255; B := (CB * TB + 127) div 255;
-        A := (CA * TA_ + 127) div 255;
+        R := Div255(CR * TR + 127); G := Div255(CG * TG + 127); B := Div255(CB * TB + 127);
+        A := Div255(CA * TA_ + 127);
       end;
     end;
     if ((P.ISP and $01000000) <> 0) and not Bump then
@@ -1387,7 +1398,7 @@ end;
 
 function BlendChannel(Src, Dst: Cardinal; Sh, FS, FD: Integer): Cardinal; inline;
 begin
-  var V := (Integer((Src shr Sh) and $FF) * FS + Integer((Dst shr Sh) and $FF) * FD + 127) div 255;
+  var V := Div255(Integer((Src shr Sh) and $FF) * FS + Integer((Dst shr Sh) and $FF) * FD + 127);
   if V > 255 then
     V := 255;
   Result := Cardinal(V) shl Sh;
