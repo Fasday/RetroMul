@@ -27,7 +27,7 @@ type
     FProgram: array[0..127, 0..3] of Integer;
     FLastStep: Integer;
     FProgramDirty: Boolean;
-    function WordAt(Index: Integer): Integer;
+    function WordAt(Index: Integer): Integer; inline;
     procedure DecodeProgram;
   public
     RingBase, RingLength: Integer;
@@ -48,7 +48,7 @@ implementation
 uses
   System.Math;
 
-function Sar(Value: Int64; Count: Integer): Integer;
+function Sar(Value: Int64; Count: Integer): Integer; inline;
 begin
   if Value >= 0 then
     Result := Value shr Count
@@ -56,7 +56,7 @@ begin
     Result := -((-Value + (Int64(1) shl Count) - 1) shr Count);
 end;
 
-function SignedBits(Value: Int64; Bits: Integer): Integer;
+function SignedBits(Value: Int64; Bits: Integer): Integer; inline;
 begin
   Result := Value and ((Int64(1) shl Bits) - 1);
   if Result and (1 shl (Bits - 1)) <> 0 then
