@@ -669,6 +669,9 @@ begin
   var FileName := '';
   var FileType := '';
   var Current := -1;
+  // Redump GD-ROM sheets mark the high-density area with a comment; its
+  // first track starts at LBA 45000.
+  var HighFirst := -1;
   for var Line in Text.Split([#10]) do
   begin
     var Value := Line.Trim;
@@ -779,6 +782,8 @@ begin
 
       PostGaps[Current] := CueTime(Tokens[1]);
     end
+    else if (Command = 'REM') and Value.ToUpper.Contains('HIGH-DENSITY AREA') then
+      HighFirst := Length(FTracks)
     else if not ((Command = 'REM') or (Command = 'TITLE') or (Command = 'PERFORMER') or
       (Command = 'SONGWRITER') or (Command = 'CATALOG') or (Command = 'ISRC') or (Command = 'FLAGS')) then
       raise EReadError.Create('Unsupported CUE directive: ' + Command);
@@ -820,6 +825,17 @@ begin
         Inc(Cursor, FTracks[i].StoredPregap);
       end;
     end;
+    if (i = HighFirst) and (Cursor < 45000) then
+    begin
+      Inc(FTracks[i].PregapLBA, 45000 - Cursor);
+      Cursor := 45000;
+    end;
+    if HighFirst >= 0 then
+    begin
+      FTracks[i].Session := 1;
+      if i >= HighFirst then
+        FTracks[i].Session := 2;
+    end;
     FTracks[i].StartLBA := Cursor;
     Inc(Cursor, EndSector - Index1[i]);
     FTracks[i].EndLBA := Cursor;
@@ -845,6 +861,7 @@ begin
   end;
   if Length(FTracks) > 0 then
     FLeadOut := Cursor + PostGaps[High(FTracks)];
+  FHighDensity := (HighFirst > 0) and (HighFirst <= High(FTracks));
 end;
 
 // Raw data sector: Mode 1 or Mode 2 header after the sync pattern.
