@@ -389,7 +389,10 @@ type
     FTick, FLine, FField: Integer;
     FSPPC: Cardinal;
     FInputs: TN64Pads;
+    // The samples since TakeSamples: the first FSampleCount of FSample (kept
+    // from frame to frame, as no memory manager call is made for each).
     FSample: TArray<SmallInt>;
+    FSampleCount: Integer;
     FAIAddress, FAILength, FAIProgress, FAIPhase: Cardinal;
     FAINextAddress, FAINextLength: Cardinal;
     FAudioClock: Integer;
@@ -857,7 +860,7 @@ begin
   FLine := 0;
   FField := 0;
   FSPPC := 0;
-  FSample := nil;
+  FSampleCount := 0;
   FAIAddress := 0;
   FAILength := 0;
   FAIProgress := 0;
@@ -2672,12 +2675,14 @@ end;
 procedure TN64Console.AudioTick;
 begin
   // Guest DAC consumption has its own clock; this is only the 48 kHz sink.
-  var N := Length(FSample);
+  var N := FSampleCount;
   if N < 16384 then
   begin
-    SetLength(FSample, N + 2);
+    if N + 2 > Length(FSample) then
+      SetLength(FSample, Max(N + 2, Length(FSample) * 2));
     FSample[N] := FLastLeft;
-    FSample[N + 1] := FLastRight
+    FSample[N + 1] := FLastRight;
+    FSampleCount := N + 2
   end;
 end;
 
@@ -2838,8 +2843,8 @@ end;
 
 function TN64Console.TakeSamples: TArray<SmallInt>;
 begin
-  Result := FSample;
-  FSample := nil
+  Result := Copy(FSample, 0, FSampleCount);
+  FSampleCount := 0
 end;
 
 function TN64Console.SaveBattery: TBytes;
@@ -2975,7 +2980,7 @@ begin
   State.Field(FDebugBuffer, SizeOf(FDebugBuffer));
   if State.Loading then
   begin
-    FSample := nil;
+    FSampleCount := 0;
     FSaveDirty := True;
     if (FVIPhase >= UInt64(VideoClock) * 2) or (FAIDACPhase >= VideoClock) or
       (FAIAnchorTick > FTimeline.Now) or
@@ -3557,6 +3562,8 @@ begin
     if RemainingBeats(FSPTransfer) > 1 then
       R.LastBeat := RCPTickAfter(R.LastBeat, RemainingBeats(FSPTransfer) - 1);
     FRSPDoneBase := FSPDone;
+    // (The slot's Data stays for its next transfer: see LiftRSPTransfer.)
+    R.Data := FRSPDMAs[0].Data;
     FRSPDMAs[0] := R;
     FRSPDMACount := 1;
     if FSPQueued.Active then
@@ -3980,6 +3987,7 @@ begin
   end;
   if FRSPDMACount = Length(FRSPDMAs) then
     raise EInvalidOpException.Create('N64 RSP window knows too many transfers');
+  R.Data := FRSPDMAs[FRSPDMACount].Data;
   FRSPDMAs[FRSPDMACount] := R;
   // Published with the clock that adds it (full barrier there).
   Inc(FRSPDMACount);
@@ -4130,13 +4138,16 @@ begin
   if Beats <= 0 then
   begin
     // All its beats have run.
-    FRSPDMAs[Index].Data := nil;
     TInterlocked.Exchange(FRSPDMAs[Index].State, 2);
     Exit;
   end;
   for var B := 1 to Done do
     StepSPTransfer(Transfer);
-  SetLength(FRSPDMAs[Index].Data, Beats * 8);
+  // Data: as long as the longest transfer the slot had (no memory manager
+  // call on the RSP thread for most windows; one could wait 10 ms for a
+  // lock the emulation thread holds).
+  if Length(FRSPDMAs[Index].Data) < Beats * 8 then
+    SetLength(FRSPDMAs[Index].Data, Beats * 8);
   FRSPOverlapCount := 0;
   if not Transfer.Writing then
   begin
