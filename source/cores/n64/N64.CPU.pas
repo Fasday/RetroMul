@@ -504,7 +504,38 @@ begin
 end;
 
 type
-  EGuestFault = class(Exception);
+  // A guest exception (Fault) leaving the instruction for Step. Its object is
+  // its thread's buffer, not the memory manager's (GoldenEye raises some 160
+  // a VI, and a memory manager call that finds the lock held sleeps 10 ms).
+  EGuestFault = class(Exception)
+  public
+    class function NewInstance: TObject; override;
+    procedure FreeInstance; override;
+  end;
+
+threadvar
+  GuestFaultBuffer: array[0..31] of UInt64;
+  GuestFaultBusy: Boolean;
+
+class function EGuestFault.NewInstance: TObject;
+begin
+  // (One raised in a handler of another: from the memory manager.)
+  if GuestFaultBusy or (InstanceSize > SizeOf(GuestFaultBuffer)) then
+    Exit(inherited NewInstance);
+  GuestFaultBusy := True;
+  Result := InitInstance(@GuestFaultBuffer);
+end;
+
+procedure EGuestFault.FreeInstance;
+begin
+  if Pointer(Self) <> @GuestFaultBuffer then
+  begin
+    inherited;
+    Exit;
+  end;
+  CleanupInstance;
+  GuestFaultBusy := False;
+end;
 
 constructor TN64CPU.Create(Bus: TN64Bus);
 begin
