@@ -25,10 +25,13 @@ type
   private
     FBus: TN64Bus;
     FRandom: Cardinal;
-    // Double-buffered weave: FBuffers[FFront] is the persistent raster (the
+    // Triple-buffered weave: FBuffers[FFront] is the persistent raster (the
     // snapshot state) and the frame most recently returned by Render. The
-    // next field is composed in the other buffer, then the two swap.
-    FBuffers: array[0..1] of TArray<TAlphaColor>;
+    // next field is composed in the oldest buffer, the one after it, which
+    // then becomes the front: with VI fields in two slots the console still
+    // holds the frame before the front (CompleteVISlot), and a buffer held
+    // would be copied (SetLength), a memory manager call for each field.
+    FBuffers: array[0..2] of TArray<TAlphaColor>;
     FFront: Integer;
     FWidth, FHeight: Integer;
     FLastField: Integer;
@@ -53,8 +56,8 @@ type
   public
     constructor Create(Bus: TN64Bus);
     procedure Reset;
-    // Pixels stays unchanged until the next-but-one Render. A consumer that
-    // still holds it then gets a private copy (SetLength copy-on-write).
+    // Pixels stays unchanged for the next two Renders. A consumer that still
+    // holds it then gets a private copy (SetLength copy-on-write).
     procedure Render(const Registers: array of Cardinal; out Width, Height: Integer; out Pixels: TArray<TAlphaColor>);
     // The RDRAM bytes Render(Registers) may read (more, not fewer): Count
     // from Address, within RDRAM. False: it reads none.
@@ -124,6 +127,7 @@ begin
   FRandom := 3;
   FBuffers[0] := nil;
   FBuffers[1] := nil;
+  FBuffers[2] := nil;
   FFront := 0;
   FWidth := 0;
   FHeight := 0;
@@ -619,9 +623,9 @@ begin
     for var I := 0 to Size - 1 do
       FBuffers[FFront][I] := $FF000000;
   end;
-  // Compose in the back buffer; SetLength also makes it private if a frame
-  // returned two fields ago is still referenced by a consumer.
-  var Back := 1 - FFront;
+  // Compose in the oldest buffer; SetLength also makes it private if a frame
+  // returned three fields ago is still referenced by a consumer.
+  var Back := (FFront + 1) mod Length(FBuffers);
   SetLength(FBuffers[Back], Size);
   var Weave := FBuffers[Back];
   if not (PixelType in [2, 3]) then
@@ -814,6 +818,7 @@ begin
       (FLastField < -1) or (FLastField > 1) then
       raise EReadError.Create('Invalid VI raster snapshot');
     FFront := 0;
+    FBuffers[2] := nil;
     FBuffers[1] := nil;
     FBuffers[0] := nil;
     SetLength(FBuffers[0], FWidth * FHeight);
