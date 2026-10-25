@@ -56,6 +56,8 @@ type
     function ReadArea4(Address: Cardinal; Size: Integer): Cardinal;
     procedure VBlank;
     procedure Event(Kind: TDCEvent);
+    // The registers a finished GD-ROM DMA leaves (the boot ROM's loads).
+    procedure SetGDDMAEnd(Address, Length: Cardinal);
     procedure SerializeState(Archive: TStateArchive);
   end;
 
@@ -536,6 +538,12 @@ begin
   else
     SetReg(Aligned, Value);
   end;
+end;
+
+procedure TDCHolly.SetGDDMAEnd(Address, Length: Cardinal);
+begin
+  SetReg(SB_GDSTARD, Address);
+  SetReg(SB_GDLEND, Length);
 end;
 
 procedure TDCHolly.SerializeState(Archive: TStateArchive);

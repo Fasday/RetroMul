@@ -376,6 +376,8 @@ begin
     raise EReadError.Create('No disc inserted');
   CPU.InvalidateBlocks;
   Boot.BootDisc(Disc);
+  if Boot.BootDMAEnd <> 0 then
+    Holly.SetGDDMAEnd(Boot.BootDMAEnd, Boot.BootDMALength);
   CPU.InvalidateBlocks;
 end;
 

@@ -61,8 +61,12 @@ type
     procedure Sysinfo;
     procedure CheckDisc;
     function FlashPartition(Index: Integer; out Offset, Size: Integer): Boolean;
+    function LoadWinCEParts(const Data: TBytes): Boolean;
   public
     GDROM: TDCGDROMSyscalls;
+    // Where the boot file's last GD-ROM DMA ended and its length (Windows CE
+    // boot files, see LoadWinCEParts); 0 otherwise.
+    BootDMAEnd, BootDMALength: Cardinal;
     // Optional diagnostics: one line per system call.
     Trace: TStrings;
     // Video output: True for VGA (31 kHz progressive), else NTSC/PAL 480i.
@@ -201,9 +205,61 @@ begin
   // The boot ROM descrambles boot files read from CD media (MIL-CD, CD-R).
   if Disc.ScrambledBootFile then
     DCDescramble(Data);
-  Move(Data[0], (RAM + $10000)^, Length(Data));
-  FMemory.TouchRAM($8000, $8000 + Cardinal(Length(Data)));
+  if not LoadWinCEParts(Data) then
+  begin
+    Move(Data[0], (RAM + $10000)^, Length(Data));
+    FMemory.TouchRAM($8000, $8000 + Cardinal(Length(Data)));
+  end;
   EnterProgram($AC008300);
+end;
+
+function TDCBoot.LoadWinCEParts(const Data: TBytes): Boolean;
+begin
+  // Windows CE software (IP.BIN peripherals at 38h, hexadecimal, bit 0) on
+  // GD-ROM: the boot file's first sector describes the parts to load (count
+  // at 10h, entry point at 14h, then file offset, size and address of each).
+  // The boot ROM reads that sector to 8CE01000 and the parts by GD-ROM DMA;
+  // the IP.BIN bootstrap checks that the last DMA ended where the last part
+  // does. Copies on CD-R hold the single part alone and are loaded as usual.
+  Result := False;
+  BootDMAEnd := 0;
+  BootDMALength := 0;
+  var RAM := FMemory.RAM;
+  var Peripherals := 0;
+  for var I := 0 to 7 do
+  begin
+    var C := Char((RAM + $8038 + Cardinal(I))^);
+    if CharInSet(C, ['0'..'9', 'A'..'F', 'a'..'f']) then
+      Peripherals := Peripherals * 16 + StrToInt('$' + C);
+  end;
+  if ((Peripherals and 1) = 0) or (Length(Data) <= 2048) then
+    Exit;
+  var Count := PCardinal(@Data[$10])^;
+  if (Count < 1) or (Count > 168) or ($18 + Count * 12 > 2048) then
+    Exit;
+  for var K := 0 to Integer(Count) - 1 do
+  begin
+    var Offset := PCardinal(@Data[$18 + K * 12])^;
+    var Size := PCardinal(@Data[$1C + K * 12])^;
+    var Address := PCardinal(@Data[$20 + K * 12])^ and $1FFFFFFF;
+    if (Address < $0C000000) or (Int64(Address) + Size > $0C000000 + DCRAMSize) or (Offset < 2048) or (Size = 0) or
+      (Int64(Offset) + Size > Length(Data)) then
+      Exit;
+  end;
+  Move(Data[0], (RAM + $E01000)^, 2048);
+  FMemory.TouchRAM($E01000, 2048);
+  for var K := 0 to Integer(Count) - 1 do
+  begin
+    var Offset := PCardinal(@Data[$18 + K * 12])^;
+    var Size := PCardinal(@Data[$1C + K * 12])^;
+    var Address := PCardinal(@Data[$20 + K * 12])^;
+    Move(Data[Offset], (RAM + (Address and $00FFFFFF))^, Size);
+    FMemory.TouchRAM(Address and $00FFFFFF, Size);
+    BootDMAEnd := Address + Size;
+    BootDMALength := Size;
+  end;
+  FMemory.TouchRAM($8000, $8000);
+  Result := True;
 end;
 
 // Misc system call 2 (check disc), made after a disc change: the boot ROM
