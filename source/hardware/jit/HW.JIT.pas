@@ -5,9 +5,9 @@ unit HW.JIT;
 // (TJitReg) and simple operands (TJitOp), and knows no host instruction. A
 // backend turns them into one host's instructions and calling convention in
 // executable memory, with unwind data so exceptions pass through the code:
-// x64 instructions (TJitAsmX64) with the Win64 convention (TJitAsmWin64).
-// Only Win64 has a backend (JitSupported); other targets compile the unit
-// and make no code (CreateJitAsm is nil).
+// x64 instructions (TJitAsmX64) with the Win64 convention (TJitAsmWin64) or
+// Linux's System V one (TJitAsmSysV64). Other targets compile the unit and
+// make no code (JitSupported False, CreateJitAsm nil).
 
 interface
 
@@ -17,7 +17,7 @@ uses
   System.SysUtils;
 
 const
-  JitSupported = {$IF DEFINED(MSWINDOWS) AND DEFINED(CPUX64)}True{$ELSE}False{$ENDIF};
+  JitSupported = {$IF DEFINED(CPUX64) AND (DEFINED(MSWINDOWS) OR (DEFINED(LINUX) AND NOT DEFINED(ANDROID)))}True{$ELSE}False{$ENDIF};
 
 type
   // Registers by role. The fixed ones keep their values across calls: Self
@@ -768,7 +768,7 @@ begin
   ModRM(False, [$FF], 4, False, X64Reg(FArgs[2]), False);
 end;
 
-{$IF JitSupported}
+{$IF JitSupported and Defined(MSWINDOWS)}
 
 { Win64 }
 
@@ -883,10 +883,126 @@ end;
 
 {$ENDIF}
 
+{$IF JitSupported and Defined(LINUX)}
+
+{ Linux x64 }
+
+procedure __register_frame(Frame: Pointer); cdecl; external 'libgcc_s.so.1' name '__register_frame';
+procedure __deregister_frame(Frame: Pointer); cdecl; external 'libgcc_s.so.1' name '__deregister_frame';
+
+type
+  // The System V convention: arguments in RDI, RSI, RDX, RCX, the result in
+  // RAX; RBX, RBP, R12..R15 kept by a callee (the fixed roles; R12, which
+  // would need a SIB byte as a base, for Extra), RSP 16-aligned at a call.
+  // Every function has Enter's frame, so one DWARF frame description at the
+  // start of the buffer (a CIE and an FDE, registered with libgcc's unwinder,
+  // which the RTL raises exceptions through) covers it.
+  TJitAsmSysV64 = class(TJitAsmX64)
+  protected
+    function Allocate(Size: NativeInt; out CodeStart: NativeInt): PByte; override;
+    procedure Release(Base: PByte); override;
+    procedure FlushCode(P: PByte; Len: NativeInt); override;
+  public
+    constructor Create(Size: NativeInt);
+    procedure Enter; override;
+    procedure Leave(const Value: TJitOp); override;
+  end;
+
+const
+  SysVCodeStart = 256;
+  // The frame description (.eh_frame form) for Enter's frame, from the
+  // buffer's first code on: a CIE (code alignment 1, data alignment -8,
+  // return address register 16, FDE addresses absolute; at a function's
+  // entry the CFA is RSP + 8, the return address at CFA - 8), an FDE for the
+  // code (its start and length at offsets 32 and 40: CFA RSP + 64; RBX, RBP,
+  // R12..R15 at CFA - 16 .. CFA - 56) and the terminator.
+  SysVFrame: array[0..67] of Byte = (
+    20, 0, 0, 0,  0, 0, 0, 0,  1, Ord('z'), Ord('R'), 0,  1, $78, 16, 1,  0,  $0C, 7, 8,  $90, 1,  0, 0,
+    36, 0, 0, 0,  28, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0,  0,
+    $0E, 64,  $83, 2,  $86, 3,  $8C, 4,  $8D, 5,  $8E, 6,  $8F, 7,  0,
+    0, 0, 0, 0);
+
+constructor TJitAsmSysV64.Create(Size: NativeInt);
+const
+  Phys: array[TJitReg] of Byte = (rBX, rBP, r13, r12, r14, r15, rAX, rCX, rDX, r8, r9, r10, r11, rAX);
+begin
+  for var R := Low(TJitReg) to High(TJitReg) do
+    FPhys[R] := Phys[R];
+  FArgs[0] := rDI;
+  FArgs[1] := rSI;
+  FArgs[2] := rDX;
+  FArgs[3] := rCX;
+  inherited Create(Size);
+end;
+
+function TJitAsmSysV64.Allocate(Size: NativeInt; out CodeStart: NativeInt): PByte;
+begin
+  // Read, write and execute: blocks are compiled while others run.
+  {$WARN SYMBOL_PLATFORM OFF}
+  Result := mmap(nil, Size, PROT_READ or PROT_WRITE or PROT_EXEC, MAP_PRIVATE or MAP_ANONYMOUS, -1, 0);
+  {$WARN SYMBOL_PLATFORM ON}
+  if Result = MAP_FAILED then
+    RaiseLastOSError;
+  System.Move(SysVFrame, Result^, SizeOf(SysVFrame));
+  PUInt64(Result + 32)^ := UInt64(Result + SysVCodeStart);
+  PUInt64(Result + 40)^ := UInt64(Size - SysVCodeStart);
+  __register_frame(Result);
+  CodeStart := SysVCodeStart;
+end;
+
+procedure TJitAsmSysV64.Release(Base: PByte);
+begin
+  __deregister_frame(Base);
+  munmap(Base, Size);
+end;
+
+procedure TJitAsmSysV64.FlushCode(P: PByte; Len: NativeInt);
+begin
+  // (x64 keeps the instruction cache coherent.)
+end;
+
+procedure TJitAsmSysV64.Enter;
+begin
+  Emit([$53]);                // push rbx
+  Emit([$55]);                // push rbp
+  Emit([$41, $54]);           // push r12
+  Emit([$41, $55]);           // push r13
+  Emit([$41, $56]);           // push r14
+  Emit([$41, $57]);           // push r15
+  Emit([$48, $83, $EC, 8]);   // sub rsp, 8
+  MoveX(jw64, X64Reg(FPhys[jrSelf]), X64Reg(FArgs[0]));
+  MoveX(jw64, X64Reg(FPhys[jrCtx]), X64Reg(FArgs[1]));
+end;
+
+procedure TJitAsmSysV64.Leave(const Value: TJitOp);
+begin
+  MoveX(jw64, X64Reg(rAX), X(Value));
+  Emit([$48, $83, $C4, 8]);   // add rsp, 8
+  Emit([$41, $5F]);           // pop r15
+  Emit([$41, $5E]);           // pop r14
+  Emit([$41, $5D]);           // pop r13
+  Emit([$41, $5C]);           // pop r12
+  Emit([$5D]);                // pop rbp
+  Emit([$5B]);                // pop rbx
+  Emit([$C3]);                // ret
+end;
+
+{$ENDIF}
 function CreateJitAsm(Size: NativeInt): TJitAsm;
 begin
   {$IF JitSupported}
-  Result := TJitAsmWin64.Create(Size);
+  try
+    {$IFDEF MSWINDOWS}
+    Result := TJitAsmWin64.Create(Size);
+    {$ELSE}
+    Result := TJitAsmSysV64.Create(Size);
+    {$ENDIF}
+  except
+    // No executable memory here (a system that forbids it): the blocks run
+    // interpreted.
+    on EOSError do
+      Result := nil;
+  end;
   {$ELSE}
   Result := nil;
   {$ENDIF}
