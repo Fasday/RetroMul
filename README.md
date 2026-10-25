@@ -24,6 +24,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | SEGA Master System / Mark III | `.sms` |
 | SEGA Game Gear | `.gg` |
 | SEGA Saturn | `.iso`, `.cue`, `.chd`, `.mds`, `.nrg` |
+| SEGA Dreamcast (experimental) | `.gdi`, `.cdi`, `.chd`, `.cue`, `.iso`, `.mds`, `.nrg`, homebrew `.elf`, multi-disc `.m3u` |
 | Sony PlayStation (PS1) | `.cue`, `.chd`, `.iso`, `.mds`, `.nrg`, raw `.bin`, PS-X `.exe`, disc / executable `.zip`, multi-disc `.m3u` |
 | ZX Spectrum family / clones | `.sna`, `.z80`, `.tap`, `.tzx`, `.trd`, `.scl`, `.dsk`, `.dck`, `.pro`, `.kdi`, `.ide`, `.mmc`, `.zip` / `.7z` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
@@ -90,6 +91,7 @@ ROMS/
   cps3/
   ps1/
   saturn/
+  dc/
   neogeocd/
   pcengine/
   sgx/

@@ -19,7 +19,33 @@ uses
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
-  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.ZX, Core.Adapter.PS1;
+  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.ZX, Core.Adapter.PS1, Core.Adapter.DC,
+  System.StrUtils;
+
+// The first disc named by an M3U playlist (as written); restores the stream position.
+function FirstPlaylistEntry(Stream: TStream): string;
+begin
+  Result := '';
+  var Start := Stream.Position;
+  try
+    var Size := Stream.Size - Start;
+    if Size > 64 * 1024 then
+      Size := 64 * 1024;
+    var Data: TBytes;
+    SetLength(Data, Size);
+    if Size > 0 then
+      Stream.ReadBuffer(Data[0], Size);
+    for var Line in TEncoding.UTF8.GetString(Data).Split([#13, #10]) do
+    begin
+      var Entry := Line.Trim;
+      if (Entry = '') or Entry.StartsWith('#') then
+        Continue;
+      Exit(Entry.DeQuotedString('"'));
+    end;
+  finally
+    Stream.Position := Start;
+  end;
+end;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -39,8 +65,34 @@ begin
   if (Storage <> nil) and RomName.StartsWith('content://', True) then
     SourceName := Storage.Describe(RomName).Name;
 
+  // GD-ROM and DiscJuggler images only hold Dreamcast discs.
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_GDI) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CDI) then
+  begin
+    var DiscStorage := Storage;
+    if DiscStorage = nil then
+      DiscStorage := TStorage.Default;
+    var Disc := TCDDisc.Create(Stream, DiscStorage, RomName);
+    try
+      if not TDCCoreAdapter.IsDCDisc(Disc) then
+        raise EReadError.Create('Not a Dreamcast disc: the boot track lacks the SEGA SEGAKATANA identifier');
+    except
+      Disc.Free;
+      raise;
+    end;
+    Exit(TDCCoreAdapter.Create(Stream, DiscStorage, RomName, Disc));
+  end;
+
+  // Playlists: Dreamcast in its ROM folder or for GD-ROM/DiscJuggler images,
+  // else PlayStation.
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_M3U) then
+  begin
+    var PlaylistFolder := ExtractFileName(ExcludeTrailingPathDelimiter(ExtractFilePath(SourceName)));
+    if SameText(PlaylistFolder, ROM_SYSTEM_DC) or SameText(PlaylistFolder, 'dreamcast') or
+      MatchText(ExtractFileExt(FirstPlaylistEntry(Stream)), [ROM_EXTENSION_GDI, ROM_EXTENSION_CDI]) then
+      Exit(TDCCoreAdapter.Create(Stream, Storage, RomName));
     Exit(TPS1CoreAdapter.Create(Stream, Storage, RomName));
+  end;
 
   // A raw single-track .bin is a disc, not a cartridge (CD sync at sector 0).
   var RawDisc := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_BIN) and IsCDRawImage(Stream);
@@ -61,6 +113,12 @@ begin
     var IsSegaCD := False;
     var IsSaturn := False;
     try
+      if TDCCoreAdapter.IsDCDisc(Disc) then
+      begin
+        var OwnedDisc := Disc;
+        Disc := nil;
+        Exit(TDCCoreAdapter.Create(Stream, DiscStorage, RomName, OwnedDisc));
+      end;
       for var T := 1 to Disc.TrackCount do
       begin
         var Track := Disc.Track(T);
@@ -332,6 +390,8 @@ begin
         Result := TSaturnCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.PS1:
         Result := TPS1CoreAdapter.Create(Input, Storage, RomName);
+      TRomSystem.DC:
+        Result := TDCCoreAdapter.Create(Input, Storage, RomName);
       TRomSystem.SNES:
         Result := TSnesCoreAdapter.Create(Input, Storage, RomName);
     end;

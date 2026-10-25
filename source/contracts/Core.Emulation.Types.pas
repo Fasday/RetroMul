@@ -72,6 +72,16 @@ type
     procedure SendMouseDelta(DX, DY: Integer; Buttons: Byte);
   end;
 
+  // Absolute aiming for light guns: the host pointer in frame pixels, Valid
+  // False when it is off the picture. Frontends call once per input poll
+  // while UsesPointer is true (mouse buttons arrive through IEmulationMouseInput).
+  IEmulationPointerInput = interface
+    ['{5E0B8C2A-3F7D-4A61-9B1E-2C4D8A7F6E30}']
+    function GetUsesPointer: Boolean;
+    procedure SetPointer(X, Y: Integer; Valid: Boolean);
+    property UsesPointer: Boolean read GetUsesPointer;
+  end;
+
   IEmulationMotionInput = interface
     ['{1B7C1D32-86B7-4DCC-BD4B-20B1D41120A7}']
     function GetHasAccelerometer: Boolean;

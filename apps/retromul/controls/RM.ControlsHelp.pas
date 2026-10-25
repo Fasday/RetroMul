@@ -48,7 +48,7 @@ uses
   System.SysUtils, System.Math, System.Generics.Collections,
   System.Generics.Defaults, FMX.Graphics, FMX.TextLayout, FMX.BehaviorManager, RM.LibraryView,
   RM.Settings, RM.Input, RM.Gamepad, Core.Emulation, RM.Icons, RM.Styles,
-  NES.PowerPad, Core.Adapter.PS1;
+  NES.PowerPad, Core.Adapter.PS1, Core.Adapter.DC;
 
 {$R *.fmx}
 
@@ -243,6 +243,13 @@ begin
           AssignmentRow(LayoutAssignments, PS1ExtraName(Extra), Assignments(Action), Y, Action);
           Y := Y + 34;
         end;
+    if FSystemId = ROM_SYSTEM_DC then
+      for var Extra := Low(TDCExtra) to High(TDCExtra) do
+      begin
+        var Action := DCAction(FPlayer, Extra);
+        AssignmentRow(LayoutAssignments, DCExtraName(Extra), Assignments(Action), Y, Action);
+        Y := Y + 34;
+      end;
     if PowerPadActive then
       for var Button := 1 to 12 do
       begin
