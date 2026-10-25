@@ -34,6 +34,7 @@ type
     FKeys: TDCKeyMap;
     FExtraKeys: TDCExtraKeyMap;
     FBIOSMode, FBIOSFile, FFlashFile, FRegion, FLanguage, FCable, FVideo, FVMUScreen: string;
+    FShowVMU: Boolean;
     FRumble: Boolean;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
@@ -58,7 +59,9 @@ type
     // 'auto', 'ntsc' or 'pal'.
     property Video: string read FVideo write FVideo;
     // 'off', 'top-left', 'top-right', 'bottom-left' or 'bottom-right'.
+    // The corner of the VMU screen and whether it is shown (hidden by default).
     property VMUScreen: string read FVMUScreen write FVMUScreen;
+    property ShowVMU: Boolean read FShowVMU write FShowVMU;
     property Rumble: Boolean read FRumble write FRumble;
     property Keys: TDCKeyMap read FKeys;
   end;
@@ -337,8 +340,9 @@ begin
     ['japanese', 'english', 'german', 'french', 'spanish', 'italian'], 'english');
   FCable := OneOf(Ini.ReadString('System', 'Cable', 'composite'), ['composite', 'rgb', 'vga'], 'composite');
   FVideo := OneOf(Ini.ReadString('System', 'Video', 'auto'), ['auto', 'ntsc', 'pal'], 'auto');
+  FShowVMU := Ini.ReadBool('Peripherals', 'ShowVMU', False);
   FVMUScreen := OneOf(Ini.ReadString('Peripherals', 'VMUScreen', 'top-right'),
-    ['off', 'top-left', 'top-right', 'bottom-left', 'bottom-right'], 'top-right');
+    ['top-left', 'top-right', 'bottom-left', 'bottom-right'], 'top-right');
   FRumble := Ini.ReadBool('Peripherals', 'Rumble', True);
   for var P := 0 to 3 do
   begin
@@ -361,6 +365,7 @@ begin
   Ini.WriteString('System', 'Language', FLanguage);
   Ini.WriteString('System', 'Cable', FCable);
   Ini.WriteString('System', 'Video', FVideo);
+  Ini.WriteBool('Peripherals', 'ShowVMU', FShowVMU);
   Ini.WriteString('Peripherals', 'VMUScreen', FVMUScreen);
   Ini.WriteBool('Peripherals', 'Rumble', FRumble);
   for var P := 0 to 3 do
@@ -1772,12 +1777,14 @@ end;
 function TDCCoreAdapter.TakeVMUScreen(out Pixels: TBytes): Boolean;
 begin
   Pixels := nil;
-  Result := (FWorker <> nil) and (FConfigObject.VMUScreen <> 'off') and FWorker.TakeVMUScreen(Pixels);
+  Result := (FWorker <> nil) and FConfigObject.ShowVMU and FWorker.TakeVMUScreen(Pixels);
 end;
 
 function TDCCoreAdapter.VMUScreenCorner: string;
 begin
   Result := FConfigObject.VMUScreen;
+  if not FConfigObject.ShowVMU then
+    Result := 'off';
 end;
 
 end.

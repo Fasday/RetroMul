@@ -74,9 +74,10 @@ the program puts the Maple bus in light gun mode.
 The analog stick uses host axes or four bindable directions; the L and R
 triggers are the logical Select and Mode buttons and report analog travel from
 host triggers. A jump pack occupies port A's second slot when rumble is on.
-VMU contents are saved as `saves/dc/vmu_A1.bin` and so on. The VMU screen is
-drawn by the frontend in a corner of the game display (Dreamcast settings);
-it is not part of frames, screenshots or frame hashes.
+VMU contents are saved as `saves/dc/vmu_A1.bin` and so on. The VMU screen,
+when switched on in Dreamcast settings (it is off by default), is drawn by the
+frontend in a chosen corner of the game display; it is not part of frames,
+screenshots or frame hashes.
 
 ## Implementation notes
 

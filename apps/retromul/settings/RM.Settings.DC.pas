@@ -38,8 +38,9 @@ begin
       'Dreamcast controller (with a Visual Memory unit), keyboard, mouse, light gun or nothing. The keyboard ' +
       'takes the host keys; the light gun aims with the mouse pointer and fires with its left button.', sekCombo);
   Context.CreateGroup('DCPeripherals', 'Visual Memory and rumble');
-  Context.CreateOption('RowDCVMUScreen', 'VMU screen',
-    'Show the Visual Memory display of the first controller in a corner of the picture.', sekCombo);
+  Context.CreateOption('RowDCShowVMU', 'VMU screen',
+    'Show the Visual Memory display of the first controller over the picture.', sekSwitch);
+  Context.CreateOption('RowDCVMUScreen', 'VMU screen position', 'The corner of the picture it is shown in.', sekCombo);
   Context.CreateOption('RowDCRumble', 'Jump pack rumble',
     'Vibrate the gamepad when the game runs the jump pack of the first controller.', sekSwitch);
 end;
@@ -63,8 +64,9 @@ end;
 procedure TDCSettings.Peripherals(Context: TSettingsPageContext);
 begin
   Context.Heading('GroupDCPeripherals');
-  Context.Combo('RowDCVMUScreen', 'Peripherals', 'VMUScreen', ['Off', 'Top left', 'Top right', 'Bottom left',
-    'Bottom right'], ['off', 'top-left', 'top-right', 'bottom-left', 'bottom-right'], 'top-right');
+  Context.Check('RowDCShowVMU', 'Peripherals', 'ShowVMU', False);
+  Context.Combo('RowDCVMUScreen', 'Peripherals', 'VMUScreen', ['Top left', 'Top right', 'Bottom left', 'Bottom right'],
+    ['top-left', 'top-right', 'bottom-left', 'bottom-right'], 'top-right');
   Context.Check('RowDCRumble', 'Peripherals', 'Rumble', True);
 end;
 
