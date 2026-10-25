@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, PC.OPL.Nuked, Core.AudioFilter;
+  System.SysUtils, PC.OPL.Nuked, Core.AudioFilter, Core.Snapshots;
 
 type
   // Common AdLib / Sound Blaster synthesis backend. Instances own their state;
@@ -32,7 +32,9 @@ type
     function ReadPort(Port: Byte): Byte;
     function ReadStatus: Byte;
     procedure AdvanceClocks(Cycles: Cardinal);
-    procedure GenerateNative(out Left, Right: SmallInt);
+    procedure GenerateNative(out Left, Right: SmallInt; Timers: Boolean = True);
+    function RegisterValue(Index: Word): Byte;
+    procedure SerializeState(State: TStateArchive);
     procedure Sample(out Left, Right: SmallInt);
     procedure Render(var PCM: array of SmallInt; Frames: Integer);
     property Clock: Integer read FClock;
@@ -49,7 +51,7 @@ type
 implementation
 
 uses
-  System.Math;
+  System.Math, System.Classes;
 
 constructor TOPL1.Create(Clock, SampleRate: Integer);
 begin
@@ -200,7 +202,7 @@ begin
     end;
 end;
 
-procedure TOPLSound.GenerateNative(out Left, Right: SmallInt);
+procedure TOPLSound.GenerateNative(out Left, Right: SmallInt; Timers: Boolean);
 var
   PCM: array[0..1] of SmallInt;
 begin
@@ -210,7 +212,7 @@ begin
     Right := PCM[1]
   else
     Right := Left;
-  AdvanceClocks(FDivider);
+  if Timers then AdvanceClocks(FDivider);
 end;
 
 procedure TOPLSound.Sample(out Left, Right: SmallInt);
@@ -235,6 +237,57 @@ begin
 
   for var J := 0 to Frames - 1 do
     Sample(PCM[J * 2], PCM[J * 2 + 1]);
+end;
+
+function TOPLSound.RegisterValue(Index: Word): Byte;
+begin
+  Result := FRegisters[Index and $1FF];
+end;
+
+procedure TOPLSound.SerializeState(State: TStateArchive);
+var Chip: TOplChip;
+  procedure PointerField(var P; Loading: Boolean);
+  var N: NativeUInt;
+  begin
+    Move(P,N,SizeOf(N));
+    if not Loading then begin
+      if N<>0 then begin
+        if (N<NativeUInt(@FChip)) or (N>=NativeUInt(@FChip)+SizeOf(FChip)) then
+          raise EReadError.Create('Invalid OPL internal pointer');
+        N:=N-NativeUInt(@FChip)+1;
+      end;
+    end else if N<>0 then begin
+      if N>SizeOf(FChip) then raise EReadError.Create('Invalid OPL state pointer');
+      N:=NativeUInt(@FChip)+N-1;
+    end;
+    Move(N,P,SizeOf(N));
+  end;
+  procedure Pointers(Loading: Boolean);
+  begin
+    for var I:=0 to 17 do begin
+      for var J:=0 to 1 do PointerField(Chip.channel[I].slotz[J],Loading);
+      PointerField(Chip.channel[I].pair,Loading); PointerField(Chip.channel[I].chip,Loading);
+      for var J:=0 to 3 do PointerField(Chip.channel[I].&out[J],Loading);
+    end;
+    for var I:=0 to 35 do begin
+      PointerField(Chip.slot[I].channel,Loading);PointerField(Chip.slot[I].chip,Loading);
+      PointerField(Chip.slot[I].&mod,Loading);PointerField(Chip.slot[I].trem,Loading);
+    end;
+  end;
+begin
+  Chip:=FChip;
+  if not State.Loading then Pointers(False);
+  State.Field(Chip,SizeOf(Chip));
+  if State.Loading then begin
+    Pointers(True);FChip:=Chip;
+    if (FChip.writebuf_cur>1023) or (FChip.writebuf_last>1023) then
+      raise EReadError.Create('Invalid OPL write buffer');
+  end;
+  State.Field(FAddress,SizeOf(FAddress));State.Field(FRegisters,SizeOf(FRegisters));
+  State.Field(FTimerValue,SizeOf(FTimerValue));State.Field(FTimerRunning,SizeOf(FTimerRunning));
+  State.Field(FTimerMasked,SizeOf(FTimerMasked));State.Field(FTimerCycles,SizeOf(FTimerCycles));
+  State.Field(FStatus,1);State.Field(FPhase,SizeOf(FPhase));
+  State.Field(FFiltered,SizeOf(FFiltered));State.Field(FFilter,SizeOf(FFilter));
 end;
 
 end.

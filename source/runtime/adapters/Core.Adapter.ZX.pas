@@ -225,6 +225,14 @@ begin
   Ini.WriteBool('Hardware', 'GeneralSound', Machine.GeneralSound);
   Ini.WriteInteger('Hardware', 'GeneralSoundRAMKB', Machine.GeneralSoundRAMKB);
   Ini.WriteBool('Hardware', 'NeoGS', Machine.NeoGS);
+  Ini.WriteBool('Hardware', 'SID', Machine.SID);
+  Ini.WriteInteger('Hardware', 'SIDModel', Machine.SIDModel);
+  Ini.WriteString('Hardware', 'SIDClock', 'pal');
+  if Machine.SIDNTSC then
+    Ini.WriteString('Hardware', 'SIDClock', 'ntsc');
+  Ini.WriteBool('Hardware', 'MoonSound', Machine.MoonSound);
+  Ini.WriteBool('Hardware', 'MoonSoundIRQ', Machine.MoonSoundIRQ);
+  Ini.WriteBool('Hardware', 'MoonSoundInDOS', Machine.MoonSoundInDOS);
   Ini.WriteBool('Hardware', 'DMAUSC', Machine.DMAUSC);
   Ini.WriteBool('Hardware', 'DMAUSCULABypass', Machine.DMAUSCULABypass);
   Ini.WriteInteger('Hardware', 'DMAUSCStereo', Machine.DMAUSCStereo);
@@ -360,6 +368,7 @@ begin
   FThread.TimexCartridgeFile := TZXConfig(FConfig).TimexCartridgeFile;
   FThread.NeoGSImageHash := Copy(FNeoGSImageHash);
   FThread.NeoGSImageFile := FNeoGSImageFile;
+  FThread.MoonSoundFlashFile := ChangeFileExt(FStorage.ConfigFile('zx'), '.moonsound.flash');
   FThread.NeoGSFlashFile := ChangeFileExt(FStorage.ConfigFile('zx'), '.neogs.flash');
   if FNeoGSImageFile <> '' then
     FThread.NeoGSSaveFile := FStorage.GameSave('zx', FNeoGSImageFile, SnapshotIdentity(FNeoGSImageHash)) + '.ngs';

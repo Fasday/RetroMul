@@ -130,8 +130,10 @@ begin
   // ZX v23 adds NeoGS and the shared native SPI SD state.
   // ZX v24 stores VS1011e, MP3 DMA, CPLD/FPGA and programmable flash.
   // ZX v25 adds DMA USC controller/timers, physical DMA and bus continuation.
+  // ZX v26 adds ZXM-MoonSound and shared 040B/016D flash geometry.
+  // ZX v27 adds the eZX/MB SID voices, filters and rational clock phases.
   if SameText(PlatformCore, 'ZX') then
-    Result.Version := 25;
+    Result.Version := 27;
   // CPS v2 adds OKI bank state, enlarged sprite buffers and board peripherals.
   if SameText(PlatformCore, 'CPS1') or SameText(PlatformCore, 'CPS2') then
     Result.Version := 2;

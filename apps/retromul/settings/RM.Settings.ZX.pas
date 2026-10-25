@@ -93,6 +93,12 @@ begin
   Context.CreateOption('ZXDAC', 'DAC sound board', 'Choose the external 8-bit DAC interface. GS-port Covox is the B3 DAC interface. Applies when opening media.', sekCombo);
   Context.CreateOption('ZXGeneralSound', 'General Sound', 'Attach the classic 12 MHz Z80 sound card with built-in GS ROM 1.05b and four DAC channels. Applies when opening media.', sekSwitch);
   Context.CreateOption('ZXGeneralSoundRAM', 'General Sound RAM', 'Select the classic 128 KiB board or GS512 expansion. GS512 retains the original missing 32 KiB region. Applies when opening media.', sekCombo);
+  Context.CreateOption('ZXSID', 'SID (eZX/MB)', 'Attach one SID through the eZX/MB ports. No BIOS is required. Applies when opening media.', sekSwitch);
+  Context.CreateOption('ZXSIDModel', 'SID model', 'Initial SID model. Software can switch 6581/8580 without resetting the voices.', sekCombo);
+  Context.CreateOption('ZXSIDClock', 'SID clock', 'Initial PAL or NTSC SID clock. This does not change Spectrum video timing. Software can change the SID clock.', sekCombo);
+  Context.CreateOption('ZXMoonSound', 'ZXM-MoonSound', 'Attach OPL4 with 18 FM and 24 wave channels, 1 MiB RAM and built-in Yamaha sample ROM. Flash updates are saved automatically. Applies when opening media.', sekSwitch);
+  Context.CreateOption('ZXMoonSoundIRQ', 'MoonSound IRQ jumper', 'Connect OPL4 timer interrupts to the Spectrum CPU. The standard music players use frame interrupts and do not require this jumper.', sekSwitch);
+  Context.CreateOption('ZXMoonSoundInDOS', 'MoonSound in TR-DOS', 'Emulate the PentEvo jumper and keep MoonSound accessible in DOS ROM. Disk-controller accesses still take priority.', sekSwitch);
   Context.CreateOption('ZXDMAUSC', 'DMA Ultrasound Card', 'Attach the four-channel DMA Ultrasound Card. Samples use motherboard RAM; no BIOS is required. Applies when opening media.', sekSwitch);
   Context.CreateOption('ZXDMAUSCStereo', 'DMA Ultrasound stereo', 'Route the four physical audio outputs to stereo or mono.', sekCombo);
   Context.CreateOption('ZXDMAUSCULABypass', 'Keep ULA interrupts enabled', 'Compatibility option for early DMA USC players. Keep frame interrupts enabled regardless of IRQ-control bit 3. Turn off to emulate the complete interrupt controller.', sekSwitch);
@@ -101,7 +107,7 @@ begin
   Context.CreateOption('ZXNeoGSImage', 'NeoGS SD image', 'Optional raw SD image for the NeoGS slot, independent of divMMC. Sector changes are saved separately; the original image is preserved.', sekPath);
   Context.CreateOption('ZXNextDACMode', 'Next-DAC port profile', 'Choose enabled DAC aliases on startup. Programs can change these gates through NextReg 84. Applies only to Next-DAC.', sekCombo);
   Context.CreateOption('ZXNextDACStartup', 'Enable Next-DAC on startup', 'Enable the DAC for classic software. Turn off to start with the hardware power-on gate closed; programs can enable NextReg 08 bit 3.', sekSwitch);
-  Context.CreateOption('ZXExpansionVolume', 'DAC / GS / SAA1099 / FM volume (%)', 'Adjust external DAC, General Sound, SAA1099 and Turbo Sound FM synthesis independently of the PSG and beeper.', sekNumber);
+  Context.CreateOption('ZXExpansionVolume', 'Expansion sound volume (%)', 'Adjust DAC, GS/NeoGS, SAA1099, FM, MoonSound and SID independently of the PSG and beeper.', sekNumber);
   Context.CreateOption('ZXPSGModel', 'PSG chip', 'Select AY-3-8912 or YM2149 sound characteristics. Turbo Sound FM always uses YM2203 SSG.', sekCombo);
   Context.CreateOption('ZXStereo', 'PSG stereo layout', 'Mono or channel order from left to right. ABC preserves the previous sound.', sekCombo);
   Context.CreateOption('ZXAYVolume', 'AY / YM volume (%)', 'Adjust PSG sound independently. Zero mutes the chip.', sekNumber);
@@ -168,6 +174,12 @@ begin
     ['none', 'covoxfb', 'covoxdd', 'covoxgs', 'soundrive', 'specdrum', 'nextdac'], 'none');
   Context.Check('ZXGeneralSound', 'Hardware', 'GeneralSound', False);
   Context.Combo('ZXGeneralSoundRAM', 'Hardware', 'GeneralSoundRAMKB', ['128 KiB', '512 KiB'], ['128', '512'], '128');
+  Context.Check('ZXSID', 'Hardware', 'SID', False);
+  Context.Combo('ZXSIDModel', 'Hardware', 'SIDModel', ['MOS 6581', 'MOS 8580'], ['0', '1'], '0');
+  Context.Combo('ZXSIDClock', 'Hardware', 'SIDClock', ['PAL (985248 Hz)', 'NTSC (1022730 Hz)'], ['pal', 'ntsc'], 'pal');
+  Context.Check('ZXMoonSound', 'Hardware', 'MoonSound', False);
+  Context.Check('ZXMoonSoundIRQ', 'Hardware', 'MoonSoundIRQ', False);
+  Context.Check('ZXMoonSoundInDOS', 'Hardware', 'MoonSoundInDOS', False);
   Context.Check('ZXDMAUSC', 'Hardware', 'DMAUSC', False);
   Context.Combo('ZXDMAUSCStereo', 'Hardware', 'DMAUSCStereo', ['AD left / BC right', 'AB left / CD right', 'Mono'], ['0', '1', '2'], '0');
   Context.Check('ZXDMAUSCULABypass', 'Hardware', 'DMAUSCULABypass', True);

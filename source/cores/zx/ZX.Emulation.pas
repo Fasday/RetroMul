@@ -40,6 +40,7 @@ type
     SnapshotDirectory, DiskSaveFile, CMOSSaveFile, ServiceROMFile, TimexCartridgeFile: string;
     DivImageFile, DivFirmwareFile, DivSaveFile: string;
     DivImageHash: TBytes;
+    MoonSoundFlashFile: string;
     NeoGSImageFile, NeoGSSaveFile, NeoGSFlashFile: string;
     NeoGSImageHash: TBytes;
     property InputPorts: TCoreInputPorts read GetInputPorts write SetInputPorts;
@@ -288,6 +289,10 @@ end;
 
 procedure TZXWorker.PersistNeoGSFlash(Console: TZXConsole);
 begin
+  if (Console<>nil) and (Console.MoonSound<>nil) and Console.MoonSound.FlashDirty and (MoonSoundFlashFile<>'') then begin
+    var MoonStream:=TBytesStream.Create(Console.MoonSound.FlashImage);
+    try SaveStreamAtomically(MoonStream,MoonSoundFlashFile,FStorage);finally MoonStream.Free;end;
+  end;
   if (Console = nil) or (Console.NeoGS = nil) or not Console.NeoGS.FlashDirty or
     (NeoGSFlashFile = '') then
     Exit;
@@ -340,6 +345,8 @@ begin
         Console.DivStorage.Mount(FStorage.OpenRead(DivImageFile), DivImageHash);
       if (Console.DivStorage.Disk <> nil) and (DivSaveFile <> '') and FStorage.Exists(DivSaveFile) then
         Console.DivStorage.Disk.LoadOverlay(FStorage.ReadBytes(DivSaveFile));
+      if (Console.MoonSound<>nil) and (MoonSoundFlashFile<>'') and FStorage.Exists(MoonSoundFlashFile) then
+        Console.MoonSound.LoadFlash(FStorage.ReadBytes(MoonSoundFlashFile));
       if (Console.NeoGS <> nil) and (NeoGSFlashFile <> '') and FStorage.Exists(NeoGSFlashFile) then
         Console.NeoGS.LoadFlash(FStorage.ReadBytes(NeoGSFlashFile));
       if (Console.NeoGS <> nil) and (NeoGSImageFile <> '') then
@@ -612,7 +619,8 @@ begin
         end;
       end;
     end;
-    if (Console <> nil) and (Console.NeoGS <> nil) and Console.NeoGS.FlashDirty and (NeoGSFlashFile <> '') then
+    if (Console<>nil) and (((Console.NeoGS<>nil) and Console.NeoGS.FlashDirty and (NeoGSFlashFile<>'')) or
+      ((Console.MoonSound<>nil) and Console.MoonSound.FlashDirty and (MoonSoundFlashFile<>''))) then
     try
       PersistNeoGSFlash(Console);
     except

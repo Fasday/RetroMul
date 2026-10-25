@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{4490F9E7-DA81-458B-A9BF-211F6E8C70C0}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -96,7 +96,7 @@
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <SanitizedProjectName>RetromulTerm</SanitizedProjectName>
-        <DCC_UnitSearchPath>..\..\source\hardware\audio\mp3;..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\..\source\hardware\audio\opl;..\..\source\hardware\audio\mp3;..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>1049</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
     </PropertyGroup>
@@ -237,6 +237,9 @@
         <DCCReference Include="..\..\source\cores\zx\ZX.Configuration.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.GeneralSound.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.NeoGS.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.SID.pas"/>
+        <DCCReference Include="..\..\source\cores\zx\ZX.MoonSound.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\opl\Yamaha.Sound.OPL4.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.DMAUSC.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.PIT8253.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.VS1011.pas"/>

@@ -1,4 +1,4 @@
-﻿# Original machine ROMs
+# Original machine ROMs
 
 These are ZX Spectrum machine firmware images, not native code libraries.
 They are embedded by `ZX.Firmware.rc` so snapshots and tapes can call the ROM.
@@ -215,3 +215,27 @@ DMA USC contains no BIOS or private sample RAM. The native 8237A/8253 model
 uses motherboard RAM; this package adds no firmware resource. Original DMA
 Demo programs are test fixtures under `codex-work/zx-dmausc/references`, not
 BIOS images embedded into the application.
+
+## ZXM-MoonSound YRW801
+
+`yrw801.rom` is the unchanged 2 MiB Yamaha YRW801 sample table supplied in
+[Mick's original board archive](http://micklab.ru/file/zxm_moonsound/yrw801m_1993.rar).
+It is embedded as RCDATA `ZX_MOON_WAVE` in `ZX.Firmware.RES`; no external ROM
+path is needed. The table is audio/header data, not a host library or executable
+BIOS. Yamaha and the original respective rights holders retain their copyrights.
+The factory resource is unchanged by guest flash programming; modified bytes
+are saved separately as `zx.moonsound.flash`. The file was downloaded
+2026-10-25 from the board author's publication.
+
+Bytes: 2097152; CRC32: `2a9d8d43`;
+SHA-256: `0481e861f639fa3d6a64a75b735035a54b0875d57aaae33fdbe400146c80423f`.
+Primary schematic, chip documentation, archive and test-vector hashes are
+recorded in `codex-work/zx-moonsound/references.json`.
+
+## SID (eZX/MB)
+
+The eLeMeNt ZX/MB03+ SID application interface requires no BIOS, sample ROM
+or additional firmware. This package leaves `ZX.Firmware.rc`, `ZX.Firmware.RES`
+and all existing firmware images unchanged. Hood's original Z80 SID players
+are regression fixtures in `codex-work/zx-sid/references`, not application
+resources or host binary libraries.

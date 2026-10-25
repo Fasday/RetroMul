@@ -35,6 +35,9 @@ type
     GeneralSoundRAMKB: Integer;
     NeoGS: Boolean;
     NeoGSRAMKB: Integer;
+    MoonSound, MoonSoundIRQ, MoonSoundInDOS: Boolean;
+    SID, SIDNTSC: Boolean;
+    SIDModel: Integer; // 0 MOS6581, 1 MOS8580; eZX/MB single-SID interface
     DMAUSC, DMAUSCULABypass: Boolean;
     DMAUSCStereo: Integer; // 0 AD/BC, 1 AB/CD, 2 mono; four physical card outputs
     class function ForModel(Value: TZXMachineModel): TZXMachineConfig; static;
@@ -185,6 +188,8 @@ begin
     Add('Unsupported TK90X/TK95 video timing');
   if (NextDACMode < 0) or (NextDACMode > 8) then
     Add('Unsupported Next-DAC port profile');
+  if (SIDModel < 0) or (SIDModel > 1) then
+    Add('Unsupported eZX/MB SID model');
   if (DAC < 0) or (DAC > 6) then
     Add('Unsupported Spectrum DAC board');
   if (DivType = zdIDE) and (DAC = 6) and (NextDACMode in [0, 6]) then
@@ -195,6 +200,8 @@ begin
     Add('Unsupported NeoGS RAM size');
   if (DMAUSCStereo < 0) or (DMAUSCStereo > 2) then
     Add('Unsupported DMA Ultrasound stereo layout');
+  if MoonSound and MoonSoundIRQ and DMAUSC then
+    Add('DMA Ultrasound and MoonSound IRQ share the interrupt bus; disable the MoonSound IRQ jumper');
   if DMAUSC and not (Model in [zmSpectrum128, zmSpectrumPlus2, zmSpectrumPlus2b, zmSpectrumPlus3,
       zmPentagon128, zmPentagon512, zmPentagon1024, zmScorpion256, zmProfi512, zmProfi1024]) then
     Add('DMA Ultrasound requires a supported 128K or expanded motherboard with physical RAM banking');

@@ -1,4 +1,4 @@
-﻿# ZX Spectrum
+# ZX Spectrum
 
 Native Delphi core using RetroMul's MD.Z80 CPU and ZX.Sound.YM2149 AY model.
 No external emulator binary is linked.
@@ -51,8 +51,8 @@ Ambiguous Z80 v1 and 48K SNA files retain selected 16K or Timex profiles, otherw
 selection retains the existing snapshot override. TRD/SCL still auto-select
 Pentagon 128 unless an expanded Pentagon, Scorpion or Profi profile was selected.
 
-Native state version 25 stores a validated machine identifier, attached device state
-and DMA USC bus continuation; earlier native state
+Native state version 27 stores a validated machine identifier, attached device state,
+DMA USC bus continuation, MoonSound/FM/PCM/flash and eZX/MB SID state; earlier native state
 versions are rejected. Restoring a state selects the matching embedded ROM pair.
 Reset retains the current machine profile; frontend reset reloads the original
 media using its configured profile.
@@ -991,3 +991,79 @@ Original unmodified DMA Demo Planet/Technological players and sample data pass
 alongside register/timing, full 64K bus holds, snapshots and runtime-worker tests.
 
 [DMA USC validation and source hashes](../../../codex-work/zx-dmausc/VALIDATION.md).
+
+## ZXM-MoonSound (Mick revision 01)
+
+Enable `MoonSound` or choose **Pentagon 128K + ZXM-MoonSound**. The board has
+a native YMF278B at 33.8688 MHz, existing RetroMul OPL3 FM and 24 PCM voices
+at 44.1 kHz. PCM supports signed packed 8/12/16-bit samples, ROM/RAM headers,
+fractional pitch and interpolation, looping, envelopes, rate correction,
+pseudo reverb, DAMP, LFO, level interpolation and stereo pan/mix registers.
+The board uses DO2; voices routed exclusively to unconnected DO1 are silent.
+
+The complete 2 MiB YRW801 table is embedded as `ZX_MOON_WAVE`; an external
+BIOS file is unnecessary. This is sample data, not guest executable firmware.
+AM29F016D ID/read/program/sector and chip erase use the shared native AMD flash
+controller. Guest programming persists in `zx.moonsound.flash` beside
+the ZX configuration. Reset retains programmed flash and SRAM. The factory
+resource is immutable. Original MoonService 0.3a identifies the flash as 01/AD.
+
+There is 1 MiB external SRAM. Memory type 0 maps it at 200000..2FFFFF. Type 1
+maps MCS6 at 380000..39FFFF and MCS7 at 3A0000..3BFFFF, preserving the wired
+nineteen address lines on each 512 KiB SRAM; these windows are not a linear
+remapping of the entire RAM. Flash occupies 000000..1FFFFF in either mode.
+
+The low-byte decoder selects 7E/7F (PCM) and C4..C7 (FM); upper address bits
+are ignored. IORQG inhibits motherboard aliases, including even-port ULA and
+paging. The optional IRQ jumper is off by default; the board has no IM2 vector.
+Enabling it together with DMA USC is rejected as an interrupt-bus conflict.
+The PentEvo jumper can expose the board in TR-DOS; disk-controller I/O retains
+priority. Both jumper settings have localized controls and conflict/advisory
+messages. Presets and manual settings use the same validated configuration.
+
+MoonSound state (introduced in native v26) saves PCM/FM phases, SRAM, flash commands and clock
+remainders. FM pointer graphs are rebased when loading. Older native states
+are rejected; native states are architecture-local. SNA/Z80 interchange formats
+retain their existing behavior.
+
+Implementation follows the author's schematics/CPLD and Yamaha documentation.
+Independent YMFM vectors cover PCM format/loop/pitch at unity gain; existing
+FM output matches Nuked-OPL3 goldens. Envelope/effect and analog behavior are
+not certified bit-exact to a physical card. Other board revisions and CPLD/JTAG
+reprogramming are outside this profile. No external host audio library is linked.
+
+Sources, original player tests and regression results:
+[MoonSound validation](../../../codex-work/zx-moonsound/VALIDATION.md).
+
+## SID (eLeMeNt ZX / MB03+ application interface)
+
+Enable `SID` or select **Pentagon 128K + SID 6581 (eZX/MB)** / **SID 8580**.
+This attaches one chip using the existing native `C64.Sound.SID` synthesizer:
+three voices, ADSR, triangle/saw/pulse/noise, sync/ring modulation, volume DAC
+and model-dependent approximate filters. No SID BIOS or sample ROM is required.
+
+The full 16-bit ports are **6C3B** (index) and **6D3B** (read/write data).
+Original registers 00..1C are forwarded to the SID. Register **1F** bit 0 selects
+6581/8580; bit 1 selects PAL **985248 Hz** / NTSC **1022730 Hz**; bits 2..7 read
+zero. Switching preserves voices, envelopes and filter state. The clock ratio
+to the motherboard is rational and independent of Spectrum video timing and
+Pentagon CPU turbo. The optional multiple-chip register 20 leaves chip 0 selected;
+other reserved indices are ignored/read FF and do not alias original registers.
+POT inputs read FF. The index port has no claimed readback and returns FF.
+
+Settings define startup model/clock. Reset restores them; guest changes are
+saved in native states rather than written back to the startup configuration.
+Audio is mono through the expansion sound volume, with existing DC filtering.
+The board can coexist with AY, DAC, GS/NeoGS, DMA USC and MoonSound; it adds no
+IRQ. State v27 stores all oscillator/envelope/filter/DC/sample phases and latches.
+Earlier ZX native states are rejected; SNA/Z80 interchange formats are unchanged.
+
+This package implements the documented single-chip application interface, not
+the complete eZX/MB motherboard or SetUp port families 70/71/78/793B. Other SID
+cards (for example xxCF) are separate interfaces. The existing synthesizer is
+not certified bit-exact to physical SID analog circuits or the FPGA's internal
+pipelines/combined waveforms. Original Hood Z80 music routines are exercised
+without player patches; complete game/firmware boot is not implied.
+
+See [SID validation](../../../codex-work/zx-sid/VALIDATION.md) for primary
+documentation, regression hashes and reproducible tests.

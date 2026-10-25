@@ -7,14 +7,15 @@ uses
 
 type
   // AMD command protocol, matching the existing native CPS3 flash engine,
-  // with the Am29F040B geometry/IDs and asynchronous embedded operations.
+  // with Am29F040B/Am29F016D geometry/IDs and asynchronous operations.
   TZXAM29F040 = class
   private
     FData: TBytes;
     FCommand: Integer;
     FID, FToggle, FSuspended, FDirty: Boolean;
     FProgramAddress: Cardinal;
-    FProgramData, FEraseMask: Byte;
+    FProgramData: Byte;
+    FEraseMask: Cardinal;
     FProgramLeft, FEraseLeft: Integer;
     procedure FinishProgram;
     procedure FinishErase;
@@ -39,8 +40,8 @@ uses
 constructor TZXAM29F040.Create(const Data: TBytes);
 begin
   inherited Create;
-  if Length(Data) <> $80000 then
-    raise EArgumentException.Create('Am29F040B requires 512 KiB');
+  if (Length(Data) <> $80000) and (Length(Data) <> $200000) then
+    raise EArgumentException.Create('AMD flash requires 512 KiB (040B) or 2 MiB (016D)');
   FData := Data;
   PowerReset;
 end;
@@ -69,8 +70,8 @@ end;
 
 procedure TZXAM29F040.FinishErase;
 begin
-  for var Sector := 0 to 7 do
-    if (FEraseMask and (1 shl Sector)) <> 0 then
+  for var Sector := 0 to Length(FData) div $10000-1 do
+    if (FEraseMask and (Cardinal(1) shl Sector)) <> 0 then
       for var I := Sector * $10000 to (Sector + 1) * $10000 - 1 do
         if FData[I] <> $FF then
         begin
@@ -100,7 +101,7 @@ end;
 
 function TZXAM29F040.Read(Address: Cardinal): Byte;
 begin
-  Address := Address and $7FFFF;
+  Address := Address and Cardinal(Length(FData)-1);
   Result := FData[Address];
   if FProgramLeft > 0 then
   begin
@@ -108,7 +109,7 @@ begin
     Result := (Result and $1F) or ((not FProgramData) and $80) or (Ord(FToggle) shl 6);
     Exit;
   end;
-  if (FEraseLeft > 0) and ((FEraseMask and (1 shl (Address shr 16))) <> 0) then
+  if (FEraseLeft > 0) and ((FEraseMask and (Cardinal(1) shl (Address shr 16))) <> 0) then
   begin
     FToggle := not FToggle;
     if FSuspended then
@@ -122,7 +123,7 @@ begin
       0:
         Result := 1;
       1:
-        Result := $A4;
+        if Length(FData)=$80000 then Result := $A4 else Result := $AD;
       2:
         Result := 0;
     else
@@ -132,7 +133,7 @@ end;
 
 procedure TZXAM29F040.Write(Address: Cardinal; Value: Byte);
 begin
-  Address := Address and $7FFFF;
+  Address := Address and Cardinal(Length(FData)-1);
   if FProgramLeft > 0 then
     Exit;
   if (FEraseLeft > 0) and not FSuspended then
@@ -144,7 +145,7 @@ begin
   if FCommand = 3 then
   begin
     FCommand := 0;
-    if FSuspended and ((FEraseMask and (1 shl (Address shr 16))) <> 0) then
+    if FSuspended and ((FEraseMask and (Cardinal(1) shl (Address shr 16))) <> 0) then
       Exit;
     FProgramAddress := Address;
     FProgramData := Value;
@@ -201,13 +202,13 @@ begin
         FCommand := 0;
         FID := False;
         if Value = $30 then
-          FEraseMask := 1 shl (Address shr 16)
+          FEraseMask := Cardinal(1) shl (Address shr 16)
         else if (Value = $10) and ((Address and $7FF) = $555) then
-          FEraseMask := $FF;
+          FEraseMask := Cardinal(UInt64($FFFFFFFF) shr (32-Length(FData) div $10000));
         if FEraseMask <> 0 then
         begin
           FEraseLeft := 24000000;
-          if FEraseMask = $FF then
+          if FEraseMask = Cardinal(UInt64($FFFFFFFF) shr (32-Length(FData) div $10000)) then
             FEraseLeft := 192000000;
         end;
       end;
@@ -217,7 +218,7 @@ end;
 procedure TZXAM29F040.LoadImage(const Data: TBytes);
 begin
   if Length(Data) <> Length(FData) then
-    raise EReadError.Create('Invalid NeoGS flash image size');
+    raise EReadError.Create('Invalid AMD flash image size');
   Move(Data[0], FData[0], Length(Data));
   PowerReset;
   FDirty := False;
@@ -246,13 +247,13 @@ begin
   State.Field(FDirty, SizeOf(FDirty));
   State.Field(FProgramAddress, 4);
   State.Field(FProgramData, 1);
-  State.Field(FEraseMask, 1);
+  State.Field(FEraseMask, 4);
   State.Field(FProgramLeft, 4);
   State.Field(FEraseLeft, 4);
-  if (FCommand < 0) or (FCommand > 6) or (FProgramAddress > $7FFFF) or
+  if (FCommand < 0) or (FCommand > 6) or (FProgramAddress >= Cardinal(Length(FData))) or
     (FProgramLeft < 0) or (FProgramLeft > 168) or (FEraseLeft < 0) or (FEraseLeft > 192000000) or
     ((FEraseLeft > 0) <> (FEraseMask <> 0)) or (FSuspended and (FEraseLeft = 0)) then
-    raise EReadError.Create('Invalid Am29F040B operation state');
+    raise EReadError.Create('Invalid AMD flash operation state');
   if State.Loading and not CompareMem(@Previous[0], @FData[0], Length(FData)) then
     FDirty := True;
 end;
