@@ -15,7 +15,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Game Boy Advance | `.gba` |
 | Nintendo 64 (experimental) | `.z64`, `.n64`, `.v64` |
 | SEGA Mega Drive / Genesis | `.md`, `.bin`, `.gen`, `.smd` |
-| SEGA CD / Mega-CD | `.cue`, `.iso`, `.chd` |
+| SEGA CD / Mega-CD | `.cue`, `.iso`, `.chd`, `.mds`, `.nrg` |
 | SEGA 32X | `.32x`, `.bin`, `.gen`, `.md`, `.smd` |
 | SEGA SG-1000 | `.sg` (legacy `.sms` images in `sg1000/`) |
 | SEGA SC-3000 | `.sc` |
@@ -23,12 +23,12 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Othello Multivision | `.mv` |
 | SEGA Master System / Mark III | `.sms` |
 | SEGA Game Gear | `.gg` |
-| SEGA Saturn | `.iso`, `.cue`, `.chd` |
-| Sony PlayStation (PS1) | `.cue`, `.chd`, `.iso`, raw `.bin`, PS-X `.exe`, disc / executable `.zip`, multi-disc `.m3u` |
+| SEGA Saturn | `.iso`, `.cue`, `.chd`, `.mds`, `.nrg` |
+| Sony PlayStation (PS1) | `.cue`, `.chd`, `.iso`, `.mds`, `.nrg`, raw `.bin`, PS-X `.exe`, disc / executable `.zip`, multi-disc `.m3u` |
 | ZX Spectrum family / clones | `.sna`, `.z80`, `.tap`, `.tzx`, `.trd`, `.scl`, `.dsk`, `.dck`, `.pro`, `.kdi`, `.ide`, `.mmc`, `.zip` / `.7z` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS / AES | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
-| Neo Geo CD / CDZ | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd` |
+| Neo Geo CD / CDZ | `.iso`, `.cue` with BIN/PCM WAV tracks, `.chd`, `.mds`, `.nrg` |
 | Neo Geo Pocket | `.ngp`, `.ngc`, `.zip` |
 | Neo Geo Pocket Color | `.ngp`, `.ngc`, `.zip` |
 | Capcom Play System I (CPS-1) | Named arcade ROM sets in `.zip` |
@@ -36,7 +36,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Capcom Play System III (CPS-3) | Supported SIMM / No-CD ROM sets in `.zip` |
 | PC Engine / TurboGrafx-16 | `.pce`, single-HuCard `.zip` |
 | SuperGrafx | `.sgx`, `.pce`, single-HuCard `.zip` |
-| PC Engine CD / Duo / Arcade Card | `.cue`, `.iso`, `.chd` (built-in System Cards 1/2/3) |
+| PC Engine CD / Duo / Arcade Card | `.cue`, `.iso`, `.chd`, `.mds`, `.nrg` (built-in System Cards 1/2/3) |
 
 ## Features
 

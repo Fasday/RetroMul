@@ -47,7 +47,9 @@ begin
   var ZipDisc := SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ZIP) and TCDDisc.IsDiscZip(Stream);
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CUE) or
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ISO) or
-    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) or RawDisc or ZipDisc then
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CHD) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_MDS) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_NRG) or RawDisc or ZipDisc then
   begin
     // A location is only a hint. Confirm the native NEC boot string in the first
     // data track so generic .cue/.iso/.chd still select the correct CD family.
