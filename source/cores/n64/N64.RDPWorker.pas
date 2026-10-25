@@ -25,8 +25,7 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.SyncObjs, System.Diagnostics,
-  N64.Types, N64.RDP, N64.Host;
+  System.SysUtils, System.Classes, System.SyncObjs, System.Diagnostics, System.Math, N64.Types, N64.RDP, N64.Host;
 
 type
   TN64RDPWorker = class
@@ -128,6 +127,7 @@ type
     procedure OpenSegment;
     procedure CloseSegment(Last: Boolean);
     procedure Publish;
+    procedure WakeBands(Index: Integer);
     function MinConsumed: Int64;
     function Reached(Target: TWaitTarget; Value: Int64): Boolean;
     procedure WaitFor(Target: TWaitTarget; Value: Int64);
@@ -237,6 +237,8 @@ begin
         TInterlocked.Exchange(FOwner.FSlots[FIndex].Sleeping, 0);
       Continue;
     end;
+    // (Before a copy's barrier too, where every band must come.)
+    FOwner.WakeBands(FIndex);
     if FOwner.FStress then
       StressDelay(FNoise);
     var Header := FOwner.FRing[Position and RingMask];
@@ -542,9 +544,20 @@ end;
 
 procedure TN64RDPWorker.Publish;
 begin
+  // Band 0 only: the bands wake each other (WakeBands), so a publication
+  // costs this thread one wake-up at most.
   TInterlocked.Exchange(FPublished, FWrite);
-  for var I := 0 to High(FSlots) do
-    Signal(FSlots[I].Sleeping, FSlots[I].DataReady);
+  Signal(FSlots[0].Sleeping, FSlots[0].DataReady);
+end;
+
+procedure TN64RDPWorker.WakeBands(Index: Integer);
+begin
+  // Band Index, taking a segment, wakes bands 2 Index + 1 and 2 Index + 2:
+  // from band 0 every band in turn. A band sleeps only after setting its flag
+  // and finding nothing published, and this runs only after the segment was
+  // published, so none sleeps through it.
+  for var C := 2 * Index + 1 to Min(2 * Index + 2, High(FSlots)) do
+    Signal(FSlots[C].Sleeping, FSlots[C].DataReady);
 end;
 
 procedure TN64RDPWorker.BeginList;
