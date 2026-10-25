@@ -203,19 +203,8 @@ begin
   if Code = 0 then
     Exit;
 
-  for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
-  begin
-    if Code = FConfigObject.Keys[Button] then
-      if Pressed then
-        Include(FKeyboard.Buttons, Button)
-      else
-        Exclude(FKeyboard.Buttons, Button);
-    if Code = FConfigObject.Keys2[Button] then
-      if Pressed then
-        Include(FKeyboard.Buttons2, Button)
-      else
-        Exclude(FKeyboard.Buttons2, Button);
-  end;
+  UpdateMappedButtons(Code, Pressed, FConfigObject.Keys, FKeyboard.Buttons);
+  UpdateMappedButtons(Code, Pressed, FConfigObject.Keys2, FKeyboard.Buttons2);
   ApplySettings;
 end;
 

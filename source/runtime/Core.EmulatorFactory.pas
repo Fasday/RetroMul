@@ -19,7 +19,8 @@ uses
   Core.Adapter.SG1000, Core.Adapter.NES, Core.Adapter.GB, Core.Adapter.GBC,
   Core.Adapter.N64, Core.Adapter.MD, Core.Adapter.GBA, Core.Adapter.SNES,
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
-  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.ZX, Core.Adapter.PS1;
+  Core.Adapter.CPS, CPS.RomSets, Core.Adapter.ZX, Core.Adapter.PS1,
+  Core.Adapter.PSP, Core.PSP.Archive, PSP.Media;
 
 function CreateEmulationCore(const FileName: string): IEmulationCore;
 begin
@@ -38,6 +39,27 @@ begin
   var SourceName := RomName;
   if (Storage <> nil) and RomName.StartsWith('content://', True) then
     SourceName := Storage.Describe(RomName).Name;
+
+  // PSP executables and UMD must be dispatched before generic CD/cartridge
+  // readers, whose sector assumptions and 64 MiB cartridge limit differ.
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_PBP) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ELF) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_PRX) or
+    SameText(ExtractFileExt(SourceName), ROM_EXTENSION_CSO) then
+    Exit(TPSPCoreAdapter.Create(Stream, Storage, RomName));
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ISO) and TPSPDisc.Recognizes(Stream) then
+  begin
+    var SavedPosition := Stream.Position;
+    var PSPDisc := TPSPDisc.Create(Stream);
+    try
+      if PSPDisc.IsPSP then Exit(TPSPCoreAdapter.Create(Stream, Storage, RomName));
+    finally
+      PSPDisc.Free;
+      Stream.Position := SavedPosition;
+    end;
+  end;
+  if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_ZIP) and IsPSPArchive(Stream) then
+    Exit(TPSPCoreAdapter.Create(Stream, Storage, RomName));
 
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_M3U) then
     Exit(TPS1CoreAdapter.Create(Stream, Storage, RomName));

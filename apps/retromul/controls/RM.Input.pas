@@ -68,7 +68,7 @@ uses
   Core.Adapter.N64, Core.Adapter.GB, Core.Adapter.NES, Core.Adapter.MD,
   Core.Adapter.SNES, Core.Adapter.NeoGeo, Core.Adapter.NGP, Core.Adapter.GBA,
   Core.Adapter.CPS, GB.Joypad, NES.Input, NES.Types, MD.Console, SNES.Console,
-  System.Math, FMX.Types, PS1.SIO;
+  System.Math, FMX.Types, PS1.SIO, Core.Adapter.PSP;
 
 procedure ReadRelativeMouse(Input: TInputManager; out DX, DY: Integer; out Buttons: Byte);
 begin
@@ -284,6 +284,8 @@ begin
 
   if SystemId = ROM_SYSTEM_PS1 then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
+  if SystemId = ROM_SYSTEM_PSP then
+    Exit([Low(TEmulatorButton)..TEmulatorButton.Z]);
 
   if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X) then
   begin
@@ -371,6 +373,18 @@ begin
         Exit('R');
     end;
 
+  if SystemId = ROM_SYSTEM_PSP then
+  begin
+    case Button of
+      TEmulatorButton.A: Result := 'Cross';
+      TEmulatorButton.B: Result := 'Circle';
+      TEmulatorButton.X: Result := 'Square';
+      TEmulatorButton.Y: Result := 'Triangle';
+      TEmulatorButton.C: Result := 'L';
+      TEmulatorButton.Z: Result := 'R';
+    end;
+    Exit;
+  end;
   if SystemId = ROM_SYSTEM_PS1 then
   begin
     case Button of
@@ -694,6 +708,13 @@ begin
       for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
         Keys[Port, B] := Map[Port, B];
   end
+  else if SystemId = ROM_SYSTEM_PSP then
+  begin
+    var C := TPSPConfig.Create('', nil);
+    Config := C;
+    for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
+      Keys[0, B] := C.Keys[B];
+  end
   else if SystemId = ROM_SYSTEM_PS1 then
   begin
     var C := TPS1Config.Create('', nil);
@@ -764,7 +785,7 @@ begin
     Count := 12;
   if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
     Count := 5;
-  if (SystemId = ROM_SYSTEM_ZX) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
+  if (SystemId = ROM_SYSTEM_PSP) or (SystemId = ROM_SYSTEM_ZX) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or (SystemId = ROM_SYSTEM_GB) or (SystemId = ROM_SYSTEM_GBC) or (SystemId = ROM_SYSTEM_GBA) then
     Count := 1;
   if (SystemId = ROM_SYSTEM_MD) or (SystemId = ROM_SYSTEM_SEGACD) or (SystemId = ROM_SYSTEM_SEGA32X) then
     Count := 4;
@@ -785,7 +806,7 @@ begin
         if (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           Section := 'Keys';
         if (SystemId = ROM_SYSTEM_SATURN) or (SystemId = ROM_SYSTEM_NGP) or (SystemId = ROM_SYSTEM_NGPC) or
-          (SystemId = ROM_SYSTEM_PS1) then
+          (SystemId = ROM_SYSTEM_PS1) or (SystemId = ROM_SYSTEM_PSP) then
           Section := 'Keys';
         if Port > 0 then
           Section := Section + IntToStr(Port + 1);
@@ -802,7 +823,7 @@ begin
           end;
 
         // Config keys are stable identifiers, not the displayed GW button labels.
-        if (SystemId = ROM_SYSTEM_ZX) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
+        if (SystemId = ROM_SYSTEM_PSP) or (SystemId = ROM_SYSTEM_ZX) or (SystemId = ROM_SYSTEM_GW) or (SystemId = ROM_SYSTEM_PCE) or (SystemId = ROM_SYSTEM_SGX) or (SystemId = ROM_SYSTEM_PCECD) then
           case B of
             TEmulatorButton.Mode:
               KeyName := 'Mode';

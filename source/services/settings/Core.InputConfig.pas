@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.SyncObjs, System.IniFiles,
-  Core.Storage;
+  Core.Storage, Core.Emulation.Types;
 
 type
   TCoreInputPorts = record
@@ -45,7 +45,23 @@ function ReadCoreInputPorts(Ini: TCustomIniFile): TCoreInputPorts;
 
 function LoadCoreInputPorts(const Storage: IStorage; const SystemId: string): TCoreInputPorts;
 
+procedure UpdateMappedButtons(Code: UInt32; Pressed: Boolean;
+  const Keys: array of UInt32; var Buttons: TEmulatorButtons);
+
 implementation
+
+procedure UpdateMappedButtons(Code: UInt32; Pressed: Boolean;
+  const Keys: array of UInt32; var Buttons: TEmulatorButtons);
+begin
+  if Code = 0 then
+    Exit;
+  for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
+    if (Ord(Button) < Length(Keys)) and (Code = Keys[Ord(Button)]) then
+      if Pressed then
+        Include(Buttons, Button)
+      else
+        Exclude(Buttons, Button);
+end;
 
 function SameInputPorts(const A, B: TCoreInputPorts): Boolean;
 begin

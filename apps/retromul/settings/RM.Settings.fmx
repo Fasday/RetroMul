@@ -3527,6 +3527,101 @@ object SettingsView: TSettingsView
           end
         end
       end
+      object PanelRowRomFolderPsp: TPanel
+        Align = Top
+        Padding.Left = 16.000000000000000000
+        Padding.Top = 12.000000000000000000
+        Padding.Right = 16.000000000000000000
+        Padding.Bottom = 12.000000000000000000
+        Margins.Bottom = 6.000000000000000000
+        Position.X = 16.000000000000000000
+        Position.Y = 1655.000000000000000000
+        Size.Width = 868.000000000000000000
+        Size.Height = 72.000000000000000000
+        Size.PlatformDefault = False
+        StyleLookup = 'retromul_row'
+        object LayoutRowRomFolderPspText: TLayout
+          Align = Client
+          Size.Width = 600.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object LabelRowRomFolderPspTitle: TLabel
+            Align = Top
+            StyledSettings = [Family, Style, FontColor]
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 15.000000000000000000
+            TextSettings.WordWrap = False
+            Text = 'PlayStation Portable'
+          end
+          object LabelRowRomFolderPspDetail: TLabel
+            Align = Client
+            StyledSettings = [Family, Style, FontColor]
+            Opacity = 0.720000028610229500
+            Size.Width = 600.000000000000000000
+            Size.Height = 24.000000000000000000
+            Size.PlatformDefault = False
+            TextSettings.Font.Size = 14.000000000000000000
+            Text = 'ROM folder'
+          end
+        end
+        object LayoutRowRomFolderPspEditorContainer: TLayout
+          Align = Right
+          Margins.Left = 16.000000000000000000
+          Position.X = 632.000000000000000000
+          Position.Y = 12.000000000000000000
+          Size.Width = 220.000000000000000000
+          Size.Height = 48.000000000000000000
+          Size.PlatformDefault = False
+          object EditRowRomFolderPspEditor: TEdit
+            Touch.InteractiveGestures = [LongTap, DoubleTap]
+            Align = Client
+            Margins.Top = 8.000000000000000000
+            Margins.Bottom = 8.000000000000000000
+            Size.Width = 220.000000000000000000
+            Size.Height = 32.000000000000000000
+            Size.PlatformDefault = False
+            object EditButtonRowRomFolderPspBrowse: TEditButton
+              Touch.InteractiveGestures = [LongTap]
+              CanFocus = False
+              Cursor = crArrow
+              Hint = 'Choose folder'
+              Size.Width = 32.000000000000000000
+              Size.Height = 50.000000000000000000
+              Size.PlatformDefault = False
+              TabOrder = 0
+              object PathRowRomFolderPspBrowseIcon: TPath
+                Align = Center
+                Data.Path = {
+                  2A000000000000000000C84000002041020000000000C840E10B2B4102000000
+                  6E17B64000003441020000000000A040000034410200000092E8894000003441
+                  0200000000007040E10B2B410200000000007040000020410200000000007040
+                  49F414410200000092E8894000000C41020000000000A04000000C4102000000
+                  6E17B64000000C41020000000000C84049F41441020000000000C84000002041
+                  030000000000C840000020410000000000003441000020410200000000003441
+                  E10B2B4102000000E10B2B410000344102000000000020410000344102000000
+                  49F41441000034410200000000000C41E10B2B410200000000000C4100002041
+                  0200000000000C4149F414410200000049F4144100000C410200000000002041
+                  00000C4102000000E10B2B4100000C41020000000000344149F4144102000000
+                  0000344100002041030000000000344100002041000000000000704100003441
+                  02000000E10B7B41000034410200000000008241E10B2B410200000000008241
+                  00002041020000000000824149F4144102000000E10B7B4100000C4102000000
+                  0000704100000C41020000001FF4644100000C410200000000005C4149F41441
+                  0200000000005C41000020410200000000005C41E10B2B41020000001FF46441
+                  00003441020000000000704100003441030000000000704100003441}
+                Fill.Color = xFFE8ECF1
+                HitTest = False
+                Size.Width = 16.000000000000000000
+                Size.Height = 16.000000000000000000
+                Size.PlatformDefault = False
+                Stroke.Kind = None
+                WrapMode = Fit
+              end
+            end
+          end
+        end
+      end
       object PanelRowRomFolderOmv: TPanel
         Align = Top
         Padding.Left = 16.000000000000000000

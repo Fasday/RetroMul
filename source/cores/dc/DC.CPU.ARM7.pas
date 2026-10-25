@@ -22,7 +22,6 @@ type
     function Condition(Code: Integer): Boolean;
     procedure SetPSR(Value: Cardinal);
     procedure NZ(Value: Cardinal);
-    function Shift(Value: Cardinal; Kind, Count: Integer; Immediate: Boolean; var Carry: Cardinal): Cardinal;
     function Operand(Op: Cardinal; var Carry: Cardinal): Cardinal;
     procedure ExceptionEntry(Mode: Integer; Vector: Cardinal);
   public
@@ -39,6 +38,8 @@ function ARMSub(A, B: Cardinal): Cardinal; inline;
 
 implementation
 
+uses HW.ARM.Shifter;
+
 function ARMAdd(A, B: Cardinal): Cardinal;
 begin
   Result := Cardinal((UInt64(A) + B) and $FFFFFFFF);
@@ -47,15 +48,6 @@ end;
 function ARMSub(A, B: Cardinal): Cardinal;
 begin
   Result := Cardinal((UInt64(A) + UInt64($100000000) - B) and $FFFFFFFF);
-end;
-
-function Rotate(V: Cardinal; Count: Integer): Cardinal; inline;
-begin
-  Count := Count and 31;
-  if Count = 0 then
-    Result := V
-  else
-    Result := (V shr Count) or (V shl (32 - Count));
 end;
 
 function Bank(Mode: Integer): Integer; inline;
@@ -164,80 +156,12 @@ begin
     Result := not Result;
 end;
 
-function TARM7.Shift(Value: Cardinal; Kind, Count: Integer; Immediate: Boolean; var Carry: Cardinal): Cardinal;
-begin
-  Result := Value;
-  if (Count = 0) and not Immediate then
-    Exit;
-
-  case Kind of
-    0:
-      begin
-        if Count = 0 then
-          Exit;
-        if Count <= 32 then
-          Carry := (Value shr (32 - Count)) and 1
-        else
-          Carry := 0;
-        if Count < 32 then
-          Result := Value shl Count
-        else
-          Result := 0;
-      end;
-    1:
-      begin
-        if Count = 0 then
-          Count := 32;
-        if Count <= 32 then
-          Carry := (Value shr (Count - 1)) and 1
-        else
-          Carry := 0;
-        if Count < 32 then
-          Result := Value shr Count
-        else
-          Result := 0;
-      end;
-    2:
-      begin
-        if Count = 0 then
-          Count := 32;
-        if Count < 32 then
-        begin
-          Carry := (Value shr (Count - 1)) and 1;
-          Result := Value shr Count;
-          if Value and $80000000 <> 0 then
-            Result := Result or ($FFFFFFFF shl (32 - Count));
-        end
-        else
-        begin
-          Carry := Value shr 31;
-          Result := 0;
-          if Carry <> 0 then
-            Result := $FFFFFFFF;
-        end;
-      end;
-    3:
-      begin
-        if (Count = 0) and Immediate then
-        begin
-          Result := (Carry shl 31) or (Value shr 1);
-          Carry := Value and 1;
-        end
-        else
-        begin
-          Result := Rotate(Value, Count);
-          Carry := Result shr 31;
-        end;
-      end;
-  end;
-end;
-
 function TARM7.Operand(Op: Cardinal; var Carry: Cardinal): Cardinal;
 begin
   if Op and $02000000 <> 0 then
   begin
     var Count := Integer((Op shr 8) and 15) * 2;
-    Result := Rotate(Op and 255, Count);
+    Result := ARMRotateRight(Op and 255, Count);
     if Count <> 0 then
       Carry := Result shr 31;
     Exit;
@@ -251,7 +175,7 @@ begin
     if Op and 15 = 15 then
       Value := ARMAdd(Value, 4);
   end;
-  Result := Shift(Value, (Op shr 5) and 3, Count, Immediate, Carry);
+  Result := ARMShift(Value, (Op shr 5) and 3, Count, Immediate, Carry);
 end;
 
 procedure TARM7.ExceptionEntry(Mode: Integer; Vector: Cardinal);
@@ -372,7 +296,7 @@ begin
   begin
     var Offset := Op and $FFF;
     if Op and $02000000 <> 0 then
-      Offset := Shift(Reg(Op and 15), (Op shr 5) and 3, (Op shr 7) and 31, True, Carry);
+      Offset := ARMShift(Reg(Op and 15), (Op shr 5) and 3, (Op shr 7) and 31, True, Carry);
     var Base := Reg(RN);
     var Adjusted: Cardinal;
     if Op and $00800000 <> 0 then

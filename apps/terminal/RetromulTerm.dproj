@@ -96,7 +96,7 @@
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <SanitizedProjectName>RetromulTerm</SanitizedProjectName>
-        <DCC_UnitSearchPath>..\..\source\hardware\audio\opl;..\..\source\hardware\audio\mp3;..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\..\source\hardware\audio\atrac3;..\..\source\hardware\audio\codecs;..\..\source\hardware\video\avc;..\..\source\hardware\audio\atrac3plus;..\..\source\cores\psp;..\..\source\hardware\audio\opl;..\..\source\hardware\audio\mp3;..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>1049</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
     </PropertyGroup>
@@ -230,6 +230,7 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\..\source\hardware\cpu\HW.ARM.Shifter.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.BlockImage.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.DivStorage.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.Timex.pas"/>
@@ -356,6 +357,59 @@
         <DCCReference Include="..\..\source\services\catalog\Core.Platforms.pas"/>
         <DCCReference Include="..\..\source\media\rom\Core.RomFormat.pas"/>
         <DCCReference Include="..\..\source\media\rom\Core.RomHashes.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Memory.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Media.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.CPU.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Executable.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Console.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.PSP.Archive.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.PSP.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.AES.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.PRX.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Relocations.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Kernel.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.FileSystem.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.SystemHLE.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Audio.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.SAS.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Utility.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.ATRAC.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\atrac3plus\Audio.ATRAC3Plus.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\atrac3plus\Audio.ATRAC3Plus.Decoder.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\atrac3plus\Audio.ATRAC3Plus.Primitives.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\atrac3plus\Audio.ATRAC3Plus.Tables.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Controller.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.VFPUMath.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.VariablePool.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Mpeg.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.MpegStream.pas"/>
+        <DCCReference Include="..\..\source\media\Core.Bitstream.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.Bitstream.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.CABAC.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.DSP.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.Syntax.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.Tables.pas"/>
+        <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.Types.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.ER.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.LD.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.PS.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.SBR.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.SSR.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.Tables.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.USAC.LPC.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.USAC.LPD.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.AAC.USAC.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.Bitstream.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.Transform.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\codecs\FMXAudio.Types.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\atrac3\Audio.ATRAC3.Decoder.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\atrac3\Audio.ATRAC3.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.YCbCr.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Registry.pas"/>
         <BuildConfiguration Include="Debug">
             <Key>Cfg_1</Key>
             <CfgParent>Base</CfgParent>

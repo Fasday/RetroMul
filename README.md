@@ -25,6 +25,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | SEGA Game Gear | `.gg` |
 | SEGA Saturn | `.iso`, `.cue`, `.chd` |
 | Sony PlayStation (PS1) | `.cue`, `.chd`, `.iso`, raw `.bin`, PS-X `.exe`, disc / executable `.zip`, multi-disc `.m3u` |
+| Sony PSP (experimental) | ELF/PRX/PBP, encrypted executables, ISO9660 `.iso`, CISO v1 `.cso`, single-image `.zip`; commercial compatibility is being validated |
 | ZX Spectrum family / clones | `.sna`, `.z80`, `.tap`, `.tzx`, `.trd`, `.scl`, `.dsk`, `.dck`, `.pro`, `.kdi`, `.ide`, `.mmc`, `.zip` / `.7z` |
 | Super Nintendo / Super Famicom | `.sfc`, `.smc`, `.swc`, `.fig` |
 | Neo Geo MVS / AES | Named MAME ROM sets in `.zip`, unencrypted NeoSD `.neo` images |
@@ -61,6 +62,12 @@ Snapshots load immediately. TRD/SCL auto-select Pentagon 128K and boot through n
 
 ## Getting started
 
+PSP uses a native Delphi Allegrex/HLE core with PRX decryption, software GE,
+UMD/memory-stick I/O, PCM/SAS, ATRAC3/ATRAC3+ and native H.264 movie playback.
+Angry Birds, Lumines and Lemmings have reached rendered gameplay; broad
+compatibility and full hardware/API coverage remain under development. See
+[PSP status and implementation checklist](source/cores/psp/README.md).
+
 Open a ROM directly, or select the library root folder in Settings. The library uses these system subdirectories:
 
 ```text
@@ -89,6 +96,7 @@ ROMS/
   cps2/
   cps3/
   ps1/
+  psp/
   saturn/
   neogeocd/
   pcengine/
