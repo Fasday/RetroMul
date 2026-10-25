@@ -633,14 +633,14 @@ begin
     Exit;
   end;
   // This field's rows start opaque black; with interlace the other field's
-  // rows keep the previous raster.
-  var BlackRow: TArray<TAlphaColor>;
-  SetLength(BlackRow, Width);
-  for var X := 0 to Width - 1 do
-    BlackRow[X] := $FF000000;
+  // rows keep the previous raster. (No row of black allocated for it: the VI
+  // thread calls no memory manager, which sleeps 10 ms on a lock held.)
   for var Y := 0 to Height - 1 do
     if not Interlaced or ((Y and 1) = Field) then
-      Move(BlackRow[0], Weave[Y * Width], Width * SizeOf(TAlphaColor))
+    begin
+      for var X := Y * Width to Y * Width + Width - 1 do
+        Weave[X] := $FF000000;
+    end
     else
       Move(FBuffers[FFront][Y * Width], Weave[Y * Width], Width * SizeOf(TAlphaColor));
   FStatus := Status;

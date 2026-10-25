@@ -381,6 +381,8 @@ type
     // used): a rewind replays the window's clocks with them in place.
     FRSPBeats: TArray<TN64RSPBeat>;
     FRSPBeatCount: Integer;
+    // (RewindRSPTo: the beats' positions.)
+    FRSPStops: TArray<Integer>;
     FRSPStats: TN64RSPAheadStats;
     FLastLeft, FLastRight: SmallInt;
     FCurrentFrame: TEmulatorFrame;
@@ -4143,11 +4145,11 @@ begin
   end;
   for var B := 1 to Done do
     StepSPTransfer(Transfer);
-  // Data: as long as the longest transfer the slot had (no memory manager
-  // call on the RSP thread for most windows; one could wait 10 ms for a
-  // lock the emulation thread holds).
+  // Data: kept, at least DMEM's size, grown by doubling (no memory manager
+  // call on the RSP thread once the slots are long enough; one could wait
+  // 10 ms for a lock another thread holds).
   if Length(FRSPDMAs[Index].Data) < Beats * 8 then
-    SetLength(FRSPDMAs[Index].Data, Beats * 8);
+    SetLength(FRSPDMAs[Index].Data, Max(Max(Beats * 8, $1000), Length(FRSPDMAs[Index].Data) * 2));
   FRSPOverlapCount := 0;
   if not Transfer.Writing then
   begin
@@ -4375,12 +4377,16 @@ begin
   // Back to the window's first Keep clocks, with the DMA beats into DMEM
   // that came between them: undone (the window's clocks before them may
   // have read the bytes they replaced), then done again in place
-  // (ReplayRSPBeat).
-  var Stops: TArray<Integer>;
-  SetLength(Stops, FRSPBeatCount);
+  // (ReplayRSPBeat). Their positions in FRSPStops, kept from rewind to
+  // rewind (no memory manager call).
+  if Length(FRSPStops) < FRSPBeatCount then
+    SetLength(FRSPStops, Max(FRSPBeatCount, Length(FRSPStops) * 2));
   for var I := 0 to FRSPBeatCount - 1 do
-    Stops[I] := FRSPBeats[I].Position;
-  FRSP.Rewind(FSPPC, Keep, Stops, ReplayRSPBeat);
+    FRSPStops[I] := FRSPBeats[I].Position;
+  if FRSPBeatCount = 0 then
+    FRSP.Rewind(FSPPC, Keep, [], ReplayRSPBeat)
+  else
+    FRSP.Rewind(FSPPC, Keep, Slice(PIntegerArray(FRSPStops)^, FRSPBeatCount), ReplayRSPBeat);
   FRSPBeatCount := 0;
 end;
 
