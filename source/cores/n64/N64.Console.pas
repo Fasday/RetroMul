@@ -251,6 +251,11 @@ type
     FPlacement, FPinned: Boolean;
     FPinnedThread: TThreadID;
     FUnpinned: TN64CPUSet;
+    // The host's cores as first found, and where the RDP bands (and the VI
+    // thread) run once placed.
+    FCores: TArray<TN64HostCore>;
+    FCoresFound: Boolean;
+    FBandCPUs: TN64CPUSet;
     FHintAttempted, FHinted: Boolean;
     FPreviousIdeal: Integer;
     FHintedThread: TThreadID;
@@ -2542,6 +2547,28 @@ end;
 
 procedure TN64Console.TVIThread.Execute;
 begin
+  // Made by the emulation thread: where that is pinned (Linux and Android
+  // pass a thread's affinity on to the threads it starts), with the RDP
+  // bands instead; before they are placed, off the emulation thread's core
+  // and the RSP thread's.
+  {$IF DEFINED(LINUX) or DEFINED(ANDROID)}
+  if FOwner.FPinned then
+  begin
+    var CPUs := FOwner.FBandCPUs;
+    if CPUs.IsEmpty then
+    begin
+      CPUs := FOwner.FUnpinned;
+      for var C := 0 to Min(1, High(FOwner.FCores)) do
+        for var W := 0 to High(CPUs.Bits) do
+          CPUs.Bits[W] := CPUs.Bits[W] and not FOwner.FCores[C].CPUs.Bits[W];
+    end;
+    if not CPUs.IsEmpty then
+    begin
+      var Previous: TN64CPUSet;
+      PinCurrentThread(CPUs, Previous);
+    end;
+  end;
+  {$ENDIF}
   var Slot := 0;
   while True do
   begin
@@ -3388,6 +3415,7 @@ begin
   for var C := First to High(Cores) do
     for var W := 0 to High(BandCPUs.Bits) do
       BandCPUs.Bits[W] := BandCPUs.Bits[W] or Cores[C].CPUs.Bits[W];
+  FBandCPUs := BandCPUs;
   SetLength(Preferred, FRDPBands);
   for var I := 0 to FRDPBands - 1 do
   begin
@@ -3421,7 +3449,14 @@ begin
     end;
     Exit;
   end;
-  Cores := HostCores;
+  // The cores found once, before this thread is pinned: on Linux and
+  // Android HostCores sees the calling thread's own affinity.
+  if not FCoresFound then
+  begin
+    FCores := HostCores;
+    FCoresFound := True;
+  end;
+  Cores := FCores;
   if Length(Cores) < 2 then
     Exit;
   if not FPinned then
