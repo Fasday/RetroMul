@@ -9,7 +9,9 @@ Open a `.gdi`, `.cdi`, `.chd`, `.cue`, `.iso`, `.mds` or `.nrg` image, an
 `.m3u` playlist of them, or a homebrew `.elf` program, from the `dc` folder of
 the library. `.gdi` and `.cdi` are always Dreamcast discs; `.cue`, `.iso`,
 `.chd`, `.mds` and `.nrg` are recognised by the `SEGA SEGAKATANA` hardware
-identifier in their boot track. A playlist in the `dc` folder, or one that lists
+identifier in their boot track; Redump cue sheets of GD-ROMs (with the
+high-density area comment) place that area at LBA 45000. A playlist in the
+`dc` folder, or one that lists
 `.gdi`/`.cdi` images, opens here. The library shows a GDI, CUE or playlist
 once, without its track files or discs. Archives are not supported for disc
 images.
@@ -45,11 +47,14 @@ and the menu call. In Dreamcast settings:
   decodes: GD-ROM, or MIL-CD for CD media. Soul Calibur (self-booting CD) does
   not find its VMU in this mode; it does with the high-level boot.
 
-Windows CE games (`0WINCEOS.BIN` boot file) run with the high-level boot: the
-kernel enables the MMU, calls the GD-ROM system call entry 8C0010F0 directly
-and is served its PIO transfers from the drive interrupt. Images whose data
-track holds the GD-ROM file system with IP.BIN as a file (some single-track
-`.mds` rips) boot from that file.
+Windows CE games (`0WINCEOS.BIN` boot file) run with the high-level boot. On
+GD-ROM their boot file starts with a sector listing the parts to load (marked
+by bit 0 of the IP.BIN peripherals); the boot loads them as the boot ROM does,
+leaving that sector at 8CE01000 and the GD-ROM DMA registers where the last
+part ends, which the IP.BIN bootstrap checks. The kernel enables the MMU, calls
+the GD-ROM system call entry 8C0010F0 directly and is served its PIO transfers
+from the drive interrupt. Images whose data track holds the GD-ROM file system
+with IP.BIN as a file (some single-track `.mds` rips) boot from that file.
 
 The system flash (region, language, broadcast standard and saved settings) is
 generated for the selected region unless a 128 KiB flash file is given, and is
@@ -90,7 +95,8 @@ it is not part of frames, screenshots or frame hashes.
   overlapped with the emulated CPU. Results do not depend on the thread count.
 - Wait loops (a short loop that only polls memory, possibly counting down a
   timeout) are recognised after two identical iterations and run ahead to the
-  next scheduler event with exactly the state the iterations would leave.
+  next scheduler event with exactly the state the iterations would leave, with
+  or without address translation.
 - AICA: the shared sound generator and DSP (also used by the DSF player) with
   the ARM7DI, timers, shared interrupt registers and the RTC; CD-DA enters
   through the EXT inputs (DSP EXTS0/1, EFSDL/EFPAN slots 16 and 17).
@@ -98,7 +104,6 @@ it is not part of frames, screenshots or frame hashes.
 - Snapshots contain the full machine, decoded TA contexts and VMU contents.
 
 Not implemented: the modem and broadband adapter, and NAOMI/Atomiswave.
-Windows CE games run slower than others (every memory access is translated).
 
 ## References
 
