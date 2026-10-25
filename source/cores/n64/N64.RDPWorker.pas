@@ -104,6 +104,9 @@ type
     // Pending 1 until made.
     FCopies: array[0..CopySlots - 1] of TCopy;
     FCopyNext: Integer;
+    // With bands: the copy band 0 makes at the barrier (CopyAt).
+    FCopyAt: Integer;
+    FMakeCopy: TProc;
   protected
     // Fields written by different threads sit on different cache lines.
     FPad0: array[0..7] of Int64;
@@ -296,6 +299,11 @@ begin
   end;
   if Bands > 1 then
     FGroup := TN64RDPGroup.Create(FRDPs);
+  FMakeCopy :=
+    procedure
+    begin
+      MakeCopy(FCopyAt);
+    end;
   FEnded := Completed;
   SetLength(FSlots, Bands);
   for var I := 0 to Bands - 1 do
@@ -397,15 +405,16 @@ end;
 procedure TN64RDPWorker.CopyAt(RDP: TN64RDP; Index: Integer);
 begin
   // Every band has finished the lists before (band 0 copies at the
-  // barrier, while the others wait).
+  // barrier, while the others wait). FMakeCopy, made once (no memory manager
+  // call on the band threads), copies FCopyAt, which band 0 sets.
   if FGroup = nil then
     MakeCopy(Index)
   else
-    FGroup.Barrier(RDP,
-      procedure
-      begin
-        MakeCopy(Index);
-      end);
+  begin
+    if RDP = FRDPs[0] then
+      FCopyAt := Index;
+    FGroup.Barrier(RDP, FMakeCopy);
+  end;
 end;
 
 procedure TN64RDPWorker.QueueCopy(Target: TN64Bus; Address, Count: Cardinal; Ready: TEvent);
