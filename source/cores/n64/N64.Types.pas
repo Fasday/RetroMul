@@ -54,6 +54,14 @@ type
 
   TN64TraceSink = reference to procedure(const Event: TN64TraceRecord);
 
+  // Where generated CPU code reads the bus's page state (N64.CPU's JIT).
+  TN64BusJitInfo = record
+    SPMarked, SPDoneCount, SPWrites, SPReads: PInt64;
+    RDPPending: PBoolean;
+    RDPWrites, RDPDone: PUInt64;
+    CodeGen: PCardinal;
+  end;
+
   TN64Bus = class abstract
   private
     FTraceSink: TN64TraceSink;
@@ -180,6 +188,9 @@ type
     // Decoded CPU code: its page counts writes from now on; the count.
     procedure MarkCodePage(Address: Cardinal); inline;
     function CodeGeneration(Address: Cardinal): Cardinal; inline;
+    // The counts by 4 KB page (generated CPU code reads them).
+    function CodeGenerations: PCardinal; inline;
+    function JitInfo: TN64BusJitInfo;
     // RDRAM changed as a whole (reset, state load): every page's count.
     procedure RAMReplaced;
     // Pages the list being queued may read, or write (and read). Parts of
@@ -729,6 +740,23 @@ end;
 function TN64Bus.CodeGeneration(Address: Cardinal): Cardinal;
 begin
   Result := FCodeGen[Address shr 12];
+end;
+
+function TN64Bus.JitInfo: TN64BusJitInfo;
+begin
+  Result.SPMarked := @FSPMarked;
+  Result.SPDoneCount := @FSPDoneCount;
+  Result.SPWrites := @FSPWrites[0];
+  Result.SPReads := @FSPReads[0];
+  Result.RDPPending := @FRDPPending;
+  Result.RDPWrites := @FRDPWrites[0];
+  Result.RDPDone := @FRDPDone;
+  Result.CodeGen := @FCodeGen[0];
+end;
+
+function TN64Bus.CodeGenerations: PCardinal;
+begin
+  Result := @FCodeGen[0];
 end;
 
 procedure TN64Bus.RAMReplaced;
