@@ -286,6 +286,7 @@ type
     function JitCompile(B: PN64CPUBlock; Careful: Boolean = False): Pointer;
     procedure JitMeasure(B: PN64CPUBlock);
     procedure JitEmitStep(B: PN64CPUBlock; I: Integer; Careful: Boolean; var State: TJitStepState);
+    function JitEmitOwn(S: PN64CPUStep): Boolean;
     procedure JitEmitEnd(B: PN64CPUBlock; Careful: Boolean);
     procedure JitEmitReturn(B: PN64CPUBlock; FallThrough: Boolean);
     procedure JitEmitShared;
@@ -479,11 +480,13 @@ implementation
 type
   // N64JIT (debugging): off, stats (counts, and a map of the code for
   // profiles), nochain, hotN; no code for blocks with nobranch, nomem,
-  // nostore, nofp, nolui.
-  TJitDebug = (jdOff, jdStats, jdNoChain, jdNoBranch, jdNoMem, jdNoStore, jdNoFP, jdNoLui);
+  // nostore, nofp, nolui; calls (every step by its routine, none written
+  // out in the code).
+  TJitDebug = (jdOff, jdStats, jdNoChain, jdNoBranch, jdNoMem, jdNoStore, jdNoFP, jdNoLui, jdCalls);
 
 const
-  JitDebugNames: array[TJitDebug] of string = ('off', 'stats', 'nochain', 'nobranch', 'nomem', 'nostore', 'nofp', 'nolui');
+  JitDebugNames: array[TJitDebug] of string = ('off', 'stats', 'nochain', 'nobranch', 'nomem', 'nostore', 'nofp', 'nolui',
+    'calls');
   // Blocks as generated code where HW.JIT has a backend (N64_NO_JIT: never).
   N64Jit = {$IFDEF N64_NO_JIT}False{$ELSE}JitSupported{$ENDIF};
 
@@ -3567,7 +3570,7 @@ type
   // Where the code reads and writes the CPU, its context, blocks and page
   // entries (offsets, worked out once).
   TJitOffsets = record
-    GPR, PC, NextPC, InstrPC, Delay, InDelay, PrevStore, PrevCond, PrevLoad, PrevFP, PrevExc: Integer;
+    GPR, HI, LO, PC, NextPC, InstrPC, Delay, InDelay, PrevStore, PrevCond, PrevLoad, PrevFP, PrevExc: Integer;
     BlocksRun, JitRuns, Exits, Calls, TLBGeneration, Pages: Integer;
     FastPage, FastPhysical, FastContext, FastGeneration, FastValid: Integer;
     CtxPhysical, CtxCached, CtxDone, CtxExtra, CtxPrevStore, CtxFP, CtxBlock, CtxBlockPC: Integer;
@@ -3588,6 +3591,8 @@ type
 begin
   var O := Default(TJitOffsets);
   O.GPR := Integer(NativeUInt(@TN64CPU(nil).GPR[0]));
+  O.HI := Integer(NativeUInt(@TN64CPU(nil).HI));
+  O.LO := Integer(NativeUInt(@TN64CPU(nil).LO));
   O.PC := Integer(NativeUInt(@TN64CPU(nil).FPC));
   O.NextPC := Integer(NativeUInt(@TN64CPU(nil).FNextPC));
   O.InstrPC := Integer(NativeUInt(@TN64CPU(nil).FInstructionPC));
@@ -4312,11 +4317,18 @@ begin
 
   // The instruction: a LUI pair as RunBlocks does it, else its routine
   // (Self, the step, its physical address, its FP inputs).
+  // (Own: written out here, JitEmitOwn; never GPR[0].)
   JitMark(Kind);
+  var Own := False;
   if Kind = KindLuiPair then
   begin
-    J.Move(jw64, JT0, JImm(Int64(S.Value)));
-    J.Move(jw64, JMem(jrSelf, O.GPR + Integer(S.T) * 8), JT0);
+    if (Int64(S.Value) >= -Int64($80000000)) and (Int64(S.Value) <= $7FFFFFFF) then
+      J.Move(jw64, JMem(jrSelf, O.GPR + Integer(S.T) * 8), JImm(Int64(S.Value)))
+    else
+    begin
+      J.Move(jw64, JT0, JImm(Int64(S.Value)));
+      J.Move(jw64, JMem(jrSelf, O.GPR + Integer(S.T) * 8), JT0);
+    end;
   end
   else if S.Size <> 0 then
     J.CallAt(JMem(jrSelf, O.Calls + Kind * 8), [JSelf, StepArg, JMem(jrCtx, O.CtxPhysical)])
@@ -4326,9 +4338,13 @@ begin
     J.Alu(jaAdd, jw32, JExtra, JT0);
   end
   else
-    J.CallAt(JMem(jrSelf, O.Calls + Kind * 8), [JSelf, StepArg]);
+  begin
+    Own := not (jdCalls in JitDebug) and not IsBranch and JitEmitOwn(S);
+    if not Own then
+      J.CallAt(JMem(jrSelf, O.Calls + Kind * 8), [JSelf, StepArg]);
+  end;
   JitMark(1003);
-  if WritesR0(S) then
+  if WritesR0(S) and not Own then
     J.Move(jw64, JMem(jrSelf, O.GPR), JImm(0));
 
   // What the next step's stall and JitRun read: the store's access.
@@ -4379,6 +4395,186 @@ begin
   State.PrevBranch := IsBranch;
   State.PrevStore := IsStore;
   State.PrevCondition := (S.Flags and StepCondition) <> 0;
+end;
+
+function TN64CPU.JitEmitOwn(S: PN64CPUStep): Boolean;
+var
+  J: TJitAsm;
+  O: TJitOffsets;
+
+  function G(R: Integer): TJitOp;
+  begin
+    Result := JMem(jrSelf, O.GPR + R * 8);
+  end;
+
+  // GPR[R] := T0's low 32 bits sign-extended (SX32).
+  procedure Put32(R: Integer);
+  begin
+    J.SignExtend(jw32, jrT0);
+    J.Move(jw64, G(R), JT0);
+  end;
+
+  // GPR[R] := Ord(GPR[S.S] Cond B), 64 bits.
+  procedure SetIf(Cond: TJitCond; const B: TJitOp; R: Integer);
+  begin
+    var L := J.NewLabel;
+    J.Move(jw64, JT1, G(S.S));
+    J.Move(jw32, JT0, JImm(1));
+    J.Branch(Cond, jw64, JT1, B, L);
+    J.Move(jw32, JT0, JImm(0));
+    J.Bind(L);
+    J.Move(jw64, G(R), JT0);
+  end;
+
+  // GPR[R] := GPR[S.S] Op Src (64 bits).
+  procedure Logic(Op: TJitAlu; const Src: TJitOp; R: Integer);
+  begin
+    J.Move(jw64, JT0, G(S.S));
+    J.Alu(Op, jw64, JT0, Src);
+    J.Move(jw64, G(R), JT0);
+  end;
+
+  // GPR[R] := GPR[S.T] shifted by N (32 bits sign-extended, or 64).
+  procedure ShiftBy(Op: TJitShift; W: TJitWidth; N, R: Integer);
+  begin
+    J.Move(W, JT0, G(S.T));
+    if N <> 0 then
+      J.Shift(Op, W, jrT0, N);
+    if W = jw32 then
+      Put32(R)
+    else
+      J.Move(jw64, G(R), JT0);
+  end;
+
+begin
+  // A step written out as host instructions, as its routine does it (GPR[0]
+  // reads 0: the code keeps it so); False: not one of these (its routine is
+  // called). Writing GPR[0] does nothing, so neither does the code.
+  J := FJit;
+  O := JitOff;
+  var Kind := Integer(S.Kind);
+  var D := Integer(S.D);
+  var T := Integer(S.T);
+  var Imm16 := Int64(S.Op and $FFFF);
+  case Kind of
+    KindSpecial + 17:
+      begin
+        J.Move(jw64, JT0, G(S.S));                                   // MTHI
+        J.Move(jw64, JMem(jrSelf, O.HI), JT0);
+        Exit(True);
+      end;
+    KindSpecial + 19:
+      begin
+        J.Move(jw64, JT0, G(S.S));                                   // MTLO
+        J.Move(jw64, JMem(jrSelf, O.LO), JT0);
+        Exit(True);
+      end;
+    KindSpecial + 0, KindSpecial + 2, KindSpecial + 3, KindSpecial + 16, KindSpecial + 18,
+    KindSpecial + 33, KindSpecial + 35..KindSpecial + 39, KindSpecial + 42, KindSpecial + 43,
+    KindSpecial + 45, KindSpecial + 47, KindSpecial + 56, KindSpecial + 58..KindSpecial + 60,
+    KindSpecial + 62, KindSpecial + 63:
+      if D = 0 then
+        Exit(True);
+    9..15:
+      if T = 0 then
+        Exit(True);
+  else
+    // (A kind whose routine does nothing: CACHE, SYNC and the like.)
+    Exit(FStepRoutines[Kind] = @TN64CPU.StepNop);
+  end;
+  case Kind of
+    KindSpecial + 0:
+      ShiftBy(jsShl, jw32, S.N, D);                                  // SLL
+    KindSpecial + 2:
+      ShiftBy(jsShr, jw32, S.N, D);                                  // SRL
+    KindSpecial + 3:
+      ShiftBy(jsSar, jw32, S.N, D);                                  // SRA
+    KindSpecial + 56:
+      ShiftBy(jsShl, jw64, S.N, D);                                  // DSLL
+    KindSpecial + 58:
+      ShiftBy(jsShr, jw64, S.N, D);                                  // DSRL
+    KindSpecial + 59:
+      ShiftBy(jsSar, jw64, S.N, D);                                  // DSRA
+    KindSpecial + 60:
+      ShiftBy(jsShl, jw64, S.N + 32, D);                             // DSLL32
+    KindSpecial + 62:
+      ShiftBy(jsShr, jw64, S.N + 32, D);                             // DSRL32
+    KindSpecial + 63:
+      ShiftBy(jsSar, jw64, S.N + 32, D);                             // DSRA32
+    KindSpecial + 16, KindSpecial + 18:
+      begin
+        if Kind = KindSpecial + 16 then                              // MFHI, MFLO
+          J.Move(jw64, JT0, JMem(jrSelf, O.HI))
+        else
+          J.Move(jw64, JT0, JMem(jrSelf, O.LO));
+        J.Move(jw64, G(D), JT0);
+      end;
+    KindSpecial + 33, KindSpecial + 35:
+      begin
+        J.Move(jw32, JT0, G(S.S));                                   // ADDU, SUBU
+        if Kind = KindSpecial + 33 then
+          J.Alu(jaAdd, jw32, JT0, G(T))
+        else
+          J.Alu(jaSub, jw32, JT0, G(T));
+        Put32(D);
+      end;
+    KindSpecial + 45:
+      Logic(jaAdd, G(T), D);                                         // DADDU
+    KindSpecial + 47:
+      Logic(jaSub, G(T), D);                                         // DSUBU
+    KindSpecial + 36:
+      Logic(jaAnd, G(T), D);                                         // AND
+    KindSpecial + 37:
+      if T = 0 then
+      begin
+        J.Move(jw64, JT0, G(S.S));                                   // OR (a move)
+        J.Move(jw64, G(D), JT0);
+      end
+      else
+        Logic(jaOr, G(T), D);
+    KindSpecial + 38:
+      Logic(jaXor, G(T), D);                                         // XOR
+    KindSpecial + 39:
+      begin
+        J.Move(jw64, JT0, G(S.S));                                   // NOR
+        J.Alu(jaOr, jw64, JT0, G(T));
+        J.Alu(jaXor, jw64, JT0, JImm(-1));
+        J.Move(jw64, G(D), JT0);
+      end;
+    KindSpecial + 42:
+      SetIf(jcLt, G(T), D);                                          // SLT
+    KindSpecial + 43:
+      SetIf(jcBelow, G(T), D);                                       // SLTU
+    9:
+      if S.S = 0 then
+        J.Move(jw64, G(T), JImm(Int64(S.Value)))                     // ADDIU (a constant)
+      else
+      begin
+        J.Move(jw32, JT0, G(S.S));
+        J.Alu(jaAdd, jw32, JT0, JImm(Int64(S.Value)));
+        Put32(T);
+      end;
+    10:
+      SetIf(jcLt, JImm(Int64(S.Value)), T);                          // SLTI
+    11:
+      SetIf(jcBelow, JImm(Int64(S.Value)), T);                       // SLTIU
+    12:
+      begin
+        J.Move(jw32, JT0, G(S.S));                                   // ANDI
+        J.Alu(jaAnd, jw32, JT0, JImm(Imm16));
+        J.Move(jw64, G(T), JT0);
+      end;
+    13:
+      if S.S = 0 then
+        J.Move(jw64, G(T), JImm(Imm16))                              // ORI (a constant)
+      else
+        Logic(jaOr, JImm(Imm16), T);
+    14:
+      Logic(jaXor, JImm(Imm16), T);                                  // XORI
+    15:
+      J.Move(jw64, G(T), JImm(Int64(Integer(Cardinal(Imm16) shl 16)))); // LUI
+  end;
+  Result := True;
 end;
 
 procedure TN64CPU.JitEmitEnd(B: PN64CPUBlock; Careful: Boolean);

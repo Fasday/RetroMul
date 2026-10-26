@@ -43,7 +43,8 @@ type
   end;
 
   TJitAlu = (jaAdd, jaSub, jaAnd, jaOr, jaXor);
-  TJitShift = (jsShl, jsShr);
+  // Left, right logical, right arithmetic (8 bits: as 32).
+  TJitShift = (jsShl, jsShr, jsSar);
   // After Branch's comparison of A with B: signed jcLt..jcGe, unsigned
   // jcBelow..jcAboveEq. After BranchTest of A and B: jcEq none of the bits,
   // jcNe some.
@@ -106,6 +107,8 @@ type
     // Dst := Dst op Src.
     procedure Alu(Op: TJitAlu; W: TJitWidth; const Dst, Src: TJitOp); virtual; abstract;
     procedure Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer); virtual; abstract;
+    // Dst := its low W bits sign-extended to 64.
+    procedure SignExtend(W: TJitWidth; Dst: TJitReg); virtual; abstract;
     // A routine with up to four arguments (pointer-sized; memory ones read as
     // 64 bits); its result in T0, the scratch registers changed.
     procedure Call(Routine: Pointer; const Args: array of TJitOp); virtual; abstract;
@@ -450,6 +453,7 @@ type
     procedure Move(W: TJitWidth; const Dst, Src: TJitOp); override;
     procedure Alu(Op: TJitAlu; W: TJitWidth; const Dst, Src: TJitOp); override;
     procedure Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer); override;
+    procedure SignExtend(W: TJitWidth; Dst: TJitReg); override;
     procedure Call(Routine: Pointer; const Args: array of TJitOp); override;
     procedure CallAt(const Routine: TJitOp; const Args: array of TJitOp); override;
     procedure JumpIndirect(const Target: TJitOp); override;
@@ -619,10 +623,24 @@ begin
 end;
 
 procedure TJitAsmX64.Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer);
+const
+  Ext: array[TJitShift] of Integer = (4, 5, 7);
 begin
-  // shl/shr r, imm8 (C1 /4, /5)
-  ModRM(W = jw64, [$C1], 4 + Ord(Op = jsShr), False, X64Reg(FPhys[Dst]), False);
+  // shl/shr/sar r, imm8 (C1 /4, /5, /7)
+  ModRM(W = jw64, [$C1], Ext[Op], False, X(JReg(Dst)), False);
   Emit([Byte(Count)]);
+end;
+
+procedure TJitAsmX64.SignExtend(W: TJitWidth; Dst: TJitReg);
+begin
+  // movsxd r64, r32 (63); movsx r64, r8 (0F BE); nothing for 64 bits
+  var R := X(JReg(Dst));
+  case W of
+    jw8:
+      ModRM(True, [$0F, $BE], R.Reg, False, R, True);
+    jw32:
+      ModRM(True, [$63], R.Reg, False, R, False);
+  end;
 end;
 
 procedure TJitAsmX64.EmitCompare(W: TJitWidth; const A, B: TJitOp);
@@ -830,6 +848,7 @@ type
     procedure Move(W: TJitWidth; const Dst, Src: TJitOp); override;
     procedure Alu(Op: TJitAlu; W: TJitWidth; const Dst, Src: TJitOp); override;
     procedure Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer); override;
+    procedure SignExtend(W: TJitWidth; Dst: TJitReg); override;
     procedure Call(Routine: Pointer; const Args: array of TJitOp); override;
     procedure CallAt(const Routine: TJitOp; const Args: array of TJitOp); override;
     procedure JumpIndirect(const Target: TJitOp); override;
@@ -1183,18 +1202,33 @@ end;
 
 procedure TJitAsmA64.Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer);
 begin
-  // lsl, lsr #Count as ubfm (8 bits: as x64's, 32).
+  // lsl, lsr #Count as ubfm, asr as sbfm (8 bits: as x64's, 32).
   var R := Cardinal(FPhys[Dst]);
   var C := Cardinal(Count);
   if W = jw64 then
-    if Op = jsShl then
-      I($D3400000 or (((64 - C) and 63) shl 16) or ((63 - C) shl 10) or (R shl 5) or R)
-    else
-      I($D3400000 or (C shl 16) or (63 shl 10) or (R shl 5) or R)
-  else if Op = jsShl then
-    I($53000000 or (((32 - C) and 31) shl 16) or ((31 - C) shl 10) or (R shl 5) or R)
+    case Op of
+      jsShl: I($D3400000 or (((64 - C) and 63) shl 16) or ((63 - C) shl 10) or (R shl 5) or R);
+      jsShr: I($D3400000 or (C shl 16) or (63 shl 10) or (R shl 5) or R);
+      jsSar: I($93400000 or (C shl 16) or (63 shl 10) or (R shl 5) or R);
+    end
   else
-    I($53000000 or (C shl 16) or (31 shl 10) or (R shl 5) or R);
+    case Op of
+      jsShl: I($53000000 or (((32 - C) and 31) shl 16) or ((31 - C) shl 10) or (R shl 5) or R);
+      jsShr: I($53000000 or (C shl 16) or (31 shl 10) or (R shl 5) or R);
+      jsSar: I($13000000 or (C shl 16) or (31 shl 10) or (R shl 5) or R);
+    end;
+end;
+
+procedure TJitAsmA64.SignExtend(W: TJitWidth; Dst: TJitReg);
+begin
+  // sxtb, sxtw (sbfm Xd, Xn, #0, #7 or #31)
+  var R := Cardinal(FPhys[Dst]);
+  case W of
+    jw8:
+      I($93401C00 or (R shl 5) or R);
+    jw32:
+      I($93407C00 or (R shl 5) or R);
+  end;
 end;
 
 procedure TJitAsmA64.EmitCompare(W: TJitWidth; const A, B: TJitOp);
