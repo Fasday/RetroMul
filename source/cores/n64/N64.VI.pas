@@ -276,6 +276,31 @@ begin
   end;
   // All in plain RDRAM: the same reads as Raw.
   var A := Cardinal(Address);
+  {$IF Defined(CPU64BITS)}
+  // The queued RDP work on the window's bytes waited for once, then each
+  // word read without (ReadRAM16/32 and ReadHiddenRAM wait for their own).
+  FBus.SyncRDPRead(A, Cardinal(Count * Bytes));
+  if FPixelType = 3 then
+    for var K := 0 to Count - 1 do
+    begin
+      var V := FBus.RDPRead32(A);
+      FWindow[K].R := (V shr 24) and $FF;
+      FWindow[K].G := (V shr 16) and $FF;
+      FWindow[K].B := (V shr 8) and $FF;
+      FWindow[K].Coverage := (V shr 5) and 7;
+      Inc(A, 4);
+    end
+  else
+    for var K := 0 to Count - 1 do
+    begin
+      var V := FBus.RDPRead16(A);
+      FWindow[K].R := Integer((V shr 8) and $F8);
+      FWindow[K].G := Integer((V shr 3) and $F8);
+      FWindow[K].B := Integer((V shl 2) and $F8);
+      FWindow[K].Coverage := Integer((V and 1) shl 2) or FBus.RDPReadHidden(A);
+      Inc(A, 2);
+    end;
+  {$ELSE}
   if FPixelType = 3 then
     for var K := 0 to Count - 1 do
     begin
@@ -296,6 +321,7 @@ begin
       FWindow[K].Coverage := Integer((V and 1) shl 2) or FBus.ReadHiddenRAM(A);
       Inc(A, 2);
     end;
+  {$ENDIF}
 end;
 
 function Toward(const Neighbour: TN64VIPixel; R, G, B: Integer): Cardinal; inline;

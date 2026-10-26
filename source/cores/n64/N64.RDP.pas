@@ -1191,6 +1191,14 @@ begin
   end;
 end;
 
+{$IF Defined(CPU64BITS)}
+function BlendLanes(C: Cardinal): UInt64; inline;
+begin
+  // A colour's red, green and blue (bits 8..31) in 16-bit lanes 0, 1, 2.
+  Result := UInt64((C shr 8) and $FF) or (UInt64((C shr 16) and $FF) shl 16) or (UInt64(C shr 24) shl 32);
+end;
+{$ENDIF}
+
 function TN64RDP.Blend(Cycle: Integer; AlwaysBlend: Boolean): Cardinal;
 begin
   var M1A := FMode.M1A[Cycle];
@@ -1231,6 +1239,17 @@ begin
     Beta := (Beta shr FBlend.BlendShiftB) or 3;
   end;
   Result := FBlend.InputColor and $FF;
+  {$IF Defined(CPU64BITS)}
+  if AlwaysBlend or ((FOtherLo and $4000) <> 0) then
+  begin
+    // The three channels at once, in 16-bit lanes (each sum at most
+    // 255 * 31 + 255 * 32 < 2^16): bits 5..12 of each.
+    var V := BlendLanes(First) * UInt64(Alpha) + BlendLanes(Second) * UInt64(Beta + 1);
+    V := (V shr 5) and UInt64($000000FF00FF00FF);
+    Exit(Result or (Cardinal(V and $FF) shl 8) or (Cardinal((V shr 16) and $FF) shl 16) or
+      (Cardinal((V shr 32) and $FF) shl 24));
+  end;
+  {$ENDIF}
   for var Channel := 1 to 3 do
   begin
     var Value := Integer((First shr (Channel * 8)) and $FF) * Alpha +
