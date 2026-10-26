@@ -55,13 +55,15 @@ type
   TN64TraceSink = reference to procedure(const Event: TN64TraceRecord);
 
   // Where generated CPU code reads the bus's page state (N64.CPU's JIT), and
-  // generated RSP code the IMEM write count (N64.RSP's).
+  // generated RSP code the IMEM write count and the eighths' stamps
+  // (N64.RSP's).
   TN64BusJitInfo = record
     SPMarked, SPDoneCount, SPWrites, SPReads: PInt64;
     RDPPending: PBoolean;
     RDPWrites, RDPDone: PUInt64;
     CodeGen: PCardinal;
     IMemCounter: PUInt64;
+    IMemRegions: PUInt64;
   end;
 
   TN64Bus = class abstract
@@ -74,6 +76,9 @@ type
     FIMemWords: array[0..1023] of Cardinal;
     FIMemStamps: array[0..1023] of UInt64;
     FIMemCounter: UInt64;
+    // For each eighth of IMEM (128 words), the value of FIMemCounter when one
+    // of its words last changed value (a write of the same value leaves it).
+    FIMemRegions: array[0..7] of UInt64;
     // SP DMEM+IMEM ($04000000..$04001FFF), plain RDRAM bytes and their
     // hidden bits. Fixed bounds keep the checked accesses cheap. A bus that
     // sets FDirectMemory promises that CPU/RSP/RDP/VI accesses there have
@@ -226,6 +231,9 @@ type
     function IMemStamp(Slot: Integer): UInt64; inline;
     // The stamp of the last change to any IMEM word.
     function IMemCounter: UInt64; inline;
+    // The stamp of the last change of value in IMEM's eighth Region (words
+    // Region * 128 on).
+    function IMemRegionStamp(Region: Integer): UInt64; inline;
     function InterruptLine: Boolean; inline;
     property DirectMemory: Boolean read FDirectMemory;
     property TraceEnabled: Boolean read FTraceEnabled;
@@ -762,6 +770,7 @@ begin
   Result.RDPDone := @FRDPDone;
   Result.CodeGen := @FCodeGen[0];
   Result.IMemCounter := @FIMemCounter;
+  Result.IMemRegions := @FIMemRegions[0];
 end;
 
 function TN64Bus.CodeGenerations: PCardinal;
@@ -873,8 +882,11 @@ end;
 procedure TN64Bus.IMemChanged(Offset: Cardinal);
 begin
   var Slot := (Offset - $1000) shr 2;
-  FIMemWords[Slot] := ReadSP32(Offset and not Cardinal(3));
+  var Value := ReadSP32(Offset and not Cardinal(3));
   Inc(FIMemCounter);
+  if FIMemWords[Slot] <> Value then
+    FIMemRegions[Slot shr 7] := FIMemCounter;
+  FIMemWords[Slot] := Value;
   FIMemStamps[Slot] := FIMemCounter;
 end;
 
@@ -897,6 +909,11 @@ end;
 function TN64Bus.IMemCounter: UInt64;
 begin
   Result := FIMemCounter;
+end;
+
+function TN64Bus.IMemRegionStamp(Region: Integer): UInt64;
+begin
+  Result := FIMemRegions[Region];
 end;
 
 procedure TN64Bus.CopyFromSP(Offset: Cardinal; var Dest: array of Byte; Index, Count: Integer);
