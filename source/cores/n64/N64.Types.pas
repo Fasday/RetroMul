@@ -150,6 +150,8 @@ type
     // complete writes the page (or, for a write, reads it).
     function SPReadHazard(Address: Cardinal): Boolean; inline;
     function SPWriteHazard(Address: Cardinal): Boolean; inline;
+    // Neither is true anywhere: no SP DMA transfer is still to complete.
+    function SPIdle: Boolean; inline;
     function PlainRAM32(Address: Cardinal): Cardinal; inline;
     // Callers guarantee Address < RAMSize.
     function ReadHiddenRAM(Address: Cardinal): Byte; inline;
@@ -501,6 +503,11 @@ function TN64Bus.SPWriteHazard(Address: Cardinal): Boolean;
 begin
   Result := (FSPMarked > FSPDoneCount) and ((FSPWrites[Address shr RDPPageShift] > FSPDoneCount) or
     (FSPReads[Address shr RDPPageShift] > FSPDoneCount));
+end;
+
+function TN64Bus.SPIdle: Boolean;
+begin
+  Result := FSPMarked <= FSPDoneCount;
 end;
 
 function TN64Bus.PlainRAM32(Address: Cardinal): Cardinal;

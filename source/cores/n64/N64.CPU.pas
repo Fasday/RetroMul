@@ -136,6 +136,10 @@ type
       Extra: Cardinal;
       // KernelMode (for KSEG0/KSEG1 code on another page).
       Kernel: Boolean;
+      // Data accesses through KSEG0/KSEG1 go as FastData takes them without
+      // asking it (the code's own check): Context allows them, RDRAM is
+      // direct, no SP DMA beat may wait (none of which changes in a batch).
+      Direct: Boolean;
       FP: TStepFP;
     end;
     PJitCtx = ^TJitCtx;
@@ -273,6 +277,10 @@ type
     FJitExitLabel: TArray<TJitLabel>;
     FJitExitDone, FJitExitStatus: TArray<Integer>;
     FJitExitCount: Integer;
+    // Data accesses the code's own check does not take, asked of JitData
+    // after the block's steps (JitEmitData): where from, back to, the step.
+    FJitSlowLabel, FJitSlowBack, FJitSlowStep: TArray<Integer>;
+    FJitSlowCount: Integer;
     function JitExitTo(Done, Status: Integer): TJitLabel;
     procedure JitMark(Kind: Integer);
     procedure ClearBlocks;
@@ -287,6 +295,8 @@ type
     procedure JitMeasure(B: PN64CPUBlock);
     procedure JitEmitStep(B: PN64CPUBlock; I: Integer; Careful: Boolean; var State: TJitStepState);
     function JitEmitOwn(S: PN64CPUStep): Boolean;
+    procedure JitEmitData(B: PN64CPUBlock; I: Integer; NeedCached: Boolean);
+    function JitStepArg(B: PN64CPUBlock; I: Integer): TJitOp;
     procedure JitEmitEnd(B: PN64CPUBlock; Careful: Boolean);
     procedure JitEmitReturn(B: PN64CPUBlock; FallThrough: Boolean);
     procedure JitEmitShared;
@@ -3574,7 +3584,7 @@ type
     BlocksRun, JitRuns, Exits, Calls, TLBGeneration, Pages: Integer;
     FastPage, FastPhysical, FastContext, FastGeneration, FastValid: Integer;
     CtxPhysical, CtxCached, CtxDone, CtxExtra, CtxPrevStore, CtxFP, CtxBlock, CtxBlockPC: Integer;
-    CtxCount, CtxClocks, CtxLimit, CtxMaxSteps, CtxKernel, CtxContext: Integer;
+    CtxCount, CtxClocks, CtxLimit, CtxMaxSteps, CtxKernel, CtxDirect, CtxContext: Integer;
     BMode, BEntryLoad, BEntryFP, BGen, BWords, BPhysical, BSteps, BLink0, BLink1, BLinkPC0, BLinkPC1: Integer;
     BFar0, BFar1, BFarPC0, BFarPC1, BInner, BJitMax, BJitSteps: Integer;
     EPage, EPhysical, EContext, EGeneration, EReadOK, EWriteOK: Integer;
@@ -3627,6 +3637,7 @@ begin
   O.CtxLimit := Integer(NativeUInt(@PCtx(nil).Limit));
   O.CtxMaxSteps := Integer(NativeUInt(@PCtx(nil).MaxSteps));
   O.CtxKernel := Integer(NativeUInt(@PCtx(nil).Kernel));
+  O.CtxDirect := Integer(NativeUInt(@PCtx(nil).Direct));
   O.CtxContext := Integer(NativeUInt(@PCtx(nil).Context));
   O.BMode := Integer(NativeUInt(@PN64CPUBlock(nil).Mode));
   O.BEntryLoad := Integer(NativeUInt(@PN64CPUBlock(nil).EntryLoad));
@@ -4207,6 +4218,7 @@ begin
   var O := JitOff;
   J.ForgetLabels;
   FJitExitCount := 0;
+  FJitSlowCount := 0;
   J.Align(16);
   JitMark(1000);
   // Entered with Self, Ctx and the frame as set (the shared entry, the
@@ -4252,18 +4264,16 @@ begin
   var Kind := Integer(S.Kind);
   var IsStore := (S.Flags and StepStore) <> 0;
   var IsFP := Kind in [KindCop1Compare, KindCop1Arith];
-  var StepArg := JImm(Int64(NativeUInt(S)));
-  if J.Has(jrS4) then
-    StepArg := JAddr(jrS4, I * SizeOf(TN64CPUStep));
+  var StepArg := JitStepArg(B, I);
   JitMark(3000 + Kind);
 
   // Before the step's bookkeeping: its data access or FP operands.
   if S.Size <> 0 then
   begin
-    J.CallAt(JMem(jrSelf, O.Calls + JitCallData * 8), [JSelf, JCtx, StepArg]);
-    J.BranchTest(jcEq, jw32, JT0, JT0, JitExitTo(I, JitStatusDecline));
+    var Stall := ((S.Flags and StepMemoryHazard) <> 0) and ((I = 0) or State.PrevStore);
+    JitEmitData(B, I, Stall or IsStore);
     // A cached store before stalls a cached access that needs it.
-    if ((S.Flags and StepMemoryHazard) <> 0) and ((I = 0) or State.PrevStore) then
+    if Stall then
     begin
       J.Move(jw8, JT0, JMem(jrCtx, O.CtxCached));
       J.Alu(jaAnd, jw32, JT0, JStore);
@@ -4395,6 +4405,66 @@ begin
   State.PrevBranch := IsBranch;
   State.PrevStore := IsStore;
   State.PrevCondition := (S.Flags and StepCondition) <> 0;
+end;
+
+function TN64CPU.JitStepArg(B: PN64CPUBlock; I: Integer): TJitOp;
+begin
+  // Step I's address as a call's argument (from S4 where there is one).
+  if FJit.Has(jrS4) then
+    Result := JAddr(jrS4, I * SizeOf(TN64CPUStep))
+  else
+    Result := JImm(Int64(NativeUInt(StepOf(B, I))));
+end;
+
+procedure TN64CPU.JitEmitData(B: PN64CPUBlock; I: Integer; NeedCached: Boolean);
+begin
+  // Step I's access as FastData finds it, into Ctx's Physical (and Cached
+  // where NeedCached: a stall or a store reads it). Through KSEG0/KSEG1 in
+  // RDRAM, aligned, where Ctx.Direct: here. Anything else asks JitData
+  // after the block's steps (JitEmitReturn) and comes back; JitData
+  // declining leaves the block. (N64JIT=calls: JitData for every access.)
+  var J := FJit;
+  var O := JitOff;
+  var S := StepOf(B, I);
+  var Size := Integer(S.Size);
+  var Ram := FBus.RAMSize;
+  if (jdCalls in JitDebug) or (Ram < $1000) or ((Ram and (Ram - 1)) <> 0) then
+  begin
+    J.CallAt(JMem(jrSelf, O.Calls + JitCallData * 8), [JSelf, JCtx, JitStepArg(B, I)]);
+    J.BranchTest(jcEq, jw32, JT0, JT0, JitExitTo(I, JitStatusDecline));
+    Exit;
+  end;
+  if FJitSlowCount = Length(FJitSlowLabel) then
+  begin
+    SetLength(FJitSlowLabel, FJitSlowCount * 2 + 64);
+    SetLength(FJitSlowBack, FJitSlowCount * 2 + 64);
+    SetLength(FJitSlowStep, FJitSlowCount * 2 + 64);
+  end;
+  var Slow := J.NewLabel;
+  var Back := J.NewLabel;
+  FJitSlowLabel[FJitSlowCount] := Slow;
+  FJitSlowBack[FJitSlowCount] := Back;
+  FJitSlowStep[FJitSlowCount] := I;
+  Inc(FJitSlowCount);
+  J.Move(jw8, JT1, JMem(jrCtx, O.CtxDirect));
+  J.BranchTest(jcEq, jw32, JT1, JT1, Slow);
+  // T0: the address; T1: it xor KSeg0Base, whose bits 63..30 are clear in
+  // KSEG0/KSEG1 (bit 29 set in KSEG1), bits 28..23 too in RDRAM (8 MB or
+  // what it is, a power of two), the low ones too where aligned: one test.
+  J.Move(jw64, JT0, JMem(jrSelf, O.GPR + Integer(S.S) * 8));
+  J.Alu(jaAdd, jw64, JT0, JImm(Int64(S.Value)));
+  J.Move(jw64, JT1, JT0);
+  J.Alu(jaXor, jw64, JT1, JImm(-Int64($80000000)));
+  J.BranchTest(jcNe, jw64, JT1, JImm(-Int64($40000000) or Int64($1FFFFFFF and not (Ram - 1)) or (Size - 1)), Slow);
+  if NeedCached then
+  begin
+    J.Shift(jsShr, jw32, jrT1, 29);
+    J.Alu(jaXor, jw32, JT1, JImm(1));
+    J.Move(jw8, JMem(jrCtx, O.CtxCached), JT1);
+  end;
+  J.Alu(jaAnd, jw32, JT0, JImm($1FFFFFFF));
+  J.Move(jw64, JMem(jrCtx, O.CtxPhysical), JT0);
+  J.Bind(Back);
 end;
 
 function TN64CPU.JitEmitOwn(S: PN64CPUStep): Boolean;
@@ -4628,13 +4698,23 @@ procedure TN64CPU.JitEmitReturn(B: PN64CPUBlock; FallThrough: Boolean);
 begin
   // Back to RunBlocks by the shared way (JitEmitShared), T1 the steps done
   // shl 2 or the status: from the end where the last step falls through to
-  // here (status 0), then the exits (declines, stops, rewrites).
+  // here (status 0); the data accesses the steps' own checks did not take
+  // (JitData, back into the steps); then the exits (declines, stops,
+  // rewrites).
   var J := FJit;
+  var O := JitOff;
   JitMark(1005);
   if FallThrough then
   begin
     J.Move(jw32, JT1, JImm(B.Count shl 2 or JitStatusDone));
     J.JumpTo(FJitReturn);
+  end;
+  for var K := 0 to FJitSlowCount - 1 do
+  begin
+    J.Bind(FJitSlowLabel[K]);
+    J.CallAt(JMem(jrSelf, O.Calls + JitCallData * 8), [JSelf, JCtx, JitStepArg(B, FJitSlowStep[K])]);
+    J.BranchTest(jcEq, jw32, JT0, JT0, JitExitTo(FJitSlowStep[K], JitStatusDecline));
+    J.Jump(FJitSlowBack[K]);
   end;
   for var Status in JitExitOrder do
     for var K := 0 to FJitExitCount - 1 do
@@ -4663,6 +4743,8 @@ begin
   Jit.Limit := Limit;
   Jit.MaxSteps := MaxSteps;
   Jit.Kernel := KernelMode;
+  // (FastData's KSEG0/KSEG1 checks that hold for the whole batch.)
+  Jit.Direct := (((Jit.Context and 6) <> 0) or ((Jit.Context and $18) = 0)) and FBus.SPIdle;
   var Status := TJitEnter(FJit.Base + FJitEnter)(Self, @Jit, Code, B);
   B := Jit.Block;
   PC := Jit.BlockPC;
