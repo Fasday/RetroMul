@@ -331,8 +331,8 @@ begin
       var Context := Thread.Context;
       if Thread = FCurrent then
         Context := FCPU.SaveContext;
-      Builder.AppendFormat('thread %.8x %s priority=%d state=%d PC=%.8x RA=%.8x callbacks=%d S0=%.8x S1=%.8x SP=%.8x',
-        [Thread.Id, Thread.Name, Thread.Priority, Ord(Thread.State.Status), Context.PC, Context.R[31], Length(Thread.CallbackContexts), Context.R[16], Context.R[17], Context.R[29]]).AppendLine;
+      Builder.AppendFormat('thread %.8x %s priority=%d state=%d PC=%.8x RA=%.8x callbacks=%d S0=%.8x S1=%.8x SP=%.8x GP=%.8x module=%.8x',
+        [Thread.Id, Thread.Name, Thread.Priority, Ord(Thread.State.Status), Context.PC, Context.R[31], Length(Thread.CallbackContexts), Context.R[16], Context.R[17], Context.R[29],Context.R[28],Thread.ModuleId]).AppendLine;
       for var Depth := 0 to Length(Thread.CallbackWaits) do
       begin
         var State := Thread.WaitState(Depth);
@@ -2263,7 +2263,7 @@ begin
           Output := D;
           Timeout := FCPU.Registers[8];
         end;
-        if (NID = $58B1F937) or (NID = $0DDCD2C9) or (NID = $DC692EE3) or (NID = $37431849) then
+        if (NID = $58B1F937) or (NID = $30FD48F0) or (NID = $0DDCD2C9) or (NID = $DC692EE3) or (NID = $37431849) then
           Timeout := 0;
         Value := WaitObject(Obj, B, Mode, Output, Timeout,
           (NID = $58B1F937) or (NID = $30FD48F0) or (NID = $0DDCD2C9) or (NID = $DC692EE3) or (NID = $37431849));

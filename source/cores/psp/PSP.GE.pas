@@ -5,7 +5,7 @@
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, System.Threading, PSP.Memory, PSP.CPU, PSP.Kernel;
+  System.SysUtils, System.Generics.Collections, System.Threading, PSP.Memory, PSP.CPU, PSP.Kernel, PSP.GEMath;
 
 type
   TPSPGEVertexLayout = record
@@ -21,8 +21,18 @@ type
   end;
 
   TPSPGEVertex = record
-    X, Y, Z, U, V: Double;
+    X, Y, Z, U, V, ReciprocalW: Double;
+    Clip: TPSPGEClip;
     Color: Cardinal;
+    ClipMask: Byte;
+    Outside, Near: Boolean;
+  end;
+
+  TPSPGEUV = record
+    Q,S,T:array[0..2] of Double;
+    CachedQ:Single;
+    CachedReciprocal:Double;
+    FlatQ:Boolean;
   end;
 
   TPSPGEList = class
@@ -46,9 +56,10 @@ type
     FBoneIndex: Integer;
     FLayout: TPSPGEVertexLayout;
     FLayoutValid: Boolean;
-    FProjection: array[0..15] of Single;
+    FProjection, FCombinedTransform: TPSPGEMatrix;
+    FTransformDirty: Boolean;
     FWorldIndex, FViewIndex, FProjectionIndex: Integer;
-    FVertexAddress, FIndexAddress, FTranslation: Cardinal;
+    FVertexAddress, FIndexAddress: Cardinal;
     FLists: TObjectList<TPSPGEList>;
     FQueue: TList<TPSPGEList>;
     FCallbacks: TDictionary<Cardinal, TPSPGECallback>;
@@ -69,14 +80,24 @@ type
     FMaxRenderWorkers, FObservedRenderThreads: Integer;
     FParallelDrawCount, FParallelFallbackCount: UInt64;
     procedure ConfigureTexture;
+    procedure UpdateTransform;
+    procedure ProjectVertex(var V: TPSPGEVertex);
+    function NearVertex(const Inside, Outside: TPSPGEVertex): TPSPGEVertex;
+    procedure SubmitPoint(const V: TPSPGEVertex);
+    procedure SubmitLine(A,B: TPSPGEVertex);
+    procedure SubmitTriangle(const A,B,C: TPSPGEVertex; Reversed: Boolean = False);
+    procedure SubmitSprite(const A,B: TPSPGEVertex);
     function Light(X, Y, Z, NX, NY, NZ: Double; Color: Cardinal; HasColor: Boolean): Cardinal;
     function FloatAt(Address: Cardinal): Single; inline;
     procedure ConfigureVertexLayout(VType: Cardinal);
     function Relative(Data, Offset: Cardinal): Cardinal;
     function Vertex(Index, VType: Cardinal; out Stride: Cardinal): TPSPGEVertex;
     function Texture(U, V: Double): Cardinal;
+    function TextureReadRange(out Address, Size: Cardinal): Boolean;
     procedure Pixel(X, Y: Integer; Z: Double; Color: Cardinal);
     function Shade(Color: Cardinal; U, V: Double): Cardinal;
+    function PerspectiveState(const A,B,C:TPSPGEVertex):TPSPGEUV;
+    function ShadePerspective(Color:Cardinal; WA,WB,WC:Double; var UV:TPSPGEUV):Cardinal;
     procedure Line(A, B: TPSPGEVertex);
     procedure Triangle(A, B, C: TPSPGEVertex);
     procedure Sprite(const A, C: TPSPGEVertex);
@@ -160,6 +181,7 @@ constructor TPSPGE.Create(Memory: TPSPMemory; CPU: TPSPCPU; Kernel: TPSPKernel);
 begin
   inherited Create;
   FMemory := Memory;
+  FTransformDirty := True;
   FCPU := CPU;
   FKernel := Kernel;
   FLists := TObjectList<TPSPGEList>.Create(True);
@@ -297,7 +319,7 @@ end;
 
 function TPSPGE.FloatAt(Address: Cardinal): Single;
 begin
-  var Bits := FMemory.Read32(Address);
+  var Bits := FMemory.ReadGE32(Address);
   Move(Bits, Result, 4)
 end;
 
@@ -368,9 +390,9 @@ function TPSPGE.Vertex(Index, VType: Cardinal; out Stride: Cardinal): TPSPGEVert
   begin
     case Kind of
       1:
-        Result := ShortInt(FMemory.Read8(Address)) / 128;
+        Result := ShortInt(FMemory.ReadGE8(Address)) / 128;
       2:
-        Result := SmallInt(FMemory.Read16(Address)) / 32768;
+        Result := SmallInt(FMemory.ReadGE16(Address)) / 32768;
     else
       Result := FloatAt(Address);
     end;
@@ -388,6 +410,7 @@ begin
     raise EPSPMemory.Create('PSP: GE vertex outside memory');
   var Through := VType and $800000 <> 0;
   Result := Default(TPSPGEVertex);
+  Result.ReciprocalW := 1;
   var Normal: array[0..2] of Double;
   Normal[0] := 0;
   Normal[1] := 0;
@@ -408,13 +431,13 @@ begin
         case FLayout.TexType of
           1:
             begin
-              Value := FMemory.Read8(At);
+              Value := FMemory.ReadGE8(At);
               if not Through then
                 Value := Value / 128
             end;
           2:
             begin
-              Value := FMemory.Read16(At);
+              Value := FMemory.ReadGE16(At);
               if not Through then
                 Value := Value / 32768
             end;
@@ -430,9 +453,9 @@ begin
     begin
       var Color: Cardinal;
       if FLayout.ColorType = 7 then
-        Color := FMemory.Read32(Q + Cardinal(FLayout.ColorOffset))
+        Color := FMemory.ReadGE32(Q + Cardinal(FLayout.ColorOffset))
       else
-        Color := DecodeColor(FMemory.Read16(Q + Cardinal(FLayout.ColorOffset)), FLayout.ColorType - 4);
+        Color := DecodeColor(FMemory.ReadGE16(Q + Cardinal(FLayout.ColorOffset)), FLayout.ColorType - 4);
       if FLayout.MorphCount = 1 then Result.Color := Color
       else
         for var Component := 0 to 3 do
@@ -445,16 +468,16 @@ begin
       if Through then
         case FLayout.PositionType of
           1:
-            Value := ShortInt(FMemory.Read8(At));
+            Value := ShortInt(FMemory.ReadGE8(At));
           2:
-            Value := SmallInt(FMemory.Read16(At));
+            Value := SmallInt(FMemory.ReadGE16(At));
         else
           Value := FloatAt(At);
         end
       else
         Value := SignedValue(At, FLayout.PositionType);
       if Through and (Component = 2) and (FLayout.PositionType = 2) then
-        Value := FMemory.Read16(At);
+        Value := FMemory.ReadGE16(At);
       case Component of
         0:
           Result.X := Result.X + Value * Weight;
@@ -488,9 +511,9 @@ begin
       var Weight: Double;
       case FLayout.WeightType of
         1:
-          Weight := FMemory.Read8(At) / 128;
+          Weight := FMemory.ReadGE8(At) / 128;
         2:
-          Weight := FMemory.Read16(At) / 32768;
+          Weight := FMemory.ReadGE16(At) / 32768;
       else
         Weight := FloatAt(At);
       end;
@@ -513,6 +536,9 @@ begin
   end;
   if not Through then
   begin
+    if FTransformDirty then UpdateTransform;
+    var Position:TPSPGEClip;
+    Position[0]:=Single(Result.X);Position[1]:=Single(Result.Y);Position[2]:=Single(Result.Z);Position[3]:=1;
     var X := Result.X * FWorld[0] + Result.Y * FWorld[3] + Result.Z * FWorld[6] + FWorld[9];
     var Y := Result.X * FWorld[1] + Result.Y * FWorld[4] + Result.Z * FWorld[7] + FWorld[10];
     var Z := Result.X * FWorld[2] + Result.Y * FWorld[5] + Result.Z * FWorld[8] + FWorld[11];
@@ -523,20 +549,162 @@ begin
       var NZ := Normal[0] * FWorld[2] + Normal[1] * FWorld[5] + Normal[2] * FWorld[8];
       Result.Color := Light(X, Y, Z, NX, NY, NZ, Result.Color, FLayout.ColorOffset >= 0);
     end;
-    var VX := X * FView[0] + Y * FView[3] + Z * FView[6] + FView[9];
-    var VY := X * FView[1] + Y * FView[4] + Z * FView[7] + FView[10];
-    var VZ := X * FView[2] + Y * FView[5] + Z * FView[8] + FView[11];
-    var W := VX * FProjection[3] + VY * FProjection[7] + VZ * FProjection[11] + FProjection[15];
-    if Abs(W) < 1E-12 then
-      W := 1E-12;
-    Result.X := (VX * FProjection[0] + VY * FProjection[4] + VZ * FProjection[8] + FProjection[12]) / W * Float24(FRegisters[$42]) +
-      Float24(FRegisters[$45]) - (FRegisters[$4C] and $FFFF) / 16;
-    Result.Y := (VX * FProjection[1] + VY * FProjection[5] + VZ * FProjection[9] + FProjection[13]) / W * Float24(FRegisters[$43]) +
-      Float24(FRegisters[$46]) - (FRegisters[$4D] and $FFFF) / 16;
-    Result.Z := (VX * FProjection[2] + VY * FProjection[6] + VZ * FProjection[10] + FProjection[14]) / W * Float24(FRegisters[$44]) + Float24(FRegisters[$47]);
-    Result.U := (Result.U * Float24(FRegisters[$48]) + Float24(FRegisters[$4A])) * (1 shl (FRegisters[$B8] and 15));
-    Result.V := (Result.V * Float24(FRegisters[$49]) + Float24(FRegisters[$4B])) * (1 shl ((FRegisters[$B8] shr 8) and 15));
+    Result.Clip:=GETransform(Position,FCombinedTransform);
+    ProjectVertex(Result);
+    Result.U:=GETruncate(GEAdd(GEProduct(Double(GETruncate(Single(Result.U)))*Float24(FRegisters[$48])),Float24(FRegisters[$4A]))) *
+      (1 shl (FRegisters[$B8] and 15));
+    Result.V:=GETruncate(GEAdd(GEProduct(Double(GETruncate(Single(Result.V)))*Float24(FRegisters[$49])),Float24(FRegisters[$4B]))) *
+      (1 shl ((FRegisters[$B8] shr 8) and 15));
   end;
+end;
+
+procedure TPSPGE.UpdateTransform;
+begin
+  var World, View, WorldView:TPSPGEMatrix;
+  FillChar(World,SizeOf(World),0);FillChar(View,SizeOf(View),0);
+  for var R:=0 to 3 do for var C:=0 to 2 do
+  begin World[R*4+C]:=FWorld[R*3+C];View[R*4+C]:=FView[R*3+C] end;
+  World[15]:=1;View[15]:=1;
+  GECombine(WorldView,World,View);
+  GECombine(FCombinedTransform,WorldView,FProjection);
+  FTransformDirty:=False;
+end;
+
+function GEFinite(Value:Single):Boolean; inline;
+begin
+  var Bits:Cardinal;Move(Value,Bits,4);Result:=Bits and $7F800000<>$7F800000;
+end;
+
+procedure TPSPGE.ProjectVertex(var V: TPSPGEVertex);
+const ScreenBound:Single=4095+15.5/16;
+begin
+  V.Outside:=False;V.Near:=False;V.ClipMask:=0;V.ReciprocalW:=0;V.X:=0;V.Y:=0;V.Z:=0;
+  for var C:=0 to 3 do if not GEFinite(V.Clip[C]) then begin V.Outside:=True;Exit end;
+  var W:Single:=V.Clip[3];
+  V.Near:=V.Clip[2]<-W;
+  if V.Clip[0]>W then V.ClipMask:=V.ClipMask or 1;
+  if -V.Clip[0]>W then V.ClipMask:=V.ClipMask or 2;
+  if V.Clip[1]>W then V.ClipMask:=V.ClipMask or 4;
+  if -V.Clip[1]>W then V.ClipMask:=V.ClipMask or 8;
+  if V.Clip[2]>W then V.ClipMask:=V.ClipMask or 16;
+  if V.Near then V.ClipMask:=V.ClipMask or 32;
+  var WBits:Cardinal;Move(W,WBits,4);
+  if WBits and $7F800000=0 then begin V.Outside:=True;Exit end;
+  V.ReciprocalW:=GEReciprocal(W);
+  var SX:Single:=GEViewport(V.Clip[0],W,Float24(FRegisters[$42]),Float24(FRegisters[$45]));
+  var SY:Single:=GEViewport(V.Clip[1],W,Float24(FRegisters[$43]),Float24(FRegisters[$46]));
+  var SZ:Single:=GEViewport(V.Clip[2],W,Float24(FRegisters[$44]),Float24(FRegisters[$47]));
+  if not GEFinite(SX) or not GEFinite(SY) or not GEFinite(SZ) then begin V.Outside:=True;Exit end;
+  var DepthClip:=FRegisters[$1C] and 1<>0;
+  if DepthClip then V.Outside:=(SX<0) or (SX>=ScreenBound) or (SY<0) or (SY>=ScreenBound)
+  else V.Outside:=(SX<0) or (SX>ScreenBound) or (SY<0) or (SY>=ScreenBound) or (SZ<0) or (SZ>=65536);
+  if V.Outside then Exit;
+  V.X:=Floor(SX*16)/16-(FRegisters[$4C] and $FFFF)/16;
+  V.Y:=Floor(SY*16)/16-(FRegisters[$4D] and $FFFF)/16;
+  if DepthClip then SZ:=EnsureRange(SZ,Single(0),Single(65535));
+  V.Z:=Floor(SZ);
+end;
+
+function TPSPGE.NearVertex(const Inside, Outside: TPSPGEVertex): TPSPGEVertex;
+begin
+  Result:=Inside;
+  var DIn:Single:=GEAdd(Inside.Clip[2],Inside.Clip[3]);
+  var DOut:Single:=GEAdd(Outside.Clip[2],Outside.Clip[3]);
+  var Den:Single:=GETruncate(GEAdd(DIn,-DOut));
+  var T:Single:=0;
+  if Den<>0 then T:=GEProduct(Double(GETruncate(DIn))*GEReciprocal(Den));
+  for var C:=0 to 3 do
+  begin
+    var Delta:Single:=GETruncate(GEAdd(Outside.Clip[C],-Inside.Clip[C]));
+    Result.Clip[C]:=GETruncate(GEAdd(GEProduct(Double(T)*Delta),Inside.Clip[C]));
+  end;
+  var Delta:Single:=GETruncate(GEAdd(Single(Outside.U),-Single(Inside.U)));
+  Result.U:=GETruncate(GEAdd(GEProduct(Double(T)*Delta),Single(Inside.U)));
+  Delta:=GETruncate(GEAdd(Single(Outside.V),-Single(Inside.V)));
+  Result.V:=GETruncate(GEAdd(GEProduct(Double(T)*Delta),Single(Inside.V)));
+  var Weight:=EnsureRange(Integer(Trunc(T*256+0.5)),0,256);
+  Result.Color:=0;
+  for var Lane:=0 to 3 do
+  begin
+    var A:=Integer((Inside.Color shr (Lane*8)) and 255);var B:=Integer((Outside.Color shr (Lane*8)) and 255);
+    Result.Color:=Result.Color or (Cardinal((A*(256-Weight)+B*Weight) shr 8) shl (Lane*8));
+  end;
+  ProjectVertex(Result);
+end;
+
+procedure TPSPGE.SubmitPoint(const V: TPSPGEVertex);
+begin
+  if (FRegisters[$12] and $800000=0) and (V.Outside or (V.ClipMask<>0)) then Exit;
+  Pixel(Floor(V.X),Floor(V.Y),V.Z,Shade(V.Color,V.U,V.V));
+end;
+
+procedure TPSPGE.SubmitLine(A,B: TPSPGEVertex);
+begin
+  if FRegisters[$12] and $800000=0 then
+  begin
+    var DepthClip:=FRegisters[$1C] and 1<>0;
+    if (A.Outside and not (DepthClip and A.Near)) or (B.Outside and not (DepthClip and B.Near)) or
+      (A.ClipMask and B.ClipMask<>0) then Exit;
+    if not DepthClip then
+    begin if (A.Clip[3]<=0) or (B.Clip[3]<=0) then Exit end
+    else
+    begin
+      var Color:=B.Color;
+      if A.Near then A:=NearVertex(B,A) else if B.Near then B:=NearVertex(A,B);
+      if A.Outside or B.Outside then Exit;
+      if FRegisters[$50] and 1=0 then B.Color:=Color;
+    end;
+  end;
+  Line(A,B);
+end;
+
+procedure TPSPGE.SubmitTriangle(const A,B,C: TPSPGEVertex; Reversed: Boolean);
+var Vertices:array[0..2] of TPSPGEVertex;
+  procedure DrawSub(V0,V1,V2:TPSPGEVertex);
+  begin
+    if V0.Outside or V1.Outside or V2.Outside then Exit;
+    if FRegisters[$50] and 1=0 then V2.Color:=C.Color;
+    Triangle(V0,V1,V2);
+  end;
+begin
+  if FRegisters[$12] and $800000<>0 then begin Triangle(A,B,C);Exit end;
+  var DepthClip:=FRegisters[$1C] and 1<>0;
+  if (A.Outside and not (DepthClip and A.Near)) or (B.Outside and not (DepthClip and B.Near)) or
+    (C.Outside and not (DepthClip and C.Near)) or (A.ClipMask and B.ClipMask and C.ClipMask<>0) then Exit;
+  if not DepthClip then
+  begin
+    if (A.Clip[3]<=0) or (B.Clip[3]<=0) or (C.Clip[3]<=0) then Exit;
+    Triangle(A,B,C);Exit;
+  end;
+  var Count:=Ord(A.Near)+Ord(B.Near)+Ord(C.Near);
+  if Count=0 then begin Triangle(A,B,C);Exit end;
+  if Count=3 then Exit;
+  Vertices[0]:=A;Vertices[1]:=B;Vertices[2]:=C;
+  var Index:=0;
+  if Count=1 then
+  begin
+    while not Vertices[Index].Near do Inc(Index);
+    var Previous:=(Index+2) mod 3;var Next:=(Index+1) mod 3;
+    if Reversed then begin var Swap:=Previous;Previous:=Next;Next:=Swap end;
+    var MadeA:=NearVertex(Vertices[Previous],Vertices[Index]);
+    var MadeB:=NearVertex(Vertices[Next],Vertices[Index]);
+    if not Reversed then
+    begin DrawSub(Vertices[Previous],MadeA,MadeB);DrawSub(Vertices[Previous],MadeB,Vertices[Next]) end
+    else
+    begin DrawSub(Vertices[Previous],MadeB,MadeA);DrawSub(Vertices[Previous],Vertices[Next],MadeB) end;
+  end
+  else
+  begin
+    while Vertices[Index].Near do Inc(Index);
+    DrawSub(Vertices[Index],NearVertex(Vertices[Index],Vertices[(Index+1) mod 3]),NearVertex(Vertices[Index],Vertices[(Index+2) mod 3]));
+  end;
+end;
+
+procedure TPSPGE.SubmitSprite(const A,B: TPSPGEVertex);
+begin
+  if (FRegisters[$12] and $800000=0) and (A.Outside or B.Outside or
+    (A.ClipMask and B.ClipMask<>0) or (A.Clip[3]<=0) or (B.Clip[3]<=0)) then Exit;
+  Sprite(A,B);
 end;
 
 procedure TPSPGE.ConfigureTexture;
@@ -611,9 +779,9 @@ begin
     var Stride := FTexture.Stride;
     var Address := FTexture.Address;
     Inc(Address, (Cardinal(Y div 4) * Max(Cardinal(1), Stride div 4) + Cardinal(X div 4)) * BlockSize);
-    var First := FMemory.Read16(Address + 4);
-    var Second := FMemory.Read16(Address + 6);
-    var Index := (FMemory.Read8(Address + Cardinal(Y and 3)) shr ((X and 3) * 2)) and 3;
+    var First := FMemory.ReadGE16(Address + 4);
+    var Second := FMemory.ReadGE16(Address + 6);
+    var Index := (FMemory.ReadGE8(Address + Cardinal(Y and 3)) shr ((X and 3) * 2)) and 3;
     var Colors: array[0..1, 0..2] of Cardinal;
     Colors[0, 0] := Expand5(First shr 11);
     Colors[1, 0] := Expand5(Second shr 11);
@@ -643,14 +811,14 @@ begin
     end;
     if Format = 9 then
     begin
-      var Alpha := (FMemory.Read16(Address + 8 + Cardinal(Y and 3) * 2) shr ((X and 3) * 4)) and 15;
+      var Alpha := (FMemory.ReadGE16(Address + 8 + Cardinal(Y and 3) * 2) shr ((X and 3) * 4)) and 15;
       Result := (Result and $FFFFFF) or (Alpha * 17 shl 24);
     end
     else if Format = 10 then
     begin
-      var FirstAlpha := Cardinal(FMemory.Read8(Address + 14));
-      var SecondAlpha := Cardinal(FMemory.Read8(Address + 15));
-      var Bits := UInt64(FMemory.Read32(Address + 8)) or (UInt64(FMemory.Read16(Address + 12)) shl 32);
+      var FirstAlpha := Cardinal(FMemory.ReadGE8(Address + 14));
+      var SecondAlpha := Cardinal(FMemory.ReadGE8(Address + 15));
+      var Bits := UInt64(FMemory.ReadGE32(Address + 8)) or (UInt64(FMemory.ReadGE16(Address + 12)) shl 32);
       var AlphaIndex := (Bits shr (((Y and 3) * 4 + (X and 3)) * 3)) and 7;
       var Alpha: Cardinal;
       if AlphaIndex = 0 then
@@ -680,13 +848,13 @@ begin
   var Value: Cardinal;
   case BitsPerPixel of
     4:
-      Value := (FMemory.Read8(Address) shr ((X and 1) * 4)) and 15;
+      Value := (FMemory.ReadGE8(Address) shr ((X and 1) * 4)) and 15;
     8:
-      Value := FMemory.Read8(Address);
+      Value := FMemory.ReadGE8(Address);
     16:
-      Value := FMemory.Read16(Address);
+      Value := FMemory.ReadGE16(Address);
   else
-    Value := FMemory.Read32(Address);
+    Value := FMemory.ReadGE32(Address);
   end;
   if Format < 4 then
     Exit(DecodeColor(Value, Format));
@@ -719,9 +887,28 @@ end;
 function GEStorageAddress(Address: Cardinal): Cardinal;
 begin
   Result := Address and $3FFFFFFF;
-  // The memory bus also exposes the +4 MiB VRAM mirror.
-  if (Result >= PSPVRAMBase) and (Result < PSPVRAMBase + $800000) and
-    (Result and $200000 = 0) then Result := PSPVRAMBase or (Result and $1FFFFF);
+  if (Result >= PSPVRAMBase) and (Result < PSPVRAMBase + $1000000) then
+    Result := PSPVRAMBase or (Result and $1FFFFF);
+end;
+
+function TPSPGE.TextureReadRange(out Address, Size: Cardinal): Boolean;
+begin
+  Result:=False;Address:=0;Size:=0;
+  var Source:=TPSPMemory.GEAddress(FTexture.Address);
+  if (FTexture.Stride<FTexture.Width) or TPSPMemory.IsDepthMirror(Source) then Exit;
+  var RowBytes:UInt64:=(UInt64(FTexture.Width)*FTexture.BitsPerPixel+7) div 8;
+  var Span:=UInt64(FTexture.Height-1)*FTexture.RowBytes+RowBytes;
+  if FTexture.Swizzled then
+    Span:=UInt64((FTexture.Height-1) div 8)*FTexture.RowBytes*8+
+      ((RowBytes-1) div 16)*128+UInt64((FTexture.Height-1) and 7)*16+((RowBytes-1) and 15)+1;
+  if FTexture.Format in [8..10] then
+  begin
+    var BlockBytes:Cardinal:=16;if FTexture.Format=8 then BlockBytes:=8;
+    Span:=(UInt64((FTexture.Height+3) div 4)-1)*((FTexture.Stride+3) div 4)*BlockBytes+
+      UInt64((FTexture.Width+3) div 4)*BlockBytes;
+  end;
+  if (Span=0) or (Span>High(Cardinal)) or not FMemory.IsValid(Source,Cardinal(Span)) then Exit;
+  Address:=GEStorageAddress(Source);Size:=Cardinal(Span);Result:=True;
 end;
 
 procedure TPSPGE.Pixel(X, Y: Integer; Z: Double; Color: Cardinal);
@@ -739,7 +926,7 @@ begin
   var Stride := FRegisters[$9D] and $7FC;
   if (Stride = 0) or (Cardinal(X) >= Stride) then
     Exit;
-  var Address := PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(Y) * Stride + Cardinal(X)) * Bytes;
+  var Address := GEStorageAddress(PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(Y) * Stride + Cardinal(X)) * Bytes);
   if not FMemory.IsValid(Address, Bytes) then
     Exit;
   var WriteMask := (FRegisters[$E8] and $FFFFFF) or ((FRegisters[$E9] and $FF) shl 24);
@@ -774,7 +961,8 @@ begin
   if DepthTest or DepthWrite then
   begin
     Depth := Cardinal(EnsureRange(Round(Z), Int64(0), Int64(65535)));
-    DepthAddress := PSPVRAMBase + (FRegisters[$9E] and $1FFFF0) + (Cardinal(Y) * (FRegisters[$9F] and $7FC) + Cardinal(X)) * 2;
+    DepthAddress := FMemory.DepthAddress(PSPVRAMBase + (FRegisters[$9E] and $1FFFF0) +
+      (Cardinal(Y) * (FRegisters[$9F] and $7FC) + Cardinal(X)) * 2, Format=3);
     if DepthTest and not Compare(Depth, FMemory.Read16(DepthAddress), FRegisters[$DE] and 7) then
       Exit;
   end;
@@ -927,7 +1115,7 @@ begin
   var Bytes: Cardinal := 2;
   if Format = 3 then Bytes := 4;
   var Width := Right - Left + 1;
-  var Address := PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(Y) * Stride + Cardinal(Left)) * Bytes;
+  var Address := GEStorageAddress(PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(Y) * Stride + Cardinal(Left)) * Bytes);
   if not FMemory.IsValid(Address, Cardinal(Width) * Bytes) then Exit;
   var DepthTest := not Clear and (FRegisters[$23] and 1 <> 0);
   var DepthWrite := (not Clear and (FRegisters[$E7] and 1 = 0)) or (Clear and (FRegisters[$D3] and $400 <> 0));
@@ -935,10 +1123,11 @@ begin
     (Cardinal(Y) * (FRegisters[$9F] and $7FC) + Cardinal(Left)) * 2;
   if DepthTest or DepthWrite then
   begin
-    if not FMemory.IsValid(DepthAddress, Cardinal(Width) * 2) then Exit;
-    // A buffered row must not change the color/depth feedback ordering.
-    if (UInt64(Address) < UInt64(DepthAddress) + Cardinal(Width) * 2) and
-      (UInt64(DepthAddress) < UInt64(Address) + Cardinal(Width) * Bytes) then
+    var StoredFirst, StoredSize: Cardinal;
+    if not FMemory.DepthStorageBounds(DepthAddress,Cardinal(Width)*2,StoredFirst,StoredSize) then Exit;
+    // Use the physical permutation envelope when rejecting feedback.
+    if (UInt64(Address) < UInt64(StoredFirst) + StoredSize) and
+      (UInt64(StoredFirst) < UInt64(Address) + Cardinal(Width) * Bytes) then
     begin
       {$IFDEF PSP_PROFILE}if PSPProfileCollecting and not FIsRenderWorker then Inc(PSPProfileSolidRejects[5]);{$ENDIF}
       Exit;
@@ -950,7 +1139,7 @@ begin
     Depth := Word(EnsureRange(Round(Z), Int64(0), Int64(65535)));
   var DepthData := FDepthRow;
   var BufferedDepth := DepthTest or (DepthWrite and ((DepthValues <> nil) or ((Colors <> nil) and AlphaTest)));
-  if BufferedDepth then FMemory.ReadInto(DepthAddress,Width*2,DepthData);
+  if BufferedDepth then FMemory.ReadDepthInto(DepthAddress,Width*2,Format=3,DepthData);
   var DepthFunction := FRegisters[$DE] and 7;
   if (WriteMask = 0) and not Blending and (Colors = nil) and (DepthValues = nil) then
   begin
@@ -973,7 +1162,7 @@ begin
       end;
       if Format = 3 then FMemory.Fill32(Address + Cardinal(First) * Bytes, X - First, PackedColor)
       else FMemory.Fill16(Address + Cardinal(First) * Bytes, X - First, Word(PackedColor));
-      if DepthWrite then FMemory.Fill16(DepthAddress + Cardinal(First) * 2, X - First, Depth);
+      if DepthWrite then FMemory.FillDepth16(DepthAddress + Cardinal(First) * 2, X - First, Depth,Format=3);
     end;
     Exit(True);
   end;
@@ -1025,8 +1214,8 @@ begin
   begin
     FMemory.WriteFrom(Address,Cardinal(Width)*Bytes,DestData);
     if DepthWrite then
-      if BufferedDepth then FMemory.WriteFrom(DepthAddress,Width*2,DepthData)
-      else FMemory.Fill16(DepthAddress, Width, Depth);
+      if BufferedDepth then FMemory.WriteDepthFrom(DepthAddress,Width*2,Format=3,DepthData)
+      else FMemory.FillDepth16(DepthAddress, Width, Depth,Format=3);
   end;
   Result := True;
 end;
@@ -1075,6 +1264,47 @@ begin
   Result := Color;
 end;
 
+function TPSPGE.PerspectiveState(const A,B,C:TPSPGEVertex):TPSPGEUV;
+begin
+  Result.Q[0]:=A.ReciprocalW;Result.Q[1]:=B.ReciprocalW;Result.Q[2]:=C.ReciprocalW;
+  Result.S[0]:=GEProduct(Double(GETruncate(Single(A.U)))*Result.Q[0]);
+  Result.S[1]:=GEProduct(Double(GETruncate(Single(B.U)))*Result.Q[1]);
+  Result.S[2]:=GEProduct(Double(GETruncate(Single(C.U)))*Result.Q[2]);
+  Result.T[0]:=GEProduct(Double(GETruncate(Single(A.V)))*Result.Q[0]);
+  Result.T[1]:=GEProduct(Double(GETruncate(Single(B.V)))*Result.Q[1]);
+  Result.T[2]:=GEProduct(Double(GETruncate(Single(C.V)))*Result.Q[2]);
+  Result.FlatQ:=(Result.Q[0]=Result.Q[1]) and (Result.Q[0]=Result.Q[2]);
+  Result.CachedQ:=0;Result.CachedReciprocal:=0;
+  if Result.FlatQ then
+  begin
+    Result.CachedQ:=GETruncate(Single(Result.Q[0]));
+    if Result.CachedQ>0 then Result.CachedReciprocal:=GEReciprocal(Result.CachedQ);
+  end;
+end;
+
+function TPSPGE.ShadePerspective(Color:Cardinal; WA,WB,WC:Double; var UV:TPSPGEUV):Cardinal;
+begin
+  var Q:Single;
+  if UV.FlatQ then Q:=UV.CachedQ
+  else Q:=GETruncate(Single(UV.Q[0]*WA+UV.Q[1]*WB+UV.Q[2]*WC));
+  var U,V:Single;
+  if Q>0 then
+  begin
+    if Q<>UV.CachedQ then
+    begin UV.CachedQ:=Q;UV.CachedReciprocal:=GEReciprocal(Q) end;
+    var Reciprocal:Double:=UV.CachedReciprocal;
+    U:=GEUVProduct(Double(GETruncate(Single(UV.S[0]*WA+UV.S[1]*WB+UV.S[2]*WC)))*Reciprocal);
+    V:=GEUVProduct(Double(GETruncate(Single(UV.T[0]*WA+UV.T[1]*WB+UV.T[2]*WC)))*Reciprocal);
+  end
+  else
+  begin
+    // A nonpositive projected Q saturates to the final texel on a PSP,
+    // including in wrap mode (pspautotests gpu/texmtx/negq).
+    U:=(1-1/65536)*FTexture.Width;V:=(1-1/65536)*FTexture.Height;
+  end;
+  Result:=Shade(Color,U,V);
+end;
+
 procedure TPSPGE.Line(A, B: TPSPGEVertex);
 var
   Start, Finish: Double;
@@ -1110,6 +1340,9 @@ begin
   var Steps := Integer(Ceil(Max(Abs(DX), Abs(DY)) * (Finish - Start)));
   if Steps = 0 then
     Steps := 1;
+  var Perspective:=(FRegisters[$12] and $800000=0) and (FRegisters[$1E] and 1<>0) and (FRegisters[$D3] and 1=0);
+  var UV:TPSPGEUV;
+  if Perspective then UV:=PerspectiveState(A,B,B);
   for var I := 0 to Steps - 1 do
   begin
     var T := Start + (Finish - Start) * I / Steps;
@@ -1123,8 +1356,9 @@ begin
         Color := Color or (Cardinal(EnsureRange(Component, Int64(0), Int64(255))) shl (Lane * 8));
       end;
     end;
-    Pixel(Floor(A.X + DX * T), Floor(A.Y + DY * T), A.Z * (1 - T) + B.Z * T,
-      Shade(Color, A.U * (1 - T) + B.U * T, A.V * (1 - T) + B.V * T));
+    if Perspective then Color:=ShadePerspective(Color,1-T,T,0,UV)
+    else Color:=Shade(Color,A.U*(1-T)+B.U*T,A.V*(1-T)+B.V*T);
+    Pixel(Floor(A.X + DX * T), Floor(A.Y + DY * T), A.Z * (1 - T) + B.Z * T,Color);
   end;
 end;
 
@@ -1167,8 +1401,10 @@ begin
   {$IFDEF PSP_PROFILE}if PSPProfileCollecting and not FIsRenderWorker then
     Inc(PSPProfileTriangleTypes[Ord(FlatColor) or (Ord(FlatDepth) shl 1) or (Ord(Textured) shl 2)]);{$ENDIF}
   var Area := (B.X - A.X) * (C.Y - A.Y) - (B.Y - A.Y) * (C.X - A.X);
-  if Abs(Area) < 1E-8 then
-    Exit;
+  if Abs(Area) < 1E-8 then Exit;
+  if (FRegisters[$1D] and 1<>0) and (FRegisters[$D3] and 1=0) then
+    if ((FRegisters[$9B] and 1=0) and (Area>0)) or
+      ((FRegisters[$9B] and 1<>0) and (Area<0)) then Exit;
   if Area < 0 then
   begin
     var Temp := B;
@@ -1182,7 +1418,36 @@ begin
   var MaxY := Min(Integer((FRegisters[$D5] shr 10) and $3FF), Integer(Ceil(Max(A.Y, Max(B.Y, C.Y)))) - 1);
   if (MinX > MaxX) or (MinY > MaxY) then Exit;
   var InverseArea := 1.0 / Area;
-  if FOptimizedRasterization and not Textured then
+  var Perspective:=Textured and (FRegisters[$12] and $800000=0);
+  var UV:TPSPGEUV;
+  if Perspective then UV:=PerspectiveState(A,B,C);
+  var BufferedTexture:=False;
+  if FOptimizedRasterization and Textured then
+  begin
+    var SourceBase, SourceSize:Cardinal;
+    var Bytes:Cardinal:=2;if FRegisters[$D2] and 3=3 then Bytes:=4;
+    var Stride:=FRegisters[$9D] and $7FC;
+    var ColorAddress:=GEStorageAddress(PSPVRAMBase+(FRegisters[$9C] and $1FFFF0)+
+      (Cardinal(MinY)*Stride+Cardinal(MinX))*Bytes);
+    var ColorSize:Cardinal:=(Cardinal(MaxY-MinY)*Stride+Cardinal(MaxX-MinX+1))*Bytes;
+    if TextureReadRange(SourceBase,SourceSize) and FMemory.IsValid(ColorAddress,ColorSize) then
+    begin
+      BufferedTexture:=not ((UInt64(SourceBase)<UInt64(ColorAddress)+ColorSize) and
+        (UInt64(ColorAddress)<UInt64(SourceBase)+SourceSize));
+      if BufferedTexture and (FRegisters[$E7] and 1=0) then
+      begin
+        var DepthStride:=FRegisters[$9F] and $7FC;
+        var DepthAddress:=PSPVRAMBase+(FRegisters[$9E] and $1FFFF0)+
+          (Cardinal(MinY)*DepthStride+Cardinal(MinX))*2;
+        var DepthSize:Cardinal:=(Cardinal(MaxY-MinY)*DepthStride+Cardinal(MaxX-MinX+1))*2;
+        var StoredFirst, StoredSize:Cardinal;
+        BufferedTexture:=FMemory.DepthStorageBounds(DepthAddress,DepthSize,StoredFirst,StoredSize);
+        if BufferedTexture then BufferedTexture:=not ((UInt64(SourceBase)<UInt64(StoredFirst)+StoredSize) and
+          (UInt64(StoredFirst)<UInt64(SourceBase)+SourceSize));
+      end;
+    end;
+  end;
+  if FOptimizedRasterization and (not Textured or BufferedTexture) then
   begin
     for var Y := MinY to MaxY do
     begin
@@ -1194,7 +1459,7 @@ begin
       if Left > Right then Continue;
       var Colors: PCardinal := nil;
       var Depths: PDouble := nil;
-      if not FlatColor then Colors := @FSpanColors[0];
+      if not FlatColor or Textured then Colors := @FSpanColors[0];
       if not FlatDepth then Depths := @FSpanDepth[0];
       if Interpolate then
         for var X := Left to Right do
@@ -1208,17 +1473,20 @@ begin
           var WA: Double := EA * InverseArea;
           var WB: Double := EB * InverseArea;
           var WC: Double := EC * InverseArea;
+          var Color:=ProvokingColor;
           if not FlatColor then
           begin
-            var Color: Cardinal := 0;
+            Color := 0;
             for var Lane := 0 to 3 do
             begin
               var Value := Round(((A.Color shr (Lane * 8)) and $FF) * WA +
                 ((B.Color shr (Lane * 8)) and $FF) * WB + ((C.Color shr (Lane * 8)) and $FF) * WC);
               Color := Color or (Cardinal(EnsureRange(Value, Int64(0), Int64(255))) shl (Lane * 8));
             end;
-            FSpanColors[X - Left] := Color;
           end;
+          if Perspective then Color:=ShadePerspective(Color,WA,WB,WC,UV)
+          else if Textured then Color:=Shade(Color,A.U*WA+B.U*WB+C.U*WC,A.V*WA+B.V*WB+C.V*WC);
+          if Colors<>nil then FSpanColors[X-Left]:=Color;
           if not FlatDepth then FSpanDepth[X - Left] := A.Z * WA + B.Z * WB + C.Z * WC;
         end;
       if not SolidSpan(Left, Right, Y, A.Z, ProvokingColor, Colors, Depths) then
@@ -1226,7 +1494,7 @@ begin
         begin
           var Color := ProvokingColor;
           var Depth := A.Z;
-          if not FlatColor then Color := FSpanColors[X - Left];
+          if Colors<>nil then Color := FSpanColors[X - Left];
           if not FlatDepth then Depth := FSpanDepth[X - Left];
           Pixel(X, Y, Depth, Color);
         end;
@@ -1268,7 +1536,8 @@ begin
           Color := Color or (Cardinal(EnsureRange(Value, Int64(0), Int64(255))) shl (I * 8));
         end;
       end;
-      if Textured then
+      if Perspective then Color:=ShadePerspective(Color,WA,WB,WC,UV)
+      else if Textured then
         Color := Shade(Color, A.U * WA + B.U * WB + C.U * WC, A.V * WA + B.V * WB + C.V * WC);
       var Depth := A.Z;
       if not FlatDepth then
@@ -1285,7 +1554,7 @@ var
   SeenX: array[0..511] of Boolean;
 begin
   Result := False;
-  if not FOptimizedRasterization or not (FTexture.Format in [0..7]) or
+  if not FOptimizedRasterization or TPSPMemory.IsDepthMirror(TPSPMemory.GEAddress(FTexture.Address)) or not (FTexture.Format in [0..7]) or
     (FRegisters[$E8] and $FFFFFF <> 0) or (FRegisters[$E9] and $FF <> 0) then
   begin
     {$IFDEF PSP_PROFILE}if PSPProfileCollecting and not FIsRenderWorker then Inc(PSPProfileBlitRejects[1]);{$ENDIF}
@@ -1312,7 +1581,7 @@ begin
   var Width := MaxX - MinX + 1;
   var PixelFormat:=FRegisters[$D2] and 3;
   var PixelBytes:Cardinal:=2;if PixelFormat=3 then PixelBytes:=4;
-  var Address := PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(MinY) * Stride + Cardinal(MinX)) * PixelBytes;
+  var Address := GEStorageAddress(PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(MinY) * Stride + Cardinal(MinX)) * PixelBytes);
   var Span := (Cardinal(MaxY - MinY) * Stride + Cardinal(Width)) * PixelBytes;
   var RowSize := (FTexture.Width * FTexture.BitsPerPixel + 7) div 8;
   var SourceSpan := (FTexture.Height - 1) * FTexture.RowBytes + RowSize;
@@ -1330,18 +1599,18 @@ begin
   var DepthStride := FRegisters[$9F] and $7FC;
   var DepthAddress := PSPVRAMBase + (FRegisters[$9E] and $1FFFF0) + (Cardinal(MinY) * DepthStride + Cardinal(MinX)) * 2;
   var DepthSpan := (Cardinal(MaxY - MinY) * DepthStride + Cardinal(Width)) * 2;
-  if (DepthWrite or DepthTest) and not FMemory.IsValid(DepthAddress, DepthSpan) then
-    Exit;
+  var StoredFirst, StoredSize: Cardinal;
+  if (DepthWrite or DepthTest) and not FMemory.DepthStorageBounds(DepthAddress,DepthSpan,StoredFirst,StoredSize) then Exit;
   var SourceBase := GEStorageAddress(FTexture.Address);
   var DestBase := Address and $1FFFFFFF;
   if (DepthWrite or DepthTest) and
-    (UInt64(DestBase) < UInt64(DepthAddress) + DepthSpan) and (UInt64(DepthAddress) < UInt64(DestBase) + Span) then
+    (UInt64(DestBase) < UInt64(StoredFirst) + StoredSize) and (UInt64(StoredFirst) < UInt64(DestBase) + Span) then
   begin
     {$IFDEF PSP_PROFILE}if PSPProfileCollecting and not FIsRenderWorker then Inc(PSPProfileBlitRejects[5]);{$ENDIF}
     Exit;
   end;
-  if DepthWrite and (UInt64(SourceBase) < UInt64(DepthAddress) + DepthSpan) and
-    (UInt64(DepthAddress) < UInt64(SourceBase) + SourceSpan) then
+  if DepthWrite and (UInt64(SourceBase) < UInt64(StoredFirst) + StoredSize) and
+    (UInt64(StoredFirst) < UInt64(SourceBase) + SourceSpan) then
   begin
     {$IFDEF PSP_PROFILE}if PSPProfileCollecting and not FIsRenderWorker then Inc(PSPProfileBlitRejects[6]);{$ENDIF}
     Exit;
@@ -1445,7 +1714,7 @@ begin
     if Blending or AlphaTest or DepthTest then
       FMemory.ReadInto(Address, Width * PixelBytes, DestData);
     if BufferedDepth then
-      FMemory.ReadInto(DepthAddress, Width * 2, DepthData);
+      FMemory.ReadDepthInto(DepthAddress, Width * 2, PixelFormat=3, DepthData);
     var RowDirty := False;
     var Destination := PCardinal(@DestData[0]);
     for var X := 0 to Width - 1 do
@@ -1492,8 +1761,8 @@ begin
     begin
       FMemory.WriteFrom(Address,Width*PixelBytes,DestData);
       if DepthWrite then
-        if BufferedDepth then FMemory.WriteFrom(DepthAddress,Width*2,DepthData)
-        else FMemory.Fill16(DepthAddress, Width, Depth);
+        if BufferedDepth then FMemory.WriteDepthFrom(DepthAddress,Width*2,PixelFormat=3,DepthData)
+        else FMemory.FillDepth16(DepthAddress, Width, Depth,PixelFormat=3);
     end;
     Inc(Address, Stride * PixelBytes);
     Inc(DepthAddress, DepthStride * 2);
@@ -1527,14 +1796,16 @@ begin
     var Bytes: Cardinal := 2;
     if Format = 3 then
       Bytes := 4;
-    var Address := PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(MinY) * Stride + Cardinal(MinX)) * Bytes;
+    var Address := GEStorageAddress(PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Cardinal(MinY) * Stride + Cardinal(MinX)) * Bytes);
     var Span := (Cardinal(MaxY - MinY) * Stride + Cardinal(Right - MinX + 1)) * Bytes;
     var DepthWrite := FRegisters[$E7] and 1 = 0;
     var DepthStride := FRegisters[$9F] and $7FC;
     var DepthAddress := PSPVRAMBase + (FRegisters[$9E] and $1FFFF0) + (Cardinal(MinY) * DepthStride + Cardinal(MinX)) * 2;
     var DepthSpan := (Cardinal(MaxY - MinY) * DepthStride + Cardinal(Right - MinX + 1)) * 2;
-    var Overlap := DepthWrite and (UInt64(Address) < UInt64(DepthAddress) + DepthSpan) and (UInt64(DepthAddress) < UInt64(Address) + Span);
-    if not Overlap and FMemory.IsValid(Address, Span) and (not DepthWrite or FMemory.IsValid(DepthAddress, DepthSpan)) then
+    var StoredFirst, StoredSize: Cardinal;
+    var Mapped := not DepthWrite or FMemory.DepthStorageBounds(DepthAddress,DepthSpan,StoredFirst,StoredSize);
+    var Overlap := DepthWrite and (UInt64(Address) < UInt64(StoredFirst) + StoredSize) and (UInt64(StoredFirst) < UInt64(Address) + Span);
+    if Mapped and not Overlap and FMemory.IsValid(Address, Span) then
     begin
       var Color := C.Color;
       if Format <> 3 then
@@ -1549,7 +1820,7 @@ begin
         else
           FMemory.Fill16(Address, Right - MinX + 1, Word(Color));
         if DepthWrite then
-          FMemory.Fill16(DepthAddress, Right - MinX + 1, Depth);
+          FMemory.FillDepth16(DepthAddress, Right - MinX + 1, Depth,Format=3);
         Inc(Address, Stride * Bytes);
         Inc(DepthAddress, DepthStride * 2);
       end;
@@ -1606,11 +1877,13 @@ begin
     var Width := Cardinal(Trunc(Abs(D.X - A.X)));var Height := Cardinal(Trunc(Abs(D.Y - A.Y)));
     var Bytes: Cardinal := 2;if FRegisters[$D2] and 3 = 3 then Bytes := 4;
     var Stride := FRegisters[$9D] and $7FC;var DepthStride := FRegisters[$9F] and $7FC;
-    var ColorStart := PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Top * Stride + Left) * Bytes;
+    var ColorStart := GEStorageAddress(PSPVRAMBase + (FRegisters[$9C] and $1FFFF0) + (Top * Stride + Left) * Bytes);
     var DepthStart := PSPVRAMBase + (FRegisters[$9E] and $1FFFF0) + (Top * DepthStride + Left) * 2;
     var ColorSpan := ((Height - 1) * Stride + Width) * Bytes;
     var DepthSpan := ((Height - 1) * DepthStride + Width) * 2;
-    if (UInt64(ColorStart) < UInt64(DepthStart) + DepthSpan) and (UInt64(DepthStart) < UInt64(ColorStart) + ColorSpan) then Exit;
+    var StoredFirst, StoredSize: Cardinal;
+    if not FMemory.DepthStorageBounds(DepthStart,DepthSpan,StoredFirst,StoredSize) then Exit;
+    if (UInt64(ColorStart) < UInt64(StoredFirst) + StoredSize) and (UInt64(StoredFirst) < UInt64(ColorStart) + ColorSpan) then Exit;
   end;
   Sprite(A, D);
   Result := True;
@@ -1632,20 +1905,25 @@ begin
   // Small draws only benefit when their actual raster footprint is large.
   if Count < 1536 then
   begin
-    if Count > 128 then Exit;
     var X0 := Vertices[0].X;var X1 := X0;
     var Y0 := Vertices[0].Y;var Y1 := Y0;
+    var ClipSensitive:=False;
     for var V in Vertices do
     begin
       if IsNan(V.X) or IsInfinite(V.X) or IsNan(V.Y) or IsInfinite(V.Y) then Exit;
       X0 := Min(X0,V.X);X1 := Max(X1,V.X);Y0 := Min(Y0,V.Y);Y1 := Max(Y1,V.Y);
+      if (FRegisters[$12] and $800000=0) and V.Near then ClipSensitive:=True;
     end;
-    // Clip doubles before conversion, including finite vertices far offscreen.
-    Left := Max(Left, Integer(Floor(EnsureRange(X0-1,0.0,1023.0))));
-    Right := Min(Right, Integer(Ceil(EnsureRange(X1+1,0.0,1023.0))));
-    Top := Max(Top, Integer(Floor(EnsureRange(Y0-1,0.0,1023.0))));
-    Bottom := Min(Bottom, Integer(Ceil(EnsureRange(Y1+1,0.0,1023.0))));
-    if (Right-Left+1)*(Bottom-Top+1) < 32768 then Exit;
+    // Near-plane intersections with changing W can project beyond the
+    // original screen bounds. In that case retain the complete scissor.
+    if not ClipSensitive then
+    begin
+      Left := Max(Left, Integer(Floor(EnsureRange(X0-1,0.0,1023.0))));
+      Right := Min(Right, Integer(Ceil(EnsureRange(X1+1,0.0,1023.0))));
+      Top := Max(Top, Integer(Floor(EnsureRange(Y0-1,0.0,1023.0))));
+      Bottom := Min(Bottom, Integer(Ceil(EnsureRange(Y1+1,0.0,1023.0))));
+      if (Right-Left+1)*(Bottom-Top+1) < 32768 then Exit;
+    end;
   end;
   if (Right < Left) or (Bottom-Top+1 < 64) then Exit;
   var Jobs := Min(FMaxRenderWorkers, Min(TThread.ProcessorCount, (Bottom-Top+1) div 32));
@@ -1653,41 +1931,41 @@ begin
   var PixelBytes: Cardinal := 2;
   if FRegisters[$D2] and 3 = 3 then PixelBytes := 4;
   var ColorBase := PSPVRAMBase + (FRegisters[$9C] and $1FFFF0);
-  var ColorAddress := ColorBase + Cardinal(Top) * Stride * PixelBytes;
-  var ColorSize := Cardinal(Bottom-Top+1) * Stride * PixelBytes;
-  if not FMemory.IsValid(ColorAddress,ColorSize) then Exit;
   var Clear := FRegisters[$D3] and 1 <> 0;
   var DepthUsed := (not Clear and ((FRegisters[$23] and 1 <> 0) or (FRegisters[$E7] and 1 = 0))) or
     (Clear and (FRegisters[$D3] and $400 <> 0));
   var DepthStride := FRegisters[$9F] and $7FC;
   var DepthBase := PSPVRAMBase + (FRegisters[$9E] and $1FFFF0);
-  var DepthAddress := DepthBase + Cardinal(Top) * DepthStride * 2;
+  var RowAlignment := 1;
+  if DepthUsed then
+  begin
+    var RowBytes := DepthStride*2;
+    if (RowBytes=0) or (RowBytes and (RowBytes-1)<>0) or
+      (DepthBase and (FMemory.DepthWindowSize-1)<>0) then Exit;
+    RowAlignment := Max(1,Integer(FMemory.DepthWindowSize div RowBytes));
+  end;
+  var OwnedTop := Top div RowAlignment*RowAlignment;
+  var OwnedBottom := ((Bottom+RowAlignment) div RowAlignment)*RowAlignment-1;
+  var Groups := (OwnedBottom-OwnedTop+1) div RowAlignment;
+  Jobs := Min(Jobs,Groups);
+  if Jobs<2 then Exit;
+  var ColorAddress := ColorBase + Cardinal(OwnedTop) * Stride * PixelBytes;
+  var ColorSize := Cardinal(OwnedBottom-OwnedTop+1) * Stride * PixelBytes;
+  if (UInt64(ColorAddress)+ColorSize>UInt64(PSPVRAMBase)+PSPVRAMSize) or not FMemory.IsValid(ColorAddress,ColorSize) then Exit;
+  var DepthAddress := DepthBase + Cardinal(OwnedTop) * DepthStride * 2;
   var DepthSize: Cardinal := 0;
   if DepthUsed then
   begin
     if DepthStride <= Cardinal(Right) then Exit;
-    DepthSize := Cardinal(Bottom-Top+1) * DepthStride * 2;
-    if not FMemory.IsValid(DepthAddress,DepthSize) then Exit;
+    DepthSize := Cardinal(OwnedBottom-OwnedTop+1) * DepthStride * 2;
+    if (UInt64(DepthAddress)+DepthSize>UInt64(PSPVRAMBase)+PSPVRAMSize) or not FMemory.IsValid(DepthAddress,DepthSize) then Exit;
     if (UInt64(ColorAddress) < UInt64(DepthAddress)+DepthSize) and
       (UInt64(DepthAddress) < UInt64(ColorAddress)+ColorSize) then Exit;
   end;
   if not Clear and (FRegisters[$1E] and 1 <> 0) then
   begin
-    if FTexture.Stride<FTexture.Width then Exit;
-    var SourceBase := GEStorageAddress(FTexture.Address);
-    var SourceRow := (UInt64(FTexture.Width)*FTexture.BitsPerPixel+7) div 8;
-    var SourceSize := UInt64(FTexture.Height-1)*FTexture.RowBytes +
-      SourceRow;
-    if FTexture.Swizzled then
-      SourceSize := UInt64((FTexture.Height-1) div 8)*FTexture.RowBytes*8 +
-        ((SourceRow-1) div 16)*128 + UInt64((FTexture.Height-1) and 7)*16 + ((SourceRow-1) and 15)+1;
-    if FTexture.Format in [8..10] then
-    begin
-      var BlockBytes: Cardinal := 16;if FTexture.Format=8 then BlockBytes:=8;
-      SourceSize := (UInt64((FTexture.Height+3) div 4)-1)*((FTexture.Stride+3) div 4)*BlockBytes +
-        UInt64((FTexture.Width+3) div 4)*BlockBytes;
-    end;
-    if (SourceSize=0) or (SourceSize>High(Cardinal)) or not FMemory.IsValid(FTexture.Address,Cardinal(SourceSize)) then Exit;
+    var SourceBase, SourceSize:Cardinal;
+    if not TextureReadRange(SourceBase,SourceSize) then Exit;
     // Texture feedback (including mirrors and padding) keeps its original
     // primitive/pixel order in the serial renderer.
     if (UInt64(SourceBase)<UInt64(ColorAddress)+ColorSize) and (UInt64(ColorAddress)<UInt64(SourceBase)+SourceSize) then Exit;
@@ -1710,8 +1988,8 @@ begin
       FRenderers[I].FIsRenderWorker:=True;
       FRenderers[I].FParallelRendering:=False;
     end;
-    var First:=Top+(Bottom-Top+1)*I div Jobs;
-    var Last:=Top+(Bottom-Top+1)*(I+1) div Jobs-1;
+    var First:=OwnedTop+(Groups*I div Jobs)*RowAlignment;
+    var Last:=OwnedTop+(Groups*(I+1) div Jobs)*RowAlignment-1;
     var LocalDepthSize:Cardinal:=0;
     if DepthUsed then LocalDepthSize:=Cardinal(Last-First+1)*DepthStride*2;
     FRenderMemories[I].PrepareRenderView(ColorBase+Cardinal(First)*Stride*PixelBytes,
@@ -1719,8 +1997,8 @@ begin
     Move(FRegisters,FRenderers[I].FRegisters,SizeOf(FRegisters));
     Move(FCLUTColors,FRenderers[I].FCLUTColors,SizeOf(FCLUTColors));
     FRenderers[I].FTexture:=FTexture;
-    FRenderers[I].FRegisters[$D4]:=(FRegisters[$D4] and $3FF) or (Cardinal(First) shl 10);
-    FRenderers[I].FRegisters[$D5]:=(FRegisters[$D5] and $3FF) or (Cardinal(Last) shl 10);
+    FRenderers[I].FRegisters[$D4]:=(FRegisters[$D4] and $3FF) or (Cardinal(Max(Top,First)) shl 10);
+    FRenderers[I].FRegisters[$D5]:=(FRegisters[$D5] and $3FF) or (Cardinal(Min(Bottom,Last)) shl 10);
   end;
   var Failed:Integer:=0;
   {$IFDEF PSP_PROFILE}
@@ -1787,25 +2065,26 @@ begin
   case Primitive of
     0:
       for var Vertex in Vertices do
-        Pixel(Floor(Vertex.X), Floor(Vertex.Y), Vertex.Z, Shade(Vertex.Color, Vertex.U, Vertex.V));
+        SubmitPoint(Vertex);
     1:
       for var I := 0 to Integer(Count div 2) - 1 do
-        Line(Vertices[I * 2], Vertices[I * 2 + 1]);
+        SubmitLine(Vertices[I * 2], Vertices[I * 2 + 1]);
     2:
       for var I := 0 to Integer(Count) - 2 do
-        Line(Vertices[I], Vertices[I + 1]);
+        SubmitLine(Vertices[I], Vertices[I + 1]);
     3:
       for var I := 0 to Integer(Count div 3) - 1 do
-        Triangle(Vertices[I * 3], Vertices[I * 3 + 1], Vertices[I * 3 + 2]);
+        SubmitTriangle(Vertices[I * 3], Vertices[I * 3 + 1], Vertices[I * 3 + 2]);
     4:
       for var I := 0 to Integer(Count) - 3 do
-        Triangle(Vertices[I], Vertices[I + 1], Vertices[I + 2]);
+        if I and 1=0 then SubmitTriangle(Vertices[I], Vertices[I + 1], Vertices[I + 2])
+        else SubmitTriangle(Vertices[I + 1], Vertices[I], Vertices[I + 2],True);
     5:
       for var I := 1 to Integer(Count) - 2 do
-        Triangle(Vertices[0], Vertices[I], Vertices[I + 1]);
+        SubmitTriangle(Vertices[0], Vertices[I], Vertices[I + 1]);
     6:
       for var I := 0 to Integer(Count div 2) - 1 do
-        Sprite(Vertices[I * 2], Vertices[I * 2 + 1]);
+        SubmitSprite(Vertices[I * 2], Vertices[I * 2 + 1]);
   else
     raise EPSPInstruction.CreateFmt('PSP: GE primitive %d is not implemented', [Primitive]);
   end;
@@ -1833,9 +2112,9 @@ begin
       0:
         ;
       1:
-        Index := FMemory.Read8(FIndexAddress + Cardinal(I));
+        Index := FMemory.ReadGE8(FIndexAddress + Cardinal(I));
       2:
-        Index := FMemory.Read16(FIndexAddress + Cardinal(I) * 2);
+        Index := FMemory.ReadGE16(FIndexAddress + Cardinal(I) * 2);
     else
       raise EPSPInstruction.Create('PSP: invalid GE index format');
     end;
@@ -1890,8 +2169,10 @@ begin
   var DX := FRegisters[$EC] and $3FF;
   var DY := (FRegisters[$EC] shr 10) and $3FF;
   for var Y := 0 to Integer(Height) - 1 do
-    FMemory.CopyMemory(Dest + ((DY + Cardinal(Y)) * (FRegisters[$B5] and $7F8) + DX) * Bytes,
-      Source + ((SY + Cardinal(Y)) * (FRegisters[$B3] and $7F8) + SX) * Bytes, Width * Bytes);
+  begin
+    FMemory.ReadGEInto(Source + ((SY + Cardinal(Y)) * (FRegisters[$B3] and $7F8) + SX) * Bytes,Width*Bytes,FColorRow);
+    FMemory.WriteGEFrom(Dest + ((DY + Cardinal(Y)) * (FRegisters[$B5] and $7F8) + DX) * Bytes,Width*Bytes,FColorRow);
+  end;
 end;
 
 procedure TPSPGE.RunList(List: TPSPGEList);
@@ -1906,7 +2187,7 @@ begin
       List.Status := 3;
       Exit;
     end;
-    var Command := FMemory.Read32(List.PC);
+    var Command := FMemory.ReadGE32(List.PC);
     var Code := Command shr 24;
     var Data := Command and $FFFFFF;
     Inc(List.PC, 4);
@@ -2071,6 +2352,7 @@ begin
         begin
           if FWorldIndex < 12 then
             FWorld[FWorldIndex] := Float24(Data);
+          FTransformDirty := True;
           FWorldIndex := (FWorldIndex + 1) and 15;
         end;
       $3C:
@@ -2079,6 +2361,7 @@ begin
         begin
           if FViewIndex < 12 then
             FView[FViewIndex] := Float24(Data);
+          FTransformDirty := True;
           FViewIndex := (FViewIndex + 1) and 15;
         end;
       $3E:
@@ -2086,14 +2369,14 @@ begin
       $3F:
         begin
           FProjection[FProjectionIndex] := Float24(Data);
+          FTransformDirty := True;
           FProjectionIndex := (FProjectionIndex + 1) and 15;
         end;
       $C4:
         begin
           var Address := (FRegisters[$B0] and $FFFFF0) or ((FRegisters[$B1] shl 8) and $0F000000);
           var Count := Min(Cardinal(2048), (Data and $3F) * 32);
-          for var I := 0 to Integer(Count) - 1 do
-            FCLUT[I] := FMemory.Read8(Address + Cardinal(I));
+          FMemory.ReadGEInto(Address,Count,FCLUT);
           FCLUTDirty := True;
         end;
       $EA:
@@ -2132,8 +2415,10 @@ begin
       Value := PSPVRAMSize;
     $B77905EA:
       begin
-        Value := FTranslation;
-        FTranslation := A;
+        case A of 0,$200,$400,$800,$1000:;
+        else Value:=$800001FE;Exit end;
+        Value := FMemory.DepthTranslation;
+        FMemory.DepthTranslation := A;
       end;
     $A4FC06A4:
       begin

@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{82132DF3-6773-48AA-904F-4792F7EFBB7C}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -478,6 +478,7 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.SystemHLE.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.GE.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GEMath.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.AES.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.PRX.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Relocations.pas"/>

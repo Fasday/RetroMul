@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{4490F9E7-DA81-458B-A9BF-211F6E8C70C0}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -396,6 +396,7 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.SystemHLE.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.GE.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GEMath.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Audio.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.SAS.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Utility.pas"/>

@@ -280,7 +280,9 @@ begin
     if Module.UnloadPending and
       (((Module.Thread=Id) and Module.Stopping) or ((Module.SelfUnloadThread=Id) and not Module.Stopping)) then
     begin
-      if Module.SelfStatusPointer<>0 then FMemory.Write32(Module.SelfStatusPointer,Status);
+      if Module.SelfStatusPointer<>0 then
+        if Module.Stopping then FMemory.Write32(Module.SelfStatusPointer,Status)
+        else FMemory.Write32(Module.SelfStatusPointer,0);
       if Module.StatusPointer<>0 then FMemory.Write32(Module.StatusPointer,Module.SelfExitCode);
       var Caller:=Module.SelfUnloadThread;var ModuleId:=Module.Id;
       Module.SelfUnloadThread:=0;Module.Thread:=0;Module.UnloadPending:=False;
@@ -296,6 +298,7 @@ begin
       Module.Thread := 0;
       if Module.StatusPointer <> 0 then
         FMemory.Write32(Module.StatusPointer, Status);
+      Module.StatusPointer:=0;
       var WasStopping := Module.Stopping;
       if Module.Stopping then
         Module.Started := False
@@ -337,6 +340,9 @@ begin
   var Module:TPSPLoadedModule:=nil;
   for var Item in FModules do if Item.Id=FKernel.CurrentModuleId then Module:=Item;
   if Module=nil then Exit($8002012E);
+  {$IFDEF PSP_TRACE_MODULES}
+  Writeln('self unload ',Module.Executable.ModuleName,' uid=',IntToHex(Module.Id,8),' thread=',IntToHex(FKernel.CurrentThreadId,8));
+  {$ENDIF}
   if Module.UnloadPending or Module.Stopping or
     ((Module.Thread<>0) and (Module.Thread<>FKernel.CurrentThreadId)) then Exit($80020133);
   var Entry:Cardinal:=0;var Priority:Cardinal:=32;var StackSize:Cardinal:=$40000;var Attributes:Cardinal:=0;
@@ -618,8 +624,7 @@ begin
           Exit;
         end;
         var Address := A;
-        if NID = $F0A26395 then
-          Address := FCPU.CurrentPC;
+        Address:=Address and $3FFFFFFF;
         Value := $8002012E;
         for var Item in FModules do
           if (Address >= Item.Executable.LowAddress) and (Address < Item.Executable.HighAddress) then
