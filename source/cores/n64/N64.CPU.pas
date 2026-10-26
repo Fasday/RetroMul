@@ -437,7 +437,7 @@ type
     // steps used (both at least 1).
     procedure LimitBlocks(Blocks, Chunks: Integer);
     // Blocks run as generated code where HW.JIT can make it (Win64, Linux
-    // x64; the same steps either way).
+    // x64, Android ARM64; the same steps either way).
     property UseJit: Boolean read FUseJit write FUseJit;
     property JitCompiled: Int64 read FJitCompiled;
     property JitRuns: Int64 read FJitRuns;
