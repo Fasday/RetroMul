@@ -484,7 +484,7 @@ function TN64Bus.ReadRAM16(Address: Cardinal): Cardinal;
 begin
   if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) = $FFF)) then
     SyncRDPRead(Address, 2);
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
   Result := Swap(PWord(@FRAM[Address])^);
   {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
@@ -523,9 +523,9 @@ function TN64Bus.ReadRAM32(Address: Cardinal): Cardinal;
 begin
   if FRDPPending and ((FRDPWrites[Address shr RDPPageShift] > FRDPDone) or ((Address and $FFF) > $FFC)) then
     SyncRDPRead(Address, 4);
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
-  // x86 permits unaligned loads. Keep the bus fences above; decode one
-  // native word instead of loading its four bytes separately.
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
+  // x86 and ARM64 permit unaligned loads. Keep the bus fences above; decode
+  // one native word instead of loading its four bytes separately.
   Result := PlainRAM32(Address);
   {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
@@ -715,7 +715,7 @@ end;
 
 function TN64Bus.RDPRead16(Address: Cardinal): Cardinal;
 begin
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
   Result := Swap(PWord(@FRAM[Address])^);
   {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 8) or FRAM[Address + 1];
@@ -724,9 +724,9 @@ end;
 
 function TN64Bus.RDPRead32(Address: Cardinal): Cardinal;
 begin
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
-  // x86 permits unaligned loads. Keep the bus fences above; decode one
-  // native word instead of loading its four bytes separately.
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
+  // x86 and ARM64 permit unaligned loads. Keep the bus fences above; decode
+  // one native word instead of loading its four bytes separately.
   Result := PlainRAM32(Address);
   {$ELSE}
   Result := (Cardinal(FRAM[Address]) shl 24) or (Cardinal(FRAM[Address + 1]) shl 16) or
@@ -785,9 +785,8 @@ end;
 procedure TN64Bus.RDPWrite32(Address, Value: Cardinal);
 begin
   CodeWritten(Address);
-  if (Address and $FFF) > $FFC then
-    CodeWritten(Address + 3);
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  if (Address and $FFF) > $FFC then CodeWritten(Address + 3);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
   PCardinal(@FRAM[Address])^ := (Cardinal(Swap(Word(Value and $FFFF))) shl 16) or Swap(Word(Value shr 16));
   {$ELSE}
   FRAM[Address] := Byte(Value shr 24);
@@ -819,7 +818,7 @@ end;
 procedure TN64Bus.RDPWrite16Hidden(Address, Value: Cardinal; Hidden: Byte);
 begin
   CodeWritten(Address);
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
   PWord(@FRAM[Address])^ := Swap(Word(Value and $FFFF));
   {$ELSE}
   FRAM[Address] := Byte((Value shr 8) and $FF);
@@ -831,9 +830,8 @@ end;
 procedure TN64Bus.RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
 begin
   CodeWritten(Address);
-  if (Address and $FFF) > $FFC then
-    CodeWritten(Address + 3);
-  {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
+  if (Address and $FFF) > $FFC then CodeWritten(Address + 3);
+  {$IF DEFINED(CPU386) or DEFINED(CPUX64) or DEFINED(CPUARM64)}
   PCardinal(@FRAM[Address])^ := (Cardinal(Swap(Word(Value and $FFFF))) shl 16) or Swap(Word(Value shr 16));
   {$ELSE}
   FRAM[Address] := Byte(Value shr 24);
