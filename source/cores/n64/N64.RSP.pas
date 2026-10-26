@@ -301,6 +301,10 @@ type
     // JitAgePipeline.
     FJitCalls: array[0..256] of Pointer;
     FJitCompiled, FJitRuns: Int64;
+    // (N64RSPJIT=stats: why the chaining code went back, and why RunBlock
+    // did not enter a block's code, by reason.)
+    FJitBack: array[0..15] of Int64;
+    FJitGen: array[0..255] of Int64;
     function JitCodeFor(B: PRSPBlock): Pointer;
     function JitCompile(B: PRSPBlock): Pointer;
     procedure JitEmitShared;
@@ -575,10 +579,22 @@ begin
 end;
 
 destructor TN64RSP.Destroy;
+const
+  Names: array[0..15] of string = ('budget', 'bubble budget', 'branch pending', 'no link', 'link PC',
+    'IMEM written', 'no code', 'checks', 'clocks', 'enter: checks', 'enter: clocks', 'enter: no code', 'enter: cold',
+    '  of which gen.', '  of which ext.', '  of which mem.');
 begin
   if IsConsole and RSPJitStats then
+  begin
     Writeln(ErrOutput, Format('RSP JIT: %d blocks compiled, %d runs; %d blocks run, %d built', [FJitCompiled, FJitRuns,
       FBlocksRun, FBlocksBuilt]));
+    for var K := 0 to High(Names) do
+      if FJitBack[K] <> 0 then
+        Writeln(ErrOutput, Format('  %-16s %d', [Names[K], FJitBack[K]]));
+    for var K := 0 to 255 do
+      if FJitGen[K] > 10000 then
+        Writeln(ErrOutput, Format('  general op %d: %d', [K, FJitGen[K]]));
+  end;
   FJit.Free;
   inherited;
 end;
@@ -5368,6 +5384,23 @@ begin
     var Native: Pointer := nil;
     if FUseJit and ((B.ChecksAll and Mask) = 0) and (Room >= B.Clocks) and not Assigned(FOnBlock) then
       Native := JitCodeFor(B);
+    if RSPJitStats and FUseJit then
+      if (B.ChecksAll and Mask) <> 0 then
+      begin
+        Inc(FJitBack[9]);
+        if (B.ChecksAll and Mask and StepGeneral) <> 0 then
+          Inc(FJitBack[13])
+        else if (B.ChecksAll and Mask and StepExternal) <> 0 then
+          Inc(FJitBack[14])
+        else
+          Inc(FJitBack[15]);
+      end
+      else if Room < B.Clocks then
+        Inc(FJitBack[10])
+      else if (Native = nil) and B.JitTried then
+        Inc(FJitBack[11])
+      else if Native = nil then
+        Inc(FJitBack[12]);
     if Native <> nil then
     begin
       JitRun(B, PC, Ran, Cycles, Mask);
@@ -5449,6 +5482,18 @@ begin
         begin
           // A branch, COP0 or other instruction of IssueInstruction's, or a
           // delay slot: the PC as each instruction takes it.
+          if RSPJitStats then
+          begin
+            var G := S.Op;
+            if S.Kind <> 0 then
+              G := S.Second;
+            if (G shr 26) = 0 then
+              Inc(FJitGen[64 + (G and 63)])
+            else if (G shr 26) in [16, 18] then
+              Inc(FJitGen[128 + ((G shr 26) - 16) * 16 + ((G shr 21) and 15)])
+            else
+              Inc(FJitGen[G shr 26]);
+          end;
           if S = Last then
             DelaySlot := FBranch;
           PC := S.PC;
@@ -5603,7 +5648,7 @@ type
   TRSPJitOffsets = record
     StalledOp, StalledPC, StalledSecond, HasStalled, HasStalledSecond: Integer;
     ScalarLo, ScalarHi, VectorLo, VectorHi, LoadHistory, SingleIssue: Integer;
-    Branch, NextPC, BranchBubble, BlocksRun, BlockClocks, Calls: Integer;
+    Branch, NextPC, BranchBubble, BlocksRun, BlockClocks, Calls, Back: Integer;
     CtxCycles, CtxRan, CtxPC, CtxMask, CtxBlock: Integer;
     BClocks, BChecksAll, BNative, BLink, BLinkPC, BChecked: Integer;
   end;
@@ -5631,6 +5676,7 @@ begin
   O.BlocksRun := Integer(NativeUInt(@TN64RSP(nil).FBlocksRun));
   O.BlockClocks := Integer(NativeUInt(@TN64RSP(nil).FBlockClocks));
   O.Calls := Integer(NativeUInt(@TN64RSP(nil).FJitCalls[0]));
+  O.Back := Integer(NativeUInt(@TN64RSP(nil).FJitBack[0]));
   O.CtxCycles := Integer(NativeUInt(@PRSPJitCtx(nil).Cycles));
   O.CtxRan := Integer(NativeUInt(@PRSPJitCtx(nil).Ran));
   O.CtxPC := Integer(NativeUInt(@PRSPJitCtx(nil).PC));
@@ -5667,6 +5713,20 @@ begin
 end;
 
 procedure TN64RSP.JitEmitShared;
+var
+  // Where the chaining code goes back (N64RSPJIT=stats: counted by reason).
+  NoLabel: array[0..15] of TJitLabel;
+  NoReason: array[0..15] of Integer;
+  NoCount: Integer;
+
+  function No(Reason: Integer): TJitLabel;
+  begin
+    Result := FJit.NewLabel;
+    NoLabel[NoCount] := Result;
+    NoReason[NoCount] := Reason;
+    Inc(NoCount);
+  end;
+
 begin
   // The code every block's code shares: the entry (TJitAsm.EnterJump: the
   // frame, then the start of a run with the block in T1), the start of a
@@ -5697,10 +5757,10 @@ begin
 
   J.Align(16);
   FJitChain := J.Offset;
-  var Back := J.NewLabel;
+  NoCount := 0;
   // T0: the budget; the clocks run reach it.
   J.Move(jw32, JT0, JMem(jrCtx, O.CtxCycles));
-  J.Branch(jcGe, jw32, JRan, JT0, Back);
+  J.Branch(jcGe, jw32, JRan, JT0, No(0));
   // T2: the bubble; T4: whether there is one (Taken); T1: the clocks run
   // after it, which reach the budget.
   J.Move(jw8, JT2, JMem(jrSelf, O.BranchBubble));
@@ -5711,35 +5771,35 @@ begin
   J.Alu(jaAdd, jw32, JT1, JImm(1));
   J.Move(jw32, JT4, JImm(1));
   J.Bind(NoBubble);
-  J.Branch(jcGe, jw32, JT1, JT0, Back);
+  J.Branch(jcGe, jw32, JT1, JT0, No(1));
   // A branch still pending.
   J.Move(jw8, JT3, JMem(jrSelf, O.Branch));
-  J.BranchTest(jcNe, jw32, JT3, JT3, Back);
+  J.BranchTest(jcNe, jw32, JT3, JT3, No(2));
   // T5: the link Taken, at the PC.
   J.Move(jw64, JT5, JT4);
   J.Shift(jsShl, jw64, jrT5, 3);
   J.Alu(jaAdd, jw64, JT5, JRB);
   J.Move(jw64, JT5, JMem(jrT5, O.BLink));
-  J.BranchTest(jcEq, jw64, JT5, JT5, Back);
+  J.BranchTest(jcEq, jw64, JT5, JT5, No(3));
   J.Move(jw64, JT6, JT4);
   J.Shift(jsShl, jw64, jrT6, 2);
   J.Alu(jaAdd, jw64, JT6, JRB);
-  J.Branch(jcNe, jw32, JPC, JMem(jrT6, O.BLinkPC), Back);
+  J.Branch(jcNe, jw32, JPC, JMem(jrT6, O.BLinkPC), No(4));
   // Checked since IMEM's last write (else RunBlock compares its words).
   J.Move(jw64, JT6, JImm(Int64(NativeUInt(Info.IMemCounter))));
   J.Move(jw64, JT6, JMem(jrT6, 0));
-  J.Branch(jcNe, jw64, JT6, JMem(jrT5, O.BChecked), Back);
+  J.Branch(jcNe, jw64, JT6, JMem(jrT5, O.BChecked), No(5));
   // Its code, none of its checks in the run's mask, its clocks within the
   // budget left after the bubble.
   J.Move(jw64, JT6, JMem(jrT5, O.BNative));
-  J.BranchTest(jcEq, jw64, JT6, JT6, Back);
+  J.BranchTest(jcEq, jw64, JT6, JT6, No(6));
   J.Move(jw8, JT6, JMem(jrT5, O.BChecksAll));
   J.Move(jw8, JT3, JMem(jrCtx, O.CtxMask));
   J.Alu(jaAnd, jw32, JT6, JT3);
-  J.BranchTest(jcNe, jw32, JT6, JT6, Back);
+  J.BranchTest(jcNe, jw32, JT6, JT6, No(7));
   J.Move(jw32, JT6, JT0);
   J.Alu(jaSub, jw32, JT6, JT1);
-  J.Branch(jcLt, jw32, JT6, JMem(jrT5, O.BClocks), Back);
+  J.Branch(jcLt, jw32, JT6, JMem(jrT5, O.BClocks), No(8));
   // On: the bubble as RunBlock takes it, then the next block.
   J.Move(jw64, JRB, JT5);
   J.Move(jw32, JRan, JT1);
@@ -5750,8 +5810,13 @@ begin
   J.CallAt(JMem(jrSelf, O.Calls + RSPJitCallAge * 8), [JSelf]);
   J.Bind(NoAge);
   J.JumpIndirect(JMem(jrRB, O.BNative));
-  J.Bind(Back);
-  J.JumpTo(FJitReturn);
+  for var K := 0 to NoCount - 1 do
+  begin
+    J.Bind(NoLabel[K]);
+    if RSPJitStats then
+      J.Alu(jaAdd, jw64, JMem(jrSelf, O.Back + NoReason[K] * 8), JImm(1));
+    J.JumpTo(FJitReturn);
+  end;
   J.ForgetLabels;
   J.Flush;
 end;
