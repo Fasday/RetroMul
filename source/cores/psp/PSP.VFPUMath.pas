@@ -5,18 +5,32 @@
 // See PSP.PRX-LICENSE.md and the bundled COPYING.GPL3.txt.
 {$Q-}
 interface
+
 function VFPSin(Bits: Cardinal): Cardinal;
+
 function VFPCos(Bits: Cardinal): Cardinal;
+
 function VFPRcp(Bits: Cardinal): Cardinal;
+
 function VFPRSqrt(Bits: Cardinal): Cardinal;
+
 function VFPSqrt(Bits: Cardinal): Cardinal;
+
 function VFPASin(Bits: Cardinal): Cardinal;
+
 function VFPExp2(Bits: Cardinal): Cardinal;
+
 function VFPLog2(Bits: Cardinal): Cardinal;
+
 implementation
+
 type
-  TVFPSegment = record C0, M, N, E: Integer; end;
+  TVFPSegment = record
+    C0, M, N, E: Integer;
+  end;
+
   TVFPTable = array[0..127] of TVFPSegment;
+
 const
   rcpTable: TVFPTable = (
     (C0: $0FFFF02; M: -$003F80C; N: $07F; E: $7E),
@@ -931,66 +945,87 @@ const
 
 function ASR(Value: Int64; Shift: Integer): Int64; inline;
 begin
-  if Value>=0 then Result := Value shr Shift
-  else Result := Int64((UInt64(Value) shr Shift) or (High(UInt64) shl (64-Shift)));
+  if Value >= 0 then
+    Result := Value shr Shift
+  else
+    Result := Int64((UInt64(Value) shr Shift) or (High(UInt64) shl (64 - Shift)));
 end;
 
 function Square(X: Cardinal): Integer; inline;
 begin
-  var T := Abs(Integer(X shr 6)-512);
-  Result := (T*T+255) shr 8;
+  var T := Abs(Integer(X shr 6) - 512);
+  Result := (T * T + 255) shr 8;
 end;
 
 function Interpolate(const Segment: TVFPSegment; X: Cardinal): Integer; inline;
 begin
-  Result := Segment.C0+ASR(Int64(Segment.M)*X,17)+ASR(Int64(Segment.N)*Square(X),9);
+  Result := Segment.C0 + ASR(Int64(Segment.M) * X, 17) + ASR(Int64(Segment.N) * Square(X), 9);
 end;
 
 function InterpolatedBits(const Table: TVFPTable; Index: Cardinal): Cardinal;
 begin
   var Segment := Table[Index shr 16];
-  Result := ((Cardinal(Segment.E-1) shl 23)+Cardinal(Interpolate(Segment,Index and $FFFF))) and $FFFFFFFC;
+  Result := ((Cardinal(Segment.E - 1) shl 23) + Cardinal(Interpolate(Segment, Index and $FFFF))) and $FFFFFFFC;
 end;
 
 function FixedBits(Value: UInt64; Fraction: Integer; Negative: Boolean): Cardinal;
 begin
   var Sign: Cardinal := 0;
-  if Negative then Sign := $80000000;
-  if Value=0 then Exit(Sign);
+  if Negative then
+    Sign := $80000000;
+  if Value = 0 then
+    Exit(Sign);
   var Top := 0;
   var Scan := Value;
-  while Scan>1 do begin Scan := Scan shr 1; Inc(Top); end;
-  var Mantissa := Value;
-  if Top<=23 then Mantissa := Value shl (23-Top) else Mantissa := Value shr (Top-23);
-  Result := Sign+(Cardinal(Top-Fraction+127) shl 23)+(Cardinal(Mantissa) and $7FFFFF);
+  while Scan > 1 do
+  begin
+    Scan := Scan shr 1;
+    Inc(Top);
+  end;
+  var Mantissa: UInt64;
+  if Top <= 23 then
+    Mantissa := Value shl (23 - Top)
+  else
+    Mantissa := Value shr (Top - 23);
+  Result := Sign + (Cardinal(Top - Fraction + 127) shl 23) + (Cardinal(Mantissa) and $7FFFFF);
 end;
 
 function SinFixed(Angle: Cardinal): Cardinal;
 begin
-  if Angle=0 then Exit(0);
-  if Angle=$800000 then Exit($10000000);
-  var Y := $800000-Angle;
+  if Angle = 0 then
+    Exit(0);
+  if Angle = $800000 then
+    Exit($10000000);
+  var Y := $800000 - Angle;
   var Segment := sinTable[Y shr 16];
-  var Value := Cardinal(Interpolate(Segment,Y and $FFFF)) and $FFFFFFFC;
-  if Segment.E>=122 then Result := Value shl (Segment.E-122)
-  else Result := Value shr (122-Segment.E);
+  var Value := Cardinal(Interpolate(Segment, Y and $FFFF)) and $FFFFFFFC;
+  if Segment.E >= 122 then
+    Result := Value shl (Segment.E - 122)
+  else
+    Result := Value shr (122 - Segment.E);
 end;
 
 function ReduceAngle(Bits: Cardinal; out Angle: Cardinal; out Odd: Boolean): Boolean;
 begin
   var Exponent := (Bits shr 23) and $FF;
   var Mantissa := (Bits and $7FFFFF) or $800000;
-  if Exponent=$FF then Exit(False);
-  if Exponent<127 then
+  if Exponent = $FF then
+    Exit(False);
+  if Exponent < 127 then
   begin
-    if Exponent<104 then Mantissa := 0 else Mantissa := Mantissa shr (127-Exponent);
+    if Exponent < 104 then
+      Mantissa := 0
+    else
+      Mantissa := Mantissa shr (127 - Exponent);
   end
-  else if Exponent>127 then
+  else if Exponent > 127 then
   begin
-    if ((Exponent-127>=25) and (Exponent-127<32)) or ((Exponent and $9F)=$9F) then Mantissa := 0
-    else Mantissa := Mantissa shl ((Exponent-127) and 31);
+    if ((Exponent - 127 >= 25) and (Exponent - 127 < 32)) or ((Exponent and $9F) = $9F) then
+      Mantissa := 0
+    else
+      Mantissa := Mantissa shl ((Exponent - 127) and 31);
   end;
-  Odd := (Mantissa shr 24) and 1<>0;
+  Odd := (Mantissa shr 24) and 1 <> 0;
   Angle := Mantissa and $FFFFFF;
   Result := True;
 end;
@@ -999,133 +1034,176 @@ function VFPSin(Bits: Cardinal): Cardinal;
 begin
   var Angle: Cardinal;
   var Odd: Boolean;
-  if not ReduceAngle(Bits,Angle,Odd) then Exit((Bits and $80000000) xor $7F800001);
-  if Angle>$800000 then Angle := $1000000-Angle;
-  Result := FixedBits(SinFixed(Angle),28,(Bits shr 31<>0) xor Odd);
+  if not ReduceAngle(Bits, Angle, Odd) then
+    Exit((Bits and $80000000) xor $7F800001);
+  if Angle > $800000 then
+    Angle := $1000000 - Angle;
+  Result := FixedBits(SinFixed(Angle), 28, (Bits shr 31 <> 0) xor Odd);
 end;
 
 function VFPCos(Bits: Cardinal): Cardinal;
 begin
   var Angle: Cardinal;
   var Odd: Boolean;
-  if not ReduceAngle(Bits,Angle,Odd) then Exit($7F800001);
-  if Angle>=$800000 then begin Angle := $1000000-Angle; Odd := not Odd; end;
-  Result := FixedBits(SinFixed($800000-Angle),28,Odd);
+  if not ReduceAngle(Bits, Angle, Odd) then
+    Exit($7F800001);
+  if Angle >= $800000 then
+  begin
+    Angle := $1000000 - Angle;
+    Odd := not Odd;
+  end;
+  Result := FixedBits(SinFixed($800000 - Angle), 28, Odd);
 end;
 
 function FastInterpolate(const Table: TVFPTable; Word, Exponent: Cardinal; Bias: Integer): Cardinal;
 begin
   var Segment := Table[(Word shr 16) and $7F];
-  Result := (Cardinal(Segment.C0)+(Cardinal(Segment.E-1+Bias) shl 23)+Exponent+
-    Cardinal(ASR(Int64(Segment.M)*(Word and $FFFF),17))+
-    Cardinal(ASR(Int64(Segment.N)*Square(Word and $FFFF),9))) and $FFFFFFFC;
+  Result := (Cardinal(Segment.C0) + (Cardinal(Segment.E - 1 + Bias) shl 23) + Exponent +
+    Cardinal(ASR(Int64(Segment.M) * (Word and $FFFF), 17)) +
+    Cardinal(ASR(Int64(Segment.N) * Square(Word and $FFFF), 9))) and $FFFFFFFC;
 end;
 
 function VFPRcp(Bits: Cardinal): Cardinal;
 begin
-  if Cardinal((Bits shl 1)-$01000000)<=$FC000000 then
-    Exit(FastInterpolate(rcpTable,Bits,Cardinal(0-(Bits and $FF800000)),127));
+  if Cardinal((Bits shl 1) - $01000000) <= $FC000000 then
+    Exit(FastInterpolate(rcpTable, Bits, Cardinal(0 - (Bits and $FF800000)), 127));
   var Magnitude := Bits and $7FFFFFFF;
   Result := 0;
-  if Magnitude<$800000 then Result := $7F800000
-  else if Magnitude>$7F800000 then Result := $7F800001;
+  if Magnitude < $800000 then
+    Result := $7F800000
+  else if Magnitude > $7F800000 then
+    Result := $7F800001;
   Result := Result xor (Bits and $80000000);
 end;
 
 function VFPSqrt(Bits: Cardinal): Cardinal;
 begin
-  if Cardinal(Bits-$800000)<$7F000000 then
+  if Cardinal(Bits - $800000) < $7F000000 then
   begin
-    var W := (Bits+$800000) shr 1;
-    Exit(FastInterpolate(sqrtTable,W,W and $7F800000,-64));
+    var W := (Bits + $800000) shr 1;
+    Exit(FastInterpolate(sqrtTable, W, W and $7F800000, -64));
   end;
-  if Bits and $7FFFFFFF<$800000 then Exit(0);
-  if Bits=$7F800000 then Exit(Bits);
+  if Bits and $7FFFFFFF < $800000 then
+    Exit(0);
+  if Bits = $7F800000 then
+    Exit(Bits);
   Result := $7F800001;
 end;
 
 function VFPRSqrt(Bits: Cardinal): Cardinal;
 begin
-  if Cardinal(Bits-$800000)<$7F000000 then
+  if Cardinal(Bits - $800000) < $7F000000 then
   begin
-    var W := (Bits+$800000) shr 1;
-    Exit(FastInterpolate(rsqrtTable,W,Cardinal(0-(W and $7F800000)),64));
+    var W := (Bits + $800000) shr 1;
+    Exit(FastInterpolate(rsqrtTable, W, Cardinal(0 - (W and $7F800000)), 64));
   end;
-  if Bits and $7FFFFFFF<$800000 then Exit((Bits and $80000000) or $7F800000);
-  if Bits shr 31<>0 then Exit($FF800001);
-  if Bits>$7F800000 then Exit($7F800001);
+  if Bits and $7FFFFFFF < $800000 then
+    Exit((Bits and $80000000) or $7F800000);
+  if Bits shr 31 <> 0 then
+    Exit($FF800001);
+  if Bits > $7F800000 then
+    Exit($7F800001);
   Result := 0;
 end;
 
 function VFPASin(Bits: Cardinal): Cardinal;
 begin
   var Magnitude := Bits and $7FFFFFFF;
-  if Magnitude>$3F800000 then Exit($7F800001 xor (Bits and $80000000));
+  if Magnitude > $3F800000 then
+    Exit($7F800001 xor (Bits and $80000000));
   var E := Magnitude shr 23;
   var X: Cardinal := 0;
-  if E>=104 then X := ((Magnitude and $7FFFFF) or $800000) shr (127-E);
+  if E >= 104 then
+    X := ((Magnitude and $7FFFFF) or $800000) shr (127 - E);
   var Value: Cardinal := 0;
-  if X=$800000 then Value := $40000000
-  else if X<>0 then
+  if X = $800000 then
+    Value := $40000000
+  else if X <> 0 then
   begin
     var Segment := asinTable[X shr 16];
-    Value := Cardinal(Interpolate(Segment,X and $FFFF));
-    if X shr 16=0 then Value := Value and $FFFFFFFE else Value := Value and $FFFFFFFC;
-    if Segment.E>=120 then Value := Value shl (Segment.E-120)
-    else Value := Value shr (120-Segment.E);
+    Value := Cardinal(Interpolate(Segment, X and $FFFF));
+    if X shr 16 = 0 then
+      Value := Value and $FFFFFFFE
+    else
+      Value := Value and $FFFFFFFC;
+    if Segment.E >= 120 then
+      Value := Value shl (Segment.E - 120)
+    else
+      Value := Value shr (120 - Segment.E);
   end;
-  Result := FixedBits(Value,30,Bits shr 31<>0);
+  Result := FixedBits(Value, 30, Bits shr 31 <> 0);
 end;
 
 function VFPExp2(Bits: Cardinal): Cardinal;
 begin
   var Magnitude := Bits and $7FFFFFFF;
-  var Negative := Bits shr 31<>0;
-  if Magnitude<=$7FFFFF then Exit($3F800000);
-  if Magnitude>$7F800000 then Exit($7F800001);
-  if Negative and (Magnitude>=$42FC0000) then Exit(0);
-  if not Negative and (Magnitude>=$43000000) then Exit($7F800000);
+  var Negative := Bits shr 31 <> 0;
+  if Magnitude <= $7FFFFF then
+    Exit($3F800000);
+  if Magnitude > $7F800000 then
+    Exit($7F800001);
+  if Negative and (Magnitude >= $42FC0000) then
+    Exit(0);
+  if not Negative and (Magnitude >= $43000000) then
+    Exit($7F800000);
   var E := Integer(Magnitude shr 23);
   var Mantissa := (Magnitude and $7FFFFF) or $800000;
   var Fixed: Integer := 0;
-  if E>=127 then Fixed := Mantissa shl (E-127)
-  else if E>=104 then Fixed := Mantissa shr (127-E);
-  if Negative then Fixed := -Fixed-1;
+  if E >= 127 then
+    Fixed := Mantissa shl (E - 127)
+  else if E >= 104 then
+    Fixed := Mantissa shr (127 - E);
+  if Negative then
+    Fixed := -Fixed - 1;
   var Fraction := Cardinal(Fixed) and $7FFFFF;
   var MantissaBits: Cardinal := 0;
-  if Fraction<>0 then MantissaBits := InterpolatedBits(exp2Table,Fraction)-$3F800000;
-  Result := $3F800000+(Cardinal(Fixed) and $FF800000)+MantissaBits;
+  if Fraction <> 0 then
+    MantissaBits := InterpolatedBits(exp2Table, Fraction) - $3F800000;
+  Result := $3F800000 + (Cardinal(Fixed) and $FF800000) + MantissaBits;
 end;
 
 function VFPLog2(Bits: Cardinal): Cardinal;
 begin
-  if Bits and $7FFFFFFF<=$7FFFFF then Exit($FF800000);
-  if Bits and $80000000<>0 then Exit($7F800001);
-  if Bits shr 23=255 then Exit($7F800000+Cardinal(Ord(Bits and $7FFFFF<>0)));
-  var Exponent := Integer(Bits shr 23)-127;
+  if Bits and $7FFFFFFF <= $7FFFFF then
+    Exit($FF800000);
+  if Bits and $80000000 <> 0 then
+    Exit($7F800001);
+  if Bits shr 23 = 255 then
+    Exit($7F800000 + Cardinal(Ord(Bits and $7FFFFF <> 0)));
+  var Exponent := Integer(Bits shr 23) - 127;
   var Index := Bits and $7FFFFF;
   var D := 0;
-  if Exponent<0 then D := 7
-  else if Exponent>=2 then
+  if Exponent < 0 then
+    D := 7
+  else if Exponent >= 2 then
   begin
     var Scan := Exponent;
-    while Scan>1 do begin Scan := Scan shr 1; Inc(D); end;
+    while Scan > 1 do
+    begin
+      Scan := Scan shr 1;
+      Inc(D);
+    end;
   end;
   var P := 1 shl D;
   var Step := Int64(4 shl D) shl 17;
   var Segment := log2Table[Index shr 16];
   var X := Index and $FFFF;
-  var N := Segment.N and not (P-1);
-  if Segment.N<0 then N := -((-Segment.N) and not (P-1));
-  var C0 := (Segment.C0+2*(Segment.N-N)) and not (P-1);
-  var Squared := Integer(ASR(Int64(N)*Square(X),9)) and not (P-1);
-  var M := Int64(Segment.M and not ((4 shl D)-1));
-  var Y := (Int64(C0+Squared) shl 17)+M*X;
-  var Fraction := Y and not (Step-1);
-  if Exponent<0 then Fraction := -((-Y) and not (Step-1));
-  var Sum := (Int64(Exponent) shl 41)+Fraction;
+  var N := Segment.N and not (P - 1);
+  if Segment.N < 0 then
+    N := -((-Segment.N) and not (P - 1));
+  var C0 := (Segment.C0 + 2 * (Segment.N - N)) and not (P - 1);
+  var Squared := Integer(ASR(Int64(N) * Square(X), 9)) and not (P - 1);
+  var M := Int64(Segment.M and not ((4 shl D) - 1));
+  var Y := (Int64(C0 + Squared) shl 17) + M * X;
+  var Fraction := Y and not (Step - 1);
+  if Exponent < 0 then
+    Fraction := -((-Y) and not (Step - 1));
+  var Sum := (Int64(Exponent) shl 41) + Fraction;
   var Magnitude := UInt64(Sum);
-  if Sum<0 then Magnitude := UInt64(-Sum);
-  Result := FixedBits(Magnitude,41,Exponent<0);
+  if Sum < 0 then
+    Magnitude := UInt64(-Sum);
+  Result := FixedBits(Magnitude, 41, Exponent < 0);
 end;
+
 end.
+

@@ -252,17 +252,39 @@ begin
     FIntRequest := FIntRequest and (not FIRQAccepted);
   // The timer uses its own 24 MHz crystal. SPI is clocked by clk_fpga,
   // which follows the selected Z80 oscillator (top.v).
-  Inc(FPeripheralPhase, UInt64(Count) * 24000000);
-  var Osc := Integer(FPeripheralPhase div Cardinal(ClockHz));
-  FPeripheralPhase := FPeripheralPhase mod Cardinal(ClockHz);
-  FFlash.Advance(Osc);
+  var Hz := Cardinal(ClockHz);
+  var Osc: Integer;
+  case Hz of
+    24000000:
+      Osc := Integer(Count); // The saved remainder is already below 24 MHz.
+    12000000:
+      begin
+        Osc := Integer(UInt64(Count) * 2);
+        // A frequency change can leave a remainder from the 24 MHz domain.
+        if FPeripheralPhase >= 12000000 then
+        begin
+          Inc(Osc);
+          Dec(FPeripheralPhase, 12000000);
+        end;
+      end;
+  else
+    begin
+      var Phase := FPeripheralPhase + UInt64(Count) * 24000000;
+      var Whole := Phase div Hz;
+      Osc := Integer(Whole);
+      FPeripheralPhase := Phase - Whole * Hz;
+    end;
+  end;
+  if FFlash.Active then
+    FFlash.Advance(Osc);
   FVS.Advance(Osc);
   if not FConfigured then
     Exit;
-  var Steps := (FTimerDivider + Osc) div 5;
-  FTimerDivider := (FTimerDivider + Osc) mod 5;
+  var TimerClocks := FTimerDivider + Osc;
+  var Steps := TimerClocks div 5;
+  FTimerDivider := TimerClocks - Steps * 5;
   var Period := Periods[FTimerRate];
-  if (FTimerCounter mod Period) + Steps >= Period then
+  if (FTimerCounter and (Period - 1)) + Steps >= Period then
     FIntRequest := FIntRequest or 1;
   FTimerCounter := (FTimerCounter + Steps) and $1FFFF;
   if FMCLeft > 0 then

@@ -41,6 +41,10 @@ type
   TZXCoreAdapter = class(TInterfacedObject, IEmulationCore, IEmulationLiveSettings, IEmulationInputPorts, IEmulationSnapshotLocation, IEmulationAudioDiagnostics, IEmulationVirtualControls, ISGKeyboardCore, IZXTapeCore, IEmulationMouseInput)
   private
     FThread: TZXWorker;
+    FPreparedConsole: TZXConsole;
+    FPreparedMachine: TZXMachineConfig;
+    FPreparedOptions: TZXRuntimeOptions;
+    FPreparedKey: string;
     FData: TBytes;
     FName, FSnapshotDirectory, FError: string;
     FDivImageFile: string;
@@ -57,12 +61,17 @@ type
     FPaused: Boolean;
     FTapeKeyDown: array[0..255] of Boolean;
     FChoicePage: Integer;
+    function PreparationKey: string;
+    procedure InitializeImage(Stream: TStream; const OwnedData: TBytes; const Storage: IStorage;
+      const RomName, ImageName: string);
     function SessionMachine: TZXMachineConfig;
     procedure ApplySettings;
   public
     procedure SendMouseDelta(DX, DY: Integer; Buttons: Byte);
     procedure ApplyLiveSettings;
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string; const ImageName: string = '');
+    // Transfers Data ownership; caller must not retain writable aliases.
+    constructor CreateOwned(var Data: TBytes; const Storage: IStorage; const RomName, ImageName: string);
     destructor Destroy; override;
     function GetName: string;
     function GetTapeStatus: string;
@@ -180,6 +189,7 @@ begin
   Options.AutoLoad := Ini.ReadBool('Media', 'AutoLoad', True);
   Options.TapeAutoPlay := Ini.ReadBool('Media', 'TapeAutoPlay', True);
   Options.TapeSpeed := Ini.ReadInteger('Media', 'TapeSpeed', 1);
+  Options.FastForwardSpeed := Ini.ReadInteger('Media', 'FastForwardSpeed', 8);
   Options.DiskWriteProtected := Ini.ReadBool('Media', 'DiskWriteProtected', False);
   Options := Options.Normalized;
   for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
@@ -250,6 +260,7 @@ begin
   Ini.WriteBool('Media', 'AutoLoad', Options.AutoLoad);
   Ini.WriteBool('Media', 'TapeAutoPlay', Options.TapeAutoPlay);
   Ini.WriteInteger('Media', 'TapeSpeed', Options.TapeSpeed);
+  Ini.WriteInteger('Media', 'FastForwardSpeed', Options.FastForwardSpeed);
   Ini.WriteBool('Media', 'DiskWriteProtected', Options.DiskWriteProtected);
   for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
     Ini.WriteInteger('Keys', KeyNames[B], Keys[B]);
@@ -271,6 +282,28 @@ end;
 constructor TZXCoreAdapter.Create(Stream: TStream; const Storage: IStorage; const RomName, ImageName: string);
 begin
   inherited Create;
+  InitializeImage(Stream, nil, Storage, RomName, ImageName);
+end;
+
+constructor TZXCoreAdapter.CreateOwned(var Data: TBytes; const Storage: IStorage; const RomName, ImageName: string);
+begin
+  inherited Create;
+  if (Length(Data) = 0) or (Length(Data) > 8 * 1024 * 1024) then
+    raise EReadError.Create('Spectrum image is empty or exceeds 8 MiB');
+  var Owned := Data;
+  Data := nil;
+  InitializeImage(nil, Owned, Storage, RomName, ImageName);
+end;
+
+function TZXCoreAdapter.PreparationKey: string;
+begin
+  var C := TZXConfig(FConfig);
+  Result := C.TimexCartridgeFile + #0 + C.DivFirmwareFile + #0 + FDivImageFile + #0 + FNeoGSImageFile;
+end;
+
+procedure TZXCoreAdapter.InitializeImage(Stream: TStream; const OwnedData: TBytes; const Storage: IStorage;
+  const RomName, ImageName: string);
+begin
   FStorage := Storage;
   if FStorage = nil then
     FStorage := TStorage.Default;
@@ -284,12 +317,16 @@ begin
   var Mass := SameText(ExtractFileExt(FName), '.mmc') or SameText(ExtractFileExt(FName), '.ide');
   if Mass then
   begin
+    if Stream = nil then
+      raise EReadError.Create('CF/SD images require an immutable source stream');
     if not SameText(ExtractFileExt(RomName), ExtractFileExt(FName)) then
       raise EReadError.Create('Open CF/SD images directly, outside ZIP/7z archives');
     FData := TZXBlockImage.Identity(Stream);
     FDivImageFile := RomName;
     // Resolve this image independently of the saved global interface preference.
   end
+  else if Stream = nil then
+    FData := OwnedData
   else
   begin
     if (Stream.Size - Stream.Position <= 0) or (Stream.Size - Stream.Position > 8 * 1024 * 1024) then
@@ -322,6 +359,8 @@ begin
   end;
   var Console := TZXConsole.Create;
   try
+    FPreparedOptions := Config.Options.Normalized;
+    Console.ApplyOptions(FPreparedOptions);
     Console.Load(FData, FName, Machine);
     if (Config.TimexCartridgeFile <> '') and (Console.Machine.Model = zmTimex2068) and not SameText(ExtractFileExt(FName), '.dck') then
       Console.MountTimexCartridge(FStorage.ReadBytes(Config.TimexCartridgeFile));
@@ -331,6 +370,10 @@ begin
       Console.DivStorage.Mount(FStorage.OpenRead(FDivImageFile), FDivImageHash);
     if FNeoGSImageFile <> '' then
       Console.NeoGS.Mount(FStorage.OpenRead(FNeoGSImageFile), FNeoGSImageHash);
+    FPreparedMachine := Machine;
+    FPreparedKey := PreparationKey;
+    FPreparedConsole := Console;
+    Console := nil;
   finally
     Console.Free;
   end;
@@ -341,6 +384,7 @@ end;
 destructor TZXCoreAdapter.Destroy;
 begin
   FThread.Free;
+  FPreparedConsole.Free;
   FDivImageLock.Free;
   FNeoGSImageLock.Free;
   inherited;
@@ -361,7 +405,13 @@ procedure TZXCoreAdapter.Start;
 begin
   if FThread <> nil then
     Exit;
-  FThread := TZXWorker.Create(FData, FName, FStorage, SessionMachine);
+  var Machine := SessionMachine;
+  var Options := TZXConfig(FConfig).Options.Normalized;
+  if (FPreparedKey <> PreparationKey) or
+    not CompareMem(@Machine, @FPreparedMachine, SizeOf(Machine)) or
+    not CompareMem(@Options, @FPreparedOptions, SizeOf(Options)) then
+    FreeAndNil(FPreparedConsole);
+  FThread := TZXWorker.CreatePrepared(FData, FName, FStorage, Machine, Options, FPreparedConsole);
   FThread.SnapshotDirectory := FSnapshotDirectory;
   FThread.CMOSSaveFile := ChangeFileExt(FStorage.ConfigFile('zx'), '.cmos');
   FThread.ServiceROMFile := TZXConfig(FConfig).ServiceROMFile;
@@ -416,6 +466,8 @@ end;
 
 procedure TZXCoreAdapter.ClearInput;
 begin
+  if FThread <> nil then
+    FThread.SetFastForward(False);
   SendMouseDelta(0, 0, 0);
   FillChar(FKeys, SizeOf(FKeys), 0);
   FillChar(FScreenKeys, SizeOf(FScreenKeys), 0);
@@ -496,6 +548,12 @@ end;
 
 procedure TZXCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 begin
+  if Code = vkF10 then
+  begin
+    if FThread <> nil then
+      FThread.SetFastForward(Pressed);
+    Exit;
+  end;
   if Code = vkF9 then
   begin
     if Pressed and not FKeys[vkF9] and (FThread <> nil) then

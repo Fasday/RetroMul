@@ -14,6 +14,7 @@ uses
 
 type
   EBitstreamError = class(Exception);
+
   EBitstreamFormat = class(EBitstreamError);
 
   TVLCNode = record

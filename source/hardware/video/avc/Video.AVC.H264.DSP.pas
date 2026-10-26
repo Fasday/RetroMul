@@ -7,7 +7,7 @@
 
 interface
 
-uses System.SysUtils, Video.AVC.Types, Video.AVC.Bitstream;
+uses Core.Bitstream, System.SysUtils, Video.AVC.Types, Video.AVC.Bitstream;
 
 type
   TCoeffBlock = array[0..15] of Integer;
@@ -154,7 +154,7 @@ begin
   if Length(Scaling)<>16 then raise EPlayerError.Create('Invalid 4x4 scaling list size');
   Start := Ord(PreserveDC);
   Rem:=QP mod 6;Factor:=1 shl (QP div 6);
-  for I:=0 to 2 do Coefficients[I]:=ff_h264_dequant4_coeff_init[Rem][I]*Factor;
+  for I:=0 to 2 do Coefficients[I]:=Integer(ff_h264_dequant4_coeff_init[Rem][I])*Factor;
   for I := Start to 15 do
   begin
     if ((I and 1) = 0) and ((I and 4) = 0) then C := 0
@@ -198,7 +198,7 @@ var I,C,Rem,Factor:Integer; V:Int64;Coefficients:array[0..5] of Integer;
 begin
   if Length(Scaling)<>64 then raise EPlayerError.Create('Invalid 8x8 scaling list size');
   Rem:=QP mod 6;Factor:=1 shl (QP div 6);
-  for I:=0 to 5 do Coefficients[I]:=ff_h264_dequant8_coeff_init[Rem][I]*Factor;
+  for I:=0 to 5 do Coefficients[I]:=Integer(ff_h264_dequant8_coeff_init[Rem][I])*Factor;
   for I:=0 to 63 do
   begin
     C:=ff_h264_dequant8_coeff_init_scan[((I shr 1) and 12) or (I and 3)];

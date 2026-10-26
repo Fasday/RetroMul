@@ -1,4 +1,4 @@
-unit Core.PS1.Playback;
+﻿unit Core.PS1.Playback;
 
 interface
 

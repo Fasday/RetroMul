@@ -121,6 +121,7 @@ begin
   Context.CreateOption('ZXAutoLoad', 'Auto-load media', 'Automatically enter the tape loading command or start the +3 Loader / boot TR-DOS after opening media. Applies on open or reset.', sekSwitch);
   Context.CreateOption('ZXTapeAutoPlay', 'Play tape on startup', 'Start the tape automatically after opening or resetting. F7 toggles playback; F8 rewinds.', sekSwitch);
   Context.CreateOption('ZXTapeSpeed', 'Tape playback speed', 'Accelerate the whole machine while the tape is playing; accelerated playback is muted. F7 returns to normal speed.', sekCombo);
+  Context.CreateOption('ZXFastForwardSpeed', 'Fast-forward speed (hold F10)', 'Accelerate any media while F10 is held. All hardware clocks are emulated; host audio is muted.', sekCombo);
   Context.CreateOption('ZXDiskWriteProtected', 'Write protect disk', 'Prevent writes and formatting. Existing saved disk changes remain readable.', sekSwitch);
   Context.CreateGroup('ZXKeyboard', 'Spectrum input');
   Context.CreateOption('ZXJoystick', 'Joystick emulation', 'Choose Kempston, QAOP/Space, both, or no joystick. Button bindings are in Controls.', sekCombo);
@@ -210,6 +211,7 @@ begin
   Context.Check('ZXAutoLoad', 'Media', 'AutoLoad', True);
   Context.Check('ZXTapeAutoPlay', 'Media', 'TapeAutoPlay', True);
   Context.Combo('ZXTapeSpeed', 'Media', 'TapeSpeed', ['1x (normal)', '2x', '4x', '8x'], ['1', '2', '4', '8'], '1');
+  Context.Combo('ZXFastForwardSpeed', 'Media', 'FastForwardSpeed', ['1x (normal)', '2x', '4x', '8x'], ['1', '2', '4', '8'], '8');
   Context.Check('ZXDiskWriteProtected', 'Media', 'DiskWriteProtected', False);
 end;
 

@@ -67,9 +67,10 @@ type
     SecondJoystick: Boolean; // Controller 2: Gama PPI B, otherwise Interface 2 keys 12345.
     AutoLoad, TapeAutoPlay, DiskWriteProtected: Boolean;
     TapeSpeed: Integer;
+    FastForwardSpeed: Integer; // Host pacing only, while F10 is held.
     class function Defaults: TZXRuntimeOptions; static;
     function Normalized: TZXRuntimeOptions;
-    function PlaybackSpeed(HasTape, Stopped: Boolean): Integer;
+    function PlaybackSpeed(HasTape, Stopped: Boolean; FastForward: Boolean = False): Integer;
   end;
 
 implementation
@@ -87,6 +88,7 @@ begin
   Result.AutoLoad := True;
   Result.TapeAutoPlay := True;
   Result.TapeSpeed := 1;
+  Result.FastForwardSpeed := 8;
 end;
 
 function TZXRuntimeOptions.Normalized: TZXRuntimeOptions;
@@ -102,13 +104,17 @@ begin
     Result.Joystick := 0;
   if not (TapeSpeed in [1, 2, 4, 8]) then
     Result.TapeSpeed := 1;
+  if not (FastForwardSpeed in [1, 2, 4, 8]) then
+    Result.FastForwardSpeed := 8;
 end;
 
-function TZXRuntimeOptions.PlaybackSpeed(HasTape, Stopped: Boolean): Integer;
+function TZXRuntimeOptions.PlaybackSpeed(HasTape, Stopped: Boolean; FastForward: Boolean): Integer;
 begin
   Result := 1;
   if HasTape and not Stopped then
     Result := Normalized.TapeSpeed;
+  if FastForward then
+    Result := Max(Result, Normalized.FastForwardSpeed);
 end;
 
 class function TZXMachineConfig.ForModel(Value: TZXMachineModel): TZXMachineConfig;

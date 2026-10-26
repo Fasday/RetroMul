@@ -668,7 +668,7 @@ begin
     end;
   end;
 
-  var ZXControlKey := ZXActive and (Code in [vkF7, vkF8, vkF9]);
+  var ZXControlKey := ZXActive and (Code in [vkF7, vkF8, vkF9, vkF10]);
   if (FState.Help.View = nil) and (KeyboardActive or not (ssCtrl in Shift) or ZXControlKey) then
     if (FState.Session.Emulation <> nil) and ((FState.Input.Manager = nil) or ZXControlKey or ((SGKeyboard <> nil) and SGKeyboard.HasKeyboard)) then
       FView.ForwardKeyState(Code, True);
@@ -748,7 +748,7 @@ begin
 
   var SGKeyboard: ISGKeyboardCore;
   if (FState.Help.View = nil) and (FState.Session.Emulation <> nil) and
-    ((FState.Input.Manager = nil) or ((FState.Input.SystemId = ROM_SYSTEM_ZX) and (Code in [vkF7, vkF8, vkF9])) or
+    ((FState.Input.Manager = nil) or ((FState.Input.SystemId = ROM_SYSTEM_ZX) and (Code in [vkF7, vkF8, vkF9, vkF10])) or
     (Supports(FState.Session.Emulation, ISGKeyboardCore, SGKeyboard) and SGKeyboard.HasKeyboard)) then
     FView.ForwardKeyState(Code, False);
 

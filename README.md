@@ -178,18 +178,17 @@ The script signs and verifies the staged EXE using SignTool and SHA-256, with an
 
 | Directory | Responsibility |
 | --- | --- |
-| `apps/retromul` | Emulator frontend: forms, controllers, settings, virtual devices and platform UI |
+| `apps/retromul` | Emulator frontend, with `ui`, `controllers`, `settings`, `input` and `platform` modules |
 | `apps/retrotune` | Music player project and forms |
 | `apps/terminal` | Windows console frontend |
-| `source/contracts` | Emulation and storage interfaces and shared data types |
-| `source/runtime` | Emulator factory, adapters, worker timing and snapshot coordination |
+| `source/runtime` | Shared contracts, emulator factory, timing, snapshots, configuration, storage and catalog |
+| `source/adapters` | All emulator adapters and their playback/archive integration helpers |
 | `source/cores` | System-specific emulation, cartridges, audio machines and firmware |
 | `source/hardware` | Shared CPU, audio-chip and video implementations |
 | `source/media` | ROM identification, CD access and native CHD decoding |
-| `source/services` | Storage, configuration, system catalog and game-list metadata |
-| `source/platform` | Host storage integration and performance hints |
 | `source/music` | Reusable decoders, trackers, playback, synthesis and export |
-| `source/ui/fmx` | Shared FMX controls, SVG rendering and Game & Watch artwork backend |
+| `source/ui` | Shared FMX controls, SVG rendering, shaders and Game & Watch artwork backend |
+| `source/RetroMul.Paths.props` | Shared relative unit search paths imported by all three application projects |
 | `dependencies` | Git submodules: DelphiWinUI3, FMXVibration, FMXInput and PCMAudio |
 
 Initialize dependencies with `git submodule update --init --recursive`. Their repository URLs and pinned commits are unchanged; the logical submodule names in `.gitmodules` are retained so existing Git metadata continues to work. DelphiWinUI3's nested submodules remain part of that dependency. Do not add dependency contents to the parent repository as ordinary files.
@@ -274,7 +273,7 @@ MiniDSF needs its referenced library files beside the source file. MD1 needs the
 
 ### Using the player in another Delphi application
 
-`TTunePlayer` in `source/music/playback/RetroTune.Player.pas` owns the playback thread and PCM device; it does not depend on FireMonkey or `RetroTune.Main`. Add `source/music/decoders`, `source/music/common`, `source/music/chips`, `source/music/playback`, and `dependencies/PCMAudio` to your project's unit search path. Other decoders can additionally require `source/music/trackers` (including its `amiga` directory), `source/contracts`, `source/runtime`, the relevant `source/hardware` directories and system-specific core directories. The complete decoder set's paths are listed in `apps/retrotune/RetroTune.dproj`.
+`TTunePlayer` in `source/music/playback/RetroTune.Player.pas` owns the playback thread and PCM device; it does not depend on FireMonkey or `RetroTune.Main`. Add `source/music/decoders`, `source/music/common`, `source/music/chips`, `source/music/playback`, and `dependencies/PCMAudio` to your project's unit search path. Other decoders can additionally require `source/music/trackers` (including its `amiga` directory), `source/runtime`, `source/runtime`, the relevant `source/hardware` directories and system-specific core directories. The complete decoder set's paths are listed in `apps/retrotune/RetroTune.dproj`.
 
 Decoder units register their formats in their `initialization` sections. This standalone console example enables WAV and MIDI; add the other `RetroTune.Decoder.*` units used by [RetroTune.dpr](apps/retrotune/RetroTune.dpr) to enable their formats. Keep dependent decoder units when using containers. For MIDI, prepare the `sf2` directory beside **your application's** EXE, or call `SetMidiSoundFont` with a custom SF2 path before opening the MIDI file.
 

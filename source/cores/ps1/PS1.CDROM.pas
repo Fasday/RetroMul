@@ -3,8 +3,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, Core.Snapshots, Core.CD.Disc, PS1.Types, PS1.Scheduler,
-  PS1.DMA, PS1.CDROM.Audio;
+  System.SysUtils, System.Classes, Core.Snapshots, Core.CD.Disc, PS1.Types,
+  PS1.Scheduler, PS1.DMA, PS1.CDROM.Audio;
 
 {$SCOPEDENUMS ON}
 
@@ -136,7 +136,7 @@ const
   ReadTOCDelay = PS1CPUClock;
   // Seeks into the lead-out succeed up to 74:10 or 1.5 minutes past its
   // start (ps1-tests cdrom/getloc reaches 74:00 but not 74:30).
-  MinSeekLimit = (74 * 60 + 10) * 75 - 150;
+  MinSeekLimit = ( 74 * 60 + 10) * 75 - 150;
   LeadOutSeek = 90 * 75;
   // Sectors skipped per sector time by Forward/Backward.
   FastStep = 10;
@@ -148,7 +148,6 @@ const
   ActionStop = 1;
   ActionInit = 2;
   ActionSpinUp = 3;
-
   StatError = $01;
   StatMotor = $02;
   StatSeekError = $04;
@@ -157,7 +156,6 @@ const
   StatRead = $20;
   StatSeek = $40;
   StatPlay = $80;
-
   ModeCDDA = $01;
   ModeAutoPause = $02;
   ModeReport = $04;
@@ -779,12 +777,12 @@ begin
   Q[3] := BCD(Relative div 4500 mod 100);
   Q[4] := BCD((Relative div 75) mod 60);
   Q[5] := BCD(Relative mod 75);
-  var Absolute := LBA + 150;
-  if Absolute < 0 then
-    Absolute := 0;
-  Q[7] := BCD(Absolute div 4500 mod 100);
-  Q[8] := BCD((Absolute div 75) mod 60);
-  Q[9] := BCD(Absolute mod 75);
+  var LAbsolute := LBA + 150;
+  if LAbsolute < 0 then
+    LAbsolute := 0;
+  Q[7] := BCD(LAbsolute div 4500 mod 100);
+  Q[8] := BCD((LAbsolute div 75) mod 60);
+  Q[9] := BCD(LAbsolute mod 75);
 end;
 
 function TPS1CDROM.DiscType: Byte;
@@ -1221,7 +1219,7 @@ begin
           Fail($80)
         else
           Respond(Response(3, [FHeader[0], FHeader[1], FHeader[2], FHeader[3], FHeader[4], FHeader[5],
-            FHeader[6], FHeader[7]]));
+                FHeader[6], FHeader[7]]));
       end;
     $11:
       if Params(0) and DiscReady then
@@ -1302,10 +1300,12 @@ begin
             Respond(Response(3, [Ord(FShellOpen) shl 1]));
           $22:
             case FRegion of
-              'E': Respond(Response(3, [Ord('f'), Ord('o'), Ord('r'), Ord(' '), Ord('E'), Ord('u'), Ord('r'),
-                Ord('o'), Ord('p'), Ord('e')]));
-              'I': Respond(Response(3, [Ord('f'), Ord('o'), Ord('r'), Ord(' '), Ord('J'), Ord('a'), Ord('p'),
-                Ord('a'), Ord('n')]));
+              'E':
+                Respond(Response(3, [Ord('f'), Ord('o'), Ord('r'), Ord(' '), Ord('E'), Ord('u'), Ord('r'),
+                      Ord('o'), Ord('p'), Ord('e')]));
+              'I':
+                Respond(Response(3, [Ord('f'), Ord('o'), Ord('r'), Ord(' '), Ord('J'), Ord('a'), Ord('p'),
+                      Ord('a'), Ord('n')]));
             else
               Respond(Response(3, [Ord('f'), Ord('o'), Ord('r'), Ord(' '), Ord('U'), Ord('/'), Ord('C')]));
             end;
@@ -1367,7 +1367,7 @@ begin
           Second(5, InitDelay, ActionNone, [Stat or StatError, $80])
         else
           Second(2, InitDelay, ActionNone, [Control, 0, Point, 0, 0, 0, 0, BCD(LBA div 4500),
-            BCD((LBA div 75) mod 60), BCD(LBA mod 75), 0]);
+              BCD((LBA div 75) mod 60), BCD(LBA mod 75), 0]);
       end;
     $1E:
       if Params(0) and DiscReady then
@@ -1470,3 +1470,4 @@ begin
 end;
 
 end.
+

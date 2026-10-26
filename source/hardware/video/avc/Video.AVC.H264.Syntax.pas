@@ -5,7 +5,7 @@
 
 interface
 
-uses System.SysUtils, Video.AVC.Types, Video.AVC.Bitstream;
+uses Core.Bitstream, System.SysUtils, Video.AVC.Types, Video.AVC.Bitstream;
 
 type
   TH264Scaling = record

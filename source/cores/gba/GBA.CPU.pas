@@ -3,7 +3,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Math, Core.Snapshots, GBA.Multiply;
+  System.SysUtils, System.Classes, System.Math, Core.Snapshots, GBA.Multiply,
+  HW.ARM.Shifter;
 
 type
   TARMRead = function(Address: Cardinal; Size: Integer): Cardinal of object;
@@ -93,8 +94,6 @@ function ARMAdd(A, B: Cardinal): Cardinal; inline;
 function ARMSub(A, B: Cardinal): Cardinal; inline;
 
 implementation
-
-uses HW.ARM.Shifter;
 
 function ARMAdd(A, B: Cardinal): Cardinal;
 begin

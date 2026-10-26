@@ -6,7 +6,7 @@
 
 interface
 
-uses
+uses Core.Bitstream,
   FMXAudio.Bitstream;
 
 type

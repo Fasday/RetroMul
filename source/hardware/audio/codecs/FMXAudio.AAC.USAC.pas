@@ -8,7 +8,7 @@
 
 interface
 
-uses
+uses Core.Bitstream,
   FMXAudio.Bitstream, FMXAudio.Transform, FMXAudio.AAC.SBR;
 
 type

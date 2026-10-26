@@ -6,7 +6,7 @@
 
 interface
 
-uses System.SysUtils, System.Generics.Collections, Video.AVC.Types, Video.AVC.Bitstream,
+uses Core.Bitstream, System.SysUtils, System.Generics.Collections, Video.AVC.Types, Video.AVC.Bitstream,
   Video.AVC.H264.Syntax, Video.AVC.H264.DSP, Video.AVC.H264.CABAC;
 
 type
@@ -42,6 +42,8 @@ type
     FCurrent: TPicture;
     FOutput: TQueue<TVideoFrame>;
     FDelayed:TList<TVideoFrame>;
+    FDelayedPOC:TList<Integer>;
+    FOrderByPOC:Boolean;
     FPictureID:NativeUInt;
     FPOC,FPOCLSB,FPOCMSB,FPrevPOCLSB,FPrevPOCMSB,FPrevFrameNum,FFrameOffset,FPrevFrameOffset:Integer;
     FSliceType:Integer;
@@ -103,7 +105,7 @@ type
     constructor Create(UseRegionCache:Boolean=False);
     destructor Destroy; override;
     procedure Configure(const Track: TTrackInfo);
-    procedure ConfigureAnnexB;
+    procedure ConfigureAnnexB(PictureOrder:Boolean=False);
     procedure SendAnnexB(const Packet: TMediaPacket);
     procedure Send(const Packet: TMediaPacket);
     function Receive(out Frame: TVideoFrame): Boolean;
@@ -147,6 +149,7 @@ begin
   FPromoteRefs:=TList<TPicture>.Create; FPromoteIndexes:=TList<Integer>.Create;
   FOutput := TQueue<TVideoFrame>.Create;
   FDelayed:=TList<TVideoFrame>.Create;
+  FDelayedPOC:=TList<Integer>.Create;
 end;
 
 destructor TH264Decoder.Destroy;
@@ -157,6 +160,7 @@ begin
   FPromoteRefs.Free; FPromoteIndexes.Free;
   FOutput.Free;
   FDelayed.Free;
+  FDelayedPOC.Free;
   inherited;
 end;
 
@@ -169,15 +173,17 @@ begin
   if not ((Track.Codec = 'avc1') or (Track.Codec = 'avc3')) then
     raise EPlayerUnsupported.Create('H.264 decoder requires AVC');
   Reset;
+  FOrderByPOC:=False;
   for I := 0 to High(FSPS) do FSPS[I] := Default(TH264SPS);
   for I := 0 to High(FPPS) do FPPS[I] := Default(TH264PPS);
   Packet := Default(TMediaPacket);
   for UnitData in ParseAVCC(Track.CodecConfig, FLengths) do NAL(UnitData, Packet);
 end;
 
-procedure TH264Decoder.ConfigureAnnexB;
+procedure TH264Decoder.ConfigureAnnexB(PictureOrder:Boolean);
 begin
   Reset;
+  FOrderByPOC:=PictureOrder;
   for var I := 0 to High(FSPS) do FSPS[I] := Default(TH264SPS);
   for var I := 0 to High(FPPS) do FPPS[I] := Default(TH264PPS);
 end;
@@ -213,6 +219,7 @@ begin
   FOutput.Clear;
   FRefList:=nil; FRefList1:=nil;
   FDelayed.Clear;
+  FDelayedPOC.Clear;
   FPrevPOCMSB:=0; FPrevPOCLSB:=0; FPrevFrameNum:=0; FPrevFrameOffset:=0;
   FSliceID := 0;
 end;
@@ -312,7 +319,7 @@ begin
     Frame.Strides[P] := W; SetLength(Frame.Planes[P],W*H);
     for Y := 0 to H-1 do Move(FCurrent.Pixels[P][(Y+Y0)*Stride+X0],Frame.Planes[P][Y*W],W);
   end;
-  FDelayed.Add(Frame); OutputDelayed(False);
+  FDelayed.Add(Frame); FDelayedPOC.Add(FPOC); OutputDelayed(False);
   if FRefNAL then
   begin
     FPrevPOCMSB:=FPOCMSB; FPrevPOCLSB:=FPOCLSB;
@@ -347,13 +354,17 @@ begin
   begin
     Smallest:=0;
     for I:=1 to FDelayed.Count-1 do
-      if FDelayed[I].PTS<FDelayed[Smallest].PTS then Smallest:=I;
-    FOutput.Enqueue(FDelayed[Smallest]); FDelayed.Delete(Smallest);
+      if FOrderByPOC then
+      begin
+        if FDelayedPOC[I]<FDelayedPOC[Smallest] then Smallest:=I;
+      end
+      else if FDelayed[I].PTS<FDelayed[Smallest].PTS then Smallest:=I;
+    FOutput.Enqueue(FDelayed[Smallest]); FDelayed.Delete(Smallest);FDelayedPOC.Delete(Smallest);
   end;
 end;
 
 procedure TH264Decoder.Slice(const Data: TBytes; const Packet: TMediaPacket);
-var First, SliceType, PPSID, RefCount, RefCount1, I, ID, PicNum, Diff, SkipRun, Q,InitID,Context,Plane,L: Integer;
+var First, SliceType, PPSID, RefCount, RefCount1, I, ID, PicNum, Diff, SkipRun, Q,InitID,Context,Plane: Integer;
   BottomDelta,Delta0,Delta1,AbsFrame,Cycle,InCycle,Expected,MaxPOC:Integer;
   Skipped:Boolean; P:TPicture; MMCO:Cardinal; LongIndex:Integer;
   function Before(A,B:TPicture; ListIndex:Integer):Boolean;
@@ -849,7 +860,6 @@ begin
 {$IFDEF PLAYER_PROFILE}
   Started:=TStopwatch.GetTimeStamp;
 {$ENDIF}
-  Mask:=0;
   if FY=0 then Mask:=1 else if FX=0 then Mask:=2
   else if (FX=2) and (FY=2) then Mask:=4
   else if FX=2 then Mask:=5 else if FY=2 then Mask:=6 else Mask:=3;
@@ -1135,7 +1145,7 @@ begin
 end;
 
 procedure TH264Decoder.DirectMotion(out M0,M1:TMotionBlock; PartitionMask:Integer);
-var X,Y,L,I,CX,CY,Index,ColIndex,R,TD,TB,TX,Scale:Integer;
+var X,Y,L,I,CX,CY,ColIndex,R,TD,TB,TX,Scale:Integer;
   Base:array[0..1] of TMotion; A,B,C,Col,V0,V1:TMotion; RefPic:TPicture; Zero:Boolean;
   function Median(A,B,C:Integer):Integer;
   begin Result:=A+B+C-Min(A,Min(B,C))-Max(A,Max(B,C)) end;
@@ -1166,7 +1176,7 @@ begin
     // Mixed B_8x8 macroblocks use direct inference only in selected 8x8s.
     // Other collocated blocks may legally reference pictures outside list0.
     if PartitionMask and (1 shl (I div 4))=0 then Continue;
-    CX:=BlockX[I]; CY:=BlockY[I]; Index:=(Y+CY)*FGridWidth+X+CX;
+    CX:=BlockX[I]; CY:=BlockY[I];
     if FS.Direct8Inference then begin CX:=(CX div 2)*3; CY:=(CY div 2)*3 end;
     ColIndex:=(Y+CY)*FGridWidth+X+CX;
     V0:=Default(TMotion); V1:=Default(TMotion); V0.Ref:=0; V1.Ref:=0;

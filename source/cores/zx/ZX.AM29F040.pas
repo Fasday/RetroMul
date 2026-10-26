@@ -19,6 +19,7 @@ type
     FProgramLeft, FEraseLeft: Integer;
     procedure FinishProgram;
     procedure FinishErase;
+    function GetActive: Boolean; inline;
   public
     constructor Create(const Data: TBytes);
     procedure PowerReset;
@@ -30,6 +31,7 @@ type
     function Image: TBytes;
     procedure MarkDirty;
     property Dirty: Boolean read FDirty;
+    property Active: Boolean read GetActive;
   end;
 
 implementation
@@ -70,7 +72,7 @@ end;
 
 procedure TZXAM29F040.FinishErase;
 begin
-  for var Sector := 0 to Length(FData) div $10000-1 do
+  for var Sector := 0 to Length(FData) div $10000 - 1 do
     if (FEraseMask and (Cardinal(1) shl Sector)) <> 0 then
       for var I := Sector * $10000 to (Sector + 1) * $10000 - 1 do
         if FData[I] <> $FF then
@@ -81,6 +83,11 @@ begin
   FEraseLeft := 0;
   FEraseMask := 0;
   FSuspended := False;
+end;
+
+function TZXAM29F040.GetActive: Boolean;
+begin
+  Result := (FProgramLeft > 0) or ((FEraseLeft > 0) and not FSuspended);
 end;
 
 procedure TZXAM29F040.Advance(Osc24: Integer);
@@ -101,7 +108,7 @@ end;
 
 function TZXAM29F040.Read(Address: Cardinal): Byte;
 begin
-  Address := Address and Cardinal(Length(FData)-1);
+  Address := Address and Cardinal(Length(FData) - 1);
   Result := FData[Address];
   if FProgramLeft > 0 then
   begin
@@ -123,7 +130,10 @@ begin
       0:
         Result := 1;
       1:
-        if Length(FData)=$80000 then Result := $A4 else Result := $AD;
+        if Length(FData) = $80000 then
+          Result := $A4
+        else
+          Result := $AD;
       2:
         Result := 0;
     else
@@ -133,7 +143,7 @@ end;
 
 procedure TZXAM29F040.Write(Address: Cardinal; Value: Byte);
 begin
-  Address := Address and Cardinal(Length(FData)-1);
+  Address := Address and Cardinal(Length(FData) - 1);
   if FProgramLeft > 0 then
     Exit;
   if (FEraseLeft > 0) and not FSuspended then
@@ -204,11 +214,11 @@ begin
         if Value = $30 then
           FEraseMask := Cardinal(1) shl (Address shr 16)
         else if (Value = $10) and ((Address and $7FF) = $555) then
-          FEraseMask := Cardinal(UInt64($FFFFFFFF) shr (32-Length(FData) div $10000));
+          FEraseMask := Cardinal(UInt64($FFFFFFFF) shr (32 - Length(FData) div $10000));
         if FEraseMask <> 0 then
         begin
           FEraseLeft := 24000000;
-          if FEraseMask = Cardinal(UInt64($FFFFFFFF) shr (32-Length(FData) div $10000)) then
+          if FEraseMask = Cardinal(UInt64($FFFFFFFF) shr (32 - Length(FData) div $10000)) then
             FEraseLeft := 192000000;
         end;
       end;

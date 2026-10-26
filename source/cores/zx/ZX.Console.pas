@@ -4,9 +4,10 @@ interface
 
 uses
   System.SysUtils, System.UITypes, MD.Z80, ZX.Sound.YM2149, SAM.Sound.SAA1099,
-  ZX.SID, ZX.MoonSound, ZX.DMAUSC, ZX.NeoGS, ZX.GeneralSound, ZX.NextDAC, ZX.TurboSoundFM, ZX.Timex,
-  ZX.DivStorage, SG1000.FDC, SG1000.Disk, ZX.Tape, ZX.BetaDisk, ZX.CMOS,
-  Core.Emulation.Types, Core.AudioFilter, Core.Snapshots, ZX.Machine;
+  ZX.SID, ZX.MoonSound, ZX.DMAUSC, ZX.NeoGS, ZX.GeneralSound, ZX.NextDAC,
+  ZX.TurboSoundFM, ZX.Timex, ZX.DivStorage, SG1000.FDC, SG1000.Disk, ZX.Tape,
+  ZX.BetaDisk, ZX.CMOS, Core.Emulation.Types, Core.AudioFilter, Core.Snapshots,
+  ZX.Machine;
 
 type
   TZXBusEvent = record
@@ -418,9 +419,13 @@ begin
   end
   else
     FreeAndNil(FSID);
-  if Machine.MoonSound then begin
-    if FMoon=nil then FMoon:=TZXMoonSound.Create;
-  end else FreeAndNil(FMoon);
+  if Machine.MoonSound then
+  begin
+    if FMoon = nil then
+      FMoon := TZXMoonSound.Create;
+  end
+  else
+    FreeAndNil(FMoon);
   if Machine.DMAUSC then
   begin
     if FUSC = nil then
@@ -622,7 +627,8 @@ begin
     FGS.Reset;
   if FSID <> nil then
     FSID.Reset(FClock, FMachine.SIDModel, FMachine.SIDNTSC);
-  if FMoon<>nil then FMoon.Reset(FClock);
+  if FMoon <> nil then
+    FMoon.Reset(FClock);
   FUSCBusAck := False;
   FUSCVector := $FF;
   if FUSC <> nil then
@@ -1017,10 +1023,13 @@ end;
 
 function TZXConsole.MoonSoundSelected(Address: Word): Boolean;
 begin
-  Result:=(FMoon<>nil) and TZXMoonSound.Decodes(Address);
-  if not Result then Exit;
-  if FTRDOSActive and not FMachine.MoonSoundInDOS then Exit(False);
-  if (FTRDOSActive or (FMachine.Profi and ((FProfiPaging and $20)<>0))) and (BetaPort(Address)>=0) then Exit(False);
+  Result := (FMoon <> nil) and TZXMoonSound.Decodes(Address);
+  if not Result then
+    Exit;
+  if FTRDOSActive and not FMachine.MoonSoundInDOS then
+    Exit(False);
+  if (FTRDOSActive or (FMachine.Profi and ((FProfiPaging and $20) <> 0))) and (BetaPort(Address) >= 0) then
+    Exit(False);
 end;
 
 function TZXConsole.InterruptActive(Length: Integer): Boolean;
@@ -1028,7 +1037,8 @@ begin
   Result := (FTime < Length) and not (FMachine.VideoTimex and ((FTimex and $40) <> 0));
   if FUSC <> nil then
     Result := FUSC.Interrupt(Result);
-  if (FMoon<>nil) and FMachine.MoonSoundIRQ then Result:=Result or FMoon.Interrupt;
+  if (FMoon <> nil) and FMachine.MoonSoundIRQ then
+    Result := Result or FMoon.Interrupt;
 end;
 
 function TZXConsole.ServiceUSC: Boolean;
@@ -1397,7 +1407,8 @@ function TZXConsole.ReadPort(Address: Word): Byte;
 begin
   if (FSID <> nil) and TZXSID.Decodes(Address) then
     Exit(FSID.ReadPort(Address));
-  if MoonSoundSelected(Address) then Exit(FMoon.ReadPort(Address));
+  if MoonSoundSelected(Address) then
+    Exit(FMoon.ReadPort(Address));
   Result := ReadOtherPort(Address);
   // Only A7 and /IORQ select the on-board PPI; A5/A6 select its register.
   // A0..A4 and the high byte are not decoded. Even aliases also select ULA.
@@ -1585,8 +1596,13 @@ begin
     Exit;
   end;
   // CPLD IORQG suppresses motherboard I/O, including even-port ULA and paging.
-  if MoonSoundSelected(Address) then begin
-    if (Parts and 16)<>0 then begin FMoon.WritePort(Address,Value);Notify(18);end;
+  if MoonSoundSelected(Address) then
+  begin
+    if (Parts and 16) <> 0 then
+    begin
+      FMoon.WritePort(Address, Value);
+      Notify(18);
+    end;
     Exit;
   end;
   if FMachine.Gama and ((Address and $80) = 0) and ((Parts and 16) <> 0) then
@@ -1856,7 +1872,8 @@ begin
   end;
   if FSID <> nil then
     FSID.Tick;
-  if FMoon<>nil then FMoon.Tick;
+  if FMoon <> nil then
+    FMoon.Tick;
   if FUSC <> nil then
     FUSC.Tick(FUSCBusAck);
   if FGS <> nil then
@@ -1905,8 +1922,12 @@ begin
     DACLeft := DACLeft + USCL;
     DACRight := DACRight + USCR;
   end;
-  if FMoon<>nil then begin
-    var L,R:Double;FMoon.Levels(L,R);DACLeft:=DACLeft+L;DACRight:=DACRight+R;
+  if FMoon <> nil then
+  begin
+    var L, R: Double;
+    FMoon.Levels(L, R);
+    DACLeft := DACLeft + L;
+    DACRight := DACRight + R;
   end;
   if FSID <> nil then
   begin
@@ -2139,9 +2160,9 @@ begin
   State.Field(FMachine.SID, SizeOf(FMachine.SID));
   State.Field(FMachine.SIDModel, SizeOf(FMachine.SIDModel));
   State.Field(FMachine.SIDNTSC, SizeOf(FMachine.SIDNTSC));
-  State.Field(FMachine.MoonSound,SizeOf(FMachine.MoonSound));
-  State.Field(FMachine.MoonSoundIRQ,SizeOf(FMachine.MoonSoundIRQ));
-  State.Field(FMachine.MoonSoundInDOS,SizeOf(FMachine.MoonSoundInDOS));
+  State.Field(FMachine.MoonSound, SizeOf(FMachine.MoonSound));
+  State.Field(FMachine.MoonSoundIRQ, SizeOf(FMachine.MoonSoundIRQ));
+  State.Field(FMachine.MoonSoundInDOS, SizeOf(FMachine.MoonSoundInDOS));
   State.Field(FMachine.DMAUSC, SizeOf(FMachine.DMAUSC));
   State.Field(FMachine.DMAUSCULABypass, SizeOf(FMachine.DMAUSCULABypass));
   State.Field(FMachine.DMAUSCStereo, SizeOf(FMachine.DMAUSCStereo));
@@ -2307,7 +2328,8 @@ begin
   FNextDAC.SerializeState(State);
   if FSID <> nil then
     FSID.SerializeState(State);
-  if FMoon<>nil then FMoon.SerializeState(State);
+  if FMoon <> nil then
+    FMoon.SerializeState(State);
   if FUSC <> nil then
     FUSC.SerializeState(State);
   if FGS <> nil then

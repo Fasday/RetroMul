@@ -762,7 +762,7 @@ begin
   Result := Length(FEntries);
 end;
 
-{$IFDEF CPUX64}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
 // Conversions as Round and Floor give them under the rasterizer's nearest
 // rounding, without calls into the runtime.
 function RoundInt(X: Double): Int64;

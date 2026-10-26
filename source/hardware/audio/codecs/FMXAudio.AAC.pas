@@ -6,7 +6,7 @@
 
 interface
 
-uses
+uses Core.Bitstream,
   System.SysUtils, System.Generics.Collections, FMXAudio.Types,
   FMXAudio.Bitstream, FMXAudio.Transform, FMXAudio.AAC.SBR, FMXAudio.AAC.SSR,
   FMXAudio.AAC.LD, FMXAudio.AAC.ER, FMXAudio.AAC.USAC, FMXAudio.AAC.USAC.LPD;
@@ -807,6 +807,7 @@ begin
     CommonTW := False;
     TNSOnLR := True;
     StereoMode := 0;
+    MaxSFB := 0;
     FillChar(Mask, SizeOf(Mask), 0);
     if (ChannelCount = 2) and not CoreMode[0] and not CoreMode[1] then
     begin
@@ -914,6 +915,7 @@ begin
       end;
       if not Common then
         ReadInfo(FICS[Channel]);
+      MaxSFB := Max(MaxSFB, FICS[Channel].MaxSFB);
       if Element.TimeWarping and not CommonTW then
         if FBits.ReadBit then
           raise EPlayerUnsupported.Create('USAC time-warped MDCT is not implemented');

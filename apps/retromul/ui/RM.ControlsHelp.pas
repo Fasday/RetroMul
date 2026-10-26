@@ -113,9 +113,9 @@ begin
     LabelNote.Text := Translate('Letter shortcuts, F5, F6, F8 and F9 are unavailable with keyboard peripherals.');
   if ZXActive then
     if KeyboardPeripheral then
-      LabelNote.Text := Translate('ZX: F5/F6 save/load; F7 tape; F8 rewind; F9 NMI. P, R, Shift+R and Ctrl+O go to ZX. Use toolbar buttons for emulator actions.')
+      LabelNote.Text := Translate('ZX: F5/F6 save/load; F7 tape; F8 rewind; F9 NMI. P, R, Shift+R and Ctrl+O go to ZX. Use toolbar buttons for emulator actions.') + ' ' + Translate('Hold F10 to fast-forward.')
     else
-      LabelNote.Text := Translate('ZX: F5/F6 save/load; F7 tape; F8 rewind; F9 NMI.');
+      LabelNote.Text := Translate('ZX: F5/F6 save/load; F7 tape; F8 rewind; F9 NMI.') + ' ' + Translate('Hold F10 to fast-forward.');
   ButtonSettings.OnClick := SettingsClick;
   ButtonSettings.StylesData['text.Margins.Left'] := 36;
   ButtonSettings.StylesData['text.Margins.Right'] := 10;

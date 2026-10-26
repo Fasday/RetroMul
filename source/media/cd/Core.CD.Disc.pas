@@ -52,8 +52,7 @@ type
     // requirements are selected by the caller after construction.
     // DeferIdentity skips reading the whole image here; the first Identity
     // call does it instead, and must come before another thread reads sectors.
-    constructor Create(Stream: TStream; const Storage: IStorage; const Location: string;
-      DeferIdentity: Boolean = False);
+    constructor Create(Stream: TStream; const Storage: IStorage; const Location: string; DeferIdentity: Boolean = False);
     // Inspect ZIP directory metadata without loading cartridge/disc payloads.
     class function IsDiscZip(Stream: TStream): Boolean; static;
     procedure RequireISO9660;
@@ -80,12 +79,12 @@ type
 
 // UTF-8 playlist; paths are relative to its location. Nested playlists are rejected.
 // SystemId names the ROM folder that resolves document (content://) locations.
-function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string;
-  const SystemId: string = 'ps1'): TArray<string>;
+function ReadCDPlaylist(Stream: TStream; const Storage: IStorage; const Location: string; const SystemId: string = 'ps1'): TArray<string>;
 
 function CDSibling(const Storage: IStorage; const Location, Name: string): string;
 // File names of the tracks a GDI lists (as written, relative to the GDI);
 // malformed lines are skipped.
+
 function ReadGDITrackNames(Stream: TStream): TArray<string>;
 // A single-track raw image (.bin without a CUE): 2352-byte sectors starting
 // with a Mode 1 or Mode 2 data sector. Restores the stream position.
@@ -324,8 +323,7 @@ begin
     raise EReadError.Create('CD audio WAV requires 44100 Hz, stereo, 16-bit PCM');
 end;
 
-constructor TCDDisc.Create(Stream: TStream; const Storage: IStorage; const Location: string;
-  DeferIdentity: Boolean);
+constructor TCDDisc.Create(Stream: TStream; const Storage: IStorage; const Location: string; DeferIdentity: Boolean);
 begin
   inherited Create;
   if (Stream = nil) or (Storage = nil) or (Location = '') then
@@ -1093,10 +1091,14 @@ begin
         Skip(16);
         var SectorSize: Integer;
         case U32 of
-          0: SectorSize := 2048;
-          1: SectorSize := 2336;
-          2: SectorSize := 2352;
-          4: SectorSize := 2448;
+          0:
+            SectorSize := 2048;
+          1:
+            SectorSize := 2336;
+          2:
+            SectorSize := 2352;
+          4:
+            SectorSize := 2448;
         else
           raise EReadError.Create('Unsupported CDI sector size');
         end;
@@ -1127,7 +1129,8 @@ begin
         Item.EndLBA := Item.StartLBA + Length_;
         if not Item.Audio then
           case SectorSize of
-            2336: Item.DataOffset := 8;
+            2336:
+              Item.DataOffset := 8;
             2352, 2448:
               if Mode = 2 then
                 Item.DataOffset := 24
@@ -1346,8 +1349,10 @@ begin
         end;
         if not (Mode in [1, 2]) then
           case U8(Block) and $0F of
-            $A: Mode := 1;
-            $B..$D: Mode := 2;
+            $A:
+              Mode := 1;
+            $B..$D:
+              Mode := 2;
           else
             raise EReadError.Create('Unknown MDS data track mode');
           end;
@@ -1569,11 +1574,13 @@ begin
       // Per track: ISRC, sector size, mode and three file offsets (64-bit in
       // DAOX, 32-bit in DAOI; some writers use 32-bit size and mode fields).
       var Entry := (Count - 22) div (Last - First + 1);
-      var Wide := 0;
+      var Wide: Integer;
       var Head := 18;
       case Entry of
-        42: Wide := 8;
-        30: Wide := 4;
+        42:
+          Wide := 8;
+        30:
+          Wide := 4;
         32:
           begin
             Wide := 4;
@@ -1712,13 +1719,13 @@ begin
   FHighDensity := GDROM;
   var FileCursor := 0;
   var Cursor := 0;
-  for var i := 0 to 98 do
+  for var I := 0 to 98 do
   begin
-    var Metadata := Source.Metadata($43485432, i); // CHT2
+    var Metadata := Source.Metadata($43485432, I); // CHT2
     if Metadata = '' then
-      Metadata := Source.Metadata($43485452, i); // CHTR
+      Metadata := Source.Metadata($43485452, I); // CHTR
     if Metadata = '' then
-      Metadata := Source.Metadata($43484744, i); // CHGD
+      Metadata := Source.Metadata($43484744, I); // CHGD
     if Metadata = '' then
       Break;
 
@@ -1752,7 +1759,7 @@ begin
           PostGap := StrToInt(Pair[1]);
       end;
     end;
-    if (Number <> i + 1) or (Frames <= 0) or (Frames > 450000) or
+    if (Number <> I + 1) or (Frames <= 0) or (Frames > 450000) or
       (Gap < 0) or (Gap > 450000) or (PostGap < 0) or (PostGap > 450000) then
       raise EReadError.Create('Invalid CHD track bounds');
 
@@ -1773,7 +1780,7 @@ begin
     // The GD-ROM high-density area starts with track 3 at LBA 45000.
     if GDROM and (Number = 3) and (Cursor + Gap < 45000) then
       Cursor := 45000 - Gap;
-    SetLength(FTracks, i + 1);
+    SetLength(FTracks, I + 1);
     var Item := Default(TCDTrack);
     Item.Number := Number;
     Item.Session := 1;
@@ -1801,7 +1808,7 @@ begin
     Item.Stream := TCHDStream.Create(Source);
 
     // CHD's CD audio is big-endian; BIN and WAV are little-endian.
-    FTracks[i] := Item;
+    FTracks[I] := Item;
   end;
   FLeadOut := Cursor;
 end;
@@ -1962,9 +1969,9 @@ end;
 function TCDDisc.TrackAt(LBA: Integer): Integer;
 begin
   Result := -1;
-  for var i := 0 to High(FTracks) do
-    if (LBA >= FTracks[i].PregapLBA) and (LBA < FTracks[i].EndLBA) then
-      Exit(i);
+  for var I := 0 to High(FTracks) do
+    if (LBA >= FTracks[I].PregapLBA) and (LBA < FTracks[I].EndLBA) then
+      Exit(I);
 end;
 
 function TCDDisc.Track(Number: Integer): TCDTrack;
@@ -2033,9 +2040,9 @@ begin
   if (Count < 0) or (Count > Length(Data)) then
     raise EArgumentOutOfRangeException.Create('Invalid CD EDC range');
   Result := 0;
-  for var i := 0 to Count - 1 do
+  for var I := 0 to Count - 1 do
   begin
-    Result := Result xor Data[i];
+    Result := Result xor Data[I];
     for var Bit := 0 to 7 do
       if (Result and 1) <> 0 then
         Result := (Result shr 1) xor $D8018001
@@ -2155,13 +2162,13 @@ begin
   if CRCValid(Sector) then
     Exit(True);
   Work := Copy(Sector);
-  for var i := 0 to 255 do
+  for var I := 0 to 255 do
   begin
-    var J := i shl 1;
-    if (i and $80) <> 0 then
+    var J := I shl 1;
+    if (I and $80) <> 0 then
       J := J xor $11D;
-    ForwardGF[i] := J;
-    BackwardGF[i xor J] := i;
+    ForwardGF[I] := J;
+    BackwardGF[I xor J] := I;
   end;
   for var Pass := 0 to 3 do
   begin
@@ -2185,9 +2192,9 @@ end;
 function CDQCRC(const Q: TBytes): Word;
 begin
   var CRC: Cardinal := 0;
-  for var i := 0 to 9 do
+  for var I := 0 to 9 do
   begin
-    CRC := CRC xor (Cardinal(Q[i]) shl 8);
+    CRC := CRC xor (Cardinal(Q[I]) shl 8);
     for var Bit := 0 to 7 do
       if (CRC and $8000) <> 0 then
         CRC := ((CRC shl 1) xor $1021) and $FFFF
@@ -2261,8 +2268,8 @@ begin
     Exit; // Preserve the dumped header, parity and intentional errors.
   end;
   FillChar(Sector[0], Length(Sector), 0);
-  for var i := 1 to 10 do
-    Sector[i] := $FF;
+  for var I := 1 to 10 do
+    Sector[I] := $FF;
   var Position := LBA + 150;
   Sector[12] := CDBCD(Position div 4500);
   Sector[13] := CDBCD((Position div 75) mod 60);
@@ -2272,16 +2279,16 @@ begin
   ReadData(LBA, Data);
   Move(Data[0], Sector[16], 2048);
   var EDC := CDDataEDC(Sector, 2064);
-  for var i := 0 to 3 do
-    Sector[2064 + i] := Byte(EDC shr (i * 8));
+  for var I := 0 to 3 do
+    Sector[2064 + I] := Byte(EDC shr (I * 8));
   // ECMA-130 Mode 1: P(26,24), then Q(45,43) including P parity.
-  for var i := 0 to 255 do
+  for var I := 0 to 255 do
   begin
-    var J := i shl 1;
-    if (i and $80) <> 0 then
+    var J := I shl 1;
+    if (I and $80) <> 0 then
       J := J xor $11D;
-    ForwardGF[i] := J;
-    BackwardGF[i xor J] := i;
+    ForwardGF[I] := J;
+    BackwardGF[I xor J] := I;
   end;
   Parity(86, 24, 2, 86, 2076);
   Parity(52, 43, 86, 88, 2248);
@@ -2319,8 +2326,8 @@ begin
       Item.Stream.ReadBuffer(Sub, 96);
     end;
     if Item.SubRaw then
-      for var i := 0 to 95 do
-        Q[i div 8] := Q[i div 8] or (((Sub[i] shr 6) and 1) shl (7 - i mod 8))
+      for var I := 0 to 95 do
+        Q[I div 8] := Q[I div 8] or (((Sub[I] shr 6) and 1) shl (7 - I mod 8))
     else
       Move(Sub[12], Q[0], 12);
     var CRC := CDQCRC(Q);

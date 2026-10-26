@@ -349,12 +349,7 @@ begin
     RomName.ToLower.Contains('(sf-7000)') or RomName.ToLower.Contains('initial program loader'));
   if IsZXImageName(SourceName) and not SegaDisk then
   begin
-    var ZXStream := TBytesStream.Create(Data);
-    try
-      Result := TZXCoreAdapter.Create(ZXStream, Storage, RomName, SourceName);
-    finally
-      ZXStream.Free;
-    end;
+    Result := TZXCoreAdapter.CreateOwned(Data, Storage, RomName, SourceName);
     Exit;
   end;
 

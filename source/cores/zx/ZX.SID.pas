@@ -79,8 +79,10 @@ begin
       FAddress := Value;
     $6D3B:
       case FAddress of
-        $00..$1C: FChip.WriteRegister(FAddress, Value);
-        $1F: SetParameters(Value);
+        $00..$1C:
+          FChip.WriteRegister(FAddress, Value);
+        $1F:
+          SetParameters(Value);
         // 20 is reserved for optional multiple SIDs. This profile has one chip.
       end;
   end;
@@ -92,9 +94,12 @@ begin
   if Address <> $6D3B then
     Exit;
   case FAddress of
-    $00..$1C: Result := FChip.ReadRegister(FAddress);
-    $1F: Result := FParameters;
-    $20: Result := 0;
+    $00..$1C:
+      Result := FChip.ReadRegister(FAddress);
+    $1F:
+      Result := FParameters;
+    $20:
+      Result := 0;
   end;
 end;
 
@@ -141,3 +146,4 @@ begin
 end;
 
 end.
+

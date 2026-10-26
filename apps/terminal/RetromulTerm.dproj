@@ -1,4 +1,4 @@
-﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{4490F9E7-DA81-458B-A9BF-211F6E8C70C0}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -86,6 +86,7 @@
         <Cfg_2>true</Cfg_2>
         <Base>true</Base>
     </PropertyGroup>
+    <Import Project="..\..\source\RetroMul.Paths.props"/>
     <PropertyGroup Condition="'$(Base)'!=''">
         <DCC_DcuOutput>$(Platform)\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>$(Platform)\$(Config)</DCC_ExeOutput>
@@ -96,7 +97,7 @@
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <SanitizedProjectName>RetromulTerm</SanitizedProjectName>
-        <DCC_UnitSearchPath>..\..\source\hardware\audio\atrac3;..\..\source\hardware\audio\codecs;..\..\source\hardware\video\avc;..\..\source\hardware\audio\atrac3plus;..\..\source\cores\psp;..\..\source\hardware\audio\opl;..\..\source\hardware\audio\mp3;..\..\source\cores\ngp;..\..\dependencies\Delphi7z;..\..\source\cores\cps;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\cores\dc;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\source\cores\neogeo;..\..\source\cores\zx;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source;..\..\dependencies\PCMAudio;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>1049</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
     </PropertyGroup>
@@ -259,7 +260,7 @@
         <DCCReference Include="..\..\source\cores\zx\ZX.BetaDisk.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.CMOS.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.Emulation.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.ZX.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.ZX.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS.Medal.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS.MSMSound.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS1.MSM.pas"/>
@@ -287,7 +288,7 @@
         <DCCReference Include="..\..\source\cores\cps\CPS1.Console.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS2.Console.pas"/>
         <DCCReference Include="..\..\source\cores\cps\CPS3.Console.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.CPS.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.CPS.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH7604.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Firmware.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH7034.pas"/>
@@ -303,7 +304,7 @@
         <DCCReference Include="..\..\source\cores\saturn\Saturn.VDP2.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Console.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Emulation.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.Saturn.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.Saturn.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Types.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Scheduler.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Bus.pas"/>
@@ -321,8 +322,8 @@
         <DCCReference Include="..\..\source\cores\ps1\PS1.Exe.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Firmware.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Console.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.PS1.Playback.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.PS1.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.PS1.Playback.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.PS1.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Types.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Scheduler.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Interrupts.pas"/>
@@ -344,13 +345,13 @@
         <DCCReference Include="..\..\source\cores\dc\DC.Console.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH4.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH4.Periph.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.DC.Playback.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.DC.pas"/>
-        <DCCReference Include="..\..\source\ui\fmx\gamewatch\GW.Artwork.FMX.pas"/>
-        <DCCReference Include="..\..\source\contracts\Core.Emulation.Types.pas"/>
-        <DCCReference Include="..\..\source\contracts\Core.Storage.Types.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.DC.Playback.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.DC.pas"/>
+        <DCCReference Include="..\..\source\ui\gamewatch\GW.Artwork.FMX.pas"/>
+        <DCCReference Include="..\..\source\runtime\Core.Emulation.Types.pas"/>
+        <DCCReference Include="..\..\source\runtime\Core.Storage.Types.pas"/>
         <DCCReference Include="..\..\source\runtime\Core.Emulation.Timing.pas"/>
-        <DCCReference Include="..\..\source\services\settings\Core.Emulation.Config.pas"/>
+        <DCCReference Include="..\..\source\runtime\Core.Emulation.Config.pas"/>
         <DCCReference Include="..\..\source\cores\gamewatch\GW.Artwork.pas"/>
         <DCCReference Include="Retromul.Terminal.pas"/>
         <DCCReference Include="..\..\source\media\cd\Core.CD.Disc.pas"/>
@@ -366,9 +367,9 @@
         <DCCReference Include="..\..\source\cores\neogeo\NeoGeoCD.Controller.pas"/>
         <DCCReference Include="..\..\source\cores\neogeo\NeoGeo.Bootleg.pas"/>
         <DCCReference Include="..\..\source\cores\neogeo\NeoGeo.PCB.pas"/>
-        <DCCReference Include="..\..\source\services\storage\Core.Storage.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.N64.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.N64.Playback.pas"/>
+        <DCCReference Include="..\..\source\runtime\Core.Storage.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.N64.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.N64.Playback.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.Types.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.CPU.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.RSP.pas"/>
@@ -377,7 +378,7 @@
         <DCCReference Include="..\..\source\cores\n64\N64.Timing.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.VI.pas"/>
         <DCCReference Include="..\..\source\cores\n64\N64.Console.pas"/>
-        <DCCReference Include="..\..\source\services\catalog\Core.Platforms.pas"/>
+        <DCCReference Include="..\..\source\runtime\Core.Platforms.pas"/>
         <DCCReference Include="..\..\source\media\rom\Core.RomFormat.pas"/>
         <DCCReference Include="..\..\source\media\rom\Core.RomHashes.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Memory.pas"/>
@@ -385,8 +386,8 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.CPU.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Executable.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Console.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.PSP.Archive.pas"/>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.PSP.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.PSP.Archive.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.PSP.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.AES.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.PRX.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Relocations.pas"/>
@@ -406,6 +407,7 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.Controller.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPUMath.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.VariablePool.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.MP3.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Mpeg.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.MpegStream.pas"/>
         <DCCReference Include="..\..\source\media\Core.Bitstream.pas"/>
@@ -441,7 +443,7 @@
             <Key>Cfg_2</Key>
             <CfgParent>Base</CfgParent>
         </BuildConfiguration>
-        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.PCE.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.PCE.pas"/>
         <DCCReference Include="..\..\source\cores\pce\PCE.Cartridge.pas"/>
         <DCCReference Include="..\..\source\cores\pce\PCE.Firmware.pas"/>
         <DCCReference Include="..\..\source\cores\pce\PCE.Console.pas"/>

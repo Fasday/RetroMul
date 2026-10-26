@@ -2803,7 +2803,8 @@ begin
       var Physical2: Cardinal := 0;
       var Cached := False;
       var Kind := Step.Kind;
-      var FPA, FPB: UInt64;
+      var FPA: UInt64 := 0;
+      var FPB: UInt64 := 0;
       var FPResult: TSoftFloatResult;
       var FPCycles: Cardinal;
       var FPTarget: Integer;

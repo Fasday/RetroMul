@@ -2,16 +2,18 @@
 
 interface
 
-uses System.Classes, System.SysUtils, System.Generics.Collections;
+uses
+  System.Classes, System.SysUtils, System.Generics.Collections;
 
 type
   EPSPFormat = class(EReadError);
+
   TPSPDiscEntry = record
     Name: string;
     Size: Int64;
     Directory: Boolean;
     LBA: Cardinal;
-    Created,Accessed,Modified: TDateTime;
+    Created, Accessed, Modified: TDateTime;
   end;
 
   TPSPSFO = class
@@ -48,7 +50,7 @@ type
     function IsPSP: Boolean;
     function OpenFile(const Path: string): TStream;
     function OpenRaw: TStream;
-    function ReadSectors(LBA,Count: Cardinal): TBytes;
+    function ReadSectors(LBA, Count: Cardinal): TBytes;
     function FileInfo(const Path: string; out FileSize: Int64; out Directory: Boolean): Boolean;
     function ReadDirectory(const Path: string): TArray<TPSPDiscEntry>;
     function FileLBA(const Path: string): Cardinal;
@@ -63,11 +65,13 @@ type
   end;
 
 function PSPLE16(const Data: TBytes; Offset: Int64): Word;
+
 function PSPLE32(const Data: TBytes; Offset: Int64): Cardinal;
 
 implementation
 
-uses System.ZLib, System.Math, System.DateUtils, PSP.PRX;
+uses
+  System.ZLib, System.Math, System.DateUtils, PSP.PRX;
 
 type
   TPSPDiscStream = class(TStream)
@@ -87,9 +91,10 @@ constructor TPSPDiscStream.Create(Disc: TPSPDisc; LBA, Size: Cardinal);
 begin
   inherited Create;
   FDisc := Disc;
-  FStart := Int64(LBA)*2048;
+  FStart := Int64(LBA) * 2048;
   FLength := Size;
-  if (FStart>Disc.Size) or (FLength>Disc.Size-FStart) then raise EPSPFormat.Create('PSP: UMD file outside image');
+  if (FStart > Disc.Size) or (FLength > Disc.Size - FStart) then
+    raise EPSPFormat.Create('PSP: UMD file outside image');
 end;
 
 function TPSPDiscStream.GetSize: Int64;
@@ -99,21 +104,23 @@ end;
 
 function TPSPDiscStream.Read(var Buffer; Count: Longint): Longint;
 begin
-  if Count<=0 then Exit(0);
-  if FPosition>=FLength then Exit(0);
-  Result := Min(Int64(Count),FLength-FPosition);
+  if Count <= 0 then
+    Exit(0);
+  if FPosition >= FLength then
+    Exit(0);
+  Result := Min(Int64(Count), FLength - FPosition);
   var Done := 0;
-  while Done<Result do
+  while Done < Result do
   begin
-    var Offset := FStart+FPosition+Done;
+    var Offset := FStart + FPosition + Done;
     var Sector: TBytes;
-    FDisc.ReadBlock(Offset div 2048,Sector);
+    FDisc.ReadBlock(Offset div 2048, Sector);
     var InSector := Integer(Offset mod 2048);
-    var N := Min(Result-Done,2048-InSector);
-    Move(Sector[InSector],PByte(@Buffer)[Done],N);
-    Inc(Done,N);
+    var N := Min(Result - Done, 2048 - InSector);
+    Move(Sector[InSector], PByte(@Buffer)[Done], N);
+    Inc(Done, N);
   end;
-  Inc(FPosition,Result);
+  Inc(FPosition, Result);
 end;
 
 function TPSPDiscStream.Write(const Buffer; Count: Longint): Longint;
@@ -125,10 +132,13 @@ function TPSPDiscStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
 begin
   var NewPosition := Offset;
   case Origin of
-    soCurrent: NewPosition := FPosition+Offset;
-    soEnd: NewPosition := FLength+Offset;
+    soCurrent:
+      NewPosition := FPosition + Offset;
+    soEnd:
+      NewPosition := FLength + Offset;
   end;
-  if NewPosition<0 then raise EStreamError.Create('PSP: negative UMD seek');
+  if NewPosition < 0 then
+    raise EStreamError.Create('PSP: negative UMD seek');
   FPosition := NewPosition;
   Result := FPosition;
 end;
@@ -157,7 +167,8 @@ function ZeroText(const Data: TBytes; Start, Limit: Int64): string;
 begin
   CheckRange(Data, Start, Limit);
   var Count: Int64 := 0;
-  while (Count < Limit) and (Data[Start + Count] <> 0) do Inc(Count);
+  while (Count < Limit) and (Data[Start + Count] <> 0) do
+    Inc(Count);
   if Count = Limit then
     raise EPSPFormat.Create('PSP: unterminated container string');
   Result := TEncoding.UTF8.GetString(Data, Start, Count);
@@ -168,7 +179,8 @@ begin
   inherited Create;
   FStrings := TDictionary<string, string>.Create;
   FIntegers := TDictionary<string, Cardinal>.Create;
-  if Length(Data) = 0 then Exit;
+  if Length(Data) = 0 then
+    Exit;
   if (Length(Data) < 20) or (PSPLE32(Data, 0) <> $46535000) or
     (PSPLE32(Data, 4) <> $101) then
     raise EPSPFormat.Create('PSP: invalid PARAM.SFO header');
@@ -182,18 +194,22 @@ begin
   begin
     var Entry := 20 + I * 16;
     var K := Keys + PSPLE16(Data, Entry);
-    if K >= Values then raise EPSPFormat.Create('PSP: invalid SFO key offset');
+    if K >= Values then
+      raise EPSPFormat.Create('PSP: invalid SFO key offset');
     var Name := ZeroText(Data, K, Values - K);
     var Used := PSPLE32(Data, Entry + 4);
     var Capacity := PSPLE32(Data, Entry + 8);
     var V := Values + PSPLE32(Data, Entry + 12);
-    if Used > Capacity then raise EPSPFormat.Create('PSP: invalid SFO value size');
+    if Used > Capacity then
+      raise EPSPFormat.Create('PSP: invalid SFO value size');
     CheckRange(Data, V, Capacity);
     case PSPLE16(Data, Entry + 2) of
-      $0204: FStrings.AddOrSetValue(Name, ZeroText(Data, V, Used));
+      $0204:
+        FStrings.AddOrSetValue(Name, ZeroText(Data, V, Used));
       $0404:
         begin
-          if Used <> 4 then raise EPSPFormat.Create('PSP: invalid SFO integer');
+          if Used <> 4 then
+            raise EPSPFormat.Create('PSP: invalid SFO integer');
           FIntegers.AddOrSetValue(Name, PSPLE32(Data, V));
         end;
     end;
@@ -209,12 +225,14 @@ end;
 
 function TPSPSFO.Text(const Key: string): string;
 begin
-  if not FStrings.TryGetValue(Key, Result) then Result := '';
+  if not FStrings.TryGetValue(Key, Result) then
+    Result := '';
 end;
 
 function TPSPSFO.Number(const Key: string; Default: Cardinal): Cardinal;
 begin
-  if not FIntegers.TryGetValue(Key, Result) then Result := Default;
+  if not FIntegers.TryGetValue(Key, Result) then
+    Result := Default;
 end;
 
 procedure TPSPDisc.ReadAt(Offset: Int64; var Buffer; Count: Integer);
@@ -235,8 +253,10 @@ begin
     Stream.Position := 0;
     if Stream.Read(Magic, 4) = 4 then
       if (Magic[0] = Ord('C')) and (Magic[1] = Ord('I')) and
-        (Magic[2] = Ord('S')) and (Magic[3] = Ord('O')) then Exit(True);
-    if Stream.Size < 17 * 2048 then Exit;
+        (Magic[2] = Ord('S')) and (Magic[3] = Ord('O')) then
+        Exit(True);
+    if Stream.Size < 17 * 2048 then
+      Exit;
     Stream.Position := 16 * 2048;
     Stream.ReadBuffer(Magic, 7);
     Result := (Magic[0] = 1) and (Magic[1] = Ord('C')) and (Magic[2] = Ord('D')) and
@@ -249,7 +269,8 @@ end;
 constructor TPSPDisc.Create(Stream: TStream);
 begin
   inherited Create;
-  if Stream = nil then raise EArgumentNilException.Create('Stream');
+  if Stream = nil then
+    raise EArgumentNilException.Create('Stream');
   FStream := Stream;
   FCacheBlock := -1;
   FBlockSize := 2048;
@@ -309,7 +330,8 @@ begin
     var Finish := Int64(FIndex[Index + 1] and $7FFFFFFF) shl FAlignment;
     if FIndex[Index] and $80000000 <> 0 then
     begin
-      if Finish - Start < FBlockSize then raise EPSPFormat.Create('PSP: truncated plain CISO block');
+      if Finish - Start < FBlockSize then
+        raise EPSPFormat.Create('PSP: truncated plain CISO block');
       ReadAt(Start, Data[0], Length(Data));
     end
     else
@@ -326,7 +348,8 @@ begin
         try
           Decoder.ReadBuffer(Data[0], Length(Data));
           var Extra: Byte;
-          if Decoder.Read(Extra, 1) <> 0 then raise EPSPFormat.Create('PSP: oversized CISO sector');
+          if Decoder.Read(Extra, 1) <> 0 then
+            raise EPSPFormat.Create('PSP: oversized CISO sector');
         finally
           Decoder.Free;
         end;
@@ -358,22 +381,31 @@ end;
 
 function TPSPDisc.FindEntry(const Path: string; out LBA, Size: Cardinal; out Directory: Boolean): Boolean;
 begin
-  LBA := 0; Size := 0; Directory := False;
+  LBA := 0;
+  Size := 0;
+  Directory := False;
   var RawName := Path.Trim(['/']).ToLower;
   if RawName.StartsWith('sce_lbn') then
   begin
-    Result := False; Directory := False;
+    Result := False;
+    Directory := False;
     var Separator := RawName.IndexOf('_size');
-    if Separator<7 then Exit;
-    var LBAText := RawName.Substring(7,Separator-7);
-    var SizeText := RawName.Substring(Separator+5);
-    if LBAText.StartsWith('0x') then LBAText := LBAText.Substring(2);
-    if SizeText.StartsWith('0x') then SizeText := SizeText.Substring(2);
-    var LBAValue,SizeValue: UInt64;
-    if not TryStrToUInt64('$'+LBAText,LBAValue) or not TryStrToUInt64('$'+SizeText,SizeValue) or
-      (LBAValue>High(Cardinal)) or (SizeValue>High(Cardinal)) then Exit;
-    if (LBAValue*2048>UInt64(FSize)) or (SizeValue>UInt64(FSize)-LBAValue*2048) then Exit;
-    LBA := Cardinal(LBAValue); Size := Cardinal(SizeValue);
+    if Separator < 7 then
+      Exit;
+    var LBAText := RawName.Substring(7, Separator - 7);
+    var SizeText := RawName.Substring(Separator + 5);
+    if LBAText.StartsWith('0x') then
+      LBAText := LBAText.Substring(2);
+    if SizeText.StartsWith('0x') then
+      SizeText := SizeText.Substring(2);
+    var LBAValue, SizeValue: UInt64;
+    if not TryStrToUInt64('$' + LBAText, LBAValue) or not TryStrToUInt64('$' + SizeText, SizeValue) or
+      (LBAValue > High(Cardinal)) or (SizeValue > High(Cardinal)) then
+      Exit;
+    if (LBAValue * 2048 > UInt64(FSize)) or (SizeValue > UInt64(FSize) - LBAValue * 2048) then
+      Exit;
+    LBA := Cardinal(LBAValue);
+    Size := Cardinal(SizeValue);
     Exit(True);
   end;
   LBA := FRootLBA;
@@ -381,7 +413,8 @@ begin
   Directory := True;
   for var Part in Path.Replace('\', '/').Split(['/'], TStringSplitOptions.ExcludeEmpty) do
   begin
-    if not Directory then Exit(False);
+    if not Directory then
+      Exit(False);
     var Data := ReadExtent(LBA, Size, 8 * 1024 * 1024);
     var Pos := 0;
     var Found := False;
@@ -397,10 +430,12 @@ begin
       if (N < 34) or ((Pos mod 2048) + N > 2048) or (Integer(Data[Pos + 32]) > N - 33) then
         raise EPSPFormat.Create('PSP: malformed ISO9660 directory record');
       var Name := TEncoding.ASCII.GetString(Data, Pos + 33, Data[Pos + 32]);
-      if Name.EndsWith(';1') then Name := Name.Substring(0, Name.Length - 2);
+      if Name.EndsWith(';1') then
+        Name := Name.Substring(0, Name.Length - 2);
       if SameText(Name, Part) then
       begin
-        if Data[Pos + 25] and $80 <> 0 then raise EPSPFormat.Create('PSP: multi-extent ISO files are unsupported');
+        if Data[Pos + 25] and $80 <> 0 then
+          raise EPSPFormat.Create('PSP: multi-extent ISO files are unsupported');
         LBA := PSPLE32(Data, Pos + 2);
         Size := PSPLE32(Data, Pos + 10);
         Directory := Data[Pos + 25] and 2 <> 0;
@@ -409,7 +444,8 @@ begin
       end;
       Inc(Pos, N);
     end;
-    if not Found then Exit(False);
+    if not Found then
+      Exit(False);
   end;
   Result := True;
 end;
@@ -437,68 +473,87 @@ end;
 
 function TPSPDisc.OpenRaw: TStream;
 begin
-  if FSize>High(Cardinal) then raise EPSPFormat.Create('PSP: UMD image exceeds device address range');
-  Result := TPSPDiscStream.Create(Self,0,Cardinal(FSize));
+  if FSize > High(Cardinal) then
+    raise EPSPFormat.Create('PSP: UMD image exceeds device address range');
+  Result := TPSPDiscStream.Create(Self, 0, Cardinal(FSize));
 end;
 
-function TPSPDisc.ReadSectors(LBA,Count: Cardinal): TBytes;
+function TPSPDisc.ReadSectors(LBA, Count: Cardinal): TBytes;
 begin
-  if Count>32768 then raise EPSPFormat.Create('PSP: oversized UMD sector request');
-  Result := ReadExtent(LBA,Count*2048,64*1024*1024);
+  if Count > 32768 then
+    raise EPSPFormat.Create('PSP: oversized UMD sector request');
+  Result := ReadExtent(LBA, Count * 2048, 64 * 1024 * 1024);
 end;
 
 function TPSPDisc.OpenFile(const Path: string): TStream;
 begin
   var LBA, Size: Cardinal;
   var Directory: Boolean;
-  if not FindEntry(Path,LBA,Size,Directory) or Directory then
-    raise EFOpenError.CreateFmt('PSP: UMD file not found: %s',[Path]);
-  Result := TPSPDiscStream.Create(Self,LBA,Size);
+  if not FindEntry(Path, LBA, Size, Directory) or Directory then
+    raise EFOpenError.CreateFmt('PSP: UMD file not found: %s', [Path]);
+  Result := TPSPDiscStream.Create(Self, LBA, Size);
 end;
 
 function TPSPDisc.FileInfo(const Path: string; out FileSize: Int64; out Directory: Boolean): Boolean;
 begin
   var LBA, Size: Cardinal;
-  Result := FindEntry(Path,LBA,Size,Directory);
+  Result := FindEntry(Path, LBA, Size, Directory);
   FileSize := Size;
 end;
 
 function TPSPDisc.FileLBA(const Path: string): Cardinal;
 begin
-  var Size: Cardinal; var Directory: Boolean;
-  if not FindEntry(Path,Result,Size,Directory) then Result := 0;
+  var Size: Cardinal;
+  var Directory: Boolean;
+  if not FindEntry(Path, Result, Size, Directory) then
+    Result := 0;
 end;
 
 function TPSPDisc.ReadDirectory(const Path: string): TArray<TPSPDiscEntry>;
 begin
-  var LBA,Size: Cardinal; var Directory: Boolean;
-  if not FindEntry(Path,LBA,Size,Directory) or not Directory then
-    raise EFOpenError.CreateFmt('PSP: UMD directory not found: %s',[Path]);
-  var Data := ReadExtent(LBA,Size,8*1024*1024);
+  var LBA, Size: Cardinal;
+  var Directory: Boolean;
+  if not FindEntry(Path, LBA, Size, Directory) or not Directory then
+    raise EFOpenError.CreateFmt('PSP: UMD directory not found: %s', [Path]);
+  var Data := ReadExtent(LBA, Size, 8 * 1024 * 1024);
   var Entries := TList<TPSPDiscEntry>.Create;
   try
     var At := 0;
-    while At<Length(Data) do
+    while At < Length(Data) do
     begin
       var Count := Integer(Data[At]);
-      if Count=0 then begin At := ((At div 2048)+1)*2048; Continue; end;
-      CheckRange(Data,At,Count);
-      if (Count<34) or ((At mod 2048)+Count>2048) or (Data[At+32]>Count-33) then
+      if Count = 0 then
+      begin
+        At := ((At div 2048) + 1) * 2048;
+        Continue;
+      end;
+      CheckRange(Data, At, Count);
+      if (Count < 34) or ((At mod 2048) + Count > 2048) or (Data[At + 32] > Count - 33) then
         raise EPSPFormat.Create('PSP: malformed ISO9660 directory record');
-      if (Data[At+32]=1) and (Data[At+33] in [0,1]) then begin Inc(At,Count); Continue; end;
+      if (Data[At + 32] = 1) and (Data[At + 33] in [0, 1]) then
+      begin
+        Inc(At, Count);
+        Continue;
+      end;
       var Entry := Default(TPSPDiscEntry);
-      Entry.Name := TEncoding.ASCII.GetString(Data,At+33,Data[At+32]);
-      if Entry.Name.EndsWith(';1') then Entry.Name := Entry.Name.Substring(0,Entry.Name.Length-2);
-      Entry.LBA := PSPLE32(Data,At+2); Entry.Size := PSPLE32(Data,At+10);
-      Entry.Directory := Data[At+25] and 2<>0;
-      if Data[At+25] and $80<>0 then raise EPSPFormat.Create('PSP: multi-extent ISO files are unsupported');
-      TryEncodeDateTime(1900+Data[At+18],Data[At+19],Data[At+20],Data[At+21],Data[At+22],Data[At+23],0,Entry.Modified);
-      Entry.Created := Entry.Modified; Entry.Accessed := Entry.Modified;
+      Entry.Name := TEncoding.ASCII.GetString(Data, At + 33, Data[At + 32]);
+      if Entry.Name.EndsWith(';1') then
+        Entry.Name := Entry.Name.Substring(0, Entry.Name.Length - 2);
+      Entry.LBA := PSPLE32(Data, At + 2);
+      Entry.Size := PSPLE32(Data, At + 10);
+      Entry.Directory := Data[At + 25] and 2 <> 0;
+      if Data[At + 25] and $80 <> 0 then
+        raise EPSPFormat.Create('PSP: multi-extent ISO files are unsupported');
+      TryEncodeDateTime(1900 + Data[At + 18], Data[At + 19], Data[At + 20], Data[At + 21], Data[At + 22], Data[At + 23], 0, Entry.Modified);
+      Entry.Created := Entry.Modified;
+      Entry.Accessed := Entry.Modified;
       Entries.Add(Entry);
-      Inc(At,Count);
+      Inc(At, Count);
     end;
     Result := Entries.ToArray;
-  finally Entries.Free; end;
+  finally
+    Entries.Free;
+  end;
 end;
 
 class function TPSPProgram.Read(Stream: TStream): TPSPProgram;
@@ -510,7 +565,8 @@ begin
     begin
       var Disc := TPSPDisc.Create(Stream);
       try
-        if not Disc.IsPSP then raise EPSPFormat.Create('PSP: image does not contain PSP_GAME');
+        if not Disc.IsPSP then
+          raise EPSPFormat.Create('PSP: image does not contain PSP_GAME');
         Result.BootPath := 'disc0:/PSP_GAME/SYSDIR/EBOOT.BIN';
         Result.Parameters := Disc.ReadFile('PSP_GAME/PARAM.SFO', 1024 * 1024);
         Result.Executable := Disc.ReadFile('PSP_GAME/SYSDIR/EBOOT.BIN');
@@ -518,7 +574,8 @@ begin
           Disc.HasFile('PSP_GAME/SYSDIR/BOOT.BIN') then
         begin
           var Boot := Disc.ReadFile('PSP_GAME/SYSDIR/BOOT.BIN');
-          if (Length(Boot) >= 4) and (PSPLE32(Boot, 0) = $464C457F) then Result.Executable := Boot;
+          if (Length(Boot) >= 4) and (PSPLE32(Boot, 0) = $464C457F) then
+            Result.Executable := Boot;
         end;
       finally
         Disc.Free;
@@ -548,7 +605,8 @@ begin
         Result.Parameters := Copy(Data, Offsets[0], Offsets[1] - Offsets[0]);
         Result.Executable := Copy(Data, Offsets[6], Offsets[7] - Offsets[6]);
       end
-      else Result.Executable := Data;
+      else
+        Result.Executable := Data;
     end;
     var SFO := TPSPSFO.Create(Result.Parameters);
     try
@@ -566,3 +624,4 @@ begin
 end;
 
 end.
+
