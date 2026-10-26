@@ -171,23 +171,27 @@ type
     Link: array[0..1] of PRSPBlock;
     LinkPC: array[0..1] of Cardinal;
     // Its generated code (HW.JIT; nil: none, or not yet): its clocks as
-    // RunBlock runs them where none of its steps needs a check of the run
-    // (ChecksAll, every step's) and the budget left takes them all. Entries
-    // before the code is made (JitHeat), whether it was tried.
+    // RunBlock runs them where the budget left takes them all. Entries before
+    // the code is made (JitHeat), whether it was tried.
     Native: Pointer;
-    ChecksAll: Byte;
     JitTried: Boolean;
     JitHeat: Word;
   end;
 
   // What RunBlock and the blocks' code exchange (TN64RSP.JitRun): the
-  // budget, the clocks run, the checks of the run; when the code returns,
-  // the last block it ran to its end and the PC after it.
+  // budget, the clocks run, the checks of the run (Mask but StepMemory;
+  // Fences: StepMemory too while DMEM has fences), RunBlock's Status and
+  // Interrupt. When the code returns: the last block it ran to its end and
+  // the PC after it (Outcome -1), or where a clock of its stopped the run as
+  // RunBlock stops it there (Outcome its result; PC, Ran as it leaves them).
+  // Slot: whether a branch was pending before a block's last clock run by
+  // JitCheck (PC: as its words moved it).
   TRSPJitCtx = record
-    Cycles, Ran: Integer;
+    Cycles, Ran, Outcome: Integer;
     PC: Cardinal;
-    Mask: Byte;
+    Mask, Fences, Slot: Byte;
     Block: PRSPBlock;
+    Status, Interrupt: PCardinal;
   end;
 
   PRSPJitCtx = ^TRSPJitCtx;
@@ -296,10 +300,10 @@ type
     // yet): the entry, the start of a run, the way back, the chaining code.
     FJit: TJitAsm;
     FUseJit, FJitFull: Boolean;
-    FJitEnter, FJitOuter, FJitReturn, FJitChain: NativeInt;
+    FJitEnter, FJitOuter, FJitReturn, FJitStop, FJitChain: NativeInt;
     // The routines the code calls (CallAt): the steps' by kind, then
-    // JitAgePipeline.
-    FJitCalls: array[0..256] of Pointer;
+    // JitAgePipeline, JitCheck.
+    FJitCalls: array[0..257] of Pointer;
     FJitCompiled, FJitRuns: Int64;
     // (N64RSPJIT=stats: why the chaining code went back, and why RunBlock
     // did not enter a block's code, by reason.)
@@ -308,8 +312,11 @@ type
     function JitCodeFor(B: PRSPBlock): Pointer;
     function JitCompile(B: PRSPBlock): Pointer;
     procedure JitEmitShared;
-    procedure JitRun(var B: PRSPBlock; var PC: Cardinal; var Ran: Integer; Cycles: Integer; Mask: Byte);
+    function JitRun(var B: PRSPBlock; var PC, Status, Interrupt: Cardinal; var Ran: Integer; Cycles: Integer;
+      Mask: Byte; Fences: Boolean): Integer;
     procedure JitAgePipeline;
+    function JitCheck(Ctx: PRSPJitCtx; Step, Ran: Integer): Cardinal;
+    procedure CountGeneral(S: PRSPBlockStep);
     procedure ClearBlocks;
     function BlockValid(B: PRSPBlock; Slot: Integer): Boolean; inline;
     function FindBlock(PC: Cardinal): PRSPBlock;
@@ -4820,7 +4827,6 @@ begin
   Result.Link[0] := nil;
   Result.Link[1] := nil;
   Result.Native := nil;
-  Result.ChecksAll := 0;
   Result.JitTried := False;
   Result.JitHeat := 0;
   Result.Next := FBlockHead[Start];
@@ -4969,7 +4975,6 @@ begin
     S.VectorHi := VHi;
     S.LoadHistory := LoadHistory;
     S.SingleIssue := SingleIssue;
-    Result.ChecksAll := Result.ChecksAll or S.Checks;
     Inc(Count);
     // A branch's delay slot is the last clock: where the branch goes is
     // only known as it runs.
@@ -5603,25 +5608,15 @@ begin
     // The last clock run (nil: none yet), and the block's last.
     var Done: PRSPBlockStep := nil;
     var Last: PRSPBlockStep;
-    // Its generated code where it runs all of the block's clocks as below
-    // (none needs a check, the budget takes them all): it runs the blocks
-    // after it too while they are such, then B is the last that ran to its
-    // end, as below.
+    // Its generated code where the budget takes all of the block's clocks:
+    // it runs them as below (its clocks that need a check by JitCheck), and
+    // the blocks after it while the budget takes theirs; then B is the last
+    // that ran to its end, as below, or a clock stopped the run as below.
     var Native: Pointer := nil;
-    if FUseJit and ((B.ChecksAll and Mask) = 0) and (Room >= B.Clocks) and not Assigned(FOnBlock) then
+    if FUseJit and (Room >= B.Clocks) and not Assigned(FOnBlock) then
       Native := JitCodeFor(B);
     if RSPJitStats and FUseJit then
-      if (B.ChecksAll and Mask) <> 0 then
-      begin
-        Inc(FJitBack[9]);
-        if (B.ChecksAll and Mask and StepGeneral) <> 0 then
-          Inc(FJitBack[13])
-        else if (B.ChecksAll and Mask and StepExternal) <> 0 then
-          Inc(FJitBack[14])
-        else
-          Inc(FJitBack[15]);
-      end
-      else if Room < B.Clocks then
+      if Room < B.Clocks then
         Inc(FJitBack[10])
       else if (Native = nil) and B.JitTried then
         Inc(FJitBack[11])
@@ -5629,7 +5624,9 @@ begin
         Inc(FJitBack[12]);
     if Native <> nil then
     begin
-      JitRun(B, PC, Ran, Cycles, Mask);
+      var Outcome := JitRun(B, PC, Status, Interrupt, Ran, Cycles, Base, Fences);
+      if Outcome >= 0 then
+        Exit(Outcome);
       Last := @FBlockSteps[B.First + B.Count - 1];
       Done := Last;
     end
@@ -5709,17 +5706,7 @@ begin
           // A branch, COP0 or other instruction of IssueInstruction's, or a
           // delay slot: the PC as each instruction takes it.
           if RSPJitStats then
-          begin
-            var G := S.Op;
-            if S.Kind <> 0 then
-              G := S.Second;
-            if (G shr 26) = 0 then
-              Inc(FJitGen[64 + (G and 63)])
-            else if (G shr 26) in [16, 18] then
-              Inc(FJitGen[128 + ((G shr 26) - 16) * 16 + ((G shr 21) and 15)])
-            else
-              Inc(FJitGen[G shr 26]);
-          end;
+            CountGeneral(S);
           if S = Last then
             DelaySlot := FBranch;
           PC := S.PC;
@@ -5843,17 +5830,17 @@ end;
 // --- Blocks as generated code ------------------------------------------------
 //
 // HW.JIT, as the CPU's blocks (N64.CPU): a block's code runs its clocks as
-// RunBlock does where none of them needs a check of the run (TRSPBlock.
-// ChecksAll against the run's mask) and the budget takes them all: each
-// clock's stall noted, its words' routines called (FKindIssue: what a word
-// does is its routine's alone), then the block's plain end (the PC after
-// it, the pipeline, the counts). Then the shared chaining code goes on as
-// RunBlock does (the budget, the branch bubble, the link) into the next
-// block's code where it is such a block too, else back to RunBlock with the
-// last block that ran to its end. The code is written in HW.JIT's
-// operations; its registers by role: Self the RSP, Ctx the TRSPJitCtx, and
-// the kept S0..S3 as Block, Ran (the clocks run), Slot (a delay slot's
-// branch taken) and PC (after the block).
+// RunBlock does where the budget takes them all: each clock's stall noted,
+// its words' routines called (FKindIssue: what a word does is its routine's
+// alone), a clock that needs a check of the run by JitCheck (RunBlock's
+// steps for it), then the block's plain end (the PC after it, the pipeline,
+// the counts). Then the shared chaining code goes on as RunBlock does (the
+// budget, the branch bubble, the link) into the next block's code where it
+// is such a block too, else back to RunBlock with the last block that ran
+// to its end (or where JitCheck stopped the run). The code is written in
+// HW.JIT's operations; its registers by role: Self the RSP, Ctx the
+// TRSPJitCtx, and the kept S0..S3 as Block, Ran (the clocks run), Slot (a
+// delay slot's branch taken) and PC (after the block).
 
 const
   jrRB = jrS0;
@@ -5867,6 +5854,11 @@ const
   RSPJitBufferSize = 16 * 1024 * 1024;
   // FJitCalls past the kinds' routines.
   RSPJitCallAge = 256;
+  RSPJitCallCheck = 257;
+  // JitCheck's Step: the step's index, whether it is its block's first,
+  // last.
+  RSPJitFirstStep = 1 shl 28;
+  RSPJitLastStep = 1 shl 29;
 
 type
   // Where the code reads and writes the RSP, its context and blocks
@@ -5875,8 +5867,8 @@ type
     StalledOp, StalledPC, StalledSecond, HasStalled, HasStalledSecond: Integer;
     ScalarLo, ScalarHi, VectorLo, VectorHi, LoadHistory, SingleIssue: Integer;
     Branch, NextPC, BranchBubble, BlocksRun, BlockClocks, Calls, Back: Integer;
-    CtxCycles, CtxRan, CtxPC, CtxMask, CtxBlock: Integer;
-    BClocks, BChecksAll, BNative, BLink, BLinkPC, BChecked: Integer;
+    CtxCycles, CtxRan, CtxPC, CtxFences, CtxSlot, CtxBlock: Integer;
+    BClocks, BNative, BLink, BLinkPC, BChecked, Fenced: Integer;
   end;
 
 var
@@ -5906,14 +5898,15 @@ begin
   O.CtxCycles := Integer(NativeUInt(@PRSPJitCtx(nil).Cycles));
   O.CtxRan := Integer(NativeUInt(@PRSPJitCtx(nil).Ran));
   O.CtxPC := Integer(NativeUInt(@PRSPJitCtx(nil).PC));
-  O.CtxMask := Integer(NativeUInt(@PRSPJitCtx(nil).Mask));
+  O.CtxFences := Integer(NativeUInt(@PRSPJitCtx(nil).Fences));
+  O.CtxSlot := Integer(NativeUInt(@PRSPJitCtx(nil).Slot));
   O.CtxBlock := Integer(NativeUInt(@PRSPJitCtx(nil).Block));
   O.BClocks := Integer(NativeUInt(@PRSPBlock(nil).Clocks));
-  O.BChecksAll := Integer(NativeUInt(@PRSPBlock(nil).ChecksAll));
   O.BNative := Integer(NativeUInt(@PRSPBlock(nil).Native));
   O.BLink := Integer(NativeUInt(@PRSPBlock(nil).Link[0]));
   O.BLinkPC := Integer(NativeUInt(@PRSPBlock(nil).LinkPC[0]));
   O.BChecked := Integer(NativeUInt(@PRSPBlock(nil).Checked));
+  O.Fenced := Integer(NativeUInt(@TN64RSP(nil).FFenced));
   RSPOff := O;
 end;
 
@@ -5956,12 +5949,13 @@ var
 begin
   // The code every block's code shares: the entry (TJitAsm.EnterJump: the
   // frame, then the start of a run with the block in T1), the start of a
-  // run (Block and Ran set, into the block's code), the way back to RunBlock
-  // (Block, Ran and PC into Ctx), and the chaining code: after a block ran
-  // to its end, as RunBlock goes on (the budget, a branch bubble, no branch
-  // pending, the link at the PC, the block found there valid as IMEM is)
-  // into the next block's code where it runs all of that block's clocks;
-  // else back, nothing of that done.
+  // run (Block and Ran set, into the block's code), the ways back to
+  // RunBlock (Block, Ran and PC into Ctx; or as JitCheck left Ctx), and the
+  // chaining code: after a block ran to its end, as RunBlock goes on (the
+  // budget, a branch bubble, no branch pending, the link at the PC, the
+  // block found there valid as IMEM is) into the next block's code where
+  // the budget takes all of that block's clocks; else back, nothing of that
+  // done.
   var J := FJit;
   var O := RSPOff;
   var Info := FBus.JitInfo;
@@ -5979,6 +5973,10 @@ begin
   J.Move(jw32, JMem(jrCtx, O.CtxRan), JRan);
   J.Move(jw32, JMem(jrCtx, O.CtxPC), JPC);
   J.Move(jw64, JMem(jrCtx, O.CtxBlock), JRB);
+  J.Leave(JImm(0));
+  // Back where JitCheck stopped the run (it set Ctx).
+  J.Align(16);
+  FJitStop := J.Offset;
   J.Leave(JImm(0));
 
   J.Align(16);
@@ -6015,14 +6013,9 @@ begin
   J.Move(jw64, JT6, JImm(Int64(NativeUInt(Info.IMemCounter))));
   J.Move(jw64, JT6, JMem(jrT6, 0));
   J.Branch(jcNe, jw64, JT6, JMem(jrT5, O.BChecked), No(5));
-  // Its code, none of its checks in the run's mask, its clocks within the
-  // budget left after the bubble.
+  // Its code, its clocks within the budget left after the bubble.
   J.Move(jw64, JT6, JMem(jrT5, O.BNative));
   J.BranchTest(jcEq, jw64, JT6, JT6, No(6));
-  J.Move(jw8, JT6, JMem(jrT5, O.BChecksAll));
-  J.Move(jw8, JT3, JMem(jrCtx, O.CtxMask));
-  J.Alu(jaAnd, jw32, JT6, JT3);
-  J.BranchTest(jcNe, jw32, JT6, JT6, No(7));
   J.Move(jw32, JT6, JT0);
   J.Alu(jaSub, jw32, JT6, JT1);
   J.Branch(jcLt, jw32, JT6, JMem(jrT5, O.BClocks), No(8));
@@ -6071,6 +6064,7 @@ begin
     for var K := 0 to 255 do
       FJitCalls[K] := FKindIssue[K];
     FJitCalls[RSPJitCallAge] := @TN64RSP.JitAgePipeline;
+    FJitCalls[RSPJitCallCheck] := @TN64RSP.JitCheck;
   end;
   if not FJit.Room(4096 + B.Count * 256) then
   begin
@@ -6085,25 +6079,63 @@ begin
   J.Align(16);
   Result := J.Here;
   J.Alu(jaAdd, jw64, JMem(jrSelf, O.BlocksRun), JImm(1));
+  // A clock that needs a check of the run: by JitCheck (a general one
+  // always; a load or store while the run has fences), back where it stops
+  // the run.
+  var Stop := J.NewLabel;
   for var I := 0 to B.Count - 1 do
   begin
     var S: PRSPBlockStep := @FBlockSteps[B.First + I];
+    var Step := B.First + I;
+    if I = 0 then
+      Step := Step or RSPJitFirstStep;
+    if I = B.Count - 1 then
+      Step := Step or RSPJitLastStep;
     if S.Wait <> 0 then
     begin
       J.Move(jw32, JMem(jrSelf, O.StalledOp), JImm(S.Op));
       J.Move(jw32, JMem(jrSelf, O.StalledPC), JImm(S.PC));
       J.Move(jw32, JMem(jrSelf, O.StalledSecond), JImm(S.Second));
     end;
+    if (S.Checks and StepGeneral) <> 0 then
+    begin
+      J.CallAt(JMem(jrSelf, O.Calls + RSPJitCallCheck * 8), [JSelf, JCtx, JImm(Step), JRan]);
+      J.BranchTest(jcNe, jw32, JT0, JT0, Stop);
+      Continue;
+    end;
+    var Next: TJitLabel := -1;
+    if (S.Checks and StepMemory) <> 0 then
+    begin
+      var Plain := J.NewLabel;
+      Next := J.NewLabel;
+      J.Move(jw8, JT0, JMem(jrCtx, O.CtxFences));
+      J.BranchTest(jcEq, jw32, JT0, JT0, Plain);
+      J.Move(jw8, JT0, JMem(jrSelf, O.Fenced));
+      J.BranchTest(jcEq, jw32, JT0, JT0, Plain);
+      J.CallAt(JMem(jrSelf, O.Calls + RSPJitCallCheck * 8), [JSelf, JCtx, JImm(Step), JRan]);
+      J.BranchTest(jcNe, jw32, JT0, JT0, Stop);
+      J.Jump(Next);
+      J.Bind(Plain);
+    end;
     J.CallAt(JMem(jrSelf, O.Calls + Integer(S.Kind) * 8), [JSelf, JImm(S.Arg)]);
     if S.Pair then
       J.CallAt(JMem(jrSelf, O.Calls + Integer(S.SecondKind) * 8), [JSelf, JImm(S.SecondArg)]);
+    if Next >= 0 then
+      J.Bind(Next);
   end;
   // The plain end: the PC after the last clock (after a delay slot where the
-  // branch took it), the pipeline after it, a delay slot's bubble, the
-  // counts.
+  // branch took it; as JitCheck left it after a general one), the pipeline
+  // after it, a delay slot's bubble, the counts.
   var Last: PRSPBlockStep := @FBlockSteps[B.First + B.Count - 1];
-  J.Move(jw32, JPC, JImm((Cardinal(Last.PC) + 4 + 4 * Cardinal(Ord(Last.Pair))) and $FFC));
-  if Last.Delay then
+  var LastGeneral := (Last.Checks and StepGeneral) <> 0;
+  if LastGeneral then
+  begin
+    J.Move(jw32, JPC, JMem(jrCtx, O.CtxPC));
+    J.Move(jw8, JSlot, JMem(jrCtx, O.CtxSlot));
+  end
+  else
+    J.Move(jw32, JPC, JImm((Cardinal(Last.PC) + 4 + 4 * Cardinal(Ord(Last.Pair))) and $FFC));
+  if Last.Delay and not LastGeneral then
   begin
     var NoBranch := J.NewLabel;
     J.Move(jw8, JSlot, JMem(jrSelf, O.Branch));
@@ -6120,7 +6152,7 @@ begin
   J.Move(jw8, JMem(jrSelf, O.SingleIssue), JImm(Last.SingleIssue));
   J.Move(jw8, JMem(jrSelf, O.HasStalled), JImm(0));
   J.Move(jw8, JMem(jrSelf, O.HasStalledSecond), JImm(0));
-  if Last.Delay then
+  if Last.Delay or LastGeneral then
   begin
     var NoSlot := J.NewLabel;
     J.BranchTest(jcEq, jw32, JSlot, JSlot, NoSlot);
@@ -6132,30 +6164,139 @@ begin
   J.Alu(jaAdd, jw64, JMem(jrSelf, O.BlockClocks), JImm(B.Clocks));
   J.Alu(jaAdd, jw32, JRan, JImm(B.Clocks));
   J.JumpTo(FJitChain);
+  J.Bind(Stop);
+  J.JumpTo(FJitStop);
   J.ForgetLabels;
   J.Flush;
   Inc(FJitCompiled);
 end;
 
-procedure TN64RSP.JitRun(var B: PRSPBlock; var PC: Cardinal; var Ran: Integer; Cycles: Integer; Mask: Byte);
+function TN64RSP.JitRun(var B: PRSPBlock; var PC, Status, Interrupt: Cardinal; var Ran: Integer; Cycles: Integer;
+  Mask: Byte; Fences: Boolean): Integer;
 type
   TRSPJitEnter = function(RSP: TObject; Ctx: PRSPJitCtx; Code: Pointer; Block: PRSPBlock): Integer;
 begin
-  // B's code and the blocks' it chains to (RunBlock found that it runs all
-  // of B's clocks with Mask): then B is the last block that ran to its end,
-  // PC the PC after it, Ran with all their clocks (and the bubbles between
-  // them).
+  // B's code and the blocks' it chains to (RunBlock found that the budget
+  // takes all of B's clocks; Mask: the run's checks but StepMemory, Fences:
+  // that too while DMEM has fences): then B is the last block that ran to
+  // its end, PC the PC after it, Ran with all their clocks (and the bubbles
+  // between them), the result -1; or a clock stopped the run as RunBlock
+  // stops it there, the result RunBlock's (PC, Ran as it leaves them).
   var Ctx: TRSPJitCtx;
   Ctx.Cycles := Cycles;
   Ctx.Ran := Ran;
+  Ctx.Outcome := -1;
   Ctx.PC := PC;
   Ctx.Mask := Mask;
+  Ctx.Fences := Ord(Fences);
+  Ctx.Slot := 0;
   Ctx.Block := B;
+  Ctx.Status := @Status;
+  Ctx.Interrupt := @Interrupt;
   Inc(FJitRuns);
   TRSPJitEnter(FJit.Base + FJitEnter)(Self, @Ctx, FJit.Base + FJitOuter, B);
   B := Ctx.Block;
   PC := Ctx.PC;
   Ran := Ctx.Ran;
+  Result := Ctx.Outcome;
+end;
+
+procedure TN64RSP.CountGeneral(S: PRSPBlockStep);
+begin
+  // (N64RSPJIT=stats: a general clock's instruction, by opcode; SPECIAL by
+  // function, COP0 and COP2 by their rs.)
+  var G := S.Op;
+  if S.Kind <> 0 then
+    G := S.Second;
+  if (G shr 26) = 0 then
+    Inc(FJitGen[64 + (G and 63)])
+  else if (G shr 26) in [16, 18] then
+    Inc(FJitGen[128 + ((G shr 26) - 16) * 16 + ((G shr 21) and 15)])
+  else
+    Inc(FJitGen[G shr 26]);
+end;
+
+function TN64RSP.JitCheck(Ctx: PRSPJitCtx; Step, Ran: Integer): Cardinal;
+begin
+  // (For a block's code.) Block clock Step (with RSPJitFirstStep and
+  // RSPJitLastStep) that needs a check of the run, as RunBlock takes it, Ran
+  // the clocks before its block: 0 when the code goes on after it (it ran);
+  // 1 when it stopped the run as RunBlock stops it there (Ctx: Outcome, PC,
+  // Ran as RunBlock leaves them). Ctx.PC: the PC as a general clock's words
+  // moved it; Ctx.Slot: whether a branch was pending before them.
+  var S: PRSPBlockStep := @FBlockSteps[Step and (RSPJitFirstStep - 1)];
+  var Done: PRSPBlockStep := nil;
+  if (Step and RSPJitFirstStep) = 0 then
+  begin
+    Done := S;
+    Dec(Done);
+  end;
+  // (The clocks before this one, its stall included.)
+  var Before := Ran + S.Clocks - 1;
+  Result := 1;
+  if ((S.Checks and StepMemory) <> 0) and (Ctx.Fences <> 0) and FFenced and
+    (TouchesFence(S.Op) or (S.Pair and TouchesFence(S.Second))) then
+  begin
+    HoldStep(Done, S);
+    if not LiftFence(S.PC, S.Op, S.Second, S.Pair, FClockBase + Before + 1) then
+    begin
+      FAheadStop := TRSPAheadStop.Fence;
+      Inc(FBlockClocks, S.Clocks - 1);
+      Ctx.Outcome := 2;
+      Ctx.PC := S.PC;
+      Ctx.Ran := Before;
+      Exit;
+    end;
+  end;
+  if ((S.Checks and Ctx.Mask and StepExternal) <> 0) and not JournalCOP0(S.Op, S.Second, S.Pair, FClockBase + Before + 1) then
+  begin
+    HoldStep(Done, S);
+    StopAtExternal(S.Op, S.Second);
+    Inc(FBlockClocks, S.Clocks - 1);
+    Ctx.Outcome := 2;
+    Ctx.PC := S.PC;
+    Ctx.Ran := Before;
+    Exit;
+  end;
+  if (S.Checks and StepGeneral) = 0 then
+  begin
+    // A load or store let through.
+    TRSPIssueProc(S.Issue)(Self, S.Arg);
+    if S.Pair then
+      TRSPIssueProc(S.SecondIssue)(Self, S.SecondArg);
+    Exit(0);
+  end;
+  if RSPJitStats then
+    CountGeneral(S);
+  Ctx.Slot := Ord(FBranch);
+  var PC := Cardinal(S.PC);
+  IssueKind(S.Kind, S.Arg, PC, Ctx.Status^, Ctx.Interrupt^);
+  var external := (S.Checks and StepExternal) <> 0;
+  if S.Pair and (not external or ((Ctx.Status^ and 1) = 0)) then
+    IssueKind(S.SecondKind, S.SecondArg, PC, Ctx.Status^, Ctx.Interrupt^);
+  Ctx.PC := PC;
+  if not external or ((Ctx.Status^ and $21) = 0) then
+    Exit(0);
+  // Halted or single-stepping: the run ends after the clock.
+  if (Ctx.Status^ and $20) <> 0 then
+    Ctx.Status^ := Ctx.Status^ or 1;
+  FScalarLo := S.ScalarLo;
+  FScalarHi := S.ScalarHi;
+  FVectorLo := S.VectorLo;
+  FVectorHi := S.VectorHi;
+  FLoadHistory := S.LoadHistory;
+  FSingleIssue := S.SingleIssue;
+  FHasStalledOpcode := False;
+  FHasStalledSecondOpcode := False;
+  if ((Step and RSPJitLastStep) <> 0) and (Ctx.Slot <> 0) then
+  begin
+    FBranchBubble := 1;
+    if (PC and 4) <> 0 then
+      FSingleIssue := 1;
+  end;
+  Inc(FBlockClocks, S.Clocks);
+  Ctx.Outcome := 0;
+  Ctx.Ran := Ran + S.Clocks;
 end;
 
 function TN64RSP.RunSteps(S: PRSPBlockStep; Mask: Byte; Room, Limit: Integer): PRSPBlockStep;
