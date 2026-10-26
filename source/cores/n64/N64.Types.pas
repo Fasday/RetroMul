@@ -54,12 +54,14 @@ type
 
   TN64TraceSink = reference to procedure(const Event: TN64TraceRecord);
 
-  // Where generated CPU code reads the bus's page state (N64.CPU's JIT).
+  // Where generated CPU code reads the bus's page state (N64.CPU's JIT), and
+  // generated RSP code the IMEM write count (N64.RSP's).
   TN64BusJitInfo = record
     SPMarked, SPDoneCount, SPWrites, SPReads: PInt64;
     RDPPending: PBoolean;
     RDPWrites, RDPDone: PUInt64;
     CodeGen: PCardinal;
+    IMemCounter: PUInt64;
   end;
 
   TN64Bus = class abstract
@@ -759,6 +761,7 @@ begin
   Result.RDPWrites := @FRDPWrites[0];
   Result.RDPDone := @FRDPDone;
   Result.CodeGen := @FCodeGen[0];
+  Result.IMemCounter := @FIMemCounter;
 end;
 
 function TN64Bus.CodeGenerations: PCardinal;
