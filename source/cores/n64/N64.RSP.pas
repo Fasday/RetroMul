@@ -362,6 +362,7 @@ type
     procedure SetAccLo(I: Integer; Value: Word);
     {$IF Defined(CPU64BITS)}
     procedure SetAccLoQuads(Lo0, Lo1: UInt64); inline;
+    procedure SelectQuads(Op: Cardinal; VS, VT: PRSPQuadLanes; T0, T1: UInt64);
     {$ENDIF} inline;
     function VTLanes(Op: Cardinal; var Copy: TRSPQuadLanes): PRSPLanes; inline;
     procedure VectorOp(Op: Cardinal);
@@ -1419,6 +1420,83 @@ begin
   Result := (S and not M) or ((RSPLaneLow + ((A shr 15) and RSPLaneOne)) and M);
 end;
 
+{$IF Defined(CPU64BITS)}
+procedure TN64RSP.SetAccLoQuads(Lo0, Lo1: UInt64);
+begin
+  // Each lane's ACC_LO from four lanes at a time (Lo0: lanes 0..3).
+  PWord(@FAcc[0])^ := Word(Lo0);
+  PWord(@FAcc[1])^ := Word(Lo0 shr 16);
+  PWord(@FAcc[2])^ := Word(Lo0 shr 32);
+  PWord(@FAcc[3])^ := Word(Lo0 shr 48);
+  PWord(@FAcc[4])^ := Word(Lo1);
+  PWord(@FAcc[5])^ := Word(Lo1 shr 16);
+  PWord(@FAcc[6])^ := Word(Lo1 shr 32);
+  PWord(@FAcc[7])^ := Word(Lo1 shr 48);
+end;
+
+// More of four lanes at a time: a 1 in a lane where it is equal, below
+// (unsigned), less (signed); the wrapped difference and sum; a sum's carry
+// out (a 1 in the lane); a lane's 1 widened to $FFFF; the four lanes' 1s as
+// four bits (lane 0 lowest).
+
+function LaneEqual4(A, B: UInt64): UInt64; inline;
+begin
+  var Z := A xor B;
+  Result := (((((Z and RSPLaneLow) + RSPLaneLow) or Z) and RSPLaneSign) xor RSPLaneSign) shr 15;
+end;
+
+function LaneDiff4(A, B: UInt64): UInt64; inline;
+begin
+  Result := ((A or RSPLaneSign) - (B and RSPLaneLow)) xor ((A xor not B) and RSPLaneSign);
+end;
+
+function LaneBelow4(A, B: UInt64): UInt64; inline;
+begin
+  // A borrow out of the lane: B's top bit over A's, or equal top bits and a
+  // borrow from below (the difference's top bit then).
+  var D := LaneDiff4(A, B);
+  Result := ((((not A) and B) or ((not (A xor B)) and D)) and RSPLaneSign) shr 15;
+end;
+
+function LaneLess4(A, B: UInt64): UInt64; inline;
+begin
+  Result := LaneBelow4(A xor RSPLaneSign, B xor RSPLaneSign);
+end;
+
+function LaneSum4(A, B: UInt64): UInt64; inline;
+begin
+  Result := ((A and RSPLaneLow) + (B and RSPLaneLow)) xor ((A xor B) and RSPLaneSign);
+end;
+
+function LaneCarry4(A, B, S: UInt64): UInt64; inline;
+begin
+  Result := (((A and B) or ((A or B) and not S)) and RSPLaneSign) shr 15;
+end;
+
+function LaneMask4(F: UInt64): UInt64; inline;
+begin
+  Result := (F shl 16) - F;
+end;
+
+function LaneNibble4(F: UInt64): Cardinal; inline;
+begin
+  Result := Cardinal((F or (F shr 15) or (F shr 30) or (F shr 45)) and 15);
+end;
+
+procedure TN64RSP.SelectQuads(Op: Cardinal; VS, VT: PRSPQuadLanes; T0, T1: UInt64);
+begin
+  // The compares' and VMRG's result: VS's lanes where T0, T1 (lanes 0..3,
+  // 4..7) have a 1, else VT's, into VD and ACC_LO; VCO cleared.
+  var R0 := VT.Quads[0] xor ((VS.Quads[0] xor VT.Quads[0]) and LaneMask4(T0));
+  var R1 := VT.Quads[1] xor ((VS.Quads[1] xor VT.Quads[1]) and LaneMask4(T1));
+  var VD := PRSPQuadLanes(@FVec[(Op shr 6) and 31]);
+  VD.Quads[0] := R0;
+  VD.Quads[1] := R1;
+  SetAccLoQuads(R0, R1);
+  FVCO := 0;
+end;
+{$ENDIF}
+
 procedure TN64RSP.VectorAdd(Op: Cardinal);
 begin
   // VADD with the VCO carries (VS + VT + carry, clamped; the sum wrapped
@@ -1482,21 +1560,6 @@ begin
   FVCO := 0;
 end;
 
-{$IF Defined(CPU64BITS)}
-procedure TN64RSP.SetAccLoQuads(Lo0, Lo1: UInt64);
-begin
-  // Each lane's ACC_LO from four lanes at a time (Lo0: lanes 0..3).
-  PWord(@FAcc[0])^ := Word(Lo0);
-  PWord(@FAcc[1])^ := Word(Lo0 shr 16);
-  PWord(@FAcc[2])^ := Word(Lo0 shr 32);
-  PWord(@FAcc[3])^ := Word(Lo0 shr 48);
-  PWord(@FAcc[4])^ := Word(Lo1);
-  PWord(@FAcc[5])^ := Word(Lo1 shr 16);
-  PWord(@FAcc[6])^ := Word(Lo1 shr 32);
-  PWord(@FAcc[7])^ := Word(Lo1 shr 48);
-end;
-{$ENDIF}
-
 procedure TN64RSP.VectorAbs(Op: Cardinal);
 begin
   // VABS: VT negated, kept or zeroed by the sign of VS.
@@ -1520,6 +1583,33 @@ end;
 procedure TN64RSP.VectorCarry(Op: Cardinal);
 begin
   // VADDC (carry out), VSUBC (borrow and not-equal) into VCO.
+  {$IF Defined(CPU64BITS)}
+  var Copy: TRSPQuadLanes;
+  var VT := PRSPQuadLanes(VTLanes(Op, Copy));
+  var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
+  var VD := PRSPQuadLanes(@FVec[(Op shr 6) and 31]);
+  var R0, R1: UInt64;
+  if (Op and 63) = 20 then
+  begin
+    R0 := LaneSum4(VS.Quads[0], VT.Quads[0]);
+    R1 := LaneSum4(VS.Quads[1], VT.Quads[1]);
+    FVCO := Word(LaneNibble4(LaneCarry4(VS.Quads[0], VT.Quads[0], R0)) or
+      (LaneNibble4(LaneCarry4(VS.Quads[1], VT.Quads[1], R1)) shl 4));
+  end
+  else
+  begin
+    R0 := LaneDiff4(VS.Quads[0], VT.Quads[0]);
+    R1 := LaneDiff4(VS.Quads[1], VT.Quads[1]);
+    var Borrow := LaneNibble4(LaneBelow4(VS.Quads[0], VT.Quads[0])) or
+      (LaneNibble4(LaneBelow4(VS.Quads[1], VT.Quads[1])) shl 4);
+    var NotEqual := LaneNibble4(LaneEqual4(VS.Quads[0], VT.Quads[0]) xor RSPLaneOne) or
+      (LaneNibble4(LaneEqual4(VS.Quads[1], VT.Quads[1]) xor RSPLaneOne) shl 4);
+    FVCO := Word(Borrow or (NotEqual shl 8));
+  end;
+  VD.Quads[0] := R0;
+  VD.Quads[1] := R1;
+  SetAccLoQuads(R0, R1);
+  {$ELSE}
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
@@ -1546,6 +1636,7 @@ begin
     FVec[D, I] := Word(V and $FFFF);
   end;
   FVCO := Word(Carry);
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorSar(Op: Cardinal);
@@ -1572,6 +1663,18 @@ end;
 procedure TN64RSP.VectorLT(Op: Cardinal);
 begin
   // Less, or equal with VCO's carry and not-equal both set.
+  {$IF Defined(CPU64BITS)}
+  var Copy: TRSPQuadLanes;
+  var VT := PRSPQuadLanes(VTLanes(Op, Copy));
+  var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
+  var Equal := Cardinal(FVCO) and (Cardinal(FVCO) shr 8);
+  var T0 := LaneLess4(VS.Quads[0], VT.Quads[0]) or
+    (LaneEqual4(VS.Quads[0], VT.Quads[0]) and RSPNibbleLanes[Equal and 15]);
+  var T1 := LaneLess4(VS.Quads[1], VT.Quads[1]) or
+    (LaneEqual4(VS.Quads[1], VT.Quads[1]) and RSPNibbleLanes[(Equal shr 4) and 15]);
+  SelectQuads(Op, VS, VT, T0, T1);
+  FVCC := Word(LaneNibble4(T0) or (LaneNibble4(T1) shl 4));
+  {$ELSE}
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
   var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
@@ -1591,11 +1694,22 @@ begin
   end;
   FVCO := 0;
   FVCC := Word(Compare);
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorEQ(Op: Cardinal);
 begin
   // Equal, without VCO's not-equal.
+  {$IF Defined(CPU64BITS)}
+  var Copy: TRSPQuadLanes;
+  var VT := PRSPQuadLanes(VTLanes(Op, Copy));
+  var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
+  var Kept := not (Cardinal(FVCO) shr 8);
+  var T0 := LaneEqual4(VS.Quads[0], VT.Quads[0]) and RSPNibbleLanes[Kept and 15];
+  var T1 := LaneEqual4(VS.Quads[1], VT.Quads[1]) and RSPNibbleLanes[(Kept shr 4) and 15];
+  SelectQuads(Op, VS, VT, T0, T1);
+  FVCC := Word(LaneNibble4(T0) or (LaneNibble4(T1) shl 4));
+  {$ELSE}
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
   var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
@@ -1615,11 +1729,22 @@ begin
   end;
   FVCO := 0;
   FVCC := Word(Compare);
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorNE(Op: Cardinal);
 begin
   // Not equal, or VCO's not-equal.
+  {$IF Defined(CPU64BITS)}
+  var Copy: TRSPQuadLanes;
+  var VT := PRSPQuadLanes(VTLanes(Op, Copy));
+  var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
+  var NotEqual := Cardinal(FVCO) shr 8;
+  var T0 := (LaneEqual4(VS.Quads[0], VT.Quads[0]) xor RSPLaneOne) or RSPNibbleLanes[NotEqual and 15];
+  var T1 := (LaneEqual4(VS.Quads[1], VT.Quads[1]) xor RSPLaneOne) or RSPNibbleLanes[(NotEqual shr 4) and 15];
+  SelectQuads(Op, VS, VT, T0, T1);
+  FVCC := Word(LaneNibble4(T0) or (LaneNibble4(T1) shl 4));
+  {$ELSE}
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
   var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
@@ -1639,11 +1764,24 @@ begin
   end;
   FVCO := 0;
   FVCC := Word(Compare);
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorGE(Op: Cardinal);
 begin
   // Greater, or equal unless VCO's carry and not-equal are both set.
+  {$IF Defined(CPU64BITS)}
+  var Copy: TRSPQuadLanes;
+  var VT := PRSPQuadLanes(VTLanes(Op, Copy));
+  var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
+  var Kept := not (Cardinal(FVCO) and (Cardinal(FVCO) shr 8));
+  var T0 := LaneLess4(VT.Quads[0], VS.Quads[0]) or
+    (LaneEqual4(VS.Quads[0], VT.Quads[0]) and RSPNibbleLanes[Kept and 15]);
+  var T1 := LaneLess4(VT.Quads[1], VS.Quads[1]) or
+    (LaneEqual4(VS.Quads[1], VT.Quads[1]) and RSPNibbleLanes[(Kept shr 4) and 15]);
+  SelectQuads(Op, VS, VT, T0, T1);
+  FVCC := Word(LaneNibble4(T0) or (LaneNibble4(T1) shl 4));
+  {$ELSE}
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
   var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
@@ -1663,6 +1801,7 @@ begin
   end;
   FVCO := 0;
   FVCC := Word(Compare);
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorClipLow(Op: Cardinal);
@@ -1804,6 +1943,12 @@ end;
 procedure TN64RSP.VectorMerge(Op: Cardinal);
 begin
   // VMRG: VS where VCC is set, else VT; clears VCO.
+  {$IF Defined(CPU64BITS)}
+  var Copy: TRSPQuadLanes;
+  var VT := PRSPQuadLanes(VTLanes(Op, Copy));
+  var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
+  SelectQuads(Op, VS, VT, RSPNibbleLanes[FVCC and 15], RSPNibbleLanes[(FVCC shr 4) and 15]);
+  {$ELSE}
   var Copy: TRSPQuadLanes;
   var VT := VTLanes(Op, Copy);
   var S := (Op shr 11) and 31;
@@ -1817,6 +1962,7 @@ begin
     FVec[D, I] := R;
   end;
   FVCO := 0;
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorLogic(Op: Cardinal);
@@ -1861,8 +2007,12 @@ begin
   end;
   VD.Quads[0] := R0;
   VD.Quads[1] := R1;
+  {$IF Defined(CPU64BITS)}
+  SetAccLoQuads(R0, R1);
+  {$ELSE}
   for var I := 0 to 7 do
     PWord(@FAcc[I])^ := VD.Lanes[I];
+  {$ENDIF}
 end;
 
 procedure TN64RSP.VectorReserved(Op: Cardinal);
@@ -1960,6 +2110,11 @@ begin
   end;
 end;
 
+const
+  // 64-bit hosts (x64, ARM64) load and store 8-byte words at any address;
+  // 32-bit ones only aligned (ARM's LDRD, STRD).
+  RSPUnaligned = {$IF Defined(CPU64BITS)}True{$ELSE}False{$ENDIF};
+
 procedure TN64RSP.VectorMemoryDirect(Op: Cardinal; Writing: Boolean);
 begin
   // VectorMemory's LBV, LSV, LLV, LDV, LQV and their stores with direct SP
@@ -1991,16 +2146,17 @@ begin
     if not Odd(E) and (E + Size <= 16) and (Address + Cardinal(Size) <= $1000) then
     begin
       // Whole lanes to bytes that do not wrap: a 16-byte line in two
-      // 8-byte words where it is aligned so (little-endian hosts only).
+      // 8-byte words where the host takes them there (RSPUnaligned, else
+      // aligned so; little-endian hosts only).
       var P := SP + Address;
-      if (Size = 16) and ((NativeUInt(P) and 7) = 0) then
+      if (Size = 16) and (RSPUnaligned or ((NativeUInt(P) and 7) = 0)) then
       begin
         var Q := PRSPQuadLanes(Lanes);
         PUInt64(P)^ := ((Q.Quads[0] shr 8) and $00FF00FF00FF00FF) or ((Q.Quads[0] and $00FF00FF00FF00FF) shl 8);
         PUInt64(P + 8)^ := ((Q.Quads[1] shr 8) and $00FF00FF00FF00FF) or ((Q.Quads[1] and $00FF00FF00FF00FF) shl 8);
         I := 16;
       end
-      else if (Size = 8) and ((NativeUInt(P) and 7) = 0) then
+      else if (Size = 8) and (RSPUnaligned or ((NativeUInt(P) and 7) = 0)) then
       begin
         // SDV's four lanes in one 8-byte word.
         var L := E shr 1;
@@ -2043,7 +2199,7 @@ begin
     begin
       // Whole lanes from bytes that do not wrap (as the store).
       var P := SP + Address;
-      if (Size = 16) and ((NativeUInt(P) and 7) = 0) then
+      if (Size = 16) and (RSPUnaligned or ((NativeUInt(P) and 7) = 0)) then
       begin
         var Q := PRSPQuadLanes(Lanes);
         var Q0 := PUInt64(P)^;
@@ -2052,7 +2208,7 @@ begin
         Q.Quads[1] := ((Q1 shr 8) and $00FF00FF00FF00FF) or ((Q1 and $00FF00FF00FF00FF) shl 8);
         I := 16;
       end
-      else if (Size = 8) and ((NativeUInt(P) and 7) = 0) then
+      else if (Size = 8) and (RSPUnaligned or ((NativeUInt(P) and 7) = 0)) then
       begin
         // LDV's four lanes from one 8-byte word.
         var L := E shr 1;
