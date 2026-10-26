@@ -152,7 +152,7 @@ begin
   FModel := TPCEModel.PCengine;
   if SourceName.ToLower.Contains('(u)') or SourceName.ToLower.Contains('(usa)') then
     FModel := TPCEModel.TurboGrafx16;
-  if (Ext = '.cue') or (Ext = '.iso') or (Ext = '.chd') then
+  if (Ext = '.cue') or (Ext = '.iso') or (Ext = '.chd') or (Ext = '.mds') then
   begin
     FSystemId := 'pcecd';
     FModel := TPCEModel.SuperCDROM2;

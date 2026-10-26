@@ -828,7 +828,11 @@ begin
   var Extensions := TStringList.Create;
   var CueNames := TStringList.Create;
   var PlaylistDiscs := TStringList.Create;
+  var TrackFiles := TStringList.Create;
   try
+    TrackFiles.CaseSensitive := False;
+    TrackFiles.Sorted := True;
+    TrackFiles.Duplicates := dupIgnore;
     PlaylistDiscs.Sorted := True;
     PlaylistDiscs.Duplicates := dupIgnore;
     {$IFDEF MSWINDOWS}
@@ -862,13 +866,14 @@ begin
             ExpandFileName(Locations[i])).Replace('\', '/');
       end;
     end;
-    if SameText(SystemId, ROM_SYSTEM_PS1) then
+    var DiscSystem := SameText(SystemId, ROM_SYSTEM_PS1) or SameText(SystemId, ROM_SYSTEM_DC);
+    if DiscSystem then
       for var Candidate in Candidates do
         if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_M3U) then
         try
           var Stream := OpenRead(Candidate.Location);
           try
-            for var Disc in ReadCDPlaylist(Stream, Self, Candidate.Location) do
+            for var Disc in ReadCDPlaylist(Stream, Self, Candidate.Location, SystemId) do
               PlaylistDiscs.Add(Disc);
           finally
             Stream.Free;
@@ -884,6 +889,25 @@ begin
     for var Candidate in Candidates do
       if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_CUE) then
         CueNames.Add(ChangeFileExt(Candidate.RelativePath, ''));
+    // The track files of a Dreamcast GDI belong to its library entry.
+    if SameText(SystemId, ROM_SYSTEM_DC) then
+      for var Candidate in Candidates do
+        if SameText(ExtractFileExt(Candidate.Name), ROM_EXTENSION_GDI) then
+        try
+          var Directory := Candidate.RelativePath.Substring(0, Length(Candidate.RelativePath) - Length(Candidate.Name));
+          var Stream := OpenRead(Candidate.Location);
+          try
+            for var Track in ReadGDITrackNames(Stream) do
+              TrackFiles.Add(Directory + Track);
+          finally
+            Stream.Free;
+          end;
+        except
+          on E: EAbort do
+            raise;
+          on E: Exception do
+            Continue;
+        end;
     for var Candidate in Candidates do
     begin
       var Item := Candidate;
@@ -891,9 +915,12 @@ begin
         Continue;
       if Extensions.IndexOf(ExtractFileExt(Item.Name)) < 0 then
         Continue;
-      // A PlayStation CUE is the library entry for its paired data/audio files.
-      // Match complete names, so Game.cue never hides an unrelated Game2.bin.
-      if SameText(SystemId, ROM_SYSTEM_PS1) and
+      if TrackFiles.IndexOf(Item.RelativePath) >= 0 then
+        Continue;
+      // A PlayStation or Dreamcast CUE is the library entry for its paired
+      // data/audio files. Match complete names, so Game.cue never hides an
+      // unrelated Game2.bin.
+      if DiscSystem and
         (SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_BIN) or
         SameText(ExtractFileExt(Item.Name), ROM_EXTENSION_ISO)) then
       begin
@@ -915,6 +942,7 @@ begin
     end;
     Result := Items.ToArray;
   finally
+    TrackFiles.Free;
     PlaylistDiscs.Free;
     CueNames.Free;
     Extensions.Free;

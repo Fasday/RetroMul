@@ -29,6 +29,7 @@ const
   ROM_SYSTEM_SATURN = 'saturn';
   ROM_SYSTEM_PS1 = 'ps1';
   ROM_SYSTEM_PSP = 'psp';
+  ROM_SYSTEM_DC = 'dc';
   ROM_SYSTEM_NEOGEO = 'neogeo';
   ROM_SYSTEM_NEOGEOCD = 'neogeocd';
   ROM_SYSTEM_NEOGEOAES = 'neogeoaes';
@@ -60,6 +61,7 @@ const
   ROM_CORE_ID_SATURN = 'SATURN';
   ROM_CORE_ID_PS1 = 'PS1';
   ROM_CORE_ID_PSP = 'PSP';
+  ROM_CORE_ID_DC = 'DC';
   ROM_CORE_ID_NEOGEO = 'NEOGEO';
   ROM_CORE_ID_NEOGEOCD = 'NEOGEOCD';
 
@@ -107,6 +109,10 @@ const
   ROM_EXTENSION_PBP = '.pbp';
   ROM_EXTENSION_ELF = '.elf';
   ROM_EXTENSION_PRX = '.prx';
+  ROM_EXTENSION_GDI = '.gdi';
+  ROM_EXTENSION_CDI = '.cdi';
+  ROM_EXTENSION_MDS = '.mds';
+  ROM_EXTENSION_NRG = '.nrg';
 
 const
   ROM_MAX_SIZE = 64 * 1024 * 1024;
@@ -396,6 +402,14 @@ begin
   if (Length(Data) >= $800) and Signature(0, 'PS-X EXE') then
   begin
     Result.System := TRomSystem.PS1;
+    Exit;
+  end;
+
+  // Dreamcast homebrew: 32-bit little-endian SuperH (machine 42) ELF executables.
+  if (Length(Data) >= 52) and Signature(0, #$7F'ELF'#1#1) and (Data[16] = 2) and (Data[17] = 0) and
+    (Data[18] = 42) and (Data[19] = 0) then
+  begin
+    Result.System := TRomSystem.DC;
     Exit;
   end;
 

@@ -9,7 +9,7 @@ uses
 
 type
   TPlatformPadLayout = (Nes, Sega, Snes, GameBoy, GameBoyColor, NeoGeo, Dendy, GameBoyAdvance, Nintendo64, PCE, CPS,
-    PlayStation, PSP);
+    PlayStation, PSP, Dreamcast);
 
 const
   SETTINGS_PAGE_MAIN = 0;
@@ -42,6 +42,7 @@ const
   SETTINGS_PAGE_PS1 = 28;
   SETTINGS_PAGE_ZX = 27;
   SETTINGS_PAGE_PSP = 29;
+  SETTINGS_PAGE_DC = 30;
 
 type
   TPlatformPresentation = record
@@ -132,6 +133,12 @@ begin
         Result.SettingsPageId := SETTINGS_PAGE_PSP;
         Result.PadLayout := TPlatformPadLayout.PSP;
         Result.IconData := PlatformIconGBA;
+      end;
+    TRomSystem.DC:
+      begin
+        Result.SettingsPageId := SETTINGS_PAGE_DC;
+        Result.PadLayout := TPlatformPadLayout.Dreamcast;
+        Result.IconData := PlatformIconDC;
       end;
     TRomSystem.N64:
       begin

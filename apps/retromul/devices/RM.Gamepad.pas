@@ -237,6 +237,7 @@ begin
     TScreenGamepadLayout.Nintendo64: System := TRomSystem.N64;
     TScreenGamepadLayout.PlayStation: System := TRomSystem.PS1;
     TScreenGamepadLayout.PSP: System := TRomSystem.PSP;
+    TScreenGamepadLayout.Dreamcast: System := TRomSystem.DC;
     TScreenGamepadLayout.NeoGeo: System := TRomSystem.NeoGeo;
     TScreenGamepadLayout.PCE:
       begin

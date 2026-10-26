@@ -164,7 +164,7 @@
         <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
         <Icns_MainIcns>$(BDS)\bin\delphi_PROJECTICNS.icns</Icns_MainIcns>
         <SanitizedProjectName>RetroMul</SanitizedProjectName>
-        <DCC_UnitSearchPath>..\..\source\hardware\audio\atrac3;..\..\source\hardware\audio\codecs;..\..\source\hardware\video\avc;..\..\source\hardware\audio\atrac3plus;..\..\source\cores\psp;..\..\source\hardware\audio\mp3;..\..\source\ui\fmx\shaders;..\..\source\cores\cps;..\..\dependencies\Delphi7z;..\..\source\cores\ngp;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;main;controllers;controls;library;theme;platform;settings;devices;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;settings;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\dependencies\FMXVibration;..\..\source\cores\neogeo;..\..\source\cores\atari;..\..\source\cores\c64;..\..\source\cores\zx;..\..\dependencies\FMXInput;..\..\source\hardware\audio\opl;devices;platform;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\services\library;..\..\dependencies\PCMAudio;..\..\dependencies\DelphiWinUI3\Sources;..\..\dependencies\DelphiWinUI3\DelphiWindowStyle;..\..\dependencies\DelphiWinUI3\FMXWindowsDispatch;..\..\dependencies\DelphiWinUI3\FMXWindowsHint;..\..\dependencies\DelphiWinUI3\WindowsNotificationManager;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\..\source\hardware\audio\atrac3;..\..\source\hardware\audio\codecs;..\..\source\hardware\video\avc;..\..\source\hardware\audio\atrac3plus;..\..\source\cores\psp;..\..\source\hardware\audio\mp3;..\..\source\ui\fmx\shaders;..\..\source\cores\cps;..\..\dependencies\Delphi7z;..\..\source\cores\ngp;..\..\source\cores\saturn;..\..\source\cores\ps1;..\..\source\cores\dc;..\..\source\contracts;..\..\source\runtime;..\..\source\services\settings;main;controllers;controls;library;theme;platform;settings;devices;..\..\source\cores\pce;..\..\source\cores\gamewatch;..\..\source\ui\fmx\gamewatch;..\..\source\ui\fmx\svg;settings;..\..\source\cores\sms;..\..\source\hardware\audio;..\..\source\cores\msx;..\..\source\cores\sg1000;..\..\source\hardware\video;..\..\source\cores\n64;..\..\source\media\chd;..\..\source\cores\gba;..\..\dependencies\FMXVibration;..\..\source\cores\neogeo;..\..\source\cores\atari;..\..\source\cores\c64;..\..\source\cores\zx;..\..\dependencies\FMXInput;..\..\source\hardware\audio\opl;devices;platform;..\..\source\cores;..\..\source\contracts;..\..\source\media\cd;..\..\source\media\rom;..\..\source\platform;..\..\source\runtime;..\..\source\runtime\adapters;..\..\source\services\catalog;..\..\source\services\settings;..\..\source\services\storage;..\..\source\ui\fmx\icons;..\..\source\cores\snes;..\..\source\cores\md;..\..\source\hardware\cpu;..\..\source\cores\nes;..\..\source\cores\nes\mappers;..\..\source\cores\gb;..\..\source\cores\gbc;..\..\source\services\library;..\..\dependencies\PCMAudio;..\..\dependencies\DelphiWinUI3\Sources;..\..\dependencies\DelphiWinUI3\DelphiWindowStyle;..\..\dependencies\DelphiWinUI3\FMXWindowsDispatch;..\..\dependencies\DelphiWinUI3\FMXWindowsHint;..\..\dependencies\DelphiWinUI3\WindowsNotificationManager;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Android)'!=''">
         <DCC_UsePackage>fmx;DbxCommonDriver;bindengine;IndyIPCommon;emsclient;IndyProtocols;dbxcds;FmxTeeUI;FireDACSqliteDriver;DbxClientDriver;soapmidas;dbexpress;inet;FireDACDBXDriver;CustomIPTransport;IndySystem;FireDACCommon;emsserverresource;bindcompdbx;rtl;DBXSqliteDriver;DataSnapFireDAC;FireDAC;xmlrtl;dsnap;DataSnapNativeClient;emshosting;FireDACCommonDriver;IndyIPClient;emsedge;bindcompfmx;fmxFireDAC;FMXAudioHGM;DataSnapCommon;fmxase;dbrtl;DBXInterBaseDriver;bindcomp;VLCPlayer;inetstn;IndyCore;RESTBackendComponents;RESTComponents;IndyIPServer;dsnapxml;DataSnapClient;DataSnapProviderClient;emsclientfiredac;FireDACDSDriver;tethering;CloudService;FMXTee;soaprtl;soapserver;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
@@ -524,6 +524,7 @@
         <DCCReference Include="devices\gamepads\RM.Gamepad.Saturn.Analog.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.PS1.Digital.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.PS1.Analog.pas"/>
+        <DCCReference Include="devices\gamepads\RM.Gamepad.DC.Standart.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Viewport.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Base.pas"/>
         <DCCReference Include="devices\gamepads\RM.Gamepad.Factory.pas"/>
@@ -585,6 +586,7 @@
         <DCCReference Include="controllers\RM.Controllers.Mobile.pas"/>
         <DCCReference Include="controllers\RM.Controllers.Session.pas"/>
         <DCCReference Include="controls\RM.FrameUpload.pas"/>
+        <DCCReference Include="controls\RM.VMUOverlay.pas"/>
         <DCCReference Include="platform\RM.Rumble.pas"/>
         <DCCReference Include="..\..\dependencies\FMXVibration\FMX.Vibrate.pas"/>
         <DCCReference Include="theme\RM.Icons.pas"/>
@@ -721,6 +723,26 @@
         <DCCReference Include="..\..\source\cores\ps1\PS1.Firmware.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Console.pas"/>
         <DCCReference Include="settings\RM.Settings.PS1.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Types.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Scheduler.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Interrupts.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Memory.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Flash.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Holly.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.PVR.Texture.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.PVR.TA.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.PVR.Render.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.PVR.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Maple.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.AICA.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Disc.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.GDROM.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.GDROM.HLE.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.ELF.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Font.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Boot.pas"/>
+        <DCCReference Include="..\..\source\cores\dc\DC.Console.pas"/>
+        <DCCReference Include="settings\RM.Settings.DC.pas"/>
         <DCCReference Include="..\..\source\cores\md\MD.Firmware.pas"/>
         <DCCReference Include="..\..\source\cores\md\MD.Mars.pas"/>
         <DCCReference Include="..\..\source\cores\md\MD.MegaCD.pas"/>
@@ -887,6 +909,8 @@
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH2.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH7034.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.SH7604.pas"/>
+        <DCCReference Include="..\..\source\hardware\cpu\HW.SH4.pas"/>
+        <DCCReference Include="..\..\source\hardware\cpu\HW.SH4.Periph.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.TLCS900H.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\MD.M68k.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\MD.Z80.pas"/>
@@ -902,6 +926,8 @@
         <DCCReference Include="..\..\source\runtime\adapters\Core.N64.Playback.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.PS1.Playback.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.PS1.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.DC.Playback.pas"/>
+        <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.DC.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.NeoGeo.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.NES.pas"/>
         <DCCReference Include="..\..\source\runtime\adapters\Core.Adapter.NGP.pas"/>
