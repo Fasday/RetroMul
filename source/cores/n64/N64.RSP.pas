@@ -275,8 +275,9 @@ type
     FAheadClocks: Integer;
     FAheadStop: TRSPAheadStop;
     // 8-byte groups of DMEM a run-ahead window must not read (bit 0) or
-    // write (bit 1): DMA or the RDP uses them meanwhile.
-    FFence: array[0..511] of Byte;
+    // write (bit 1): DMA or the RDP uses them meanwhile. 512..515: groups
+    // 0..3 again (the blocks' code reads past the end without wrapping).
+    FFence: array[0..515] of Byte;
     FFenced: Boolean;
     FAheadStopIndex: Integer;
     // The instructions of the clock a fence stops (for ClockFenced).
@@ -5868,7 +5869,7 @@ type
     ScalarLo, ScalarHi, VectorLo, VectorHi, LoadHistory, SingleIssue: Integer;
     Branch, NextPC, BranchBubble, BlocksRun, BlockClocks, Calls, Back: Integer;
     CtxCycles, CtxRan, CtxPC, CtxFences, CtxSlot, CtxBlock: Integer;
-    BClocks, BNative, BLink, BLinkPC, BChecked, Fenced: Integer;
+    BClocks, BNative, BLink, BLinkPC, BChecked, Fenced, Fence, Reg: Integer;
   end;
 
 var
@@ -5907,6 +5908,8 @@ begin
   O.BLinkPC := Integer(NativeUInt(@PRSPBlock(nil).LinkPC[0]));
   O.BChecked := Integer(NativeUInt(@PRSPBlock(nil).Checked));
   O.Fenced := Integer(NativeUInt(@TN64RSP(nil).FFenced));
+  O.Fence := Integer(NativeUInt(@TN64RSP(nil).FFence[0]));
+  O.Reg := Integer(NativeUInt(@TN64RSP(nil).FReg[0]));
   RSPOff := O;
 end;
 
@@ -6106,12 +6109,65 @@ begin
     var Next: TJitLabel := -1;
     if (S.Checks and StepMemory) <> 0 then
     begin
+      // While the run has fences and DMEM has any: the groups the load or
+      // store may touch (as TouchesFence finds them, the base register as
+      // before the clock) tested here, JitCheck where one is fenced.
       var Plain := J.NewLabel;
+      var Fenced := J.NewLabel;
       Next := J.NewLabel;
       J.Move(jw8, JT0, JMem(jrCtx, O.CtxFences));
       J.BranchTest(jcEq, jw32, JT0, JT0, Plain);
       J.Move(jw8, JT0, JMem(jrSelf, O.Fenced));
       J.BranchTest(jcEq, jw32, JT0, JT0, Plain);
+      var W := S.Op;
+      if not LoadStore(W) then
+        W := S.Second;
+      var Code := W shr 26;
+      J.Move(jw32, JT0, JMem(jrSelf, O.Reg + Integer((W shr 21) and 31) * 4));
+      var Flags: Cardinal := 1;
+      if Code in [40..43, 58] then
+        Flags := 2;
+      if Code in [50, 58] then
+      begin
+        // 32 bytes from 16 below the 16-byte line: four groups (FFence's
+        // copy of 0..3 past its end).
+        var Kind := (W shr 11) and 31;
+        var Size: Integer := 16;
+        if Kind <= 3 then
+          Size := 1 shl Kind
+        else if Kind in [6, 7] then
+          Size := 8;
+        var Offset := Integer(SignedValue(SX(W and 127, 7)));
+        J.Alu(jaAdd, jw32, JT0, JImm(Int64(Cardinal((Int64(Offset) * Size) and $FFFFFFFF))));
+        J.Alu(jaAnd, jw32, JT0, JImm($FF0));
+        J.Shift(jsShr, jw32, jrT0, 3);
+        J.Alu(jaAdd, jw64, JT0, JSelf);
+        J.Move(jw32, JT1, JMem(jrT0, O.Fence));
+        J.BranchTest(jcNe, jw32, JT1, JImm(Flags * $01010101), Fenced);
+      end
+      else
+      begin
+        // Its first and last byte's groups.
+        var Size := 1;
+        if Code in [33, 37, 41] then
+          Size := 2
+        else if Code in [35, 39, 43] then
+          Size := 4;
+        J.Alu(jaAdd, jw32, JT0, JImm(W and $FFF));
+        J.Alu(jaAnd, jw32, JT0, JImm($FFF));
+        J.Move(jw32, JT1, JT0);
+        J.Alu(jaAdd, jw32, JT1, JImm(Size - 1));
+        J.Shift(jsShr, jw32, jrT0, 3);
+        J.Shift(jsShr, jw32, jrT1, 3);
+        J.Alu(jaAdd, jw64, JT0, JSelf);
+        J.Alu(jaAdd, jw64, JT1, JSelf);
+        J.Move(jw8, JT2, JMem(jrT0, O.Fence));
+        J.Move(jw8, JT3, JMem(jrT1, O.Fence));
+        J.Alu(jaOr, jw32, JT2, JT3);
+        J.BranchTest(jcNe, jw32, JT2, JImm(Flags), Fenced);
+      end;
+      J.Jump(Plain);
+      J.Bind(Fenced);
       J.CallAt(JMem(jrSelf, O.Calls + RSPJitCallCheck * 8), [JSelf, JCtx, JImm(Step), JRan]);
       J.BranchTest(jcNe, jw32, JT0, JT0, Stop);
       J.Jump(Next);
@@ -6536,6 +6592,8 @@ begin
     Flags := Flags or 1;
   for var Group := Integer(Offset shr 3) to Integer((Offset + Count - 1) shr 3) do
     FFence[Group and 511] := FFence[Group and 511] or Flags;
+  for var Group := 0 to 3 do
+    FFence[512 + Group] := FFence[Group];
   FFenced := True;
 end;
 
