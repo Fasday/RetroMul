@@ -360,7 +360,9 @@ type
     function AccLo(I: Integer): Word; inline;
     procedure SetAcc(I: Integer; Value: Int64); inline;
     procedure SetAccLo(I: Integer; Value: Word);
-    procedure SetAccLoQuads(Lo0, Lo1: UInt64); inline; inline;
+    {$IF Defined(CPU64BITS)}
+    procedure SetAccLoQuads(Lo0, Lo1: UInt64); inline;
+    {$ENDIF} inline;
     function VTLanes(Op: Cardinal; var Copy: TRSPQuadLanes): PRSPLanes; inline;
     procedure VectorOp(Op: Cardinal);
     procedure VectorMulFrac(Op: Cardinal);
@@ -1420,38 +1422,67 @@ end;
 procedure TN64RSP.VectorAdd(Op: Cardinal);
 begin
   // VADD with the VCO carries (VS + VT + carry, clamped; the sum wrapped
-  // into ACC_LO), four lanes at a time; VCO cleared.
+  // into ACC_LO); VCO cleared. 64-bit hosts four lanes at a time, 32-bit
+  // ones (which split each 64-bit operation) a lane at a time.
   var Copy: TRSPQuadLanes;
+  var Carry := Cardinal(FVCO);
+  {$IF Defined(CPU64BITS)}
   var VT := PRSPQuadLanes(VTLanes(Op, Copy));
   var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
   var VD := PRSPQuadLanes(@FVec[(Op shr 6) and 31]);
-  var Carry := Cardinal(FVCO);
   var Sum0, Sum1: UInt64;
   var R0 := SatAdd4(VS.Quads[0], VT.Quads[0], RSPNibbleLanes[Carry and 15], Sum0);
   var R1 := SatAdd4(VS.Quads[1], VT.Quads[1], RSPNibbleLanes[(Carry shr 4) and 15], Sum1);
   VD.Quads[0] := R0;
   VD.Quads[1] := R1;
   SetAccLoQuads(Sum0, Sum1);
+  {$ELSE}
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  for var I := 0 to 7 do
+  begin
+    var V := S16(VS[I]) + S16(VT[I]) + Integer(Carry and 1);
+    Carry := Carry shr 1;
+    PWord(@FAcc[I])^ := Word(V);
+    VD[I] := ClampSigned(V);
+  end;
+  {$ENDIF}
   FVCO := 0;
 end;
 
 procedure TN64RSP.VectorSub(Op: Cardinal);
 begin
-  // VSUB: VS - VT - carry, as VS + not VT + (1 - carry).
+  // VSUB: VS - VT - carry; 64-bit hosts as VS + not VT + (1 - carry), four
+  // lanes at a time (as VectorAdd).
   var Copy: TRSPQuadLanes;
+  var Carry := Cardinal(FVCO);
+  {$IF Defined(CPU64BITS)}
   var VT := PRSPQuadLanes(VTLanes(Op, Copy));
   var VS := PRSPQuadLanes(@FVec[(Op shr 11) and 31]);
   var VD := PRSPQuadLanes(@FVec[(Op shr 6) and 31]);
-  var Carry := Cardinal(FVCO);
   var Sum0, Sum1: UInt64;
   var R0 := SatAdd4(VS.Quads[0], not VT.Quads[0], RSPLaneOne - RSPNibbleLanes[Carry and 15], Sum0);
   var R1 := SatAdd4(VS.Quads[1], not VT.Quads[1], RSPLaneOne - RSPNibbleLanes[(Carry shr 4) and 15], Sum1);
   VD.Quads[0] := R0;
   VD.Quads[1] := R1;
   SetAccLoQuads(Sum0, Sum1);
+  {$ELSE}
+  var VT := VTLanes(Op, Copy);
+  var VS: PRSPLanes := @FVec[(Op shr 11) and 31];
+  var VD: PRSPLanes := @FVec[(Op shr 6) and 31];
+  for var I := 0 to 7 do
+  begin
+    var V := S16(VS[I]) - S16(VT[I]) - Integer(Carry and 1);
+    Carry := Carry shr 1;
+    PWord(@FAcc[I])^ := Word(V);
+    VD[I] := ClampSigned(V);
+  end;
+  {$ENDIF}
   FVCO := 0;
 end;
 
+{$IF Defined(CPU64BITS)}
 procedure TN64RSP.SetAccLoQuads(Lo0, Lo1: UInt64);
 begin
   // Each lane's ACC_LO from four lanes at a time (Lo0: lanes 0..3).
@@ -1464,6 +1495,7 @@ begin
   PWord(@FAcc[6])^ := Word(Lo1 shr 32);
   PWord(@FAcc[7])^ := Word(Lo1 shr 48);
 end;
+{$ENDIF}
 
 procedure TN64RSP.VectorAbs(Op: Cardinal);
 begin
