@@ -4587,23 +4587,24 @@ end;
 procedure TN64Console.RunThreadedWindow;
 begin
   // RSP thread: the requested window, in parts, each published as it ends
-  // (a window run in parts is the same as one run at once).
+  // (a window run in parts is the same as one run at once): of AheadPart
+  // clocks at least, to the end of the RSP block running then.
   var PC := FAheadPC;
   var Status := FAheadStatus;
   var Budget := FAheadBudget;
   var Done := 0;
   try
     var Part := Min(AheadPart, Budget);
-    var Ran := FRSP.RunAhead(PC, Status, Part);
+    var Ran := FRSP.RunAhead(PC, Status, Budget, Part);
     Done := Ran;
-    while (Ran = Part) and (Done < Budget) and (FRSP.AheadStop = TRSPAheadStop.Budget) and
+    while (Ran >= Part) and (Done < Budget) and (FRSP.AheadStop = TRSPAheadStop.Budget) and
       (SharedRead(FAheadStopRequest) = 0) do
     begin
       PublishAhead(Done);
       if FRSPStress then
         StressPause;
       Part := Min(AheadPart, Budget - Done);
-      Ran := FRSP.ContinueAhead(PC, Status, Part);
+      Ran := FRSP.ContinueAhead(PC, Status, Budget - Done, Part);
       Inc(Done, Ran);
     end;
   except
