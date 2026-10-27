@@ -355,7 +355,8 @@ begin
   FDisplay.FrameDone := False;
   var Limit := FScheduler.Now + Int64(PSPFrameNs) * 2;
   while not FDisplay.FrameDone and not FKernel.Exited and (FScheduler.Now < Limit) do
-    RunUntil(Min(Limit, FScheduler.Due(TPSPEvent.VBlank) + 1));
+    // A syscall's cost can carry Now past the vblank; run at least once so it is dispatched.
+    RunUntil(Min(Limit - 1, Max(FScheduler.Due(TPSPEvent.VBlank), FScheduler.Now)) + 1);
   Inc(FFrameNumber);
   Frame := Default(TEmulatorFrame);
   FDisplay.Render(Frame);
