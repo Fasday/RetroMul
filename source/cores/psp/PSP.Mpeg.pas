@@ -81,6 +81,9 @@ type
     function FillQueue(Inst: TPSPMpegInstance; Q: TPSPEsQueue): Boolean;
     procedure WriteAu(Address: Cardinal; const Au: TPSPAccessUnit; EsBuffer: Cardinal; WriteEs: Boolean);
     procedure PutStep(Rb, Remaining, Done: Cardinal);
+    function DecodeAu(Inst: TPSPMpegInstance; AuPtr: Cardinal; out Pictures: TArray<TPSPPicture>): Cardinal;
+    procedure InitYCbCr(Buf: Cardinal; W, H: Integer);
+    procedure WriteYCbCr(const Pic: TPSPPicture; Buf: Cardinal);
     procedure WritePictureTo(Inst: TPSPMpegInstance; const Pic: TPSPPicture; Buffer: Cardinal; Width: Integer);
     procedure hInit;
     procedure hFinish;
@@ -927,6 +930,44 @@ begin
   Result := 100 + Int64((Pic.Width + 15) div 16) * ((Pic.Height + 15) div 16) * 5;
 end;
 
+function TPSPMpeg.DecodeAu(Inst: TPSPMpegInstance; AuPtr: Cardinal; out Pictures: TArray<TPSPPicture>): Cardinal;
+begin
+  // The access unit sceMpegGetAvcAu left in the ES buffer (or an ES buffer in
+  // memory, which sceMp4 fills).
+  Pictures := nil;
+  Result := 0;
+  var Es := FMemory.Read32(AuPtr + 16);
+  var Data: TBytes := nil;
+  if (Es >= Cardinal(Low(Inst.EsBufs))) and (Es <= Cardinal(High(Inst.EsBufs))) then
+  begin
+    Data := Inst.EsBufs[Es].Data;
+    Inst.EsBufs[Es].Data := nil;
+  end;
+  var Size := FMemory.Read32(AuPtr + 20);
+  if (Data = nil) and (Es > Cardinal(High(Inst.EsBufs))) and (Size > 0) and (Size < $100000) and FMemory.Valid(Es, Size) then
+  begin
+    SetLength(Data, Size);
+    FMemory.ReadBytes(Es, Data[0], Size);
+  end;
+  if Cardinal(Length(Data)) > Size then
+    SetLength(Data, Size);
+  if Length(Data) > 0 then
+  begin
+    Result := Inst.Avc.Decode(Data, Pictures);
+    if Result <> 0 then
+      Exit;
+  end;
+  FMemory.Write32(AuPtr + 20, 0);
+  if Length(Data) > 0 then
+    UpdateCodecContext(Inst, Cardinal(Length(Data)), Pictures);
+  if Length(Pictures) > 0 then
+  begin
+    Inst.LastPicture := Pictures[0];
+    Inst.HasDetail := True;
+    Inc(Inst.Pictures, Length(Pictures));
+  end;
+end;
+
 procedure TPSPMpeg.hAvcDecode;
 begin
   var Inst := InstanceOf(FHLE.Arg(0));
@@ -939,46 +980,17 @@ begin
     FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
     Exit;
   end;
-  var Es := FMemory.Read32(AuPtr + 16);
-  var Data: TBytes := nil;
-  if (Es >= Cardinal(Low(Inst.EsBufs))) and (Es <= Cardinal(High(Inst.EsBufs))) then
+  var Pictures: TArray<TPSPPicture>;
+  var Err := DecodeAu(Inst, AuPtr, Pictures);
+  if Err <> 0 then
   begin
-    Data := Inst.EsBufs[Es].Data;
-    Inst.EsBufs[Es].Data := nil;
+    FHLE.Result(Err);
+    Exit;
   end;
-  var Size := FMemory.Read32(AuPtr + 20);
-  if (Data = nil) and (Es > Cardinal(High(Inst.EsBufs))) and (Size > 0) and (Size < $100000) and FMemory.Valid(Es, Size) then
-  begin
-    // An ES buffer in memory: sceMp4 puts the access unit there.
-    SetLength(Data, Size);
-    FMemory.ReadBytes(Es, Data[0], Size);
-  end;
-  if Cardinal(Length(Data)) > Size then
-    SetLength(Data, Size);
-  var Pictures: TArray<TPSPPicture> := nil;
-  if Length(Data) > 0 then
-  begin
-    var Err := Inst.Avc.Decode(Data, Pictures);
-    if Err <> 0 then
-    begin
-      FHLE.Result(Err);
-      Exit;
-    end;
-  end;
-  FMemory.Write32(AuPtr + 20, 0);
-  if Length(Data) > 0 then
-    UpdateCodecContext(Inst, Cardinal(Length(Data)), Pictures);
-  var Status := Length(Pictures);
-  if Status > 0 then
-  begin
-    Inst.LastPicture := Pictures[0];
-    Inst.HasDetail := True;
-    Inc(Inst.Pictures, Status);
-    if BufPtr <> 0 then
-      WritePictureTo(Inst, Pictures[0], FMemory.Read32(BufPtr), Width);
-  end;
+  if (Length(Pictures) > 0) and (BufPtr <> 0) then
+    WritePictureTo(Inst, Pictures[0], FMemory.Read32(BufPtr), Width);
   if InitPtr <> 0 then
-    FMemory.Write32(InitPtr, Cardinal(Status));
+    FMemory.Write32(InitPtr, Cardinal(Length(Pictures)));
   var Us: Int64 := 200;
   if Inst.Avc.HasPicture then
     Us := DecodeTimeUs(Inst.Avc.LastPicture);
@@ -1077,33 +1089,226 @@ begin
   FHLE.Result(0);
 end;
 
+// The ME's YCbCr buffer: a descriptor (macroblock rows and columns, two
+// words, eight plane addresses, the picture's size) followed by the planes in
+// the layout sceMpegBaseCscAvc reads: luma per field and macroblock column
+// parity, chroma per field and plane.
+
+function YCbCrPlanes(MbW, MbH: Integer; out Sizes: TArray<Cardinal>): Cardinal;
+begin
+  var Luma := Cardinal(((MbW + 1) div 2) * 16 * (MbH * 8));
+  var Chroma := Cardinal(MbW * 8 * MbH * 4);
+  Sizes := [Luma, Luma, Luma, Luma, Chroma, Chroma, Chroma, Chroma];
+  Result := $40 + 4 * Luma + 4 * Chroma;
+end;
+
 procedure TPSPMpeg.hAvcQueryYCbCrSize;
 begin
-  FHLE.Unimplemented('AvcQueryYCbCrSize');
+  var W := FHLE.ArgInt(2);
+  var H := FHLE.ArgInt(3);
+  var Out_ := FHLE.Arg(4);
+  if (W <= 0) or (H <= 0) or (W > 1024) or (H > 1024) then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  var Sizes: TArray<Cardinal>;
+  var Size := YCbCrPlanes((W + 15) div 16, (H + 15) div 16, Sizes);
+  if Out_ <> 0 then
+    FMemory.Write32(Out_, Size);
   FHLE.Result(0);
+end;
+
+procedure TPSPMpeg.InitYCbCr(Buf: Cardinal; W, H: Integer);
+begin
+  var MbW := (W + 15) div 16;
+  var MbH := (H + 15) div 16;
+  var Sizes: TArray<Cardinal>;
+  YCbCrPlanes(MbW, MbH, Sizes);
+  FMemory.Write32(Buf, Cardinal(MbH));
+  FMemory.Write32(Buf + 4, Cardinal(MbW));
+  FMemory.Write32(Buf + 8, 0);
+  FMemory.Write32(Buf + 12, 1);
+  var A := Buf + $40;
+  for var I := 0 to 7 do
+  begin
+    FMemory.Write32(Buf + 16 + Cardinal(I) * 4, A);
+    Inc(A, Sizes[I]);
+  end;
+  FMemory.Write32(Buf + 48, Cardinal(H));
+  FMemory.Write32(Buf + 52, Cardinal(W));
 end;
 
 procedure TPSPMpeg.hAvcInitYCbCr;
 begin
-  FHLE.Unimplemented('AvcInitYCbCr');
+  var Inst := InstanceOf(FHLE.Arg(0));
+  var W := FHLE.ArgInt(2);
+  var H := FHLE.ArgInt(3);
+  var Buf := FHLE.Arg(4);
+  if Inst = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
+    Exit;
+  end;
+  if (Buf = 0) or (W <= 0) or (H <= 0) or (W > 1024) or (H > 1024) then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  InitYCbCr(Buf, W, H);
   FHLE.Result(0);
+end;
+
+procedure TPSPMpeg.WriteYCbCr(const Pic: TPSPPicture; Buf: Cardinal);
+begin
+  if (Buf = 0) or not FMemory.Valid(Buf, $40) then
+    Exit;
+  var MbH := Integer(FMemory.Read32(Buf));
+  var MbW := Integer(FMemory.Read32(Buf + 4));
+  if (MbW * 16 < Pic.Width) or (MbH * 16 < Pic.Height) or (MbW > 64) or (MbH > 64) then
+  begin
+    InitYCbCr(Buf, Pic.Width, Pic.Height);
+    MbH := (Pic.Height + 15) div 16;
+    MbW := (Pic.Width + 15) div 16;
+  end;
+  var Bufs: array[0..7] of Cardinal;
+  for var I := 0 to 7 do
+    Bufs[I] := FMemory.Read32(Buf + 16 + Cardinal(I) * 4);
+  var FieldRows := MbH * 8;
+  var CW := (Pic.Width + 1) div 2;
+  for var Y := 0 to Pic.Height - 1 do
+  begin
+    var Field := Y and 1;
+    var Row := Y div 2;
+    for var X := 0 to Pic.Width - 1 do
+    begin
+      var Mb := X div 16;
+      FMemory.Write8(Bufs[Field * 2 + (Mb and 1)] + Cardinal(((Mb div 2) * FieldRows + Row) * 16 + (X and 15)),
+        Pic.Y[Y * Pic.Width + X]);
+    end;
+  end;
+  // Each field keeps the chroma rows of its parity.
+  var CH := (Pic.Height + 1) div 2;
+  for var F := 0 to 1 do
+    for var K := 0 to MbH * 4 - 1 do
+    begin
+      var SrcRow := 2 * K + F;
+      if SrcRow >= CH then
+        Break;
+      for var X := 0 to CW - 1 do
+      begin
+        var C := Cardinal(K * (MbW * 8) + X);
+        var S := SrcRow * CW + X;
+        FMemory.Write8(Bufs[4 + F * 2] + C, Pic.Cb[S]);
+        FMemory.Write8(Bufs[5 + F * 2] + C, Pic.Cr[S]);
+      end;
+    end;
 end;
 
 procedure TPSPMpeg.hAvcDecodeYCbCr;
 begin
-  FHLE.Unimplemented('AvcDecodeYCbCr');
-  FHLE.Result(0);
+  var Inst := InstanceOf(FHLE.Arg(0));
+  var AuPtr := FHLE.Arg(1);
+  var BufPtr := FHLE.Arg(2);
+  var InitPtr := FHLE.Arg(3);
+  if Inst = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
+    Exit;
+  end;
+  var Pictures: TArray<TPSPPicture>;
+  var Err := DecodeAu(Inst, AuPtr, Pictures);
+  if Err <> 0 then
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
+  if (Length(Pictures) > 0) and (BufPtr <> 0) then
+    WriteYCbCr(Pictures[0], FMemory.Read32(BufPtr));
+  if InitPtr <> 0 then
+    FMemory.Write32(InitPtr, Cardinal(Length(Pictures)));
+  var Us: Int64 := 200;
+  if Inst.Avc.HasPicture then
+    Us := DecodeTimeUs(Inst.Avc.LastPicture);
+  Delay(Us, 0);
 end;
 
 procedure TPSPMpeg.hAvcDecodeStopYCbCr;
 begin
-  FHLE.Unimplemented('AvcDecodeStopYCbCr');
+  var Inst := InstanceOf(FHLE.Arg(0));
+  var BufPtr := FHLE.Arg(1);
+  var StatusPtr := FHLE.Arg(2);
+  if Inst = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
+    Exit;
+  end;
+  var Pictures: TArray<TPSPPicture>;
+  Inst.Avc.Drain(Pictures);
+  for var I := 0 to High(Pictures) do
+    if BufPtr <> 0 then
+      WriteYCbCr(Pictures[I], FMemory.Read32(BufPtr + Cardinal(I) * 4));
+  if Length(Pictures) > 0 then
+    Inst.LastPicture := Pictures[0];
+  if StatusPtr <> 0 then
+    FMemory.Write32(StatusPtr, Cardinal(Length(Pictures)));
   FHLE.Result(0);
 end;
 
 procedure TPSPMpeg.hAvcCsc;
 begin
-  FHLE.Unimplemented('AvcCsc');
+  var Inst := InstanceOf(FHLE.Arg(0));
+  var Src := FHLE.Arg(1);
+  var Range := FHLE.Arg(2);
+  var Stride := FHLE.ArgInt(3);
+  var Dest := FHLE.Arg(4);
+  if Inst = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
+    Exit;
+  end;
+  if (Src = 0) or (Range = 0) or (Dest = 0) or (Stride <= 0) then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  var X0 := Integer(FMemory.Read32(Range));
+  var Y0 := Integer(FMemory.Read32(Range + 4));
+  var W := Integer(FMemory.Read32(Range + 8));
+  var H := Integer(FMemory.Read32(Range + 12));
+  var MbH := Integer(FMemory.Read32(Src));
+  var MbW := Integer(FMemory.Read32(Src + 4));
+  if (X0 < 0) or (Y0 < 0) or (W <= 0) or (H <= 0) or (X0 + W > MbW * 16) or (Y0 + H > MbH * 16) then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  var Bufs: array[0..7] of Cardinal;
+  for var I := 0 to 7 do
+    Bufs[I] := FMemory.Read32(Src + 16 + Cardinal(I) * 4);
+  var FieldRows := MbH * 8;
+  var Bpp := PSPPixelBytes(Inst.PixelFormat);
+  for var Y := 0 to H - 1 do
+  begin
+    var SY := Y0 + Y;
+    var Field := SY and 1;
+    var Row := SY div 2;
+    var Line := Dest + Cardinal(Y * Stride * Bpp);
+    for var X := 0 to W - 1 do
+    begin
+      var SX := X0 + X;
+      var Mb := SX div 16;
+      var Yv := Integer(FMemory.Read8(Bufs[Field * 2 + (Mb and 1)] + Cardinal(((Mb div 2) * FieldRows + Row) * 16 + (SX and 15))));
+      var C := Cardinal((Row div 2) * (MbW * 8) + SX div 2);
+      var R, G, B: Integer;
+      PSPYCbCrToRGB(Yv, FMemory.Read8(Bufs[4 + Field * 2] + C), FMemory.Read8(Bufs[5 + Field * 2] + C), R, G, B);
+      var Px := PSPPackPixel(R, G, B, Inst.PixelFormat);
+      if Bpp = 4 then
+        FMemory.Write32(Line + Cardinal(X) * 4, Px)
+      else
+        FMemory.Write16(Line + Cardinal(X) * 2, Px);
+    end;
+  end;
   FHLE.Result(0);
 end;
 
