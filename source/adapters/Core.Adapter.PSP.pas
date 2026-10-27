@@ -1,9 +1,9 @@
-﻿unit Core.Adapter.PSP;
+unit Core.Adapter.PSP;
 
 interface
 
 uses System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, PSP.Media, PSP.Console, PCM.Audio;
+  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, PCM.Audio;
 
 type
   TPSPKeyMap = array[TEmulatorButton] of UInt32;
@@ -11,12 +11,20 @@ type
   TPSPConfig = class(TEmulatorConfigBase)
   private
     FKeys: TPSPKeyMap;
+    FRecompiler: Boolean;
+    FLanguage, FButtonSwap: Integer;
+    FNickname: string;
   protected
     procedure LoadCoreSettings(Ini: TCustomIniFile); override;
     procedure SaveCoreSettings(Ini: TCustomIniFile); override;
   public
     constructor Create(const FileName: string; const Storage: IStorage);
     property Keys: TPSPKeyMap read FKeys;
+    // The CPU through its recompiler (Emulation/Execution jit), else interpreted.
+    property Recompiler: Boolean read FRecompiler write FRecompiler;
+    property Language: Integer read FLanguage;
+    property ButtonSwap: Integer read FButtonSwap;
+    property Nickname: string read FNickname;
   end;
 
   TPSPWorker = class(TThread)
@@ -29,6 +37,7 @@ type
     FVolume: Single;
     FInput: TEmulatorInput;
     FPaused, FReset, FAvailable: Boolean;
+    FRecompiler: Boolean;
     FFrame: TEmulatorFrame;
     FError: string;
   protected
@@ -36,7 +45,8 @@ type
   public
     constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage);
     destructor Destroy; override;
-    procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1);
+    procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1;
+      Recompiler: Boolean = True);
     procedure RequestReset;
     procedure Join;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
@@ -83,7 +93,7 @@ type
 
 implementation
 
-uses System.UITypes, System.Diagnostics, System.Math, Core.PSP.Archive;
+uses System.UITypes, System.Diagnostics, System.Math, Core.PSP.Archive, PSP.Settings;
 
 const
   KeyNames: array[TEmulatorButton] of string =
@@ -95,18 +105,33 @@ const
 begin
   inherited Create(FileName, Storage);
   FKeys := DefaultKeys;
+  FRecompiler := True;
+  FLanguage := 1;
+  FButtonSwap := 1;
+  FNickname := 'RetroMul';
 end;
 
 procedure TPSPConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
     FKeys[Button] := ReadEmulatorKey(Ini,'Keys',KeyNames[Button],FKeys[Button]);
+  FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
+  FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
+  FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
+  FNickname := Ini.ReadString('System', 'Nickname', FNickname);
 end;
 
 procedure TPSPConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
     Ini.WriteInteger('Keys',KeyNames[Button],FKeys[Button]);
+  if FRecompiler then
+    Ini.WriteString('Emulation', 'Execution', 'jit')
+  else
+    Ini.WriteString('Emulation', 'Execution', 'interpreter');
+  Ini.WriteInteger('System', 'Language', FLanguage);
+  Ini.WriteInteger('System', 'ButtonSwap', FButtonSwap);
+  Ini.WriteString('System', 'Nickname', FNickname);
 end;
 
 constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage);
@@ -136,11 +161,13 @@ begin
   WaitFor;
 end;
 
-procedure TPSPWorker.Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean; Volume: Single);
+procedure TPSPWorker.Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean; Volume: Single;
+  Recompiler: Boolean);
 begin
   FLock.Acquire;
   try
     FInput := Input;
+    FRecompiler := Recompiler;
     FPaused := Paused;
     FAudioEnabled := AudioEnabled;
     FVolume := EnsureRange(Volume,0.0,1.0);
@@ -178,8 +205,10 @@ begin
       var AudioEnabled: Boolean;
       var Volume: Single;
       var Input: TEmulatorInput;
+      var Recompiler: Boolean;
       FLock.Acquire;
       try
+        Recompiler := FRecompiler;
         Paused := FPaused;
         Reset := FReset;
         FReset := False;
@@ -197,6 +226,8 @@ begin
         Deadline := TStopwatch.GetTimeStamp / TStopwatch.Frequency;
         Continue;
       end;
+      if FConsole.Recompiler <> nil then
+        FConsole.Recompiler.Enabled := Recompiler;
       FConsole.Input := Input;
       var Frame: TEmulatorFrame;
       FConsole.RunFrame(Frame);
@@ -303,13 +334,18 @@ end;
 
 procedure TPSPCoreAdapter.Configure;
 begin
-  if FWorker <> nil then FWorker.Configure(GetInputState,FPaused,FConfig.AudioEnabled,FConfig.AudioVolume);
+  if FWorker <> nil then
+    FWorker.Configure(GetInputState,FPaused,FConfig.AudioEnabled,FConfig.AudioVolume,FConfigObject.Recompiler);
 end;
 
 procedure TPSPCoreAdapter.Start;
 begin
   if FWorker <> nil then Exit;
   FError := '';
+  // The system settings the game reads (sceUtility, sceReg, sceImpose).
+  PSPSettings.Language := FConfigObject.Language;
+  PSPSettings.ButtonSwap := FConfigObject.ButtonSwap;
+  PSPSettings.Nickname := FConfigObject.Nickname;
   FWorker := TPSPWorker.Create(FProgram,FStorage);
   Configure;
   FWorker.Start;
@@ -390,7 +426,7 @@ end;
 
 function TPSPCoreAdapter.GetName: string;
 begin
-  Result := 'Sony PSP (experimental homebrew)';
+  Result := 'Sony PSP';
 end;
 
 function TPSPCoreAdapter.GetSystemId: string;

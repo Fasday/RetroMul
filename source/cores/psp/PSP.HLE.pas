@@ -48,6 +48,7 @@ type
     FCycleCost: Integer;
     class function Key(const Lib: string; NID: Cardinal): string; static; inline;
     function GetCount: Integer;
+    procedure Clobber;
   public
     TraceCalls: Boolean;
     constructor Create(CPU: TPSPCPU; Memory: TPSPMemory);
@@ -165,11 +166,38 @@ begin
     Result := -1;
 end;
 
+// Kernel-mode and driver libraries share most NIDs with their user ones.
+function UserLibrary(const Lib: string): string;
+const
+  Pairs: array[0..20, 0..1] of string = (
+    ('ThreadManForKernel', 'ThreadManForUser'), ('SysMemForKernel', 'SysMemUserForUser'),
+    ('UtilsForKernel', 'UtilsForUser'), ('IoFileMgrForKernel', 'IoFileMgrForUser'),
+    ('LoadExecForKernel', 'LoadExecForUser'), ('ModuleMgrForKernel', 'ModuleMgrForUser'),
+    ('InterruptManagerForKernel', 'InterruptManager'), ('StdioForKernel', 'StdioForUser'),
+    ('sceDisplay_driver', 'sceDisplay'), ('sceCtrl_driver', 'sceCtrl'), ('sceAudio_driver', 'sceAudio'),
+    ('sceGe_driver', 'sceGe_user'), ('scePower_driver', 'scePower'), ('sceRtc_driver', 'sceRtc'),
+    ('sceReg_driver', 'sceReg'), ('sceUmd', 'sceUmdUser'), ('sceHprm_driver', 'sceHprm'),
+    ('sceImpose_driver', 'sceImpose'), ('sceMpegbase_driver', 'sceMpegbase'),
+    ('sceAudioRouting_driver', 'sceAudioRouting'), ('sceSuspendForKernel', 'sceSuspendForUser'));
+begin
+  for var I := 0 to High(Pairs) do
+    if Pairs[I, 0] = Lib then
+      Exit(Pairs[I, 1]);
+  Result := '';
+end;
+
 function TPSPHLE.Resolve(const Lib: string; NID: Cardinal): Integer;
 begin
   Result := Find(Lib, NID);
   if Result >= 0 then
     Exit;
+  var Alias := UserLibrary(Lib);
+  if Alias <> '' then
+  begin
+    Result := Find(Alias, NID);
+    if Result >= 0 then
+      Exit;
+  end;
   var F := Default(TPSPHLEFunction);
   F.Library_ := Lib;
   F.NID := NID;
@@ -205,8 +233,15 @@ begin
   FCPU.AddCycles(FCycleCost);
   if TraceCalls then
     Log('call %s(%x, %x, %x, %x) ra=%.8x', [F.Name, FCPU.Ctx.GPR[4], FCPU.Ctx.GPR[5], FCPU.Ctx.GPR[6], FCPU.Ctx.GPR[7], FCPU.Ctx.GPR[31]]);
+  var ReturnPC := FCPU.Ctx.PC;
   if Assigned(F.Handler) then
-    F.Handler()
+  begin
+    F.Handler();
+    // The kernel leaves the caller-saved registers clobbered (unless the call
+    // went on into guest code, a callback or a thread switch).
+    if FCPU.Ctx.PC = ReturnPC then
+      Clobber;
+  end
   else
   begin
     if not FUnknownLogged.ContainsKey(Index) then
@@ -220,6 +255,18 @@ begin
     FCPU.Ctx.GPR[2] := 0;
   end;
   Result := True;
+end;
+
+procedure TPSPHLE.Clobber;
+begin
+  var C: PPSPContext := @FCPU.Ctx;
+  C.GPR[1] := $DEADBEEF;
+  for var R := 4 to 15 do
+    C.GPR[R] := $DEADBEEF;
+  C.GPR[24] := $DEADBEEF;
+  C.GPR[25] := $DEADBEEF;
+  C.HI := $DEADBEEF;
+  C.LO := $DEADBEEF;
 end;
 
 procedure TPSPHLE.Log(const Text: string);

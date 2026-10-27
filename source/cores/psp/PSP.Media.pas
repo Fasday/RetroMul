@@ -572,6 +572,14 @@ begin
       Result.BootPath := 'disc0:/PSP_GAME/SYSDIR/EBOOT.BIN';
       if Disc.HasFile('PSP_GAME/SYSDIR/EBOOT.BIN') then
         Result.Executable := Disc.ReadFile('PSP_GAME/SYSDIR/EBOOT.BIN');
+      // Discs patched to boot through a custom-firmware loader keep the
+      // game's own executable as EBOOT.OLD.
+      if Disc.HasFile('PSP_GAME/SYSDIR/EBOOT.OLD') then
+      begin
+        var Old := Disc.ReadFile('PSP_GAME/SYSDIR/EBOOT.OLD');
+        if IsExecutable(Old) then
+          Result.Executable := Old;
+      end;
       if not IsExecutable(Result.Executable) and Disc.HasFile('PSP_GAME/SYSDIR/BOOT.BIN') then
       begin
         var Boot := Disc.ReadFile('PSP_GAME/SYSDIR/BOOT.BIN');

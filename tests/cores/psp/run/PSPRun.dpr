@@ -7,7 +7,7 @@ program PSPRun;
 // -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
 
 uses
-  System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
+  Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
 
 type
@@ -41,6 +41,24 @@ begin
   if Shots > 1 then
     Name := ChangeFileExt(ShotFile, '') + '.' + IntToStr(Shots) + ExtractFileExt(ShotFile);
   TFile.WriteAllBytes(Name, Data);
+end;
+
+type
+  TWatch = class(TThread)
+    Console: TPSPConsole;
+    procedure Execute; override;
+  end;
+
+procedure TWatch.Execute;
+begin
+  while not Terminated do
+  begin
+    Sleep(2000);
+    if Terminated then
+      Break;
+    Writeln(ErrOutput, Format('[watch] pc=%.8x now=%d next=%d busy=%d thread=%s', [Console.CPU.CurPC, Console.Scheduler.Now div 1000,
+      Console.Scheduler.NextDue div 1000, Console.Kernel.BusyUntil div 1000, PSPThreadName(Console.Kernel.Current)]));
+  end;
 end;
 
 function ButtonOf(const S: string): TEmulatorButton;
@@ -124,6 +142,10 @@ begin
     var Quiet := False;
     var Strict := False;
     var TraceKernel := False;
+    var WatchOn := False;
+    var ShowState := False;
+    var DumpAt: Cardinal := 0;
+    var DumpLen := 0;
     var ShotFile := '';
     var I := 2;
     while I <= ParamCount do
@@ -137,6 +159,9 @@ begin
       else if A = '-quiet' then Quiet := True
       else if A = '-strict' then Strict := True
       else if A = '-trace' then TraceKernel := True
+      else if A = '-watch' then WatchOn := True
+      else if A = '-state' then ShowState := True
+      else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-press' then
       begin
@@ -172,8 +197,34 @@ begin
     end;
     if (Ext = '.iso') or (Ext = '.cso') then
       Prog.MediaPath := FileName;
+    // Every run gets its own memory stick, and tests a copy of their folder as host0:,
+    // so runs in parallel do not see each other's files.
+    var Scratch := TPath.Combine(TPath.GetTempPath, Format('psprun-%d', [GetCurrentProcessId]));
     var HostRoot := ExtractFileDir(FileName);
-    var Memstick := TPath.Combine(TPath.GetTempPath, 'psprun-memstick');
+    var Memstick := TPath.Combine(Scratch, 'ms0');
+    if TestMode then
+    begin
+      // host0:/ is the test suite's root on hardware (usbhostfs): the test's
+      // folder is copied to the same place under the scratch root.
+      var Host := TPath.Combine(Scratch, 'host0');
+      var Rel := '';
+      var At := HostRoot.ToLower.LastIndexOf('\tests\');
+      if At >= 0 then
+        Rel := HostRoot.Substring(At + 1);
+      var Dest := Host;
+      if Rel <> '' then
+        Dest := TPath.Combine(Host, Rel);
+      ForceDirectories(Dest);
+      for var F in TDirectory.GetFiles(HostRoot) do
+        TFile.Copy(F, TPath.Combine(Dest, ExtractFileName(F)), True);
+      for var D in TDirectory.GetDirectories(HostRoot) do
+        TDirectory.Copy(D, TPath.Combine(Dest, ExtractFileName(D)));
+      HostRoot := Host;
+      if Rel <> '' then
+        Prog.BootPath := 'host0:/' + Rel.Replace('\', '/') + '/' + ExtractFileName(FileName)
+      else
+        Prog.BootPath := 'host0:/' + ExtractFileName(FileName);
+    end;
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick);
@@ -182,9 +233,17 @@ begin
       Sink.Console := Console;
       Sink.ShotFile := ShotFile;
       Console.IO.OnScreenshot := Sink.Screenshot;
+      if WatchOn then
+      begin
+        var Watcher := TWatch.Create(True);
+        Watcher.Console := Console;
+        Watcher.FreeOnTerminate := True;
+        Watcher.Start;
+      end;
       Console.HLE.Strict := Strict;
       Console.Kernel.Trace := TraceKernel;
       Console.HLE.TraceCalls := TraceKernel;
+      Console.HLE.NoClobber := GetEnvironmentVariable('PSP_NOCLOBBER') <> '';
       if TestMode then
         Console.IO.HasDisplay := False;
       if not Quiet then
@@ -229,10 +288,18 @@ begin
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      if ShowState then
+      begin
+        Writeln(ErrOutput, Console.Kernel.DescribeThreads);
+        Writeln(ErrOutput, Console.Loader.Describe);
+      end;
+      for var K := 0 to DumpLen div 4 - 1 do
+        Writeln(ErrOutput, Format('[dump] %.8x %.8x', [DumpAt + Cardinal(K) * 4, Console.Memory.Read32(DumpAt + Cardinal(K) * 4)]));
       if not Quiet then
-        Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s',
+        Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s cpu=%.1fM (%.1f MHz host)',
           [Console.FrameNumber, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9,
-          BoolToStr(Console.Kernel.Exited, True), LastHash]));
+          BoolToStr(Console.Kernel.Exited, True), LastHash, Console.Executed / 1e6,
+          Console.Executed / 1e6 / Max(0.001, Watch.Elapsed.TotalSeconds)]));
       begin
         if Failed <> '' then
         begin
@@ -254,6 +321,11 @@ begin
       Console.Free;
       Sink.Free;
       Presses.Free;
+      try
+        if TDirectory.Exists(Scratch) then
+          TDirectory.Delete(Scratch, True);
+      except
+      end;
     end;
   except
     on E: Exception do
