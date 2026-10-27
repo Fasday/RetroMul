@@ -346,8 +346,14 @@ var
 begin
   T := nil;
   Tracks.Clear;
-  Boxes(0, Length(Data));
-  FinishTrack;
+  try
+    Boxes(0, Length(Data));
+    FinishTrack;
+  except
+    // A damaged file keeps the tracks read before the damage.
+    on E: Exception do
+      FreeAndNil(T);
+  end;
 end;
 
 { TPSPMp4 }
@@ -729,7 +735,7 @@ begin
   if S.Key then
     Out_ := Copy(R.Track.ParamSets);
   var P := S.Offset;
-  var Stop := S.Offset + S.Size;
+  var Stop := Min(S.Offset + S.Size, Int64(Length(Data)));
   while P + R.Track.NalLength <= Stop do
   begin
     var L: Int64 := 0;
