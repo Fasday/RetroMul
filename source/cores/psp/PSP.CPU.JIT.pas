@@ -434,15 +434,25 @@ procedure TPSPRecompiler.EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Po
 begin
   // The handler (PC, NPC and CurPC first where it may read them); after it
   // the code leaves where it stopped the run or rewrote a block.
+  // The budget as the interpreter has it while it runs (the block's later
+  // instructions not taken yet).
   if State then
     WriteState(At);
+  var Rest := At.Refund;
+  var Remaining := JMem(jrSelf, OffRemaining);
+  if Rest <> 0 then
+    FJ.Alu(jaAdd, jw32, Remaining, JImm(Rest));
   FJ.Call(Handler, [JSelf, JImm(Op)]);
-  var Leave := HitExit(At);
+  var After := At;
+  After.Refund := 0;
+  var Leave := HitExit(After);
   FJ.BranchTest(jcNe, jw8, JMem(jrSelf, OffStopping), JImm($FF), Leave);
   // (Cycles it added that leave too few for the block's rest.)
-  FJ.Branch(jcLt, jw32, JMem(jrSelf, OffRemaining), JImm(0), Leave);
+  FJ.Branch(jcLt, jw32, Remaining, JImm(Rest), Leave);
   if MayStore(Op) then
     FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), Leave);
+  if Rest <> 0 then
+    FJ.Alu(jaSub, jw32, Remaining, JImm(Rest));
 end;
 
 procedure TPSPRecompiler.EmitHost(Kind: Integer; Store: Boolean; const Reg: TJitOp);

@@ -151,6 +151,7 @@ begin
   // Stops the run, adds cycles, or both.
   if (Op and 1) <> 0 then
     C.Stop;
+  C.Ctx.V[(Op shr 4) and 127] := Cardinal(C.TakeCycles);
   C.AddCycles((Op shr 1) and 7);
   C.Ctx.V[Op and 127] := C.Ctx.V[Op and 127] + 1;
 end;
