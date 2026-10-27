@@ -286,6 +286,8 @@ end;
 
 procedure TPSPConsole.DispatchEvent(E: TPSPEvent);
 begin
+  // Every event is an interrupt on hardware, whose return breaks a pending ll/sc.
+  FCPU.Ctx.LLBit := 0;
   case E of
     TPSPEvent.VBlank: FDisplay.OnEvent;
     TPSPEvent.Kernel: FKernel.OnTimerEvent;

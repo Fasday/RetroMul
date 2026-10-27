@@ -68,6 +68,8 @@ type
     procedure CodeWrite(Address, Size: Cardinal);
   public
     Ctx: TPSPContext;
+    // System control coprocessor registers, as kernel-mode code reads and writes them.
+    COP0: array[0..31] of Cardinal;
     Memory: TPSPMemory;
     CurPC: Cardinal;
     Stopping: Boolean;
@@ -227,14 +229,15 @@ begin
   C.Ctx.GPR[RD(Op)] := Sar32(C.Ctx.GPR[RT(Op)], C.Ctx.GPR[RS(Op)] and 31);
 end;
 
+// The low two bits of a register jump target are ignored.
 procedure OpJR(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := C.Ctx.GPR[RS(Op)];
+  C.Ctx.NPC := C.Ctx.GPR[RS(Op)] and $FFFFFFFC;
 end;
 
 procedure OpJALR(C: TPSPCPU; Op: Cardinal);
 begin
-  var Target := C.Ctx.GPR[RS(Op)];
+  var Target := C.Ctx.GPR[RS(Op)] and $FFFFFFFC;
   var D := RD(Op);
   if D <> 0 then
     C.Ctx.GPR[D] := C.Ctx.NPC;
@@ -255,6 +258,8 @@ end;
 
 procedure OpSYSCALL(C: TPSPCPU; Op: Cardinal);
 begin
+  // The exception return breaks a pending ll/sc.
+  C.Ctx.LLBit := 0;
   if Assigned(C.FOnSyscall) then
     C.FOnSyscall(C, (Op shr 6) and $FFFFF)
   else
@@ -682,6 +687,7 @@ begin
   C.Ctx.LLBit := 1;
 end;
 
+// A successful sc leaves the link set: only an exception clears it.
 procedure OpSC(C: TPSPCPU; Op: Cardinal);
 begin
   var T := RT(Op);
@@ -689,7 +695,6 @@ begin
     C.Memory.Write32(C.Ctx.GPR[RS(Op)] + SImm(Op), C.Ctx.GPR[T]);
   if T <> 0 then
     C.Ctx.GPR[T] := C.Ctx.LLBit;
-  C.Ctx.LLBit := 0;
 end;
 
 procedure OpLWC1(C: TPSPCPU; Op: Cardinal);
@@ -783,9 +788,39 @@ end;
 
 { COP0 }
 
+const
+  COP0_STATUS = 12;
+  COP0_EPC = 14;
+  COP0_ERROREPC = 30;
+
 procedure OpMFC0(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.GPR[RT(Op)] := 0;
+  C.Ctx.GPR[RT(Op)] := C.COP0[RD(Op)];
+end;
+
+procedure OpMTC0(C: TPSPCPU; Op: Cardinal);
+begin
+  C.COP0[RD(Op)] := C.Ctx.GPR[RT(Op)];
+end;
+
+// eret has no delay slot: ERL returns to ErrorEPC, otherwise EXL to EPC.
+procedure OpERET(C: TPSPCPU; Op: Cardinal);
+begin
+  var S := C.COP0[COP0_STATUS];
+  var Target: Cardinal;
+  if (S and 4) <> 0 then
+  begin
+    Target := C.COP0[COP0_ERROREPC];
+    C.COP0[COP0_STATUS] := S and not Cardinal(4);
+  end
+  else
+  begin
+    Target := C.COP0[COP0_EPC];
+    C.COP0[COP0_STATUS] := S and not Cardinal(2);
+  end;
+  C.Ctx.LLBit := 0;
+  C.Ctx.PC := Target;
+  C.Ctx.NPC := Target + 4;
 end;
 
 {$I PSP.CPU.FPU.inc}
@@ -974,6 +1009,8 @@ begin
     $10:
       case RS(Op) of
         $00: if T = 0 then Result := OpNop else Result := OpMFC0;
+        $04: Result := OpMTC0;
+        $10: if (Op and $3F) = $18 then Result := OpERET else Result := OpNop;
       else
         Result := OpNop;
       end;
@@ -1058,6 +1095,8 @@ procedure TPSPCPU.Reset;
 begin
   FlushDecoded;
   Ctx := Default(TPSPContext);
+  FillChar(COP0, SizeOf(COP0), 0);
+  FCmpPC := 0;
   Ctx.VC[VFPU_PFXS] := $E4;
   Ctx.VC[VFPU_PFXT] := $E4;
   Ctx.VC[VFPU_CC] := $3F;
