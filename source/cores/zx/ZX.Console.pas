@@ -157,6 +157,7 @@ type
     function BorderColor: TAlphaColor;
     function DisplayColor(Attr: Byte; Ink: Boolean): TAlphaColor;
     function FlashActive: Boolean; inline;
+    function VideoDisplayStart: Integer; inline;
     procedure DrawCompatibleVideo;
     procedure UpdatePalette(Index: Integer);
     function TimexHiRes: Boolean; inline;
@@ -478,6 +479,8 @@ begin
     FCallbacks.InternalMachineCallback := ClockBusCallback;
   FRAMSizeKB := Profile.RAMSizeKB;
   FClock := Profile.ClockHz;
+  if FSID <> nil then
+    FSID.SetMotherboardClock(FClock);
   if FTFM.Clock <> FClock then
     FTFM.Reset(FClock);
   FFrameCycles := Profile.FrameCycles;
@@ -626,7 +629,7 @@ begin
   if FGS <> nil then
     FGS.Reset;
   if FSID <> nil then
-    FSID.Reset(FClock, FMachine.SIDModel, FMachine.SIDNTSC);
+    FSID.Reset(FClock, FMachine.SIDModel, FMachine.SIDNTSC, FMachine.SIDInterface, FMachine.SIDClock1MHz);
   if FMoon <> nil then
     FMoon.Reset(FClock);
   FUSCBusAck := False;
@@ -1405,7 +1408,7 @@ end;
 
 function TZXConsole.ReadPort(Address: Word): Byte;
 begin
-  if (FSID <> nil) and TZXSID.Decodes(Address) then
+  if (FSID <> nil) and FSID.HandlesPort(Address) then
     Exit(FSID.ReadPort(Address));
   if MoonSoundSelected(Address) then
     Exit(FMoon.ReadPort(Address));
@@ -1586,7 +1589,7 @@ procedure TZXConsole.WritePortPart(Address: Word; Value, Parts: Byte; Timed: Boo
   end;
 
 begin
-  if (FSID <> nil) and TZXSID.Decodes(Address) then
+  if (FSID <> nil) and FSID.HandlesPort(Address) then
   begin
     if (Parts and 16) <> 0 then
     begin
@@ -2160,6 +2163,8 @@ begin
   State.Field(FMachine.SID, SizeOf(FMachine.SID));
   State.Field(FMachine.SIDModel, SizeOf(FMachine.SIDModel));
   State.Field(FMachine.SIDNTSC, SizeOf(FMachine.SIDNTSC));
+  State.Field(FMachine.SIDInterface, SizeOf(FMachine.SIDInterface));
+  State.Field(FMachine.SIDClock1MHz, SizeOf(FMachine.SIDClock1MHz));
   State.Field(FMachine.MoonSound, SizeOf(FMachine.MoonSound));
   State.Field(FMachine.MoonSoundIRQ, SizeOf(FMachine.MoonSoundIRQ));
   State.Field(FMachine.MoonSoundInDOS, SizeOf(FMachine.MoonSoundInDOS));
@@ -2327,7 +2332,12 @@ begin
   State.Field(FDAC, SizeOf(FDAC));
   FNextDAC.SerializeState(State);
   if FSID <> nil then
+  begin
     FSID.SerializeState(State);
+    if (FSID.MotherboardClock <> FClock) or (FSID.InterfaceType <> FMachine.SIDInterface) or
+      (FSID.FixedClock <> Ord(FMachine.SIDClock1MHz) * 1000000) then
+      raise EReadError.Create('Mismatched SID interface state');
+  end;
   if FMoon <> nil then
     FMoon.SerializeState(State);
   if FUSC <> nil then
@@ -3097,9 +3107,18 @@ begin
   Result := Color(C or ((Attr shr 3) and 8));
 end;
 
+function TZXConsole.VideoDisplayStart: Integer;
+begin
+  // Pentagon visible paper starts at 17989 T. Keep the 17984 T physical
+  // counter origin for memory fetches and the 1024SL bus arbitration.
+  Result := FDisplayStart;
+  if FPentagon then
+    Inc(Result, 5);
+end;
+
 procedure TZXConsole.DrawCompatibleVideo;
 begin
-  var T := FTime - (FDisplayStart - 24 * FLineCycles - 16);
+  var T := FTime - (VideoDisplayStart - 24 * FLineCycles - 16);
   if T < 0 then
     Exit;
   var Y := T div FLineCycles;
@@ -4030,9 +4049,9 @@ begin
   var Wide := (FExpansion and $40) <> 0;
   var Hires := not Wide and ((FExpansion and 2) <> 0) and ((FExpansion and 1) = 0);
   var Nibbles := (FExpansion and 1) <> 0;
-  var Start := FDisplayStart - 24 * FLineCycles - 16;
+  var Start := VideoDisplayStart - 24 * FLineCycles - 16;
   if Wide then
-    Start := FDisplayStart - 64 * FLineCycles - 32;
+    Start := VideoDisplayStart - 64 * FLineCycles - 32;
   var T := FTime - Start;
   if T < 0 then
     Exit;

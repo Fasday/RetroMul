@@ -1,4 +1,4 @@
-﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{82132DF3-6773-48AA-904F-4792F7EFBB7C}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -435,6 +435,24 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\..\source\adapters\Core.Adapter.MSX.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Cartridge.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.MapperAnalysis.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Console.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.AudioBoard.pas"/>
+        <DCCReference Include="..\..\source\hardware\audio\opl\Yamaha.Sound.Y8950.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.RTC.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Floppy.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Cassette.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Peripherals.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Emulation.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Firmware.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.Machine.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.VDP.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.VDP.Timing.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.VDP.AdjustTiming.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.VDP.SpriteTiming.pas"/>
+        <DCCReference Include="..\..\source\cores\msx\MSX.VDP.ShortTiming.pas"/>
         <DCCReference Include="..\..\source\hardware\cpu\HW.ARM.Shifter.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Registry.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.YCbCr.pas"/>
@@ -478,7 +496,6 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.SystemHLE.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.GE.pas"/>
-        <DCCReference Include="..\..\source\cores\psp\PSP.GEMath.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.AES.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.PRX.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Relocations.pas"/>

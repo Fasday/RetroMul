@@ -62,8 +62,7 @@ type
     FTapeKeyDown: array[0..255] of Boolean;
     FChoicePage: Integer;
     function PreparationKey: string;
-    procedure InitializeImage(Stream: TStream; const OwnedData: TBytes; const Storage: IStorage;
-      const RomName, ImageName: string);
+    procedure InitializeImage(Stream: TStream; const OwnedData: TBytes; const Storage: IStorage; const RomName, ImageName: string);
     function SessionMachine: TZXMachineConfig;
     procedure ApplySettings;
   public
@@ -237,9 +236,14 @@ begin
   Ini.WriteBool('Hardware', 'NeoGS', Machine.NeoGS);
   Ini.WriteBool('Hardware', 'SID', Machine.SID);
   Ini.WriteInteger('Hardware', 'SIDModel', Machine.SIDModel);
+  Ini.WriteString('Hardware', 'SIDInterface', 'ezxmb');
+  if Machine.SIDInterface = 1 then
+    Ini.WriteString('Hardware', 'SIDInterface', 'xxcf');
   Ini.WriteString('Hardware', 'SIDClock', 'pal');
   if Machine.SIDNTSC then
     Ini.WriteString('Hardware', 'SIDClock', 'ntsc');
+  if Machine.SIDClock1MHz then
+    Ini.WriteString('Hardware', 'SIDClock', '1mhz');
   Ini.WriteBool('Hardware', 'MoonSound', Machine.MoonSound);
   Ini.WriteBool('Hardware', 'MoonSoundIRQ', Machine.MoonSoundIRQ);
   Ini.WriteBool('Hardware', 'MoonSoundInDOS', Machine.MoonSoundInDOS);
@@ -301,8 +305,7 @@ begin
   Result := C.TimexCartridgeFile + #0 + C.DivFirmwareFile + #0 + FDivImageFile + #0 + FNeoGSImageFile;
 end;
 
-procedure TZXCoreAdapter.InitializeImage(Stream: TStream; const OwnedData: TBytes; const Storage: IStorage;
-  const RomName, ImageName: string);
+procedure TZXCoreAdapter.InitializeImage(Stream: TStream; const OwnedData: TBytes; const Storage: IStorage; const RomName, ImageName: string);
 begin
   FStorage := Storage;
   if FStorage = nil then

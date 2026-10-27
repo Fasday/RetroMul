@@ -257,7 +257,7 @@ begin
   case Hz of
     24000000:
       Osc := Integer(Count); // The saved remainder is already below 24 MHz.
-    12000000:
+      12000000:
       begin
         Osc := Integer(UInt64(Count) * 2);
         // A frequency change can leave a remainder from the 24 MHz domain.

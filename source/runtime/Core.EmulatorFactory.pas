@@ -21,7 +21,7 @@ uses
   Core.Adapter.NeoGeo, NeoGeo.Cartridge, Core.Adapter.Saturn, Core.Adapter.NGP,
   Core.Adapter.CPS, CPS.RomSets, Core.Adapter.ZX, Core.Adapter.PS1,
   Core.Adapter.PSP, Core.PSP.Archive, PSP.Media, Core.Adapter.DC, DC.ELF,
-  System.StrUtils;
+  System.StrUtils, Core.Adapter.MSX, MSX.Machine, MSX.Cartridge;
 
 // The first disc named by an M3U playlist (as written); restores the stream position.
 function FirstPlaylistEntry(Stream: TStream): string;
@@ -63,6 +63,11 @@ function CreateEmulationCore(Stream: TStream; const Storage: IStorage; const Rom
 begin
   // Disc streams exceed cartridge limits; keep them on disk and read sectors.
   var SourceName := RomName;
+  var MSXHint := -1;
+  var FolderHint := RomName.ToLower.Replace('\', '/');
+  if FolderHint.Contains('/msx1/') or FolderHint.Contains('/msx/') then MSXHint := Ord(MSX1);
+  if FolderHint.Contains('/msx2/') then MSXHint := Ord(MSX2);
+  if FolderHint.Contains('/msx2plus/') or FolderHint.Contains('/msx2+/') then MSXHint := Ord(MSX2Plus);
   if (Storage <> nil) and RomName.StartsWith('content://', True) then
     SourceName := Storage.Describe(RomName).Name;
 
@@ -261,7 +266,7 @@ begin
           Continue;
 
         var BinaryCartridge := False;
-        if SameText(ExtractFileExt(Name), '.bin') and
+        if MatchText(ExtractFileExt(Name), ['.bin', '.rom']) and
           (Archive.FileInfo[i].UncompressedSize <= ROM_MAX_SIZE) then
         begin
           var Probe: TBytes;
@@ -269,11 +274,12 @@ begin
           var ProbeFormat := DetectRom(Probe);
           BinaryCartridge := not (ProbeFormat.System in [TRomSystem.Unknown, TRomSystem.NeoGeo]);
         end;
-        if CartridgeArchiveEntry(Name, Archive.FileInfo[i].UncompressedSize) or BinaryCartridge then
+        var MSXEntry := (MSXHint >= 0) and MatchText(ExtractFileExt(Name), ['.rom','.wav']);
+        if CartridgeArchiveEntry(Name, Archive.FileInfo[i].UncompressedSize) or BinaryCartridge or MSXEntry then
         begin
           if Candidate >= 0 then
           begin
-            if not IsSevenZip then
+            if not IsSevenZip and (MSXHint < 0) then
             begin
               var OldName := Archive.FileNames[Candidate];
               var NewDisk := SameText(ExtractFileExt(Name), '.trd') or SameText(ExtractFileExt(Name), '.scl') or SameText(ExtractFileExt(Name), '.dsk');
@@ -322,6 +328,30 @@ begin
       ArchiveStream.Free;
     end;
   end;
+
+  if SameText(ExtractFileExt(SourceName), '.mx1') and (MSXHint < 0) then MSXHint := Ord(MSX1);
+  if SameText(ExtractFileExt(SourceName), '.mx2') and (MSXHint < 0) then MSXHint := Ord(MSX2);
+  if SameText(ExtractFileExt(SourceName), '.mxp') then MSXHint := Ord(MSX2Plus);
+  if SameText(ExtractFileExt(SourceName),'.cas') then
+  begin
+    if MSXHint<0 then MSXHint:=Ord(MSX1);
+    Exit(TMSXCoreAdapter.Create(Data,TMSXModel(MSXHint),Storage,RomName,CASMedia));
+  end;
+  if (MSXHint>=0) and SameText(ExtractFileExt(SourceName),'.wav') then
+    Exit(TMSXCoreAdapter.Create(Data,TMSXModel(MSXHint),Storage,RomName,WAVMedia));
+  var MSXDisk:=SameText(ExtractFileExt(SourceName),'.dsk') and (MSXHint>=0);
+  // Outside a system folder, only claim a raw FAT image with a valid MSX BPB.
+  // CPC containers and the historic SF-7000 160 KiB dispatch keep their paths.
+  if SameText(ExtractFileExt(SourceName),'.dsk') and (MSXHint<0) and
+    (Length(Data)>=320*1024) and (Length(Data)<=86*2*9*512) and
+    ((Data[0]=$EB) or (Data[0]=$E9)) and (Data[11]=0) and (Data[12]=2) and
+    (Data[24] in [8,9]) and (Data[25]=0) and (Data[26] in [1,2]) and (Data[27]=0) and
+    (Length(Data) mod (512*Data[24]*Data[26])=0) then
+  begin MSXDisk:=True; MSXHint:=Ord(MSX2);end;
+  if MSXDisk then Exit(TMSXCoreAdapter.Create(Data,TMSXModel(MSXHint),Storage,RomName,DiskMedia));
+  if (MSXHint >= 0) and
+    (TMSXCartridge.Recognizes(Data) or MatchText(ExtractFileExt(SourceName), ['.rom', '.mx1', '.mx2', '.mxp'])) then
+    Exit(TMSXCoreAdapter.Create(Data, TMSXModel(MSXHint), Storage, RomName));
 
   if SameText(ExtractFileExt(SourceName), ROM_EXTENSION_PCE) or
     SameText(ExtractFileExt(SourceName), ROM_EXTENSION_SGX) then
@@ -392,6 +422,12 @@ begin
   var Input := TBytesStream.Create(Data);
   try
     case Format.System of
+      TRomSystem.MSX1:
+        Result := TMSXCoreAdapter.Create(Data, MSX1, Storage, RomName);
+      TRomSystem.MSX2:
+        Result := TMSXCoreAdapter.Create(Data, MSX2, Storage, RomName);
+      TRomSystem.MSX2Plus:
+        Result := TMSXCoreAdapter.Create(Data, MSX2Plus, Storage, RomName);
       TRomSystem.SG1000, TRomSystem.SC3000:
         Result := TSGCoreAdapter.Create(Input, Storage, RomName, Format.System = TRomSystem.SC3000);
       TRomSystem.SF7000:

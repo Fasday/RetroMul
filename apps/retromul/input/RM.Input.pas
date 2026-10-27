@@ -310,6 +310,10 @@ begin
   if SystemId = ROM_SYSTEM_GW then
     Exit([Low(TEmulatorButton)..High(TEmulatorButton)]);
 
+  if (SystemId = ROM_SYSTEM_MSX1) or (SystemId = ROM_SYSTEM_MSX2) or (SystemId = ROM_SYSTEM_MSX2PLUS) then
+    Exit([TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right,
+      TEmulatorButton.A, TEmulatorButton.B, TEmulatorButton.Start, TEmulatorButton.Select]);
+
   Result := [];
   if not (Device = 'auto') and not Device.StartsWith('pad') then
     Exit;
@@ -703,7 +707,7 @@ begin
     CopyNES(2, C.GetKeys3);
     CopyNES(3, C.GetKeys4);
   end
-  else if (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) then
+  else if (SystemId = ROM_SYSTEM_MSX1) or (SystemId = ROM_SYSTEM_MSX2) or (SystemId = ROM_SYSTEM_MSX2PLUS) or (SystemId = ROM_SYSTEM_SG1000) or (SystemId = ROM_SYSTEM_SC3000) or (SystemId = ROM_SYSTEM_SF7000) or (SystemId = ROM_SYSTEM_OMV) or (SystemId = ROM_SYSTEM_SMS) or (SystemId = ROM_SYSTEM_GG) then
   begin
     Keys[0, TEmulatorButton.Up] := vkUp;
     Keys[0, TEmulatorButton.Down] := vkDown;

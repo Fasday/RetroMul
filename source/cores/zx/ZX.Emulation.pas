@@ -51,8 +51,7 @@ type
     constructor Create(const Data: TBytes; const Name: string; const Storage: IStorage; Tape128: Boolean = False; Pentagon: Boolean = False; PentagonRAMKB: Integer = 128); overload;
     constructor Create(const Data: TBytes; const Name: string; const Storage: IStorage; const Machine: TZXMachineConfig); overload;
     // Data is privately owned by the adapter and remains immutable for restarts.
-    constructor CreatePrepared(const Data: TBytes; const Name: string; const Storage: IStorage;
-      const Machine: TZXMachineConfig; const Options: TZXRuntimeOptions; var Console: TZXConsole);
+    constructor CreatePrepared(const Data: TBytes; const Name: string; const Storage: IStorage; const Machine: TZXMachineConfig; const Options: TZXRuntimeOptions; var Console: TZXConsole);
     destructor Destroy; override;
     procedure SetFastForward(Enabled: Boolean);
     procedure MoveMouse(DX, DY: Integer; Buttons: Byte);
@@ -108,8 +107,7 @@ begin
   FOptions := TZXRuntimeOptions.Defaults;
 end;
 
-constructor TZXWorker.CreatePrepared(const Data: TBytes; const Name: string; const Storage: IStorage;
-  const Machine: TZXMachineConfig; const Options: TZXRuntimeOptions; var Console: TZXConsole);
+constructor TZXWorker.CreatePrepared(const Data: TBytes; const Name: string; const Storage: IStorage; const Machine: TZXMachineConfig; const Options: TZXRuntimeOptions; var Console: TZXConsole);
 begin
   Create(nil, Name, Storage, Machine);
   FData := Data;

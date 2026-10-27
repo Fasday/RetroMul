@@ -23,6 +23,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 | Othello Multivision | `.mv` |
 | SEGA Master System / Mark III | `.sms` |
 | SEGA Game Gear | `.gg` |
+| MSX1 / MSX2 / MSX2+ (experimental) | `.rom`, `.mx1`, `.mx2`, `.mxp`, `.dsk`, `.cas`, `.wav`, `.zip` / `.7z` |
 | SEGA Saturn | `.iso`, `.cue`, `.chd`, `.mds`, `.nrg` |
 | SEGA Dreamcast (experimental) | `.gdi`, `.cdi`, `.chd`, `.cue`, `.iso`, `.mds`, `.nrg`, homebrew `.elf`, multi-disc `.m3u` |
 | Sony PlayStation (PS1) | `.cue`, `.chd`, `.iso`, `.mds`, `.nrg`, raw `.bin`, PS-X `.exe`, disc / executable `.zip`, multi-disc `.m3u` |
@@ -57,17 +58,7 @@ RetroMul is a multi-system retro game emulator written in Delphi with a FireMonk
 
 Compatibility depends on the game's cartridge hardware, protection, and peripherals. Mapper or ROM-set support does not imply complete hardware accuracy or full gameplay compatibility for every game. Save-state formats can change between builds.
 
-ZX Spectrum includes built-in 48K/128K ROMs, a touch keyboard, Kempston plus QAOP/Space controls,
-beeper and AY audio, and automatic cassette loading. TAP/TZX play at original tape speed.
-Snapshots load immediately. TRD/SCL auto-select Pentagon 128K and boot through native Beta 128 / TR-DOS; disk writes use separate save overlays. PAL Timex TC2048/TC2068, Scorpion ZS-256 and Profi+ 512K/1024K are selectable in settings; DCK boots Timex cartridges; PRO boots native Profi CP/M disks. Microdigital TK90X/TK95 adds MC16845 60/50 Hz timing and embedded Portuguese/Spanish ROMs. ZX settings include 30 ready configurations and live conflict notifications. Didaktik Gama 1987/1988/1989 adds native 80K paging, on-board 8255 and embedded ROMs. Byte 48K and Byte-01 128K/KVU are selectable with embedded ROM/PROM images, native video/VI53 sound and 800K KDI CP/M boot. Optional Pentagon 512K/1024K models are available in settings; 1024K includes software-controlled turbo, 16C/512/384 video and persistent Gluk CMOS. See [ZX Spectrum support and accuracy limits](source/cores/zx/README.md).
-
 ## Getting started
-
-PSP uses a native Delphi Allegrex/HLE core with PRX decryption, software GE,
-UMD/memory-stick I/O, PCM/SAS, ATRAC3/ATRAC3+ and native H.264 movie playback.
-Angry Birds, Lumines and Lemmings have reached rendered gameplay; broad
-compatibility and full hardware/API coverage remain under development. See
-[PSP status and implementation checklist](source/cores/psp/README.md).
 
 Open a ROM directly, or select the library root folder in Settings. The library uses these system subdirectories:
 
@@ -84,6 +75,9 @@ ROMS/
   sega32x/
   sg1000/
   sc3000/
+  msx1/
+  msx2/
+  msx2plus/
   zxspectrum/
   sf7000/
   omv/

@@ -43,6 +43,9 @@ const
   SETTINGS_PAGE_ZX = 27;
   SETTINGS_PAGE_PSP = 29;
   SETTINGS_PAGE_DC = 30;
+  SETTINGS_PAGE_MSX1 = 31;
+  SETTINGS_PAGE_MSX2 = 32;
+  SETTINGS_PAGE_MSX2PLUS = 33;
 
 type
   TPlatformPresentation = record
@@ -64,6 +67,19 @@ function PlatformPresentation(System: TRomSystem): TPlatformPresentation;
 begin
   Result := Default(TPlatformPresentation);
   case System of
+    TRomSystem.MSX1, TRomSystem.MSX2, TRomSystem.MSX2Plus:
+      begin
+        case System of
+          TRomSystem.MSX1:
+            Result.SettingsPageId := SETTINGS_PAGE_MSX1;
+          TRomSystem.MSX2:
+            Result.SettingsPageId := SETTINGS_PAGE_MSX2;
+          TRomSystem.MSX2Plus:
+            Result.SettingsPageId := SETTINGS_PAGE_MSX2PLUS;
+        end;
+        Result.PadLayout := TPlatformPadLayout.Nes;
+        Result.IconData := PlatformIconSC3000;
+      end;
     TRomSystem.ZXSpectrum:
       begin
         Result.SettingsPageId := SETTINGS_PAGE_ZX;
@@ -73,9 +89,12 @@ begin
     TRomSystem.CPS1, TRomSystem.CPS2, TRomSystem.CPS3:
       begin
         case System of
-          TRomSystem.CPS1: Result.SettingsPageId := SETTINGS_PAGE_CPS1;
-          TRomSystem.CPS2: Result.SettingsPageId := SETTINGS_PAGE_CPS2;
-          TRomSystem.CPS3: Result.SettingsPageId := SETTINGS_PAGE_CPS3;
+          TRomSystem.CPS1:
+            Result.SettingsPageId := SETTINGS_PAGE_CPS1;
+          TRomSystem.CPS2:
+            Result.SettingsPageId := SETTINGS_PAGE_CPS2;
+          TRomSystem.CPS3:
+            Result.SettingsPageId := SETTINGS_PAGE_CPS3;
         end;
         Result.PadLayout := TPlatformPadLayout.CPS;
         Result.IconData := PlatformIconCPS;

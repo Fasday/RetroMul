@@ -1,4 +1,4 @@
-﻿object FormMain: TFormMain
+object FormMain: TFormMain
   Left = 0
   Top = 0
   Caption = 'RetroMul'
@@ -103,7 +103,6 @@
         end
         object LayoutVideoOutput: TLayout
           Align = Client
-          HitTest = False
           Size.Width = 1105.000000000000000000
           Size.Height = 691.000000000000000000
           Size.PlatformDefault = False
@@ -28307,7 +28306,7 @@
                 TextSettings.Font.StyleExt = {00070000000000000004000000}
                 TextSettings.FontColor = xFFE8ECF1
                 TextSettings.WordWrap = False
-                Text = 'NESFMX - Open ROM'
+                Text = 'RetroMul - Open ROM'
                 TabOrder = 0
               end
               object GamePlatform: TLabel
@@ -28373,6 +28372,8 @@
                 Fill.Color = xFFE8ECF1
                 HitTest = False
                 Margins.Left = 12.000000000000000000
+                Position.X = 12.000000000000000000
+                Position.Y = 6.000000000000000000
                 Size.Width = 20.000000000000000000
                 Size.Height = 20.000000000000000000
                 Size.PlatformDefault = False
@@ -28386,6 +28387,7 @@
               StyledSettings = []
               Hint = 'Pause / resume '#183' P'
               Margins.Right = 8.000000000000000000
+              Position.X = 138.000000000000000000
               Size.Width = 132.000000000000000000
               Size.Height = 32.000000000000000000
               Size.PlatformDefault = False
@@ -28471,7 +28473,7 @@
               StyledSettings = []
               Hint = 'Full screen '#183' F11'
               Margins.Right = 8.000000000000000000
-              Position.X = 140.000000000000000000
+              Position.X = 278.000000000000000000
               Size.Width = 132.000000000000000000
               Size.Height = 32.000000000000000000
               Size.PlatformDefault = False
@@ -28508,7 +28510,7 @@
               StyledSettings = []
               Hint = 'Settings'
               Margins.Right = 8.000000000000000000
-              Position.X = 280.000000000000000000
+              Position.X = 418.000000000000000000
               Size.Width = 132.000000000000000000
               Size.Height = 32.000000000000000000
               Size.PlatformDefault = False
@@ -28593,7 +28595,7 @@
               StyledSettings = []
               Hint = 'Controls and shortcuts '#183' F1'
               Margins.Right = 8.000000000000000000
-              Position.X = 420.000000000000000000
+              Position.X = 558.000000000000000000
               Size.Width = 132.000000000000000000
               Size.Height = 32.000000000000000000
               Size.PlatformDefault = False
@@ -28859,11 +28861,11 @@
       AutoHide = False
       Bounces = False
       TouchTracking = True
-      Viewport.Width = 50.000000000000000000
-      Viewport.Height = 50.000000000000000000
+      Viewport.Width = 292.000000000000000000
+      Viewport.Height = 424.000000000000000000
       object GameActionsItems: TLayout
         Align = Top
-        Size.Width = 50.000000000000000000
+        Size.Width = 292.000000000000000000
         Size.Height = 384.000000000000000000
         Size.PlatformDefault = False
         TabOrder = 0

@@ -47,6 +47,8 @@ begin
   Result.SID := Ini.ReadBool('Hardware', 'SID', False);
   Result.SIDModel := Ini.ReadInteger('Hardware', 'SIDModel', 0);
   Result.SIDNTSC := SameText(Ini.ReadString('Hardware', 'SIDClock', 'pal'), 'ntsc');
+  Result.SIDClock1MHz := SameText(Ini.ReadString('Hardware', 'SIDClock', 'pal'), '1mhz');
+  Result.SIDInterface := IndexStr(LowerCase(Ini.ReadString('Hardware', 'SIDInterface', 'ezxmb')), ['ezxmb', 'xxcf']);
   Result.MoonSound := Ini.ReadBool('Hardware', 'MoonSound', False);
   Result.MoonSoundIRQ := Ini.ReadBool('Hardware', 'MoonSoundIRQ', False);
   Result.MoonSoundInDOS := Ini.ReadBool('Hardware', 'MoonSoundInDOS', False);
@@ -120,6 +122,13 @@ begin
   Add('sid8580', 'Pentagon 128K + SID 8580 (eZX/MB)', zmPentagon128);
   Result[High(Result)].Machine.SID := True;
   Result[High(Result)].Machine.SIDModel := 1;
+  Add('hardsid6581', 'Pentagon 1024K + HardSID 6581 (xxCF)', zmPentagon1024);
+  Result[High(Result)].Machine.SID := True;
+  Result[High(Result)].Machine.SIDInterface := 1;
+  Add('hardsid8580', 'Pentagon 1024K + HardSID 8580 (xxCF)', zmPentagon1024);
+  Result[High(Result)].Machine.SID := True;
+  Result[High(Result)].Machine.SIDInterface := 1;
+  Result[High(Result)].Machine.SIDModel := 1;
   Add('moonsound', 'Pentagon 128K + ZXM-MoonSound', zmPentagon128);
   Result[High(Result)].Machine.MoonSound := True;
   Add('ulaplus', 'Spectrum 48K + ULAplus', zmSpectrum48);
@@ -170,9 +179,14 @@ begin
   Ini.WriteBool('Hardware', 'NeoGS', Machine.NeoGS);
   Ini.WriteBool('Hardware', 'SID', Machine.SID);
   Ini.WriteInteger('Hardware', 'SIDModel', Machine.SIDModel);
+  Ini.WriteString('Hardware', 'SIDInterface', 'ezxmb');
+  if Machine.SIDInterface = 1 then
+    Ini.WriteString('Hardware', 'SIDInterface', 'xxcf');
   Ini.WriteString('Hardware', 'SIDClock', 'pal');
   if Machine.SIDNTSC then
     Ini.WriteString('Hardware', 'SIDClock', 'ntsc');
+  if Machine.SIDClock1MHz then
+    Ini.WriteString('Hardware', 'SIDClock', '1mhz');
   Ini.WriteBool('Hardware', 'MoonSound', Machine.MoonSound);
   Ini.WriteBool('Hardware', 'MoonSoundIRQ', Machine.MoonSoundIRQ);
   Ini.WriteBool('Hardware', 'MoonSoundInDOS', Machine.MoonSoundInDOS);
@@ -236,7 +250,13 @@ begin
             if SameText(Key, 'Preset') then
               Continue;
             if not Ini.ValueExists(Section, Key) then
+            begin
+              // Configurations saved before HardSID implicitly use eZX/MB.
+              if SameText(Section, 'Hardware') and SameText(Key, 'SIDInterface') and
+                (P.Machine.SIDInterface = 0) then
+                Continue;
               Exit;
+            end;
             var Value := Expected.ReadString(Section, Key, '');
             if not SameText(Ini.ReadString(Section, Key, Value), Value) then
               Exit;

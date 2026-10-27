@@ -43,3 +43,4 @@ __recovery/
 /apps/retrotune/Win64/*
 /apps/retromul/Lang/*
 /fpc/*
+/apps/gpu_tests/*

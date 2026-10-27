@@ -7,6 +7,9 @@ uses
 
 const
   ROM_SYSTEM_ZX = 'zx';
+  ROM_SYSTEM_MSX1 = 'msx1';
+  ROM_SYSTEM_MSX2 = 'msx2';
+  ROM_SYSTEM_MSX2PLUS = 'msx2plus';
   ROM_SYSTEM_NES = 'nes';
   ROM_SYSTEM_GB = 'gb';
   ROM_SYSTEM_GBC = 'gbc';
@@ -505,6 +508,12 @@ begin
     Result.System := TRomSystem.MD;
     Result.Encoding := TRomEncoding.SMD;
   end
+  // AB headers identify a cartridge, but do not encode the MSX generation.
+  // Prefer the dedicated signatures above; the factory refines the model hint.
+  else if (Length(Data) >= $2000) and (Length(Data) <= $800000) and
+    (((Data[0] = $41) and (Data[1] = $42)) or
+    ((Length(Data) >= $4010) and (Data[$4000] = $41) and (Data[$4001] = $42))) then
+    Result.System := TRomSystem.MSX1
   else
   begin
     var Header: TSnesHeader;

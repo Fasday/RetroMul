@@ -10,7 +10,7 @@ uses
 type
   TRomSystem = (Unknown, NES, GB, GBC, MD, SNES, NeoGeo, GBA, NeoGeoCD, N64, SG1000, SC3000,
     SF7000, Multivision, SMS, GameGear, GameWatch, PCE, SuperGrafx, PCECD, SegaCD, Sega32X, Saturn, NeoGeoAES, NeoGeoPocket, NeoGeoPocketColor,
-    CPS1, CPS2, CPS3, ZXSpectrum, PS1, PSP, DC);
+    CPS1, CPS2, CPS3, ZXSpectrum, PS1, PSP, DC, MSX1, MSX2, MSX2Plus);
 
 type
   // Stable system IDs and settings keys preserve existing collections and INI files.
@@ -53,6 +53,15 @@ end;
 class constructor TPlatformRegistry.Create;
 begin
   FItems := TList<TPlatformInfo>.Create;
+  RegisterPlatform(TRomSystem.MSX1, 'msx1', 'MSX1', 'MSX1',
+    'ASCII / Microsoft', 'MSX TMS9918 AY Z80', 'msx1', ['msx1', 'msx'],
+    ['.rom', '.mx1', '.dsk', '.cas', '.wav', '.zip', '.7z'], 'MSX', 'msx1', 2);
+  RegisterPlatform(TRomSystem.MSX2, 'msx2', 'MSX2', 'MSX2',
+    'ASCII / Microsoft', 'MSX V9938', 'msx2', ['msx2'],
+    ['.rom', '.mx2', '.dsk', '.cas', '.wav', '.zip', '.7z'], 'MSX', 'msx2', 2);
+  RegisterPlatform(TRomSystem.MSX2Plus, 'msx2plus', 'MSX2+', 'MSX2+',
+    'ASCII', 'MSX2+ V9958 YJK MSX MUSIC', 'msx2plus', ['msx2plus', 'msx2+'],
+    ['.rom', '.mx2', '.mxp', '.dsk', '.cas', '.wav', '.zip', '.7z'], 'MSX', 'msx2plus', 2);
   RegisterPlatform(TRomSystem.CPS1, ROM_SYSTEM_CPS1, 'Capcom Play System I', 'CPS-1',
     'Capcom', 'CPS CPS1 arcade', 'cps1', ['cps1'], [ROM_EXTENSION_ZIP], 'CPS1', 'cps1', 4);
   RegisterPlatform(TRomSystem.CPS2, ROM_SYSTEM_CPS2, 'Capcom Play System II', 'CPS-2',

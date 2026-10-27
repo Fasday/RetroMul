@@ -31,6 +31,8 @@ uses
 function GamepadClass(System: TRomSystem; const Device: string): TPlatformGamepadClass;
 begin
   case System of
+    TRomSystem.MSX1, TRomSystem.MSX2, TRomSystem.MSX2Plus:
+      Result := TGamepadSC3000Standart;
     TRomSystem.ZXSpectrum:
       Result := TGamepadZX;
     TRomSystem.CPS1, TRomSystem.CPS2, TRomSystem.CPS3:

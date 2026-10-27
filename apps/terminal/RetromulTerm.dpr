@@ -5,6 +5,25 @@
 {$R *.res}
 
 uses
+  Core.Adapter.MSX in '..\..\source\adapters\Core.Adapter.MSX.pas',
+  MSX.Cartridge in '..\..\source\cores\msx\MSX.Cartridge.pas',
+  MSX.MapperAnalysis in '..\..\source\cores\msx\MSX.MapperAnalysis.pas',
+  MSX.Console in '..\..\source\cores\msx\MSX.Console.pas',
+  MSX.AudioBoard in '..\..\source\cores\msx\MSX.AudioBoard.pas',
+  Yamaha.Sound.Y8950 in '..\..\source\hardware\audio\opl\Yamaha.Sound.Y8950.pas',
+  MSX.RTC in '..\..\source\cores\msx\MSX.RTC.pas',
+  MSX.Floppy in '..\..\source\cores\msx\MSX.Floppy.pas',
+  MSX.Cassette in '..\..\source\cores\msx\MSX.Cassette.pas',
+  MSX.Peripherals in '..\..\source\cores\msx\MSX.Peripherals.pas',
+  MSX.Emulation in '..\..\source\cores\msx\MSX.Emulation.pas',
+  MSX.Firmware in '..\..\source\cores\msx\MSX.Firmware.pas',
+  MSX.Machine in '..\..\source\cores\msx\MSX.Machine.pas',
+  MSX.VDP in '..\..\source\cores\msx\MSX.VDP.pas',
+  MSX.VDP.Timing in '..\..\source\cores\msx\MSX.VDP.Timing.pas',
+  MSX.VDP.AdjustTiming in '..\..\source\cores\msx\MSX.VDP.AdjustTiming.pas',
+  MSX.VDP.SpriteTiming in '..\..\source\cores\msx\MSX.VDP.SpriteTiming.pas',
+  MSX.VDP.ShortTiming in '..\..\source\cores\msx\MSX.VDP.ShortTiming.pas',
+
   HW.ARM.Shifter in '..\..\source\hardware\cpu\HW.ARM.Shifter.pas',
   PSP.Registry in '..\..\source\cores\psp\PSP.Registry.pas',
   PSP.YCbCr in '..\..\source\cores\psp\PSP.YCbCr.pas',

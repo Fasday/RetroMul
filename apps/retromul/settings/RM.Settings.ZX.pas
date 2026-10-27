@@ -93,9 +93,10 @@ begin
   Context.CreateOption('ZXDAC', 'DAC sound board', 'Choose the external 8-bit DAC interface. GS-port Covox is the B3 DAC interface. Applies when opening media.', sekCombo);
   Context.CreateOption('ZXGeneralSound', 'General Sound', 'Attach the classic 12 MHz Z80 sound card with built-in GS ROM 1.05b and four DAC channels. Applies when opening media.', sekSwitch);
   Context.CreateOption('ZXGeneralSoundRAM', 'General Sound RAM', 'Select the classic 128 KiB board or GS512 expansion. GS512 retains the original missing 32 KiB region. Applies when opening media.', sekCombo);
-  Context.CreateOption('ZXSID', 'SID (eZX/MB)', 'Attach one SID through the eZX/MB ports. No BIOS is required. Applies when opening media.', sekSwitch);
-  Context.CreateOption('ZXSIDModel', 'SID model', 'Initial SID model. Software can switch 6581/8580 without resetting the voices.', sekCombo);
-  Context.CreateOption('ZXSIDClock', 'SID clock', 'Initial PAL or NTSC SID clock. This does not change Spectrum video timing. Software can change the SID clock.', sekCombo);
+  Context.CreateOption('ZXSID', 'SID sound board', 'Attach one MOS SID using the selected interface. No BIOS is required. Applies when opening media.', sekSwitch);
+  Context.CreateOption('ZXSIDInterface', 'SID interface', 'eZX/MB uses 6C3B/6D3B. HardSID uses xxCF with the register in the high byte. For NSID Pentagon use the Pentagon 1024 HardSID preset.', sekCombo);
+  Context.CreateOption('ZXSIDModel', 'SID model', 'Initial SID model. eZX/MB software can switch 6581/8580 without resetting the voices. HardSID keeps the configured model.', sekCombo);
+  Context.CreateOption('ZXSIDClock', 'SID clock', 'Choose PAL, NTSC or a 1 MHz HardSID clock. Only eZX/MB software can change the SID clock. Spectrum video timing is unchanged.', sekCombo);
   Context.CreateOption('ZXMoonSound', 'ZXM-MoonSound', 'Attach OPL4 with 18 FM and 24 wave channels, 1 MiB RAM and built-in Yamaha sample ROM. Flash updates are saved automatically. Applies when opening media.', sekSwitch);
   Context.CreateOption('ZXMoonSoundIRQ', 'MoonSound IRQ jumper', 'Connect OPL4 timer interrupts to the Spectrum CPU. The standard music players use frame interrupts and do not require this jumper.', sekSwitch);
   Context.CreateOption('ZXMoonSoundInDOS', 'MoonSound in TR-DOS', 'Emulate the PentEvo jumper and keep MoonSound accessible in DOS ROM. Disk-controller accesses still take priority.', sekSwitch);
@@ -176,8 +177,9 @@ begin
   Context.Check('ZXGeneralSound', 'Hardware', 'GeneralSound', False);
   Context.Combo('ZXGeneralSoundRAM', 'Hardware', 'GeneralSoundRAMKB', ['128 KiB', '512 KiB'], ['128', '512'], '128');
   Context.Check('ZXSID', 'Hardware', 'SID', False);
+  Context.Combo('ZXSIDInterface', 'Hardware', 'SIDInterface', ['eZX/MB (6C3B/6D3B)', 'HardSID / ZX-TSid (xxCF)'], ['ezxmb', 'xxcf'], 'ezxmb');
   Context.Combo('ZXSIDModel', 'Hardware', 'SIDModel', ['MOS 6581', 'MOS 8580'], ['0', '1'], '0');
-  Context.Combo('ZXSIDClock', 'Hardware', 'SIDClock', ['PAL (985248 Hz)', 'NTSC (1022730 Hz)'], ['pal', 'ntsc'], 'pal');
+  Context.Combo('ZXSIDClock', 'Hardware', 'SIDClock', ['PAL (985248 Hz)', 'NTSC (1022730 Hz)', '1 MHz (ZX-TSid)'], ['pal', 'ntsc', '1mhz'], 'pal');
   Context.Check('ZXMoonSound', 'Hardware', 'MoonSound', False);
   Context.Check('ZXMoonSoundIRQ', 'Hardware', 'MoonSoundIRQ', False);
   Context.Check('ZXMoonSoundInDOS', 'Hardware', 'MoonSoundInDOS', False);

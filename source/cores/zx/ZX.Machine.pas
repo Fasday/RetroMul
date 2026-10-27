@@ -37,7 +37,9 @@ type
     NeoGSRAMKB: Integer;
     MoonSound, MoonSoundIRQ, MoonSoundInDOS: Boolean;
     SID, SIDNTSC: Boolean;
-    SIDModel: Integer; // 0 MOS6581, 1 MOS8580; eZX/MB single-SID interface
+    SIDModel: Integer; // 0 MOS6581, 1 MOS8580
+    SIDInterface: Integer; // 0 eZX/MB 6C3B/6D3B, 1 HardSID/ZX-TSid xxCF
+    SIDClock1MHz: Boolean; // Fixed ZX-TSid clock; otherwise SIDNTSC selects PAL/NTSC.
     DMAUSC, DMAUSCULABypass: Boolean;
     DMAUSCStereo: Integer; // 0 AD/BC, 1 AB/CD, 2 mono; four physical card outputs
     class function ForModel(Value: TZXMachineModel): TZXMachineConfig; static;
@@ -195,7 +197,11 @@ begin
   if (NextDACMode < 0) or (NextDACMode > 8) then
     Add('Unsupported Next-DAC port profile');
   if (SIDModel < 0) or (SIDModel > 1) then
-    Add('Unsupported eZX/MB SID model');
+    Add('Unsupported SID model');
+  if (SIDInterface < 0) or (SIDInterface > 1) then
+    Add('Unsupported SID interface');
+  if SID and SIDClock1MHz and ((SIDInterface <> 1) or SIDNTSC) then
+    Add('The 1 MHz SID clock requires HardSID xxCF and cannot be combined with NTSC');
   if (DAC < 0) or (DAC > 6) then
     Add('Unsupported Spectrum DAC board');
   if (DivType = zdIDE) and (DAC = 6) and (NextDACMode in [0, 6]) then
