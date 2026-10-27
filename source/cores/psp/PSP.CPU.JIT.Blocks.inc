@@ -177,6 +177,7 @@ begin
   P.Blocks.Remove(B);
   B.State := bsDead;
   B.Code := nil;
+  Inc(FDead);
 end;
 
 procedure TPSPRecompiler.KillAll;
@@ -210,6 +211,7 @@ begin
       FPages[I] := nil;
     end;
   FResetPending := False;
+  FDead := 0;
   if FJ <> nil then
   begin
     FJ.Reset;
@@ -536,7 +538,8 @@ begin
   var Pending: PPSPJitExit := nil;
   while C.FRemaining > 0 do
   begin
-    if FResetPending then
+    // (Dropped blocks' records and code are freed all at once.)
+    if FResetPending or (FDead > MaxDead) then
     begin
       ResetCode;
       Pending := nil;

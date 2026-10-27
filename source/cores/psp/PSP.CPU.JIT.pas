@@ -110,6 +110,7 @@ type
     FAllExits: TList<PPSPJitExit>;
     FEnter, FPrologue, FExit, FLookup: NativeInt;
     FCompiled, FInvokes, FInterpreted, FLinks, FKills, FResets: Int64;
+    FDead: Integer;
     // While a block is written: what goes out of line.
     FSlow: TList<TPSPJitSlow>;
     FHitExits: TList<TPSPJitHitExit>;
@@ -196,6 +197,7 @@ const
     $88010000, $98010000, $A8000000, $B8000000, $C0010000, $E0010000, $70010024, $70000026);
 
   JitBufferSize = 64 * 1024 * 1024;
+  MaxDead = 65536;
 
   // A host pointer's width (the model runs on 32-bit hosts too).
   {$IFDEF CPU64BITS}

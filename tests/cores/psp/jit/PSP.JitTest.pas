@@ -124,6 +124,9 @@ begin
       end;
     6:
       C.SetPC(CodeStart + (Hash mod (CodeWords - 2)) * 4);
+    7:
+      if Code mod 3 = 0 then
+        C.FlushDecoded;
   end;
 end;
 
@@ -477,8 +480,10 @@ begin
     begin
       Rng := Cardinal((UInt64(P) * 2654435761 + 12345) and $FFFFFFFF);
       var Start: Cardinal := $08800000;
-      if Next(4) = 0 then
-        Start := $88800000;
+      case Next(8) of
+        0, 1: Start := $88800000;
+        2: Start := PSPVRAMBase + $100000;
+      end;
       var Pool: array[0..3] of Cardinal;
       if Next(2) = 0 then
         MakeProgram(Code, Start, Pool)
@@ -504,7 +509,11 @@ begin
       var OtherPC := Start + Next(CodeWords - 2) * 4;
       PSPJitHot := Pick([1, 1, 2, 3, 8]);
       for var M in Machines do
+      begin
         SetUp(M, Code, Start, Pool, Regs, Data, OtherPC);
+        if M.Jit <> nil then
+          M.Jit.Enabled := True;
+      end;
       if FindCmdLineSwitch('mix') then
       begin
         var M := Machines[0];
@@ -552,6 +561,11 @@ begin
           for var M in Machines do
             M.CPU.SetPC(NewPC);
         end;
+        // (The recompiler switched off and on: the interpreter meanwhile.)
+        if Next(12) = 0 then
+          for var M in Machines do
+            if M.Jit <> nil then
+              M.Jit.Enabled := not M.Jit.Enabled;
         var Results: TArray<Integer>;
         SetLength(Results, Length(Machines));
         for var K := 0 to High(Machines) do
