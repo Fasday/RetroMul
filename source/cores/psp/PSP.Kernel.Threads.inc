@@ -369,6 +369,7 @@ begin
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  Spend(PSPSyncCallNs);
   if T.IsDormant then
     begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
   Spend(PSPTerminateThreadNs);
@@ -713,6 +714,7 @@ begin
     Exit;
   end;
   T.EndWaiters.Add(K.FCurrent);
+  K.FWaitCheckNs := PSPThreadEndCheckNs;
   K.BeginWait(PSPWaitThreadEnd, T, Id, H.Arg(1), AllowCB, K.ThreadEndRetry);
 end;
 
@@ -744,7 +746,8 @@ begin
     Microseconds := 0;
   var T := FCurrent;
   var Check: Int64 := PSPDelayCheckNs;
-  if T.Fresh then
+  var WasFresh := T.Fresh;
+  if WasFresh then
     Check := PSPFreshCheckNs;
   T.Fresh := False;
   // A delay that is over by the time the kernel looks returns at once.
@@ -760,7 +763,11 @@ begin
   var Deadline := FScheduler.Now + Us * 1000 + PSPDelayLatencyNs;
   BeginWait(PSPWaitDelay, nil, 0, 0, AllowCB, DelayRetry);
   if T.Wait.Kind = PSPWaitDelay then
-    SetWaitDeadline(T, Deadline)
+  begin
+    SetWaitDeadline(T, Deadline);
+    if WasFresh then
+      Spend(PSPFreshBlockNs);
+  end
   else if T.Frames.Count > 0 then
   begin
     // Callbacks started first; the saved wait carries the deadline.

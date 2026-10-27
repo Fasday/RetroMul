@@ -13,7 +13,11 @@ const
   PSPWaitCheckNs = 1700;
   PSPDelayCheckNs = 500;
   PSPFreshCheckNs = 1500;
+  // The rest of that slower path, after the check, before the thread is off
+  // the CPU.
+  PSPFreshBlockNs = 20000;
   PSPPipeCheckNs = 2900;
+  PSPThreadEndCheckNs = 2000;
   // Thread manager call costs (ns) as a test on hardware measures them.
   PSPCreateThreadNs = 185000;
   PSPStartThreadNs = 15000;
@@ -639,7 +643,8 @@ begin
   if FWaitCheckNs <> 0 then
     Check := FWaitCheckNs;
   FWaitCheckNs := 0;
-  if T.Fresh then
+  var WasFresh := T.Fresh;
+  if WasFresh then
     Check := PSPFreshCheckNs;
   T.Fresh := False;
   if (TimeoutPtr <> 0) and ((FScheduler.Now + Check) div 1000 > FScheduler.Now div 1000 + Int64(FMemory.Read32(TimeoutPtr))) then
@@ -667,6 +672,8 @@ begin
     StartCallbacks(T);
     Exit;
   end;
+  if WasFresh then
+    Spend(PSPFreshBlockNs);
   RequestReschedule;
 end;
 
