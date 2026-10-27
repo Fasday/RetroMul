@@ -30,6 +30,8 @@ begin
   H.Register(U, $E860E75E, 'sceKernelUtilsMt19937Init', hMt19937Init);
   H.Register(U, $06FB8A63, 'sceKernelUtilsMt19937UInt', hMt19937UInt);
   H.Register(U, $37FB5C42, 'sceKernelGetGPI', hGetGPI);
+  H.Register('Kernel_Library', $A089ECA4, 'sceKernelMemset', hKernelMemset);
+  H.Register('Kernel_Library', $1839852A, 'sceKernelMemcpy', hKernelMemcpy);
   H.Register(U, $6AD345D7, 'sceKernelSetGPO', hZero);
 
   H.Register(P, $FDB5BFE9, 'scePowerGetCpuClockFrequencyInt', hPowerGetCpu);
