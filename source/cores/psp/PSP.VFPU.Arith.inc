@@ -251,6 +251,9 @@ begin
     Bits := Bits or $10;
   if (Bits and All) = All then
     Bits := Bits or $20;
+  C.VcmpPC := C.CurPC;
+  C.VcmpOld := C.Ctx.VC[VFPU_CC];
+  C.VccWritePC := 0;
   // Lanes past the size keep their bits.
   C.Ctx.VC[VFPU_CC] := (C.Ctx.VC[VFPU_CC] and not (All or $30)) or Bits;
   EatPfx(C);

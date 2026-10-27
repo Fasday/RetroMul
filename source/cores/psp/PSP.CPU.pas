@@ -70,6 +70,8 @@ type
     Ctx: TPSPContext;
     // System control coprocessor registers, as kernel-mode code reads and writes them.
     COP0: array[0..31] of Cardinal;
+    // VFPU condition hazards: where the last mtvc to CC and the last vcmp were, and the CC before each.
+    VccWritePC, VccWriteOld, VcmpPC, VcmpOld: Cardinal;
     Memory: TPSPMemory;
     CurPC: Cardinal;
     Stopping: Boolean;
@@ -1097,6 +1099,8 @@ begin
   Ctx := Default(TPSPContext);
   FillChar(COP0, SizeOf(COP0), 0);
   FCmpPC := 0;
+  VccWritePC := 0;
+  VcmpPC := 0;
   Ctx.VC[VFPU_PFXS] := $E4;
   Ctx.VC[VFPU_PFXT] := $E4;
   Ctx.VC[VFPU_CC] := $3F;
