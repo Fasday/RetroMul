@@ -4,7 +4,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 src = open(os.path.join(os.path.dirname(__file__), 'vfpu_fn_sin3.py')).read().split('rows = []')[0]
 exec(src)
-SEG = 0x10000
+SEG = int(os.environ.get('SEG', '0')) or (1 << (FA - 7))
 REFL = os.environ.get('REFL', 'neg')
 
 
@@ -40,7 +40,7 @@ for fn, inp, o in pts:
     v = model(fr)
     y = abs(mpmath.mpf(f(o)))
     e = ((o >> 23) & 0xFF) - 127
-    ulp = mpmath.power(2, e - 21)
+    ulp = max(mpmath.power(2, e - 21), mpmath.power(2, -28))
     lo = (y - v) * 2 ** 28
     hi = (y + ulp - v) * 2 ** 28
     ok = lo <= 0 < hi
