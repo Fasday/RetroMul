@@ -562,10 +562,10 @@ begin
             M.CPU.SetPC(NewPC);
         end;
         // (The recompiler switched off and on: the interpreter meanwhile.)
-        if Next(12) = 0 then
-          for var M in Machines do
-            if M.Jit <> nil then
-              M.Jit.Enabled := not M.Jit.Enabled;
+        var Toggle := Next(12) = 0;
+        for var M in Machines do
+          if (M.Jit <> nil) and (Toggle or not M.Jit.Enabled) then
+            M.Jit.Enabled := not M.Jit.Enabled;
         var Results: TArray<Integer>;
         SetLength(Results, Length(Machines));
         for var K := 0 to High(Machines) do
@@ -640,51 +640,111 @@ begin
   end;
 end;
 
+// Instructions for the benchmarks.
+function EncR(Fn, Rs, Rt, Rd: Cardinal; Sa: Cardinal = 0): Cardinal;
+begin
+  Result := (Rs shl 21) or (Rt shl 16) or (Rd shl 11) or (Sa shl 6) or Fn;
+end;
+
+function EncI(Op, Rs, Rt: Cardinal; Imm: Integer): Cardinal;
+begin
+  Result := (Op shl 26) or (Rs shl 21) or (Rt shl 16) or (Cardinal(Imm) and $FFFF);
+end;
+
+function EncJ(Op, Target: Cardinal): Cardinal;
+begin
+  Result := (Op shl 26) or ((Target and $0FFFFFFF) shr 2);
+end;
+
 procedure RunPSPJitBench(Report: TStrings);
 const
   Start = $08800000;
+  Func = Start + $100;
 begin
-  // A hot loop of loads, stores, ALU and a branch, on the interpreter and on
-  // the recompiler's code: instructions per second.
-  var Code: TArray<Cardinal> := [
-    $3C080890,              // lui $8, 0x0890
-    $24090100,              // addiu $9, $0, 256
-    $00005021,              // addu $10, $0, $0
-    $8D0B0000,              // lw $11, 0($8)
-    $014B5021,              // addu $10, $10, $11
-    $014B6026,              // xor $12, $10, $11
-    $000C68C0,              // sll $13, $12, 3
-    $AD0D0400,              // sw $13, 1024($8)
-    $25080004,              // addiu $8, $8, 4
-    $014D702A,              // slt $14, $10, $13
-    $2529FFFF,              // addiu $9, $9, -1
-    $1520FFF7,              // bne $9, $0, -9 (to the lw)
-    $31CF0007,              // andi $15, $14, 7
-    $08000000 or ((Start and $0FFFFFFF) shr 2),  // j Start
-    $00000000];
-  for var Kind := 0 to 2 do
-  begin
-    if (Kind = 1) and not JitSupported then
-      Continue;
-    var M := TMachine.Create(Kind);
-    try
-      M.Memory.WriteBytes(Start, Code[0], Length(Code) * 4);
-      M.CPU.SetPC(Start);
-      var Total: Int64 := 0;
-      var Target: Int64 := 200000000;
-      case Kind of
-        1: Target := 2000000000;
-        2: Target := 10000000;
+  // Hot loops on the interpreter and on the recompiler's code (and its
+  // model): instructions per second. Loop: loads, stores, ALU, a branch.
+  // Calls: a call (JAL, JR) of a function with MULT, MFLO, SRA, SLTU, MOVN,
+  // halfword loads, a likely branch.
+  var Loop: TArray<Cardinal> := [
+    EncI($F, 0, 8, $0890),                  // lui $8, 0x0890
+    EncI(9, 0, 9, 256),                     // addiu $9, $0, 256
+    EncR($21, 0, 0, 10),                    // addu $10, $0, $0
+    EncI($23, 8, 11, 0),                    // L: lw $11, 0($8)
+    EncR($21, 10, 11, 10),                  // addu $10, $10, $11
+    EncR($26, 10, 11, 12),                  // xor $12, $10, $11
+    EncR(0, 0, 12, 13, 3),                  // sll $13, $12, 3
+    EncI($2B, 8, 13, 1024),                 // sw $13, 1024($8)
+    EncI(9, 8, 8, 4),                       // addiu $8, $8, 4
+    EncR($2A, 10, 13, 14),                  // slt $14, $10, $13
+    EncI(9, 9, 9, -1),                      // addiu $9, $9, -1
+    EncI(5, 9, 0, -9),                      // bne $9, $0, L
+    EncI($C, 14, 15, 7),                    // andi $15, $14, 7
+    EncJ(2, Start),                         // j Start
+    0];
+  var Calls: TArray<Cardinal> := [
+    EncI($F, 0, 8, $0890),                  // lui $8, 0x0890
+    EncI(9, 0, 9, 200),                     // addiu $9, $0, 200
+    EncI($23, 8, 4, 0),                     // L: lw $4, 0($8)
+    EncI($21, 8, 5, 6),                     // lh $5, 6($8)
+    EncJ(3, Func),                          // jal Func
+    EncI(9, 8, 8, 8),                       // addiu $8, $8, 8
+    EncI($29, 8, 2, 2048),                  // sh $2, 2048($8)
+    EncI($25, 8, 6, 2050),                  // lhu $6, 2050($8)
+    EncR($21, 6, 2, 7),                     // addu $7, $6, $2
+    EncI(9, 9, 9, -1),                      // addiu $9, $9, -1
+    EncI($15, 9, 0, -9),                    // bnel $9, $0, L
+    EncI($2B, 8, 7, 4096),                  // sw $7, 4096($8)
+    EncJ(2, Start),                         // j Start
+    0];
+  var FuncCode: TArray<Cardinal> := [
+    EncR($18, 4, 5, 0),                     // mult $4, $5
+    EncR($12, 0, 0, 2),                     // mflo $2
+    EncR(3, 0, 2, 2, 4),                    // sra $2, $2, 4
+    EncR($2B, 2, 4, 3),                     // sltu $3, $2, $4
+    EncR($0B, 4, 3, 2),                     // movn $2, $4, $3
+    EncR(8, 31, 0, 0),                      // jr $31
+    EncI($C, 2, 2, $FFFF)];                 // andi $2, $2, 0xFFFF
+  for var Work := 0 to 1 do
+    for var Kind := 0 to 2 do
+    begin
+      if (Kind = 1) and not JitSupported then
+        Continue;
+      var M := TMachine.Create(Kind);
+      try
+        if Work = 0 then
+          M.Memory.WriteBytes(Start, Loop[0], Length(Loop) * 4)
+        else
+        begin
+          M.Memory.WriteBytes(Start, Calls[0], Length(Calls) * 4);
+          M.Memory.WriteBytes(Func, FuncCode[0], Length(FuncCode) * 4);
+        end;
+        M.CPU.SetPC(Start);
+        var Total: Int64 := 0;
+        var Target: Int64 := 100000000;
+        case Kind of
+          1: Target := 1000000000;
+          2: Target := 5000000;
+        end;
+        // (The best of three: other programs share the host.)
+        var S := 1E9;
+        for var Round := 1 to 3 do
+        begin
+          var Done: Int64 := 0;
+          var W := TStopwatch.StartNew;
+          while Done < Target do
+            Inc(Done, M.CPU.Run(1000000));
+          S := Min(S, W.Elapsed.TotalSeconds);
+          Total := Done;
+        end;
+        var WorkName := 'loop';
+        if Work = 1 then
+          WorkName := 'calls';
+        Report.Add(Format('%-6s %-12s %7.1f M instructions/s (%d in %.2f s)', [WorkName, KindNames[Kind],
+          Total / S / 1E6, Total, S]));
+      finally
+        M.Free;
       end;
-      var W := TStopwatch.StartNew;
-      while Total < Target do
-        Inc(Total, M.CPU.Run(1000000));
-      var S := W.Elapsed.TotalSeconds;
-      Report.Add(Format('%-12s %7.1f M instructions/s (%d in %.2f s)', [KindNames[Kind], Total / S / 1E6, Total, S]));
-    finally
-      M.Free;
     end;
-  end;
 end;
 
 end.
