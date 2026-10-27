@@ -50,7 +50,11 @@ type
     procedure Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
     function LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
     procedure TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
+    procedure ClipPosition(const P: TGEVec3; out CX, CY, CZ, CW: Double; out VP: TGEVec3);
     procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
+    function VertexIndex(I: Integer; VType: Cardinal): Integer;
+    procedure AdvanceVertices(Count: Integer; VType: Cardinal);
+    procedure BoundingBox(Op: Cardinal);
     procedure BuildRaster;
     function ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
@@ -123,7 +127,11 @@ begin
         Exit(4 + Integer(Min(FPrimCost, 100000000)));
       end;
     GE_BBOX:
-      BoxVisible := (P and $FFFF) <> 0;
+      begin
+        Regs.Cmd[Cmd] := Op;
+        BoundingBox(Op);
+        Exit(12 + Integer(Min(FPrimCost, 100000000)));
+      end;
     $F7:
       begin
         Regs.Cmd[Cmd] := Op;
@@ -806,6 +814,27 @@ begin
   end;
 end;
 
+// A model space position through the matrices in the GE's 24-bit arithmetic:
+// clip coordinates and the view space position.
+procedure TPSPGEEngine.ClipPosition(const P: TGEVec3; out CX, CY, CZ, CW: Double; out VP: TGEVec3);
+begin
+  var M: PGEMat12 := @Regs.World;
+  var PX := T24(P.X); var PY := T24(P.Y); var PZ := T24(P.Z);
+  var AX := Row24(M[0], M[3], M[6], M[9], PX, PY, PZ);
+  var AY := Row24(M[1], M[4], M[7], M[10], PX, PY, PZ);
+  var AZ := Row24(M[2], M[5], M[8], M[11], PX, PY, PZ);
+  M := @Regs.View;
+  var BX := Row24(M[0], M[3], M[6], M[9], AX, AY, AZ);
+  var BY := Row24(M[1], M[4], M[7], M[10], AX, AY, AZ);
+  var BZ := Row24(M[2], M[5], M[8], M[11], AX, AY, AZ);
+  var Q: PGEMat16 := @Regs.Proj;
+  CX := Row24P(Q[0], Q[4], Q[8], Q[12], BX, BY, BZ, 1);
+  CY := Row24P(Q[1], Q[5], Q[9], Q[13], BX, BY, BZ, 1);
+  CZ := Row24P(Q[2], Q[6], Q[10], Q[14], BX, BY, BZ, 1);
+  CW := Row24P(Q[3], Q[7], Q[11], Q[15], BX, BY, BZ, 1);
+  VP := Vec3(BX, BY, BZ);
+end;
+
 procedure TPSPGEEngine.TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
 var
   C: PGECmds;
@@ -846,25 +875,7 @@ begin
     N := Vec3(-N.X, -N.Y, -N.Z);
   WP := MulPoint(Regs.World, P);
   WN := MulDir(Regs.World, N);
-  VP := MulPoint(Regs.View, WP);
-  // Position through the matrices and the viewport in the GE's 24-bit arithmetic.
-  begin
-    var M: PGEMat12 := @Regs.World;
-    var PX := T24(P.X); var PY := T24(P.Y); var PZ := T24(P.Z);
-    var AX := Row24(M[0], M[3], M[6], M[9], PX, PY, PZ);
-    var AY := Row24(M[1], M[4], M[7], M[10], PX, PY, PZ);
-    var AZ := Row24(M[2], M[5], M[8], M[11], PX, PY, PZ);
-    M := @Regs.View;
-    var BX := Row24(M[0], M[3], M[6], M[9], AX, AY, AZ);
-    var BY := Row24(M[1], M[4], M[7], M[10], AX, AY, AZ);
-    var BZ := Row24(M[2], M[5], M[8], M[11], AX, AY, AZ);
-    var Q: PGEMat16 := @Regs.Proj;
-    CX := Row24P(Q[0], Q[4], Q[8], Q[12], BX, BY, BZ, 1);
-    CY := Row24P(Q[1], Q[5], Q[9], Q[13], BX, BY, BZ, 1);
-    CZ := Row24P(Q[2], Q[6], Q[10], Q[14], BX, BY, BZ, 1);
-    CW := Row24P(Q[3], Q[7], Q[11], Q[15], BX, BY, BZ, 1);
-    VP := Vec3(BX, BY, BZ);
-  end;
+  ClipPosition(P, CX, CY, CZ, CW, VP);
   if not (CW > 0) then
   begin
     Clip := True;
@@ -1108,10 +1119,7 @@ begin
   var Count := Integer(Op and $FFFF);
   var VType := Regs.Cmd[GE_VTYPE];
   SetupVertexFormat(VType);
-  var IdxKind := (VType shr 11) and 3;
-  var Through := (VType and (1 shl 23)) <> 0;
   var HasPos := ((VType shr 7) and 3) <> 0;
-  var Morphs := Integer((VType shr 18) and 7) + 1;
   if PrimType <> 7 then
   begin
     FAsmType := PrimType;
@@ -1122,26 +1130,124 @@ begin
   FCullCW := (Regs.Cmd[GE_CULL] and 1) <> 0;
   for var I := 0 to Count - 1 do
   begin
-    var Index := I;
-    case IdxKind of
-      1: Index := FMemory.Read8(Regs.IAddr + Cardinal(I));
-      2: Index := FMemory.Read16(Regs.IAddr + Cardinal(I * 2));
-      3: Index := Integer(FMemory.Read32(Regs.IAddr + Cardinal(I * 4)) and $FFFF);
-    end;
-    ReadVertex(Index, VType, Raw);
+    ReadVertex(VertexIndex(I, VType), VType, Raw);
     TransformVertex(Raw, VType, V, Clip);
     Inc(FPrimCost, 40);
     AddVertex(V, Clip or not HasPos);
   end;
-  if IdxKind <> 0 then
-  begin
-    var ISz: Cardinal := 1;
-    if IdxKind = 2 then ISz := 2;
-    if IdxKind = 3 then ISz := 4;
-    Regs.IAddr := Regs.IAddr + Cardinal(Count) * ISz;
-  end
+  AdvanceVertices(Count, VType);
+end;
+
+function TPSPGEEngine.VertexIndex(I: Integer; VType: Cardinal): Integer;
+begin
+  case (VType shr 11) and 3 of
+    1: Result := FMemory.Read8(Regs.IAddr + Cardinal(I));
+    2: Result := FMemory.Read16(Regs.IAddr + Cardinal(I * 2));
+    3: Result := Integer(FMemory.Read32(Regs.IAddr + Cardinal(I * 4)) and $FFFF);
   else
-    Regs.VAddr := Regs.VAddr + Cardinal(Count * FVSize * Morphs);
+    Result := I;
+  end;
+end;
+
+// Past the vertices (or indices) a PRIM or BBOX has read.
+procedure TPSPGEEngine.AdvanceVertices(Count: Integer; VType: Cardinal);
+begin
+  case (VType shr 11) and 3 of
+    0: Regs.VAddr := Regs.VAddr + Cardinal(Count * FVSize * (Integer((VType shr 18) and 7) + 1));
+    1: Regs.IAddr := Regs.IAddr + Cardinal(Count);
+    2: Regs.IAddr := Regs.IAddr + Cardinal(Count) * 2;
+    3: Regs.IAddr := Regs.IAddr + Cardinal(Count) * 4;
+  end;
+end;
+
+// A screen coordinate in 1/16 pixel, clamped to the 4096 pixel range.
+function ScreenCoord(D: Double): Integer;
+begin
+  if IsNan(D) then
+    Exit(0);
+  Result := Floor(EnsureRange(D * 16, 0, 65535));
+end;
+
+// BOUNDING BOX: may the hull of the vertices be visible? Not when they all
+// lie behind the eye (w <= 0), beyond one z plane (with clipping on) or on
+// one side of the drawing area: scissor and region together, widened by a
+// pixel, against screen positions clamped to the 4096 pixel range before the
+// offset. The vertices go through in groups of 256 counted from the end, and
+// the flag BJUMP reads is the second last group's (the only one's for 256 or
+// fewer).
+procedure TPSPGEEngine.BoundingBox(Op: Cardinal);
+var
+  Raw: TGEInVertex;
+  P, N, VP: TGEVec3;
+  CX, CY, CZ, CW: Double;
+begin
+  var Count := Integer(Op and $FFFF);
+  var VType := Regs.Cmd[GE_VTYPE];
+  SetupVertexFormat(VType);
+  FPrimCost := Int64(Count) * 40;
+  BoxVisible := False;
+  if Count = 0 then
+    Exit;
+  var C: PGECmds := @Regs.Cmd;
+  var Groups := (Count + 255) div 256;
+  var First := Count - (Groups - 1) * 256;
+  var GStart := 0;
+  var GEnd := Count;
+  if Groups = 2 then
+    GEnd := First
+  else if Groups > 2 then
+  begin
+    GStart := First + (Groups - 3) * 256;
+    GEnd := GStart + 256;
+  end;
+  var Through := (VType and (1 shl 23)) <> 0;
+  var Clamp := (C[GE_CLIPENABLE] and 1) <> 0;
+  var X1 := (Integer(Max(C[GE_SCISSOR1] and $3FF, C[GE_REGION1] and $3FF)) - 1) * 16;
+  var Y1 := (Integer(Max((C[GE_SCISSOR1] shr 10) and $3FF, (C[GE_REGION1] shr 10) and $3FF)) - 1) * 16;
+  var X2 := (Integer(Min(C[GE_SCISSOR2] and $3FF, C[GE_REGION2] and $3FF)) + 1) * 16;
+  var Y2 := (Integer(Min((C[GE_SCISSOR2] shr 10) and $3FF, (C[GE_REGION2] shr 10) and $3FF)) + 1) * 16;
+  var OffX := Integer(C[GE_OFFSETX] and $FFFF);
+  var OffY := Integer(C[GE_OFFSETY] and $FFFF);
+  var OutMask := $FF;
+  for var I := GStart to GEnd - 1 do
+  begin
+    ReadVertex(VertexIndex(I, VType), VType, Raw);
+    var M := 0;
+    var SX, SY: Integer;
+    if Through then
+    begin
+      SX := Round(Raw.P.X * 16);
+      SY := Round(Raw.P.Y * 16);
+    end
+    else
+    begin
+      P := Raw.P;
+      N := Raw.N;
+      if ((VType shr 9) and 3) <> 0 then
+        Skin(Raw, VType, P, N);
+      ClipPosition(P, CX, CY, CZ, CW, VP);
+      if not (CW > 0) then
+      begin
+        OutMask := OutMask and 16;
+        Continue;
+      end;
+      if Clamp then
+      begin
+        if CZ < -CW then M := M or 32;
+        if CZ > CW then M := M or 64;
+      end;
+      var RW := Recip24(CW);
+      SX := ScreenCoord(Add24(T24(T24(CX * RW) * GEFloat(C[GE_VIEWPORTXSCALE])), GEFloat(C[GE_VIEWPORTXCENTER]))) - OffX;
+      SY := ScreenCoord(Add24(T24(T24(CY * RW) * GEFloat(C[GE_VIEWPORTYSCALE])), GEFloat(C[GE_VIEWPORTYCENTER]))) - OffY;
+    end;
+    if SX < X1 then M := M or 1;
+    if SX > X2 then M := M or 2;
+    if SY < Y1 then M := M or 4;
+    if SY > Y2 then M := M or 8;
+    OutMask := OutMask and M;
+  end;
+  BoxVisible := OutMask = 0;
+  AdvanceVertices(Count, VType);
 end;
 
 // A vertex given by registers $F0-$F9 (screen x, y in 1/16, z, s, t, q,
