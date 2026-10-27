@@ -48,6 +48,9 @@ const
   RegionNames: array[0..2] of string = ('RAM', 'VRAM', 'scratchpad');
   KindNames: array[0..2] of string = ('interpreter', 'recompiler', 'model');
   CodeWords = 4096;
+  // Kernel stubs at the end of the code.
+  StubCount = 32;
+  StubWord = CodeWords - 2 - 2 * StubCount;
   DataBase = $08900000;
   OtherBase = $08A00000;
 
@@ -121,6 +124,9 @@ begin
       end;
     6:
       C.SetPC(CodeStart + (Hash mod (CodeWords - 2)) * 4);
+    7:
+      if Code mod 3 = 0 then
+        C.FlushDecoded;
   end;
 end;
 
@@ -128,6 +134,61 @@ procedure TMachine.Break_(C: TPSPCPU; Code: Cardinal);
 begin
   Log.Append(Format('b%x@%x+%d;', [Code, C.CurPC, C.TakeCycles]));
   C.Stop;
+end;
+
+{ Handlers the recompiler knows nothing of (as the test's VFPU) }
+
+procedure TestReadPC(C: TPSPCPU; Op: Cardinal);
+begin
+  // What the interpreter has as PC, NPC and CurPC while it runs one.
+  var T := (Op shr 16) and 31;
+  if T < 24 then
+    C.Ctx.GPR[T] := C.Ctx.PC xor (C.Ctx.NPC shl 1) xor (C.CurPC shl 2) xor Op;
+end;
+
+procedure TestStop(C: TPSPCPU; Op: Cardinal);
+begin
+  // Stops the run, adds cycles, or both.
+  if (Op and 1) <> 0 then
+    C.Stop;
+  C.AddCycles((Op shr 1) and 7);
+  C.Ctx.V[Op and 127] := C.Ctx.V[Op and 127] + 1;
+end;
+
+procedure TestStore(C: TPSPCPU; Op: Cardinal);
+begin
+  // A store (through its base: into code too).
+  C.Memory.Write32(C.Ctx.GPR[(Op shr 21) and 31] + Cardinal(Integer(SmallInt(Word(Op)))), C.Ctx.GPR[(Op shr 16) and 31]);
+end;
+
+procedure TestBranch(C: TPSPCPU; Op: Cardinal);
+begin
+  // A branch on GPR[1]'s low bit (likely where bit 17 is set), as the
+  // interpreter's branches.
+  var Taken := ((C.Ctx.GPR[1] and 1) <> 0) = ((Op and $10000) <> 0);
+  if Taken then
+    C.Ctx.NPC := C.Ctx.PC + Cardinal(Integer(SmallInt(Word(Op))) * 4)
+  else if (Op and $20000) <> 0 then
+  begin
+    C.Ctx.PC := C.Ctx.NPC;
+    C.Ctx.NPC := C.Ctx.NPC + 4;
+  end;
+end;
+
+function TestDecoder(Op: Cardinal): TPSPOpHandler;
+begin
+  case Op shr 26 of
+    $18: Result := TestReadPC;
+    $19: Result := TestStop;
+    $3A: Result := TestStore;
+    $12:
+      if ((Op shr 21) and 31) = 8 then
+        Result := TestBranch
+      else
+        Result := OpReserved;
+  else
+    Result := OpReserved;
+  end;
 end;
 
 { Programs }
@@ -213,6 +274,7 @@ procedure MakeProgram(var Code: array of Cardinal; Start: Cardinal; var Pool: ar
 begin
   for var K := 0 to High(Pool) do
     Pool[K] := AluInstruction;
+  var Sparse := Next(4) = 0;
   var I := 0;
   while I < CodeWords - 2 do
   begin
@@ -252,7 +314,7 @@ begin
           var R := Pick([24, 25]);
           var Kind: Cardinal := $2B;
           if Next(16) = 0 then
-            Kind := Pick([$28, $29]);
+            Kind := Pick([$28, $29, $2A, $2E]);
           Op := (Kind shl 26) or (27 shl 21) or (R shl 16) or ((Cardinal(Target) * 4) and $FFFF);
         end;
       56..73:
@@ -275,7 +337,14 @@ begin
           var Target := Cardinal(I) + 2 + Next(200);
           if (Target > CodeWords - 3) or (Next(4) = 0) then
             Target := Next(CodeWords - 2);
-          Op := (Cardinal(Pick([2, 3])) shl 26) or (((Start + Target * 4) and $0FFFFFFF) shr 2);
+          var Kind := Pick([2, 3]);
+          if Next(3) = 0 then
+          begin
+            // A call of a kernel stub (JR $31 with a SYSCALL in its slot).
+            Target := StubWord + 2 * Next(StubCount);
+            Kind := 3;
+          end;
+          Op := (Kind shl 26) or (((Start + Target * 4) and $0FFFFFFF) shr 2);
         end;
       78..80:
         if Next(2) = 0 then
@@ -307,11 +376,29 @@ begin
         else
           Op := (Cardinal($30) shl 26) or (28 shl 21) or (Next(2) shl 16) or (Next(64) * 4);               // LL (maybe $0)
         end;
+      92..95:
+        // The test's own "VFPU" (TestDecoder).
+        case Next(5) of
+          0: Op := (Cardinal($18) shl 26) or (Dest shl 16) or Next($10000);
+          1: Op := (Cardinal($19) shl 26) or (Next($2000) * 2) or Cardinal(Ord(Next(4) = 0));
+          2: Op := (Cardinal($3A) shl 26) or (28 shl 21) or (Src shl 16) or (Cardinal(Integer(Next(512)) * 4 - 1024) and $FFFF);
+          3: Op := (Cardinal($3A) shl 26) or (27 shl 21) or (Pick([24, 25]) shl 16) or ((Cardinal(I) + 1 + Next(6)) * 4);
+        else
+          Op := (Cardinal($12) shl 26) or (8 shl 21) or (Next(4) shl 16) or Rel;
+        end;
     else
       Op := 0;
     end;
+    // (Long blocks: few branches.)
+    if Sparse and (Op shr 26 in [1..7, $11, $14..$17]) and (Next(16) <> 0) then
+      Op := AluInstruction;
     Code[I] := Op;
     Inc(I);
+  end;
+  for var K := 0 to StubCount - 1 do
+  begin
+    Code[StubWord + 2 * K] := $03E00008;
+    Code[StubWord + 2 * K + 1] := (Next(64) shl 6) or $C;
   end;
   // The end goes back to the start.
   Code[CodeWords - 2] := (2 shl 26) or ((Start and $0FFFFFFF) shr 2);
@@ -324,7 +411,7 @@ begin
   // their own next words and syscalls; random filler elsewhere.
   MakeProgram(Code, Start, Pool);
   var I := 0;
-  while I < CodeWords - 64 do
+  while I < StubWord - 40 do
   begin
     var Len := 4 + Integer(Next(12));
     var Head := I;
@@ -449,6 +536,8 @@ begin
   var Data: TBytes;
   SetLength(Data, $8000);
   var SavedHot := PSPJitHot;
+  var SavedDecoder: TPSPVFPUDecoder := PSPVFPUDecoder;
+  PSPVFPUDecoder := TestDecoder;
   var Ran: Int64 := 0;
   var Failed := 0;
   var Faulted := 0;
@@ -456,10 +545,12 @@ begin
   try
     for var P := 0 to Programs - 1 do
     begin
-      Rng := Cardinal(P) * 2654435761 + 12345;
+      Rng := Cardinal((UInt64(P) * 2654435761 + 12345) and $FFFFFFFF);
       var Start: Cardinal := $08800000;
-      if Next(4) = 0 then
-        Start := $88800000;
+      case Next(8) of
+        0, 1: Start := $88800000;
+        2: Start := PSPVRAMBase + $100000;
+      end;
       var Pool: array[0..3] of Cardinal;
       if Next(2) = 0 then
         MakeProgram(Code, Start, Pool)
@@ -485,7 +576,11 @@ begin
       var OtherPC := Start + Next(CodeWords - 2) * 4;
       PSPJitHot := Pick([1, 1, 2, 3, 8]);
       for var M in Machines do
+      begin
         SetUp(M, Code, Start, Pool, Regs, Data, OtherPC);
+        if M.Jit <> nil then
+          M.Jit.Enabled := True;
+      end;
       if FindCmdLineSwitch('mix') then
       begin
         var M := Machines[0];
@@ -527,9 +622,17 @@ begin
         if Next(3) = 0 then
         begin
           var NewPC := Start + Next(CodeWords - 2) * 4;
+          // (The same code through the other segment: other blocks.)
+          if Next(6) = 0 then
+            NewPC := NewPC xor $80000000;
           for var M in Machines do
             M.CPU.SetPC(NewPC);
         end;
+        // (The recompiler switched off and on: the interpreter meanwhile.)
+        var Toggle := Next(12) = 0;
+        for var M in Machines do
+          if (M.Jit <> nil) and (Toggle or not M.Jit.Enabled) then
+            M.Jit.Enabled := not M.Jit.Enabled;
         var Results: TArray<Integer>;
         SetLength(Results, Length(Machines));
         for var K := 0 to High(Machines) do
@@ -599,56 +702,117 @@ begin
       Report.Add('PSP JIT: DIFFERENCES');
   finally
     PSPJitHot := SavedHot;
+    PSPVFPUDecoder := SavedDecoder;
     for var M in Machines do
       M.Free;
   end;
 end;
 
+// Instructions for the benchmarks.
+function EncR(Fn, Rs, Rt, Rd: Cardinal; Sa: Cardinal = 0): Cardinal;
+begin
+  Result := (Rs shl 21) or (Rt shl 16) or (Rd shl 11) or (Sa shl 6) or Fn;
+end;
+
+function EncI(Op, Rs, Rt: Cardinal; Imm: Integer): Cardinal;
+begin
+  Result := (Op shl 26) or (Rs shl 21) or (Rt shl 16) or (Cardinal(Imm) and $FFFF);
+end;
+
+function EncJ(Op, Target: Cardinal): Cardinal;
+begin
+  Result := (Op shl 26) or ((Target and $0FFFFFFF) shr 2);
+end;
+
 procedure RunPSPJitBench(Report: TStrings);
 const
   Start = $08800000;
+  Func = Start + $100;
 begin
-  // A hot loop of loads, stores, ALU and a branch, on the interpreter and on
-  // the recompiler's code: instructions per second.
-  var Code: TArray<Cardinal> := [
-    $3C080890,              // lui $8, 0x0890
-    $24090100,              // addiu $9, $0, 256
-    $00005021,              // addu $10, $0, $0
-    $8D0B0000,              // lw $11, 0($8)
-    $014B5021,              // addu $10, $10, $11
-    $014B6026,              // xor $12, $10, $11
-    $000C68C0,              // sll $13, $12, 3
-    $AD0D0400,              // sw $13, 1024($8)
-    $25080004,              // addiu $8, $8, 4
-    $014D702A,              // slt $14, $10, $13
-    $2529FFFF,              // addiu $9, $9, -1
-    $1520FFF7,              // bne $9, $0, -9 (to the lw)
-    $31CF0007,              // andi $15, $14, 7
-    $08000000 or ((Start and $0FFFFFFF) shr 2),  // j Start
-    $00000000];
-  for var Kind := 0 to 2 do
-  begin
-    if (Kind = 1) and not JitSupported then
-      Continue;
-    var M := TMachine.Create(Kind);
-    try
-      M.Memory.WriteBytes(Start, Code[0], Length(Code) * 4);
-      M.CPU.SetPC(Start);
-      var Total: Int64 := 0;
-      var Target: Int64 := 200000000;
-      case Kind of
-        1: Target := 2000000000;
-        2: Target := 10000000;
+  // Hot loops on the interpreter and on the recompiler's code (and its
+  // model): instructions per second. Loop: loads, stores, ALU, a branch.
+  // Calls: a call (JAL, JR) of a function with MULT, MFLO, SRA, SLTU, MOVN,
+  // halfword loads, a likely branch.
+  var Loop: TArray<Cardinal> := [
+    EncI($F, 0, 8, $0890),                  // lui $8, 0x0890
+    EncI(9, 0, 9, 256),                     // addiu $9, $0, 256
+    EncR($21, 0, 0, 10),                    // addu $10, $0, $0
+    EncI($23, 8, 11, 0),                    // L: lw $11, 0($8)
+    EncR($21, 10, 11, 10),                  // addu $10, $10, $11
+    EncR($26, 10, 11, 12),                  // xor $12, $10, $11
+    EncR(0, 0, 12, 13, 3),                  // sll $13, $12, 3
+    EncI($2B, 8, 13, 1024),                 // sw $13, 1024($8)
+    EncI(9, 8, 8, 4),                       // addiu $8, $8, 4
+    EncR($2A, 10, 13, 14),                  // slt $14, $10, $13
+    EncI(9, 9, 9, -1),                      // addiu $9, $9, -1
+    EncI(5, 9, 0, -9),                      // bne $9, $0, L
+    EncI($C, 14, 15, 7),                    // andi $15, $14, 7
+    EncJ(2, Start),                         // j Start
+    0];
+  var Calls: TArray<Cardinal> := [
+    EncI($F, 0, 8, $0890),                  // lui $8, 0x0890
+    EncI(9, 0, 9, 200),                     // addiu $9, $0, 200
+    EncI($23, 8, 4, 0),                     // L: lw $4, 0($8)
+    EncI($21, 8, 5, 6),                     // lh $5, 6($8)
+    EncJ(3, Func),                          // jal Func
+    EncI(9, 8, 8, 8),                       // addiu $8, $8, 8
+    EncI($29, 8, 2, 2048),                  // sh $2, 2048($8)
+    EncI($25, 8, 6, 2050),                  // lhu $6, 2050($8)
+    EncR($21, 6, 2, 7),                     // addu $7, $6, $2
+    EncI(9, 9, 9, -1),                      // addiu $9, $9, -1
+    EncI($15, 9, 0, -9),                    // bnel $9, $0, L
+    EncI($2B, 8, 7, 4096),                  // sw $7, 4096($8)
+    EncJ(2, Start),                         // j Start
+    0];
+  var FuncCode: TArray<Cardinal> := [
+    EncR($18, 4, 5, 0),                     // mult $4, $5
+    EncR($12, 0, 0, 2),                     // mflo $2
+    EncR(3, 0, 2, 2, 4),                    // sra $2, $2, 4
+    EncR($2B, 2, 4, 3),                     // sltu $3, $2, $4
+    EncR($0B, 4, 3, 2),                     // movn $2, $4, $3
+    EncR(8, 31, 0, 0),                      // jr $31
+    EncI($C, 2, 2, $FFFF)];                 // andi $2, $2, 0xFFFF
+  for var Work := 0 to 1 do
+    for var Kind := 0 to 2 do
+    begin
+      if (Kind = 1) and not JitSupported then
+        Continue;
+      var M := TMachine.Create(Kind);
+      try
+        if Work = 0 then
+          M.Memory.WriteBytes(Start, Loop[0], Length(Loop) * 4)
+        else
+        begin
+          M.Memory.WriteBytes(Start, Calls[0], Length(Calls) * 4);
+          M.Memory.WriteBytes(Func, FuncCode[0], Length(FuncCode) * 4);
+        end;
+        M.CPU.SetPC(Start);
+        var Total: Int64 := 0;
+        var Target: Int64 := 100000000;
+        case Kind of
+          1: Target := 1000000000;
+          2: Target := 5000000;
+        end;
+        // (The best of three: other programs share the host.)
+        var S := 1E9;
+        for var Round := 1 to 3 do
+        begin
+          var Done: Int64 := 0;
+          var W := TStopwatch.StartNew;
+          while Done < Target do
+            Inc(Done, M.CPU.Run(1000000));
+          S := Min(S, W.Elapsed.TotalSeconds);
+          Total := Done;
+        end;
+        var WorkName := 'loop';
+        if Work = 1 then
+          WorkName := 'calls';
+        Report.Add(Format('%-6s %-12s %7.1f M instructions/s (%d in %.2f s)', [WorkName, KindNames[Kind],
+          Total / S / 1E6, Total, S]));
+      finally
+        M.Free;
       end;
-      var W := TStopwatch.StartNew;
-      while Total < Target do
-        Inc(Total, M.CPU.Run(1000000));
-      var S := W.Elapsed.TotalSeconds;
-      Report.Add(Format('%-12s %7.1f M instructions/s (%d in %.2f s)', [KindNames[Kind], Total / S / 1E6, Total, S]));
-    finally
-      M.Free;
     end;
-  end;
 end;
 
 end.
