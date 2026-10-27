@@ -652,7 +652,7 @@ begin
   TimeoutEnd := FScheduler.Now + Us * 1000;
   if Us < PSPMinTimeoutUs then
     Us := PSPMinTimeoutUs;
-  Result := FScheduler.Now + Us * 1000 + PSPWaitLatencyNs;
+  Result := FScheduler.Now + Us * 1000;
 end;
 
 procedure TPSPKernel.BeginWait(Kind: Integer; Obj: TPSPKernelObject; Id, TimeoutPtr: Cardinal; AllowCB: Boolean;
@@ -884,10 +884,16 @@ begin
       tkWait:
         if (E.Thread <> nil) and E.Thread.IsWaiting then
         begin
+          // The timer interrupt and the wakeup take the CPU a while, from
+          // whatever was running.
           if E.Thread.Wait.Kind = PSPWaitDelay then
-            EndWait(E.Thread, 0)
+          begin
+            Spend(PSPDelayLatencyNs);
+            EndWait(E.Thread, 0);
+          end
           else
           begin
+            Spend(PSPWaitLatencyNs);
             var Obj := E.Thread.Wait.Obj;
             EndWait(E.Thread, SCE_KERNEL_ERROR_WAIT_TIMEOUT);
             if (Obj <> nil) and FObjects.ContainsKey(Obj.UID) then

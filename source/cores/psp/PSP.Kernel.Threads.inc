@@ -764,7 +764,7 @@ begin
   var Us := Microseconds;
   if Us < PSPMinTimeoutUs then
     Us := PSPMinTimeoutUs;
-  var Deadline := FScheduler.Now + Us * 1000 + PSPDelayLatencyNs;
+  var Deadline := FScheduler.Now + Us * 1000;
   BeginWait(PSPWaitDelay, nil, 0, 0, AllowCB, DelayRetry);
   if T.Wait.Kind = PSPWaitDelay then
   begin
