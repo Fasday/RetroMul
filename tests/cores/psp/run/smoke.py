@@ -25,8 +25,13 @@ def images(folder, filters):
     return out
 
 
-def run(path, exe, frames, timeout, shots):
+def run(path, exe, frames, timeout, shots, mash=0):
     args = [exe, path, '-frames', str(frames)]
+    # From frame `mash` on, Start and Cross in turn every 150 frames, to get
+    # through notices, title screens and menus.
+    if mash:
+        for k, f in enumerate(range(mash, frames, 75)):
+            args += ['-press', '%s@%d:6' % ('start' if k % 2 == 0 else 'cross', f)]
     if shots:
         d = os.path.join(shots, re.sub(r'[^A-Za-z0-9_.-]+', '_', os.path.basename(path)))
         os.makedirs(d, exist_ok=True)
@@ -74,11 +79,12 @@ def main():
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--out', default=os.path.join(ROOT, 'smoke.txt'))
     ap.add_argument('--shots', default='')
+    ap.add_argument('--mash', type=int, default=0, help='press Start/Cross in turn from this frame on')
     args = ap.parse_args()
     imgs = images(args.dir, args.filters)
     results = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
-        futs = [ex.submit(run, p, args.exe, args.frames, args.timeout, args.shots) for p in imgs]
+        futs = [ex.submit(run, p, args.exe, args.frames, args.timeout, args.shots, args.mash) for p in imgs]
         for f in concurrent.futures.as_completed(futs):
             results.append(f.result())
     results.sort()

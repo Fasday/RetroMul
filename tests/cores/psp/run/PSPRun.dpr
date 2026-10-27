@@ -354,10 +354,10 @@ begin
           if OutDir <> '' then
             SaveBMP(Frame, TPath.Combine(OutDir, Format('f%.5d.bmp', [F])));
         end;
-        LastHash := FrameHash(Frame);
         if Console.Kernel.Exited then
           Break;
       end;
+      LastHash := FrameHash(Frame);
       var Text := Console.TakeOutput;
       if Text <> '' then
         Write(Text);
