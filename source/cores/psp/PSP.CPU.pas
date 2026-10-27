@@ -42,8 +42,9 @@ type
     LLBit: Cardinal;
     V: array[0..127] of Cardinal;
     VC: array[0..15] of Cardinal;
-    // Prefix state the VFPU keeps decoded between a prefix and its consumer.
-    VPrefix: array[0..3] of Cardinal;
+    // The last value the VFPU's S prefix stage produced in each lane, which an
+    // out-of-range swizzle replays for the integer unpack instructions.
+    VLatch: array[0..3] of Cardinal;
   end;
   PPSPContext = ^TPSPContext;
 
