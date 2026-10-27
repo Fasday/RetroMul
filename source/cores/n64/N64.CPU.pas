@@ -143,11 +143,6 @@ type
       FP: TStepFP;
     end;
     PJitCtx = ^TJitCtx;
-    // A block's code (Code, entered through the code all blocks share,
-    // JitEmitShared): 0 all the last block's steps ran (their totals added),
-    // 1 declined before step Done (FastData or FastFloat), 2 a store wrote its
-    // own code (after Done), 3 careful code reached a limit (after Done).
-    TJitEnter = function(CPU: TObject; Ctx: PJitCtx; Code: Pointer; Block: PN64CPUBlock): Integer;
     // What JitCompile carries from step to step (JitEmitStep): about the step
     // before, whether Store is known to be 0, and (careful code) the steps
     // and their PClocks so far.
@@ -450,6 +445,12 @@ type
     // Blocks run as generated code where HW.JIT can make it (Win64, Linux
     // x64, Android ARM64; the same steps either way).
     property UseJit: Boolean read FUseJit write FUseJit;
+    // Whether there is generated code here (a backend, not N64JIT=off).
+    class function JitAvailable: Boolean; static;
+    // Tests: blocks made generated code from their Hot+1th run on (0: their
+    // first), by HW.JIT's model with Model (CPUs that make their first code
+    // after this).
+    class procedure JitForTests(Hot: Integer; Model: Boolean); static;
     property JitCompiled: Int64 read FJitCompiled;
     property JitRuns: Int64 read FJitRuns;
     // (N64JIT=stats) What generated code at Address does: a step kind, 1000+
@@ -491,12 +492,13 @@ type
   // N64JIT (debugging): off, stats (counts, and a map of the code for
   // profiles), nochain, hotN; no code for blocks with nobranch, nomem,
   // nostore, nofp, nolui; calls (every step by its routine, none written
-  // out in the code).
-  TJitDebug = (jdOff, jdStats, jdNoChain, jdNoBranch, jdNoMem, jdNoStore, jdNoFP, jdNoLui, jdCalls);
+  // out in the code); model (the code run by HW.JIT's model, for the
+  // tests: much slower).
+  TJitDebug = (jdOff, jdStats, jdNoChain, jdNoBranch, jdNoMem, jdNoStore, jdNoFP, jdNoLui, jdCalls, jdModel);
 
 const
   JitDebugNames: array[TJitDebug] of string = ('off', 'stats', 'nochain', 'nobranch', 'nomem', 'nostore', 'nofp', 'nolui',
-    'calls');
+    'calls', 'model');
   // Blocks as generated code where HW.JIT has a backend (N64_NO_JIT: never).
   N64Jit = {$IFDEF N64_NO_JIT}False{$ELSE}JitSupported{$ENDIF};
 
@@ -3759,6 +3761,20 @@ begin
   Inc(FJitMapCount);
 end;
 
+class function TN64CPU.JitAvailable: Boolean;
+begin
+  Result := N64Jit and not (jdOff in JitDebug);
+end;
+
+class procedure TN64CPU.JitForTests(Hot: Integer; Model: Boolean);
+begin
+  JitHot := Hot;
+  if Model then
+    Include(JitDebug, jdModel)
+  else
+    Exclude(JitDebug, jdModel);
+end;
+
 function TN64CPU.JitWhat(Address: UInt64): Integer;
 begin
   Result := -1;
@@ -3812,8 +3828,12 @@ end;
 
 procedure TN64CPU.JitEmitShared;
 begin
-  // The code every block's code shares: the entry (TJitEnter: the frame, then
-  // to the block's code with Block in T1), the way back to RunBlocks (T1 the
+  // The code every block's code shares: the entry (Invoke'd with the CPU,
+  // the TJitCtx, the block's code and the block; the frame, then to the
+  // block's code with Block in T1; its result 0 all the last block's steps
+  // ran (their totals added), 1 declined before step Done (FastData or
+  // FastFloat), 2 a store wrote its own code (after Done), 3 careful code
+  // reached a limit (after Done)), the way back to RunBlocks (T1 the
   // steps done shl 2 or the status; Extra, Store, Block and Entry as the
   // block's code left them), and the chaining code (JitEmitChain).
   var J := FJit;
@@ -4188,7 +4208,10 @@ begin
     end;
   if FJit = nil then
   begin
-    FJit := CreateJitAsm(JitBufferSize);
+    if jdModel in JitDebug then
+      FJit := CreateJitModel(JitBufferSize)
+    else
+      FJit := CreateJitAsm(JitBufferSize);
     if FJit = nil then
     begin
       FUseJit := False;
@@ -4745,7 +4768,7 @@ begin
   Jit.Kernel := KernelMode;
   // (FastData's KSEG0/KSEG1 checks that hold for the whole batch.)
   Jit.Direct := (((Jit.Context and 6) <> 0) or ((Jit.Context and $18) = 0)) and FBus.SPIdle;
-  var Status := TJitEnter(FJit.Base + FJitEnter)(Self, @Jit, Code, B);
+  var Status := Integer(FJit.Invoke(FJit.Base + FJitEnter, NativeUInt(Self), NativeUInt(@Jit), NativeUInt(Code), NativeUInt(B)));
   B := Jit.Block;
   PC := Jit.BlockPC;
   Count := Jit.Count;
