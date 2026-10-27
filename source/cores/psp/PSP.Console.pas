@@ -78,7 +78,7 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
-  PSP.Utility, PSP.Font, PSP.Misc;
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Settings;
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin
@@ -347,6 +347,11 @@ begin
     else
       FScheduler.AdvanceTo(Deadline);
   end;
+  // A slice can overshoot At by the cost of its last HLE call; events due by
+  // then must not wait for a call whose target is already behind.
+  var Due: TPSPEvent;
+  while not FKernel.Exited and FScheduler.TakeDue(Due) do
+    DispatchEvent(Due);
 end;
 
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
