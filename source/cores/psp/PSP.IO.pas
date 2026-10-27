@@ -125,6 +125,8 @@ type
     procedure Register;
     // Reads a whole file through the devices (module loading, utility).
     function ReadAll(const Path: string; out Data: TBytes): Cardinal;
+    // The rest of an open file from its position (sceKernelLoadModuleByID).
+    function ReadOpen(Fd: Cardinal; out Data: TBytes; out Path: string): Cardinal;
     function Exists(const Path: string): Boolean;
     function HostFileName(const Path: string): string;
     property Disc: TPSPDisc read FDisc write FDisc;
@@ -459,6 +461,40 @@ begin
   finally
     F.Free;
   end;
+end;
+
+function TPSPIO.ReadOpen(Fd: Cardinal; out Data: TBytes; out Path: string): Cardinal;
+begin
+  Data := nil;
+  Path := '';
+  var F := GetFile(Fd);
+  if (F = nil) or F.IsDirectory then
+    Exit(SCE_KERNEL_ERROR_BADF);
+  Path := F.Path;
+  case F.Kind of
+    dkUMD:
+      begin
+        var Start := F.Position;
+        if F.RawSectors then
+          Start := Start * 2048;
+        var N := F.DiscSize - Start;
+        if N < 0 then
+          N := 0;
+        SetLength(Data, N);
+        if N > 0 then
+          FDisc.ReadAt(F.DiscStart + Start, Data[0], N);
+      end;
+    dkHost:
+      begin
+        var N := F.Stream.Size - F.Stream.Position;
+        SetLength(Data, N);
+        if N > 0 then
+          F.Stream.ReadBuffer(Data[0], N);
+      end;
+  else
+    Exit(SCE_KERNEL_ERROR_BADF);
+  end;
+  Result := 0;
 end;
 
 function TPSPIO.Exists(const Path: string): Boolean;

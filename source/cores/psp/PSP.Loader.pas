@@ -76,6 +76,7 @@ type
     procedure WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal; Linger: Int64);
     function ThreadOptions(OptPtr: Cardinal; var Prio: Integer; var Stack, Attr: Cardinal): Cardinal;
     function NoRetry(T: TPSPThread): Boolean;
+    procedure LoadForCaller(const Data: TBytes; const Path: string);
     procedure hKprintf;
     procedure hIcacheClearAll;
     procedure hLoadModule;
@@ -931,21 +932,12 @@ begin
   end;
 end;
 
-procedure TPSPLoader.hLoadModule;
+procedure TPSPLoader.LoadForCaller(const Data: TBytes; const Path: string);
 begin
-  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  var Data: TBytes;
-  var Err := FIO.ReadAll(Path, Data);
-  if Err <> 0 then
-  begin
-    FHLE.Log('sceKernelLoadModule %s -> %.8x', [Path, Err]);
-    FHLE.Result(Err);
-    Exit;
-  end;
   if not FKernel.CanWait then
   begin
     var M: TPSPModule;
-    Err := Load(Data, Path, M);
+    var Err := Load(Data, Path, M);
     if Err <> 0 then
       FHLE.Result(Err)
     else
@@ -978,15 +970,36 @@ begin
     end);
 end;
 
-function TPSPLoader.NoRetry(T: TPSPThread): Boolean;
+procedure TPSPLoader.hLoadModule;
 begin
-  Result := False;
+  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  var Data: TBytes;
+  var Err := FIO.ReadAll(Path, Data);
+  if Err <> 0 then
+  begin
+    FHLE.Log('sceKernelLoadModule %s -> %.8x', [Path, Err]);
+    FHLE.Result(Err);
+    Exit;
+  end;
+  LoadForCaller(Data, Path);
 end;
 
 procedure TPSPLoader.hLoadModuleByID;
 begin
-  FHLE.Unimplemented('load by id');
-  FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+  var Data: TBytes;
+  var Path: string;
+  var Err := FIO.ReadOpen(FHLE.Arg(0), Data, Path);
+  if Err <> 0 then
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
+  LoadForCaller(Data, Path);
+end;
+
+function TPSPLoader.NoRetry(T: TPSPThread): Boolean;
+begin
+  Result := False;
 end;
 
 procedure TPSPLoader.hLoadModuleBufferUsbWlan;
