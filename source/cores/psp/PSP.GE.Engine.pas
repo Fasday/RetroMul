@@ -29,6 +29,14 @@ type
     Weights: array[0..7] of Single;
   end;
 
+  // A vertex in primitive assembly: its drawn form, its clip coordinates and
+  // the planes it lies beyond (GEOut*).
+  TGEAsmVertex = record
+    V: TGEVertex;
+    CX, CY, CZ, CW: Double;
+    Code: Integer;
+  end;
+
   TPSPGEEngine = class
   private
     FMemory: TPSPMemory;
@@ -40,9 +48,8 @@ type
     FAsmType, FAsmCount: Integer;
     FLastU, FLastV: Single;
     FLastN: TGEVec3;
-    FAsmBuf: array[0..2] of TGEVertex;
-    FAsmClip: array[0..2] of Boolean;
-    FCullOn, FCullCW: Boolean;
+    FAsm: array[0..2] of TGEAsmVertex;
+    FCullOn, FCullCW, FDepthClamp: Boolean;
     procedure SetupVertexFormat(VType: Cardinal);
     procedure DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
     function ReadVertex(Index: Integer; VType: Cardinal; out V: TGEInVertex): Boolean;
@@ -51,14 +58,18 @@ type
     function LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
     procedure TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
     procedure ClipPosition(const P: TGEVec3; out CX, CY, CZ, CW: Double; out VP: TGEVec3);
-    procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
+    procedure Project(var A: TGEAsmVertex);
+    procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEAsmVertex);
     function VertexIndex(I: Integer; VType: Cardinal): Integer;
     procedure AdvanceVertices(Count: Integer; VType: Cardinal);
     procedure BoundingBox(Op: Cardinal);
     procedure BuildRaster;
     function ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
-    procedure AddVertex(const V: TGEVertex; Clip: Boolean);
+    procedure ClipTriangle(const A, B, C: TGEAsmVertex; Odd: Boolean);
+    procedure ClipLine(const A, B: TGEAsmVertex);
+    procedure EmitSprite(const A, B: TGEAsmVertex);
+    procedure AddVertex(const A: TGEAsmVertex);
     procedure DrawPrim(Op: Cardinal);
     procedure ImmediateVertex(Op: Cardinal);
     procedure LoadClut(Op: Cardinal);
@@ -835,16 +846,53 @@ begin
   VP := Vec3(BX, BY, BZ);
 end;
 
-procedure TPSPGEEngine.TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
+const
+  GEOutXNeg = 1;
+  GEOutXPos = 2;
+  GEOutYNeg = 4;
+  GEOutYPos = 8;
+  GEOutNear = 16;
+  GEOutFar = 32;
+  GEOutPlanes = 63;
+  GEOutZ = GEOutNear or GEOutFar;
+  // Projected outside the 4096 pixel screen.
+  GEOutScreen = 64;
+  // No position.
+  GEOutNone = 128;
+
+// Clip coordinates to a screen position (a vertex beyond the 4096 pixel
+// screen culls its primitive), depth and 1/w.
+procedure TPSPGEEngine.Project(var A: TGEAsmVertex);
+begin
+  var C: PGECmds := @Regs.Cmd;
+  var RW := Recip24(A.CW);
+  var SX := Add24(T24(T24(A.CX * RW) * GEFloat(C[GE_VIEWPORTXSCALE])), GEFloat(C[GE_VIEWPORTXCENTER]));
+  var SY := Add24(T24(T24(A.CY * RW) * GEFloat(C[GE_VIEWPORTYSCALE])), GEFloat(C[GE_VIEWPORTYCENTER]));
+  var SZ := Add24(T24(T24(A.CZ * RW) * GEFloat(C[GE_VIEWPORTZSCALE])), GEFloat(C[GE_VIEWPORTZCENTER]));
+  if not ((SX >= 0) and (SX <= 4096) and (SY >= 0) and (SY <= 4096)) then
+  begin
+    A.Code := A.Code or GEOutScreen;
+    SX := 0; SY := 0;
+  end;
+  A.V.X := Floor(SX * 16) - Integer(C[GE_OFFSETX] and $FFFF);
+  A.V.Y := Floor(SY * 16) - Integer(C[GE_OFFSETY] and $FFFF);
+  if IsNan(SZ) or (Abs(SZ) > 1E9) then
+    SZ := 0;
+  A.V.Z := Floor(SZ);
+  if IsInfinite(RW) then
+    RW := 0;
+  A.V.W := RW;
+end;
+
+procedure TPSPGEEngine.TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEAsmVertex);
 var
   C: PGECmds;
   R, G, B, A, SR, SG, SB: Integer;
   P, N, WP, WN, VP: TGEVec3;
-  CX, CY, CZ, CW, IW, SX, SY, SZ: Double;
+  CX, CY, CZ, CW: Double;
   S, T: Single;
 begin
-  O := Default(TGEVertex);
-  Clip := False;
+  O := Default(TGEAsmVertex);
   C := @Regs.Cmd;
   if V.HasColor then
   begin
@@ -857,14 +905,14 @@ begin
   end;
   if (VType and (1 shl 23)) <> 0 then
   begin
-    O.X := Round(V.P.X * 16);
-    O.Y := Round(V.P.Y * 16);
-    O.Z := Trunc(V.P.Z);
-    O.W := 1;
-    O.R := R; O.G := G; O.B := B; O.A := A;
-    O.S := V.U;
-    O.T := V.V;
-    O.Fog := 1;
+    O.V.X := Round(V.P.X * 16);
+    O.V.Y := Round(V.P.Y * 16);
+    O.V.Z := Trunc(V.P.Z);
+    O.V.W := 1;
+    O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
+    O.V.S := V.U;
+    O.V.T := V.V;
+    O.V.Fog := 1;
     Exit;
   end;
   P := V.P;
@@ -876,37 +924,24 @@ begin
   WP := MulPoint(Regs.World, P);
   WN := MulDir(Regs.World, N);
   ClipPosition(P, CX, CY, CZ, CW, VP);
-  if not (CW > 0) then
-  begin
-    Clip := True;
-    CW := 1E-6;
-  end;
-  var RW := Recip24(CW);
-  IW := RW;
-  SX := Add24(T24(T24(CX * RW) * GEFloat(C[GE_VIEWPORTXSCALE])), GEFloat(C[GE_VIEWPORTXCENTER]));
-  SY := Add24(T24(T24(CY * RW) * GEFloat(C[GE_VIEWPORTYSCALE])), GEFloat(C[GE_VIEWPORTYCENTER]));
-  SZ := Add24(T24(T24(CZ * RW) * GEFloat(C[GE_VIEWPORTZSCALE])), GEFloat(C[GE_VIEWPORTZCENTER]));
-  if IsNan(SX) or IsNan(SY) or (Abs(SX) > 1E6) or (Abs(SY) > 1E6) then
-  begin
-    Clip := True;
-    SX := 0; SY := 0;
-  end;
-  O.X := Floor(SX * 16) - Integer(C[GE_OFFSETX] and $FFFF);
-  O.Y := Floor(SY * 16) - Integer(C[GE_OFFSETY] and $FFFF);
-  if IsNan(SZ) or (Abs(SZ) > 1E9) then
-    SZ := 0;
-  O.Z := Floor(SZ);
-  O.W := IW;
+  O.CX := CX; O.CY := CY; O.CZ := CZ; O.CW := CW;
+  if CX < -CW then O.Code := GEOutXNeg;
+  if CX > CW then O.Code := O.Code or GEOutXPos;
+  if CY < -CW then O.Code := O.Code or GEOutYNeg;
+  if CY > CW then O.Code := O.Code or GEOutYPos;
+  if CZ < -CW then O.Code := O.Code or GEOutNear;
+  if CZ > CW then O.Code := O.Code or GEOutFar;
+  Project(O);
 
   SR := 0; SG := 0; SB := 0;
   if (C[GE_LIGHTINGENABLE] and 1) <> 0 then
     Light(V, WP, WN, R, G, B, A, SR, SG, SB);
-  O.R := R; O.G := G; O.B := B; O.A := A;
-  O.SR := SR; O.SG := SG; O.SB := SB;
+  O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
+  O.V.SR := SR; O.V.SG := SG; O.V.SB := SB;
   TexGen(V, WP, WN, S, T);
-  O.S := S * (1 shl (C[GE_TEXSIZE0] and $F));
-  O.T := T * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
-  O.Fog := (GEFloat(C[GE_FOG1]) + VP.Z) * GEFloat(C[GE_FOG2]);
+  O.V.S := S * (1 shl (C[GE_TEXSIZE0] and $F));
+  O.V.T := T * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
+  O.V.Fog := (GEFloat(C[GE_FOG1]) + VP.Z) * GEFloat(C[GE_FOG2]);
 end;
 
 { Raster state }
@@ -992,6 +1027,7 @@ begin
   S.DepthWrite := (C[GE_ZWRITEDISABLE] and 1) = 0;
   S.MinZ := C[GE_MINZ] and $FFFF;
   S.MaxZ := C[GE_MAXZ] and $FFFF;
+  S.DepthClamp := (C[GE_CLIPENABLE] and 1) <> 0;
   S.Blend := ((C[GE_BLENDENABLE] and 1) <> 0) and not S.ClearMode;
   S.BlendSrc := C[GE_BLENDMODE] and $F;
   S.BlendDst := (C[GE_BLENDMODE] shr 4) and $F;
@@ -1014,6 +1050,10 @@ begin
 end;
 
 { Primitives }
+
+const
+  // Texture setup of a textured primitive (the texture cache's fill).
+  GETexPrimCost = 2000;
 
 // Pixels of a 1/16 pixel box inside the scissor, for the drawing cost.
 function TPSPGEEngine.ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
@@ -1043,68 +1083,188 @@ begin
     ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
 
-procedure TPSPGEEngine.AddVertex(const V: TGEVertex; Clip: Boolean);
+type
+  PGEAsmVertex = ^TGEAsmVertex;
+
+// Where the edge from A (inside) to B (beyond the near plane z = -w) meets
+// the plane: clip coordinates and attributes in proportion, not projected.
+function NearPoint(const A, B: TGEAsmVertex): TGEAsmVertex;
+begin
+  var DA := A.CZ + A.CW;
+  var DB := B.CZ + B.CW;
+  var T := DA / (DA - DB);
+  Result.CX := A.CX + (B.CX - A.CX) * T;
+  Result.CY := A.CY + (B.CY - A.CY) * T;
+  Result.CZ := A.CZ + (B.CZ - A.CZ) * T;
+  Result.CW := A.CW + (B.CW - A.CW) * T;
+  Result.Code := 0;
+  Result.V := A.V;
+  Result.V.R := A.V.R + Round((B.V.R - A.V.R) * T);
+  Result.V.G := A.V.G + Round((B.V.G - A.V.G) * T);
+  Result.V.B := A.V.B + Round((B.V.B - A.V.B) * T);
+  Result.V.A := A.V.A + Round((B.V.A - A.V.A) * T);
+  Result.V.SR := A.V.SR + Round((B.V.SR - A.V.SR) * T);
+  Result.V.SG := A.V.SG + Round((B.V.SG - A.V.SG) * T);
+  Result.V.SB := A.V.SB + Round((B.V.SB - A.V.SB) * T);
+  Result.V.S := A.V.S + (B.V.S - A.V.S) * T;
+  Result.V.T := A.V.T + (B.V.T - A.V.T) * T;
+  Result.V.Fog := A.V.Fog + (B.V.Fog - A.V.Fog) * T;
+end;
+
+procedure CopyColors(var D: TGEVertex; const S: TGEVertex); inline;
+begin
+  D.R := S.R; D.G := S.G; D.B := S.B; D.A := S.A;
+  D.SR := S.SR; D.SG := S.SG; D.SB := S.SB;
+end;
+
+// A triangle through the clipper. It is culled when all its vertices lie
+// beyond one plane, when without depth clamping any lies beyond the near or
+// far plane, and when any vertex it is drawn with lies outside the 4096
+// pixel screen. With depth clamping the near plane cuts it and the far plane
+// only clamps depth.
+procedure TPSPGEEngine.ClipTriangle(const A, B, C: TGEAsmVertex; Odd: Boolean);
+var
+  Src: array[0..2] of PGEAsmVertex;
+  Poly: array[0..3] of TGEAsmVertex;
+begin
+  var Codes := A.Code or B.Code or C.Code;
+  if ((Codes and GEOutNone) <> 0) or ((A.Code and B.Code and C.Code and GEOutPlanes) <> 0) then
+    Exit;
+  if ((Codes and GEOutZ) <> 0) and not FDepthClamp then
+    Exit;
+  if (Codes and GEOutNear) = 0 then
+  begin
+    if (Codes and GEOutScreen) = 0 then
+      EmitTriangle(A.V, B.V, C.V, Odd);
+    Exit;
+  end;
+  Src[0] := @A; Src[1] := @B; Src[2] := @C;
+  var N := 0;
+  for var I := 0 to 2 do
+  begin
+    var P := Src[I];
+    var Q := Src[(I + 1) mod 3];
+    var PIn := (P.Code and GEOutNear) = 0;
+    var QIn := (Q.Code and GEOutNear) = 0;
+    if PIn then
+    begin
+      Poly[N] := P^;
+      Inc(N);
+    end;
+    if PIn <> QIn then
+    begin
+      if PIn then
+        Poly[N] := NearPoint(P^, Q^)
+      else
+        Poly[N] := NearPoint(Q^, P^);
+      Project(Poly[N]);
+      Inc(N);
+    end;
+  end;
+  for var I := 0 to N - 1 do
+  begin
+    if (Poly[I].Code and GEOutScreen) <> 0 then
+      Exit;
+    if FRaster.Flat then
+      CopyColors(Poly[I].V, C.V);
+  end;
+  for var I := 1 to N - 2 do
+    EmitTriangle(Poly[0].V, Poly[I].V, Poly[I + 1].V, Odd);
+end;
+
+procedure TPSPGEEngine.ClipLine(const A, B: TGEAsmVertex);
+var
+  P, Q: TGEAsmVertex;
+begin
+  var Codes := A.Code or B.Code;
+  if ((Codes and GEOutNone) <> 0) or ((A.Code and B.Code and GEOutPlanes) <> 0) then
+    Exit;
+  if ((Codes and GEOutZ) <> 0) and not FDepthClamp then
+    Exit;
+  P := A;
+  Q := B;
+  if (A.Code and GEOutNear) <> 0 then
+  begin
+    P := NearPoint(B, A);
+    Project(P);
+  end
+  else if (B.Code and GEOutNear) <> 0 then
+  begin
+    Q := NearPoint(A, B);
+    Project(Q);
+    if FRaster.Flat then
+      CopyColors(Q.V, B.V);
+  end;
+  if ((P.Code or Q.Code) and GEOutScreen) = 0 then
+    GEDrawLine(FRaster, P.V, Q.V);
+end;
+
+procedure TPSPGEEngine.EmitSprite(const A, B: TGEAsmVertex);
+begin
+  var Codes := A.Code or B.Code;
+  if ((Codes and (GEOutNone or GEOutNear or GEOutScreen)) <> 0) or ((A.Code and B.Code and GEOutPlanes) <> 0) then
+    Exit;
+  if ((Codes and GEOutFar) <> 0) and not FDepthClamp then
+    Exit;
+  GEDrawSprite(FRaster, A.V, B.V);
+  Inc(FPrimCost, 100 + ScissoredArea(Min(A.V.X, B.V.X), Min(A.V.Y, B.V.Y), Max(A.V.X, B.V.X), Max(A.V.Y, B.V.Y)) * 3);
+end;
+
+procedure TPSPGEEngine.AddVertex(const A: TGEAsmVertex);
 begin
   var N := FAsmCount;
   Inc(FAsmCount);
   case FAsmType of
     0:
-      if not Clip then
-        GEDrawPoint(FRaster, V);
+      if (A.Code and (GEOutNone or GEOutPlanes or GEOutScreen)) = 0 then
+        GEDrawPoint(FRaster, A.V);
     1:
       begin
-        FAsmBuf[N and 1] := V; FAsmClip[N and 1] := Clip;
+        FAsm[N and 1] := A;
         if (N and 1) = 1 then
-          if not FAsmClip[0] and not FAsmClip[1] then
-            GEDrawLine(FRaster, FAsmBuf[0], FAsmBuf[1]);
+          ClipLine(FAsm[0], FAsm[1]);
       end;
     2:
       begin
-        if (N > 0) and not Clip and not FAsmClip[0] then
-          GEDrawLine(FRaster, FAsmBuf[0], V);
-        FAsmBuf[0] := V; FAsmClip[0] := Clip;
+        if N > 0 then
+          ClipLine(FAsm[0], A);
+        FAsm[0] := A;
       end;
     3:
       begin
         var I := N mod 3;
-        FAsmBuf[I] := V; FAsmClip[I] := Clip;
-        if (I = 2) and not FAsmClip[0] and not FAsmClip[1] and not FAsmClip[2] then
-          EmitTriangle(FAsmBuf[0], FAsmBuf[1], FAsmBuf[2], False);
+        FAsm[I] := A;
+        if I = 2 then
+          ClipTriangle(FAsm[0], FAsm[1], FAsm[2], False);
       end;
     4:
       begin
         if N < 2 then
         begin
-          FAsmBuf[N] := V; FAsmClip[N] := Clip;
+          FAsm[N] := A;
           Exit;
         end;
-        FAsmBuf[2] := V; FAsmClip[2] := Clip;
-        if not FAsmClip[0] and not FAsmClip[1] and not FAsmClip[2] then
-          EmitTriangle(FAsmBuf[0], FAsmBuf[1], FAsmBuf[2], ((N - 2) and 1) <> 0);
-        FAsmBuf[0] := FAsmBuf[1]; FAsmClip[0] := FAsmClip[1];
-        FAsmBuf[1] := FAsmBuf[2]; FAsmClip[1] := FAsmClip[2];
+        FAsm[2] := A;
+        ClipTriangle(FAsm[0], FAsm[1], FAsm[2], ((N - 2) and 1) <> 0);
+        FAsm[0] := FAsm[1];
+        FAsm[1] := FAsm[2];
       end;
     5:
       begin
         if N < 2 then
         begin
-          FAsmBuf[N] := V; FAsmClip[N] := Clip;
+          FAsm[N] := A;
           Exit;
         end;
-        FAsmBuf[2] := V; FAsmClip[2] := Clip;
-        if not FAsmClip[0] and not FAsmClip[1] and not FAsmClip[2] then
-          EmitTriangle(FAsmBuf[0], FAsmBuf[1], FAsmBuf[2], False);
-        FAsmBuf[1] := FAsmBuf[2]; FAsmClip[1] := FAsmClip[2];
+        FAsm[2] := A;
+        ClipTriangle(FAsm[0], FAsm[1], FAsm[2], False);
+        FAsm[1] := FAsm[2];
       end;
     6:
       begin
-        FAsmBuf[N and 1] := V; FAsmClip[N and 1] := Clip;
-        if ((N and 1) = 1) and not FAsmClip[0] and not FAsmClip[1] then
-        begin
-          GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
-          Inc(FPrimCost, 100 + ScissoredArea(Min(FAsmBuf[0].X, FAsmBuf[1].X), Min(FAsmBuf[0].Y, FAsmBuf[1].Y),
-            Max(FAsmBuf[0].X, FAsmBuf[1].X), Max(FAsmBuf[0].Y, FAsmBuf[1].Y)) * 3);
-        end;
+        FAsm[N and 1] := A;
+        if (N and 1) = 1 then
+          EmitSprite(FAsm[0], FAsm[1]);
       end;
   end;
 end;
@@ -1112,8 +1272,7 @@ end;
 procedure TPSPGEEngine.DrawPrim(Op: Cardinal);
 var
   Raw: TGEInVertex;
-  V: TGEVertex;
-  Clip: Boolean;
+  V: TGEAsmVertex;
 begin
   var PrimType := Integer((Op shr 16) and 7);
   var Count := Integer(Op and $FFFF);
@@ -1128,12 +1287,17 @@ begin
   BuildRaster;
   FCullOn := ((Regs.Cmd[GE_CULLENABLE] and 1) <> 0) and not FRaster.ClearMode;
   FCullCW := (Regs.Cmd[GE_CULL] and 1) <> 0;
+  FDepthClamp := (Regs.Cmd[GE_CLIPENABLE] and 1) <> 0;
+  if FRaster.Textured then
+    Inc(FPrimCost, GETexPrimCost);
   for var I := 0 to Count - 1 do
   begin
     ReadVertex(VertexIndex(I, VType), VType, Raw);
-    TransformVertex(Raw, VType, V, Clip);
+    TransformVertex(Raw, VType, V);
+    if not HasPos then
+      V.Code := GEOutNone;
     Inc(FPrimCost, 40);
-    AddVertex(V, Clip or not HasPos);
+    AddVertex(V);
   end;
   AdvanceVertices(Count, VType);
 end;
@@ -1256,6 +1420,7 @@ end;
 procedure TPSPGEEngine.ImmediateVertex(Op: Cardinal);
 var
   V: TGEVertex;
+  AV: TGEAsmVertex;
 begin
   var C: PGECmds := @Regs.Cmd;
   var PrimType := Integer((Op shr 8) and 7);
@@ -1298,7 +1463,9 @@ begin
   V.T := GEFloat(C[$F4]) / Q * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
   V.Fog := (C[$F8] and $FF) / 255;
   Inc(FPrimCost, 40);
-  AddVertex(V, False);
+  AV := Default(TGEAsmVertex);
+  AV.V := V;
+  AddVertex(AV);
 end;
 
 procedure TPSPGEEngine.LoadClut(Op: Cardinal);

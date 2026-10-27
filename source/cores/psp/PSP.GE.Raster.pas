@@ -62,6 +62,7 @@ type
     DepthFunc: Integer;
     DepthWrite: Boolean;
     MinZ, MaxZ: Integer;
+    DepthClamp: Boolean;
     Blend: Boolean;
     BlendOp, BlendSrc, BlendDst: Integer;
     FixA, FixB: Cardinal;
@@ -410,8 +411,14 @@ begin
     Exit;
   end;
 
+  // The depth range test sees the depth clamped only with depth clamping on.
   if not S.Through then
-    if (F.Z < S.MinZ) or (F.Z > S.MaxZ) then
+    if S.DepthClamp then
+    begin
+      if (Z < S.MinZ) or (Z > S.MaxZ) then
+        Exit;
+    end
+    else if (F.Z < S.MinZ) or (F.Z > S.MaxZ) then
       Exit;
 
   if S.Textured then
