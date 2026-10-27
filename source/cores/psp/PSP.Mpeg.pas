@@ -134,6 +134,9 @@ type
     procedure hBaseCscAvc;
     procedure hVideocodecGetSEI;
     procedure hBasePESpacketCopy;
+    procedure hAvcConvertToYuv420;
+    procedure hAvcCopyYCbCr;
+    procedure hBaseYCrCbCopy;
     procedure hAvcDecodeDetail2;
   public
     constructor Create(System: TPSPSystem); override;
@@ -247,6 +250,9 @@ begin
   H.Register(LibBase, $91929A21, 'sceMpegBaseCscAvc', hBaseCscAvc);
   H.Register(LibBase, $BEA18F91, 'sceMpegBasePESpacketCopy', hBasePESpacketCopy);
   H.Register(LibMpeg, $CF3547A2, 'sceMpegAvcDecodeDetail2', hAvcDecodeDetail2);
+  H.Register(LibMpeg, $F5E7EA31, 'sceMpegAvcConvertToYuv420', hAvcConvertToYuv420);
+  H.Register(LibMpeg, $0558B075, 'sceMpegAvcCopyYCbCr', hAvcCopyYCbCr);
+  H.Register(LibBase, $7AC0321A, 'sceMpegBaseYCrCbCopy', hBaseYCrCbCopy);
   H.Register(LibCodec, $627B7D42, 'sceVideocodecGetSEI', hVideocodecGetSEI);
 end;
 
@@ -1559,6 +1565,104 @@ begin
       Cb := Mem.Read8(Bufs[4 + Field * 2] + C);
       Cr := Mem.Read8(Bufs[5 + Field * 2] + C);
     end);
+  FHLE.Result(0);
+end;
+
+function ReadYCbCrDesc(Memory: TPSPMemory; Buf: Cardinal; out MbW, MbH: Integer; out Bufs: TArray<Cardinal>;
+  out Sizes: TArray<Cardinal>): Boolean;
+begin
+  MbH := Integer(Memory.Read32(Buf));
+  MbW := Integer(Memory.Read32(Buf + 4));
+  Result := (MbW > 0) and (MbH > 0) and (MbW <= 64) and (MbH <= 64);
+  SetLength(Bufs, 8);
+  for var I := 0 to 7 do
+    Bufs[I] := Memory.Read32(Buf + 16 + Cardinal(I) * 4);
+  if Result then
+    YCbCrPlanes(MbW, MbH, Sizes);
+end;
+
+procedure TPSPMpeg.hAvcConvertToYuv420;
+begin
+  // Planar YUV 4:2:0 out of the ME's two-field buffer.
+  var Dst := FHLE.Arg(1);
+  var Src := FHLE.Arg(2);
+  var MbW, MbH: Integer;
+  var Bufs, Sizes: TArray<Cardinal>;
+  if (Dst = 0) or (Src = 0) or not ReadYCbCrDesc(FMemory, Src, MbW, MbH, Bufs, Sizes) then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  var W := MbW * 16;
+  var H := MbH * 16;
+  var FieldRows := MbH * 8;
+  for var Y := 0 to H - 1 do
+    for var X := 0 to W - 1 do
+    begin
+      var Mb := X div 16;
+      FMemory.Write8(Dst + Cardinal(Y * W + X),
+        FMemory.Read8(Bufs[(Y and 1) * 2 + (Mb and 1)] + Cardinal(((Mb div 2) * FieldRows + Y div 2) * 16 + (X and 15))));
+    end;
+  var CW := W div 2;
+  var CH := H div 2;
+  var U := Dst + Cardinal(W * H);
+  var V := U + Cardinal(CW * CH);
+  for var Row := 0 to CH - 1 do
+    for var X := 0 to CW - 1 do
+    begin
+      var C := Cardinal((Row div 2) * CW + X);
+      FMemory.Write8(U + Cardinal(Row * CW + X), FMemory.Read8(Bufs[4 + (Row and 1) * 2] + C));
+      FMemory.Write8(V + Cardinal(Row * CW + X), FMemory.Read8(Bufs[5 + (Row and 1) * 2] + C));
+    end;
+  FHLE.Result(0);
+end;
+
+procedure TPSPMpeg.hAvcCopyYCbCr;
+begin
+  var Dst := FHLE.Arg(1);
+  var Src := FHLE.Arg(2);
+  var MbW, MbH: Integer;
+  var Bufs, Sizes: TArray<Cardinal>;
+  if (Dst = 0) or (Src = 0) or not ReadYCbCrDesc(FMemory, Src, MbW, MbH, Bufs, Sizes) then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  var DMbW, DMbH: Integer;
+  var DBufs, DSizes: TArray<Cardinal>;
+  if not ReadYCbCrDesc(FMemory, Dst, DMbW, DMbH, DBufs, DSizes) or (DMbW <> MbW) or (DMbH <> MbH) then
+  begin
+    InitYCbCr(Dst, MbW * 16, MbH * 16);
+    ReadYCbCrDesc(FMemory, Dst, DMbW, DMbH, DBufs, DSizes);
+  end;
+  for var I := 0 to 7 do
+    if (Bufs[I] <> 0) and (DBufs[I] <> 0) then
+      FMemory.Copy(DBufs[I], Bufs[I], Sizes[I]);
+  FHLE.Result(0);
+end;
+
+procedure TPSPMpeg.hBaseYCrCbCopy;
+begin
+  // Copies the fields Flags selects (bit 0 the first, bit 1 the second).
+  var Dst := FHLE.Arg(0);
+  var Src := FHLE.Arg(1);
+  var Flags := FHLE.Arg(2);
+  var MbW, MbH: Integer;
+  var Bufs, Sizes: TArray<Cardinal>;
+  if (Dst = 0) or (Src = 0) or not ReadYCbCrDesc(FMemory, Src, MbW, MbH, Bufs, Sizes) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+    Exit;
+  end;
+  for var I := 0 to 7 do
+  begin
+    var Field := (I shr 1) and 1;
+    if (Flags and (1 shl Field)) = 0 then
+      Continue;
+    var D := FMemory.Read32(Dst + 16 + Cardinal(I) * 4);
+    if (Bufs[I] <> 0) and (D <> 0) then
+      FMemory.Copy(D, Bufs[I], Sizes[I]);
+  end;
   FHLE.Result(0);
 end;
 
