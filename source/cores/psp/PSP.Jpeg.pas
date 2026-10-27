@@ -242,7 +242,7 @@ begin
   end;
 end;
 
-function PSPDecodeJpeg(const Data: TBytes; HeaderOnly: Boolean; out Image: TPSPJpegImage): Cardinal;
+function DecodeJpeg(const Data: TBytes; HeaderOnly: Boolean; out Image: TPSPJpegImage): Cardinal;
 var
   Quant: array[0..3, 0..63] of Integer;
   Dc, Ac: array[0..3] of THuffTable;
@@ -482,6 +482,20 @@ begin
       Move(Comps[C].Data[Y * Stride], Image.Planes[C][Y * W], W);
   end;
   Result := 0;
+end;
+
+function PSPDecodeJpeg(const Data: TBytes; HeaderOnly: Boolean; out Image: TPSPJpegImage): Cardinal;
+begin
+  try
+    Result := DecodeJpeg(Data, HeaderOnly, Image);
+  except
+    // Damaged data the parser ran off the end of.
+    on E: Exception do
+    begin
+      Image := Default(TPSPJpegImage);
+      Result := ERROR_JPEG_NO_SOI;
+    end;
+  end;
 end;
 
 { TPSPJpeg }

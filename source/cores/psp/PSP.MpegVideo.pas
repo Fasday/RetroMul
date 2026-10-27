@@ -25,6 +25,9 @@ type
     Poc: Integer;
     Index: Integer;
     OutAt: Int64;
+    Idr: Boolean;
+    // The ME's SEI record of the access unit the picture came from.
+    Record_: TArray<Cardinal>;
   end;
 
   TPSPAvcSps = record
@@ -39,17 +42,22 @@ type
     UnitsInTick, TimeScale: Cardinal;
     Hrd: Boolean;
     CpbDelayLength, DpbDelayLength, TimeOffsetLength: Integer;
-    CpbCount: Integer;
+    CpbCount, InitDelayLength: Integer;
+    NalHrd, VclHrd: Boolean;
     PicStruct: Boolean;
     FullRange: Boolean;
     MaxDecFrameBuffering: Integer;
   end;
 
   TPSPAvcSei = record
-    HasBuffering, HasTiming: Boolean;
+    HasBuffering, HasTiming, HasRecovery: Boolean;
     CpbRemovalDelay, DpbOutputDelay: Cardinal;
     PicStruct: Integer;
   end;
+
+  // What the ME keeps of an access unit's SEI messages (41 words): flags,
+  // buffering period, picture timing with three clock timestamps, recovery point.
+  TPSPSeiRecord = array[0..40] of Cardinal;
 
   TPSPAvc = class
   private
@@ -65,6 +73,11 @@ type
     FLastSei: TPSPAvcSei;
     FLastPicture: TPSPPicture;
     FHasPicture: Boolean;
+    // Two records, used by alternate access units; fields an access unit does
+    // not carry keep what the one before last left.
+    FSlots: array[0..1] of TPSPSeiRecord;
+    FSlot: Integer;
+    FLastIdr: Boolean;
     procedure ParseSps(const Rbsp: TBytes);
     procedure ParsePps(const Rbsp: TBytes);
     procedure ParseSei(const Rbsp: TBytes; var Sei: TPSPAvcSei);
@@ -84,6 +97,9 @@ type
     property HasPicture: Boolean read FHasPicture;
     property LastPicture: TPSPPicture read FLastPicture;
     property Decoded: Int64 read FCount;
+    // The record of the last decoded access unit.
+    function CurrentRecord: TArray<Cardinal>;
+    property LastIdr: Boolean read FLastIdr;
   end;
 
 // Video colour conversion (BT.601, studio range) as the ME does it.
@@ -99,6 +115,9 @@ implementation
 
 uses
   System.Math;
+
+const
+  SeiClocks: array[0..8] of Integer = (1, 1, 1, 2, 2, 3, 3, 2, 3);
 
 function Clamp255(V: Integer): Integer; inline;
 begin
@@ -246,6 +265,15 @@ begin
   FConfigured := True;
   FLastSei := Default(TPSPAvcSei);
   FHasPicture := False;
+  FillChar(FSlots, SizeOf(FSlots), 0);
+  FSlot := 0;
+  FLastIdr := False;
+end;
+
+function TPSPAvc.CurrentRecord: TArray<Cardinal>;
+begin
+  SetLength(Result, Length(FSlots[FSlot]));
+  Move(FSlots[FSlot][0], Result[0], SizeOf(FSlots[FSlot]));
 end;
 
 function TPSPAvc.ActiveSps: TPSPAvcSps;
@@ -272,7 +300,7 @@ var
       B.ReadUE;
       B.Skip(1);
     end;
-    B.Skip(5);
+    S.InitDelayLength := B.ReadBits(5) + 1;
     S.CpbDelayLength := B.ReadBits(5) + 1;
     S.DpbDelayLength := B.ReadBits(5) + 1;
     S.TimeOffsetLength := B.ReadBits(5);
@@ -379,6 +407,8 @@ begin
       if VclHrd then
         Hrd;
       S.Hrd := NalHrd or VclHrd;
+      S.NalHrd := NalHrd;
+      S.VclHrd := VclHrd;
       if S.Hrd then
         B.Skip(1);
       S.PicStruct := B.ReadBit;
@@ -462,22 +492,106 @@ begin
         end;
     if (S >= 0) and FSps[S].Valid then
     begin
+      var Sp := FSps[S];
       var B: TBitReader;
       B.Init(Payload);
       try
         case PayloadType of
-          0: Sei.HasBuffering := True;
-          1:
-            if FSps[S].Hrd then
+          0:
             begin
-              Sei.HasTiming := True;
-              Sei.CpbRemovalDelay := B.ReadBits(FSps[S].CpbDelayLength);
-              Sei.DpbOutputDelay := B.ReadBits(FSps[S].DpbDelayLength);
-              if FSps[S].PicStruct then
+              Sei.HasBuffering := True;
+              FSlots[FSlot][0] := FSlots[FSlot][0] or 1;
+              FSlots[FSlot][1] := B.ReadUE;
+              if Sp.NalHrd then
+              begin
+                FSlots[FSlot][2] := B.ReadBits(Sp.InitDelayLength);
+                FSlots[FSlot][3] := B.ReadBits(Sp.InitDelayLength);
+                for var K := 2 to Sp.CpbCount do
+                  B.Skip(2 * Sp.InitDelayLength);
+              end;
+              if Sp.VclHrd then
+              begin
+                FSlots[FSlot][4] := B.ReadBits(Sp.InitDelayLength);
+                FSlots[FSlot][5] := B.ReadBits(Sp.InitDelayLength);
+              end;
+            end;
+          1:
+            begin
+              FSlots[FSlot][0] := FSlots[FSlot][0] or 2;
+              if Sp.Hrd then
+              begin
+                Sei.HasTiming := True;
+                Sei.CpbRemovalDelay := B.ReadBits(Sp.CpbDelayLength);
+                Sei.DpbOutputDelay := B.ReadBits(Sp.DpbDelayLength);
+                FSlots[FSlot][6] := Sei.CpbRemovalDelay;
+                FSlots[FSlot][7] := Sei.DpbOutputDelay;
+              end;
+              if Sp.PicStruct then
+              begin
                 Sei.PicStruct := B.ReadBits(4);
-            end
-            else if FSps[S].PicStruct then
-              Sei.PicStruct := B.ReadBits(4);
+                var Clocks := 1;
+                if Sei.PicStruct <= 8 then
+                  Clocks := SeiClocks[Sei.PicStruct];
+                var Flags: Cardinal := Cardinal(Sei.PicStruct);
+                for var C := 0 to Clocks - 1 do
+                  if B.ReadBit then
+                  begin
+                    Flags := Flags or (Cardinal(1) shl (8 + C * 8));
+                    var W := 9 + C * 5;
+                    var CtType := B.ReadBits(2);
+                    var Nuit := B.ReadBits(1);
+                    var Counting := B.ReadBits(5);
+                    var Full := B.ReadBits(1);
+                    FSlots[FSlot][W] := CtType or (Nuit shl 8) or (Counting shl 16) or (Full shl 24);
+                    var Disc := B.ReadBits(1);
+                    var Dropped := B.ReadBits(1);
+                    var Frames := B.ReadBits(8);
+                    FSlots[FSlot][W + 1] := Disc or (Dropped shl 8) or (Frames shl 16);
+                    var Sec: Cardinal := 0;
+                    var Min_: Cardinal := 0;
+                    var Hour: Cardinal := 0;
+                    var Present: Cardinal := 0;
+                    if Full <> 0 then
+                    begin
+                      Sec := B.ReadBits(6);
+                      Min_ := B.ReadBits(6);
+                      Hour := B.ReadBits(5);
+                      Present := 7;
+                    end
+                    else if B.ReadBit then
+                    begin
+                      Sec := B.ReadBits(6);
+                      Present := 1;
+                      if B.ReadBit then
+                      begin
+                        Min_ := B.ReadBits(6);
+                        Present := 3;
+                        if B.ReadBit then
+                        begin
+                          Hour := B.ReadBits(5);
+                          Present := 7;
+                        end;
+                      end;
+                    end;
+                    FSlots[FSlot][W + 2] := Present;
+                    FSlots[FSlot][W + 3] := Sec or (Min_ shl 8) or (Hour shl 16);
+                    if Sp.TimeOffsetLength > 0 then
+                      FSlots[FSlot][W + 4] := B.ReadBits(Sp.TimeOffsetLength)
+                    else
+                      FSlots[FSlot][W + 4] := 0;
+                  end;
+                FSlots[FSlot][8] := Flags;
+              end;
+            end;
+          6:
+            begin
+              Sei.HasRecovery := True;
+              FSlots[FSlot][0] := FSlots[FSlot][0] or 4;
+              FSlots[FSlot][24] := B.ReadUE;
+              FSlots[FSlot][25] := B.ReadBits(1);
+              FSlots[FSlot][26] := B.ReadBits(1);
+              FSlots[FSlot][27] := B.ReadBits(2);
+            end;
         end;
       except
         on EBitstreamError do ;
@@ -595,6 +709,8 @@ function TPSPAvc.Decode(const Au: TBytes; out Pictures: TArray<TPSPPicture>): Ca
 begin
   Pictures := nil;
   Result := 0;
+  FSlot := Integer(FCount and 1);
+  FSlots[FSlot][0] := 0;
   var Nals := SplitAnnexB(Au);
   var Sei := Default(TPSPAvcSei);
   var Poc := Integer(FCount) * 2;
@@ -625,6 +741,7 @@ begin
   if S.Valid and (S.MaxRefs > 3) then
     Exit(Cardinal($80628002));
   FLastSei := Sei;
+  FLastIdr := Idr;
   var Packet := Default(TMediaPacket);
   Packet.Data := Au;
   Packet.PTS := FCount;
@@ -649,6 +766,8 @@ begin
     Pic.Cr := Frame.Planes[2];
     Pic.Poc := Poc;
     Pic.Index := FCount;
+    Pic.Idr := Idr;
+    Pic.Record_ := CurrentRecord;
     if S.Hrd and Sei.HasTiming then
     begin
       var Frames := Int64(Sei.DpbOutputDelay) div 2;
