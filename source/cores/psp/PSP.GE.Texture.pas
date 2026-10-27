@@ -87,12 +87,16 @@ begin
     Result := Cardinal(Y * RowBytes + ByteX);
 end;
 
-function DXTColor(C0, C1: Cardinal; Index: Integer; Alpha1: Boolean): Cardinal;
+// A DXT colour block's texel. The end colours widen to 8 bits without
+// repeating their top bits; when the first is not greater, the block has
+// three colours and index 3 is transparent black (DXT3/5 take the alpha from
+// their own data).
+function DXTColor(C0, C1: Cardinal; Index: Integer): Cardinal;
   procedure Split(C: Cardinal; out R, G, B: Integer);
   begin
-    R := (C shr 11) and $1F; R := (R shl 3) or (R shr 2);
-    G := (C shr 5) and $3F; G := (G shl 2) or (G shr 4);
-    B := C and $1F; B := (B shl 3) or (B shr 2);
+    R := ((C shr 11) and $1F) shl 3;
+    G := ((C shr 5) and $3F) shl 2;
+    B := (C and $1F) shl 3;
   end;
 var
   R0, G0, B0, R1, G1, B1: Integer;
@@ -103,12 +107,12 @@ begin
     0: Result := Cardinal(R0) or (Cardinal(G0) shl 8) or (Cardinal(B0) shl 16) or $FF000000;
     1: Result := Cardinal(R1) or (Cardinal(G1) shl 8) or (Cardinal(B1) shl 16) or $FF000000;
     2:
-      if (C0 > C1) or not Alpha1 then
+      if C0 > C1 then
         Result := Cardinal((2 * R0 + R1) div 3) or (Cardinal((2 * G0 + G1) div 3) shl 8) or (Cardinal((2 * B0 + B1) div 3) shl 16) or $FF000000
       else
         Result := Cardinal((R0 + R1) div 2) or (Cardinal((G0 + G1) div 2) shl 8) or (Cardinal((B0 + B1) div 2) shl 16) or $FF000000;
   else
-    if (C0 > C1) or not Alpha1 then
+    if C0 > C1 then
       Result := Cardinal((R0 + 2 * R1) div 3) or (Cardinal((G0 + 2 * G1) div 3) shl 8) or (Cardinal((B0 + 2 * B1) div 3) shl 16) or $FF000000
     else
       Result := 0;
@@ -141,32 +145,32 @@ begin
       Result := ClutLookup(T, M.Read32(L.Addr + TexelOffset(T, L, X, Y, 32)));
     8, 9, 10:
       begin
-        // 4x4 blocks in rows of BufWidth/4 blocks; DXT1 blocks are 8 bytes, DXT3/5 16.
+        // 4x4 blocks in rows of BufWidth/4 blocks: the colour block (indices,
+        // then the two colours), and for DXT3/5 the alpha data after it.
         var BlockBytes := 16;
         if T.Format = 8 then
           BlockBytes := 8;
         var BlocksPerRow := L.BufWidth div 4;
         var Block := L.Addr + Cardinal(((Y shr 2) * BlocksPerRow + (X shr 2)) * BlockBytes);
-        var ColorBlock := Block;
-        if T.Format <> 8 then
-          ColorBlock := Block + 8;
-        var Bits := M.Read32(ColorBlock);
-        var C0 := M.Read16(ColorBlock + 4);
-        var C1 := M.Read16(ColorBlock + 6);
-        var Index := (Bits shr (((Y and 3) * 4 + (X and 3)) * 2)) and 3;
-        Result := DXTColor(C0, C1, Index, T.Format = 8);
+        var Bits := M.Read32(Block);
+        var C0 := M.Read16(Block + 4);
+        var C1 := M.Read16(Block + 6);
+        var Pixel := (Y and 3) * 4 + (X and 3);
+        Result := DXTColor(C0, C1, (Bits shr (Pixel * 2)) and 3);
         if T.Format = 9 then
         begin
-          var AW := M.Read16(Block + Cardinal((Y and 3) * 2));
+          // 4 bits a texel, a row in 16 bits; widened without repeating.
+          var AW := M.Read16(Block + 8 + Cardinal((Y and 3) * 2));
           var A := (AW shr ((X and 3) * 4)) and $F;
-          Result := (Result and $FFFFFF) or ((A * 17) shl 24);
+          Result := (Result and $FFFFFF) or ((A shl 4) shl 24);
         end
         else if T.Format = 10 then
         begin
-          var A0 := M.Read8(Block + 6);
-          var A1 := M.Read8(Block + 7);
-          var ABits := UInt64(M.Read32(Block)) or (UInt64(M.Read16(Block + 4)) shl 32);
-          var AI := (ABits shr (((Y and 3) * 4 + (X and 3)) * 3)) and 7;
+          // 48 bits of 3-bit indices, then the two end alphas.
+          var ABits := UInt64(M.Read32(Block + 8)) or (UInt64(M.Read16(Block + 12)) shl 32);
+          var A0 := M.Read8(Block + 14);
+          var A1 := M.Read8(Block + 15);
+          var AI := (ABits shr (Pixel * 3)) and 7;
           var A: Cardinal;
           if A0 > A1 then
             case AI of
