@@ -932,7 +932,10 @@ begin
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
-  FHLE.Result(Cardinal(R));
+  if F.Kind = dkHost then
+    DeviceYield(Cardinal(R), ReadLatency(F, Max(R, 0)))
+  else
+    FHLE.Result(Cardinal(R));
 end;
 
 procedure TPSPIO.hReadAsync;
@@ -986,7 +989,10 @@ begin
     begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_ASYNC_BUSY)))); Exit; end;
   // (fd, pad, offset64 in a2/a3, whence in t0)
   var Offset := Int64(FHLE.Arg64(2));
-  FHLE.Result64(UInt64(DoSeek(F, Offset, FHLE.ArgInt(4))));
+  var R := DoSeek(F, Offset, FHLE.ArgInt(4));
+  FHLE.Result64(UInt64(R));
+  if F.Kind = dkHost then
+    DeviceYield(Cardinal(UInt64(R)), 20000);
 end;
 
 procedure TPSPIO.hLseekAsync;
@@ -1007,7 +1013,11 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  FHLE.Result(Cardinal(DoSeek(F, FHLE.ArgInt(1), FHLE.ArgInt(2))));
+  var R := Cardinal(DoSeek(F, FHLE.ArgInt(1), FHLE.ArgInt(2)));
+  if F.Kind = dkHost then
+    DeviceYield(R, 20000)
+  else
+    FHLE.Result(R);
 end;
 
 procedure TPSPIO.hLseek32Async;
