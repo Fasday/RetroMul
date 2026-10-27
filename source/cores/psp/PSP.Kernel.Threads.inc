@@ -28,6 +28,9 @@ end;
 procedure TPSPKernel.StartThread(T: TPSPThread; ArgSize, ArgPtr: Cardinal; const ArgData: TBytes);
 begin
   var C := Default(TPSPContext);
+  // A new thread's VFPU registers read as NaN.
+  for var I := 0 to High(C.V) do
+    C.V[I] := $7F800001;
   C.VC := FCPU.Ctx.VC;
   C.VC[VFPU_PFXS] := $E4;
   C.VC[VFPU_PFXT] := $E4;

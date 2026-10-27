@@ -247,7 +247,8 @@ begin
     Bits := Bits or $10;
   if (Bits and All) = All then
     Bits := Bits or $20;
-  C.Ctx.VC[VFPU_CC] := Bits;
+  // Lanes past the size keep their bits.
+  C.Ctx.VC[VFPU_CC] := (C.Ctx.VC[VFPU_CC] and not (All or $30)) or Bits;
   EatPfx(C);
 end;
 

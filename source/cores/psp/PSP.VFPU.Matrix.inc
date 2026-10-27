@@ -105,9 +105,22 @@ begin
   case N of
     3:
       begin
-        D[0] := Sum2(S[1], T[2], S[2] xor $80000000, T[1]);
-        D[1] := Sum2(S[2], T[0], S[0] xor $80000000, T[2]);
-        D[2] := Sum2(S[0], T[1], S[1] xor $80000000, T[0]);
+        // Lane by lane, z first, each from the register file as it stands.
+        var P: PIdx4 := @VecIdx[2, RegD(Op)];
+        var DPfx := C.Ctx.VC[VFPU_PFXD];
+        var Z := Sum2(S[0], T[1], S[1] xor $80000000, T[0]);
+        if Zero then
+          Z := 0;
+        if (DPfx and $100) = 0 then
+          C.Ctx.V[P[2]] := SatLane(Z, DPfx and 3);
+        LoadV(C, RegS(Op), N, S);
+        LoadV(C, RegT(Op), N, T);
+        C.Ctx.V[P[1]] := Sum2(S[2], T[0], S[0] xor $80000000, T[2]);
+        LoadV(C, RegS(Op), N, S);
+        LoadV(C, RegT(Op), N, T);
+        C.Ctx.V[P[0]] := Sum2(S[1], T[2], S[2] xor $80000000, T[1]);
+        EatPfx(C);
+        Exit;
       end;
     4:
       begin
@@ -176,14 +189,15 @@ begin
   DoMatFill(C, Op, 1);
 end;
 
+// The sine lanes (and zeros) are written first, the cosine after, from the
+// angle register as it is then.
 procedure OpVROT(C: TPSPCPU; Op: Cardinal);
 begin
   var N := VSz(Op);
-  var A := C.Ctx.V[VecIdx[0, RegS(Op)][0]];
+  var AngleIdx := VecIdx[0, RegS(Op)][0];
   var Imm := (Op shr 16) and 31;
-  var Co := VCos(A);
   var Zero := False;
-  var SA := LastIn(C.Ctx.VC[VFPU_PFXS], A, Zero);
+  var SA := LastIn(C.Ctx.VC[VFPU_PFXS], C.Ctx.V[AngleIdx], Zero);
   var Si: Cardinal := 0;
   if not Zero then
     Si := VSin(SA);
@@ -193,13 +207,13 @@ begin
   var SL := Integer((Imm shr 2) and 3);
   var D: TV4;
   for var I := 0 to 3 do
-    if I = CL then
-      D[I] := Co
-    else if (SL = CL) or (I = SL) then
+    if (SL = CL) or (I = SL) then
       D[I] := Si
     else
       D[I] := 0;
   StoreV(C, RegD(Op), N, D);
+  if CL < N then
+    C.Ctx.V[VecIdx[N - 1, RegD(Op)][CL]] := VCos(C.Ctx.V[AngleIdx]);
   EatPfx(C);
 end;
 
