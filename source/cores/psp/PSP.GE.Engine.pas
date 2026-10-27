@@ -48,7 +48,8 @@ type
     function ReadVertex(Index: Integer; VType: Cardinal; out V: TGEInVertex): Boolean;
     procedure Skin(const V: TGEInVertex; VType: Cardinal; var P, N: TGEVec3);
     procedure Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
-    procedure TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);
+    function LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
+    procedure TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
     procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
     procedure BuildRaster;
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
@@ -550,7 +551,7 @@ var
   MA, MD, MS, E, AL, LA, LD, LS: array[0..2] of Single;
   Lit, Spec: array[0..2] of Single;
   MAA, ALA, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp, Cutoff, Expo: Single;
-  N, D, SD, H: TGEVec3;
+  N, D, SD, H, VW: TGEVec3;
   L, Kind, LType, Ch: Integer;
   LT: Cardinal;
 begin
@@ -587,7 +588,10 @@ begin
     Spec[Ch] := 0;
   end;
   N := Normalized(WN);
-  Shine := GEFloat(C[GE_MATERIALSPECULARCOEF]);
+  // The exponent keeps the top 4 bits of its mantissa.
+  Shine := GEFloat(C[GE_MATERIALSPECULARCOEF] and $FFF800);
+  // The viewer is at infinity along view space +z.
+  VW := Vec3(GEFloat(Regs.View[2]), GEFloat(Regs.View[5]), GEFloat(Regs.View[8]));
   for L := 0 to 3 do
   begin
     if (C[GE_LIGHTENABLE0 + L] and 1) = 0 then
@@ -642,7 +646,7 @@ begin
       Lit[Ch] := Lit[Ch] + Att * Spot * (LA[Ch] * MA[Ch] + LD[Ch] * MD[Ch] * Diff);
     if (Kind = 1) and (NdotL >= 0) then
     begin
-      H := Normalized(Vec3(D.X, D.Y, D.Z + 1));
+      H := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
       NdotH := Max(Dot(N, H), 0);
       Sp := Att * Spot * Min(GEPow(NdotH, Shine), 1);
       for Ch := 0 to 2 do
@@ -664,7 +668,27 @@ begin
   A := LitChannel(ALA * MAA);
 end;
 
-procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);
+// The vector to a light as lighting sees it, for shade mapping: the half
+// vector for lights with specular.
+function TPSPGEEngine.LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
+var
+  C: PGECmds;
+  D, VW: TGEVec3;
+begin
+  C := @Regs.Cmd;
+  D := CmdVec(C^, GE_LX0 + L * 3);
+  if ((C[GE_LIGHTTYPE0 + L] shr 8) and 3) <> 0 then
+    D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
+  D := Normalized(D);
+  if (C[GE_LIGHTTYPE0 + L] and 3) = 1 then
+  begin
+    VW := Vec3(GEFloat(Regs.View[2]), GEFloat(Regs.View[5]), GEFloat(Regs.View[8]));
+    D := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
+  end;
+  Result := D;
+end;
+
+procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
 var
   C: PGECmds;
   Src, N, LU, LV: TGEVec3;
@@ -693,8 +717,8 @@ begin
     2:
       begin
         N := Normalized(WN);
-        LU := Normalized(CmdVec(C^, GE_LX0 + Integer(C[GE_TEXSHADELS] and 3) * 3));
-        LV := Normalized(CmdVec(C^, GE_LX0 + Integer((C[GE_TEXSHADELS] shr 8) and 3) * 3));
+        LU := LightVector(Integer(C[GE_TEXSHADELS] and 3), WP);
+        LV := LightVector(Integer((C[GE_TEXSHADELS] shr 8) and 3), WP);
         S := (1 + Dot(N, LU)) / 2;
         T := (1 + Dot(N, LV)) / 2;
       end;
@@ -775,7 +799,7 @@ begin
     Light(V, WP, WN, R, G, B, A, SR, SG, SB);
   O.R := R; O.G := G; O.B := B; O.A := A;
   O.SR := SR; O.SG := SG; O.SB := SB;
-  TexGen(V, WN, S, T);
+  TexGen(V, WP, WN, S, T);
   O.S := S * (1 shl (C[GE_TEXSIZE0] and $F));
   O.T := T * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
   O.Fog := (GEFloat(C[GE_FOG1]) + VP.Z) * GEFloat(C[GE_FOG2]);
