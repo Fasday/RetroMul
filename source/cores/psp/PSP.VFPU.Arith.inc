@@ -57,7 +57,11 @@ end;
 
 function FnSbn(A, B: Cardinal): Cardinal;
 begin
-  Result := (A and $807FFFFF) or ((Cardinal(127 + Integer(B)) and $FF) shl 23);
+  var E := A and $7F800000;
+  if (E = 0) or (E = $7F800000) then
+    Result := A
+  else
+    Result := (A and $807FFFFF) or ((Cardinal(127 + Integer(B)) and $FF) shl 23);
 end;
 
 procedure OpVADD(C: TPSPCPU; Op: Cardinal);

@@ -366,11 +366,17 @@ begin
   EatPfx(C);
 end;
 
+// The exponent becomes the immediate; the mantissa (with its hidden bit) is
+// shifted left by the old exponent's low four bits and wraps.
 procedure OpVWBN(C: TPSPCPU; Op: Cardinal);
 begin
   var S, D: TV4;
   var Z := ReadS(C, Op, 1, S);
-  D[0] := (S[0] and $807FFFFF) or (((Op shr 16) and $FF) shl 23);
+  var E := (S[0] shr 23) and $FF;
+  var M := S[0] and $7FFFFF;
+  if E <> 0 then
+    M := M or $800000;
+  D[0] := (S[0] and $80000000) or (((Op shr 16) and $FF) shl 23) or ((M shl (E and 15)) and $7FFFFF);
   WriteD(C, Op, 1, D, Z);
   EatPfx(C);
 end;
