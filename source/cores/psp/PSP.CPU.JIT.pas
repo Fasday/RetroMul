@@ -443,14 +443,38 @@ begin
   if Rest <> 0 then
     FJ.Alu(jaAdd, jw32, Remaining, JImm(Rest));
   FJ.Call(Handler, [JSelf, JImm(Op)]);
-  var After := At;
-  After.Refund := 0;
-  var Leave := HitExit(After);
-  FJ.BranchTest(jcNe, jw8, JMem(jrSelf, OffStopping), JImm($FF), Leave);
-  // (Cycles it added that leave too few for the block's rest.)
-  FJ.Branch(jcLt, jw32, Remaining, JImm(Rest), Leave);
-  if MayStore(Op) then
-    FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), Leave);
+  // Where it stopped the run, used up the cycles left, rewrote a block or
+  // (with PC and NPC written) moved them as a kernel call would: back to
+  // Run, from where the handler left them.
+  if State then
+  begin
+    FJ.BranchTo(jcNe, jw8, JMem(jrSelf, OffStopping), JImm(0), FExit);
+    if At.Dynamic then
+    begin
+      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffPC), JTarget, FExit);
+      FJ.Move(jw32, JT0, JTarget);
+      FJ.Alu(jaAdd, jw32, JT0, JImm(4));
+      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffNPC), JT0, FExit);
+    end
+    else
+    begin
+      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffPC), JImm(At.Next), FExit);
+      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffNPC), JImm(Cardinal(At.Next + 4)), FExit);
+    end;
+    FJ.BranchTo(jcLt, jw32, Remaining, JImm(Rest), FExit);
+    if MayStore(Op) then
+      FJ.BranchTo(jcNe, jw8, JMem(jrCtx, OffHit), JImm(0), FExit);
+  end
+  else
+  begin
+    var After := At;
+    After.Refund := 0;
+    var Leave := HitExit(After);
+    FJ.BranchTest(jcNe, jw8, JMem(jrSelf, OffStopping), JImm($FF), Leave);
+    FJ.Branch(jcLt, jw32, Remaining, JImm(Rest), Leave);
+    if MayStore(Op) then
+      FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), Leave);
+  end;
   if Rest <> 0 then
     FJ.Alu(jaSub, jw32, Remaining, JImm(Rest));
 end;

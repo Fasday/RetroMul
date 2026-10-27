@@ -154,6 +154,9 @@ begin
   C.Ctx.V[(Op shr 4) and 127] := Cardinal(C.TakeCycles);
   C.AddCycles((Op shr 1) and 7);
   C.Ctx.V[Op and 127] := C.Ctx.V[Op and 127] + 1;
+  // (Now and then on elsewhere, as a kernel call can.)
+  if (Op and $3000) = $3000 then
+    C.SetPC(C.Ctx.PC + 8);
 end;
 
 procedure TestStore(C: TPSPCPU; Op: Cardinal);
