@@ -167,38 +167,45 @@ begin
   end;
 end;
 
-function BlendFactor(Kind: Integer; const Src: TGEFragment; DR, DG, DB, DA: Integer; Fix: Cardinal; IsSrc: Boolean;
-  out FR, FG, FB: Integer): Boolean;
-var
-  OR_, OG, OB: Integer;
+// One side of the blend equation: a colour times its factor. The colour
+// counts as (c + 1) / 256; doubled factors double the product, "one minus
+// double" factors clamp at zero.
+function BlendTerm(Kind, C, Other, SA, DA, Fix: Integer): Integer; inline;
 begin
-  Result := True;
-  // "Other" colour: the destination for the source factor, the source for the destination factor.
-  if IsSrc then
-  begin
-    OR_ := DR; OG := DG; OB := DB;
-  end
-  else
-  begin
-    OR_ := Src.R; OG := Src.G; OB := Src.B;
-  end;
   case Kind of
-    0: begin FR := OR_; FG := OG; FB := OB; end;
-    1: begin FR := 255 - OR_; FG := 255 - OG; FB := 255 - OB; end;
-    2: begin FR := Src.A; FG := Src.A; FB := Src.A; end;
-    3: begin FR := 255 - Src.A; FG := FR; FB := FR; end;
-    4: begin FR := DA; FG := DA; FB := DA; end;
-    5: begin FR := 255 - DA; FG := FR; FB := FR; end;
-    6: begin FR := 2 * Src.A; FG := FR; FB := FR; end;
-    7: begin FR := Max(0, 255 - 2 * Src.A); FG := FR; FB := FR; end;
-    8: begin FR := 2 * DA; FG := FR; FB := FR; end;
-    9: begin FR := Max(0, 255 - 2 * DA); FG := FR; FB := FR; end;
+    0: Result := ((C + 1) * Other) shr 8;
+    1: Result := ((C + 1) * (255 - Other)) shr 8;
+    2: Result := ((C + 1) * SA) shr 8;
+    3: Result := ((C + 1) * (255 - SA)) shr 8;
+    4: Result := ((C + 1) * DA) shr 8;
+    5: Result := ((C + 1) * (255 - DA)) shr 8;
+    6: Result := (((C + 1) * SA) shr 8) * 2;
+    7: Result := ((C + 1) * Max(0, 255 - 2 * SA)) shr 8;
+    8: Result := (((C + 1) * DA) shr 8) * 2;
+    9: Result := ((C + 1) * Max(0, 255 - 2 * DA)) shr 8;
   else
-    begin
-      FR := Fix and $FF;
-      FG := (Fix shr 8) and $FF;
-      FB := (Fix shr 16) and $FF;
-    end;
+    Result := ((C + 1) * Fix) shr 8;
+  end;
+end;
+
+function BlendChannel(const S: TGERaster; SC, DC, SA, DA, Shift: Integer): Integer; inline;
+begin
+  case S.BlendOp of
+    0..2:
+      begin
+        var A := BlendTerm(S.BlendSrc, SC, DC, SA, DA, (S.FixA shr Shift) and $FF);
+        var B := BlendTerm(S.BlendDst, DC, SC, SA, DA, (S.FixB shr Shift) and $FF);
+        case S.BlendOp of
+          0: Result := A + B;
+          1: Result := A - B;
+        else
+          Result := B - A;
+        end;
+      end;
+    3: Result := Min(SC, DC);
+    4: Result := Max(SC, DC);
+  else
+    Result := Abs(SC - DC);
   end;
 end;
 
@@ -272,6 +279,18 @@ begin
   end;
 end;
 
+// a * (255 - t) + b * t over 256, rounded up, doubled before the shift.
+function TexLerp(A, B, T, Dbl: Integer): Integer; inline;
+begin
+  Result := Clamp255(((A * (255 - T) + B * T + 255) * Dbl) shr 8);
+end;
+
+// A colour times a texture colour: the colour counts as (c + 1) / 256.
+function TexMul(C, T, Dbl: Integer): Integer; inline;
+begin
+  Result := Clamp255(((C + 1) * T * Dbl) shr 8);
+end;
+
 procedure ApplyTexture(const S: TGERaster; var F: TGEFragment);
 var
   TR, TG, TB, TA: Integer;
@@ -281,62 +300,55 @@ begin
   TG := (C shr 8) and $FF;
   TB := (C shr 16) and $FF;
   TA := C shr 24;
-  if not S.TexAlpha then
-    TA := 255;
+  var Dbl := 1;
+  if S.ColorDouble then
+    Dbl := 2;
   case S.TexFunc of
     0: // modulate
       begin
-        F.R := (F.R * TR) div 255;
-        F.G := (F.G * TG) div 255;
-        F.B := (F.B * TB) div 255;
+        F.R := TexMul(F.R, TR, Dbl);
+        F.G := TexMul(F.G, TG, Dbl);
+        F.B := TexMul(F.B, TB, Dbl);
         if S.TexAlpha then
-          F.A := (F.A * TA) div 255;
+          F.A := TexMul(F.A, TA, 1);
       end;
     1: // decal
+      if S.TexAlpha then
       begin
-        if S.TexAlpha then
-        begin
-          F.R := (TR * TA + F.R * (255 - TA)) div 255;
-          F.G := (TG * TA + F.G * (255 - TA)) div 255;
-          F.B := (TB * TA + F.B * (255 - TA)) div 255;
-        end
-        else
-        begin
-          F.R := TR;
-          F.G := TG;
-          F.B := TB;
-        end;
+        F.R := TexLerp(F.R, TR, TA, Dbl);
+        F.G := TexLerp(F.G, TG, TA, Dbl);
+        F.B := TexLerp(F.B, TB, TA, Dbl);
+      end
+      else
+      begin
+        F.R := Clamp255(TR * Dbl);
+        F.G := Clamp255(TG * Dbl);
+        F.B := Clamp255(TB * Dbl);
       end;
     2: // blend
       begin
-        F.R := (F.R * (255 - TR) + S.EnvR * TR) div 255;
-        F.G := (F.G * (255 - TG) + S.EnvG * TG) div 255;
-        F.B := (F.B * (255 - TB) + S.EnvB * TB) div 255;
+        F.R := TexLerp(F.R, S.EnvR, TR, Dbl);
+        F.G := TexLerp(F.G, S.EnvG, TG, Dbl);
+        F.B := TexLerp(F.B, S.EnvB, TB, Dbl);
         if S.TexAlpha then
-          F.A := (F.A * TA) div 255;
+          F.A := TexMul(F.A, TA, 1);
       end;
     3: // replace
       begin
-        F.R := TR;
-        F.G := TG;
-        F.B := TB;
+        F.R := Clamp255(TR * Dbl);
+        F.G := Clamp255(TG * Dbl);
+        F.B := Clamp255(TB * Dbl);
         if S.TexAlpha then
           F.A := TA;
       end;
   else // add
     begin
-      F.R := Clamp255(F.R + TR);
-      F.G := Clamp255(F.G + TG);
-      F.B := Clamp255(F.B + TB);
+      F.R := Clamp255((F.R + TR) * Dbl);
+      F.G := Clamp255((F.G + TG) * Dbl);
+      F.B := Clamp255((F.B + TB) * Dbl);
       if S.TexAlpha then
-        F.A := (F.A * TA) div 255;
+        F.A := TexMul(F.A, TA, 1);
     end;
-  end;
-  if S.ColorDouble then
-  begin
-    F.R := Clamp255(F.R * 2);
-    F.G := Clamp255(F.G * 2);
-    F.B := Clamp255(F.B * 2);
   end;
 end;
 
@@ -485,46 +497,9 @@ begin
     DecodePixel(S.FBFormat, Old, DR, DG, DB, DA);
     if S.FBFormat = 0 then
       DA := 0;
-    BlendFactor(S.BlendSrc, F, DR, DG, DB, DA, S.FixA, True, SFR, SFG, SFB);
-    BlendFactor(S.BlendDst, F, DR, DG, DB, DA, S.FixB, False, DFR, DFG, DFB);
-    case S.BlendOp of
-      0:
-        begin
-          R := (F.R * SFR) div 255 + (DR * DFR) div 255;
-          G := (F.G * SFG) div 255 + (DG * DFG) div 255;
-          B := (F.B * SFB) div 255 + (DB * DFB) div 255;
-        end;
-      1:
-        begin
-          R := (F.R * SFR) div 255 - (DR * DFR) div 255;
-          G := (F.G * SFG) div 255 - (DG * DFG) div 255;
-          B := (F.B * SFB) div 255 - (DB * DFB) div 255;
-        end;
-      2:
-        begin
-          R := (DR * DFR) div 255 - (F.R * SFR) div 255;
-          G := (DG * DFG) div 255 - (F.G * SFG) div 255;
-          B := (DB * DFB) div 255 - (F.B * SFB) div 255;
-        end;
-      3:
-        begin
-          R := Min(F.R, DR);
-          G := Min(F.G, DG);
-          B := Min(F.B, DB);
-        end;
-      4:
-        begin
-          R := Max(F.R, DR);
-          G := Max(F.G, DG);
-          B := Max(F.B, DB);
-        end;
-    else
-      begin
-        R := Abs(F.R - DR);
-        G := Abs(F.G - DG);
-        B := Abs(F.B - DB);
-      end;
-    end;
+    R := BlendChannel(S, F.R, DR, F.A, DA, 0);
+    G := BlendChannel(S, F.G, DG, F.A, DA, 8);
+    B := BlendChannel(S, F.B, DB, F.A, DA, 16);
   end;
 
   if S.Dither and (S.FBFormat <> 3) then
@@ -652,10 +627,10 @@ begin
       end
       else
       begin
-        F.R := Round(A0.R * W0 + A1.R * W1 + A2.R * W2);
-        F.G := Round(A0.G * W0 + A1.G * W1 + A2.G * W2);
-        F.B := Round(A0.B * W0 + A1.B * W1 + A2.B * W2);
-        F.A := Round(A0.A * W0 + A1.A * W1 + A2.A * W2);
+        F.R := (A0.R * E0 + A1.R * E1 + A2.R * E2) div Area;
+        F.G := (A0.G * E0 + A1.G * E1 + A2.G * E2) div Area;
+        F.B := (A0.B * E0 + A1.B * E1 + A2.B * E2) div Area;
+        F.A := (A0.A * E0 + A1.A * E1 + A2.A * E2) div Area;
         F.SR := Round(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
         F.SG := Round(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
         F.SB := Round(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
@@ -723,14 +698,39 @@ var
 begin
   var X0 := V0.X; var Y0 := V0.Y;
   var DX := V1.X - X0; var DY := V1.Y - Y0;
-  var Steps := Max(Abs(DX), Abs(DY)) div 16;
-  if Steps = 0 then
+  if (DX = 0) and (DY = 0) then
     Exit;
-  for var I := 0 to Steps - 1 do
+  // Pixels whose centre on the major axis lies between the end points; the
+  // minor axis is the containing pixel of the line there.
+  var XMajor := Abs(DX) >= Abs(DY);
+  var A0, A1, D: Integer;
+  if XMajor then
   begin
-    var T := I / Steps;
-    var PX := (X0 + Round(DX * T)) div 16;
-    var PY := (Y0 + Round(DY * T)) div 16;
+    A0 := Min(V0.X, V1.X); A1 := Max(V0.X, V1.X); D := DX;
+  end
+  else
+  begin
+    A0 := Min(V0.Y, V1.Y); A1 := Max(V0.Y, V1.Y); D := DY;
+  end;
+  var P1 := (A0 - 8 + 15 + $100000) div 16 - $10000;
+  var P2 := (A1 - 8 + 15 + $100000) div 16 - $10000 - 1;
+  for var P := P1 to P2 do
+  begin
+    var C := P * 16 + 8;
+    var T: Single;
+    var PX, PY: Integer;
+    if XMajor then
+    begin
+      T := (C - X0) / D;
+      PX := P;
+      PY := (Y0 + Round(DY * T) + $100000) div 16 - $10000;
+    end
+    else
+    begin
+      T := (C - Y0) / D;
+      PY := P;
+      PX := (X0 + Round(DX * T) + $100000) div 16 - $10000;
+    end;
     SetupFragment(F, V1);
     if not S.Flat and S.Gouraud then
     begin
@@ -752,7 +752,7 @@ var
   F: TGEFragment;
 begin
   SetupFragment(F, V);
-  PlotPixel(S, V.X div 16, V.Y div 16, F);
+  PlotPixel(S, (V.X + $100000) div 16 - $10000, (V.Y + $100000) div 16 - $10000, F);
 end;
 
 end.
