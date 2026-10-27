@@ -48,12 +48,15 @@ type
     function ReadVertex(Index: Integer; VType: Cardinal; out V: TGEInVertex): Boolean;
     procedure Skin(const V: TGEInVertex; VType: Cardinal; var P, N: TGEVec3);
     procedure Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
-    procedure TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);
+    function LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
+    procedure TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
     procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
     procedure BuildRaster;
+    function ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
     procedure AddVertex(const V: TGEVertex; Clip: Boolean);
     procedure DrawPrim(Op: Cardinal);
+    procedure ImmediateVertex(Op: Cardinal);
     procedure LoadClut(Op: Cardinal);
     procedure BlockTransfer(Op: Cardinal);
   public
@@ -103,7 +106,7 @@ end;
 
 function TPSPGEEngine.Execute(Op, PC: Cardinal): Integer;
 begin
-  Result := 4;
+  Result := 12;
   var Cmd := Op shr 24;
   var P := Op and $FFFFFF;
   case Cmd of
@@ -114,12 +117,20 @@ begin
     GE_PRIM:
       begin
         Regs.Cmd[Cmd] := Op;
-        FPrimCost := 0;
+        // Primitive setup, per vertex and per pixel.
+        FPrimCost := 1000;
         DrawPrim(Op);
         Exit(4 + Integer(Min(FPrimCost, 100000000)));
       end;
     GE_BBOX:
       BoxVisible := (P and $FFFF) <> 0;
+    $F7:
+      begin
+        Regs.Cmd[Cmd] := Op;
+        FPrimCost := 0;
+        ImmediateVertex(Op);
+        Exit(12 + Integer(Min(FPrimCost, 100000000)));
+      end;
     GE_OFFSETADDR:
       Regs.Offset := P shl 8;
     GE_ORIGIN:
@@ -464,6 +475,73 @@ begin
     Result := P;
 end;
 
+{ The vertex unit's arithmetic: 24-bit floats (a 16-bit significand),
+  truncated after every operation; an add first truncates both terms to the
+  precision of the larger one. }
+
+function T24(V: Double): Double;
+var
+  E: Integer;
+  M: Double;
+begin
+  if (V = 0) or IsNan(V) or IsInfinite(V) then
+    Exit(V);
+  Frexp(V, M, E);
+  // |M| in [0.5, 1): 16 significant bits.
+  Result := Ldexp(Int(M * 65536), E - 16);
+end;
+
+function Exp24(V: Double): Integer; inline;
+var
+  M: Double;
+begin
+  Frexp(V, M, Result);
+end;
+
+function Add24(A, B: Double): Double;
+begin
+  if A = 0 then
+    Exit(T24(B));
+  if B = 0 then
+    Exit(T24(A));
+  var E := Max(Exp24(A), Exp24(B));
+  var Ulp := Ldexp(1, E - 16);
+  Result := T24(Int(A / Ulp) * Ulp + Int(B / Ulp) * Ulp);
+end;
+
+// The GE's 1/x: linear between the reciprocals of 1 + k/128.
+function Recip24(V: Double): Double;
+var
+  M: Double;
+  E: Integer;
+begin
+  if V = 0 then
+    Exit(Infinity);
+  if IsNan(V) or IsInfinite(V) then
+    Exit(0);
+  Frexp(Abs(V), M, E);
+  M := M * 2;
+  Dec(E);
+  var K := Trunc((M - 1) * 128);
+  var T := (M - 1) * 128 - K;
+  var R0 := 1 / (1 + K / 128);
+  var R1 := 1 / (1 + (K + 1) / 128);
+  Result := T24(Ldexp(R0 + (R1 - R0) * T, -E));
+  if V < 0 then
+    Result := -Result;
+end;
+
+// A matrix row times a point: the products summed, then the translation added.
+function Row24(M0, M1, M2, T: Cardinal; X, Y, Z: Double): Double; inline;
+begin
+  Result := Add24(T24(GEFloat(M0) * X + GEFloat(M1) * Y + GEFloat(M2) * Z), GEFloat(T));
+end;
+
+function Row24P(M0, M1, M2, M3: Cardinal; X, Y, Z, W: Double): Double; inline;
+begin
+  Result := Add24(T24(GEFloat(M0) * X + GEFloat(M1) * Y + GEFloat(M2) * Z), T24(GEFloat(M3) * W));
+end;
+
 // A value as the GE's 24-bit floats hold it: 16 mantissa bits, truncated.
 function F24(V: Single): Single; inline;
 begin
@@ -549,7 +627,7 @@ var
   MA, MD, MS, E, AL, LA, LD, LS: array[0..2] of Single;
   Lit, Spec: array[0..2] of Single;
   MAA, ALA, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp, Cutoff, Expo: Single;
-  N, D, SD, H: TGEVec3;
+  N, D, SD, H, VW: TGEVec3;
   L, Kind, LType, Ch: Integer;
   LT: Cardinal;
 begin
@@ -586,7 +664,10 @@ begin
     Spec[Ch] := 0;
   end;
   N := Normalized(WN);
-  Shine := GEFloat(C[GE_MATERIALSPECULARCOEF]);
+  // The exponent keeps the top 4 bits of its mantissa.
+  Shine := GEFloat(C[GE_MATERIALSPECULARCOEF] and $FFF800);
+  // The viewer is at infinity along view space +z.
+  VW := Vec3(GEFloat(Regs.View[2]), GEFloat(Regs.View[5]), GEFloat(Regs.View[8]));
   for L := 0 to 3 do
   begin
     if (C[GE_LIGHTENABLE0 + L] and 1) = 0 then
@@ -641,7 +722,7 @@ begin
       Lit[Ch] := Lit[Ch] + Att * Spot * (LA[Ch] * MA[Ch] + LD[Ch] * MD[Ch] * Diff);
     if (Kind = 1) and (NdotL >= 0) then
     begin
-      H := Normalized(Vec3(D.X, D.Y, D.Z + 1));
+      H := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
       NdotH := Max(Dot(N, H), 0);
       Sp := Att * Spot * Min(GEPow(NdotH, Shine), 1);
       for Ch := 0 to 2 do
@@ -663,7 +744,27 @@ begin
   A := LitChannel(ALA * MAA);
 end;
 
-procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);
+// The vector to a light as lighting sees it, for shade mapping: the half
+// vector for lights with specular.
+function TPSPGEEngine.LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
+var
+  C: PGECmds;
+  D, VW: TGEVec3;
+begin
+  C := @Regs.Cmd;
+  D := CmdVec(C^, GE_LX0 + L * 3);
+  if ((C[GE_LIGHTTYPE0 + L] shr 8) and 3) <> 0 then
+    D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
+  D := Normalized(D);
+  if (C[GE_LIGHTTYPE0 + L] and 3) = 1 then
+  begin
+    VW := Vec3(GEFloat(Regs.View[2]), GEFloat(Regs.View[5]), GEFloat(Regs.View[8]));
+    D := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
+  end;
+  Result := D;
+end;
+
+procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
 var
   C: PGECmds;
   Src, N, LU, LV: TGEVec3;
@@ -692,8 +793,8 @@ begin
     2:
       begin
         N := Normalized(WN);
-        LU := Normalized(CmdVec(C^, GE_LX0 + Integer(C[GE_TEXSHADELS] and 3) * 3));
-        LV := Normalized(CmdVec(C^, GE_LX0 + Integer((C[GE_TEXSHADELS] shr 8) and 3) * 3));
+        LU := LightVector(Integer(C[GE_TEXSHADELS] and 3), WP);
+        LV := LightVector(Integer((C[GE_TEXSHADELS] shr 8) and 3), WP);
         S := (1 + Dot(N, LU)) / 2;
         T := (1 + Dot(N, LV)) / 2;
       end;
@@ -710,7 +811,8 @@ var
   C: PGECmds;
   R, G, B, A, SR, SG, SB: Integer;
   P, N, WP, WN, VP: TGEVec3;
-  CX, CY, CZ, CW, IW, SX, SY, SZ, S, T: Single;
+  CX, CY, CZ, CW, IW, SX, SY, SZ: Double;
+  S, T: Single;
 begin
   O := Default(TGEVertex);
   Clip := False;
@@ -745,36 +847,52 @@ begin
   WP := MulPoint(Regs.World, P);
   WN := MulDir(Regs.World, N);
   VP := MulPoint(Regs.View, WP);
-  CX := GEFloat(Regs.Proj[0]) * VP.X + GEFloat(Regs.Proj[4]) * VP.Y + GEFloat(Regs.Proj[8]) * VP.Z + GEFloat(Regs.Proj[12]);
-  CY := GEFloat(Regs.Proj[1]) * VP.X + GEFloat(Regs.Proj[5]) * VP.Y + GEFloat(Regs.Proj[9]) * VP.Z + GEFloat(Regs.Proj[13]);
-  CZ := GEFloat(Regs.Proj[2]) * VP.X + GEFloat(Regs.Proj[6]) * VP.Y + GEFloat(Regs.Proj[10]) * VP.Z + GEFloat(Regs.Proj[14]);
-  CW := GEFloat(Regs.Proj[3]) * VP.X + GEFloat(Regs.Proj[7]) * VP.Y + GEFloat(Regs.Proj[11]) * VP.Z + GEFloat(Regs.Proj[15]);
-  if CW <= 0 then
+  // Position through the matrices and the viewport in the GE's 24-bit arithmetic.
+  begin
+    var M: PGEMat12 := @Regs.World;
+    var PX := T24(P.X); var PY := T24(P.Y); var PZ := T24(P.Z);
+    var AX := Row24(M[0], M[3], M[6], M[9], PX, PY, PZ);
+    var AY := Row24(M[1], M[4], M[7], M[10], PX, PY, PZ);
+    var AZ := Row24(M[2], M[5], M[8], M[11], PX, PY, PZ);
+    M := @Regs.View;
+    var BX := Row24(M[0], M[3], M[6], M[9], AX, AY, AZ);
+    var BY := Row24(M[1], M[4], M[7], M[10], AX, AY, AZ);
+    var BZ := Row24(M[2], M[5], M[8], M[11], AX, AY, AZ);
+    var Q: PGEMat16 := @Regs.Proj;
+    CX := Row24P(Q[0], Q[4], Q[8], Q[12], BX, BY, BZ, 1);
+    CY := Row24P(Q[1], Q[5], Q[9], Q[13], BX, BY, BZ, 1);
+    CZ := Row24P(Q[2], Q[6], Q[10], Q[14], BX, BY, BZ, 1);
+    CW := Row24P(Q[3], Q[7], Q[11], Q[15], BX, BY, BZ, 1);
+    VP := Vec3(BX, BY, BZ);
+  end;
+  if not (CW > 0) then
   begin
     Clip := True;
     CW := 1E-6;
   end;
-  IW := 1 / CW;
-  SX := CX * IW * GEFloat(C[GE_VIEWPORTXSCALE]) + GEFloat(C[GE_VIEWPORTXCENTER]);
-  SY := CY * IW * GEFloat(C[GE_VIEWPORTYSCALE]) + GEFloat(C[GE_VIEWPORTYCENTER]);
-  SZ := CZ * IW * GEFloat(C[GE_VIEWPORTZSCALE]) + GEFloat(C[GE_VIEWPORTZCENTER]);
+  var RW := Recip24(CW);
+  IW := RW;
+  SX := Add24(T24(T24(CX * RW) * GEFloat(C[GE_VIEWPORTXSCALE])), GEFloat(C[GE_VIEWPORTXCENTER]));
+  SY := Add24(T24(T24(CY * RW) * GEFloat(C[GE_VIEWPORTYSCALE])), GEFloat(C[GE_VIEWPORTYCENTER]));
+  SZ := Add24(T24(T24(CZ * RW) * GEFloat(C[GE_VIEWPORTZSCALE])), GEFloat(C[GE_VIEWPORTZCENTER]));
   if IsNan(SX) or IsNan(SY) or (Abs(SX) > 1E6) or (Abs(SY) > 1E6) then
   begin
     Clip := True;
     SX := 0; SY := 0;
   end;
-  O.X := Round(SX * 16) - Integer(C[GE_OFFSETX] and $FFFF);
-  O.Y := Round(SY * 16) - Integer(C[GE_OFFSETY] and $FFFF);
+  O.X := Floor(SX * 16) - Integer(C[GE_OFFSETX] and $FFFF);
+  O.Y := Floor(SY * 16) - Integer(C[GE_OFFSETY] and $FFFF);
   if IsNan(SZ) or (Abs(SZ) > 1E9) then
     SZ := 0;
-  O.Z := Trunc(SZ);
+  O.Z := Floor(SZ);
   O.W := IW;
+
   SR := 0; SG := 0; SB := 0;
   if (C[GE_LIGHTINGENABLE] and 1) <> 0 then
     Light(V, WP, WN, R, G, B, A, SR, SG, SB);
   O.R := R; O.G := G; O.B := B; O.A := A;
   O.SR := SR; O.SG := SG; O.SB := SB;
-  TexGen(V, WN, S, T);
+  TexGen(V, WP, WN, S, T);
   O.S := S * (1 shl (C[GE_TEXSIZE0] and $F));
   O.T := T * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
   O.Fog := (GEFloat(C[GE_FOG1]) + VP.Z) * GEFloat(C[GE_FOG2]);
@@ -869,7 +987,7 @@ begin
   S.BlendOp := (C[GE_BLENDMODE] shr 8) and $F;
   S.FixA := C[GE_BLENDFIXEDA] and $FFFFFF;
   S.FixB := C[GE_BLENDFIXEDB] and $FFFFFF;
-  S.Dither := ((C[GE_DITHERENABLE] and 1) <> 0) and not S.ClearMode;
+  S.Dither := (C[GE_DITHERENABLE] and 1) <> 0;
   for var Row := 0 to 3 do
     for var Col := 0 to 3 do
     begin
@@ -886,6 +1004,16 @@ end;
 
 { Primitives }
 
+// Pixels of a 1/16 pixel box inside the scissor, for the drawing cost.
+function TPSPGEEngine.ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
+begin
+  var W := Min(X2 div 16, FRaster.ScissorX2 + 1) - Max(X1 div 16, FRaster.ScissorX1);
+  var H := Min(Y2 div 16, FRaster.ScissorY2 + 1) - Max(Y1 div 16, FRaster.ScissorY1);
+  if (W <= 0) or (H <= 0) then
+    Exit(0);
+  Result := Int64(W) * H;
+end;
+
 procedure TPSPGEEngine.EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
 begin
   if FCullOn then
@@ -900,7 +1028,8 @@ begin
       Exit;
   end;
   GEDrawTriangle(FRaster, A, B, C);
-  Inc(FPrimCost, 200);
+  Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
+    ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
 
 procedure TPSPGEEngine.AddVertex(const V: TGEVertex; Clip: Boolean);
@@ -962,7 +1091,8 @@ begin
         if ((N and 1) = 1) and not FAsmClip[0] and not FAsmClip[1] then
         begin
           GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
-          Inc(FPrimCost, Int64(Abs(FAsmBuf[1].X - FAsmBuf[0].X) div 16) * (Abs(FAsmBuf[1].Y - FAsmBuf[0].Y) div 16) div 2);
+          Inc(FPrimCost, 100 + ScissoredArea(Min(FAsmBuf[0].X, FAsmBuf[1].X), Min(FAsmBuf[0].Y, FAsmBuf[1].Y),
+            Max(FAsmBuf[0].X, FAsmBuf[1].X), Max(FAsmBuf[0].Y, FAsmBuf[1].Y)) * 3);
         end;
       end;
   end;
@@ -1000,7 +1130,7 @@ begin
     end;
     ReadVertex(Index, VType, Raw);
     TransformVertex(Raw, VType, V, Clip);
-    Inc(FPrimCost, 20);
+    Inc(FPrimCost, 40);
     AddVertex(V, Clip or not HasPos);
   end;
   if IdxKind <> 0 then
@@ -1012,6 +1142,57 @@ begin
   end
   else
     Regs.VAddr := Regs.VAddr + Cardinal(Count * FVSize * Morphs);
+end;
+
+// A vertex given by registers $F0-$F9 (screen x, y in 1/16, z, s, t, q,
+// colour, fog, secondary colour); $F7 adds it with the alpha, the primitive
+// and, on a primitive's first vertex, enables that replace the usual ones.
+procedure TPSPGEEngine.ImmediateVertex(Op: Cardinal);
+var
+  V: TGEVertex;
+begin
+  var C: PGECmds := @Regs.Cmd;
+  var PrimType := Integer((Op shr 8) and 7);
+  var Through := (C[GE_VTYPE] and (1 shl 23)) <> 0;
+  if PrimType <> 7 then
+  begin
+    FAsmType := PrimType;
+    FAsmCount := 0;
+    BuildRaster;
+    FRaster.Through := Through;
+    FRaster.Gouraud := (Op and $40000) <> 0;
+    FRaster.Flat := not FRaster.Gouraud;
+    FRaster.Textured := ((Op and $200000) <> 0) and not FRaster.ClearMode;
+    FRaster.FogEnabled := ((Op and $400000) <> 0) and not FRaster.ClearMode;
+    FRaster.Dither := ((Op and $800000) <> 0) and not FRaster.ClearMode;
+    FCullOn := ((Op and $80000) <> 0) and not FRaster.ClearMode;
+    FCullCW := (Op and $100000) <> 0;
+  end;
+  V := Default(TGEVertex);
+  V.X := Integer(C[$F0] and $FFFF);
+  V.Y := Integer(C[$F1] and $FFFF);
+  Dec(V.X, Integer(C[GE_OFFSETX] and $FFFF));
+  Dec(V.Y, Integer(C[GE_OFFSETY] and $FFFF));
+  V.Z := C[$F2] and $FFFF;
+  V.W := 1;
+  V.R := C[$F6] and $FF;
+  V.G := (C[$F6] shr 8) and $FF;
+  V.B := (C[$F6] shr 16) and $FF;
+  V.A := Op and $FF;
+  if not Through and ((C[GE_LIGHTMODE] and 1) <> 0) then
+  begin
+    V.SR := C[$F9] and $FF;
+    V.SG := (C[$F9] shr 8) and $FF;
+    V.SB := (C[$F9] shr 16) and $FF;
+  end;
+  var Q := GEFloat(C[$F5]);
+  if Q = 0 then
+    Q := 1;
+  V.S := GEFloat(C[$F3]) / Q * (1 shl (C[GE_TEXSIZE0] and $F));
+  V.T := GEFloat(C[$F4]) / Q * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
+  V.Fog := (C[$F8] and $FF) / 255;
+  Inc(FPrimCost, 40);
+  AddVertex(V, False);
 end;
 
 procedure TPSPGEEngine.LoadClut(Op: Cardinal);
