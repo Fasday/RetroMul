@@ -56,7 +56,7 @@ type
     Atrac: TATRAC3PlusDecoder;
     PackPos: Integer;
     Ready: TQueue<TPSPPicture>;
-    Decoded: Integer;
+    Decoded, AudioFrames: Integer;
     StreamDone: Boolean;
     Shown: Integer;
     ShownPic: TPSPPicture;
@@ -78,6 +78,7 @@ type
     procedure StopPlayback;
     procedure StartPlayback;
     function NextPicture(out Pic: TPSPPicture): Boolean;
+    function NextAudio(out Pcm: TArray<SmallInt>): Boolean;
   end;
 
   // A scePsmf handle: the guest's struct address and what was parsed into it.
@@ -202,6 +203,7 @@ begin
   AudioQ := nil;
   Ready.Clear;
   Decoded := 0;
+  AudioFrames := 0;
   StreamDone := False;
   Shown := -1;
   Updates := 0;
@@ -252,12 +254,6 @@ begin
     begin
       Demux.FeedPack(@Data[PackPos]);
       Inc(PackPos, PSMFPacketSize);
-      if AudioQ <> nil then
-        while Demux.HasAu(AudioQ) do
-        begin
-          var A: TPSPAccessUnit;
-          Demux.NextAu(AudioQ, A);
-        end;
     end;
     var Au: TPSPAccessUnit;
     var Pictures: TArray<TPSPPicture>;
@@ -277,6 +273,35 @@ begin
   end;
   Pic := Ready.Dequeue;
   Inc(Decoded);
+  Result := True;
+end;
+
+function TPSPPsmfPlayer.NextAudio(out Pcm: TArray<SmallInt>): Boolean;
+begin
+  Pcm := nil;
+  if AudioQ = nil then
+    Exit(False);
+  while not Demux.HasAu(AudioQ) and (PackPos + PSMFPacketSize <= Length(Data)) do
+  begin
+    Demux.FeedPack(@Data[PackPos]);
+    Inc(PackPos, PSMFPacketSize);
+  end;
+  var Au: TPSPAccessUnit;
+  if not Demux.NextAu(AudioQ, Au) then
+    Exit(False);
+  Demux.TakeFreed;
+  Inc(AudioFrames);
+  try
+    if Atrac = nil then
+      Atrac := TATRAC3PlusDecoder.Create(2, 2);
+    if (Length(Au.Data) > 8) and (Au.Data[0] = $0F) and (Au.Data[1] = $D0) then
+      Pcm := Atrac.Decode(Copy(Au.Data, 8, Length(Au.Data) - 8));
+  except
+    on E: Exception do
+      Pcm := nil;
+  end;
+  if Length(Pcm) < 4096 then
+    SetLength(Pcm, 4096);
   Result := True;
 end;
 
@@ -859,7 +884,23 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
-  FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
+  // Audio runs a few frames ahead of the video clock (2048 samples = 4180 ticks).
+  if (P.Status <> PsmfStatusPlaying) or P.Starved or (P.AudioQ = nil) or (P.Updates < 5) or
+    (Int64(P.AudioFrames) * 4180 > Int64(P.Updates - 5) * 1502 + 4 * 4180) then
+  begin
+    FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
+    Exit;
+  end;
+  var Pcm: TArray<SmallInt>;
+  if not P.NextAudio(Pcm) then
+  begin
+    FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
+    Exit;
+  end;
+  var Dest := FHLE.Arg(1);
+  if Dest <> 0 then
+    FMemory.WriteBytes(Dest, Pcm[0], $2000);
+  FHLE.Result(0);
 end;
 
 procedure TPSPPsmf.hPlayerGetCurrentStatus;

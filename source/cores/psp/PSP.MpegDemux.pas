@@ -229,8 +229,8 @@ begin
     if (S.StreamId and $F0) = $E0 then
     begin
       S.Kind := PSMFKindAvc;
-      S.Width := Data[O + 14] * 16;
-      S.Height := Data[O + 15] * 16;
+      S.Width := Data[O + 12] * 16;
+      S.Height := Data[O + 13] * 16;
     end
     else if S.StreamId = $BD then
     begin
