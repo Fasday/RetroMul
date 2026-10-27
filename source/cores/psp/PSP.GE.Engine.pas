@@ -52,6 +52,7 @@ type
     procedure TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
     procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
     procedure BuildRaster;
+    function ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
     procedure AddVertex(const V: TGEVertex; Clip: Boolean);
     procedure DrawPrim(Op: Cardinal);
@@ -1003,6 +1004,16 @@ end;
 
 { Primitives }
 
+// Pixels of a 1/16 pixel box inside the scissor, for the drawing cost.
+function TPSPGEEngine.ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
+begin
+  var W := Min(X2 div 16, FRaster.ScissorX2 + 1) - Max(X1 div 16, FRaster.ScissorX1);
+  var H := Min(Y2 div 16, FRaster.ScissorY2 + 1) - Max(Y1 div 16, FRaster.ScissorY1);
+  if (W <= 0) or (H <= 0) then
+    Exit(0);
+  Result := Int64(W) * H;
+end;
+
 procedure TPSPGEEngine.EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
 begin
   if FCullOn then
@@ -1017,7 +1028,8 @@ begin
       Exit;
   end;
   GEDrawTriangle(FRaster, A, B, C);
-  Inc(FPrimCost, 100 + Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) * 3 div 512);
+  Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
+    ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
 
 procedure TPSPGEEngine.AddVertex(const V: TGEVertex; Clip: Boolean);
@@ -1079,7 +1091,8 @@ begin
         if ((N and 1) = 1) and not FAsmClip[0] and not FAsmClip[1] then
         begin
           GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
-          Inc(FPrimCost, 100 + Int64(Abs(FAsmBuf[1].X - FAsmBuf[0].X) div 16) * (Abs(FAsmBuf[1].Y - FAsmBuf[0].Y) div 16) * 3);
+          Inc(FPrimCost, 100 + ScissoredArea(Min(FAsmBuf[0].X, FAsmBuf[1].X), Min(FAsmBuf[0].Y, FAsmBuf[1].Y),
+            Max(FAsmBuf[0].X, FAsmBuf[1].X), Max(FAsmBuf[0].Y, FAsmBuf[1].Y)) * 3);
         end;
       end;
   end;
