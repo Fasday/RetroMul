@@ -661,7 +661,7 @@ begin
   end;
   var S := StreamAt(Inst, FHLE.Arg(1));
   if (S <> nil) and (S.Queue <> nil) then
-    S.Queue.Clear;
+    S.Queue.Discard;
   FHLE.Result(0);
 end;
 
@@ -907,6 +907,25 @@ end;
 
 procedure TPSPMpeg.hChangeGetAuMode;
 begin
+  var Inst := InstanceOf(FHLE.Arg(0));
+  if Inst = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
+    Exit;
+  end;
+  var S := StreamAt(Inst, FHLE.Arg(1));
+  if S = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_VALUE);
+    Exit;
+  end;
+  // Mode 1 skips the stream: its data is dropped as the packs go by.
+  if S.Queue <> nil then
+  begin
+    S.Queue.Active := FHLE.ArgInt(2) = 0;
+    if not S.Queue.Active then
+      S.Queue.Discard;
+  end;
   FHLE.Result(0);
 end;
 
