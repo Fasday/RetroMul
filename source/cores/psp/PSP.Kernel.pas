@@ -249,7 +249,8 @@ type
     FIntFrames: TList<TPSPFrame>;
     FPendingInts: TQueue<TPSPPendingInterrupt>;
     FSubIntr: array[0..66, 0..31] of TPSPInterruptHandler;
-    FIntrEnabled: array[0..66] of Boolean;
+    // Main interrupt handlers; the firmware's drivers hold some from the start.
+    FIntrHandlers: array[0..67] of TPSPInterruptHandler;
     FTrapBase: Cardinal;
     FIntStack: Cardinal;
     FDispatchSuspended: Boolean;
@@ -291,6 +292,7 @@ type
     procedure DropWaitTimer(T: TPSPThread);
     procedure RegisterAll;
     procedure RegisterKernelAliases;
+    procedure hIoForKernel;
     function WaitDeadline(TimeoutPtr: Cardinal; out TimeoutEnd: Int64): Int64;
     procedure WriteRemaining(T: TPSPThread);
     procedure FreeThreadStacks(T: TPSPThread);
@@ -489,6 +491,7 @@ type
     procedure hIsSubInterruptOccurred;
     procedure hRegisterUserSpaceIntrStack;
     procedure hQueryIntrHandlerInfo;
+    function IntrHandlerCheck(I: Integer): Cardinal;
     procedure hEnableIntr;
     procedure hDisableIntr;
     procedure hRegisterIntrHandler;

@@ -305,7 +305,13 @@ begin
   FVolatileWaiters.Clear;
   FEventHandlers.Clear;
   FillChar(FSubIntr, SizeOf(FSubIntr), 0);
-  FillChar(FIntrEnabled, SizeOf(FIntrEnabled), 0);
+  FillChar(FIntrHandlers, SizeOf(FIntrHandlers), 0);
+  // Audio, DMA, GE, VBlank, ME and the last one belong to firmware drivers.
+  for var I in [10, 21, 25, 30, 31, 67] do
+  begin
+    FIntrHandlers[I].Handler := $88000000;
+    FIntrHandlers[I].Enabled := True;
+  end;
   FCurrent := nil;
   FNextUID := $00100001;
   FTimerSeq := 0;
@@ -1165,7 +1171,7 @@ end;
 function TPSPKernel.Partition(Id: Integer): TPSPPartition;
 begin
   case Id of
-    1: Result := FKernelPartition;
+    1, 3, 4: Result := FKernelPartition;
     2, 6: Result := FUserPartition;
     5: Result := FVolatilePartition;
   else
