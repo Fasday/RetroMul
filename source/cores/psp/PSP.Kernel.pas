@@ -249,6 +249,8 @@ type
     FIntFrames: TList<TPSPFrame>;
     FPendingInts: TQueue<TPSPPendingInterrupt>;
     FSubIntr: array[0..66, 0..31] of TPSPInterruptHandler;
+    // The virtual timer whose handler is running.
+    FFiringVTimer: Cardinal;
     // Main interrupt handlers; the firmware's drivers hold some from the start.
     FIntrHandlers: array[0..67] of TPSPInterruptHandler;
     FTrapBase: Cardinal;
