@@ -31,6 +31,7 @@ begin
   // A new thread's VFPU registers read as NaN.
   for var I := 0 to High(C.V) do
     C.V[I] := $7F800001;
+  C.FCR31 := $00000E00;
   C.VC := FCPU.Ctx.VC;
   C.VC[VFPU_PFXS] := $E4;
   C.VC[VFPU_PFXT] := $E4;
