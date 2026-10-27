@@ -76,6 +76,7 @@ type
     procedure Delay(Us: Int64; Value: Cardinal);
     procedure WriteHeader(Inst: TPSPMpegInstance);
     procedure WriteCodecContext(Inst: TPSPMpegInstance);
+    procedure UpdateCodecContext(Inst: TPSPMpegInstance; AuSize: Cardinal; const Pictures: TArray<TPSPPicture>);
     procedure FreePackets(Inst: TPSPMpegInstance);
     function FillQueue(Inst: TPSPMpegInstance; Q: TPSPEsQueue): Boolean;
     procedure WriteAu(Address: Cardinal; const Au: TPSPAccessUnit; EsBuffer: Cardinal; WriteEs: Boolean);
@@ -301,6 +302,13 @@ begin
   FMemory.Write32(H + 40, 99);
 end;
 
+const
+  // The context the ME keeps in the mpeg buffer, and its stream parameters (ctx+180).
+  CodecHead: array[0..18] of Cardinal = ($05100601, $78, 0, $001B3140, 0, $001B3140, $3C2C, $09000000,
+    $15C00, $4A000, 0, 0, 0, 0, 0, 4, 480, 272, 2);
+  CodecParams: array[0..24] of Cardinal = ($101, 0, 0, $05010001, 1, $10000, 0, 0, $FA4, $3A980, $10101, 1,
+    0, 0, 0, 0, 0, 0, $18060611, $60400, $270, $270, $60400, $270, $270);
+
 procedure TPSPMpeg.WriteCodecContext(Inst: TPSPMpegInstance);
 begin
   // The sceVideocodec context the ME works with, kept in the mpeg buffer.
@@ -308,8 +316,50 @@ begin
   if Ctx + $200 > Inst.Data + Inst.Size then
     Exit;
   FMemory.Write32(Inst.Handle + $6C0, Ctx);
-  FMemory.Fill(Ctx, 0, $60);
-  FMemory.Write32(Ctx, $05100601);
+  FMemory.Fill(Ctx, 0, $200);
+  for var I := 0 to High(CodecHead) do
+    FMemory.Write32(Ctx + Cardinal(I) * 4, CodecHead[I]);
+  FMemory.Write32(Ctx + $10, Ctx + $80);
+  FMemory.Write32(Ctx + $2C, Ctx + $C0);
+  FMemory.Write32(Ctx + $30, Ctx + $180);
+  for var I := 0 to High(CodecParams) do
+    FMemory.Write32(Ctx + $180 + Cardinal(I) * 4, CodecParams[I]);
+end;
+
+procedure TPSPMpeg.UpdateCodecContext(Inst: TPSPMpegInstance; AuSize: Cardinal; const Pictures: TArray<TPSPPicture>);
+begin
+  // What the ME leaves in its context after a decode: the unit's size, four
+  // picture descriptors (0x2C bytes) and, when the caller gave a buffer at
+  // ctx+38, each descriptor's SEI records.
+  var Ctx := FMemory.Read32(Inst.Handle + $6C0);
+  if (Ctx = 0) or not FMemory.Valid(Ctx, $200) then
+    Exit;
+  FMemory.Write32(Ctx + $28, AuSize);
+  var Records := FMemory.Read32(Ctx + $38);
+  for var I := 0 to 3 do
+  begin
+    var Desc := Ctx + $C0 + Cardinal(I) * $2C;
+    if Records <> 0 then
+    begin
+      FMemory.Write32(Desc + $24, Records + Cardinal(I) * $148);
+      FMemory.Write32(Desc + $28, Records + Cardinal(I) * $148 + $A4);
+    end
+    else
+    begin
+      FMemory.Write32(Desc + $24, 0);
+      FMemory.Write32(Desc + $28, 0);
+    end;
+  end;
+  if Length(Pictures) = 0 then
+    Exit;
+  FMemory.Write32(Ctx + $C0 + $20, Ord(Pictures[0].Idr));
+  if (Records <> 0) and FMemory.Valid(Records, $148) then
+  begin
+    FMemory.Fill(Records, 0, $148);
+    var R := Pictures[0].Record_;
+    if Length(R) > 0 then
+      FMemory.WriteBytes(Records, R[0], Length(R) * 4);
+  end;
 end;
 
 { Basics }
@@ -916,6 +966,8 @@ begin
     end;
   end;
   FMemory.Write32(AuPtr + 20, 0);
+  if Length(Data) > 0 then
+    UpdateCodecContext(Inst, Cardinal(Length(Data)), Pictures);
   var Status := Length(Pictures);
   if Status > 0 then
   begin
@@ -1007,7 +1059,10 @@ begin
     Exit;
   end;
   var P := Inst.LastPicture;
-  FMemory.Write32(Detail + $04, Ord(P.Index = 0));
+  var Ctx := Inst.Data + MpegCtxOffset + $30;
+  // Whether the picture handed out and the unit just decoded are IDR, the
+  // picture's size and crop, the stream parameters and the picture's records.
+  FMemory.Write32(Detail + $04, Ord(P.Idr));
   FMemory.Write32(Detail + $08, Cardinal(P.Width));
   FMemory.Write32(Detail + $0C, Cardinal(P.Height));
   FMemory.Write32(Detail + $10, 0);
@@ -1015,10 +1070,10 @@ begin
   FMemory.Write32(Detail + $18, 0);
   FMemory.Write32(Detail + $1C, 0);
   FMemory.Write32(Detail + $20, 1);
-  FMemory.Write32(Detail + $24, 0);
-  FMemory.Write32(Detail + $28, Inst.Data + MpegCtxOffset + $1B0);
-  FMemory.Write32(Detail + $2C, 0);
-  FMemory.Write32(Detail + $30, 0);
+  FMemory.Write32(Detail + $24, Ord(Inst.Avc.LastIdr));
+  FMemory.Write32(Detail + $28, Ctx + $180);
+  FMemory.Write32(Detail + $2C, FMemory.Read32(Ctx + $C0 + $24));
+  FMemory.Write32(Detail + $30, FMemory.Read32(Ctx + $C0 + $28));
   FHLE.Result(0);
 end;
 
@@ -1281,8 +1336,19 @@ end;
 
 procedure TPSPMpeg.hVideocodecGetSEI;
 begin
-  FHLE.Unimplemented('VideocodecGetSEI');
-  FHLE.Result(0);
+  // The ME copies the last decoded unit's SEI record to the buffer at ctx+50.
+  var Ctx := FHLE.Arg(0);
+  for var Inst in FInstances do
+    if Inst.Data + MpegCtxOffset + $30 = Ctx then
+    begin
+      var Dest := FMemory.Read32(Ctx + $50);
+      var R := Inst.Avc.CurrentRecord;
+      if (Dest <> 0) and (Length(R) > 0) and FMemory.Valid(Dest, Length(R) * 4) then
+        FMemory.WriteBytes(Dest, R[0], Length(R) * 4);
+      FHLE.Result(0);
+      Exit;
+    end;
+  FHLE.Result(ERROR_MPEG_INVALID_VALUE);
 end;
 
 initialization
