@@ -185,7 +185,7 @@ end;
 procedure OpVUC2I(C: TPSPCPU; Op: Cardinal);
 begin
   var S, D: TV4;
-  ReadS(C, Op, 1, S);
+  ReadSL(C, Op, 1, S);
   for var I := 0 to 3 do
     D[I] := (((S[0] shr (I * 8)) and $FF) * $01010101) shr 1;
   WriteD(C, Op, 4, D, 0);
@@ -195,7 +195,7 @@ end;
 procedure OpVC2I(C: TPSPCPU; Op: Cardinal);
 begin
   var S, D: TV4;
-  ReadS(C, Op, 1, S);
+  ReadSL(C, Op, 1, S);
   for var I := 0 to 3 do
     D[I] := ((S[0] shr (I * 8)) and $FF) shl 24;
   WriteD(C, Op, 4, D, 0);
@@ -208,7 +208,7 @@ begin
   if N > 2 then
     N := 2;
   var S, D: TV4;
-  ReadS(C, Op, N, S);
+  ReadSL(C, Op, N, S);
   for var I := 0 to N - 1 do
   begin
     D[I * 2] := (S[I] and $FFFF) shl 15;
@@ -224,7 +224,7 @@ begin
   if N > 2 then
     N := 2;
   var S, D: TV4;
-  ReadS(C, Op, N, S);
+  ReadSL(C, Op, N, S);
   for var I := 0 to N - 1 do
   begin
     D[I * 2] := (S[I] and $FFFF) shl 16;
