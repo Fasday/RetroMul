@@ -37,6 +37,12 @@ type
     FVSize: Integer;
     FOffTC, FOffC, FOffN, FOffP: Integer;
     FPrimCost: Int64;
+    FAsmType, FAsmCount: Integer;
+    FLastU, FLastV: Single;
+    FLastN: TGEVec3;
+    FAsmBuf: array[0..2] of TGEVertex;
+    FAsmClip: array[0..2] of Boolean;
+    FCullOn, FCullCW: Boolean;
     procedure SetupVertexFormat(VType: Cardinal);
     procedure DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
     function ReadVertex(Index: Integer; VType: Cardinal; out V: TGEInVertex): Boolean;
@@ -45,6 +51,8 @@ type
     procedure TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);
     procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEVertex; out Clip: Boolean);
     procedure BuildRaster;
+    procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
+    procedure AddVertex(const V: TGEVertex; Clip: Boolean);
     procedure DrawPrim(Op: Cardinal);
     procedure LoadClut(Op: Cardinal);
     procedure BlockTransfer(Op: Cardinal);
@@ -256,15 +264,17 @@ begin
         3: V.Weights[I] := M.ReadFloat(Addr + Cardinal(I * 4));
       end;
   case Tc of
+    0:
+      begin
+        // Formats without texture coordinates or normals use the last ones read.
+        V.U := FLastU;
+        V.V := FLastV;
+      end;
     1:
       begin
-        V.U := M.Read8(Addr + Cardinal(FOffTC));
-        V.V := M.Read8(Addr + Cardinal(FOffTC) + 1);
-        if not Through then
-        begin
-          V.U := V.U / 128;
-          V.V := V.V / 128;
-        end;
+        // Also in through mode, where they are texels / 128.
+        V.U := M.Read8(Addr + Cardinal(FOffTC)) / 128;
+        V.V := M.Read8(Addr + Cardinal(FOffTC) + 1) / 128;
       end;
     2:
       begin
@@ -282,6 +292,8 @@ begin
         V.V := M.ReadFloat(Addr + Cardinal(FOffTC) + 4);
       end;
   end;
+  FLastU := V.U;
+  FLastV := V.V;
   if Col >= 4 then
   begin
     V.HasColor := True;
@@ -329,17 +341,17 @@ begin
           V.N.X := M.ReadFloat(NA); V.N.Y := M.ReadFloat(NA + 4); V.N.Z := M.ReadFloat(NA + 8);
         end;
     end;
-  end;
+    FLastN := V.N;
+  end
+  else
+    V.N := FLastN;
   if Pos <> 0 then
   begin
     var PA := Addr + Cardinal(FOffP);
     case Pos of
       1:
-        if Through then
-        begin
-          V.P.X := ShortInt(M.Read8(PA)); V.P.Y := ShortInt(M.Read8(PA + 1)); V.P.Z := M.Read8(PA + 2);
-        end
-        else
+        // Through mode has no 8-bit positions: they read as the origin.
+        if not Through then
         begin
           V.P.X := ShortInt(M.Read8(PA)) / 128; V.P.Y := ShortInt(M.Read8(PA + 1)) / 128; V.P.Z := ShortInt(M.Read8(PA + 2)) / 128;
         end;
@@ -452,6 +464,27 @@ begin
     Result := P;
 end;
 
+// A value as the GE's 24-bit floats hold it: 16 mantissa bits, truncated.
+function F24(V: Single): Single; inline;
+begin
+  var Bits := PCardinal(@V)^ and $FFFFFF00;
+  Result := PSingle(@Bits)^;
+end;
+
+function NormalizedF24(const P: TGEVec3): TGEVec3;
+var
+  L: Single;
+begin
+  L := F24(P.X * P.X + P.Y * P.Y + P.Z * P.Z);
+  if L > 0 then
+  begin
+    L := 1 / Sqrt(L);
+    Result.X := P.X * L; Result.Y := P.Y * L; Result.Z := P.Z * L;
+  end
+  else
+    Result := P;
+end;
+
 function Dot(const A, B: TGEVec3): Single; inline;
 begin
   Result := A.X * B.X + A.Y * B.Y + A.Z * B.Z;
@@ -469,37 +502,89 @@ begin
   Result.Z := GEFloat(C[Index + 2]);
 end;
 
+// pow as the GE's lighting unit computes it: log2 and exp2 linear between powers of two.
+function GEPow(X, E: Single): Single;
+begin
+  if not (X > 0) then
+  begin
+    if E = 0 then
+      Exit(1);
+    Exit(0);
+  end;
+  var Bits := PCardinal(@X)^;
+  var L2: Double := Integer((Bits shr 23) and $FF) - 127 + (Bits and $7FFFFF) / 8388608.0;
+  var Y: Double := L2 * E;
+  if IsNan(Y) then
+    Exit(1);
+  if Y > 127 then
+    Exit(Infinity);
+  if Y < -127 then
+    Exit(0);
+  var F := Floor(Y);
+  Result := Ldexp(1 + (Y - F), F);
+end;
+
+function Unit8(C: Cardinal; Shift: Integer): Single; inline;
+begin
+  Result := ((C shr Shift) and $FF) / 255;
+end;
+
+// Lighting works on colours as fractions of 255; the result goes back to
+// 8 bits as a fraction of 256, truncated.
+function LitChannel(V: Single): Integer; inline;
+begin
+  if not (V > 0) then
+    Exit(0);
+  V := V * 256;
+  if V >= 255 then
+    Result := 255
+  else
+    Result := Trunc(V);
+end;
+
 procedure TPSPGEEngine.Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
 var
   C: PGECmds;
   Upd: Cardinal;
-  MAR, MAG, MAB, MAA, MDR, MDG, MDB, MSR, MSG, MSB, ER, EG, EB, ALR, ALG, ALB, ALA: Integer;
-  LAR, LAG, LAB, LDR, LDG, LDB, LSPR, LSPG, LSPB: Integer;
-  LR, LG, LB, LSR, LSG, LSB, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, F, NdotH, Sp: Single;
+  MA, MD, MS, E, AL, LA, LD, LS: array[0..2] of Single;
+  Lit, Spec: array[0..2] of Single;
+  MAA, ALA, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp, Cutoff, Expo: Single;
   N, D, SD, H: TGEVec3;
-  L, Kind, LType: Integer;
+  L, Kind, LType, Ch: Integer;
   LT: Cardinal;
 begin
   C := @Regs.Cmd;
   Upd := C[GE_MATERIALUPDATE];
-  Color24(C[GE_MATERIALAMBIENT], MAR, MAG, MAB);
-  MAA := C[GE_MATERIALALPHA] and $FF;
-  Color24(C[GE_MATERIALDIFFUSE], MDR, MDG, MDB);
-  Color24(C[GE_MATERIALSPECULAR], MSR, MSG, MSB);
-  Color24(C[GE_MATERIALEMISSIVE], ER, EG, EB);
+  for Ch := 0 to 2 do
+  begin
+    MA[Ch] := Unit8(C[GE_MATERIALAMBIENT], Ch * 8);
+    MD[Ch] := Unit8(C[GE_MATERIALDIFFUSE], Ch * 8);
+    MS[Ch] := Unit8(C[GE_MATERIALSPECULAR], Ch * 8);
+    E[Ch] := Unit8(C[GE_MATERIALEMISSIVE], Ch * 8);
+    AL[Ch] := Unit8(C[GE_AMBIENTCOLOR], Ch * 8);
+  end;
+  MAA := Unit8(C[GE_MATERIALALPHA], 0);
+  ALA := Unit8(C[GE_AMBIENTALPHA], 0);
   if V.HasColor then
   begin
-    if (Upd and 1) <> 0 then begin MAR := V.R; MAG := V.G; MAB := V.B; MAA := V.A; end;
-    if (Upd and 2) <> 0 then begin MDR := V.R; MDG := V.G; MDB := V.B; end;
-    if (Upd and 4) <> 0 then begin MSR := V.R; MSG := V.G; MSB := V.B; end;
+    if (Upd and 1) <> 0 then
+    begin
+      MA[0] := V.R / 255; MA[1] := V.G / 255; MA[2] := V.B / 255; MAA := V.A / 255;
+    end;
+    if (Upd and 2) <> 0 then
+    begin
+      MD[0] := V.R / 255; MD[1] := V.G / 255; MD[2] := V.B / 255;
+    end;
+    if (Upd and 4) <> 0 then
+    begin
+      MS[0] := V.R / 255; MS[1] := V.G / 255; MS[2] := V.B / 255;
+    end;
   end;
-  Color24(C[GE_AMBIENTCOLOR], ALR, ALG, ALB);
-  ALA := C[GE_AMBIENTALPHA] and $FF;
-  LR := ER + ALR * MAR / 255;
-  LG := EG + ALG * MAG / 255;
-  LB := EB + ALB * MAB / 255;
-  LSR := 0; LSG := 0; LSB := 0;
-  A := (ALA * MAA) div 255;
+  for Ch := 0 to 2 do
+  begin
+    Lit[Ch] := E[Ch] + AL[Ch] * MA[Ch];
+    Spec[Ch] := 0;
+  end;
   N := Normalized(WN);
   Shine := GEFloat(C[GE_MATERIALSPECULARCOEF]);
   for L := 0 to 3 do
@@ -512,67 +597,70 @@ begin
     D := CmdVec(C^, GE_LX0 + L * 3);
     if LType <> 0 then
       D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
-    Dist := Sqrt(Dot(D, D));
-    D := Normalized(D);
+    Dist := Sqrt(F24(Dot(D, D)));
+    D := NormalizedF24(D);
     Att := 1;
     if LType <> 0 then
     begin
       Den := GEFloat(C[GE_LKA0 + L * 3]) + GEFloat(C[GE_LKA0 + L * 3 + 1]) * Dist + GEFloat(C[GE_LKA0 + L * 3 + 2]) * Dist * Dist;
       if Den <> 0 then
-        Att := 1 / Den;
+        Att := 1 / Den
+      else
+        Att := 0;
       if Att > 1 then
         Att := 1;
+      if not (Att > 0) then
+        Att := 0;
     end;
     Spot := 1;
     if LType = 2 then
     begin
       SD := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
-      CosA := -Dot(D, SD);
-      if CosA >= GEFloat(C[GE_LKO0 + L]) then
-        Spot := Power(Max(CosA, 0), GEFloat(C[GE_LKS0 + L]))
+      CosA := Dot(D, SD);
+      Cutoff := GEFloat(C[GE_LKO0 + L]);
+      Expo := GEFloat(C[GE_LKS0 + L]);
+      // An infinite direction lights everything or nothing by its sign.
+      if IsNan(CosA) then
+        Spot := Ord(GEFloat(C[GE_LDX0 + L * 3]) > 0)
+      else if CosA >= Cutoff then
+        Spot := Min(GEPow(Max(CosA, 0), Expo), 1E30)
       else
         Spot := 0;
     end;
-    Color24(C[GE_LAC0 + L * 3], LAR, LAG, LAB);
-    Color24(C[GE_LAC0 + L * 3 + 1], LDR, LDG, LDB);
-    Color24(C[GE_LAC0 + L * 3 + 2], LSPR, LSPG, LSPB);
+    for Ch := 0 to 2 do
+    begin
+      LA[Ch] := Unit8(C[GE_LAC0 + L * 3], Ch * 8);
+      LD[Ch] := Unit8(C[GE_LAC0 + L * 3 + 1], Ch * 8);
+      LS[Ch] := Unit8(C[GE_LAC0 + L * 3 + 2], Ch * 8);
+    end;
     NdotL := Dot(N, D);
-    if NdotL < 0 then
-      NdotL := 0;
-    Diff := NdotL;
+    Diff := Max(NdotL, 0);
     if Kind = 2 then
-      Diff := Power(NdotL, Shine);
-    F := Att * Spot;
-    LR := LR + F * (LAR * MAR / 255 + LDR * MDR / 255 * Diff);
-    LG := LG + F * (LAG * MAG / 255 + LDG * MDG / 255 * Diff);
-    LB := LB + F * (LAB * MAB / 255 + LDB * MDB / 255 * Diff);
-    if (Kind = 1) and (NdotL > 0) then
+      Diff := Min(GEPow(Diff, Shine), 1);
+    for Ch := 0 to 2 do
+      Lit[Ch] := Lit[Ch] + Att * Spot * (LA[Ch] * MA[Ch] + LD[Ch] * MD[Ch] * Diff);
+    if (Kind = 1) and (NdotL >= 0) then
     begin
       H := Normalized(Vec3(D.X, D.Y, D.Z + 1));
-      NdotH := Dot(N, H);
-      if NdotH > 0 then
-      begin
-        Sp := F * Power(NdotH, Shine);
-        LSR := LSR + Sp * LSPR * MSR / 255;
-        LSG := LSG + Sp * LSPG * MSG / 255;
-        LSB := LSB + Sp * LSPB * MSB / 255;
-      end;
+      NdotH := Max(Dot(N, H), 0);
+      Sp := Att * Spot * Min(GEPow(NdotH, Shine), 1);
+      for Ch := 0 to 2 do
+        Spec[Ch] := Spec[Ch] + Sp * LS[Ch] * MS[Ch];
     end;
   end;
   if (C[GE_LIGHTMODE] and 1) <> 0 then
   begin
-    SR := EnsureRange(Trunc(LSR), 0, 255);
-    SG := EnsureRange(Trunc(LSG), 0, 255);
-    SB := EnsureRange(Trunc(LSB), 0, 255);
+    SR := LitChannel(Spec[0]);
+    SG := LitChannel(Spec[1]);
+    SB := LitChannel(Spec[2]);
   end
   else
-  begin
-    LR := LR + LSR; LG := LG + LSG; LB := LB + LSB;
-  end;
-  R := EnsureRange(Trunc(LR), 0, 255);
-  G := EnsureRange(Trunc(LG), 0, 255);
-  B := EnsureRange(Trunc(LB), 0, 255);
-  A := EnsureRange(A, 0, 255);
+    for Ch := 0 to 2 do
+      Lit[Ch] := Lit[Ch] + Spec[Ch];
+  R := LitChannel(Lit[0]);
+  G := LitChannel(Lit[1]);
+  B := LitChannel(Lit[2]);
+  A := LitChannel(ALA * MAA);
 end;
 
 procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);
@@ -798,13 +886,95 @@ end;
 
 { Primitives }
 
+procedure TPSPGEEngine.EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
+begin
+  if FCullOn then
+  begin
+    var Cross := Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X);
+    if Cross = 0 then
+      Exit;
+    var CW := Cross > 0;
+    if Odd then
+      CW := not CW;
+    if CW <> FCullCW then
+      Exit;
+  end;
+  GEDrawTriangle(FRaster, A, B, C);
+  Inc(FPrimCost, 200);
+end;
+
+procedure TPSPGEEngine.AddVertex(const V: TGEVertex; Clip: Boolean);
+begin
+  var N := FAsmCount;
+  Inc(FAsmCount);
+  case FAsmType of
+    0:
+      if not Clip then
+        GEDrawPoint(FRaster, V);
+    1:
+      begin
+        FAsmBuf[N and 1] := V; FAsmClip[N and 1] := Clip;
+        if (N and 1) = 1 then
+          if not FAsmClip[0] and not FAsmClip[1] then
+            GEDrawLine(FRaster, FAsmBuf[0], FAsmBuf[1]);
+      end;
+    2:
+      begin
+        if (N > 0) and not Clip and not FAsmClip[0] then
+          GEDrawLine(FRaster, FAsmBuf[0], V);
+        FAsmBuf[0] := V; FAsmClip[0] := Clip;
+      end;
+    3:
+      begin
+        var I := N mod 3;
+        FAsmBuf[I] := V; FAsmClip[I] := Clip;
+        if (I = 2) and not FAsmClip[0] and not FAsmClip[1] and not FAsmClip[2] then
+          EmitTriangle(FAsmBuf[0], FAsmBuf[1], FAsmBuf[2], False);
+      end;
+    4:
+      begin
+        if N < 2 then
+        begin
+          FAsmBuf[N] := V; FAsmClip[N] := Clip;
+          Exit;
+        end;
+        FAsmBuf[2] := V; FAsmClip[2] := Clip;
+        if not FAsmClip[0] and not FAsmClip[1] and not FAsmClip[2] then
+          EmitTriangle(FAsmBuf[0], FAsmBuf[1], FAsmBuf[2], ((N - 2) and 1) <> 0);
+        FAsmBuf[0] := FAsmBuf[1]; FAsmClip[0] := FAsmClip[1];
+        FAsmBuf[1] := FAsmBuf[2]; FAsmClip[1] := FAsmClip[2];
+      end;
+    5:
+      begin
+        if N < 2 then
+        begin
+          FAsmBuf[N] := V; FAsmClip[N] := Clip;
+          Exit;
+        end;
+        FAsmBuf[2] := V; FAsmClip[2] := Clip;
+        if not FAsmClip[0] and not FAsmClip[1] and not FAsmClip[2] then
+          EmitTriangle(FAsmBuf[0], FAsmBuf[1], FAsmBuf[2], False);
+        FAsmBuf[1] := FAsmBuf[2]; FAsmClip[1] := FAsmClip[2];
+      end;
+    6:
+      begin
+        FAsmBuf[N and 1] := V; FAsmClip[N and 1] := Clip;
+        if ((N and 1) = 1) and not FAsmClip[0] and not FAsmClip[1] then
+        begin
+          GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
+          Inc(FPrimCost, Int64(Abs(FAsmBuf[1].X - FAsmBuf[0].X) div 16) * (Abs(FAsmBuf[1].Y - FAsmBuf[0].Y) div 16) div 2);
+        end;
+      end;
+  end;
+end;
+
 procedure TPSPGEEngine.DrawPrim(Op: Cardinal);
 var
   Raw: TGEInVertex;
-  Buf: array[0..2] of TGEVertex;
-  Clip: array[0..2] of Boolean;
+  V: TGEVertex;
+  Clip: Boolean;
 begin
-  var PrimType := (Op shr 16) and 7;
+  var PrimType := Integer((Op shr 16) and 7);
   var Count := Integer(Op and $FFFF);
   var VType := Regs.Cmd[GE_VTYPE];
   SetupVertexFormat(VType);
@@ -812,121 +982,26 @@ begin
   var Through := (VType and (1 shl 23)) <> 0;
   var HasPos := ((VType shr 7) and 3) <> 0;
   var Morphs := Integer((VType shr 18) and 7) + 1;
+  if PrimType <> 7 then
+  begin
+    FAsmType := PrimType;
+    FAsmCount := 0;
+  end;
   BuildRaster;
-  var CullOn := ((Regs.Cmd[GE_CULLENABLE] and 1) <> 0) and not Through;
-  var CullCW := (Regs.Cmd[GE_CULL] and 1) <> 0;
-  var N := 0;
-  var Total := 0;
-  var Strip := 0;
+  FCullOn := ((Regs.Cmd[GE_CULLENABLE] and 1) <> 0) and not FRaster.ClearMode;
+  FCullCW := (Regs.Cmd[GE_CULL] and 1) <> 0;
   for var I := 0 to Count - 1 do
   begin
     var Index := I;
     case IdxKind of
       1: Index := FMemory.Read8(Regs.IAddr + Cardinal(I));
       2: Index := FMemory.Read16(Regs.IAddr + Cardinal(I * 2));
-      3: Index := Integer(FMemory.Read32(Regs.IAddr + Cardinal(I * 4)));
+      3: Index := Integer(FMemory.Read32(Regs.IAddr + Cardinal(I * 4)) and $FFFF);
     end;
     ReadVertex(Index, VType, Raw);
-    var V: TGEVertex;
-    var C: Boolean;
-    TransformVertex(Raw, VType, V, C);
+    TransformVertex(Raw, VType, V, Clip);
     Inc(FPrimCost, 20);
-    case PrimType of
-      0:
-        if HasPos and not C then
-          GEDrawPoint(FRaster, V);
-      1:
-        begin
-          Buf[N] := V; Clip[N] := C; Inc(N);
-          if N = 2 then
-          begin
-            if HasPos and not Clip[0] and not Clip[1] then
-              GEDrawLine(FRaster, Buf[0], Buf[1]);
-            N := 0;
-          end;
-        end;
-      2:
-        begin
-          if (I > 0) and HasPos and not C and not Clip[0] then
-            GEDrawLine(FRaster, Buf[0], V);
-          Buf[0] := V; Clip[0] := C;
-        end;
-      3, 4, 5:
-        begin
-          if PrimType = 3 then
-          begin
-            Buf[N] := V; Clip[N] := C; Inc(N);
-            if N < 3 then
-              Continue;
-            N := 0;
-          end
-          else if PrimType = 4 then
-          begin
-            if I < 2 then
-            begin
-              Buf[I] := V; Clip[I] := C;
-              Continue;
-            end;
-            Buf[2] := V; Clip[2] := C;
-          end
-          else
-          begin
-            if I = 0 then
-            begin
-              Buf[0] := V; Clip[0] := C;
-              Continue;
-            end;
-            if I = 1 then
-            begin
-              Buf[1] := V; Clip[1] := C;
-              Continue;
-            end;
-            Buf[2] := V; Clip[2] := C;
-          end;
-          if HasPos and not Clip[0] and not Clip[1] and not Clip[2] then
-          begin
-            var Draw := True;
-            if CullOn then
-            begin
-              var Cross := Int64(Buf[1].X - Buf[0].X) * (Buf[2].Y - Buf[0].Y) - Int64(Buf[1].Y - Buf[0].Y) * (Buf[2].X - Buf[0].X);
-              var CW := Cross > 0;
-              if (PrimType = 4) and Odd(Strip) then
-                CW := not CW;
-              if CW <> CullCW then
-                Draw := False;
-            end;
-            if Draw then
-            begin
-              GEDrawTriangle(FRaster, Buf[0], Buf[1], Buf[2]);
-              Inc(FPrimCost, 200);
-            end;
-          end;
-          if PrimType = 4 then
-          begin
-            Buf[0] := Buf[1]; Clip[0] := Clip[1];
-            Buf[1] := Buf[2]; Clip[1] := Clip[2];
-            Inc(Strip);
-          end
-          else if PrimType = 5 then
-          begin
-            Buf[1] := Buf[2]; Clip[1] := Clip[2];
-          end;
-        end;
-      6:
-        begin
-          Buf[N] := V; Clip[N] := C; Inc(N);
-          if N = 2 then
-          begin
-            if HasPos and not Clip[0] and not Clip[1] then
-            begin
-              GEDrawSprite(FRaster, Buf[0], Buf[1]);
-              Inc(FPrimCost, Int64(Abs(Buf[1].X - Buf[0].X) div 16) * (Abs(Buf[1].Y - Buf[0].Y) div 16) div 2);
-            end;
-            N := 0;
-          end;
-        end;
-    end;
-    Inc(Total);
+    AddVertex(V, Clip or not HasPos);
   end;
   if IdxKind <> 0 then
   begin
@@ -971,7 +1046,7 @@ begin
     var DA := Dst + Cardinal(((DY + Y) * DstW + DX) * Bpp);
     FMemory.Copy(DA, SA, Cardinal(W * Bpp));
   end;
-  FPrimCost := Int64(W) * H * Bpp div 4;
+  FPrimCost := Int64(W) * H * Bpp * 2;
 end;
 
 { Context }
