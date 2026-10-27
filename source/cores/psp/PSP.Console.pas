@@ -269,7 +269,8 @@ begin
   else if not FHLE.Call(Code) then
     raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
   FKernel.AfterSyscall;
-  if FScheduler.NextDue < FRunDeadline then
+  // HLE costs are not in the CPU's budget: a loop of calls must still stop at the deadline.
+  if (FScheduler.NextDue < FRunDeadline) or (FScheduler.Now >= FRunDeadline) then
     C.Stop;
 end;
 
@@ -347,6 +348,10 @@ begin
     else
       FScheduler.AdvanceTo(Deadline);
   end;
+  // HLE costs can carry time past At inside a run: what fell due by then still fires.
+  var Due: TPSPEvent;
+  while not FKernel.Exited and FScheduler.TakeDue(Due) do
+    DispatchEvent(Due);
 end;
 
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
