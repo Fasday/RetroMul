@@ -86,7 +86,8 @@ type
     Slow, Back, Hit: TJitLabel;
     Routine: Pointer;
     Store: Boolean;
-    Rt: Integer;
+    // The register loaded or stored (a GPR or an FPR).
+    Reg: TJitOp;
   end;
 
   TPSPJitHitExit = record
@@ -134,8 +135,8 @@ type
     procedure WriteState(const At: TPSPJitAt);
     function HitExit(const At: TPSPJitAt): TJitLabel;
     procedure EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Pointer);
-    procedure EmitLoad(Op: Cardinal; Kind: Integer);
-    procedure EmitStore(const At: TPSPJitAt; Op: Cardinal; Kind: Integer);
+    procedure EmitLoad(Op: Cardinal; Kind: Integer; const Reg: TJitOp);
+    procedure EmitStore(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; const Reg: TJitOp);
     function EmitInstr(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; Handler: Pointer): Boolean;
     procedure EmitStatic(Target, Last: Cardinal; Refund: Integer);
     procedure EmitDelay(A: Cardinal; Op: Cardinal; Kind: Integer; Handler: Pointer; Dynamic: Boolean; Next: Cardinal);
@@ -170,7 +171,7 @@ type
     jkADDU, jkSUBU, jkAND, jkOR, jkXOR, jkNOR, jkSLT, jkSLTU, jkMAX, jkMIN,
     jkADDIU, jkSLTI, jkSLTIU, jkANDI, jkORI, jkXORI, jkLUI, jkMFC0,
     jkEXT, jkINS, jkWSBH, jkWSBW, jkSEB, jkSEH,
-    jkLB, jkLH, jkLW, jkLBU, jkLHU, jkSB, jkSH, jkSW,
+    jkLB, jkLH, jkLW, jkLBU, jkLHU, jkSB, jkSH, jkSW, jkLWC1, jkSWC1, jkMFC1, jkMTC1,
     jkJR, jkJALR, jkJ, jkJAL, jkB, jkBEQ, jkBNE, jkBLEZ, jkBGTZ, jkBLTZ, jkBGEZ, jkBLTZAL, jkBGEZAL,
     jkBEQL, jkBNEL, jkBLEZL, jkBGTZL, jkBLTZL, jkBGEZL, jkBLTZALL, jkBGEZALL);
 
@@ -183,6 +184,7 @@ const
     $24010000, $28010000, $2C010000, $30010000, $34010000, $38010000, $3C010000, $40010000,
     $7C010000, $7C010004, $7C0008A0, $7C0008E0, $7C000C20, $7C000E20,
     $80010000, $84010000, $8C010000, $90010000, $94010000, $A0000000, $A4000000, $AC000000,
+    $C4000000, $E4000000, $44010000, $44800000,
     $00000008, $00000009, $08000000, $0C000000, $10000000, $10200000, $14000000, $18000000, $1C000000,
     $04000000, $04010000, $04100000, $04110000,
     $50000000, $54000000, $58000000, $5C000000, $04020000, $04030000, $04120000, $04130000);
@@ -220,7 +222,7 @@ var
   EndHandler: array[0..2] of Pointer;
   PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
-  OffGPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode: Integer;
+  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode: Integer;
 
 function HandlerOf(Op: Cardinal): Pointer;
 begin
@@ -239,6 +241,7 @@ begin
   for var I := 0 to High(PureSample) do
     PureHandler[I] := HandlerOf(PureSample[I]);
   OffGPR := Integer(NativeUInt(@TPSPCPU(nil).Ctx.GPR[0]));
+  OffFPR := Integer(NativeUInt(@TPSPCPU(nil).Ctx.FPR[0]));
   OffHI := Integer(NativeUInt(@TPSPCPU(nil).Ctx.HI));
   OffLO := Integer(NativeUInt(@TPSPCPU(nil).Ctx.LO));
   OffPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.PC));

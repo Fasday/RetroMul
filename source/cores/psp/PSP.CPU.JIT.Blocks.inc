@@ -437,7 +437,7 @@ begin
     J.Bind(S.Slow);
     if S.Store then
     begin
-      J.Move(jw32, JT5, G(S.Rt));
+      J.Move(jw32, JT5, S.Reg);
       J.Call(S.Routine, [JCtx, JT0, JT5]);
       J.BranchTest(jcNe, jw32, JT0, JT0, S.Hit);
     end

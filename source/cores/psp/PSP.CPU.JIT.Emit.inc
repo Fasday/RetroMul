@@ -7,6 +7,11 @@ begin
   Result := JMem(jrSelf, OffGPR + Integer(R) * 4);
 end;
 
+function F(R: Cardinal): TJitOp; inline;
+begin
+  Result := JMem(jrSelf, OffFPR + Integer(R) * 4);
+end;
+
 function FieldRS(Op: Cardinal): Cardinal; inline;
 begin
   Result := (Op shr 21) and 31;
@@ -68,7 +73,7 @@ begin
     FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), HitExit(At));
 end;
 
-procedure TPSPRecompiler.EmitLoad(Op: Cardinal; Kind: Integer);
+procedure TPSPRecompiler.EmitLoad(Op: Cardinal; Kind: Integer; const Reg: TJitOp);
 begin
   // As TPSPMemory.ReadN: the page's host memory at the address's offset
   // (aligned or not), else the routine (no page).
@@ -78,7 +83,7 @@ begin
   S.Slow := J.NewLabel;
   S.Back := J.NewLabel;
   S.Store := False;
-  S.Rt := FieldRT(Op);
+  S.Reg := Reg;
   S.Hit := -1;
   case K of
     jkLB, jkLBU: S.Routine := @JitRead8;
@@ -121,11 +126,11 @@ begin
         J.Shift(jsSar, jw32, jrT0, 16);
       end;
   end;
-  J.Move(jw32, G(S.Rt), JT0);
+  J.Move(jw32, Reg, JT0);
   FSlow.Add(S);
 end;
 
-procedure TPSPRecompiler.EmitStore(const At: TPSPJitAt; Op: Cardinal; Kind: Integer);
+procedure TPSPRecompiler.EmitStore(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; const Reg: TJitOp);
 begin
   // As TPSPMemory.WriteN where the page is not code: its host memory; else
   // the routine (which re-decodes, and the block may have to stop).
@@ -135,7 +140,7 @@ begin
   S.Slow := J.NewLabel;
   S.Back := J.NewLabel;
   S.Store := True;
-  S.Rt := FieldRT(Op);
+  S.Reg := Reg;
   S.Hit := HitExit(At);
   case K of
     jkSB: S.Routine := @JitWrite8;
@@ -160,7 +165,7 @@ begin
   J.Move(jw32, JT2, JT0);
   J.Alu(jaAnd, jw32, JT2, JImm(PSPPageMask));
   J.Alu(jaAdd, jw64, JT1, JT2);
-  J.Move(jw32, JT2, G(S.Rt));
+  J.Move(jw32, JT2, Reg);
   case K of
     jkSB:
       J.Move(jw8, JMem(jrT1, 0), JT2);
@@ -422,9 +427,17 @@ begin
         J.Move(jw32, G(FieldRD(Op)), JT0);
       end;
     jkLB, jkLH, jkLW, jkLBU, jkLHU:
-      EmitLoad(Op, Kind);
+      EmitLoad(Op, Kind, G(FieldRT(Op)));
     jkSB, jkSH, jkSW:
-      EmitStore(At, Op, Kind);
+      EmitStore(At, Op, Kind, G(FieldRT(Op)));
+    jkLWC1:
+      EmitLoad(Op, Ord(jkLW), F(FieldRT(Op)));
+    jkSWC1:
+      EmitStore(At, Op, Ord(jkSW), F(FieldRT(Op)));
+    jkMFC1:
+      Copy(G(FieldRT(Op)), F(FieldRD(Op)));
+    jkMTC1:
+      Copy(F(FieldRD(Op)), G(FieldRT(Op)));
   else
     raise EInvalidOpException.Create('PSP JIT: a branch as an instruction');
   end;
