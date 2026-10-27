@@ -286,7 +286,9 @@ begin
   else if not FHLE.Call(Code) then
     raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
   FKernel.AfterSyscall;
-  // HLE costs are not in the CPU's budget: a loop of calls must still stop at the deadline.
+  // Call costs count toward the slice too: a loop of calls must not run past
+  // an event.
+  SyncTime;
   if (FScheduler.NextDue < FRunDeadline) or (FScheduler.Now >= FRunDeadline) then
     C.Stop;
 end;
