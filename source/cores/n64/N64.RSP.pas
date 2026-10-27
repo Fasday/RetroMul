@@ -557,6 +557,15 @@ type
     property BlocksBuilt: Int64 read FBlocksBuilt;
     property BlocksRun: Int64 read FBlocksRun;
     property BlockClocks: Int64 read FBlockClocks;
+    // Blocks run as generated code where HW.JIT can make it (the same clocks
+    // either way); whether there is generated code here (a backend, not
+    // N64RSPJIT=off).
+    property UseJit: Boolean read FUseJit write FUseJit;
+    class function JitAvailable: Boolean; static;
+    // Tests: blocks made generated code from their Hot+1th entry on (0: their
+    // first), by HW.JIT's model with Model (RSPs that make their first code
+    // after this).
+    class procedure JitForTests(Hot: Integer; Model: Boolean); static;
     // Blocks made generated code, and runs of it (each RunBlock entering it).
     property JitCompiled: Int64 read FJitCompiled;
     property JitRuns: Int64 read FJitRuns;
@@ -580,10 +589,11 @@ const
   RSPJit = {$IFDEF N64_NO_JIT}False{$ELSE}JitSupported{$ENDIF};
 
 var
-  // N64RSPJIT (debugging): off (no generated code), stats (counts at the
-  // end), hotN (entries of a block before its code is made).
+  // N64RSPJIT (debugging): off (no generated code), model (the code run by
+  // HW.JIT's model, for the tests: much slower), stats (counts at the end),
+  // hotN (entries of a block before its code is made).
   {$IF RSPJit}
-  RSPJitOff: Boolean;
+  RSPJitOff, RSPJitModel: Boolean;
   {$ENDIF}
   RSPJitStats: Boolean;
   RSPJitHot: Integer = 16;
@@ -5986,6 +5996,23 @@ begin
   RSPOff := O;
 end;
 
+class function TN64RSP.JitAvailable: Boolean;
+begin
+  {$IF RSPJit}
+  Result := not RSPJitOff;
+  {$ELSE}
+  Result := False;
+  {$ENDIF}
+end;
+
+class procedure TN64RSP.JitForTests(Hot: Integer; Model: Boolean);
+begin
+  RSPJitHot := Hot;
+  {$IF RSPJit}
+  RSPJitModel := Model;
+  {$ENDIF}
+end;
+
 function TN64RSP.JitCodeFor(B: PRSPBlock): Pointer;
 begin
   // B's code, made once B was entered RSPJitHot times (nil: none).
@@ -6179,7 +6206,12 @@ begin
       FUseJit := False;
       Exit;
     end;
-    FJit := CreateJitAsm(RSPJitBufferSize);
+    {$IF RSPJit}
+    if RSPJitModel then
+      FJit := CreateJitModel(RSPJitBufferSize)
+    else
+    {$ENDIF}
+      FJit := CreateJitAsm(RSPJitBufferSize);
     if FJit = nil then
     begin
       FUseJit := False;
@@ -6353,8 +6385,6 @@ end;
 
 function TN64RSP.JitRun(var B: PRSPBlock; var PC, Status, Interrupt: Cardinal; var Ran: Integer; Cycles, Stop: Integer;
   Mask: Byte; Fences: Boolean): Integer;
-type
-  TRSPJitEnter = function(RSP: TObject; Ctx: PRSPJitCtx; Code: Pointer; Block: PRSPBlock): Integer;
 begin
   // B's code and the blocks' it chains to (RunBlock found that the budget
   // takes all of B's clocks; Mask: the run's checks but StepMemory, Fences:
@@ -6375,7 +6405,7 @@ begin
   Ctx.Status := @Status;
   Ctx.Interrupt := @Interrupt;
   Inc(FJitRuns);
-  TRSPJitEnter(FJit.Base + FJitEnter)(Self, @Ctx, FJit.Base + FJitOuter, B);
+  FJit.Invoke(FJit.Base + FJitEnter, NativeUInt(Self), NativeUInt(@Ctx), NativeUInt(FJit.Base + FJitOuter), NativeUInt(B));
   B := Ctx.Block;
   PC := Ctx.PC;
   Ran := Ctx.Ran;
@@ -7068,11 +7098,12 @@ initialization
   InitKindIssue;
   InitDivideTables;
   RSPJitWorkOutOffsets;
-  // N64RSPJIT: off, stats, hotN (where there is generated code).
+  // N64RSPJIT: off, model, stats, hotN (where there is generated code).
   {$IF RSPJit}
   begin
     var Words := GetEnvironmentVariable('N64RSPJIT').ToLower;
     RSPJitOff := Words.Contains('off');
+    RSPJitModel := Words.Contains('model');
     RSPJitStats := Words.Contains('stats');
     var P := Words.IndexOf('hot');
     if P >= 0 then
