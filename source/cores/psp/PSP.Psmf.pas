@@ -496,18 +496,6 @@ begin
   var Path := FMemory.ReadString(Name, 1024);
   var Data: TBytes;
   var Err := FSystem.IO.ReadAll(Path, Data);
-  if (Err <> 0) and Path.StartsWith('host0:/') then
-  begin
-    // pspautotests name files from the suite's root, which is host0: on hardware;
-    // here host0: is the test's folder.
-    var Rest := Path.Substring(7);
-    while (Err <> 0) and (Rest.IndexOf('/') > 0) do
-    begin
-      Rest := Rest.Substring(Rest.IndexOf('/') + 1);
-      if Rest <> '' then
-        Err := FSystem.IO.ReadAll('host0:/' + Rest, Data);
-    end;
-  end;
   var Header: TPSPPsmfHeader;
   if (Err <> 0) or (Offset < 0) or (Offset + PSMFPacketSize > Length(Data)) or
     (Header.Parse(Copy(Data, Offset, PSMFPacketSize)) <> 0) then
