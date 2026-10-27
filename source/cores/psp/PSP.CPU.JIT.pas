@@ -10,16 +10,19 @@ unit PSP.CPU.JIT;
 // Hot times (until then the interpreter runs it). Its code takes all its
 // cycles from the budget on entry where they fit (else the interpreter runs
 // what is left of the budget) and gives back those of a likely branch's
-// nullified delay slot. The common integer instructions, branches, jumps and
-// aligned-or-not loads and stores through the page table are written out;
-// every other instruction calls the interpreter's handler (DecodeOp) with
-// PC, NPC and CurPC as the interpreter has them. A store that reaches a code
-// page goes through TPSPMemory (which re-decodes); when it rewrote a block
-// the block stops after it. After its last instruction a block goes on into
-// the next block's code: by direct links (made the first time that way is
-// taken) or, after JR/JALR, by a look-up of the block table; else back to
-// Run. Blocks are dropped when their words are written (CodeWritten) or the
-// decoded code is (Flushed).
+// nullified delay slot. The common integer instructions, branches, jumps,
+// FPR moves and loads and stores (aligned or not: RAM directly, the rest
+// through the page table) are written out; every other instruction calls
+// the interpreter's handler (DecodeOp), with PC, NPC and CurPC as the
+// interpreter has them where it may read them, and the code stops after it
+// where it stopped the run or used up the cycles left. A store that reaches
+// a code page goes through TPSPMemory (which re-decodes); where it changed a
+// block's word the block is dropped and the code stops after the store.
+// After its last instruction a block goes on into the next block's code: by
+// direct links (made the first time that way is taken) or, after JR/JALR,
+// by a look-up of the block table; else back to Run. Blocks are dropped when
+// their words change (CodeWritten; words that change often are left to the
+// interpreter) or the decoded code is dropped (Flushed).
 //
 // PSPJIT=off (the interpreter), model (HW.JIT's model runs the code), stats
 // (counts at the end); several with commas.
@@ -349,7 +352,7 @@ end;
 
 { Writing a block's code. Registers: Self the CPU, Ctx the recompiler, S0
   the memory's page table, S1 its code marks, S2 a jump's target (JR, JALR, a
-  handler's branch) across its delay slot. }
+  handler's branch) across its delay slot, S3 RAM's host buffer. }
 
 function G(R: Cardinal): TJitOp; inline;
 begin
