@@ -9,14 +9,11 @@ unit PSP.SysLibs;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service;
 
 type
-  TPSPSysLibs = class
+  TPSPSysLibs = class(TPSPService)
   private
-    FKernel: TPSPKernel;
-    FHLE: TPSPHLE;
-    FMemory: TPSPMemory;
     FUmdCallback: Cardinal;
     FUmdActivated: Boolean;
     FPowerCallbacks: array[0..15] of Cardinal;
@@ -99,13 +96,12 @@ type
     procedure hDmacMemcpy;
     procedure hGetPSID;
     procedure hZero;
-    procedure hError;
     procedure TickAdd(Units: Int64);
   public
-    constructor Create(Kernel: TPSPKernel);
+    constructor Create(System: TPSPSystem); override;
     destructor Destroy; override;
-    procedure Reset;
-    procedure Register;
+    procedure Reset; override;
+    procedure Register; override;
   end;
 
 implementation
@@ -116,12 +112,9 @@ uses
 const
   UnixEpochTicks: UInt64 = 62135596800000000;
 
-constructor TPSPSysLibs.Create(Kernel: TPSPKernel);
+constructor TPSPSysLibs.Create(System: TPSPSystem);
 begin
-  inherited Create;
-  FKernel := Kernel;
-  FHLE := Kernel.HLE;
-  FMemory := Kernel.Memory;
+  inherited Create(System);
   FMt := TDictionary<Cardinal, TArray<Cardinal>>.Create;
   FUmdWaiters := TList<TPSPThread>.Create;
 end;
@@ -799,11 +792,6 @@ begin
   FHLE.Result(0);
 end;
 
-procedure TPSPSysLibs.hError;
-begin
-  FHLE.Result($80410D02);
-end;
-
 procedure TPSPSysLibs.Register;
 const
   U = 'UtilsForUser';
@@ -940,5 +928,8 @@ begin
   H.Register('sceWlanDrv', $D7763699, 'sceWlanGetSwitchState', hZero);
   H.Register('sceWlanDrv', $0C622081, 'sceWlanGetEtherAddr', hZero);
 end;
+
+initialization
+  RegisterPSPService(TPSPSysLibs);
 
 end.

@@ -1,37 +1,26 @@
 unit PSP.Audio;
 
-// sceAudio output mixing at 44.1 kHz. Placeholder: silence.
+// sceAudio: output channels mixed at 44.1 kHz on the master clock.
+// Placeholder: silence. Other audio services mix in through TPSPService.Mix.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
 uses
-  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler;
+  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service;
 
 type
-  TPSPAudio = class
+  TPSPAudio = class(TPSPService)
   private
-    FKernel: TPSPKernel;
-    FHLE: TPSPHLE;
-    FSamples: TArray<SmallInt>;
     FProduced: Int64;
   public
-    constructor Create(Kernel: TPSPKernel);
-    procedure Reset;
-    procedure Register;
-    procedure OnEvent;
-    // Stereo samples produced since the last call.
+    procedure Reset; override;
+    procedure Register; override;
+    // Stereo samples produced since the last call, up to the current guest time.
     function TakeSamples: TArray<SmallInt>;
   end;
 
 implementation
-
-constructor TPSPAudio.Create(Kernel: TPSPKernel);
-begin
-  inherited Create;
-  FKernel := Kernel;
-  FHLE := Kernel.HLE;
-end;
 
 procedure TPSPAudio.Reset;
 begin
@@ -42,13 +31,8 @@ procedure TPSPAudio.Register;
 begin
 end;
 
-procedure TPSPAudio.OnEvent;
-begin
-end;
-
 function TPSPAudio.TakeSamples: TArray<SmallInt>;
 begin
-  // Frames that fit in the elapsed time.
   var Total := FKernel.Scheduler.Now * PSPAudioRate div 1000000000;
   var N := Total - FProduced;
   if N < 0 then
@@ -58,5 +42,8 @@ begin
   if N > 0 then
     FillChar(Result[0], N * 4, 0);
 end;
+
+initialization
+  RegisterPSPService(TPSPAudio);
 
 end.

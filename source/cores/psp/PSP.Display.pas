@@ -98,6 +98,9 @@ type
     procedure SetInput(const Input: TEmulatorInput);
     // Converts the shown framebuffer to ARGB pixels.
     procedure Render(var Frame: TEmulatorFrame);
+    // The 512x272 32-bit BMP the test programs write on hardware: every
+    // framebuffer row of 512 pixels, bottom-up, alpha kept.
+    function ScreenshotBMP: TBytes;
     function LineNow: Int64;
     property Current: TPSPFrameBuffer read FCurrent;
     property VCount: Cardinal read FVCount;
@@ -425,6 +428,85 @@ begin
     Exit;
   end;
   PixelsFrom(FMemory, FCurrent, Frame);
+end;
+
+function TPSPDisplay.ScreenshotBMP: TBytes;
+const
+  Header: array[0..53] of Byte = (
+    $42, $4D, $38, $80, $08, $00, $00, $00, $00, $00, $36, $00,
+    $00, $00, $28, $00, $00, $00, $00, $02, $00, $00, $10, $01,
+    $00, $00, $01, $00, $20, $00, $00, $00, $00, $00, $02, $80,
+    $08, $00, $12, $0B, $00, $00, $12, $0B, $00, $00, $00, $00,
+    $00, $00, $00, $00, $00, $00);
+
+  function E4(V: Cardinal): Cardinal; inline;
+  begin
+    Result := (V shl 4) or V;
+  end;
+
+  function E5(V: Cardinal): Cardinal; inline;
+  begin
+    Result := (V shl 3) or (V shr 2);
+  end;
+
+  function E6(V: Cardinal): Cardinal; inline;
+  begin
+    Result := (V shl 2) or (V shr 4);
+  end;
+
+begin
+  SetLength(Result, 54 + 512 * 272 * 4);
+  Move(Header, Result[0], 54);
+  var FB := FCurrent;
+  if (FB.Address = 0) or (FB.Width = 0) then
+    Exit;
+  var Bpp: Cardinal := 2;
+  if FB.Format = 3 then
+    Bpp := 4;
+  for var Y := 0 to 271 do
+  begin
+    var Row := FB.Address + Bpp * FB.Width * Cardinal(271 - Y);
+    var Dst := PCardinal(@Result[54 + Y * 512 * 4]);
+    for var X := 0 to 511 do
+    begin
+      var C: Cardinal;
+      var R, G, B, A: Cardinal;
+      if Bpp = 4 then
+      begin
+        C := FMemory.Read32(Row + Cardinal(X) * 4);
+        R := C and $FF;
+        G := (C shr 8) and $FF;
+        B := (C shr 16) and $FF;
+        A := C shr 24;
+      end
+      else
+      begin
+        C := FMemory.Read16(Row + Cardinal(X) * 2);
+        case FB.Format of
+          0:
+            begin
+              R := E5(C and $1F);
+              G := E6((C shr 5) and $3F);
+              B := E5((C shr 11) and $1F);
+              A := $FF;
+            end;
+          1:
+            begin
+              R := E5(C and $1F);
+              G := E5((C shr 5) and $1F);
+              B := E5((C shr 10) and $1F);
+              if (C and $8000) <> 0 then A := $FF else A := 0;
+            end;
+        else
+          R := E4(C and $F);
+          G := E4((C shr 4) and $F);
+          B := E4((C shr 8) and $F);
+          A := E4((C shr 12) and $F);
+        end;
+      end;
+      PCardinal(PByte(Dst) + X * 4)^ := B or (G shl 8) or (R shl 16) or (A shl 24);
+    end;
+  end;
 end;
 
 { HLE: display }

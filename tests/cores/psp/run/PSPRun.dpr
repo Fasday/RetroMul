@@ -18,13 +18,29 @@ type
 
   TLogSink = class
     Echo: Boolean;
+    Console: TPSPConsole;
+    ShotFile: string;
+    Shots: Integer;
     procedure Log(const S: string);
+    procedure Screenshot;
   end;
 
 procedure TLogSink.Log(const S: string);
 begin
   if Echo then
     Writeln(ErrOutput, '[hle] ', S);
+end;
+
+procedure TLogSink.Screenshot;
+begin
+  Inc(Shots);
+  if ShotFile = '' then
+    Exit;
+  var Data := Console.Display.ScreenshotBMP;
+  var Name := ShotFile;
+  if Shots > 1 then
+    Name := ChangeFileExt(ShotFile, '') + '.' + IntToStr(Shots) + ExtractFileExt(ShotFile);
+  TFile.WriteAllBytes(Name, Data);
 end;
 
 function ButtonOf(const S: string): TEmulatorButton;
@@ -108,6 +124,7 @@ begin
     var Quiet := False;
     var Strict := False;
     var TraceKernel := False;
+    var ShotFile := '';
     var I := 2;
     while I <= ParamCount do
     begin
@@ -120,6 +137,7 @@ begin
       else if A = '-quiet' then Quiet := True
       else if A = '-strict' then Strict := True
       else if A = '-trace' then TraceKernel := True
+      else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-press' then
       begin
         Inc(I);
@@ -161,6 +179,9 @@ begin
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick);
     try
       Console.OnLog := Sink.Log;
+      Sink.Console := Console;
+      Sink.ShotFile := ShotFile;
+      Console.IO.OnScreenshot := Sink.Screenshot;
       Console.HLE.Strict := Strict;
       Console.Kernel.Trace := TraceKernel;
       Console.HLE.TraceCalls := TraceKernel;

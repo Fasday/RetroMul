@@ -7,9 +7,9 @@ unit PSP.Console;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.IOUtils, Core.Emulation.Types, Core.Storage,
+  System.SysUtils, System.Classes, System.IOUtils, System.Generics.Collections, Core.Emulation.Types, Core.Storage,
   PSP.Types, PSP.Memory, PSP.Scheduler, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media, PSP.IO, PSP.Loader,
-  PSP.Display, PSP.GE, PSP.Audio, PSP.SysLibs;
+  PSP.Display, PSP.Service, PSP.Audio;
 
 type
   TPSPConsole = class
@@ -22,9 +22,8 @@ type
     FIO: TPSPIO;
     FLoader: TPSPLoader;
     FDisplay: TPSPDisplay;
-    FGE: TPSPGE;
+    FSystem: TPSPSystem;
     FAudio: TPSPAudio;
-    FSysLibs: TPSPSysLibs;
     FStorage: IStorage;
     FProgram: TPSPProgram;
     FDiscStream: TStream;
@@ -40,6 +39,7 @@ type
     FPendingExec: string;
     FPendingExecArgs: TBytes;
     FBooted: Boolean;
+    procedure ResetServices;
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
     procedure Break_(C: TPSPCPU; Code: Cardinal);
     procedure SyncTime;
@@ -67,7 +67,7 @@ type
     property IO: TPSPIO read FIO;
     property Loader: TPSPLoader read FLoader;
     property Display: TPSPDisplay read FDisplay;
-    property GE: TPSPGE read FGE;
+    property System: TPSPSystem read FSystem;
     property Scheduler: TPSPScheduler read FScheduler;
     property AudioSamples: TArray<SmallInt> read FAudioSamples;
     property FrameNumber: UInt64 read FFrameNumber;
@@ -77,7 +77,8 @@ type
 implementation
 
 uses
-  System.Math;
+  System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
+  PSP.Utility, PSP.Font, PSP.Misc;
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin
@@ -110,18 +111,28 @@ begin
   FLoader := TPSPLoader.Create(FKernel, FIO);
   FLoader.OnLoadExec := HandleLoadExec;
   FDisplay := TPSPDisplay.Create(FKernel);
-  FGE := TPSPGE.Create(FKernel);
-  FAudio := TPSPAudio.Create(FKernel);
-  FSysLibs := TPSPSysLibs.Create(FKernel);
+  FSystem := TPSPSystem.Create;
+  FSystem.Memory := FMemory;
+  FSystem.CPU := FCPU;
+  FSystem.HLE := FHLE;
+  FSystem.Kernel := FKernel;
+  FSystem.Scheduler := FScheduler;
+  FSystem.IO := FIO;
+  FSystem.Loader := FLoader;
+  FSystem.Display := FDisplay;
+  FSystem.FlashRoot := FFlashRoot;
+  FSystem.Services := TObjectList<TPSPService>.Create;
+  for var Cls in PSPServiceClasses do
+    FSystem.Services.Add(Cls.Create(FSystem));
+  FAudio := TPSPAudio(FSystem.Find(TPSPAudio));
   MountDisc;
   Reset;
 end;
 
 destructor TPSPConsole.Destroy;
 begin
-  FSysLibs.Free;
-  FAudio.Free;
-  FGE.Free;
+  FSystem.Services.Free;
+  FSystem.Free;
   FDisplay.Free;
   FLoader.Free;
   FIO.Free;
@@ -182,6 +193,15 @@ begin
   FCPU.Stop;
 end;
 
+procedure TPSPConsole.ResetServices;
+begin
+  for var S in FSystem.Services do
+  begin
+    S.Reset;
+    S.Register;
+  end;
+end;
+
 procedure TPSPConsole.Reset;
 begin
   FMemory.Reset;
@@ -198,12 +218,7 @@ begin
   FLoader.Register;
   FDisplay.Reset;
   FDisplay.Register;
-  FGE.Reset;
-  FGE.Register;
-  FAudio.Reset;
-  FAudio.Register;
-  FSysLibs.Reset;
-  FSysLibs.Register;
+  ResetServices;
   FFrameNumber := 0;
   FPendingExec := '';
   FBooted := False;
@@ -274,8 +289,9 @@ begin
   case E of
     TPSPEvent.VBlank: FDisplay.OnEvent;
     TPSPEvent.Kernel: FKernel.OnTimerEvent;
-    TPSPEvent.GE: FGE.OnEvent;
-    TPSPEvent.Audio: FAudio.OnEvent;
+  else
+    for var S in FSystem.Services do
+      S.OnEvent(E);
   end;
   FKernel.AfterSyscall;
 end;
@@ -305,11 +321,7 @@ begin
         FLoader.Reset;
         FLoader.Register;
         FDisplay.Register;
-        FGE.Reset;
-        FGE.Register;
-        FAudio.Register;
-        FSysLibs.Reset;
-        FSysLibs.Register;
+        ResetServices;
         Boot(Data, Path);
       end
       else
