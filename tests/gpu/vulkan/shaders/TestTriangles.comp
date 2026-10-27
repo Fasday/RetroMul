@@ -1,0 +1,113 @@
+#version 450
+// A toy rasterizer: triangles in 1/16 pixel fixed point, edge functions with
+// the top-left rule, Gouraud colour by exact integer barycentrics, a depth
+// test and alpha blending; mode 1 counts coverage in the top byte. One
+// invocation per pixel walks the triangles in order, so the result is the
+// same as drawing them one after another.
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, binding = 0) readonly buffer Triangles { int tris[]; };
+layout(std430, binding = 1) buffer Color { uint color[]; };
+layout(std430, binding = 2) buffer Depth { uint depth[]; };
+
+layout(push_constant) uniform Push { uint count, width, height; } pc;
+
+const uint Words = 12;
+
+int64_t channel(uint c, uint shift)
+{
+  return int64_t((c >> shift) & 255u);
+}
+
+// n / d for n >= 0, d > 0: a double estimate corrected to the exact quotient.
+int64_t quotient(int64_t n, int64_t d)
+{
+  int64_t q = int64_t(double(n) / double(d));
+  int64_t r = n - q * d;
+  while (r < 0l)
+  {
+    q--;
+    r += d;
+  }
+  while (r >= d)
+  {
+    q++;
+    r -= d;
+  }
+  return q;
+}
+
+bool topLeft(int64_t dx, int64_t dy)
+{
+  return dy < 0l || (dy == 0l && dx > 0l);
+}
+
+void main()
+{
+  uint px = gl_GlobalInvocationID.x;
+  uint py = gl_GlobalInvocationID.y;
+  if (px >= pc.width || py >= pc.height)
+    return;
+  uint index = py * pc.width + px;
+  uint c = color[index];
+  uint z = depth[index];
+  int64_t sx = int64_t(px) * 16l + 8l;
+  int64_t sy = int64_t(py) * 16l + 8l;
+  int cx = int(px) * 16 + 8;
+  int cy = int(py) * 16 + 8;
+  for (uint t = 0u; t < pc.count; t++)
+  {
+    uint b = t * Words;
+    ivec2 p0 = ivec2(tris[b], tris[b + 1]);
+    ivec2 p1 = ivec2(tris[b + 2], tris[b + 3]);
+    ivec2 p2 = ivec2(tris[b + 4], tris[b + 5]);
+    if (cx < min(p0.x, min(p1.x, p2.x)) || cx > max(p0.x, max(p1.x, p2.x)) || cy < min(p0.y, min(p1.y, p2.y)) ||
+        cy > max(p0.y, max(p1.y, p2.y)))
+      continue;
+    int64_t x0 = p0.x, y0 = p0.y;
+    int64_t x1 = p1.x, y1 = p1.y;
+    int64_t x2 = p2.x, y2 = p2.y;
+    uint c0 = uint(tris[b + 6]), c1 = uint(tris[b + 7]), c2 = uint(tris[b + 8]);
+    int64_t area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+    if (area == 0l)
+      continue;
+    if (area < 0l)
+    {
+      int64_t tx = x1; x1 = x2; x2 = tx;
+      int64_t ty = y1; y1 = y2; y2 = ty;
+      uint tc = c1; c1 = c2; c2 = tc;
+      area = -area;
+    }
+    int64_t dx0 = x2 - x1, dy0 = y2 - y1;
+    int64_t dx1 = x0 - x2, dy1 = y0 - y2;
+    int64_t dx2 = x1 - x0, dy2 = y1 - y0;
+    int64_t e0 = -((sx - x1) * dy0 - (sy - y1) * dx0);
+    int64_t e1 = -((sx - x2) * dy1 - (sy - y2) * dx1);
+    int64_t e2 = -((sx - x0) * dy2 - (sy - y0) * dx2);
+    if (e0 + (topLeft(dx0, dy0) ? 0l : -1l) < 0l || e1 + (topLeft(dx1, dy1) ? 0l : -1l) < 0l ||
+        e2 + (topLeft(dx2, dy2) ? 0l : -1l) < 0l)
+      continue;
+    if (tris[b + 10] == 0)
+    {
+      uint tz = uint(tris[b + 9]);
+      if (tz > z)
+        continue;
+      z = tz;
+      uint a = c0 >> 24u;
+      uint result = 0u;
+      for (uint s = 0u; s < 24u; s += 8u)
+      {
+        uint v = uint(quotient(channel(c0, s) * e0 + channel(c1, s) * e1 + channel(c2, s) * e2, area));
+        uint old = (c >> s) & 255u;
+        result |= ((v * a + old * (255u - a)) / 255u) << s;
+      }
+      c = result | (c & 0xFF000000u);
+    }
+    else
+      c += 0x01000000u;
+  }
+  color[index] = c;
+  depth[index] = z;
+}

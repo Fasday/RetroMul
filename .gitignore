@@ -28,6 +28,7 @@ __recovery/
 /source/cores/md/README.md
 /apps/terminal/Win32/*
 /tests/*
+!/tests/gpu/
 !/tests/cores/
 /tests/cores/*
 !/tests/cores/n64/

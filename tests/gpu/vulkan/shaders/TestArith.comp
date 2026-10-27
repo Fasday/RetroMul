@@ -1,0 +1,96 @@
+#version 450
+// Integer arithmetic of every width the GE port uses, for an exact comparison
+// with the same operations in Pascal.
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Inputs { uvec4 inputs[]; };
+layout(std430, binding = 1) writeonly buffer Outputs { uint outputs[]; };
+
+layout(push_constant) uniform Push { uint count; } pc;
+
+const uint Stride = 48;
+
+void put64(uint o, uint64_t v)
+{
+  uvec2 w = unpackUint2x32(v);
+  outputs[o] = w.x;
+  outputs[o + 1] = w.y;
+}
+
+void main()
+{
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= pc.count)
+    return;
+  uvec4 v = inputs[i];
+  uint a = v.x, b = v.y, c = v.z, d = v.w;
+  int sa = int(a), sb = int(b);
+  uint o = i * Stride;
+
+  outputs[o + 0] = a + b;
+  outputs[o + 1] = a - b;
+  outputs[o + 2] = a * b;
+  uint hi, lo;
+  umulExtended(a, b, hi, lo);
+  outputs[o + 3] = hi;
+  int shi, slo;
+  imulExtended(sa, sb, shi, slo);
+  outputs[o + 4] = uint(shi);
+  outputs[o + 5] = a >> (b & 31u);
+  outputs[o + 6] = uint(sa >> (b & 31u));
+  outputs[o + 7] = a << (c & 31u);
+  outputs[o + 8] = b != 0u ? a / b : 0u;
+  outputs[o + 9] = b != 0u ? a % b : 0u;
+  int sd = sb >> (d & 15u);
+  bool okDiv = sd != 0 && !(sa == int(0x80000000) && sd == -1);
+  outputs[o + 10] = okDiv ? uint(sa / sd) : 0u;
+  outputs[o + 11] = okDiv ? uint(sa % sd) : 0u;
+  outputs[o + 12] = uint(min(sa, sb));
+  outputs[o + 13] = max(a, b);
+  outputs[o + 14] = bitfieldExtract(a, int(c & 15u), int(d & 15u));
+  outputs[o + 15] = uint(bitfieldExtract(sa, int(c & 15u), int(d & 15u) + 1));
+  outputs[o + 16] = uint(bitCount(a)) | (uint(findMSB(b)) << 8) | (uint(findLSB(c)) << 16);
+  outputs[o + 17] = uint(abs(sa)) ^ uint(sign(sb));
+
+  uint64_t A = packUint2x32(uvec2(a, b));
+  uint64_t B = packUint2x32(uvec2(c, d));
+  int64_t SA = int64_t(A);
+  int64_t SB = int64_t(B);
+  put64(o + 18, A + B);
+  put64(o + 20, A - B);
+  put64(o + 22, A * B);
+  put64(o + 24, A >> (c & 63u));
+  put64(o + 26, uint64_t(SA >> (d & 63u)));
+  int64_t SD = SB >> (a & 31u);
+  bool okDiv64 = SD != 0l && !(SA == int64_t(0x8000000000000000ul) && SD == -1l);
+  put64(o + 28, okDiv64 ? uint64_t(SA / SD) : 0ul);
+  put64(o + 30, B != 0ul ? A / B : 0ul);
+  put64(o + 32, int64_t(sa) * int64_t(sb) + int64_t(sa));
+  outputs[o + 34] = (SA < SB ? 1u : 0u) | (A < B ? 2u : 0u) | (SA == int64_t(sa) ? 4u : 0u);
+
+  int16_t x = int16_t(a);
+  int16_t y = int16_t(b);
+  uint16_t ux = uint16_t(a);
+  uint16_t uy = uint16_t(b);
+  outputs[o + 35] = uint(uint16_t(ux + uy));
+  outputs[o + 36] = uint(uint16_t(ux * uy));
+  outputs[o + 37] = uint(int(int16_t(x * y)));
+  outputs[o + 38] = uint(int(x >> int16_t(c & 15u)));
+  outputs[o + 39] = uint(ux >> uint16_t(d & 15u));
+  outputs[o + 40] = uint(int(x) + int(y));
+  outputs[o + 41] = y != int16_t(0) && !(x == int16_t(-32768) && y == int16_t(-1)) ? uint(int(x / y)) : 0u;
+
+  int8_t p = int8_t(a);
+  uint8_t up = uint8_t(a);
+  uint8_t uq = uint8_t(b);
+  outputs[o + 42] = uint(int(p));
+  outputs[o + 43] = uint(uint8_t(up + uq));
+  outputs[o + 44] = uint(uint8_t(up * uq));
+  outputs[o + 45] = uint(int(int8_t(p >> int8_t(2))));
+  outputs[o + 46] = uint(int(a) * int(p));
+  outputs[o + 47] = uint(uint64_t(a) * uint64_t(b) >> 16);
+}

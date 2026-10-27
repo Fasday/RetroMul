@@ -1,0 +1,29 @@
+#version 450
+// 8- and 16-bit storage: loads, and stores to neighbouring bytes and halves
+// from different invocations.
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Bytes { uint8_t bytes[]; };
+layout(std430, binding = 1) readonly buffer Halves { uint16_t halves[]; };
+layout(std430, binding = 2) writeonly buffer Words { uint words[]; };
+layout(std430, binding = 3) writeonly buffer OutBytes { uint8_t outBytes[]; };
+layout(std430, binding = 4) writeonly buffer OutHalves { uint16_t outHalves[]; };
+
+layout(push_constant) uniform Push { uint count; } pc;
+
+void main()
+{
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= pc.count)
+    return;
+  uint8_t b = bytes[i];
+  uint16_t h = halves[i];
+  words[i] = uint(b) | (uint(h) << 8) | (uint(int(int8_t(b)) < 0) << 31);
+  outBytes[i] = b ^ uint8_t(0x5A);
+  outHalves[i] = h + uint16_t(i);
+}
