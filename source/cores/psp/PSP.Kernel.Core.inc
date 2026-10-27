@@ -372,6 +372,18 @@ begin
   FMemory.Write32(FBusyStub + 4, 0);
 end;
 
+procedure TPSPKernel.ScrambleCallerSaved;
+begin
+  var C := PPSPContext(@FCPU.Ctx);
+  C.GPR[1] := $DEADBEEF;
+  for var I := 4 to 15 do
+    C.GPR[I] := $DEADBEEF;
+  C.GPR[24] := $DEADBEEF;
+  C.GPR[25] := $DEADBEEF;
+  C.HI := $DEADBEEF;
+  C.LO := $DEADBEEF;
+end;
+
 procedure TPSPKernel.SpendPreemptible(Ns: Int64);
 begin
   var T := FCurrent;

@@ -28,6 +28,8 @@ type
     function ReadDateTime(Address: Cardinal; out Ticks: UInt64): Boolean;
     function UmdStat: Cardinal;
     procedure hDcacheNop;
+    procedure hDcacheWritebackRange;
+    procedure hDcacheInvalidateRange;
     procedure hLibcTime;
     procedure hLibcGettimeofday;
     procedure hLibcClock;
@@ -188,6 +190,31 @@ end;
 procedure TPSPSysLibs.hDcacheNop;
 begin
   FHLE.Result(0);
+end;
+
+procedure TPSPSysLibs.hDcacheWritebackRange;
+begin
+  // (address, size): only a negative size is refused.
+  if Integer(FHLE.Arg(1)) < 0 then
+    FHLE.Result($80000104)
+  else
+    FHLE.Result(0);
+end;
+
+procedure TPSPSysLibs.hDcacheInvalidateRange;
+begin
+  // (address, size): the range must stay in user space and cover whole
+  // 64-byte lines.
+  var P := FHLE.Arg(0);
+  var Size := FHLE.Arg(1);
+  if Size = 0 then
+    FHLE.Result(0)
+  else if (Integer(Size) < 0) or (P >= $80000000) or (UInt64(P) + Size > $80000000) then
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR)
+  else if ((P or Size) and 63) <> 0 then
+    FHLE.Result($8002044C)
+  else
+    FHLE.Result(0);
 end;
 
 procedure TPSPSysLibs.hLibcTime;
@@ -804,6 +831,9 @@ begin
   for var NID in [Cardinal($79D1C3FA), $B435DEC5, $3EE30821, $34B9FA9E, $BFA98062, $920F104A, $C2DF770E,
     $80001C4C, $16641D70, $4FD31C9D, $FB05FAD0] do
     H.Register(U, NID, Format('sceKernelDcache_%.8X', [NID]), hDcacheNop);
+  H.Register(U, $3EE30821, 'sceKernelDcacheWritebackRange', hDcacheWritebackRange);
+  H.Register(U, $34B9FA9E, 'sceKernelDcacheWritebackInvalidateRange', hDcacheWritebackRange);
+  H.Register(U, $BFA98062, 'sceKernelDcacheInvalidateRange', hDcacheInvalidateRange);
   H.Register(U, $27CC57F0, 'sceKernelLibcTime', hLibcTime);
   H.Register(U, $71EC4271, 'sceKernelLibcGettimeofday', hLibcGettimeofday);
   H.Register(U, $91E4F6A7, 'sceKernelLibcClock', hLibcClock);
