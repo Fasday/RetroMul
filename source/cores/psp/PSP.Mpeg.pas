@@ -133,6 +133,8 @@ type
     procedure hBaseCscVme;
     procedure hBaseCscAvc;
     procedure hVideocodecGetSEI;
+    procedure hBasePESpacketCopy;
+    procedure hAvcDecodeDetail2;
   public
     constructor Create(System: TPSPSystem); override;
     destructor Destroy; override;
@@ -243,6 +245,8 @@ begin
   H.Register(LibBase, $BE45C284, 'sceMpegBaseYCrCbCopyVme', hBaseYCrCbCopyVme);
   H.Register(LibBase, $CE8EB837, 'sceMpegBaseCscVme', hBaseCscVme);
   H.Register(LibBase, $91929A21, 'sceMpegBaseCscAvc', hBaseCscAvc);
+  H.Register(LibBase, $BEA18F91, 'sceMpegBasePESpacketCopy', hBasePESpacketCopy);
+  H.Register(LibMpeg, $CF3547A2, 'sceMpegAvcDecodeDetail2', hAvcDecodeDetail2);
   H.Register(LibCodec, $627B7D42, 'sceVideocodecGetSEI', hVideocodecGetSEI);
 end;
 
@@ -1536,6 +1540,38 @@ begin
       Cb := Mem.Read8(Bufs[4 + Field * 2] + C);
       Cr := Mem.Read8(Bufs[5 + Field * 2] + C);
     end);
+  FHLE.Result(0);
+end;
+
+procedure TPSPMpeg.hBasePESpacketCopy;
+begin
+  // A DMA list: {source, destination, next, size} entries, size in the low 12 bits.
+  var Lli := FHLE.Arg(0);
+  var Count := 0;
+  while (Lli <> 0) and (Count < 4096) do
+  begin
+    var Src := FMemory.Read32(Lli);
+    var Dst := FMemory.Read32(Lli + 4);
+    var Next := FMemory.Read32(Lli + 8);
+    var Size := FMemory.Read32(Lli + 12) and $FFF;
+    if (Src <> 0) and (Dst <> 0) and (Size > 0) then
+      FMemory.Copy(Dst, Src, Size);
+    Lli := Next;
+    Inc(Count);
+  end;
+  FHLE.Result(0);
+end;
+
+procedure TPSPMpeg.hAvcDecodeDetail2;
+begin
+  var Inst := InstanceOf(FHLE.Arg(0));
+  if Inst = nil then
+  begin
+    FHLE.Result(ERROR_MPEG_NOT_YET_INIT);
+    Exit;
+  end;
+  if FHLE.Arg(1) <> 0 then
+    FMemory.Write32(FHLE.Arg(1), FMemory.Read32(Inst.Handle + $6C0));
   FHLE.Result(0);
 end;
 
