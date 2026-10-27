@@ -60,8 +60,15 @@ type
     StreamDone: Boolean;
     Shown: Integer;
     ShownPic: TPSPPicture;
-    Updates, FirstShownAt: Integer;
+    Updates, NextDue: Integer;
     AfterLast: Integer;
+    // The selected stream has no data in the file: nothing will ever show.
+    Starved: Boolean;
+    // Work of the player's thread that runs once the caller gives up the CPU.
+    PendingFinish: Boolean;
+    DeferNow, DeferClocks: Int64;
+    LastVideoUpdates: Integer;
+    ForceWrite: Boolean;
     CacheValid: Boolean;
     CacheFrame: Integer;
     CacheBuffer: Cardinal;
@@ -91,6 +98,11 @@ type
     procedure SetPsmfCommon(Offset: Int64);
     procedure WriteVideo(P: TPSPPsmfPlayer; Buffer: Cardinal; Width: Integer);
     procedure CheckEnd(P: TPSPPsmfPlayer);
+    procedure Finish(P: TPSPPsmfPlayer);
+    procedure ThreadWork(P: TPSPPsmfPlayer);
+    procedure CatchUp(P: TPSPPsmfPlayer);
+    procedure Yielding(P: TPSPPsmfPlayer);
+    function AdvanceVideo(P: TPSPPsmfPlayer): Boolean;
     // scePsmfPlayer
     procedure hPlayerCreate;
     procedure hPlayerDelete;
@@ -193,8 +205,12 @@ begin
   StreamDone := False;
   Shown := -1;
   Updates := 0;
-  FirstShownAt := 0;
+  NextDue := 5;
   AfterLast := 0;
+  Starved := False;
+  PendingFinish := False;
+  LastVideoUpdates := -1;
+  ForceWrite := True;
   CacheValid := False;
 end;
 
@@ -204,13 +220,22 @@ begin
   Demux := TPSPPsDemux.Create;
   Avc := TPSPAvc.Create;
   var V := Header.Find(PSMFKindAvc, VideoNum);
+  Starved := V < 0;
   if V >= 0 then
+  begin
     VideoQ := Demux.AddStream(PSMFKindAvc, Header.Streams[V].StreamId, 0);
+    if not PSMFStreamPresent(Data, StreamStart, Header.Streams[V].StreamId, 0) then
+      Starved := True;
+  end;
   if HasAudio then
   begin
     var A := Header.Find(PSMFKindAtrac, AudioNum);
     if A >= 0 then
+    begin
       AudioQ := Demux.AddStream(PSMFKindAtrac, $BD, Header.Streams[A].PrivateId);
+      if not PSMFStreamPresent(Data, StreamStart, $BD, Header.Streams[A].PrivateId) then
+        Starved := True;
+    end;
   end;
   PackPos := StreamStart;
 end;
@@ -342,7 +367,10 @@ begin
     Exit(nil);
   for var P in FPlayers do
     if P.Handle = H then
+    begin
+      CatchUp(P);
       Exit(P);
+    end;
   Result := nil;
 end;
 
@@ -587,6 +615,8 @@ begin
       Exit;
     end;
   end;
+  var OldVideo := P.VideoNum;
+  var OldAudio := P.AudioNum;
   P.VideoCodec := 0;
   P.VideoNum := VNum;
   P.HasAudio := HasAudio;
@@ -600,11 +630,18 @@ begin
     P.AudioCodec := -1;
     P.AudioNum := -1;
   end;
+  var Restart := (P.Status = PsmfStatusStandby) or (OldVideo <> P.VideoNum) or (OldAudio <> P.AudioNum);
   P.Mode := PMode;
   P.Speed := PSpeed;
-  P.StartPlayback;
+  var WasPlaying := P.Status <> PsmfStatusStandby;
+  if Restart then
+    P.StartPlayback;
   P.Status := PsmfStatusPlaying;
-  FHLE.Result(0);
+  // Restarting a running player waits for its threads.
+  if WasPlaying then
+    Delay(500, 0)
+  else
+    FHLE.Result(0);
 end;
 
 procedure TPSPPsmf.hPlayerStop;
@@ -628,24 +665,79 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
+  // Ends the wait for the next picture: it is due one vblank earlier.
+  if (P.Shown >= 0) and (P.NextDue < MaxInt) and (P.NextDue > P.Updates) then
+    Dec(P.NextDue);
   FHLE.Result(0);
+end;
+
+procedure TPSPPsmf.Finish(P: TPSPPsmfPlayer);
+begin
+  P.PendingFinish := False;
+  if P.Status <> PsmfStatusPlaying then
+    Exit;
+  if P.Loop and not P.Starved then
+    P.StartPlayback
+  else
+    P.Status := PsmfStatusFinished;
+end;
+
+procedure TPSPPsmf.ThreadWork(P: TPSPPsmfPlayer);
+begin
+  // The player's thread runs at its own priority: at once if it beats the
+  // caller, otherwise when the caller next waits.
+  var T := FKernel.Current;
+  if (T = nil) or (P.Priority < T.Priority) then
+  begin
+    Finish(P);
+    Exit;
+  end;
+  if not P.PendingFinish then
+  begin
+    P.PendingFinish := True;
+    P.DeferNow := FKernel.Scheduler.Now;
+    P.DeferClocks := T.RunClocks;
+  end;
+end;
+
+procedure TPSPPsmf.CatchUp(P: TPSPPsmfPlayer);
+begin
+  if not P.PendingFinish then
+    Exit;
+  var T := FKernel.Current;
+  if T = nil then
+  begin
+    Finish(P);
+    Exit;
+  end;
+  // Off the CPU since the work was queued: the player's thread had its turn.
+  var Ran := (T.RunClocks - P.DeferClocks) * 1000 div FKernel.Scheduler.MHz;
+  if FKernel.Scheduler.Now - P.DeferNow > Ran + 2000 then
+    Finish(P);
+end;
+
+procedure TPSPPsmf.Yielding(P: TPSPPsmfPlayer);
+begin
+  if (P <> nil) and P.PendingFinish then
+    Finish(P);
 end;
 
 procedure TPSPPsmf.CheckEnd(P: TPSPPsmfPlayer);
 begin
+  if P.Status <> PsmfStatusPlaying then
+    Exit;
+  if P.Starved then
+  begin
+    if P.Updates >= 6 then
+      ThreadWork(P);
+    Exit;
+  end;
   // Two updates after the last picture was shown the movie is over.
-  if (P.Status = PsmfStatusPlaying) and (P.Shown >= 0) and P.StreamDone and (P.Ready.Count = 0) then
+  if (P.Shown >= 0) and P.StreamDone and (P.Ready.Count = 0) then
   begin
     Inc(P.AfterLast);
     if P.AfterLast >= 2 then
-    begin
-      if P.Loop then
-      begin
-        P.StartPlayback;
-      end
-      else
-        P.Status := PsmfStatusFinished;
-    end;
+      ThreadWork(P);
   end;
 end;
 
@@ -657,6 +749,7 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
+  CatchUp(P);
   if P.Status = PsmfStatusPlaying then
   begin
     Inc(P.Updates);
@@ -670,9 +763,6 @@ begin
   var Format := P.PixelMode;
   if Format < 0 then
     Format := PSPPixel8888;
-  if P.CacheValid and (P.CacheFrame = P.Shown) and (P.CacheBuffer = Buffer) and (P.CacheWidth = Width) and
-    (P.CacheFormat = Format) then
-    Exit;
   var Pic := P.ShownPic;
   var Bpp := PSPPixelBytes(Format);
   var Bytes := Cardinal((Pic.Height - 1) * Width + Pic.Width) * Cardinal(Bpp);
@@ -689,6 +779,30 @@ begin
   P.CacheFormat := Format;
 end;
 
+function TPSPPsmf.AdvanceVideo(P: TPSPPsmfPlayer): Boolean;
+begin
+  // At most one new picture per call, once the clock reaches it.
+  Result := False;
+  if (P.Status <> PsmfStatusPlaying) or P.Starved or (P.Updates < P.NextDue) then
+    Exit;
+  var Pic: TPSPPicture;
+  if not P.NextPicture(Pic) then
+    Exit;
+  Inc(P.Shown);
+  P.ShownPic := Pic;
+  P.AfterLast := 0;
+  if P.Shown = 0 then
+    P.NextDue := 8
+  else
+    case P.Mode of
+      0: Inc(P.NextDue, 2);
+      1: Inc(P.NextDue, 6);
+    else
+      P.NextDue := MaxInt;
+    end;
+  Result := True;
+end;
+
 procedure TPSPPsmf.hPlayerGetVideoData;
 begin
   var P := PlayerOf(FHLE.Arg(0));
@@ -698,33 +812,8 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
-  if P.Status = PsmfStatusPlaying then
-  begin
-    if P.Shown < 0 then
-    begin
-      // The first picture is ready after three vblanks' worth of updates.
-      if P.Updates >= 6 then
-      begin
-        var Pic: TPSPPicture;
-        if P.NextPicture(Pic) then
-        begin
-          P.Shown := 0;
-          P.ShownPic := Pic;
-          P.FirstShownAt := P.Updates;
-        end;
-      end;
-    end
-    else if (P.Mode = 0) and (P.Updates - P.FirstShownAt >= 2 * (P.Shown + 1)) then
-    begin
-      var Pic: TPSPPicture;
-      if P.NextPicture(Pic) then
-      begin
-        Inc(P.Shown);
-        P.ShownPic := Pic;
-        P.AfterLast := 0;
-      end;
-    end;
-  end;
+  CatchUp(P);
+  var Fresh := AdvanceVideo(P);
   if P.Shown < 0 then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
@@ -751,7 +840,14 @@ begin
     Exit;
   end;
   FMemory.Write32(V + 8, Cardinal(P.Shown * FrameTicks));
-  WriteVideo(P, Buffer, Width);
+  // The picture is converted again when it is new, when no vblank went by
+  // since the last call, or after a play mode change.
+  var Write := Fresh or P.ForceWrite or (P.Status = PsmfStatusFinished) or (P.LastVideoUpdates = P.Updates);
+  P.LastVideoUpdates := P.Updates;
+  P.ForceWrite := False;
+  if Write then
+    WriteVideo(P, Buffer, Width);
+  Yielding(P);
   Delay(500, 0);
 end;
 
@@ -918,6 +1014,7 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
+  P.ForceWrite := True;
   if (M = 4) or (M = 5) then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
@@ -928,8 +1025,9 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_CONFIG);
     Exit;
   end;
+  if (M <= 1) and (P.NextDue = MaxInt) then
+    P.NextDue := P.Updates + 2;
   P.Mode := M;
-  P.CacheValid := False;
   FHLE.Result(0);
 end;
 

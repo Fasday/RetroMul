@@ -127,6 +127,8 @@ type
     property Queues: TObjectList<TPSPEsQueue> read FQueues;
   end;
 
+// Whether the packs from Start on carry data for a stream (looks at the first MaxPacks).
+function PSMFStreamPresent(const Data: TBytes; Start: Integer; StreamId, PrivateId: Byte; MaxPacks: Integer = 512): Boolean;
 function PSMFBE16(const P: PByte): Cardinal; inline;
 function PSMFBE32(const P: PByte): Cardinal; inline;
 function PSMFReadTimestamp(const P: PByte): Int64;
@@ -154,6 +156,43 @@ end;
 function PSMFAtracFrameSize(B2, B3: Byte): Integer;
 begin
   Result := ((((Integer(B2) shl 8) or B3) and $3FF) + 1) * 8 + 8;
+end;
+
+function PSMFStreamPresent(const Data: TBytes; Start: Integer; StreamId, PrivateId: Byte; MaxPacks: Integer): Boolean;
+begin
+  var Pack := Start;
+  var N := 0;
+  while (Pack + PSMFPacketSize <= Length(Data)) and (N < MaxPacks) do
+  begin
+    var P := 0;
+    var Base := PByte(@Data[Pack]);
+    while P + 6 <= PSMFPacketSize do
+    begin
+      if (Base[P] <> 0) or (Base[P + 1] <> 0) or (Base[P + 2] <> 1) then
+        Break;
+      var Id := Base[P + 3];
+      if Id = $BA then
+      begin
+        if P + 14 > PSMFPacketSize then
+          Break;
+        Inc(P, 14 + (Base[P + 13] and 7));
+        Continue;
+      end;
+      var Len := Integer(PSMFBE16(Base + P + 4));
+      if Id = StreamId then
+      begin
+        if Id <> $BD then
+          Exit(True);
+        var H := P + 6 + 3 + Base[P + 8];
+        if (H < PSMFPacketSize) and (Base[H] = PrivateId) then
+          Exit(True);
+      end;
+      Inc(P, 6 + Len);
+    end;
+    Inc(Pack, PSMFPacketSize);
+    Inc(N);
+  end;
+  Result := False;
 end;
 
 function BE48(const P: PByte): Int64;
