@@ -69,6 +69,7 @@ type
     FInstances: TObjectList<TPSPMpegInstance>;
     FInit: Boolean;
     FCscWidth: Integer;
+    FEsBuf, FDecTop: Cardinal;
     function InstanceAt(Handle: Cardinal): TPSPMpegInstance;
     function InstanceOf(MpegPtr: Cardinal): TPSPMpegInstance;
     function StreamAt(Inst: TPSPMpegInstance; Address: Cardinal): TPSPMpegStreamReg;
@@ -139,7 +140,7 @@ type
 implementation
 
 uses
-  System.Math;
+  System.Math, PSP.Mp4;
 
 const
   LibMpeg = 'sceMpeg';
@@ -896,6 +897,12 @@ begin
     Inst.EsBufs[Es].Data := nil;
   end;
   var Size := FMemory.Read32(AuPtr + 20);
+  if (Data = nil) and (Es > Cardinal(High(Inst.EsBufs))) and (Size > 0) and (Size < $100000) and FMemory.Valid(Es, Size) then
+  begin
+    // An ES buffer in memory: sceMp4 puts the access unit there.
+    SetLength(Data, Size);
+    FMemory.ReadBytes(Es, Data[0], Size);
+  end;
   if Cardinal(Length(Data)) > Size then
     SetLength(Data, Size);
   var Pictures: TArray<TPSPPicture> := nil;
@@ -1098,22 +1105,33 @@ end;
 
 procedure TPSPMpeg.hAvcResourceInit;
 begin
+  // The decoder's working memory and its ES buffer, which sceMp4 fills.
+  if FEsBuf = 0 then
+    FEsBuf := FKernel.AllocKernel($40000, 'avc es');
+  if FDecTop = 0 then
+    FDecTop := FKernel.AllocKernel($1000, 'avc dec top');
   FHLE.Result(0);
 end;
 
 procedure TPSPMpeg.hAvcResourceFinish;
 begin
+  if FEsBuf <> 0 then
+    FKernel.KernelPartition.FreeBlock(FEsBuf);
+  if FDecTop <> 0 then
+    FKernel.KernelPartition.FreeBlock(FDecTop);
+  FEsBuf := 0;
+  FDecTop := 0;
   FHLE.Result(0);
 end;
 
 procedure TPSPMpeg.hAvcResourceGetAvcDecTopAddr;
 begin
-  FHLE.Result(0);
+  FHLE.Result(FDecTop);
 end;
 
 procedure TPSPMpeg.hAvcResourceGetAvcEsBuf;
 begin
-  FHLE.Result(0);
+  FHLE.Result(FEsBuf);
 end;
 
 procedure TPSPMpeg.hZero;
