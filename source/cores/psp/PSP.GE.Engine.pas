@@ -986,7 +986,7 @@ begin
   S.BlendOp := (C[GE_BLENDMODE] shr 8) and $F;
   S.FixA := C[GE_BLENDFIXEDA] and $FFFFFF;
   S.FixB := C[GE_BLENDFIXEDB] and $FFFFFF;
-  S.Dither := ((C[GE_DITHERENABLE] and 1) <> 0) and not S.ClearMode;
+  S.Dither := (C[GE_DITHERENABLE] and 1) <> 0;
   for var Row := 0 to 3 do
     for var Col := 0 to 3 do
     begin

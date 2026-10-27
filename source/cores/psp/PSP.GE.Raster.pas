@@ -380,7 +380,15 @@ begin
     var NewP := Old;
     var Keep := PixelKeepMask(S);
     if S.ClearColor then
-      NewP := (NewP and not (EncodeColor(S.FBFormat, 255, 255, 255))) or EncodeColor(S.FBFormat, F.R, F.G, F.B);
+    begin
+      var CR := F.R; var CG := F.G; var CB := F.B;
+      if S.Dither then
+      begin
+        var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+        CR := Clamp255(CR + D); CG := Clamp255(CG + D); CB := Clamp255(CB + D);
+      end;
+      NewP := (NewP and not (EncodeColor(S.FBFormat, 255, 255, 255))) or EncodeColor(S.FBFormat, CR, CG, CB);
+    end;
     if S.ClearStencil then
     begin
       var SV: Integer;
