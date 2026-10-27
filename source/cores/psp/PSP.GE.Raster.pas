@@ -652,10 +652,10 @@ begin
       end
       else
       begin
-        F.R := Round(A0.R * W0 + A1.R * W1 + A2.R * W2);
-        F.G := Round(A0.G * W0 + A1.G * W1 + A2.G * W2);
-        F.B := Round(A0.B * W0 + A1.B * W1 + A2.B * W2);
-        F.A := Round(A0.A * W0 + A1.A * W1 + A2.A * W2);
+        F.R := (A0.R * E0 + A1.R * E1 + A2.R * E2) div Area;
+        F.G := (A0.G * E0 + A1.G * E1 + A2.G * E2) div Area;
+        F.B := (A0.B * E0 + A1.B * E1 + A2.B * E2) div Area;
+        F.A := (A0.A * E0 + A1.A * E1 + A2.A * E2) div Area;
         F.SR := Round(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
         F.SG := Round(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
         F.SB := Round(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
@@ -723,14 +723,39 @@ var
 begin
   var X0 := V0.X; var Y0 := V0.Y;
   var DX := V1.X - X0; var DY := V1.Y - Y0;
-  var Steps := Max(Abs(DX), Abs(DY)) div 16;
-  if Steps = 0 then
+  if (DX = 0) and (DY = 0) then
     Exit;
-  for var I := 0 to Steps - 1 do
+  // Pixels whose centre on the major axis lies between the end points; the
+  // minor axis is the containing pixel of the line there.
+  var XMajor := Abs(DX) >= Abs(DY);
+  var A0, A1, D: Integer;
+  if XMajor then
   begin
-    var T := I / Steps;
-    var PX := (X0 + Round(DX * T)) div 16;
-    var PY := (Y0 + Round(DY * T)) div 16;
+    A0 := Min(V0.X, V1.X); A1 := Max(V0.X, V1.X); D := DX;
+  end
+  else
+  begin
+    A0 := Min(V0.Y, V1.Y); A1 := Max(V0.Y, V1.Y); D := DY;
+  end;
+  var P1 := (A0 - 8 + 15 + $100000) div 16 - $10000;
+  var P2 := (A1 - 8 + 15 + $100000) div 16 - $10000 - 1;
+  for var P := P1 to P2 do
+  begin
+    var C := P * 16 + 8;
+    var T: Single;
+    var PX, PY: Integer;
+    if XMajor then
+    begin
+      T := (C - X0) / D;
+      PX := P;
+      PY := (Y0 + Round(DY * T) + $100000) div 16 - $10000;
+    end
+    else
+    begin
+      T := (C - Y0) / D;
+      PY := P;
+      PX := (X0 + Round(DX * T) + $100000) div 16 - $10000;
+    end;
     SetupFragment(F, V1);
     if not S.Flat and S.Gouraud then
     begin
@@ -752,7 +777,7 @@ var
   F: TGEFragment;
 begin
   SetupFragment(F, V);
-  PlotPixel(S, V.X div 16, V.Y div 16, F);
+  PlotPixel(S, (V.X + $100000) div 16 - $10000, (V.Y + $100000) div 16 - $10000, F);
 end;
 
 end.
