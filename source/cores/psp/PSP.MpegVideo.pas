@@ -755,6 +755,7 @@ begin
       Exit(Cardinal($80628002));
     end;
   end;
+  var Prior: TArray<TPSPPicture> := nil;
   var Frame: TVideoFrame;
   while FDecoder.Receive(Frame) do
   begin
@@ -775,11 +776,19 @@ begin
     end
     else
       Pic.OutAt := FCount;
+    if Idr and not S.Hrd and (FHeld.Count > 0) then
+    begin
+      // An IDR picture bumps everything before it out of the buffer.
+      var Before: TArray<TPSPPicture>;
+      Drain(Before);
+      Prior := Prior + Before;
+    end;
     FHeld.Add(Pic);
     FLastPicture := Pic;
     FHasPicture := True;
   end;
   TakeDue(Pictures);
+  Pictures := Prior + Pictures;
   Inc(FCount);
 end;
 
