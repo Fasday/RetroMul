@@ -264,7 +264,7 @@ begin
         except
           on E: Exception do
           begin
-            Failed := E.ClassName + ': ' + E.Message;
+            Failed := E.ClassName + ': ' + E.Message + Format(' at %p (image base %p)', [ExceptAddr, Pointer(HInstance)]);
             Break;
           end;
         end;
@@ -331,6 +331,7 @@ begin
     on E: Exception do
     begin
       Writeln(ErrOutput, E.ClassName, ': ', E.Message);
+      Writeln(ErrOutput, Format('at %p (image base %p)', [ExceptAddr, Pointer(HInstance)]));
       ExitCode := 3;
     end;
   end;

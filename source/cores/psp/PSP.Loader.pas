@@ -5,7 +5,8 @@ unit PSP.Loader;
 // syscall stubs, or jumps into another guest module that exports the library.
 // Sony's firmware libraries a game ships on the disc are not loaded: their
 // libraries are served by HLE.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+// Relocation and address arithmetic wraps by design.
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 

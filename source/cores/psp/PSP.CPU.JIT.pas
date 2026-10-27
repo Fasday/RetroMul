@@ -23,7 +23,7 @@ unit PSP.CPU.JIT;
 //
 // PSPJIT=off (the interpreter), model (HW.JIT's model runs the code), stats
 // (counts at the end); several with commas.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$POINTERMATH ON}
 
 interface

@@ -4,7 +4,7 @@ unit PSP.VFPU;
 // and its load/store instructions. Installs its decoder into PSP.CPU.
 // A register field names S<m><c><r>; Ctx.V holds it at m*16 + c*4 + r, so a
 // column is four consecutive words.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
 

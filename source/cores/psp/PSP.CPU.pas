@@ -6,7 +6,7 @@ unit PSP.CPU;
 // calls the same routines, so it cannot disagree with the interpreter.
 // Delay slots: PC is the next instruction, NPC the one after; a taken branch
 // replaces NPC.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
 
