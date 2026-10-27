@@ -475,8 +475,13 @@ begin
   J := J xor (J shl 5);
   W[1] := J;
   // The carry kept for the next step isn't this sum's: it is the overflow of
-  // 2*prev + x + c past 2^32, less one.
+  // 2*prev + x + c past 2^32, less one, where x above prev adds up to c more.
   var T := UInt64(W[2]) * 2 + W[3] + Carry;
+  if W[3] > W[2] then
+    if W[3] - W[2] < Carry then
+      Inc(T, W[3] - W[2])
+    else
+      Inc(T, Carry);
   var S := Cardinal(UInt64(W[3]) * 2 + W[2] + Carry);
   W[2] := W[3];
   W[3] := S;
