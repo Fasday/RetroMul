@@ -246,6 +246,9 @@ type
     FRDPLastPending, FRDPFollowStale: Boolean;
     // Diagnostics: False runs only the timing RDP (no pixels drawn).
     FRDPDrawing: Boolean;
+    // UseRecompiler as last set (the CPU and the RSP give up generated code
+    // they cannot make: not asked again until it changes).
+    FUseRecompiler: Boolean;
     // Thread placement (see PlaceThreads): enabled, and the emulation thread
     // pinned (FPinnedThread) with what it could run on before.
     FPlacement, FPinned: Boolean;
@@ -439,6 +442,8 @@ type
     procedure SetRDPDrawing(Value: Boolean);
     procedure SetBilinearFiltering(Value: Boolean);
     function GetBilinearFiltering: Boolean;
+    procedure SetUseRecompiler(Value: Boolean);
+    function GetUseRecompiler: Boolean;
     procedure PlaceThreads(out BandCPUs: TN64CPUSet; out Preferred: TArray<Integer>);
     procedure UnplaceThreads;
     procedure SetPlacement(Value: Boolean);
@@ -561,6 +566,11 @@ type
     // guest then sees stale images). Not to be switched back on.
     property RDPDrawing: Boolean read FRDPDrawing write SetRDPDrawing;
     property BilinearFiltering: Boolean read GetBilinearFiltering write SetBilinearFiltering;
+    // The CPU's and the RSP's blocks as generated code where there is a code
+    // generator (else always interpreted). Either way the same emulation, bit
+    // for bit: it may change at any time (the emulation thread; the RSP
+    // thread takes it at its next block).
+    property UseRecompiler: Boolean read GetUseRecompiler write SetUseRecompiler;
     // The emulation thread on a core of its own (the fastest), each RDP band
     // on another: threads sharing a core (SMT) or on slow cores slow the
     // emulation thread down. Set when the RDP worker starts; the emulation
@@ -749,6 +759,7 @@ begin
   FRDPMode := TN64RDPMode.Threaded;
   {$ENDIF}
   FVI := TN64VI.Create(Self);
+  FUseRecompiler := True;
   FHostFloat := True;
   // With three physical cores or more, VI fields on a thread of their own.
   SetVIThreaded(PhysicalCores >= 3);
@@ -3306,6 +3317,20 @@ end;
 function TN64Console.GetBilinearFiltering: Boolean;
 begin
   Result := FRDP.BilinearFiltering;
+end;
+
+function TN64Console.GetUseRecompiler: Boolean;
+begin
+  Result := FUseRecompiler;
+end;
+
+procedure TN64Console.SetUseRecompiler(Value: Boolean);
+begin
+  if Value = FUseRecompiler then
+    Exit;
+  FUseRecompiler := Value;
+  FCPU.UseJit := Value and TN64CPU.JitAvailable;
+  FRSP.UseJit := Value and TN64RSP.JitAvailable;
 end;
 
 procedure TN64Console.SetBilinearFiltering(Value: Boolean);
