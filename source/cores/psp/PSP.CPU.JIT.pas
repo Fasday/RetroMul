@@ -65,6 +65,13 @@ type
     Incoming: TList<PPSPJitExit>;
   end;
 
+  // A JR or JALR's last target and its block (kept until all code goes).
+  PPSPJitSlot = ^TPSPJitSlot;
+  TPSPJitSlot = record
+    PC: Cardinal;
+    Block: PPSPJitBlock;
+  end;
+
   PPSPJitPage = ^TPSPJitPage;
   TPSPJitPage = record
     Entries: array[0..(PSPPageSize div 4) - 1] of PPSPJitBlock;
@@ -120,6 +127,9 @@ type
     FPages: TArray<PPSPJitPage>;
     FAll: TList<PPSPJitBlock>;
     FAllExits: TList<PPSPJitExit>;
+    FSlots: TList<PPSPJitSlot>;
+    // (A slot's block before its first: no code.)
+    FNoBlock: TPSPJitBlock;
     FEnter, FPrologue, FExit, FLookup: NativeInt;
     FCompiled, FInvokes, FInterpreted, FLinks, FKills, FResets: Int64;
     FDead: Integer;
@@ -242,7 +252,8 @@ var
   EndHandler: array[0..2] of Pointer;
   PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
-  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode: Integer;
+  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode,
+    OffSlotPC, OffSlotBlock: Integer;
 
 function HandlerOf(Op: Cardinal): Pointer;
 begin
@@ -273,6 +284,8 @@ begin
   OffLastExit := Integer(NativeUInt(@TPSPRecompiler(nil).FLastExit));
   OffBlockPC := Integer(NativeUInt(@PPSPJitBlock(nil).PC));
   OffBlockCode := Integer(NativeUInt(@PPSPJitBlock(nil).Code));
+  OffSlotPC := Integer(NativeUInt(@PPSPJitSlot(nil).PC));
+  OffSlotBlock := Integer(NativeUInt(@PPSPJitSlot(nil).Block));
   KindsReady := True;
 end;
 
@@ -863,8 +876,23 @@ begin
     Exit;
   if Dynamic then
   begin
-    FJ.Move(jw32, JMem(jrSelf, OffCurPC), JImm(A));
-    FJ.JumpTo(FLookup);
+    // The block it went to last time (its slot), else the look-up.
+    var J := FJ;
+    J.Move(jw32, JMem(jrSelf, OffCurPC), JImm(A));
+    var Slot: PPSPJitSlot;
+    New(Slot);
+    Slot.PC := 0;
+    Slot.Block := @FNoBlock;
+    FSlots.Add(Slot);
+    var Miss := J.NewLabel;
+    J.Move(jw64, JT6, JImm(Int64(NativeUInt(Slot))));
+    J.Branch(jcNe, jw32, JMem(jrT6, OffSlotPC), JTarget, Miss);
+    J.Move(JPtr, JT1, JMem(jrT6, OffSlotBlock));
+    J.Move(JPtr, JT1, JMem(jrT1, OffBlockCode));
+    J.BranchTest(jcEq, JPtr, JT1, JT1, Miss);
+    J.JumpIndirect(JT1);
+    J.Bind(Miss);
+    J.JumpTo(FLookup);
   end
   else
     EmitStatic(Next, A, 0);
@@ -911,9 +939,12 @@ begin
   J.Move(JPtr, JT1, JMem(jrT1, 0));
   J.BranchTest(jcEq, JPtr, JT1, JT1, Miss);
   J.Branch(jcNe, jw32, JMem(jrT1, OffBlockPC), JT0, Miss);
-  J.Move(JPtr, JT1, JMem(jrT1, OffBlockCode));
-  J.BranchTest(jcEq, JPtr, JT1, JT1, Miss);
-  J.JumpIndirect(JT1);
+  J.Move(JPtr, JT2, JMem(jrT1, OffBlockCode));
+  J.BranchTest(jcEq, JPtr, JT2, JT2, Miss);
+  // (The jump's own slot, T6, keeps the block for its next time.)
+  J.Move(jw32, JMem(jrT6, OffSlotPC), JT0);
+  J.Move(JPtr, JMem(jrT6, OffSlotBlock), JT1);
+  J.JumpIndirect(JT2);
   J.Bind(Miss);
   J.Move(jw32, JMem(jrSelf, OffPC), JTarget);
   J.Move(jw32, JT0, JTarget);
@@ -1088,6 +1119,9 @@ begin
   for var E in FAllExits do
     Dispose(E);
   FAllExits.Clear;
+  for var S in FSlots do
+    Dispose(S);
+  FSlots.Clear;
   for var I := 0 to High(FPages) do
     if FPages[I] <> nil then
     begin
@@ -1522,6 +1556,7 @@ begin
   SetLength(FPages, PSPPageCount);
   FAll := TList<PPSPJitBlock>.Create;
   FAllExits := TList<PPSPJitExit>.Create;
+  FSlots := TList<PPSPJitSlot>.Create;
   FSlow := TList<TPSPJitSlow>.Create;
   FHitExits := TList<TPSPJitHitExit>.Create;
   FStatic := TList<PPSPJitExit>.Create;
@@ -1554,6 +1589,7 @@ begin
   ResetCode;
   FAll.Free;
   FAllExits.Free;
+  FSlots.Free;
   FSlow.Free;
   FHitExits.Free;
   FStatic.Free;
