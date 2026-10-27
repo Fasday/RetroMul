@@ -414,15 +414,15 @@ begin
   F.G := Clamp255(F.G + F.SG);
   F.B := Clamp255(F.B + F.SB);
 
-  if S.FogEnabled and not S.Through then
+  if S.FogEnabled then
   begin
     var Fg := F.Fog;
-    if Fg < 0 then Fg := 0;
+    if not (Fg > 0) then Fg := 0;
     if Fg > 1 then Fg := 1;
     var FI := Trunc(Fg * 255);
-    F.R := (F.R * FI + S.FogR * (255 - FI)) div 255;
-    F.G := (F.G * FI + S.FogG * (255 - FI)) div 255;
-    F.B := (F.B * FI + S.FogB * (255 - FI)) div 255;
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
   end;
 
   if S.ColorTest then
@@ -502,7 +502,7 @@ begin
     B := BlendChannel(S, F.B, DB, F.A, DA, 16);
   end;
 
-  if S.Dither and (S.FBFormat <> 3) then
+  if S.Dither then
   begin
     var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
     R := R + D;

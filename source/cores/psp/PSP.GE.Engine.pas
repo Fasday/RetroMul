@@ -55,6 +55,7 @@ type
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
     procedure AddVertex(const V: TGEVertex; Clip: Boolean);
     procedure DrawPrim(Op: Cardinal);
+    procedure ImmediateVertex(Op: Cardinal);
     procedure LoadClut(Op: Cardinal);
     procedure BlockTransfer(Op: Cardinal);
   public
@@ -122,6 +123,13 @@ begin
       end;
     GE_BBOX:
       BoxVisible := (P and $FFFF) <> 0;
+    $F7:
+      begin
+        Regs.Cmd[Cmd] := Op;
+        FPrimCost := 0;
+        ImmediateVertex(Op);
+        Exit(12 + Integer(Min(FPrimCost, 100000000)));
+      end;
     GE_OFFSETADDR:
       Regs.Offset := P shl 8;
     GE_ORIGIN:
@@ -1121,6 +1129,57 @@ begin
   end
   else
     Regs.VAddr := Regs.VAddr + Cardinal(Count * FVSize * Morphs);
+end;
+
+// A vertex given by registers $F0-$F9 (screen x, y in 1/16, z, s, t, q,
+// colour, fog, secondary colour); $F7 adds it with the alpha, the primitive
+// and, on a primitive's first vertex, enables that replace the usual ones.
+procedure TPSPGEEngine.ImmediateVertex(Op: Cardinal);
+var
+  V: TGEVertex;
+begin
+  var C: PGECmds := @Regs.Cmd;
+  var PrimType := Integer((Op shr 8) and 7);
+  var Through := (C[GE_VTYPE] and (1 shl 23)) <> 0;
+  if PrimType <> 7 then
+  begin
+    FAsmType := PrimType;
+    FAsmCount := 0;
+    BuildRaster;
+    FRaster.Through := Through;
+    FRaster.Gouraud := (Op and $40000) <> 0;
+    FRaster.Flat := not FRaster.Gouraud;
+    FRaster.Textured := ((Op and $200000) <> 0) and not FRaster.ClearMode;
+    FRaster.FogEnabled := ((Op and $400000) <> 0) and not FRaster.ClearMode;
+    FRaster.Dither := ((Op and $800000) <> 0) and not FRaster.ClearMode;
+    FCullOn := ((Op and $80000) <> 0) and not FRaster.ClearMode;
+    FCullCW := (Op and $100000) <> 0;
+  end;
+  V := Default(TGEVertex);
+  V.X := Integer(C[$F0] and $FFFF);
+  V.Y := Integer(C[$F1] and $FFFF);
+  Dec(V.X, Integer(C[GE_OFFSETX] and $FFFF));
+  Dec(V.Y, Integer(C[GE_OFFSETY] and $FFFF));
+  V.Z := C[$F2] and $FFFF;
+  V.W := 1;
+  V.R := C[$F6] and $FF;
+  V.G := (C[$F6] shr 8) and $FF;
+  V.B := (C[$F6] shr 16) and $FF;
+  V.A := Op and $FF;
+  if not Through and ((C[GE_LIGHTMODE] and 1) <> 0) then
+  begin
+    V.SR := C[$F9] and $FF;
+    V.SG := (C[$F9] shr 8) and $FF;
+    V.SB := (C[$F9] shr 16) and $FF;
+  end;
+  var Q := GEFloat(C[$F5]);
+  if Q = 0 then
+    Q := 1;
+  V.S := GEFloat(C[$F3]) / Q * (1 shl (C[GE_TEXSIZE0] and $F));
+  V.T := GEFloat(C[$F4]) / Q * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
+  V.Fog := (C[$F8] and $FF) / 255;
+  Inc(FPrimCost, 40);
+  AddVertex(V, False);
 end;
 
 procedure TPSPGEEngine.LoadClut(Op: Cardinal);
