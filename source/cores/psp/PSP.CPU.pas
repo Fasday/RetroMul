@@ -1340,7 +1340,7 @@ end;
 
 function TPSPCPU.TakeCycles: Integer;
 begin
-  var Done := (FRunLength - FRemaining) + ExtraCycles;
+  var Done := FRunLength - FRemaining;
   Result := Done - FAccounted;
   FAccounted := Done;
 end;
@@ -1357,7 +1357,8 @@ end;
 
 procedure TPSPCPU.AddCycles(Cycles: Integer);
 begin
-  Inc(ExtraCycles, Cycles);
+  // Extra cost of the current instruction (HLE calls): it uses the run's budget.
+  Dec(FRemaining, Cycles);
 end;
 
 procedure TPSPCPU.SetPC(Address: Cardinal);

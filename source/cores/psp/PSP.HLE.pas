@@ -165,11 +165,38 @@ begin
     Result := -1;
 end;
 
+// Kernel-mode and driver libraries share most NIDs with their user ones.
+function UserLibrary(const Lib: string): string;
+const
+  Pairs: array[0..20, 0..1] of string = (
+    ('ThreadManForKernel', 'ThreadManForUser'), ('SysMemForKernel', 'SysMemUserForUser'),
+    ('UtilsForKernel', 'UtilsForUser'), ('IoFileMgrForKernel', 'IoFileMgrForUser'),
+    ('LoadExecForKernel', 'LoadExecForUser'), ('ModuleMgrForKernel', 'ModuleMgrForUser'),
+    ('InterruptManagerForKernel', 'InterruptManager'), ('StdioForKernel', 'StdioForUser'),
+    ('sceDisplay_driver', 'sceDisplay'), ('sceCtrl_driver', 'sceCtrl'), ('sceAudio_driver', 'sceAudio'),
+    ('sceGe_driver', 'sceGe_user'), ('scePower_driver', 'scePower'), ('sceRtc_driver', 'sceRtc'),
+    ('sceReg_driver', 'sceReg'), ('sceUmd', 'sceUmdUser'), ('sceHprm_driver', 'sceHprm'),
+    ('sceImpose_driver', 'sceImpose'), ('sceMpegbase_driver', 'sceMpegbase'),
+    ('sceAudioRouting_driver', 'sceAudioRouting'), ('sceSuspendForKernel', 'sceSuspendForUser'));
+begin
+  for var I := 0 to High(Pairs) do
+    if Pairs[I, 0] = Lib then
+      Exit(Pairs[I, 1]);
+  Result := '';
+end;
+
 function TPSPHLE.Resolve(const Lib: string; NID: Cardinal): Integer;
 begin
   Result := Find(Lib, NID);
   if Result >= 0 then
     Exit;
+  var Alias := UserLibrary(Lib);
+  if Alias <> '' then
+  begin
+    Result := Find(Alias, NID);
+    if Result >= 0 then
+      Exit;
+  end;
   var F := Default(TPSPHLEFunction);
   F.Library_ := Lib;
   F.NID := NID;

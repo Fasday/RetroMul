@@ -39,6 +39,7 @@ type
     FPendingExec: string;
     FPendingExecArgs: TBytes;
     FBooted: Boolean;
+    FStopAtFrame: Boolean;
     procedure ResetServices;
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
     procedure Break_(C: TPSPCPU; Code: Cardinal);
@@ -298,12 +299,13 @@ end;
 
 procedure TPSPConsole.RunUntil(At: Int64);
 begin
-  while FScheduler.Now < At do
+  while True do
   begin
+    // Events that fell due during the last run are handled before returning.
     var E: TPSPEvent;
     while FScheduler.TakeDue(E) do
       DispatchEvent(E);
-    if FKernel.Exited then
+    if FKernel.Exited or (FScheduler.Now >= At) or (FStopAtFrame and FDisplay.FrameDone) then
       Break;
     if FPendingExec <> '' then
     begin
@@ -330,7 +332,9 @@ begin
     end;
     FKernel.ProcessInterrupts;
     var Deadline := Min(FScheduler.NextDue, At);
-    if FKernel.HasRunnable then
+    if not FKernel.InInterrupt and (FScheduler.Now < FKernel.BusyUntil) then
+      FScheduler.AdvanceTo(Min(Deadline, FKernel.BusyUntil))
+    else if FKernel.HasRunnable then
     begin
       var Budget := FScheduler.CyclesUntil(Deadline);
       if Budget > 4000000 then
@@ -353,9 +357,12 @@ procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
 begin
   FDisplay.SetInput(FInput);
   FDisplay.FrameDone := False;
-  var Limit := FScheduler.Now + Int64(PSPFrameNs) * 2;
-  while not FDisplay.FrameDone and not FKernel.Exited and (FScheduler.Now < Limit) do
-    RunUntil(Min(Limit, FScheduler.Due(TPSPEvent.VBlank) + 1));
+  FStopAtFrame := True;
+  try
+    RunUntil(FScheduler.Now + Int64(PSPFrameNs) * 2);
+  finally
+    FStopAtFrame := False;
+  end;
   Inc(FFrameNumber);
   Frame := Default(TEmulatorFrame);
   FDisplay.Render(Frame);

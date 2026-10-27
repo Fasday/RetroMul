@@ -361,6 +361,9 @@ type
     function EventFlagRetry(T: TPSPThread): Boolean;
     function CheckCallbacksNow: Boolean;
   public
+    // The kernel's own interrupt code holds the CPU until this time: no guest
+    // thread runs (guest interrupt handlers still do).
+    BusyUntil: Int64;
     constructor Create(CPU: TPSPCPU; Memory: TPSPMemory; HLE: TPSPHLE; Scheduler: TPSPScheduler);
     destructor Destroy; override;
     procedure Reset;
@@ -396,6 +399,9 @@ type
     procedure CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal = 0);
     procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil);
     procedure TriggerInterrupt(IntNo: Integer; SubNo: Integer = -1; Arg2: Cardinal = 0);
+    // Queues the enabled sub-interrupt handlers of IntNo; Done runs after the
+    // last one returns. Returns how many were queued (Done is not called for 0).
+    function QueueSubInterrupts(IntNo: Integer; Arg2: Cardinal; const Done: TProc): Integer;
     procedure ProcessInterrupts;
     procedure Trap(Code: Cardinal);
     procedure NotifyCallback(CB: TPSPCallback; Arg: Cardinal);

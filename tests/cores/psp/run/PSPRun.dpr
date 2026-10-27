@@ -43,6 +43,24 @@ begin
   TFile.WriteAllBytes(Name, Data);
 end;
 
+type
+  TWatch = class(TThread)
+    Console: TPSPConsole;
+    procedure Execute; override;
+  end;
+
+procedure TWatch.Execute;
+begin
+  while not Terminated do
+  begin
+    Sleep(2000);
+    if Terminated then
+      Break;
+    Writeln(ErrOutput, Format('[watch] pc=%.8x now=%d next=%d busy=%d thread=%s', [Console.CPU.CurPC, Console.Scheduler.Now div 1000,
+      Console.Scheduler.NextDue div 1000, Console.Kernel.BusyUntil div 1000, PSPThreadName(Console.Kernel.Current)]));
+  end;
+end;
+
 function ButtonOf(const S: string): TEmulatorButton;
 begin
   var L := S.ToLower;
@@ -124,6 +142,7 @@ begin
     var Quiet := False;
     var Strict := False;
     var TraceKernel := False;
+    var WatchOn := False;
     var ShotFile := '';
     var I := 2;
     while I <= ParamCount do
@@ -137,6 +156,7 @@ begin
       else if A = '-quiet' then Quiet := True
       else if A = '-strict' then Strict := True
       else if A = '-trace' then TraceKernel := True
+      else if A = '-watch' then WatchOn := True
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-press' then
       begin
@@ -182,6 +202,13 @@ begin
       Sink.Console := Console;
       Sink.ShotFile := ShotFile;
       Console.IO.OnScreenshot := Sink.Screenshot;
+      if WatchOn then
+      begin
+        var Watcher := TWatch.Create(True);
+        Watcher.Console := Console;
+        Watcher.FreeOnTerminate := True;
+        Watcher.Start;
+      end;
       Console.HLE.Strict := Strict;
       Console.Kernel.Trace := TraceKernel;
       Console.HLE.TraceCalls := TraceKernel;

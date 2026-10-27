@@ -180,7 +180,7 @@ def elf_imports(data):
     mi_off = None
     if etype == 0xFFA0 and phs:
         p0 = phs[0]
-        mi_off = p0[1] + (p0[3] & 0x7FFFFFFF)
+        mi_off = p0[3] & 0x7FFFFFFF
     else:
         # look for section .rodata.sceModuleInfo
         if shoff and shnum and shstrndx < shnum:

@@ -15,6 +15,8 @@ uses
 
 const
   PSPNever = High(Int64);
+  // The system has been up a while when a game starts.
+  PSPBootNs = Int64(2000000000);
 
 type
   TPSPEvent = (VBlank, HBlank, Kernel, Audio, GE, IO, Media, Utility, Frame);
@@ -56,7 +58,7 @@ end;
 
 procedure TPSPScheduler.Reset;
 begin
-  Now := 0;
+  Now := PSPBootNs;
   FRemainder := 0;
   FMHz := 222;
   for var E := Low(TPSPEvent) to High(TPSPEvent) do

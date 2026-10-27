@@ -24,7 +24,7 @@ implementation
 
 procedure TPSPAudio.Reset;
 begin
-  FProduced := 0;
+  FProduced := FKernel.Scheduler.Now * PSPAudioRate div 1000000000;
 end;
 
 procedure TPSPAudio.Register;

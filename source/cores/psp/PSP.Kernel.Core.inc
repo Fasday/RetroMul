@@ -222,6 +222,7 @@ begin
   FCompiledSdkVersion := 0;
   FCompilerVersion := 0;
   FIdle := True;
+  BusyUntil := 0;
   FDebugOut.Clear;
   FKernelPartition.Reset;
   FVolatilePartition.Reset;
@@ -900,6 +901,33 @@ begin
       Continue;
     var H := FSubIntr[IntNo, S];
     if H.Enabled and (H.Handler <> 0) then
+      QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP);
+  end;
+end;
+
+function TPSPKernel.QueueSubInterrupts(IntNo: Integer; Arg2: Cardinal; const Done: TProc): Integer;
+begin
+  Result := 0;
+  if (IntNo < 0) or (IntNo > High(FSubIntr)) then
+    Exit;
+  var Last := -1;
+  for var S := 0 to 31 do
+    if FSubIntr[IntNo, S].Enabled and (FSubIntr[IntNo, S].Handler <> 0) then
+      Last := S;
+  for var S := 0 to Last do
+  begin
+    var H := FSubIntr[IntNo, S];
+    if not H.Enabled or (H.Handler = 0) then
+      Continue;
+    Inc(Result);
+    if S = Last then
+      QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP,
+        procedure(Value: Cardinal)
+        begin
+          if Assigned(Done) then
+            Done();
+        end)
+    else
       QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP);
   end;
 end;
