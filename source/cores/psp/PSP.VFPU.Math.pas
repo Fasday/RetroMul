@@ -166,20 +166,18 @@ begin
   end;
 end;
 
-const
-  SumWindow = 24;
-
+// The dot product unit adds the products in lane order. Each step aligns the
+// running sum and the next product to the larger of their exponents (for the
+// product, the sum of its operands' exponents), keeps 25 bits below that,
+// truncating, and truncates the sum back to 24 bits.
 function VSum4(const A, B: array of Cardinal; Count: Integer; Skip: Cardinal): Cardinal;
-var
-  Sign: array[0..3] of Boolean;
-  Mant: array[0..3] of UInt64;
-  Expo: array[0..3] of Integer;
 begin
   var HasNaN := False;
   var PosInf := False;
   var NegInf := False;
-  var MaxE := -100000;
-  var Used := 0;
+  var AccNeg := False;
+  var AccM: UInt64 := 0;
+  var AccE: Integer := 0;
   for var I := 0 to Count - 1 do
   begin
     if (Skip shr I) and 1 <> 0 then
@@ -187,8 +185,8 @@ begin
     var X := VFlush(A[I]);
     var Y := VFlush(B[I]);
     var Neg := ((X xor Y) and $80000000) <> 0;
-    var EX := (X shr 23) and $FF;
-    var EY := (Y shr 23) and $FF;
+    var EX := Integer((X shr 23) and $FF);
+    var EY := Integer((Y shr 23) and $FF);
     if (EX = $FF) or (EY = $FF) then
     begin
       if ((EX = $FF) and ((X and $7FFFFF) <> 0)) or ((EY = $FF) and ((Y and $7FFFFF) <> 0)) then
@@ -203,20 +201,47 @@ begin
     end;
     if (EX = 0) or (EY = 0) then
       Continue;
-    // Exact 48-bit product of the two 24-bit mantissas.
+    // Product = M * 2^(RP - 46), M in [2^46, 2^48).
     var M := UInt64((X and $7FFFFF) or $800000) * UInt64((Y and $7FFFFF) or $800000);
-    var E := Integer(EX) + Integer(EY) - 127;
-    // Normalise so the leading bit sits at bit 47.
-    if (M and (UInt64(1) shl 47)) = 0 then
-      M := M shl 1
+    var RP := EX + EY - 254;
+    var R := RP;
+    if (AccM <> 0) and (AccE > R) then
+      R := AccE;
+    var PSh := 21 + R - RP;
+    var PQ: Int64 := 0;
+    if PSh < 64 then
+      PQ := Int64(M shr PSh);
+    var AQ: Int64 := 0;
+    if AccM <> 0 then
+    begin
+      var D := R - AccE;
+      if D <= 2 then
+        AQ := Int64(AccM shl (2 - D))
+      else if D < 64 then
+        AQ := Int64(AccM shr (D - 2));
+    end;
+    if AccNeg then
+      AQ := -AQ;
+    if Neg then
+      PQ := -PQ;
+    var S := AQ + PQ;
+    if S = 0 then
+    begin
+      AccM := 0;
+      AccNeg := False;
+      Continue;
+    end;
+    AccNeg := S < 0;
+    var U: UInt64 := UInt64(Abs(S));
+    var Top := 63;
+    while (U and (UInt64(1) shl Top)) = 0 do
+      Dec(Top);
+    // Leading bit Top in units of 2^(R - 25): exponent R - 25 + Top.
+    AccE := R - 25 + Top;
+    if Top > 23 then
+      AccM := U shr (Top - 23)
     else
-      Inc(E);
-    Sign[Used] := Neg;
-    Mant[Used] := M;
-    Expo[Used] := E;
-    if E > MaxE then
-      MaxE := E;
-    Inc(Used);
+      AccM := U shl (23 - Top);
   end;
   if HasNaN or (PosInf and NegInf) then
     Exit(VF_NAN);
@@ -224,60 +249,17 @@ begin
     Exit($7F800000);
   if NegInf then
     Exit($FF800000);
-  if Used = 0 then
+  if AccM = 0 then
     Exit(0);
-  // Align every term to the largest exponent, keeping SumWindow bits below the
-  // leading bit of the largest one; the rest is truncated.
-  var Total: Int64 := 0;
-  for var I := 0 to Used - 1 do
-  begin
-    var Shift := 47 - SumWindow + (MaxE - Expo[I]);
-    var V: Int64;
-    if Shift >= 64 then
-      V := 0
-    else
-      V := Int64(Mant[I] shr Shift);
-    if Sign[I] then
-      Total := Total - V
-    else
-      Total := Total + V;
-  end;
-  if Total = 0 then
-    Exit(0);
-  var Neg := Total < 0;
-  var U: UInt64 := UInt64(Abs(Total));
-  var Top := 63;
-  while (U and (UInt64(1) shl Top)) = 0 do
-    Dec(Top);
-  var E := MaxE + (Top - SumWindow);
-  // Round to 24 bits, nearest even.
-  var Mant24: UInt64;
-  if Top > 23 then
-  begin
-    var Drop := Top - 23;
-    Mant24 := U shr Drop;
-    var Rem := U and ((UInt64(1) shl Drop) - 1);
-    var Half := UInt64(1) shl (Drop - 1);
-    if (Rem > Half) or ((Rem = Half) and ((Mant24 and 1) <> 0)) then
-    begin
-      Inc(Mant24);
-      if Mant24 = (UInt64(1) shl 24) then
-      begin
-        Mant24 := Mant24 shr 1;
-        Inc(E);
-      end;
-    end;
-  end
-  else
-    Mant24 := U shl (23 - Top);
   var SignBit: Cardinal := 0;
-  if Neg then
+  if AccNeg then
     SignBit := $80000000;
-  if E >= 255 then
+  var BE := AccE + 127;
+  if BE >= 255 then
     Exit(SignBit or $7F800000);
-  if E <= 0 then
+  if BE <= 0 then
     Exit(SignBit);
-  Result := SignBit or (Cardinal(E) shl 23) or (Cardinal(Mant24) and $7FFFFF);
+  Result := SignBit or (Cardinal(BE) shl 23) or (Cardinal(AccM) and $7FFFFF);
 end;
 
 { Function unit. Results carry 22 bits of mantissa. }
