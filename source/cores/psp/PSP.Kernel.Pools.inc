@@ -52,6 +52,7 @@ type
 const
   PSPErrorUnknownTlsplId = Cardinal($800201D0);
   PSPErrorTlsplFull = Cardinal($800201D1);
+  PSPErrorTlsplBusy = Cardinal($800201D2);
 
 { TPSPVpl }
 
@@ -271,8 +272,9 @@ begin
       Owner[N] := T;
       Next := (N + 1) mod Count;
       Addr := Block + Cardinal(N) * Stride;
-      // A block is cleared when a thread first gets it.
+      // A block is cleared when a thread gets it and when it gives it back.
       Kernel.Memory.Fill(Addr, 0, BlockSize);
+      T.TlsSlots[Index] := Addr;
       Exit(True);
     end;
   end;
@@ -317,6 +319,8 @@ begin
   if I < 0 then
     Exit;
   Owner[I] := nil;
+  T.TlsSlots[Index] := 0;
+  Kernel.Memory.Fill(Block + Cardinal(I) * Stride, 0, BlockSize);
   while Waiters.Count > 0 do
   begin
     var W := Waiters.First;
@@ -325,10 +329,10 @@ begin
       Break;
     if W.Wait.Data[0] <> 0 then
       Kernel.Memory.Write32(W.Wait.Data[0], A);
-    if W.Wait.Data[1] <> 0 then
-      Kernel.EndWait(W, A)
-    else
-      Kernel.EndWait(W, 0);
+    var IsGet := W.Wait.Data[1] <> 0;
+    Kernel.EndWait(W, 0);
+    if IsGet then
+      W.SetResult(A);
   end;
 end;
 
@@ -451,7 +455,7 @@ end;
 procedure TPSPKernel.hFreeVpl;
 begin
   var Addr := FHLE.Arg(1);
-  if (Addr <> 0) and not ValidUserAddress(Addr) then
+  if (Addr and $80000000) <> 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
@@ -527,15 +531,17 @@ begin
       Align := A;
   end;
   var Stride := AlignUp(BlockSize, Align);
-  var Total := UInt64(Stride) * Count;
-  if Total > $7FFFFFFF then
+  // The size is worked out in 32 bits: one that wraps to nothing is refused.
+  var Total := Cardinal(UInt64(Stride) * Count);
+  if Total = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
   var P := PoolPartition(PartId);
-  var Block: Cardinal;
-  if (Attr and $4000) <> 0 then
-    Block := P.Alloc(Cardinal(Total), akHigh, 0, 256, 'fpl:' + Name)
-  else
-    Block := P.Alloc(Cardinal(Total), akLow, 0, 256, 'fpl:' + Name);
+  var Block: Cardinal := 0;
+  if UInt64(Stride) * Count <= $7FFFFFFF then
+    if (Attr and $4000) <> 0 then
+      Block := P.Alloc(Total, akHigh, 0, 256, 'fpl:' + Name)
+    else
+      Block := P.Alloc(Total, akLow, 0, 256, 'fpl:' + Name);
   if Block = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
   var F := TPSPFpl.Create;
@@ -614,7 +620,7 @@ end;
 procedure TPSPKernel.hFreeFpl;
 begin
   var Addr := FHLE.Arg(1);
-  if (Addr <> 0) and not ValidUserAddress(Addr) then
+  if (Addr and $80000000) <> 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
@@ -755,63 +761,81 @@ begin
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if L = nil then
     begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
+  // Blocks other threads still hold keep the pool alive.
+  for var O in L.Owner do
+    if (O <> nil) and (O <> FCurrent) then
+      begin FHLE.Result(PSPErrorTlsplBusy); Exit; end;
   FHLE.Result(0);
   while L.Waiters.Count > 0 do
     EndWait(L.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
+  for var O in L.Owner do
+    if O <> nil then
+      O.TlsSlots[L.Index] := 0;
   PoolPartition(L.PartitionId).FreeBlock(L.Block);
   DeleteObject(L);
 end;
 
-procedure TPSPKernel.hGetTlsAddr;
+// The thread's own block, or a free one; False when it has to wait.
+function TPSPKernel.TlsTake(Obj: TPSPKernelObject; out Addr: Cardinal): Boolean;
 begin
-  var L := TPSPTlspl(TlsplOf(FHLE.Arg(0)));
-  if (L = nil) or (FCurrent = nil) then
-    begin FHLE.Result(0); Exit; end;
+  var L := TPSPTlspl(Obj);
   var I := L.Find(FCurrent);
   if I >= 0 then
-    begin FHLE.Result(L.Block + Cardinal(I) * L.Stride); Exit; end;
-  var A: Cardinal;
-  if L.Alloc(FCurrent, A) then
-    begin FHLE.Result(A); Exit; end;
-  if not CanWait then
+  begin
+    Addr := L.Block + Cardinal(I) * L.Stride;
+    Exit(True);
+  end;
+  Result := (L.Waiters.Count = 0) and L.Alloc(FCurrent, Addr);
+end;
+
+procedure TPSPKernel.hGetTlsAddr;
+begin
+  // The library keeps each thread's block by the pool's slot (bits 3..6 of
+  // the id) and only asks the kernel when it has none.
+  if (FCurrent = nil) or InInterrupt then
     begin FHLE.Result(0); Exit; end;
+  var Cached := FCurrent.TlsSlots[(FHLE.Arg(0) shr 3) and $F];
+  if Cached <> 0 then
+    begin FHLE.Result(Cached); Exit; end;
+  var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
+  if (L = nil) or not CanWait then
+    begin FHLE.Result(0); Exit; end;
+  var A: Cardinal;
+  if TlsTake(L, A) then
+    begin FHLE.Result(A); Exit; end;
   FHLE.Result(0);
   L.Waiters.Add(FCurrent);
-  BeginWaitData(PSPWaitTlspl, L, L.UID, 0, False, L.Retry, [0, 1]);
+  if BeginWaitData(PSPWaitTlspl, L, L.UID, 0, False, L.Retry, [0, 1]) then
+    FCurrent.Wait.FailAsZero := True;
 end;
 
 procedure TPSPKernel.hAllocateTlspl;
 begin
-  var L := TPSPTlspl(TlsplOf(FHLE.Arg(0)));
-  if (L = nil) or (FCurrent = nil) then
-    begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
   var OutPtr := FHLE.Arg(1);
-  var I := L.Find(FCurrent);
-  if I >= 0 then
-  begin
-    if OutPtr <> 0 then
-      FMemory.Write32(OutPtr, L.Block + Cardinal(I) * L.Stride);
-    FHLE.Result(0);
-    Exit;
-  end;
+  var TimeoutPtr := FHLE.Arg(2);
+  if not CanWait then
+    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  if ((OutPtr and $80000000) <> 0) or ((TimeoutPtr and $80000000) <> 0) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
+  if L = nil then
+    begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
   var A: Cardinal;
-  if L.Alloc(FCurrent, A) then
+  if TlsTake(L, A) then
   begin
     if OutPtr <> 0 then
       FMemory.Write32(OutPtr, A);
     FHLE.Result(0);
     Exit;
   end;
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   L.Waiters.Add(FCurrent);
-  BeginWaitData(PSPWaitTlspl, L, L.UID, FHLE.Arg(2), False, L.Retry, [OutPtr, 0]);
+  BeginWaitData(PSPWaitTlspl, L, L.UID, TimeoutPtr, False, L.Retry, [OutPtr, 0]);
 end;
 
 procedure TPSPKernel.hFreeTlspl;
 begin
-  var L := TPSPTlspl(TlsplOf(FHLE.Arg(0)));
+  var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if L = nil then
     begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
   FHLE.Result(0);
