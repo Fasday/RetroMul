@@ -446,7 +446,7 @@ end;
 
 procedure TPSPMpeg.hRingbufferQueryMemSize;
 begin
-  FHLE.Result(Cardinal(FHLE.ArgInt(0) * MpegRingPacketCost));
+  FHLE.Result(Cardinal(Int64(FHLE.ArgInt(0)) * MpegRingPacketCost));
 end;
 
 procedure TPSPMpeg.hRingbufferQueryPackNum;
@@ -462,7 +462,8 @@ begin
   var Size := FHLE.ArgInt(3);
   var Callback := FHLE.Arg(4);
   var CbArg := FHLE.Arg(5);
-  if Size < Packets * MpegRingPacketCost then
+  // A 32-bit product, as the library computes it.
+  if Size < Integer(Cardinal(Int64(Packets) * MpegRingPacketCost)) then
   begin
     FHLE.Result(ERROR_MPEG_NO_MEMORY);
     Exit;
@@ -475,7 +476,7 @@ begin
   FMemory.Write32(Rb + $14, Data);
   FMemory.Write32(Rb + $18, Callback);
   FMemory.Write32(Rb + $1C, CbArg);
-  FMemory.Write32(Rb + $20, Data + Cardinal(Packets) * PSMFPacketSize);
+  FMemory.Write32(Rb + $20, Cardinal(Int64(Data) + Int64(Cardinal(Packets)) * PSMFPacketSize));
   FMemory.Write32(Rb + $24, 0);
   FMemory.Write32(Rb + $28, 0);
   FMemory.Write32(Rb + $2C, FHLE.CPU.Ctx.GPR[28]);
@@ -500,7 +501,7 @@ begin
   if (Write < 0) or (Write >= Total) then
     Write := 0;
   var Chunk := Min(Integer(Remaining), Total - Write);
-  var Data := FMemory.Read32(Rb + $14) + Cardinal(Write) * PSMFPacketSize;
+  var Data := Cardinal(Int64(FMemory.Read32(Rb + $14)) + Int64(Write) * PSMFPacketSize);
   var Arg := FMemory.Read32(Rb + $1C);
   var GP := FMemory.Read32(Rb + $2C);
   FKernel.CallGuest(Callback, [Data, Cardinal(Chunk), Arg],
@@ -521,7 +522,7 @@ begin
         R := Chunk;
       var W := (Write + R) mod Total;
       FMemory.Write32(Rb + 8, Cardinal(W));
-      FMemory.Write32(Rb + $0C, FMemory.Read32(Rb + $0C) + Cardinal(R));
+      FMemory.Write32(Rb + $0C, Cardinal(Int64(FMemory.Read32(Rb + $0C)) + R));
       PutStep(Rb, Remaining - Cardinal(R), Done + Cardinal(R));
     end, GP);
 end;
@@ -798,7 +799,7 @@ begin
     if Held >= Filled then
       Break;
     var Index := (Inst.RingRead + Held) mod Total;
-    FMemory.ReadBytes(Base + Cardinal(Index) * PSMFPacketSize, Pack[0], PSMFPacketSize);
+    FMemory.ReadBytes(Cardinal(Int64(Base) + Int64(Index) * PSMFPacketSize), Pack[0], PSMFPacketSize);
     Inst.Demux.FeedPack(@Pack[0]);
     Result := Inst.Demux.HasAu(Q);
   end;
