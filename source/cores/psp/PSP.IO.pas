@@ -1178,7 +1178,11 @@ begin
             FMemory.Write32(P + 12, 512);
             FMemory.Write32(P + 16, 64);
           end;
-        $02425823, $02425824:
+        // FAT on the stick ready: 1 (0 without a stick, utility/savedata/nomemstick).
+        $02425823:
+          if OutPtr <> 0 then
+            FMemory.Write32(OutPtr, 1);
+        $02425824:
           if OutPtr <> 0 then
             FMemory.Write32(OutPtr, 0);
       end;
