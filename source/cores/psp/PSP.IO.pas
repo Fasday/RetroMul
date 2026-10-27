@@ -13,7 +13,7 @@ uses
   PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media;
 
 type
-  TPSPDeviceKind = (dkNone, dkUMD, dkHost, dkEmulator);
+  TPSPDeviceKind = (dkNone, dkUMD, dkHost, dkEmulator, dkTTY, dkMsStor);
 
   TPSPOpenFile = class
   public
@@ -60,6 +60,7 @@ type
     function Resolve(const Path: string): string;
     function HostPath(const Device, Rest: string): string;
     function AllocFd: Integer;
+    function AllocTTYFd: Integer;
     function GetFile(Fd: Cardinal): TPSPOpenFile;
     function DoRead(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
     function DoWrite(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
@@ -70,7 +71,11 @@ type
     function AsyncRetry(T: TPSPThread): Boolean;
     procedure AsyncAbort(T: TPSPThread);
     procedure WaitAsync(AllowCB: Boolean);
-    procedure WriteStat(Address: Cardinal; IsDir: Boolean; Size: Int64; Time: TDateTime);
+    procedure WriteStat(Address: Cardinal; IsDir: Boolean; Size: Int64; Time: TDateTime; ReadOnly: Boolean;
+      WritePrivate: Boolean = False; LBA: Cardinal = 0);
+    procedure DeviceYield(Result: Cardinal; Latency: Int64);
+    function OnHostDevice(const Path: string): Boolean;
+    function DeviceYieldRetry(T: TPSPThread): Boolean;
     function ReadLatency(F: TPSPOpenFile; Size: Int64): Int64;
     procedure hOpen;
     procedure hOpenAsync;
@@ -211,6 +216,10 @@ begin
     Result := dkHost
   else if (Device = 'emulator') or (Device = 'kemulator') then
     Result := dkEmulator
+  else if Device.StartsWith('tty') then
+    Result := dkTTY
+  else if Device.StartsWith('msstor') then
+    Result := dkMsStor
   else
     Result := dkNone;
 end;
@@ -274,12 +283,32 @@ begin
   Result := TPath.Combine(Root, NormalizeRest(Rest).Substring(1).Replace('/', PathDelim));
 end;
 
+function TPSPIO.OnHostDevice(const Path: string): Boolean;
+begin
+  var Dev, Rest: string;
+  Result := Split(Resolve(Path), Dev, Rest) and (DeviceKind(Dev) = dkHost);
+end;
+
+function HostReadOnly(const Name: string): Boolean;
+begin
+  var A := FileGetAttr(Name);
+  Result := (A <> -1) and ((A and faReadOnly) <> 0);
+end;
+
 function TPSPIO.HostFileName(const Path: string): string;
 begin
   var Dev, Rest: string;
   if not Split(Resolve(Path), Dev, Rest) or (DeviceKind(Dev) <> dkHost) then
     Exit('');
   Result := HostPath(Dev, Rest);
+end;
+
+function TPSPIO.AllocTTYFd: Integer;
+begin
+  // Descriptors 0..2 are stdio; the first free one after the ttys' own.
+  Result := 5;
+  while FFiles.ContainsKey(Result) do
+    Inc(Result);
 end;
 
 function TPSPIO.AllocFd: Integer;
@@ -363,7 +392,7 @@ begin
         if Name = '' then
           Exit(SCE_KERNEL_ERROR_NODEV);
         if DirectoryExists(Name) then
-          Exit(SCE_ERROR_ERRNO_EISDIR);
+          Exit(SCE_ERROR_ERRNO_ENOENT);
         var Exists := FileExists(Name);
         if not Exists and ((Flags and PSP_O_CREAT) = 0) then
           Exit(SCE_ERROR_ERRNO_ENOENT);
@@ -392,10 +421,10 @@ begin
         if (Flags and PSP_O_APPEND) <> 0 then
           S.Position := S.Size;
       end;
-    dkEmulator:
+    dkEmulator, dkTTY, dkMsStor:
       begin
         F := TPSPOpenFile.Create;
-        F.Kind := dkEmulator;
+        F.Kind := DeviceKind(Dev);
         F.Path := Path;
       end;
   else
@@ -442,7 +471,7 @@ end;
 function TPSPIO.DoRead(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
 begin
   if (F.Flags and PSP_O_RDONLY) = 0 then
-    Exit(Int64(SCE_KERNEL_ERROR_BADF));
+    Exit(Int64(Integer(SCE_KERNEL_ERROR_BADF)));
   case F.Kind of
     dkUMD:
       begin
@@ -458,7 +487,7 @@ begin
             Exit(0);
           var P := FMemory.Ptr(Address, Avail);
           if P = nil then
-            Exit(Int64(SCE_KERNEL_ERROR_ILLEGAL_ADDR));
+            Exit(Int64(Integer(SCE_KERNEL_ERROR_ILLEGAL_ADDR)));
           FDisc.ReadAt(Start, P^, Avail);
           FMemory.Touched(Address, Avail);
           F.Position := Pos + (Avail + 2047) div 2048;
@@ -469,7 +498,7 @@ begin
           Exit(0);
         var P := FMemory.Ptr(Address, Avail);
         if P = nil then
-          Exit(Int64(SCE_KERNEL_ERROR_ILLEGAL_ADDR));
+          Exit(Int64(Integer(SCE_KERNEL_ERROR_ILLEGAL_ADDR)));
         FDisc.ReadAt(F.DiscStart + Pos, P^, Avail);
         FMemory.Touched(Address, Avail);
         F.Position := Pos + Avail;
@@ -481,7 +510,7 @@ begin
           Exit(0);
         var P := FMemory.Ptr(Address, Size);
         if P = nil then
-          Exit(Int64(SCE_KERNEL_ERROR_ILLEGAL_ADDR));
+          Exit(Int64(Integer(SCE_KERNEL_ERROR_ILLEGAL_ADDR)));
         Result := F.Stream.Read(P^, Size);
         FMemory.Touched(Address, Result);
       end;
@@ -496,7 +525,7 @@ begin
     dkHost:
       begin
         if (F.Flags and PSP_O_WRONLY) = 0 then
-          Exit(Int64(SCE_KERNEL_ERROR_BADF));
+          Exit(Int64(Integer(SCE_KERNEL_ERROR_BADF)));
         if Size = 0 then
           Exit(0);
         var Buf: TBytes;
@@ -506,14 +535,14 @@ begin
           F.Stream.Position := F.Stream.Size;
         Result := F.Stream.Write(Buf[0], Size);
       end;
-    dkEmulator:
+    dkEmulator, dkTTY:
       begin
         if Assigned(FOnOutput) then
           FOnOutput(FMemory.ReadAnsi(Address, Size));
         Result := Size;
       end;
   else
-    Result := Int64(SCE_KERNEL_ERROR_BADF);
+    Result := Int64(Integer(SCE_KERNEL_ERROR_BADF));
   end;
 end;
 
@@ -531,10 +560,10 @@ begin
           1: NewPos := F.Position + Offset;
           2: NewPos := Size + Offset;
         else
-          Exit(Int64(SCE_KERNEL_ERROR_INVAL));
+          Exit(Int64(Integer(SCE_KERNEL_ERROR_INVAL)));
         end;
         if NewPos < 0 then
-          Exit(Int64(SCE_KERNEL_ERROR_INVAL));
+          Exit(Int64(Integer(SCE_ERROR_ERRNO_EINVAL)));
         F.Position := NewPos;
         Result := NewPos;
       end;
@@ -546,7 +575,7 @@ begin
           1: Origin := soCurrent;
           2: Origin := soEnd;
         else
-          Exit(Int64(SCE_KERNEL_ERROR_INVAL));
+          Exit(Int64(Integer(SCE_KERNEL_ERROR_INVAL)));
         end;
         var Target: Int64;
         case Whence of
@@ -556,7 +585,7 @@ begin
           Target := F.Stream.Size + Offset;
         end;
         if Target < 0 then
-          Exit(Int64(SCE_KERNEL_ERROR_INVAL));
+          Exit(Int64(Integer(SCE_ERROR_ERRNO_EINVAL)));
         Result := F.Stream.Seek(Offset, Origin);
       end;
   else
@@ -677,20 +706,30 @@ begin
   end;
 end;
 
-procedure TPSPIO.WriteStat(Address: Cardinal; IsDir: Boolean; Size: Int64; Time: TDateTime);
+procedure TPSPIO.WriteStat(Address: Cardinal; IsDir: Boolean; Size: Int64; Time: TDateTime; ReadOnly: Boolean;
+  WritePrivate: Boolean; LBA: Cardinal);
 begin
   var Buf: array[0..$57] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
+  var Mode: Cardinal := $01FF;
+  var Attr: Cardinal := 0;
+  if ReadOnly then
+  begin
+    Mode := $016D;
+    Attr := $01;
+  end;
   if IsDir then
   begin
-    PCardinal(@Buf[0])^ := $11FF;
-    PCardinal(@Buf[4])^ := $17;
+    Mode := Mode or $1000;
+    Attr := Attr or $10;
   end
   else
   begin
-    PCardinal(@Buf[0])^ := $21FF;
-    PCardinal(@Buf[4])^ := $27;
+    Mode := Mode or $2000;
+    Attr := Attr or $20;
   end;
+  PCardinal(@Buf[0])^ := Mode;
+  PCardinal(@Buf[4])^ := Attr;
   PInt64(@Buf[8])^ := Size;
   if Time <> 0 then
     for var K := 0 to 2 do
@@ -706,7 +745,37 @@ begin
       PWord(@Buf[O + 10])^ := S;
       PCardinal(@Buf[O + 12])^ := Cardinal(Ms) * 1000;
     end;
-  FMemory.WriteBytes(Address, Buf, SizeOf(Buf));
+  PCardinal(@Buf[64])^ := LBA;
+  if WritePrivate then
+    FMemory.WriteBytes(Address, Buf, SizeOf(Buf))
+  else
+    FMemory.WriteBytes(Address, Buf, 64);
+end;
+
+procedure TPSPIO.DeviceYield(Result: Cardinal; Latency: Int64);
+begin
+  // The memory stick driver serves requests on its own thread: the caller
+  // gives up the CPU while it does.
+  FHLE.Result(Result);
+  if not FKernel.CanWait then
+    Exit;
+  var T := FKernel.Current;
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, DeviceYieldRetry, nil, 'iodev');
+  if T.Wait.HLETag <> 'iodev' then
+    Exit;
+  T.Wait.Data[0] := Result;
+  var K := FKernel;
+  FKernel.AddTimer(FKernel.Scheduler.Now + Latency, T,
+    procedure
+    begin
+      if T.IsWaiting and (T.Wait.HLETag = 'iodev') then
+        K.EndWait(T, T.Wait.Data[0]);
+    end);
+end;
+
+function TPSPIO.DeviceYieldRetry(T: TPSPThread): Boolean;
+begin
+  Result := False;
 end;
 
 { HLE }
@@ -716,14 +785,25 @@ begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
   var F: TPSPOpenFile;
   var Err := OpenPath(Path, FHLE.Arg(1), FHLE.Arg(2), F);
+  var Host := OnHostDevice(Path);
   if Err <> 0 then
   begin
     FHLE.Log('sceIoOpen %s -> %.8x', [Path, Err]);
-    begin FHLE.Result(Err); Exit; end;
+    if Host then
+      DeviceYield(Err, 30000)
+    else
+      FHLE.Result(Err);
+    Exit;
   end;
-  F.Id := AllocFd;
+  if F.Kind = dkTTY then
+    F.Id := AllocTTYFd
+  else
+    F.Id := AllocFd;
   FFiles.Add(F.Id, F);
-  FHLE.Result(Cardinal(F.Id));
+  if Host then
+    DeviceYield(Cardinal(F.Id), 30000)
+  else
+    FHLE.Result(Cardinal(F.Id));
 end;
 
 procedure TPSPIO.hOpenAsync;
@@ -876,6 +956,20 @@ end;
 function TPSPIO.IoctlCommon(F: TPSPOpenFile; Cmd, InPtr, InLen, OutPtr, OutLen: Cardinal): Cardinal;
 begin
   Result := 0;
+  if F.Kind = dkMsStor then
+  begin
+    case Cmd of
+      $02125008, $02125009:
+        begin
+          if (OutPtr = 0) or (OutLen < 4) then
+            Exit($80220183);
+          FMemory.Write32(OutPtr, Ord(Cmd = $02125008));
+        end;
+    else
+      Exit($80220183);
+    end;
+    Exit;
+  end;
   if F.Kind <> dkUMD then
     Exit(SCE_KERNEL_ERROR_UNSUP);
   case Cmd of
@@ -944,6 +1038,16 @@ begin
         $20:
           if Assigned(FOnScreenshot) then
             FOnScreenshot();
+      end;
+    dkMsStor:
+      case Cmd of
+        $02125802:
+          if (OutPtr <> 0) and (OutLen >= 4) then
+            FMemory.Write32(OutPtr, $40)
+          else
+            FHLE.Result($80220183);
+      else
+        FHLE.Result($80220183);
       end;
     dkUMD:
       case Cmd of
@@ -1014,18 +1118,22 @@ begin
         var E: TPSPDiscEntry;
         if not FDisc.Entry(Rest, E) then
           begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
-        WriteStat(StatPtr, E.Directory, E.Size, E.Modified);
         // UMD files keep their sector number in st_private[0].
-        FMemory.Write32(StatPtr + 64, E.LBA);
+        WriteStat(StatPtr, E.Directory, E.Size, E.Modified, True, True, E.LBA);
         FHLE.Result(0);
       end;
     dkHost:
       begin
         var Name := HostPath(Dev, Rest);
+        if NormalizeRest(Rest) = '/' then
+        begin
+          FHLE.Result(SCE_ERROR_ERRNO_EINVAL);
+          Exit;
+        end;
         if DirectoryExists(Name) then
         begin
-          WriteStat(StatPtr, True, 0, TDirectory.GetLastWriteTime(Name));
-          FHLE.Result(0);
+          WriteStat(StatPtr, True, 0, TDirectory.GetLastWriteTime(Name), HostReadOnly(Name));
+          DeviceYield(0, 20000);
         end
         else if FileExists(Name) then
         begin
@@ -1036,11 +1144,11 @@ begin
             Size := SR.Size;
             FindClose(SR);
           end;
-          WriteStat(StatPtr, False, Size, TFile.GetLastWriteTime(Name));
-          FHLE.Result(0);
+          WriteStat(StatPtr, False, Size, TFile.GetLastWriteTime(Name), HostReadOnly(Name));
+          DeviceYield(0, 20000);
         end
         else
-          FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+          DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000);
       end;
   else
     FHLE.Result(SCE_KERNEL_ERROR_NODEV);
@@ -1049,7 +1157,34 @@ end;
 
 procedure TPSPIO.hChstat;
 begin
-  FHLE.Result(0);
+  var Name := HostFileName(FMemory.ReadString(FHLE.Arg(0), 1024));
+  var StatPtr := FHLE.Arg(1);
+  var Bits := FHLE.Arg(2);
+  if Name = '' then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
+  if not FileExists(Name) and not DirectoryExists(Name) then
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000);
+    Exit;
+  end;
+  var ReadOnly := HostReadOnly(Name);
+  if (Bits and 1) <> 0 then
+    ReadOnly := (FMemory.Read32(StatPtr) and $92) = 0;
+  if (Bits and 2) <> 0 then
+    ReadOnly := (FMemory.Read32(StatPtr + 4) and 1) <> 0;
+  var A := FileGetAttr(Name);
+  if A <> -1 then
+  begin
+    if ReadOnly then
+      A := A or faReadOnly
+    else
+      A := A and not faReadOnly;
+    FileSetAttr(Name, A);
+  end;
+  DeviceYield(0, 20000);
 end;
 
 procedure TPSPIO.hDopen;
@@ -1099,6 +1234,8 @@ begin
           E.Name := ExtractFileName(D);
           E.Directory := True;
           E.Modified := TDirectory.GetLastWriteTime(D);
+          if HostReadOnly(D) then
+            E.Accessed := 1;
           F.Entries := F.Entries + [E];
         end;
         for var FN in TDirectory.GetFiles(Name) do
@@ -1112,6 +1249,8 @@ begin
             FindClose(SR);
           end;
           E.Modified := TFile.GetLastWriteTime(FN);
+          if HostReadOnly(FN) then
+            E.Accessed := 1;
           F.Entries := F.Entries + [E];
         end;
       end;
@@ -1134,9 +1273,10 @@ begin
     begin FHLE.Result(0); Exit; end;
   var E := F.Entries[F.EntryIndex];
   Inc(F.EntryIndex);
-  WriteStat(P, E.Directory, E.Size, E.Modified);
   if F.Kind = dkUMD then
-    FMemory.Write32(P + 64, E.LBA);
+    WriteStat(P, E.Directory, E.Size, E.Modified, True, True, E.LBA)
+  else
+    WriteStat(P, E.Directory, E.Size, E.Modified, E.Accessed <> 0);
   FMemory.WriteString(P + $58, RawByteString(E.Name), 256);
   FHLE.Result(1);
 end;
@@ -1157,10 +1297,10 @@ begin
   if Name = '' then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if DirectoryExists(Name) or FileExists(Name) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_EEXIST); Exit; end;
+    begin DeviceYield(SCE_ERROR_ERRNO_EEXIST, 20000); Exit; end;
   if not DirectoryExists(ExtractFileDir(Name)) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
-  if CreateDir(Name) then FHLE.Result(0) else FHLE.Result(SCE_ERROR_ERRNO_EACCES);
+    begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
+  if CreateDir(Name) then DeviceYield(0, 30000) else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hRmdir;
@@ -1169,8 +1309,8 @@ begin
   if Name = '' then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not DirectoryExists(Name) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
-  if RemoveDir(Name) then FHLE.Result(0) else FHLE.Result(SCE_ERROR_ERRNO_ENOTEMPTY);
+    begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
+  if RemoveDir(Name) then DeviceYield(0, 30000) else DeviceYield(SCE_ERROR_ERRNO_ENOTEMPTY, 30000);
 end;
 
 procedure TPSPIO.hRemove;
@@ -1179,24 +1319,58 @@ begin
   if Name = '' then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not FileExists(Name) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
-  if DeleteFile(Name) then FHLE.Result(0) else FHLE.Result(SCE_ERROR_ERRNO_EACCES);
+    begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
+  if DeleteFile(Name) then DeviceYield(0, 30000) else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hRename;
 begin
-  var Src := HostFileName(FMemory.ReadString(FHLE.Arg(0), 1024));
+  // The FAT driver renames in place: only the new name's last part counts.
+  var SrcPath := FMemory.ReadString(FHLE.Arg(0), 1024);
   var DstPath := FMemory.ReadString(FHLE.Arg(1), 1024);
-  if not DstPath.Contains(':') and not DstPath.Contains('/') then
-    DstPath := ExtractFilePath(FMemory.ReadString(FHLE.Arg(0), 1024).Replace('/', '\')).Replace('\', '/') + DstPath;
-  var Dst := HostFileName(DstPath);
-  if (Src = '') or (Dst = '') then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
+  if (SrcPath.IndexOfAny(['*', '?']) >= 0) or (DstPath.IndexOfAny(['*', '?']) >= 0) then
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_EINVAL, 20000);
+    Exit;
+  end;
+  var SrcDev, SrcRest, DstDev, DstRest: string;
+  if not Split(Resolve(SrcPath), SrcDev, SrcRest) then
+  begin
+    FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+    Exit;
+  end;
+  if DstPath.Contains(':') and Split(DstPath, DstDev, DstRest) and (DstDev <> SrcDev) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_XDEV);
+    Exit;
+  end;
+  var Src := HostFileName(SrcPath);
+  if Src = '' then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
+  var NewName := DstPath.Replace('\', '/');
+  if NewName.Contains(':') then
+    NewName := NewName.Substring(NewName.IndexOf(':') + 1);
+  while NewName.EndsWith('/') do
+    NewName := NewName.Substring(0, NewName.Length - 1);
+  NewName := NewName.Substring(NewName.LastIndexOf('/') + 1);
   if not FileExists(Src) and not DirectoryExists(Src) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
-  if FileExists(Dst) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_EEXIST); Exit; end;
-  if RenameFile(Src, Dst) then FHLE.Result(0) else FHLE.Result(SCE_ERROR_ERRNO_EACCES);
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000);
+    Exit;
+  end;
+  var Dst := TPath.Combine(ExtractFileDir(Src), NewName);
+  if FileExists(Dst) or DirectoryExists(Dst) then
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_EEXIST, 20000);
+    Exit;
+  end;
+  if RenameFile(Src, Dst) then
+    DeviceYield(0, 30000)
+  else
+    DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hChdir;

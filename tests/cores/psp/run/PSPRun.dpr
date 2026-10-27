@@ -7,7 +7,7 @@ program PSPRun;
 // -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
 
 uses
-  System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
+  Winapi.Windows, System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
 
 type
@@ -192,8 +192,21 @@ begin
     end;
     if (Ext = '.iso') or (Ext = '.cso') then
       Prog.MediaPath := FileName;
+    // Every run gets its own memory stick, and tests a copy of their folder as host0:,
+    // so runs in parallel do not see each other's files.
+    var Scratch := TPath.Combine(TPath.GetTempPath, Format('psprun-%d', [GetCurrentProcessId]));
     var HostRoot := ExtractFileDir(FileName);
-    var Memstick := TPath.Combine(TPath.GetTempPath, 'psprun-memstick');
+    var Memstick := TPath.Combine(Scratch, 'ms0');
+    if TestMode then
+    begin
+      var Host := TPath.Combine(Scratch, 'host0');
+      ForceDirectories(Host);
+      for var F in TDirectory.GetFiles(HostRoot) do
+        TFile.Copy(F, TPath.Combine(Host, ExtractFileName(F)), True);
+      for var D in TDirectory.GetDirectories(HostRoot) do
+        TDirectory.Copy(D, TPath.Combine(Host, ExtractFileName(D)));
+      HostRoot := Host;
+    end;
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick);
@@ -281,6 +294,11 @@ begin
       Console.Free;
       Sink.Free;
       Presses.Free;
+      try
+        if TDirectory.Exists(Scratch) then
+          TDirectory.Delete(Scratch, True);
+      except
+      end;
     end;
   except
     on E: Exception do
