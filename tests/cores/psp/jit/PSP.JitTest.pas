@@ -48,6 +48,9 @@ const
   RegionNames: array[0..2] of string = ('RAM', 'VRAM', 'scratchpad');
   KindNames: array[0..2] of string = ('interpreter', 'recompiler', 'model');
   CodeWords = 4096;
+  // Kernel stubs at the end of the code.
+  StubCount = 32;
+  StubWord = CodeWords - 2 - 2 * StubCount;
   DataBase = $08900000;
   OtherBase = $08A00000;
 
@@ -213,6 +216,7 @@ procedure MakeProgram(var Code: array of Cardinal; Start: Cardinal; var Pool: ar
 begin
   for var K := 0 to High(Pool) do
     Pool[K] := AluInstruction;
+  var Sparse := Next(4) = 0;
   var I := 0;
   while I < CodeWords - 2 do
   begin
@@ -252,7 +256,7 @@ begin
           var R := Pick([24, 25]);
           var Kind: Cardinal := $2B;
           if Next(16) = 0 then
-            Kind := Pick([$28, $29]);
+            Kind := Pick([$28, $29, $2A, $2E]);
           Op := (Kind shl 26) or (27 shl 21) or (R shl 16) or ((Cardinal(Target) * 4) and $FFFF);
         end;
       56..73:
@@ -275,7 +279,14 @@ begin
           var Target := Cardinal(I) + 2 + Next(200);
           if (Target > CodeWords - 3) or (Next(4) = 0) then
             Target := Next(CodeWords - 2);
-          Op := (Cardinal(Pick([2, 3])) shl 26) or (((Start + Target * 4) and $0FFFFFFF) shr 2);
+          var Kind := Pick([2, 3]);
+          if Next(3) = 0 then
+          begin
+            // A call of a kernel stub (JR $31 with a SYSCALL in its slot).
+            Target := StubWord + 2 * Next(StubCount);
+            Kind := 3;
+          end;
+          Op := (Kind shl 26) or (((Start + Target * 4) and $0FFFFFFF) shr 2);
         end;
       78..80:
         if Next(2) = 0 then
@@ -310,8 +321,16 @@ begin
     else
       Op := 0;
     end;
+    // (Long blocks: few branches.)
+    if Sparse and (Op shr 26 in [1..7, $11, $14..$17]) and (Next(16) <> 0) then
+      Op := AluInstruction;
     Code[I] := Op;
     Inc(I);
+  end;
+  for var K := 0 to StubCount - 1 do
+  begin
+    Code[StubWord + 2 * K] := $03E00008;
+    Code[StubWord + 2 * K + 1] := (Next(64) shl 6) or $C;
   end;
   // The end goes back to the start.
   Code[CodeWords - 2] := (2 shl 26) or ((Start and $0FFFFFFF) shr 2);
@@ -324,7 +343,7 @@ begin
   // their own next words and syscalls; random filler elsewhere.
   MakeProgram(Code, Start, Pool);
   var I := 0;
-  while I < CodeWords - 64 do
+  while I < StubWord - 40 do
   begin
     var Len := 4 + Integer(Next(12));
     var Head := I;
@@ -456,7 +475,7 @@ begin
   try
     for var P := 0 to Programs - 1 do
     begin
-      Rng := Cardinal(P) * 2654435761 + 12345;
+      Rng := Cardinal((UInt64(P) * 2654435761 + 12345) and $FFFFFFFF);
       var Start: Cardinal := $08800000;
       if Next(4) = 0 then
         Start := $88800000;
@@ -527,6 +546,9 @@ begin
         if Next(3) = 0 then
         begin
           var NewPC := Start + Next(CodeWords - 2) * 4;
+          // (The same code through the other segment: other blocks.)
+          if Next(6) = 0 then
+            NewPC := NewPC xor $80000000;
           for var M in Machines do
             M.CPU.SetPC(NewPC);
         end;

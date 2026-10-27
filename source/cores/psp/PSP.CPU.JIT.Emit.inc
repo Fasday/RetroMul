@@ -267,6 +267,12 @@ begin
       end;
     jkHandler:
       EmitCall(At, Op, Handler);
+    jkPure:
+      begin
+        J.Call(Handler, [JSelf, JImm(Op)]);
+        if MayStore(Op) then
+          J.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), HitExit(At));
+      end;
     jkSLL:
       ShiftBy(jsShl);
     jkSRL:

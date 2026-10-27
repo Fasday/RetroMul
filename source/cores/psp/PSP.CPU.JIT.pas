@@ -24,6 +24,8 @@ unit PSP.CPU.JIT;
 // PSPJIT=off (the interpreter), model (HW.JIT's model runs the code), stats
 // (counts at the end); several with commas.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+// (Guest addresses wrap.)
+{$Q-}
 {$POINTERMATH ON}
 
 interface
@@ -162,7 +164,7 @@ function CreatePSPRecompiler(CPU: TPSPCPU): TPSPRecompiler;
 implementation
 
 type
-  TJitKind = (jkNop, jkHandler, jkEnd, jkHBranch,
+  TJitKind = (jkNop, jkHandler, jkPure, jkEnd, jkHBranch,
     jkSLL, jkSRL, jkSRA, jkROTR, jkMOVZ, jkMOVN, jkMFHI, jkMTHI, jkMFLO, jkMTLO,
     jkADDU, jkSUBU, jkAND, jkOR, jkXOR, jkNOR, jkSLT, jkSLTU, jkMAX, jkMIN,
     jkADDIU, jkSLTI, jkSLTIU, jkANDI, jkORI, jkXORI, jkLUI, jkMFC0,
@@ -185,6 +187,13 @@ const
     $50000000, $54000000, $58000000, $5C000000, $04020000, $04030000, $04120000, $04130000);
   // SYSCALL, BREAK, HALT.
   EndSample: array[0..2] of Cardinal = ($0000000C, $0000000D, $70000000);
+  // Handlers that read no PC and raise nothing (called without writing PC,
+  // NPC and CurPC first): SLLV, SRLV, ROTRV, SRAV, CLZ, CLO, MULT, MULTU,
+  // DIV, DIVU, MADD, MADDU, MSUB, MSUBU, BITREV, LWL, LWR, SWL, SWR, LL, SC,
+  // MFIC, MTIC.
+  PureSample: array[0..22] of Cardinal = ($00000804, $00000806, $00000846, $00000807, $00000816, $00000817,
+    $00000018, $00000019, $0000001A, $0000001B, $0000001C, $0000001D, $0000002E, $0000002F, $7C000D20,
+    $88010000, $98010000, $A8000000, $B8000000, $C0010000, $E0010000, $70010024, $70000026);
 
   JitBufferSize = 64 * 1024 * 1024;
 
@@ -198,6 +207,7 @@ const
 var
   KindHandler: array[jkSLL..jkBGEZALL] of Pointer;
   EndHandler: array[0..2] of Pointer;
+  PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
   OffGPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode: Integer;
 
@@ -215,6 +225,8 @@ begin
     KindHandler[K] := HandlerOf(KindSample[K]);
   for var I := 0 to High(EndSample) do
     EndHandler[I] := HandlerOf(EndSample[I]);
+  for var I := 0 to High(PureSample) do
+    PureHandler[I] := HandlerOf(PureSample[I]);
   OffGPR := Integer(NativeUInt(@TPSPCPU(nil).Ctx.GPR[0]));
   OffHI := Integer(NativeUInt(@TPSPCPU(nil).Ctx.HI));
   OffLO := Integer(NativeUInt(@TPSPCPU(nil).Ctx.LO));
@@ -245,6 +257,9 @@ begin
   // COP1 and VFPU branches (BC1x, BVx): their handlers decide.
   if ((Op shr 26) in [$11, $12]) and (((Op shr 21) and 31) = 8) then
     Exit(jkHBranch);
+  for var I := 0 to High(PureHandler) do
+    if Handler = PureHandler[I] then
+      Exit(jkPure);
   Result := jkHandler;
 end;
 
