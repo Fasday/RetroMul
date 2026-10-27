@@ -18,6 +18,7 @@ type
     function FreeBlock(Addr: Cardinal): Boolean;
     function FreeSize: Cardinal;
     function Retry(T: TPSPThread): Boolean;
+    function MayAlloc(T: TPSPThread): Boolean;
     procedure WakeWaiters;
     procedure WaiterGone; override;
   end;
@@ -118,6 +119,7 @@ begin
   if (Addr < Block + 32) or (Addr >= Block + Size) or ((Addr and 7) <> 0) or (M.Read32(Bp) <> Block + 8) then
     Exit(False);
   var BpSize := M.Read32(Bp + 4);
+  var Units := BpSize;
   var P := M.Read32(Block + 20);
   for var Guard := 0 to 100000 do
   begin
@@ -146,7 +148,7 @@ begin
   else
     M.Write32(P, Bp);
   M.Write32(Block + 20, P);
-  M.Write32(Block + 16, M.Read32(Block + 16) - M.Read32(Bp + 4));
+  M.Write32(Block + 16, M.Read32(Block + 16) - Units);
   Result := True;
 end;
 
@@ -163,7 +165,7 @@ begin
     Exit(True);
   end;
   Result := False;
-  if (Waiters.Count > 0) and (Waiters.First <> T) then
+  if (Waiters.Count > 0) and (Waiters.First <> T) and ((Attr and $200) = 0) then
     Exit;
   var A := Alloc(T.Wait.Data[0]);
   if A <> 0 then
@@ -175,14 +177,30 @@ begin
   end;
 end;
 
+function TPSPVpl.MayAlloc(T: TPSPThread): Boolean;
+begin
+  // A newcomer goes first when it would head the queue; with attr $200 the
+  // queue does not hold anyone back.
+  Result := (Waiters.Count = 0) or ((Attr and $200) <> 0) or
+    (Waiters.ByPriority and (T.Priority < Waiters.First.Priority));
+end;
+
 procedure TPSPVpl.WakeWaiters;
 begin
-  while Waiters.Count > 0 do
+  // Waiters are served in queue order; normally the first that does not fit
+  // stops the rest, with attr $200 the later ones still get their turn.
+  var I := 0;
+  while I < Waiters.Count do
   begin
-    var T := Waiters.First;
+    var T := Waiters.Item(I);
     var A := Alloc(T.Wait.Data[0]);
     if A = 0 then
-      Break;
+    begin
+      if (Attr and $200) = 0 then
+        Break;
+      Inc(I);
+      Continue;
+    end;
     if T.Wait.Data[1] <> 0 then
       Kernel.Memory.Write32(T.Wait.Data[1], A);
     Kernel.EndWait(T, 0);
@@ -415,7 +433,8 @@ begin
   if (Bytes = 0) or (Bytes > V.PoolSize) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
   Spend(PSPSyncCallNs);
-  if V.Waiters.Count = 0 then
+  // Trying never minds the queue.
+  if (Mode = 2) or V.MayAlloc(FCurrent) then
   begin
     var A := V.Alloc(Bytes);
     if A <> 0 then
