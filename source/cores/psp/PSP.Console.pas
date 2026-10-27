@@ -354,6 +354,10 @@ begin
     else
       FScheduler.AdvanceTo(Deadline);
   end;
+  // HLE call costs can carry a run past At: events it overshot are still due.
+  var Late: TPSPEvent;
+  while not FKernel.Exited and FScheduler.TakeDue(Late) do
+    DispatchEvent(Late);
 end;
 
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
