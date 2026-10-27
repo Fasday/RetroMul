@@ -9,7 +9,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Generics.Collections, Core.Emulation.Types, Core.Storage,
   PSP.Types, PSP.Memory, PSP.Scheduler, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media, PSP.IO, PSP.Loader,
-  PSP.Display, PSP.Service, PSP.Audio;
+  PSP.Display, PSP.Service, PSP.Audio, PSP.CPU.JIT;
 
 type
   TPSPConsole = class
@@ -17,6 +17,7 @@ type
     FMemory: TPSPMemory;
     FScheduler: TPSPScheduler;
     FCPU: TPSPCPU;
+    FRecompiler: TPSPRecompiler;
     FHLE: TPSPHLE;
     FKernel: TPSPKernel;
     FIO: TPSPIO;
@@ -65,6 +66,9 @@ type
     property Input: TEmulatorInput read FInput write FInput;
     property Memory: TPSPMemory read FMemory;
     property CPU: TPSPCPU read FCPU;
+    // The CPU's recompiler (PSPJIT; nil: the interpreter only); Enabled
+    // switches between them.
+    property Recompiler: TPSPRecompiler read FRecompiler;
     property Kernel: TPSPKernel read FKernel;
     property HLE: TPSPHLE read FHLE;
     property IO: TPSPIO read FIO;
@@ -107,6 +111,7 @@ begin
   FCPU := TPSPCPU.Create(FMemory);
   FCPU.OnSyscall := Syscall;
   FCPU.OnBreak := Break_;
+  FRecompiler := CreatePSPRecompiler(FCPU);
   FHLE := TPSPHLE.Create(FCPU, FMemory);
   FHLE.OnLog := HandleLog;
   FKernel := TPSPKernel.Create(FCPU, FMemory, FHLE, FScheduler);
@@ -143,6 +148,7 @@ begin
   FIO.Free;
   FKernel.Free;
   FHLE.Free;
+  FRecompiler.Free;
   FCPU.Free;
   FScheduler.Free;
   FMemory.Free;

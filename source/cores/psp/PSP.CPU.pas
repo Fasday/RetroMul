@@ -55,18 +55,29 @@ type
   TPSPDecodedPage = array[0..(PSPPageSize div 4) - 1] of TPSPDecoded;
   PPSPDecodedPage = ^TPSPDecodedPage;
 
+  // A recompiler (PSP.CPU.JIT) that Run hands its budget to, told when
+  // decoded code is rewritten or dropped.
+  TPSPRunner = class abstract
+  public
+    procedure Run(C: TPSPCPU); virtual; abstract;
+    procedure CodeWritten(Address, Size: Cardinal); virtual; abstract;
+    procedure Flushed; virtual; abstract;
+  end;
+
   TPSPCPU = class
   private
     FDecoded: array of PPSPDecodedPage;
     FPages: TArray<PPSPDecodedPage>;
     FOnSyscall: TPSPSyscallEvent;
     FOnBreak: TPSPSyscallEvent;
-    FRunLength, FRemaining, FAccounted: Integer;
     // The last FPU compare and the condition before it, for the branch behind it.
     FCmpPC, FCmpOld: Cardinal;
     function DecodePage(PC: Cardinal): PPSPDecodedPage;
     procedure CodeWrite(Address, Size: Cardinal);
   public
+    // The run's budget (Run, TakeCycles, AddCycles), for a runner.
+    FRunLength, FRemaining, FAccounted: Integer;
+    Runner: TPSPRunner;
     Ctx: TPSPContext;
     // System control coprocessor registers, as kernel-mode code reads and writes them.
     COP0: array[0..31] of Cardinal;
@@ -81,6 +92,8 @@ type
     destructor Destroy; override;
     procedure Reset;
     procedure FlushDecoded;
+    // The entry the interpreter runs at PC (its page decoded first).
+    function Decoded(PC: Cardinal): PPSPDecoded; inline;
     // Executes until MaxCycles have been used or Stop is called; returns the cycles used.
     function Run(MaxCycles: Integer): Integer;
     // Cycles used in the current run since the last call (HLE time sync).
@@ -1091,6 +1104,16 @@ begin
     FillChar(FDecoded[0], Length(FDecoded) * SizeOf(Pointer), 0);
   if Memory <> nil then
     Memory.ClearCodeMarks;
+  if Runner <> nil then
+    Runner.Flushed;
+end;
+
+function TPSPCPU.Decoded(PC: Cardinal): PPSPDecoded;
+begin
+  var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
+  if Page = nil then
+    Page := DecodePage(PC);
+  Result := @Page[(PC and PSPPageMask) shr 2];
 end;
 
 procedure TPSPCPU.Reset;
@@ -1150,6 +1173,8 @@ begin
       Break;
     Inc(A, 4);
   end;
+  if Runner <> nil then
+    Runner.CodeWritten(Address, Size);
 end;
 
 function TPSPCPU.Run(MaxCycles: Integer): Integer;
@@ -1165,6 +1190,9 @@ begin
   SetExceptionMask(exAllArithmeticExceptions);
   SetRoundMode(rmNearest);
   try
+    if Runner <> nil then
+      Runner.Run(Self)
+    else
     while FRemaining > 0 do
     begin
       var PC := Ctx.PC;
