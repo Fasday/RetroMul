@@ -83,7 +83,11 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
+<<<<<<< HEAD
   PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg;
+=======
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Settings;
+>>>>>>> psp/util
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin
@@ -355,10 +359,18 @@ begin
     else
       FScheduler.AdvanceTo(Deadline);
   end;
+<<<<<<< HEAD
   // HLE call costs can carry a run past At: events it overshot are still due.
   var Late: TPSPEvent;
   while not FKernel.Exited and FScheduler.TakeDue(Late) do
     DispatchEvent(Late);
+=======
+  // A slice can overshoot At by the cost of its last HLE call; events due by
+  // then must not wait for a call whose target is already behind.
+  var Due: TPSPEvent;
+  while not FKernel.Exited and FScheduler.TakeDue(Due) do
+    DispatchEvent(Due);
+>>>>>>> psp/util
 end;
 
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
