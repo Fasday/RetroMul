@@ -143,6 +143,7 @@ begin
     var Strict := False;
     var TraceKernel := False;
     var WatchOn := False;
+    var ShowState := False;
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
@@ -159,6 +160,7 @@ begin
       else if A = '-strict' then Strict := True
       else if A = '-trace' then TraceKernel := True
       else if A = '-watch' then WatchOn := True
+      else if A = '-state' then ShowState := True
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-press' then
@@ -241,6 +243,7 @@ begin
       Console.HLE.Strict := Strict;
       Console.Kernel.Trace := TraceKernel;
       Console.HLE.TraceCalls := TraceKernel;
+      Console.HLE.NoClobber := GetEnvironmentVariable('PSP_NOCLOBBER') <> '';
       if TestMode then
         Console.IO.HasDisplay := False;
       if not Quiet then
@@ -285,6 +288,11 @@ begin
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      if ShowState then
+      begin
+        Writeln(ErrOutput, Console.Kernel.DescribeThreads);
+        Writeln(ErrOutput, Console.Loader.Describe);
+      end;
       for var K := 0 to DumpLen div 4 - 1 do
         Writeln(ErrOutput, Format('[dump] %.8x %.8x', [DumpAt + Cardinal(K) * 4, Console.Memory.Read32(DumpAt + Cardinal(K) * 4)]));
       if not Quiet then
