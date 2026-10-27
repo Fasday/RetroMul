@@ -51,6 +51,7 @@ type
     procedure Clobber;
   public
     TraceCalls: Boolean;
+    NoClobber: Boolean;
     constructor Create(CPU: TPSPCPU; Memory: TPSPMemory);
     destructor Destroy; override;
     procedure Clear;
@@ -239,7 +240,7 @@ begin
     F.Handler();
     // The kernel leaves the caller-saved registers clobbered (unless the call
     // went on into guest code, a callback or a thread switch).
-    if FCPU.Ctx.PC = ReturnPC then
+    if (FCPU.Ctx.PC = ReturnPC) and not NoClobber then
       Clobber;
   end
   else
