@@ -124,6 +124,7 @@ type
     procedure hPlayerConfigPlayer;
     procedure hPlayerGetCurrentVideoStream;
     procedure hPlayerGetCurrentAudioStream;
+    procedure SelectStream(Kind: Integer; Specific: Boolean);
     procedure hPlayerSelectVideo;
     procedure hPlayerSelectAudio;
     procedure hPlayerSelectSpecificVideo;
@@ -1007,7 +1008,7 @@ begin
   FHLE.Result(0);
 end;
 
-procedure TPSPPsmf.hPlayerSelectVideo;
+procedure TPSPPsmf.SelectStream(Kind: Integer; Specific: Boolean);
 begin
   var P := PlayerOf(FHLE.Arg(0));
   if (P = nil) or (P.Status <> PsmfStatusPlaying) then
@@ -1015,22 +1016,76 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
-  FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
+  var Current := P.VideoNum;
+  if Kind <> PSMFKindAvc then
+    Current := P.AudioNum;
+  // Only another stream that is in the header and has data in the movie.
+  var Usable :=
+    function(Num: Integer): Boolean
+    begin
+      var I := P.Header.Find(Kind, Num);
+      Result := (I >= 0) and (Num <> Current) and
+        PSMFStreamPresent(P.Data, P.StreamStart, P.Header.Streams[I].StreamId, P.Header.Streams[I].PrivateId);
+    end;
+  var Num := -1;
+  if Specific then
+  begin
+    var Codec := FHLE.ArgInt(1);
+    var Ok := ((Kind = PSMFKindAvc) and ((Codec = 0) or (Codec = $0E))) or
+      ((Kind <> PSMFKindAvc) and ((Codec = 1) or (Codec = $0F)));
+    if Ok and Usable(FHLE.ArgInt(2)) then
+      Num := FHLE.ArgInt(2);
+  end
+  else
+  begin
+    var Count := P.Header.Count(Kind);
+    for var K := 1 to Count - 1 do
+      if Usable((Current + K) mod Count) then
+      begin
+        Num := (Current + K) mod Count;
+        Break;
+      end;
+  end;
+  if Num < 0 then
+  begin
+    FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
+    Exit;
+  end;
+  if Kind = PSMFKindAvc then
+  begin
+    P.VideoNum := Num;
+    P.StartPlayback;
+  end
+  else
+  begin
+    P.AudioNum := Num;
+    if P.AudioQ <> nil then
+      P.Demux.RemoveStream(P.AudioQ);
+    var I := P.Header.Find(Kind, Num);
+    P.AudioQ := P.Demux.AddStream(PSMFKindAtrac, $BD, P.Header.Streams[I].PrivateId);
+    FreeAndNil(P.Atrac);
+  end;
+  FHLE.Result(0);
+end;
+
+procedure TPSPPsmf.hPlayerSelectVideo;
+begin
+  SelectStream(PSMFKindAvc, False);
 end;
 
 procedure TPSPPsmf.hPlayerSelectAudio;
 begin
-  hPlayerSelectVideo;
+  SelectStream(PSMFKindAtrac, False);
 end;
 
 procedure TPSPPsmf.hPlayerSelectSpecificVideo;
 begin
-  hPlayerSelectVideo;
+  SelectStream(PSMFKindAvc, True);
 end;
 
 procedure TPSPPsmf.hPlayerSelectSpecificAudio;
 begin
-  hPlayerSelectVideo;
+  SelectStream(PSMFKindAtrac, True);
 end;
 
 procedure TPSPPsmf.hPlayerGetCurrentPlayMode;
