@@ -80,13 +80,14 @@ begin
             K.DeleteObject(A)
           else
           begin
+            // Counted from the schedule, unless that has already gone by.
+            var NowUs := UInt64(K.FScheduler.Now div 1000);
             Inc(A.Schedule, Ret);
-            var At := Int64(A.Schedule) * 1000 + PSPAlarmLatencyNs;
-            if At < K.FScheduler.Now then
-              At := K.FScheduler.Now;
-            K.ArmAlarm(A, At);
+            if A.Schedule <= NowUs then
+              A.Schedule := NowUs + Ret;
+            K.ArmAlarm(A, Int64(A.Schedule) * 1000);
           end;
-        end);
+        end, PSPAlarmLatencyNs, A.UID);
     end);
 end;
 
@@ -108,7 +109,7 @@ begin
     Wait := PSPAlarmMinUs;
   var FireAt: Int64 := PSPNever;
   if Wait < UInt64(High(Int64) div 4000) then
-    FireAt := Start + Int64(Wait) * 1000 + PSPAlarmLatencyNs;
+    FireAt := Start + Int64(Wait) * 1000;
   if FireAt <> PSPNever then
     ArmAlarm(A, FireAt);
   Spend(PSPSetAlarmNs);
@@ -152,7 +153,7 @@ end;
 
 { Virtual timers }
 
-procedure TPSPKernel.ArmVTimer(Obj: TPSPKernelObject);
+procedure TPSPKernel.ArmVTimer(Obj: TPSPKernelObject; FromCall: Boolean);
 begin
   var V := TPSPVTimer(Obj);
   if V.TimerHandle <> 0 then
@@ -167,6 +168,9 @@ begin
   var Delta: UInt64 := 0;
   if V.Schedule > Cur then
     Delta := V.Schedule - Cur;
+  // Armed by a call, it goes off no sooner than an alarm would.
+  if FromCall and (Delta < PSPAlarmMinUs) then
+    Delta := PSPAlarmMinUs;
   if Delta > UInt64(High(Int64) div 4000) then
     Exit;
   var At := FScheduler.Now + Int64(Delta) * 1000 + PSPAlarmLatencyNs;
@@ -198,9 +202,9 @@ begin
           else
           begin
             Inc(V.Schedule, Ret);
-            K.ArmVTimer(V);
+            K.ArmVTimer(V, False);
           end;
-        end);
+        end, 0, V.UID);
     end);
 end;
 

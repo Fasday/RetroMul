@@ -213,6 +213,10 @@ type
   TPSPPendingInterrupt = record
     Func, A0, A1, A2, A3, GP: Cardinal;
     OnReturn: TPSPGuestReturn;
+    // Time the kernel spends before the handler starts.
+    EntryNs: Int64;
+    // The object it is for; dropped if that is deleted while pending.
+    OwnerUID: Cardinal;
   end;
 
   TPSPTimerKind = (tkWait, tkCustom);
@@ -288,6 +292,7 @@ type
     procedure ReturnTrap;
     procedure ThreadExitTrap;
     procedure StartNextInterrupt;
+    procedure DropStaleInterrupts;
     procedure EnterGuest(Func, SP, GP: Cardinal; const Args: array of Cardinal);
     procedure WakeEndWaiters(T: TPSPThread);
     procedure KillThreadFrames(T: TPSPThread);
@@ -450,7 +455,7 @@ type
     procedure hReferAlarmStatus;
     procedure SetAlarmCommon(Us: UInt64);
     procedure ArmAlarm(Obj: TPSPKernelObject; FireAt: Int64);
-    procedure ArmVTimer(Obj: TPSPKernelObject);
+    procedure ArmVTimer(Obj: TPSPKernelObject; FromCall: Boolean = True);
     function VTimerOf(Id: Cardinal): TPSPKernelObject;
     procedure SetVTimerTimeTo(Obj: TPSPKernelObject; Value: UInt64);
     procedure SetVTimerHandlerCommon(Schedule: UInt64; Handler, Common: Cardinal);
@@ -582,7 +587,8 @@ type
     procedure OnTimerEvent;
     // Guest calls
     procedure CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal = 0);
-    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil);
+    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil;
+      EntryNs: Int64 = 0; OwnerUID: Cardinal = 0);
     procedure TriggerInterrupt(IntNo: Integer; SubNo: Integer = -1; Arg2: Cardinal = 0);
     procedure ProcessInterrupts;
     procedure Trap(Code: Cardinal);

@@ -22,6 +22,10 @@ const
   PSPDeleteThreadNs = 65000;
   PSPTerminateThreadNs = 10000;
   PSPSyncCallNs = 2500;
+  // Leaving an interrupt that ran a handler, and handing the CPU to another
+  // thread from there.
+  PSPIntrExitNs = 30000;
+  PSPIntrDispatchNs = 14000;
   // Thread event handler kinds.
   PSPThreadEventCreate = 1;
   PSPThreadEventStart = 2;
@@ -1051,10 +1055,15 @@ begin
       F.OnReturn(Ret);
     if FIntFrames.Count = 0 then
     begin
+      DropStaleInterrupts;
       if FPendingInts.Count > 0 then
         StartNextInterrupt
       else
       begin
+        Spend(PSPIntrExitNs);
+        var Best := BestReady;
+        if (Best <> nil) and ((FCurrent = nil) or (Best.Priority < FCurrent.Priority)) and not FDispatchSuspended then
+          Spend(PSPIntrDispatchNs);
         if FCurrent = nil then
         begin
           FIdle := True;
@@ -1114,7 +1123,8 @@ end;
 
 { Interrupts }
 
-procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn);
+procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn;
+  EntryNs: Int64; OwnerUID: Cardinal);
 begin
   var P := Default(TPSPPendingInterrupt);
   P.Func := Func;
@@ -1124,6 +1134,8 @@ begin
   if Length(Args) > 3 then P.A3 := Args[3];
   P.GP := GP;
   P.OnReturn := OnReturn;
+  P.EntryNs := EntryNs;
+  P.OwnerUID := OwnerUID;
   FPendingInts.Enqueue(P);
   FCPU.Stop;
 end;
@@ -1142,6 +1154,14 @@ begin
   end;
 end;
 
+procedure TPSPKernel.DropStaleInterrupts;
+begin
+  // Handlers of alarms and timers deleted while they were pending never run.
+  while (FPendingInts.Count > 0) and (FPendingInts.Peek.OwnerUID <> 0) and
+    not FObjects.ContainsKey(FPendingInts.Peek.OwnerUID) do
+    FPendingInts.Dequeue;
+end;
+
 procedure TPSPKernel.StartNextInterrupt;
 begin
   var P := FPendingInts.Dequeue;
@@ -1153,11 +1173,14 @@ begin
   FIdle := False;
   if FCurrent <> nil then
     Inc(FCurrent.IntrPreemptCount);
+  if P.EntryNs > 0 then
+    Spend(P.EntryNs);
   EnterGuest(P.Func, FIntStack - 64, P.GP, [P.A0, P.A1, P.A2, P.A3]);
 end;
 
 procedure TPSPKernel.ProcessInterrupts;
 begin
+  DropStaleInterrupts;
   if (FPendingInts.Count = 0) or (FIntFrames.Count > 0) then
     Exit;
   if (FIntrSuspendLevel > 0) or not FCPU.InterruptsEnabled then
