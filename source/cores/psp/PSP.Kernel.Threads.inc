@@ -237,6 +237,8 @@ end;
 
 procedure TPSPKernel.hCreateThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var NamePtr := FHLE.Arg(0);
   var Entry := FHLE.Arg(1);
   var Prio := FHLE.ArgInt(2);
@@ -278,6 +280,8 @@ end;
 
 procedure TPSPKernel.hStartThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if Id = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
@@ -342,6 +346,8 @@ end;
 
 procedure TPSPKernel.hDeleteThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   var T := ThreadById(Id);
   if T = nil then
@@ -355,6 +361,8 @@ end;
 
 procedure TPSPKernel.hTerminateThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
@@ -370,6 +378,8 @@ end;
 
 procedure TPSPKernel.hTerminateDeleteThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
@@ -567,8 +577,8 @@ end;
 
 procedure TPSPKernel.hSleepThread;
 begin
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  if RefuseWait then
+    Exit;
   FHLE.Result(0);
   if FCurrent.WakeupCount > 0 then
   begin
@@ -580,8 +590,8 @@ end;
 
 procedure TPSPKernel.hSleepThreadCB;
 begin
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  if RefuseWait then
+    Exit;
   FHLE.Result(0);
   if FCurrent.WakeupCount > 0 then
   begin
@@ -693,6 +703,8 @@ begin
   var T := TPSPThread(K.GetObject(Id, TPSPThread));
   if T = nil then
     begin H.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  if K.RefuseWait then
+    Exit;
   if T.IsDormant then
   begin
     H.Result(T.ExitStatus);
@@ -700,8 +712,6 @@ begin
       K.CheckCallbacksNow;
     Exit;
   end;
-  if not K.CanWait then
-    begin H.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   T.EndWaiters.Add(K.FCurrent);
   K.BeginWait(PSPWaitThreadEnd, T, Id, H.Arg(1), AllowCB, K.ThreadEndRetry);
 end;
@@ -726,11 +736,8 @@ end;
 procedure TPSPKernel.DelayCurrent(Microseconds: Int64; AllowCB: Boolean);
 begin
   FHLE.Result(0);
-  if not CanWait then
-  begin
-    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+  if RefuseWait then
     Exit;
-  end;
   if Assigned(FOnSyncTime) then
     FOnSyncTime();
   if Microseconds < 0 then
@@ -936,6 +943,8 @@ end;
 
 procedure TPSPKernel.hSuspendDispatchThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   if not FCPU.InterruptsEnabled then
     begin FHLE.Result(SCE_KERNEL_ERROR_CPUDI); Exit; end;
   FHLE.Result(Ord(not FDispatchSuspended));
@@ -944,6 +953,8 @@ end;
 
 procedure TPSPKernel.hResumeDispatchThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   if not FCPU.InterruptsEnabled then
     begin FHLE.Result(SCE_KERNEL_ERROR_CPUDI); Exit; end;
   FDispatchSuspended := FHLE.Arg(0) = 0;

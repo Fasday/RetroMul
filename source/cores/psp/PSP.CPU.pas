@@ -771,7 +771,8 @@ end;
 
 procedure OpMTIC(C: TPSPCPU; Op: Cardinal);
 begin
-  C.InterruptsEnabled := C.Ctx.GPR[RT(Op)] <> 0;
+  // Only bit 0 is the enable flag.
+  C.InterruptsEnabled := (C.Ctx.GPR[RT(Op)] and 1) <> 0;
 end;
 
 procedure OpHALT(C: TPSPCPU; Op: Cardinal);

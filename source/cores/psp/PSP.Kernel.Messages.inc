@@ -438,6 +438,8 @@ end;
 
 procedure TPSPKernel.ReceiveMbxCommon(AllowCB: Boolean);
 begin
+  if RefuseWait then
+    Exit;
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
@@ -454,8 +456,6 @@ begin
       CheckCallbacksNow;
     Exit;
   end;
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   B.Waiters.Add(FCurrent);
   BeginWaitData(PSPWaitMbx, B, B.UID, FHLE.Arg(2), AllowCB, B.Retry, [OutPtr]);
@@ -592,11 +592,15 @@ end;
 // Mode: 0 waits, 1 waits with callbacks, 2 does not wait.
 procedure TPSPKernel.SendMsgPipeCommon(Mode: Integer);
 begin
+  var Buf := FHLE.Arg(1);
+  var Size := FHLE.Arg(2);
+  if Integer(Size) < 0 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  if (Mode <> 2) and RefuseWait then
+    Exit;
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
-  var Buf := FHLE.Arg(1);
-  var Size := FHLE.Arg(2);
   var WaitMode := FHLE.Arg(3);
   var ResultPtr := FHLE.Arg(4);
   var TimeoutPtr: Cardinal := 0;
@@ -688,11 +692,15 @@ end;
 
 procedure TPSPKernel.ReceiveMsgPipeCommon(Mode: Integer);
 begin
+  var Buf := FHLE.Arg(1);
+  var Size := FHLE.Arg(2);
+  if Integer(Size) < 0 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  if (Mode <> 2) and RefuseWait then
+    Exit;
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
-  var Buf := FHLE.Arg(1);
-  var Size := FHLE.Arg(2);
   var WaitMode := FHLE.Arg(3);
   var ResultPtr := FHLE.Arg(4);
   var TimeoutPtr: Cardinal := 0;

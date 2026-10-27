@@ -97,7 +97,7 @@ end;
 
 procedure TPSPKernel.hCpuResumeIntr;
 begin
-  FCPU.InterruptsEnabled := FHLE.Arg(0) <> 0;
+  FCPU.InterruptsEnabled := (FHLE.Arg(0) and 1) <> 0;
   FHLE.Result(0);
   if FCPU.InterruptsEnabled then
   begin
@@ -118,23 +118,44 @@ begin
   FHLE.Result(Ord(FHLE.Arg(0) = 0));
 end;
 
-function SubIntrValid(K: TPSPKernel; I, S: Integer): Boolean;
+const
+  // Interrupts with a sub-interrupt table user code may use.
+  PSPSubIntrHosts = [25, 30];
+  // Interrupts user code may not touch at all, and ones it may only release.
+  PSPIntrUserDenied = [7, 10, 12, 15..20, 22..24, 26, 31, 36, 50, 56..61, 65];
+  PSPIntrRegisterDenied = [4, 6, 21];
+  // VBlank sub-interrupts the firmware's drivers hold.
+  PSPVBlankFirmwareSubs = [18..20, 24..26];
+
+// 0 when the interrupt has a sub-interrupt table this caller may use.
+function SubIntrCheck(I, S: Integer; Registering: Boolean): Cardinal;
 begin
-  Result := (I >= 0) and (I <= High(K.FSubIntr)) and (S >= 0) and (S <= 31);
+  if (I < 0) or (I > 66) or (I in PSPIntrUserDenied) or (Registering and (I in PSPIntrRegisterDenied)) then
+    Exit(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+  if not (I in PSPSubIntrHosts) then
+    Exit(SCE_KERNEL_ERROR_NOTFOUND_HANDLER);
+  if (S < 0) or (S > 31) then
+    Exit(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+  Result := 0;
 end;
 
 procedure TPSPKernel.hRegisterSubIntrHandler;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  if FSubIntr[I, S].Handler <> 0 then
+  var Err := SubIntrCheck(I, S, True);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
+  if (FSubIntr[I, S].Handler <> 0) or ((I = 30) and (S in PSPVBlankFirmwareSubs)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER); Exit; end;
+  // The upper half of the table is the firmware's.
+  if S > 15 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  // A null handler is taken but leaves the slot free; an enable made before
+  // the handler came stays.
   FSubIntr[I, S].Handler := FHLE.Arg(2);
   FSubIntr[I, S].Arg := FHLE.Arg(3);
   FSubIntr[I, S].GP := FCPU.Ctx.GPR[28];
-  FSubIntr[I, S].Enabled := False;
   FHLE.Result(0);
 end;
 
@@ -142,8 +163,9 @@ procedure TPSPKernel.hReleaseSubIntrHandler;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   if FSubIntr[I, S].Handler = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
   FSubIntr[I, S] := Default(TPSPInterruptHandler);
@@ -154,10 +176,9 @@ procedure TPSPKernel.hEnableSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  if FSubIntr[I, S].Handler = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   FSubIntr[I, S].Enabled := True;
   FHLE.Result(0);
 end;
@@ -166,10 +187,9 @@ procedure TPSPKernel.hDisableSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  if FSubIntr[I, S].Handler = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   FSubIntr[I, S].Enabled := False;
   FHLE.Result(0);
 end;
@@ -178,8 +198,9 @@ procedure TPSPKernel.hSuspendSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   if FHLE.Arg(2) <> 0 then
     FMemory.Write32(FHLE.Arg(2), Ord(FSubIntr[I, S].Enabled));
   FSubIntr[I, S].Enabled := False;
@@ -190,8 +211,9 @@ procedure TPSPKernel.hResumeSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   FSubIntr[I, S].Enabled := FHLE.Arg(2) <> 0;
   FHLE.Result(0);
 end;
@@ -665,6 +687,8 @@ procedure TPSPKernel.hVolatileMemLock;
 begin
   if FHLE.Arg(0) <> 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  if RefuseWait then
+    Exit;
   if not FVolatileLocked then
   begin
     FVolatileLocked := True;

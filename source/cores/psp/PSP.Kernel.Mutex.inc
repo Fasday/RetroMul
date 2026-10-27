@@ -192,6 +192,8 @@ end;
 
 procedure TPSPKernel.LockMutexCommon(AllowCB: Boolean);
 begin
+  if RefuseWait then
+    Exit;
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
@@ -398,6 +400,8 @@ procedure TPSPKernel.LockLwMutexCommon(AllowCB, IsTry: Boolean; TryError: Cardin
   end;
 
 begin
+  if not IsTry and RefuseWait then
+    Exit;
   var W := FHLE.Arg(0);
   var Count := FHLE.ArgInt(1);
   var TimeoutPtr: Cardinal := 0;

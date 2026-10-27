@@ -569,6 +569,8 @@ type
     procedure RequestReschedule; inline;
     procedure AfterSyscall;
     function CanWait: Boolean;
+    // Sets the error and returns True when the current context may not block.
+    function RefuseWait: Boolean;
     // Guest time the kernel spends in a call (ns), on the current CPU clock.
     procedure Spend(Ns: Int64);
     // Timers in guest ns. Returns a handle (sequence number) for CancelTimer.

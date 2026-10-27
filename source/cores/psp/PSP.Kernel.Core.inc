@@ -483,6 +483,18 @@ begin
   Result := (FCurrent <> nil) and not InInterrupt and not FDispatchSuspended and FCPU.InterruptsEnabled;
 end;
 
+function TPSPKernel.RefuseWait: Boolean;
+begin
+  // A call that may block is turned away before it looks at anything else.
+  Result := True;
+  if InInterrupt or (FCurrent = nil) then
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT)
+  else if not CanWait then
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT)
+  else
+    Result := False;
+end;
+
 procedure TPSPKernel.T_(const Fmt: string; const Args: array of const);
 begin
   if FTrace then
