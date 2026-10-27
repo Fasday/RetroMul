@@ -61,6 +61,8 @@ type
     procedure hDcacheWritebackRange;
     procedure hDcacheInvalidateRange;
     procedure hLibcTime;
+    procedure hKernelMemset;
+    procedure hKernelMemcpy;
     procedure hLibcGettimeofday;
     procedure hLibcClock;
     procedure hMd5Digest;
@@ -283,10 +285,33 @@ end;
 
 procedure TPSPSysLibs.hLibcTime;
 begin
+  var P := FHLE.Arg(0);
+  if (P <> 0) and ((P >= $80000000) or not FMemory.Valid(P, 4)) then
+    begin FHLE.Result(0); Exit; end;
   var T := Cardinal((NowTicks - PSPUnixEpochTicks) div 1000000);
-  if FHLE.Arg(0) <> 0 then
-    FMemory.Write32(FHLE.Arg(0), T);
+  if P <> 0 then
+    FMemory.Write32(P, T);
   FHLE.Result(T);
+end;
+
+procedure TPSPSysLibs.hKernelMemset;
+begin
+  var Dst := FHLE.Arg(0);
+  var Size := FHLE.ArgInt(2);
+  if Size > 0 then
+    FMemory.Fill(Dst, FHLE.Arg(1) and $FF, Size);
+  FHLE.Result(Dst);
+end;
+
+procedure TPSPSysLibs.hKernelMemcpy;
+begin
+  var Dst := FHLE.Arg(0);
+  var Src := FHLE.Arg(1);
+  var Size := FHLE.ArgInt(2);
+  // A forward byte copy: an overlapping destination repeats the start.
+  for var I := 0 to Size - 1 do
+    FMemory.Write8(Dst + Cardinal(I), FMemory.Read8(Src + Cardinal(I)));
+  FHLE.Result(Dst);
 end;
 
 procedure TPSPSysLibs.hLibcGettimeofday;
