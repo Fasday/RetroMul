@@ -28,6 +28,7 @@ const
   PSPSyncCallNs = 2500;
   // Long calls are spent in slices this long.
   PSPBusyChunkNs = 10000;
+  PSPBusyResumeNs = 20000;
   PSPNotifyWakeNs = 8000;
   // Leaving an interrupt that ran a handler, and handing the CPU to another
   // thread from there.
@@ -381,6 +382,7 @@ begin
   end;
   // The call returns through a stub that spends the time a slice at a time.
   T.BusyNs := Ns;
+  T.BusyAt := FScheduler.Now;
   T.BusyPC := FCPU.Ctx.PC;
   T.BusyNPC := FCPU.Ctx.NPC;
   FCPU.Ctx.PC := FBusyStub;
@@ -393,11 +395,15 @@ begin
   var T := FCurrent;
   if T = nil then
     Exit;
+  // Taken off the CPU in the middle, the call costs more to pick up again.
+  if FScheduler.Now > T.BusyAt + 2000 then
+    Spend(PSPBusyResumeNs);
   var Chunk := T.BusyNs;
   if Chunk > PSPBusyChunkNs then
     Chunk := PSPBusyChunkNs;
   Dec(T.BusyNs, Chunk);
   Spend(Chunk - Int64(FHLE.CycleCost) * 1000 div FScheduler.MHz);
+  T.BusyAt := FScheduler.Now;
   if T.BusyNs > 0 then
   begin
     FCPU.Ctx.PC := FBusyStub;

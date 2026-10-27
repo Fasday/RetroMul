@@ -143,7 +143,7 @@ type
     DeleteOnExit: Boolean;
     // Kernel work a call left to do on the thread's time, where better
     // threads may preempt it, and where the thread goes on afterwards.
-    BusyNs: Int64;
+    BusyNs, BusyAt: Int64;
     BusyPC, BusyNPC: Cardinal;
     constructor Create;
     destructor Destroy; override;
