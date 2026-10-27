@@ -82,6 +82,8 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    // Drops what is buffered; the packs that carried it are then free.
+    procedure Discard;
     procedure Append(const Src; Count: Integer);
     function Peek(Offset: Integer): Byte; inline;
     procedure Take(Count: Integer; out Dest: TBytes);
@@ -310,6 +312,15 @@ begin
   FLength := 0;
   TotalIn := 0;
   TotalOut := 0;
+  Marks.Clear;
+  Sizes.Clear;
+  AudioSkip := 0;
+  AudioStarted := False;
+end;
+
+procedure TPSPEsQueue.Discard;
+begin
+  Drop(FLength);
   Marks.Clear;
   Sizes.Clear;
   AudioSkip := 0;

@@ -620,7 +620,7 @@ begin
   var Samples := FHLE.ArgInt(1);
   var MaxSize := FHLE.ArgInt(2);
   var ReadSize := FHLE.ArgInt(4);
-  FHLE.Result(Cardinal(Samples * (AlignUp(MaxSize, 64) + 64) + ReadSize));
+  FHLE.Result(Cardinal(Samples) * (AlignUp(Cardinal(MaxSize), 64) + 64) + Cardinal(ReadSize));
 end;
 
 procedure TPSPMp4.hConstruct;

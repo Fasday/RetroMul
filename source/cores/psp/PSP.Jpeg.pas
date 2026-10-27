@@ -785,7 +785,8 @@ begin
     Rows := 1;
   for var Y := 0 to Rows - 1 do
   begin
-    var Line := Dest + Cardinal(Y) * Cardinal(Stride) * 4;
+    // Addresses wrap at 32 bits: a huge stride lands rows anywhere.
+    var Line := Cardinal(UInt64(Dest) + UInt64(Y) * UInt64(Cardinal(Stride)) * 4);
     for var X := 0 to Width - 1 do
     begin
       var Yv := Integer(FMemory.Read8(Src + Cardinal(Y * Width + X)));
@@ -805,7 +806,7 @@ begin
       R := EnsureRange(Yv + SarFloor(359 * V + 128), 0, 255);
       G := EnsureRange(Yv - SarFloor(88 * U + 183 * V + 128), 0, 255);
       B := EnsureRange(Yv + SarFloor(454 * U + 128), 0, 255);
-      FMemory.Write32(Line + Cardinal(X) * 4, Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16));
+      FMemory.Write32(Cardinal(UInt64(Line) + UInt64(X) * 4), Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16));
     end;
   end;
 end;
