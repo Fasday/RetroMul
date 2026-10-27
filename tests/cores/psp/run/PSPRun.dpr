@@ -143,6 +143,8 @@ begin
     var Strict := False;
     var TraceKernel := False;
     var WatchOn := False;
+    var DumpAt: Cardinal := 0;
+    var DumpLen := 0;
     var ShotFile := '';
     var I := 2;
     while I <= ParamCount do
@@ -157,6 +159,7 @@ begin
       else if A = '-strict' then Strict := True
       else if A = '-trace' then TraceKernel := True
       else if A = '-watch' then WatchOn := True
+      else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-press' then
       begin
@@ -282,6 +285,8 @@ begin
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      for var K := 0 to DumpLen div 4 - 1 do
+        Writeln(ErrOutput, Format('[dump] %.8x %.8x', [DumpAt + Cardinal(K) * 4, Console.Memory.Read32(DumpAt + Cardinal(K) * 4)]));
       if not Quiet then
         Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s cpu=%.1fM (%.1f MHz host)',
           [Console.FrameNumber, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9,
