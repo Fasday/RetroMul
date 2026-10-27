@@ -298,6 +298,10 @@ end;
 
 procedure TPSPConsole.RunUntil(At: Int64);
 begin
+  // A call that took a while can carry the clock past an event: run it anyway.
+  var Due: TPSPEvent;
+  while FScheduler.TakeDue(Due) do
+    DispatchEvent(Due);
   while FScheduler.Now < At do
   begin
     var E: TPSPEvent;
