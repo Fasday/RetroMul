@@ -22,6 +22,7 @@ const
   PSPDeleteThreadNs = 65000;
   PSPTerminateThreadNs = 10000;
   PSPSyncCallNs = 2500;
+  PSPNotifyWakeNs = 8000;
   // Leaving an interrupt that ran a handler, and handing the CPU to another
   // thread from there.
   PSPIntrExitNs = 30000;
@@ -210,7 +211,9 @@ end;
 
 procedure TPSPThread.SetResult(Value: Cardinal);
 begin
-  if (Frames.Count > 0) and (Frames.Last.Kind = fkCallback) and Frames.Last.WasWaiting then
+  // A wait the thread is blocked in belongs to the level it runs at.
+  if ((Status and PSPThreadWaiting) = 0) and (Frames.Count > 0) and (Frames.Last.Kind = fkCallback) and
+    Frames.Last.WasWaiting then
   begin
     // The wait belongs to the context the callback frame restores.
     var F := Frames.Last;
@@ -1004,7 +1007,8 @@ end;
 function TPSPKernel.CheckCallbacksNow(KeepResult: Boolean): Boolean;
 begin
   var T := FCurrent;
-  if (T = nil) or not T.HasPendingCallbacks or T.InCallback then
+  // One level of callbacks inside a callback, as with blocking CB waits.
+  if (T = nil) or not T.HasPendingCallbacks or (T.CallbackDepth >= 2) then
     Exit(False);
   StartCallbacks(T, KeepResult);
   Result := True;

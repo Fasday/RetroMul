@@ -661,9 +661,33 @@ end;
 procedure TPSPKernel.hRegisterExitCallback;
 begin
   var Id := FHLE.Arg(0);
-  if (FCompiledSdkVersion >= $03950000) and (GetObject(Id, TPSPCallback) = nil) then
+  // Programs built with SDK 3.95 or later have the id checked.
+  if (FCompiledSdkVersion >= $03090500) and (GetObject(Id, TPSPCallback) = nil) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
   FExitCallback := Id;
+  FHLE.Result(0);
+end;
+
+procedure TPSPKernel.hCheckExitCallback;
+begin
+  // LoadExecForUser_362A956B: checks the exit callback's argument block,
+  // (kind 0-3, params, common) with the callback's common pointing at its
+  // last word, and fills in the params (size >= 12, then two words).
+  var CB := TPSPCallback(GetObject(FExitCallback, TPSPCallback));
+  if CB = nil then
+    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  if (CB.Common = 0) or ((CB.Common and $80000000) <> 0) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  var Arg := CB.Common - 8;
+  if FMemory.Read32(Arg) > 3 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  var Params := FMemory.Read32(Arg + 4);
+  if (Params = 0) or ((Params and $80000000) <> 0) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  if FMemory.Read32(Params) < 12 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE); Exit; end;
+  FMemory.Write32(Params + 4, 0);
+  FMemory.Write32(Params + 8, $FFFFFFFF);
   FHLE.Result(0);
 end;
 
@@ -965,6 +989,7 @@ begin
   H.Register('LoadExecForUser', $05572A5F, 'sceKernelExitGame', hExitGame);
   H.Register('LoadExecForUser', $2AC9954B, 'sceKernelExitGameWithStatus', hExitGame);
   H.Register('LoadExecForUser', $4AC57943, 'sceKernelRegisterExitCallback', hRegisterExitCallback);
+  H.Register('LoadExecForUser', $362A956B, 'LoadExecForUser_362A956B', hCheckExitCallback);
   H.Register('LoadExecForKernel', $05572A5F, 'sceKernelExitGame', hExitGame);
   H.Register('sceSuspendForUser', $3E0271D3, 'sceKernelVolatileMemLock', hVolatileMemLock);
   H.Register('sceSuspendForUser', $A14F40B2, 'sceKernelVolatileMemTryLock', hVolatileMemTryLock);

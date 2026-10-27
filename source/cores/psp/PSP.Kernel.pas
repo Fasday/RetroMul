@@ -299,6 +299,7 @@ type
     procedure DropWaitTimer(T: TPSPThread);
     procedure RegisterAll;
     procedure RegisterKernelAliases;
+    procedure hCheckExitCallback;
     procedure hIoForKernel;
     function WaitDeadline(TimeoutPtr: Cardinal; out TimeoutEnd: Int64): Int64;
     procedure WriteRemaining(T: TPSPThread);

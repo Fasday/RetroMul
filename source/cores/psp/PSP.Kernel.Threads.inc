@@ -987,7 +987,8 @@ begin
   if not ReadName(FHLE.Arg(0), Name) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
   var Func := FHLE.Arg(1);
-  if (Func <> 0) and not FCurrent.IsKernel and not ValidUserAddress(Func) then
+  // Only a kernel address is refused.
+  if ((Func and $80000000) <> 0) and not FCurrent.IsKernel then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
   var CB := TPSPCallback.Create;
   CB.Name := Name;
@@ -1017,6 +1018,10 @@ begin
   if CB = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
   FHLE.Result(0);
+  // Getting a waiting thread to its callbacks takes the kernel a while.
+  var T := CB.Thread;
+  if (T <> nil) and (T <> FCurrent) and T.IsWaiting and T.Wait.AllowCB and not T.CallbacksPending then
+    Spend(PSPNotifyWakeNs);
   NotifyCallback(CB, FHLE.Arg(1));
 end;
 

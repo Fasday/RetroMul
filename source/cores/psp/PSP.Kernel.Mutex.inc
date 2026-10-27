@@ -422,8 +422,6 @@ begin
   begin
     FMemory.Write32(W, Cardinal(Count));
     FMemory.Write32(W + 4, Me);
-    if AllowCB then
-      CheckCallbacksNow;
     Exit;
   end;
   if FMemory.Read32(W + 4) = Me then
@@ -433,8 +431,6 @@ begin
     if Int64(Level) + Count > High(Integer) then
       begin Fail(SCE_KERNEL_ERROR_LWMUTEX_LOCK_OVERFLOW); Exit; end;
     FMemory.Write32(W, Cardinal(Level + Count));
-    if AllowCB then
-      CheckCallbacksNow;
     Exit;
   end;
   if IsTry then
