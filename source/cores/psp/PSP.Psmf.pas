@@ -69,10 +69,6 @@ type
     DeferNow, DeferClocks: Int64;
     LastVideoUpdates: Integer;
     ForceWrite: Boolean;
-    CacheValid: Boolean;
-    CacheFrame: Integer;
-    CacheBuffer: Cardinal;
-    CacheWidth, CacheFormat: Integer;
     constructor Create;
     destructor Destroy; override;
     procedure StopPlayback;
@@ -214,7 +210,6 @@ begin
   PendingFinish := False;
   LastVideoUpdates := -1;
   ForceWrite := True;
-  CacheValid := False;
 end;
 
 procedure TPSPPsmfPlayer.StartPlayback;
@@ -798,11 +793,6 @@ begin
     PSPWritePicture(Pic, Dest, Width, Format);
     FMemory.Touched(Buffer, Bytes);
   end;
-  P.CacheValid := True;
-  P.CacheFrame := P.Shown;
-  P.CacheBuffer := Buffer;
-  P.CacheWidth := Width;
-  P.CacheFormat := Format;
 end;
 
 function TPSPPsmf.AdvanceVideo(P: TPSPPsmfPlayer): Boolean;
