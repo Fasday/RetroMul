@@ -57,6 +57,26 @@ begin
   Result := (X and $7FFFFFFF) = 0;
 end;
 
+// A NaN operand comes out quieted, the first one if both are; a signalling one is invalid.
+function NaNOut(A, B: Cardinal; var Flags: Cardinal): Cardinal; inline;
+begin
+  Flags := 0;
+  if IsNaNBits(A) then
+  begin
+    if (A and $400000) = 0 then
+      Flags := FX_V;
+    Result := A or $400000;
+    if IsNaNBits(B) and ((B and $400000) = 0) then
+      Flags := FX_V;
+  end
+  else
+  begin
+    if (B and $400000) = 0 then
+      Flags := FX_V;
+    Result := B or $400000;
+  end;
+end;
+
 procedure FpuDone(C: TPSPCPU; D, Bits, Flags: Cardinal); inline;
 begin
   C.Ctx.FPR[D] := Bits;
@@ -140,13 +160,16 @@ end;
 procedure FpuAdd(C: TPSPCPU; Op: Cardinal; NegB: Cardinal);
 begin
   var A := C.Ctx.FPR[FS(Op)];
-  var B := C.Ctx.FPR[FT(Op)] xor NegB;
+  var B := C.Ctx.FPR[FT(Op)];
   var D := FD(Op);
   if IsNaNBits(A) or IsNaNBits(B) then
   begin
-    FpuDone(C, D, FPU_NAN, FX_V);
+    var NF: Cardinal;
+    var N := NaNOut(A, B, NF);
+    FpuDone(C, D, N, NF);
     Exit;
   end;
+  B := B xor NegB;
   if IsInfBits(A) or IsInfBits(B) then
   begin
     if IsInfBits(A) and IsInfBits(B) and (((A xor B) and $80000000) <> 0) then
@@ -229,7 +252,9 @@ begin
   var Sign := (A xor B) and $80000000;
   if IsNaNBits(A) or IsNaNBits(B) then
   begin
-    FpuDone(C, D, FPU_NAN, FX_V);
+    var NF: Cardinal;
+    var N := NaNOut(A, B, NF);
+    FpuDone(C, D, N, NF);
     Exit;
   end;
   if IsInfBits(A) or IsInfBits(B) then
@@ -270,7 +295,9 @@ begin
   var Sign := (A xor B) and $80000000;
   if IsNaNBits(A) or IsNaNBits(B) then
   begin
-    FpuDone(C, D, FPU_NAN, FX_V);
+    var NF: Cardinal;
+    var N := NaNOut(A, B, NF);
+    FpuDone(C, D, N, NF);
     Exit;
   end;
   if IsInfBits(A) then
@@ -335,7 +362,9 @@ begin
   var D := FD(Op);
   if IsNaNBits(A) then
   begin
-    FpuDone(C, D, FPU_NAN, FX_V);
+    var NF: Cardinal;
+    var N := NaNOut(A, A, NF);
+    FpuDone(C, D, N, NF);
     Exit;
   end;
   if IsZeroBits(A) then
