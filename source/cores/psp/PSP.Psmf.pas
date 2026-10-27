@@ -55,6 +55,8 @@ type
     Avc: TPSPAvc;
     Atrac: TATRAC3PlusDecoder;
     PackPos: Integer;
+    // Where Start's initial pts put playback: a pack (from the EP map) and its picture.
+    SeekPack, FirstFrame: Integer;
     Ready: TQueue<TPSPPicture>;
     Decoded, AudioFrames: Integer;
     StreamDone: Boolean;
@@ -235,7 +237,7 @@ begin
         Starved := True;
     end;
   end;
-  PackPos := StreamStart;
+  PackPos := StreamStart + SeekPack * PSMFPacketSize;
 end;
 
 function TPSPPsmfPlayer.NextPicture(out Pic: TPSPPicture): Boolean;
@@ -607,10 +609,29 @@ begin
   var ANum := Integer(FMemory.Read32(D + 12));
   var PMode := Integer(FMemory.Read32(D + 16));
   var PSpeed := Integer(FMemory.Read32(D + 20));
-  if (InitPts <> 0) or (PMode < 0) or (PMode > 3) then
+  if (PMode < 0) or (PMode > 3) then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_PARAM);
     Exit;
+  end;
+  // A start other than the beginning needs an entry point at or before it.
+  var SeekPack := 0;
+  var SeekFrame := 0;
+  if InitPts <> 0 then
+  begin
+    var Entry := -1;
+    var V := P.Header.Find(PSMFKindAvc, Max(VNum, 0));
+    if (InitPts > 0) and (V >= 0) then
+      for var E := 0 to High(P.Header.Streams[V].EP) do
+        if P.Header.Streams[V].EP[E].Pts - P.Header.StartTime <= InitPts then
+          Entry := E;
+    if Entry < 0 then
+    begin
+      FHLE.Result(ERROR_PSMFPLAYER_INVALID_PARAM);
+      Exit;
+    end;
+    SeekPack := Integer(P.Header.Streams[V].EP[Entry].Offset);
+    SeekFrame := Integer((P.Header.Streams[V].EP[Entry].Pts - P.Header.StartTime) div FrameTicks);
   end;
   if (VCodec <> 0) and (VCodec <> $0E) then
   begin
@@ -655,6 +676,10 @@ begin
   P.Mode := PMode;
   P.Speed := PSpeed;
   var WasPlaying := P.Status <> PsmfStatusStandby;
+  if (SeekPack <> P.SeekPack) or (SeekFrame <> P.FirstFrame) then
+    Restart := True;
+  P.SeekPack := SeekPack;
+  P.FirstFrame := SeekFrame;
   if Restart then
     P.StartPlayback;
   P.Status := PsmfStatusPlaying;
@@ -804,14 +829,18 @@ begin
   var Pic: TPSPPicture;
   if not P.NextPicture(Pic) then
     Exit;
-  Inc(P.Shown);
+  var First := P.Shown < 0;
+  if First then
+    P.Shown := P.FirstFrame
+  else
+    Inc(P.Shown);
   P.ShownPic := Pic;
   P.AfterLast := 0;
-  if P.Shown = 0 then
+  if First then
     P.NextDue := 8
   else
     case P.Mode of
-      0: Inc(P.NextDue, 2);
+      0, 4, 5: Inc(P.NextDue, 2);
       1: Inc(P.NextDue, 6);
     else
       P.NextDue := MaxInt;
@@ -1103,15 +1132,21 @@ begin
   P.ForceWrite := True;
   if (M = 4) or (M = 5) then
   begin
-    FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
-    Exit;
-  end;
-  if (M < 0) or (M > 3) then
+    // Fast forward and rewind jump between entry points.
+    var V := P.Header.Find(PSMFKindAvc, P.VideoNum);
+    if (V < 0) or (Length(P.Header.Streams[V].EP) = 0) then
+    begin
+      FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
+      Exit;
+    end;
+    FHLE.Unimplemented('fast forward and rewind');
+  end
+  else if (M < 0) or (M > 3) then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_CONFIG);
     Exit;
   end;
-  if (M <= 1) and (P.NextDue = MaxInt) then
+  if (M in [0, 1, 4, 5]) and (P.NextDue = MaxInt) then
     P.NextDue := P.Updates + 2;
   P.Mode := M;
   FHLE.Result(0);
