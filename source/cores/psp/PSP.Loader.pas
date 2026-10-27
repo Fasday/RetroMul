@@ -793,6 +793,8 @@ begin
   var T := FKernel.CreateThread('user_main', M.Entry, Prio, Stack, Attr, M.GP, M.UID);
   if T = nil then
     raise EPSPError.Create('PSP: no memory for the main thread');
+  // The module manager deletes the start thread once module_start returns.
+  T.DeleteOnExit := True;
   var Arg := TEncoding.ANSI.GetBytes(Path);
   SetLength(Arg, Length(Arg) + 1);
   Arg[High(Arg)] := 0;

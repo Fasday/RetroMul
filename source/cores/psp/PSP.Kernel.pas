@@ -84,6 +84,8 @@ type
     Abort: TPSPWaitAbort;
     Data: array[0..7] of Cardinal;
     HLETag: string;
+    // The call returns an address: a wait that fails gives 0.
+    FailAsZero: Boolean;
   end;
 
   TPSPCallback = class(TPSPKernelObject)
@@ -131,10 +133,14 @@ type
     // The first wait after a start goes down a slower path.
     Fresh: Boolean;
     StackPartition: TPSPPartition;
+    // The thread's block in each TLS pool, by the pool's slot.
+    TlsSlots: array[0..15] of Cardinal;
     ReleaseCount, PreemptCount, IntrPreemptCount: Cardinal;
     Seq: Int64;
     // Runs once when the thread exits or is terminated.
     OnExit: TProc<TPSPThread>;
+    // Deleted as soon as it exits by itself (a module's start thread).
+    DeleteOnExit: Boolean;
     constructor Create;
     destructor Destroy; override;
     class function IdType: Integer; override;
@@ -264,6 +270,8 @@ type
     FEventHandlers: TList<TPSPKernelObject>;
     FIdleThreadIds: array[0..1] of Cardinal;
     FTlsplCount: Integer;
+    // How far into the next wait call its timeout is looked at (0: the usual).
+    FWaitCheckNs: Int64;
     procedure T_(const Fmt: string; const Args: array of const);
     procedure ScheduleTimerEvent;
     procedure PushReady(T: TPSPThread; Front: Boolean);
@@ -413,6 +421,7 @@ type
     procedure hReferVplStatus;
     function PoolPartition(PartId: Integer): TPSPPartition;
     function TlsplOf(Id: Cardinal): TPSPKernelObject;
+    function TlsTake(Obj: TPSPKernelObject; out Addr: Cardinal): Boolean;
     procedure ReleaseTlsOf(T: TPSPThread);
     procedure AllocateVplCommon(Mode: Integer);
     procedure hCreateFpl;

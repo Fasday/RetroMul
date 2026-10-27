@@ -12,7 +12,8 @@ type
     function Retry(T: TPSPThread): Boolean;
     // Takes the first message: 0 when it worked, else the error.
     function Take(out Msg: Cardinal): Cardinal;
-    function Contains(Msg: Cardinal): Boolean;
+    // 0 if Msg is not linked in yet; the error when it is or the ring is broken.
+    function CheckNew(Msg: Cardinal): Cardinal;
     procedure Put(Msg: Cardinal);
   end;
 
@@ -57,18 +58,20 @@ begin
     Result := Kernel.Memory.Read32(Tail);
 end;
 
-function TPSPMbx.Contains(Msg: Cardinal): Boolean;
+function TPSPMbx.CheckNew(Msg: Cardinal): Cardinal;
 begin
+  if Tail = 0 then
+    Exit(0);
   var P := First;
   for var I := 1 to Count do
   begin
     if P = 0 then
-      Break;
+      Exit(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
     if P = Msg then
-      Exit(True);
+      Exit(SCE_KERNEL_ERROR_MESSAGEBOX_DUPLICATE_MESSAGE);
     P := Kernel.Memory.Read32(P);
   end;
-  Result := False;
+  Result := 0;
 end;
 
 procedure TPSPMbx.Put(Msg: Cardinal);
@@ -426,8 +429,9 @@ begin
     EndWait(T, 0);
     Exit;
   end;
-  if B.Contains(Msg) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MESSAGEBOX_DUPLICATE_MESSAGE); Exit; end;
+  var Err := B.CheckNew(Msg);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   B.Put(Msg);
   FHLE.Result(0);
 end;
@@ -662,6 +666,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   MP.Senders.Add(FCurrent);
+  FWaitCheckNs := PSPPipeCheckNs;
   BeginWaitData(PSPWaitMsgPipe, MP, MP.UID, TimeoutPtr, Mode = 1, MP.SendRetry,
     [Buf, Size, WaitMode, Done, 1, ResultPtr], MP.WaitAbort);
 end;
@@ -765,6 +770,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   MP.Receivers.Add(FCurrent);
+  FWaitCheckNs := PSPPipeCheckNs;
   BeginWaitData(PSPWaitMsgPipe, MP, MP.UID, TimeoutPtr, Mode = 1, MP.ReceiveRetry,
     [Buf, Size, WaitMode, Done, 0, ResultPtr], MP.WaitAbort);
 end;

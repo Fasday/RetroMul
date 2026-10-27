@@ -319,7 +319,15 @@ begin
   if (FCurrent = nil) or InInterrupt then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   Spend(PSPExitThreadNs);
+  var T := FCurrent;
   ExitCurrent(FHLE.Arg(0));
+  if T.DeleteOnExit and (FCurrent = T) then
+  begin
+    T.Ctx := FCPU.Ctx;
+    FCurrent := nil;
+    DeleteThread(T);
+    Reschedule;
+  end;
 end;
 
 procedure TPSPKernel.hExitDeleteThread;

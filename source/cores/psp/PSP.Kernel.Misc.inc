@@ -288,6 +288,8 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
   if not KernelCaller and (PartId in [1, 3, 4]) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION); Exit; end;
+  if (Kind < 0) or (Kind > 4) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE); Exit; end;
   var Name: string;
   if not ReadName(NamePtr, Name) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
@@ -370,6 +372,8 @@ begin
   var Kind := FHLE.ArgInt(1);
   if (Kind < 0) or (Kind > 1) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE); Exit; end;
+  if (FHLE.Arg(3) <> 0) and (FMemory.Read32(FHLE.Arg(3)) <> 4) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
   var Err: Cardinal;
   var A := AllocPartitionBlock(2, Name, Kind, FHLE.Arg(2), 0, Err);
   if A = 0 then
@@ -390,8 +394,9 @@ end;
 procedure TPSPKernel.hGetMemoryBlockPtr;
 begin
   var B := TPSPMemBlock(GetObject(FHLE.Arg(0), TPSPMemBlock));
+  // An unknown block is not reported.
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID); Exit; end;
+    begin FHLE.Result(0); Exit; end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), B.Address);
   FHLE.Result(0);
