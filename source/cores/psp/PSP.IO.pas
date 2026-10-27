@@ -1226,6 +1226,8 @@ end;
 procedure TPSPIO.hDopen;
 begin
   var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
+  if FKernel.Trace then
+    FHLE.Log('dopen %s', [Path]);
   var Dev, Rest: string;
   if not Split(Path, Dev, Rest) then
     begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
@@ -1247,7 +1249,10 @@ begin
           begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
         end;
         F.Kind := dkUMD;
-        F.Entries := FDisc.ReadDirectory(Rest);
+        // The UMD file system lists no '.' or '..'.
+        for var D in FDisc.ReadDirectory(Rest) do
+          if (D.Name <> '.') and (D.Name <> '..') then
+            F.Entries := F.Entries + [D];
       end;
     dkHost:
       begin
