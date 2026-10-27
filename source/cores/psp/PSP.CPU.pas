@@ -161,16 +161,18 @@ begin
   Result := Op and $FFFF;
 end;
 
+// Targets count from the branch's own address: a branch in the delay slot of
+// a taken one (compilers emit runs of bvt to one label) still reaches its label.
 procedure Branch(C: TPSPCPU; Op: Cardinal; Taken: Boolean); inline;
 begin
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2);
+    C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2);
 end;
 
 procedure BranchLikely(C: TPSPCPU; Op: Cardinal; Taken: Boolean); inline;
 begin
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2)
+    C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2)
   else
   begin
     // Not taken: the delay slot is nullified.
@@ -531,13 +533,13 @@ end;
 
 procedure OpJ(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := (C.Ctx.PC and $F0000000) or ((Op and $03FFFFFF) shl 2);
+  C.Ctx.NPC := ((C.CurPC + 4) and $F0000000) or ((Op and $03FFFFFF) shl 2);
 end;
 
 procedure OpJAL(C: TPSPCPU; Op: Cardinal);
 begin
   C.Ctx.GPR[31] := C.Ctx.NPC;
-  C.Ctx.NPC := (C.Ctx.PC and $F0000000) or ((Op and $03FFFFFF) shl 2);
+  C.Ctx.NPC := ((C.CurPC + 4) and $F0000000) or ((Op and $03FFFFFF) shl 2);
 end;
 
 procedure OpBEQ(C: TPSPCPU; Op: Cardinal);
@@ -547,7 +549,7 @@ end;
 
 procedure OpB(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2);
+  C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2);
 end;
 
 procedure OpBNE(C: TPSPCPU; Op: Cardinal);

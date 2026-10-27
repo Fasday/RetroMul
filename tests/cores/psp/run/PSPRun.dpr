@@ -8,7 +8,7 @@ program PSPRun;
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
-  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
+  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
 
 type
   TPress = record
@@ -58,6 +58,71 @@ begin
       Break;
     Writeln(ErrOutput, Format('[watch] pc=%.8x now=%d next=%d busy=%d thread=%s', [Console.CPU.CurPC, Console.Scheduler.Now div 1000,
       Console.Scheduler.NextDue div 1000, Console.Kernel.BusyUntil div 1000, PSPThreadName(Console.Kernel.Current)]));
+  end;
+end;
+
+type
+  // The interpreter loop, keeping the last instructions run (-history N).
+  THistoryEntry = record
+    PC, Op, RA, SP, V0, A0: Cardinal;
+    Thread: Cardinal;
+  end;
+
+  THistoryRunner = class(TPSPRunner)
+    Console: TPSPConsole;
+    Ring: TArray<THistoryEntry>;
+    Head: Integer;
+    Count: Int64;
+    procedure Run(C: TPSPCPU); override;
+    procedure CodeWritten(Address, Size: Cardinal); override;
+    procedure Flushed; override;
+    procedure Dump;
+  end;
+
+procedure THistoryRunner.Run(C: TPSPCPU);
+begin
+  while C.FRemaining > 0 do
+  begin
+    var PC := C.Ctx.PC;
+    var Entry := C.Decoded(PC);
+    var H: ^THistoryEntry := @Ring[Head];
+    H.PC := PC;
+    H.Op := Entry.Op;
+    H.RA := C.Ctx.GPR[31];
+    H.SP := C.Ctx.GPR[29];
+    H.V0 := C.Ctx.GPR[2];
+    H.A0 := C.Ctx.GPR[4];
+    if Console.Kernel.Current <> nil then
+      H.Thread := Console.Kernel.Current.UID
+    else
+      H.Thread := 0;
+    Head := (Head + 1) mod Length(Ring);
+    Inc(Count);
+    C.CurPC := PC;
+    C.Ctx.PC := C.Ctx.NPC;
+    C.Ctx.NPC := C.Ctx.NPC + 4;
+    Dec(C.FRemaining);
+    Entry.Handler(C, Entry.Op);
+    if C.Stopping then
+      Break;
+  end;
+end;
+
+procedure THistoryRunner.CodeWritten(Address, Size: Cardinal);
+begin
+end;
+
+procedure THistoryRunner.Flushed;
+begin
+end;
+
+procedure THistoryRunner.Dump;
+begin
+  var N := Min(Count, Int64(Length(Ring)));
+  for var I := N downto 1 do
+  begin
+    var H := Ring[(Head - I + Length(Ring) * 2) mod Length(Ring)];
+    Writeln(ErrOutput, Format('[hist] %.8x %.8x ra=%.8x sp=%.8x v0=%.8x a0=%.8x th=%x', [H.PC, H.Op, H.RA, H.SP, H.V0, H.A0, H.Thread]));
   end;
 end;
 
@@ -144,6 +209,7 @@ begin
     var TraceKernel := False;
     var WatchOn := False;
     var ShowState := False;
+    var HistoryLen := 0;
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
@@ -161,6 +227,7 @@ begin
       else if A = '-trace' then TraceKernel := True
       else if A = '-watch' then WatchOn := True
       else if A = '-state' then ShowState := True
+      else if A = '-history' then begin Inc(I); HistoryLen := StrToInt(ParamStr(I)); end
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-press' then
@@ -246,6 +313,14 @@ begin
       Console.HLE.NoClobber := GetEnvironmentVariable('PSP_NOCLOBBER') <> '';
       if TestMode then
         Console.IO.HasDisplay := False;
+      var History: THistoryRunner := nil;
+      if HistoryLen > 0 then
+      begin
+        History := THistoryRunner.Create;
+        History.Console := Console;
+        SetLength(History.Ring, HistoryLen);
+        Console.CPU.Runner := History;
+      end;
       if not Quiet then
         Writeln(ErrOutput, Format('title=%s id=%s', [Prog.Title, Prog.DiscId]));
       var Watch := TStopwatch.StartNew;
@@ -288,6 +363,8 @@ begin
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      if History <> nil then
+        History.Dump;
       if ShowState then
       begin
         Writeln(ErrOutput, Console.Kernel.DescribeThreads);

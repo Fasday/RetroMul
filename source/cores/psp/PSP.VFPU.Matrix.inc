@@ -353,7 +353,7 @@ begin
   var Kind := (Op shr 16) and 3;
   var Taken := Bit = ((Kind and 1) <> 0);
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (Cardinal(Integer(SmallInt(Word(Op)))) shl 2)
+    C.Ctx.NPC := C.CurPC + 4 + (Cardinal(Integer(SmallInt(Word(Op)))) shl 2)
   else if (Kind and 2) <> 0 then
   begin
     C.Ctx.PC := C.Ctx.NPC;
