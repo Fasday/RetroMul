@@ -167,8 +167,11 @@ const
   GE_SIG_BREAK2 = $FF;
 
 type
+  TGECmds = array[0..255] of Cardinal;
+  PGECmds = ^TGECmds;
+
   TPSPGERegs = record
-    Cmd: array[0..255] of Cardinal;
+    Cmd: TGECmds;
     Bone: array[0..95] of Cardinal;
     World, View, TGen: array[0..11] of Cardinal;
     Proj: array[0..15] of Cardinal;
