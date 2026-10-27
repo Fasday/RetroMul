@@ -341,7 +341,42 @@ begin
   Result := Trunc22(Sqrt(Double(BitsToSingle(X))));
 end;
 
-// Angles are in quarter turns; the reduction keeps the quadrant exactly.
+// Angles are in quarter turns. The reduction works on the magnitude, and its
+// shifter only sees the exponent's low five bits.
+function QuarterMod4(X: Cardinal): Double;
+begin
+  var E := Integer((X shr 23) and $FF) - 127;
+  if E = -127 then
+    Exit(0);
+  if E >= 32 then
+    E := E and 31;
+  var M := UInt64((X and $7FFFFF) or $800000);
+  if E >= 23 then
+    Result := (M shl (E - 23)) and 3
+  else
+  begin
+    var D: Double := M;
+    D := D * Power(2.0, E - 23);
+    Result := D - 4.0 * Int(D / 4.0);
+  end;
+end;
+
+function SinOfQuarter(R: Double; Neg: Boolean): Cardinal;
+begin
+  if R = 0 then
+    Result := 0
+  else if R = 2 then
+    Result := $80000000
+  else if R = 1 then
+    Result := VF_ONE
+  else if R = 3 then
+    Result := $BF800000
+  else
+    Result := Trunc22(Sin(R * (Pi / 2)));
+  if Neg then
+    Result := Result xor $80000000;
+end;
+
 function SinQuarter(X: Cardinal; Cosine: Boolean): Cardinal;
 begin
   X := VFlush(X);
@@ -351,32 +386,16 @@ begin
       Exit(VF_NAN);
     Exit(NaNOf(X));
   end;
-  var D: Double := BitsToSingle(X);
+  var R := QuarterMod4(X);
   if Cosine then
-    D := D + 1.0;
-  var R := D - 4.0 * Floor(D / 4.0);
-  var Res: Double;
-  if R = 0 then
-    Res := 0
-  else if R = 1 then
-    Res := 1
-  else if R = 2 then
-    Res := 0
-  else if R = 3 then
-    Res := -1
-  else
-    Res := Sin(R * (Pi / 2));
-  if Res = 0 then
   begin
-    if Cosine then
-    begin
-      if R = 2 then
-        Exit($80000000);
-      Exit(0);
-    end;
-    Exit(X and $80000000);
-  end;
-  Result := Trunc22(Res);
+    R := R + 1;
+    if R >= 4 then
+      R := R - 4;
+    Result := SinOfQuarter(R, False);
+  end
+  else
+    Result := SinOfQuarter(R, (X and $80000000) <> 0);
 end;
 
 function VSin(X: Cardinal): Cardinal;

@@ -5,28 +5,57 @@ function FloatToInt(X: Cardinal; Scale: Integer; Mode: Integer): Cardinal;
 begin
   if (X and $7FFFFFFF) > $7F800000 then
     Exit($7FFFFFFF);
-  if (X and $7F800000) = 0 then
+  var E := Integer((X shr 23) and $FF);
+  if E = 0 then
     Exit(0);
-  var D: Double := Double(BitsToSingle(X)) * Power(2.0, Scale);
-  case Mode of
-    0:
-      begin
-        var F := Floor(D);
-        var R := D - F;
-        if (R > 0.5) or ((R = 0.5) and (Frac(F / 2) <> 0)) then
-          F := F + 1;
-        D := F;
-      end;
-    1: D := Int(D);
-    2: D := Ceil(D);
+  var Neg := (X and $80000000) <> 0;
+  var K := E - 150 + Scale;
+  var Mag: UInt64;
+  if K >= 8 then
+    Mag := UInt64(1) shl 32
   else
-    D := Floor(D);
+  begin
+    var M := UInt64((X and $7FFFFF) or $800000);
+    if K >= 0 then
+      Mag := M shl K
+    else if K <= -26 then
+    begin
+      // Below one half: only rounding away from zero can make it 1.
+      Mag := 0;
+      if ((Mode = 2) and not Neg) or ((Mode = 3) and Neg) then
+        Mag := 1;
+    end
+    else
+    begin
+      var Sh := -K;
+      Mag := M shr Sh;
+      var Rem := M and ((UInt64(1) shl Sh) - 1);
+      var Half := UInt64(1) shl (Sh - 1);
+      case Mode of
+        0:
+          if (Rem > Half) or ((Rem = Half) and ((Mag and 1) <> 0)) then
+            Inc(Mag);
+        2:
+          if (Rem <> 0) and not Neg then
+            Inc(Mag);
+        3:
+          if (Rem <> 0) and Neg then
+            Inc(Mag);
+      end;
+    end;
   end;
-  if D >= 2147483647.0 then
-    Exit($7FFFFFFF);
-  if D <= -2147483648.0 then
-    Exit($80000000);
-  Result := Cardinal(Integer(Trunc(D)));
+  if Neg then
+  begin
+    if Mag >= UInt64($80000000) then
+      Exit($80000000);
+    Result := Cardinal(-Int64(Mag));
+  end
+  else
+  begin
+    if Mag >= UInt64($80000000) then
+      Exit($7FFFFFFF);
+    Result := Cardinal(Mag);
+  end;
 end;
 
 procedure DoF2I(C: TPSPCPU; Op: Cardinal; Mode: Integer);
