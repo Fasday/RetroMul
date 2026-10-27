@@ -173,6 +173,17 @@ begin
     if (Ext = '.iso') or (Ext = '.cso') then
       Prog.MediaPath := FileName;
     var HostRoot := ExtractFileDir(FileName);
+    if TestMode then
+    begin
+      // On hardware host0: is the pspautotests root: tests open "host0:/tests/..." and "../x".
+      var Marker := PathDelim + 'tests' + PathDelim;
+      var P := FileName.ToLower.LastIndexOf(Marker);
+      if P >= 0 then
+      begin
+        HostRoot := FileName.Substring(0, P);
+        Prog.BootPath := 'host0:' + FileName.Substring(P).Replace('\', '/');
+      end;
+    end;
     var Memstick := TPath.Combine(TPath.GetTempPath, 'psprun-memstick');
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
