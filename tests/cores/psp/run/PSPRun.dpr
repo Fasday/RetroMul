@@ -5,6 +5,7 @@ program PSPRun;
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
 // -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
+// -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
@@ -154,6 +155,9 @@ end;
 
 procedure SaveBMP(const F: TEmulatorFrame; const Name: string);
 begin
+  // Nothing displayed yet.
+  if Length(F.Pixels) < F.Width * F.Height then
+    Exit;
   var S := TFileStream.Create(Name, fmCreate);
   try
     var RowSize := F.Width * 3;
@@ -190,6 +194,33 @@ begin
   end;
 end;
 
+procedure SaveWAV(const Samples: TList<SmallInt>; const Name: string);
+begin
+  var S := TFileStream.Create(Name, fmCreate);
+  try
+    var DataSize := Cardinal(Samples.Count) * 2;
+    var Header: array[0..43] of Byte;
+    FillChar(Header, SizeOf(Header), 0);
+    Move(AnsiString('RIFF')[1], Header[0], 4);
+    PCardinal(@Header[4])^ := 36 + DataSize;
+    Move(AnsiString('WAVEfmt ')[1], Header[8], 8);
+    PCardinal(@Header[16])^ := 16;
+    PWord(@Header[20])^ := 1;
+    PWord(@Header[22])^ := 2;
+    PCardinal(@Header[24])^ := 44100;
+    PCardinal(@Header[28])^ := 44100 * 4;
+    PWord(@Header[32])^ := 4;
+    PWord(@Header[34])^ := 16;
+    Move(AnsiString('data')[1], Header[36], 4);
+    PCardinal(@Header[40])^ := DataSize;
+    S.WriteBuffer(Header, SizeOf(Header));
+    if Samples.Count > 0 then
+      S.WriteBuffer(Samples.List[0], DataSize);
+  finally
+    S.Free;
+  end;
+end;
+
 begin
   try
     if ParamCount < 1 then
@@ -213,6 +244,7 @@ begin
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
+    var WavFile := '';
     var I := 2;
     while I <= ParamCount do
     begin
@@ -230,6 +262,7 @@ begin
       else if A = '-history' then begin Inc(I); HistoryLen := StrToInt(ParamStr(I)); end
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
+      else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-press' then
       begin
         Inc(I);
@@ -327,6 +360,10 @@ begin
       var Frame: TEmulatorFrame;
       var LastHash := '';
       var Failed := '';
+      var Wav := TList<SmallInt>.Create;
+      var Peak := 0;
+      var SumSq: Double := 0;
+      var SumN: Int64 := 0;
       for var F := 1 to Frames do
       begin
         var Input := Default(TEmulatorInput);
@@ -346,11 +383,32 @@ begin
         var Text := Console.TakeOutput;
         if Text <> '' then
           Write(Text);
+        if WavFile <> '' then
+          for var Smp in Console.AudioSamples do
+          begin
+            Wav.Add(Smp);
+            Peak := Max(Peak, Abs(Integer(Smp)));
+            SumSq := SumSq + Sqr(Double(Smp));
+            Inc(SumN);
+          end;
         if (Every > 0) and (F mod Every = 0) then
         begin
           var H := FrameHash(Frame);
           if not Quiet then
-            Writeln(ErrOutput, Format('frame %d hash %s', [F, H]));
+          begin
+            if WavFile <> '' then
+            begin
+              var Rms := 0.0;
+              if SumN > 0 then
+                Rms := Sqrt(SumSq / SumN);
+              Writeln(ErrOutput, Format('frame %d hash %s audio peak %d rms %.0f', [F, H, Peak, Rms]));
+              Peak := 0;
+              SumSq := 0;
+              SumN := 0;
+            end
+            else
+              Writeln(ErrOutput, Format('frame %d hash %s', [F, H]));
+          end;
           if OutDir <> '' then
             SaveBMP(Frame, TPath.Combine(OutDir, Format('f%.5d.bmp', [F])));
         end;
@@ -372,6 +430,9 @@ begin
       end;
       for var K := 0 to DumpLen div 4 - 1 do
         Writeln(ErrOutput, Format('[dump] %.8x %.8x', [DumpAt + Cardinal(K) * 4, Console.Memory.Read32(DumpAt + Cardinal(K) * 4)]));
+      if WavFile <> '' then
+        SaveWAV(Wav, WavFile);
+      Wav.Free;
       if not Quiet then
         Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s cpu=%.1fM (%.1f MHz host)',
           [Console.FrameNumber, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9,
