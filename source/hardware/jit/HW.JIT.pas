@@ -9,6 +9,11 @@ unit HW.JIT;
 // Linux's System V one (TJitAsmSysV64), AArch64 instructions with AAPCS64
 // (TJitAsmA64) on Android (TJitAsmAndroid64). Other targets compile the unit
 // and make no code (JitSupported False, CreateJitAsm nil).
+//
+// The model (CreateJitModel, every target) writes no machine code: it keeps
+// the operations and runs them itself, in Pascal (Invoke). It is what each
+// operation means, for the tests: a backend's code must do what the model
+// does, and a core's code run by the model what the core's interpreter does.
 
 interface
 
@@ -68,6 +73,9 @@ type
     FLabelCount, FFixCount: Integer;
     procedure Fix(Field: NativeInt; L: TJitLabel);
   protected
+    // Room's estimates times this (the model's operations take more bytes
+    // than instructions).
+    FRoomScale: Integer;
     procedure Need(Bytes: NativeInt); inline;
     procedure Emit(const Bytes: array of Byte);
     procedure D(V: Cardinal);
@@ -150,6 +158,9 @@ type
     procedure Redirect(Site, Target: NativeInt);
     // The code written since the last Flush made ready to run.
     procedure Flush;
+    // Runs the function at Code (written with Enter or EnterJump) with four
+    // pointer-sized arguments (unused ones ignored): its result.
+    function Invoke(Code: Pointer; A0, A1, A2, A3: NativeUInt): NativeInt; virtual;
     property Size: NativeInt read FSize;
     property Base: PByte read FBase;
   end;
@@ -177,6 +188,8 @@ const
 
 // This target's code generator with Size bytes of code (nil: none here).
 function CreateJitAsm(Size: NativeInt): TJitAsm;
+// The model (every target), with Size bytes for its operations.
+function CreateJitModel(Size: NativeInt): TJitAsm;
 
 implementation
 
@@ -220,6 +233,7 @@ end;
 constructor TJitAsm.Create(Size: NativeInt);
 begin
   inherited Create;
+  FRoomScale := 1;
   FSize := Size;
   FBase := Allocate(Size, FCodeStart);
   Reset;
@@ -267,7 +281,7 @@ end;
 
 function TJitAsm.Room(Bytes: NativeInt): Boolean;
 begin
-  Result := (FBase <> nil) and (FUsed + Bytes <= FSize);
+  Result := (FBase <> nil) and (FUsed + Bytes * FRoomScale <= FSize);
 end;
 
 procedure TJitAsm.Need(Bytes: NativeInt);
@@ -413,6 +427,13 @@ begin
   if FUsed > FFlushed then
     FlushCode(FBase + FFlushed, FUsed - FFlushed);
   FFlushed := FUsed;
+end;
+
+function TJitAsm.Invoke(Code: Pointer; A0, A1, A2, A3: NativeUInt): NativeInt;
+type
+  TJitFunction = function(A0, A1, A2, A3: NativeUInt): NativeInt;
+begin
+  Result := TJitFunction(Code)(A0, A1, A2, A3);
 end;
 
 { x64 }
@@ -1791,6 +1812,547 @@ begin
 end;
 
 {$ENDIF}
+
+{ The model }
+
+type
+  // An operand as the model keeps it (TJitOp's fields).
+  TModelOperand = packed record
+    Kind, Reg: Byte;
+    Disp: Integer;
+    Imm: Int64;
+  end;
+
+  // The operations (never $CC, Align's filler: the model skips those bytes).
+  TModelCode = (mcMove = 1, mcAlu, mcShift, mcSignExtend, mcCompare, mcTest, mcJumpIf, mcJump, mcCall, mcCallAt,
+    mcEnter, mcLeave, mcEnterJump, mcJumpIndirect);
+
+  // One operation: its width, its TJitAlu, TJitShift or TJitCond (Sub), a
+  // shift's count or a call's arguments (Count), a jump's target (Target,
+  // the jump's field: ModelTarget bytes on), a call's routine.
+  TModelOp = packed record
+    Code, W, Sub, Count: Byte;
+    Target: Integer;
+    Routine: Pointer;
+    A, B: TModelOperand;
+    Args: array[0..3] of TModelOperand;
+  end;
+
+  PModelOp = ^TModelOp;
+
+  // TJitAsm's operations kept and run in Pascal (Invoke). Each operation's
+  // meaning is written here once: what every backend's instructions must do.
+  // The forms some backend lacks raise as they are written (a constant
+  // outside a 32-bit one, an 8-bit operation on a register, two memory
+  // operands), so that code the model takes runs on every backend. After a
+  // call the scratch registers but T0 hold garbage, and no flags are left
+  // after a call, an operation or a shift (a jump on them raises).
+  TJitAsmModel = class(TJitAsm)
+  private
+    FLastTest: Boolean;
+    function Put(Code: TModelCode; W: TJitWidth): PModelOp;
+  protected
+    function Allocate(Size: NativeInt; out CodeStart: NativeInt): PByte; override;
+    procedure Release(Base: PByte); override;
+    procedure FlushCode(P: PByte; Len: NativeInt); override;
+    procedure EmitCompare(W: TJitWidth; const A, B: TJitOp); override;
+    procedure EmitTest(W: TJitWidth; const A, B: TJitOp); override;
+    function EmitJumpIf(Cond: TJitCond): NativeInt; override;
+    function EmitJump: NativeInt; override;
+    procedure PatchJump(Field, Target: NativeInt); override;
+    function JumpTargetOf(Field: NativeInt): NativeInt; override;
+    function HasS4: Boolean; override;
+  public
+    constructor Create(Size: NativeInt);
+    procedure Move(W: TJitWidth; const Dst, Src: TJitOp); override;
+    procedure Alu(Op: TJitAlu; W: TJitWidth; const Dst, Src: TJitOp); override;
+    procedure Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer); override;
+    procedure SignExtend(W: TJitWidth; Dst: TJitReg); override;
+    procedure Call(Routine: Pointer; const Args: array of TJitOp); override;
+    procedure CallAt(const Routine: TJitOp; const Args: array of TJitOp); override;
+    procedure Enter; override;
+    procedure Leave(const Value: TJitOp); override;
+    procedure EnterJump; override;
+    procedure JumpIndirect(const Target: TJitOp); override;
+    function Invoke(Code: Pointer; A0, A1, A2, A3: NativeUInt): NativeInt; override;
+  end;
+
+const
+  ModelTarget = 4;
+  // Room's estimates are for instructions; the model's operations are
+  // larger.
+  ModelRoomScale = 16;
+  ModelPoison = UInt64($BAD0BAD0BAD0BAD0);
+
+procedure ModelError(const What: string);
+begin
+  raise EInvalidOpException.Create('JIT: ' + What + ' (not on every backend)');
+end;
+
+function ModelOperand(const Op: TJitOp): TModelOperand;
+begin
+  Result.Kind := Ord(Op.Kind);
+  Result.Reg := Ord(Op.Reg);
+  Result.Disp := Op.Disp;
+  Result.Imm := Op.Imm;
+end;
+
+function ConstantFits(Value: Int64; W: TJitWidth): Boolean;
+begin
+  // A constant every backend takes in memory or an operation: 8 bits any
+  // (its low byte), 32 any 32-bit value, 64 a sign-extended 32-bit one.
+  case W of
+    jw8:
+      Result := True;
+    jw32:
+      Result := (Value >= -Int64($80000000)) and (Value <= $FFFFFFFF);
+  else
+    Result := (Value >= -Int64($80000000)) and (Value <= $7FFFFFFF);
+  end;
+end;
+
+constructor TJitAsmModel.Create(Size: NativeInt);
+begin
+  inherited Create(Size);
+  FRoomScale := ModelRoomScale;
+end;
+
+function TJitAsmModel.Allocate(Size: NativeInt; out CodeStart: NativeInt): PByte;
+begin
+  GetMem(Result, Size);
+  CodeStart := 16;
+end;
+
+procedure TJitAsmModel.Release(Base: PByte);
+begin
+  FreeMem(Base);
+end;
+
+procedure TJitAsmModel.FlushCode(P: PByte; Len: NativeInt);
+begin
+end;
+
+function TJitAsmModel.HasS4: Boolean;
+begin
+  Result := True;
+end;
+
+function TJitAsmModel.Put(Code: TModelCode; W: TJitWidth): PModelOp;
+begin
+  Need(SizeOf(TModelOp));
+  Result := PModelOp(Here);
+  FillChar(Result^, SizeOf(TModelOp), 0);
+  Result.Code := Ord(Code);
+  Result.W := Ord(W);
+  Result.Target := -1;
+  Inc(FUsed, SizeOf(TModelOp));
+end;
+
+procedure TJitAsmModel.Move(W: TJitWidth; const Dst, Src: TJitOp);
+begin
+  if Dst.Kind = okReg then
+    // (Any source; a constant fills 32 bits for 8 and 32.)
+  else if Dst.Kind = okMem then
+  begin
+    if not (Src.Kind in [okReg, okImm]) then
+      ModelError('a move to memory from memory or an address');
+    if (Src.Kind = okImm) and not ConstantFits(Src.Imm, W) then
+      ModelError('a constant out of range');
+  end
+  else
+    ModelError('a move to a constant or an address');
+  var P := Put(mcMove, W);
+  P.A := ModelOperand(Dst);
+  P.B := ModelOperand(Src);
+end;
+
+procedure TJitAsmModel.Alu(Op: TJitAlu; W: TJitWidth; const Dst, Src: TJitOp);
+begin
+  if Dst.Kind = okReg then
+  begin
+    if W = jw8 then
+      ModelError('an 8-bit operation on a register');
+    if not (Src.Kind in [okReg, okImm, okMem]) then
+      ModelError('an operation with an address');
+  end
+  else if Dst.Kind = okMem then
+  begin
+    if not (Src.Kind in [okReg, okImm]) then
+      ModelError('an operation on memory with memory or an address');
+  end
+  else
+    ModelError('an operation on a constant or an address');
+  if (Src.Kind = okImm) and not ConstantFits(Src.Imm, W) then
+    ModelError('a constant out of range');
+  var P := Put(mcAlu, W);
+  P.Sub := Ord(Op);
+  P.A := ModelOperand(Dst);
+  P.B := ModelOperand(Src);
+end;
+
+procedure TJitAsmModel.Shift(Op: TJitShift; W: TJitWidth; Dst: TJitReg; Count: Integer);
+begin
+  if (Count < 0) or ((W = jw64) and (Count > 63)) or ((W <> jw64) and (Count > 31)) then
+    ModelError('a shift count out of range');
+  var P := Put(mcShift, W);
+  P.Sub := Ord(Op);
+  P.Count := Count;
+  P.A := ModelOperand(JReg(Dst));
+end;
+
+procedure TJitAsmModel.SignExtend(W: TJitWidth; Dst: TJitReg);
+begin
+  var P := Put(mcSignExtend, W);
+  P.A := ModelOperand(JReg(Dst));
+end;
+
+procedure TJitAsmModel.EmitCompare(W: TJitWidth; const A, B: TJitOp);
+begin
+  if not (A.Kind in [okReg, okMem]) or not (B.Kind in [okReg, okImm, okMem]) or ((A.Kind = okMem) and (B.Kind = okMem)) then
+    ModelError('no such comparison');
+  if (B.Kind = okImm) and not ConstantFits(B.Imm, W) then
+    ModelError('a constant out of range');
+  var P := Put(mcCompare, W);
+  P.A := ModelOperand(A);
+  P.B := ModelOperand(B);
+  FLastTest := False;
+end;
+
+procedure TJitAsmModel.EmitTest(W: TJitWidth; const A, B: TJitOp);
+begin
+  if not (A.Kind in [okReg, okMem]) or not (B.Kind in [okReg, okImm]) then
+    ModelError('no such test');
+  if (B.Kind = okImm) and not ConstantFits(B.Imm, W) then
+    ModelError('a constant out of range');
+  var P := Put(mcTest, W);
+  P.A := ModelOperand(A);
+  P.B := ModelOperand(B);
+  FLastTest := True;
+end;
+
+function TJitAsmModel.EmitJumpIf(Cond: TJitCond): NativeInt;
+begin
+  if FLastTest and not (Cond in [jcEq, jcNe]) then
+    ModelError('an order after a test');
+  Result := Offset + ModelTarget;
+  Put(mcJumpIf, jw64).Sub := Ord(Cond);
+end;
+
+function TJitAsmModel.EmitJump: NativeInt;
+begin
+  Result := Offset + ModelTarget;
+  Put(mcJump, jw64);
+end;
+
+procedure TJitAsmModel.PatchJump(Field, Target: NativeInt);
+begin
+  PInteger(Base + Field)^ := Integer(Target);
+end;
+
+function TJitAsmModel.JumpTargetOf(Field: NativeInt): NativeInt;
+begin
+  Result := PInteger(Base + Field)^;
+end;
+
+procedure TJitAsmModel.Call(Routine: Pointer; const Args: array of TJitOp);
+begin
+  if Length(Args) > 4 then
+    ModelError('more than four arguments');
+  var P := Put(mcCall, jw64);
+  P.Routine := Routine;
+  P.Count := Length(Args);
+  for var K := 0 to High(Args) do
+    P.Args[K] := ModelOperand(Args[K]);
+end;
+
+procedure TJitAsmModel.CallAt(const Routine: TJitOp; const Args: array of TJitOp);
+begin
+  if Routine.Kind <> okMem then
+    ModelError('a call through no memory');
+  if Length(Args) > 4 then
+    ModelError('more than four arguments');
+  var P := Put(mcCallAt, jw64);
+  P.A := ModelOperand(Routine);
+  P.Count := Length(Args);
+  for var K := 0 to High(Args) do
+    P.Args[K] := ModelOperand(Args[K]);
+end;
+
+procedure TJitAsmModel.Enter;
+begin
+  Put(mcEnter, jw64);
+end;
+
+procedure TJitAsmModel.Leave(const Value: TJitOp);
+begin
+  Put(mcLeave, jw64).A := ModelOperand(Value);
+end;
+
+procedure TJitAsmModel.EnterJump;
+begin
+  Put(mcEnterJump, jw64);
+end;
+
+procedure TJitAsmModel.JumpIndirect(const Target: TJitOp);
+begin
+  if not (Target.Kind in [okReg, okMem]) then
+    ModelError('no such indirect jump');
+  Put(mcJumpIndirect, jw64).A := ModelOperand(Target);
+end;
+
+function TJitAsmModel.Invoke(Code: Pointer; A0, A1, A2, A3: NativeUInt): NativeInt;
+type
+  TFn0 = function: NativeUInt;
+  TFn1 = function(A: NativeUInt): NativeUInt;
+  TFn2 = function(A, B: NativeUInt): NativeUInt;
+  TFn3 = function(A, B, C: NativeUInt): NativeUInt;
+  TFn4 = function(A, B, C, D: NativeUInt): NativeUInt;
+const
+  Masks: array[TJitWidth] of UInt64 = ($FF, $FFFFFFFF, UInt64($FFFFFFFFFFFFFFFF));
+var
+  R: array[TJitReg] of UInt64;
+  // The flags: none, of a comparison or of a test (FlagA the bits tested).
+  FlagKind: Integer;
+  FlagA, FlagB: UInt64;
+  FlagW: TJitWidth;
+
+  function Address(const O: TModelOperand): NativeUInt;
+  begin
+    Result := NativeUInt(R[TJitReg(O.Reg)] + UInt64(Int64(O.Disp)));
+  end;
+
+  function Load(A: NativeUInt; W: TJitWidth): UInt64;
+  begin
+    case W of
+      jw8: Result := PByte(A)^;
+      jw32: Result := PCardinal(A)^;
+    else
+      Result := PUInt64(A)^;
+    end;
+  end;
+
+  procedure Store(A: NativeUInt; W: TJitWidth; V: UInt64);
+  begin
+    case W of
+      jw8: PByte(A)^ := Byte(V);
+      jw32: PCardinal(A)^ := Cardinal(V);
+    else
+      PUInt64(A)^ := V;
+    end;
+  end;
+
+  function Value(const O: TModelOperand; W: TJitWidth): UInt64;
+  begin
+    // A source operand, W bits of it (registers whole: the callers mask).
+    case TJitOpKind(O.Kind) of
+      okReg: Result := R[TJitReg(O.Reg)];
+      okImm: Result := UInt64(O.Imm);
+      okMem: Result := Load(Address(O), W);
+    else
+      Result := Address(O);
+    end;
+  end;
+
+  function Signed(V: UInt64; W: TJitWidth): Int64;
+  begin
+    case W of
+      jw8: Result := ShortInt(Byte(V));
+      jw32: Result := Integer(Cardinal(V));
+    else
+      Result := Int64(V);
+    end;
+  end;
+
+  function ToOffset(A: UInt64): NativeInt;
+  begin
+    Result := NativeInt(A) - NativeInt(Base);
+    if (Result < FCodeStart) or (Result >= FUsed) then
+      raise EInvalidOpException.Create('JIT model: a jump out of the code');
+  end;
+
+begin
+  for var X := Low(TJitReg) to High(TJitReg) do
+    R[X] := ModelPoison;
+  FlagKind := 0;
+  FlagA := 0;
+  FlagB := 0;
+  FlagW := jw64;
+  var PC := ToOffset(UInt64(NativeUInt(Code)));
+  while True do
+  begin
+    if Base[PC] = $CC then
+    begin
+      Inc(PC);
+      Continue;
+    end;
+    var P := PModelOp(Base + PC);
+    var W := TJitWidth(P.W);
+    var Next := PC + SizeOf(TModelOp);
+    case TModelCode(P.Code) of
+      mcMove:
+        if TJitOpKind(P.A.Kind) = okReg then
+        begin
+          var V: UInt64;
+          case TJitOpKind(P.B.Kind) of
+            okReg: V := R[TJitReg(P.B.Reg)] and Masks[W];
+            okImm:
+              if W = jw64 then
+                V := UInt64(P.B.Imm)
+              else
+                V := UInt64(P.B.Imm) and $FFFFFFFF;
+            okMem: V := Load(Address(P.B), W);
+          else
+            V := Address(P.B);
+          end;
+          R[TJitReg(P.A.Reg)] := V;
+        end
+        else
+          Store(Address(P.A), W, Value(P.B, W));
+      mcAlu:
+        begin
+          var Dst := Value(P.A, W) and Masks[W];
+          var Src := Value(P.B, W) and Masks[W];
+          case TJitAlu(P.Sub) of
+            jaAdd: Dst := Dst + Src;
+            jaSub: Dst := Dst - Src;
+            jaAnd: Dst := Dst and Src;
+            jaOr: Dst := Dst or Src;
+          else
+            Dst := Dst xor Src;
+          end;
+          Dst := Dst and Masks[W];
+          if TJitOpKind(P.A.Kind) = okReg then
+            R[TJitReg(P.A.Reg)] := Dst
+          else
+            Store(Address(P.A), W, Dst);
+          FlagKind := 0;
+        end;
+      mcShift:
+        begin
+          var X := TJitReg(P.A.Reg);
+          var C := P.Count;
+          if W = jw64 then
+            case TJitShift(P.Sub) of
+              jsShl: R[X] := R[X] shl C;
+              jsShr: R[X] := R[X] shr C;
+            else
+              if Int64(R[X]) < 0 then
+                R[X] := not ((not R[X]) shr C)
+              else
+                R[X] := R[X] shr C;
+            end
+          else
+          begin
+            var V := Cardinal(R[X]);
+            case TJitShift(P.Sub) of
+              jsShl: V := V shl C;
+              jsShr: V := V shr C;
+            else
+              if Integer(V) < 0 then
+                V := not ((not V) shr C)
+              else
+                V := V shr C;
+            end;
+            R[X] := V;
+          end;
+          FlagKind := 0;
+        end;
+      mcSignExtend:
+        begin
+          var X := TJitReg(P.A.Reg);
+          R[X] := UInt64(Signed(R[X], W));
+        end;
+      mcCompare:
+        begin
+          FlagA := Value(P.A, W) and Masks[W];
+          FlagB := Value(P.B, W) and Masks[W];
+          FlagW := W;
+          FlagKind := 1;
+        end;
+      mcTest:
+        begin
+          FlagA := Value(P.A, W) and Value(P.B, W) and Masks[W];
+          FlagKind := 2;
+        end;
+      mcJumpIf:
+        begin
+          if FlagKind = 0 then
+            raise EInvalidOpException.Create('JIT model: a jump on flags an operation or a call changed');
+          var Taken: Boolean;
+          if FlagKind = 2 then
+            Taken := (FlagA = 0) = (TJitCond(P.Sub) = jcEq)
+          else
+          begin
+            var SA := Signed(FlagA, FlagW);
+            var SB := Signed(FlagB, FlagW);
+            case TJitCond(P.Sub) of
+              jcEq: Taken := FlagA = FlagB;
+              jcNe: Taken := FlagA <> FlagB;
+              jcLt: Taken := SA < SB;
+              jcLe: Taken := SA <= SB;
+              jcGt: Taken := SA > SB;
+              jcGe: Taken := SA >= SB;
+              jcBelow: Taken := FlagA < FlagB;
+              jcBelowEq: Taken := FlagA <= FlagB;
+              jcAbove: Taken := FlagA > FlagB;
+            else
+              Taken := FlagA >= FlagB;
+            end;
+          end;
+          if Taken then
+            Next := P.Target;
+        end;
+      mcJump:
+        Next := P.Target;
+      mcCall, mcCallAt:
+        begin
+          var Routine: Pointer;
+          if TModelCode(P.Code) = mcCall then
+            Routine := P.Routine
+          else
+            Routine := Pointer(NativeUInt(Value(P.A, jw64)));
+          var Args: array[0..3] of NativeUInt;
+          for var K := 0 to P.Count - 1 do
+            Args[K] := NativeUInt(Value(P.Args[K], jw64));
+          var Res: NativeUInt;
+          case P.Count of
+            0: Res := TFn0(Routine)();
+            1: Res := TFn1(Routine)(Args[0]);
+            2: Res := TFn2(Routine)(Args[0], Args[1]);
+            3: Res := TFn3(Routine)(Args[0], Args[1], Args[2]);
+          else
+            Res := TFn4(Routine)(Args[0], Args[1], Args[2], Args[3]);
+          end;
+          for var X := jrT1 to jrT6 do
+            R[X] := ModelPoison;
+          R[jrT0] := Res;
+          FlagKind := 0;
+        end;
+      mcEnter, mcEnterJump:
+        begin
+          R[jrSelf] := A0;
+          R[jrCtx] := A1;
+          if TModelCode(P.Code) = mcEnterJump then
+          begin
+            R[jrT1] := A3;
+            Next := ToOffset(A2);
+          end;
+        end;
+      mcLeave:
+        Exit(NativeInt(Value(P.A, jw64)));
+      mcJumpIndirect:
+        Next := ToOffset(Value(P.A, jw64));
+    else
+      raise EInvalidOpException.Create('JIT model: no operation here');
+    end;
+    PC := Next;
+  end;
+end;
+
+function CreateJitModel(Size: NativeInt): TJitAsm;
+begin
+  Result := TJitAsmModel.Create(Size);
+end;
 
 function CreateJitAsm(Size: NativeInt): TJitAsm;
 begin
