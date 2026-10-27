@@ -592,6 +592,7 @@ uses
   Core.Adapter.SG1000 in '..\..\source\adapters\Core.Adapter.SG1000.pas',
   Core.Adapter.SNES in '..\..\source\adapters\Core.Adapter.SNES.pas',
   Core.PS1.Playback in '..\..\source\adapters\Core.PS1.Playback.pas',
+  Core.PSP.Playback in '..\..\source\adapters\Core.PSP.Playback.pas',
   Core.Adapter.PS1 in '..\..\source\adapters\Core.Adapter.PS1.pas',
   ZX.BlockImage in '..\..\source\cores\zx\ZX.BlockImage.pas',
   ZX.DivStorage in '..\..\source\cores\zx\ZX.DivStorage.pas',
