@@ -136,6 +136,61 @@ begin
   C.Stop;
 end;
 
+{ Handlers the recompiler knows nothing of (as the test's VFPU) }
+
+procedure TestReadPC(C: TPSPCPU; Op: Cardinal);
+begin
+  // What the interpreter has as PC, NPC and CurPC while it runs one.
+  var T := (Op shr 16) and 31;
+  if T < 24 then
+    C.Ctx.GPR[T] := C.Ctx.PC xor (C.Ctx.NPC shl 1) xor (C.CurPC shl 2) xor Op;
+end;
+
+procedure TestStop(C: TPSPCPU; Op: Cardinal);
+begin
+  // Stops the run, adds cycles, or both.
+  if (Op and 1) <> 0 then
+    C.Stop;
+  C.AddCycles((Op shr 1) and 7);
+  C.Ctx.V[Op and 127] := C.Ctx.V[Op and 127] + 1;
+end;
+
+procedure TestStore(C: TPSPCPU; Op: Cardinal);
+begin
+  // A store (through its base: into code too).
+  C.Memory.Write32(C.Ctx.GPR[(Op shr 21) and 31] + Cardinal(Integer(SmallInt(Word(Op)))), C.Ctx.GPR[(Op shr 16) and 31]);
+end;
+
+procedure TestBranch(C: TPSPCPU; Op: Cardinal);
+begin
+  // A branch on GPR[1]'s low bit (likely where bit 17 is set), as the
+  // interpreter's branches.
+  var Taken := ((C.Ctx.GPR[1] and 1) <> 0) = ((Op and $10000) <> 0);
+  if Taken then
+    C.Ctx.NPC := C.Ctx.PC + Cardinal(Integer(SmallInt(Word(Op))) * 4)
+  else if (Op and $20000) <> 0 then
+  begin
+    C.Ctx.PC := C.Ctx.NPC;
+    C.Ctx.NPC := C.Ctx.NPC + 4;
+  end;
+end;
+
+function TestDecoder(Op: Cardinal): TPSPOpHandler;
+begin
+  case Op shr 26 of
+    $18: Result := TestReadPC;
+    $19: Result := TestStop;
+    $3A: Result := TestStore;
+    $12:
+      if ((Op shr 21) and 31) = 8 then
+        Result := TestBranch
+      else
+        Result := OpReserved;
+  else
+    Result := OpReserved;
+  end;
+end;
+
 { Programs }
 
 function Dest: Cardinal;
@@ -321,6 +376,16 @@ begin
         else
           Op := (Cardinal($30) shl 26) or (28 shl 21) or (Next(2) shl 16) or (Next(64) * 4);               // LL (maybe $0)
         end;
+      92..95:
+        // The test's own "VFPU" (TestDecoder).
+        case Next(5) of
+          0: Op := (Cardinal($18) shl 26) or (Dest shl 16) or Next($10000);
+          1: Op := (Cardinal($19) shl 26) or (Next($2000) * 2) or Cardinal(Ord(Next(4) = 0));
+          2: Op := (Cardinal($3A) shl 26) or (28 shl 21) or (Src shl 16) or (Cardinal(Integer(Next(512)) * 4 - 1024) and $FFFF);
+          3: Op := (Cardinal($3A) shl 26) or (27 shl 21) or (Pick([24, 25]) shl 16) or ((Cardinal(I) + 1 + Next(6)) * 4);
+        else
+          Op := (Cardinal($12) shl 26) or (8 shl 21) or (Next(4) shl 16) or Rel;
+        end;
     else
       Op := 0;
     end;
@@ -471,6 +536,8 @@ begin
   var Data: TBytes;
   SetLength(Data, $8000);
   var SavedHot := PSPJitHot;
+  var SavedDecoder: TPSPVFPUDecoder := PSPVFPUDecoder;
+  PSPVFPUDecoder := TestDecoder;
   var Ran: Int64 := 0;
   var Failed := 0;
   var Faulted := 0;
@@ -635,6 +702,7 @@ begin
       Report.Add('PSP JIT: DIFFERENCES');
   finally
     PSPJitHot := SavedHot;
+    PSPVFPUDecoder := SavedDecoder;
     for var M in Machines do
       M.Free;
   end;

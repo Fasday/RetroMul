@@ -138,7 +138,7 @@ type
     procedure Recover(Page: PPSPJitPage);
     procedure WriteState(const At: TPSPJitAt);
     function HitExit(const At: TPSPJitAt): TJitLabel;
-    procedure EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Pointer);
+    procedure EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Pointer; State: Boolean);
     procedure EmitLoad(Op: Cardinal; Kind: Integer; const Reg: TJitOp);
     procedure EmitStore(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; const Reg: TJitOp);
     function EmitInstr(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; Handler: Pointer): Boolean;
@@ -230,7 +230,7 @@ var
   EndHandler: array[0..2] of Pointer;
   PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
-  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode: Integer;
+  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode: Integer;
 
 function HandlerOf(Op: Cardinal): Pointer;
 begin
@@ -255,6 +255,7 @@ begin
   OffPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.PC));
   OffNPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.NPC));
   OffCurPC := Integer(NativeUInt(@TPSPCPU(nil).CurPC));
+  OffStopping := Integer(NativeUInt(@TPSPCPU(nil).Stopping));
   OffRemaining := Integer(NativeUInt(@TPSPCPU(nil).FRemaining));
   OffHit := Integer(NativeUInt(@TPSPRecompiler(nil).FHit));
   OffLastExit := Integer(NativeUInt(@TPSPRecompiler(nil).FLastExit));
@@ -404,12 +405,19 @@ begin
   Result := H.L;
 end;
 
-procedure TPSPRecompiler.EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Pointer);
+procedure TPSPRecompiler.EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Pointer; State: Boolean);
 begin
-  WriteState(At);
+  // The handler (PC, NPC and CurPC first where it may read them); after it
+  // the code leaves where it stopped the run or rewrote a block.
+  if State then
+    WriteState(At);
   FJ.Call(Handler, [JSelf, JImm(Op)]);
+  var Leave := HitExit(At);
+  FJ.BranchTest(jcNe, jw8, JMem(jrSelf, OffStopping), JImm($FF), Leave);
+  // (Cycles it added that leave too few for the block's rest.)
+  FJ.Branch(jcLt, jw32, JMem(jrSelf, OffRemaining), JImm(0), Leave);
   if MayStore(Op) then
-    FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), HitExit(At));
+    FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), Leave);
 end;
 
 procedure TPSPRecompiler.EmitLoad(Op: Cardinal; Kind: Integer; const Reg: TJitOp);
@@ -610,13 +618,9 @@ begin
         Result := True;
       end;
     jkHandler:
-      EmitCall(At, Op, Handler);
+      EmitCall(At, Op, Handler, True);
     jkPure:
-      begin
-        J.Call(Handler, [JSelf, JImm(Op)]);
-        if MayStore(Op) then
-          J.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), HitExit(At));
-      end;
+      EmitCall(At, Op, Handler, False);
     jkSLL:
       ShiftBy(jsShl);
     jkSRL:
