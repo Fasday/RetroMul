@@ -1316,20 +1316,30 @@ begin
   FRunLength := MaxCycles;
   FRemaining := MaxCycles;
   FAccounted := 0;
-  while FRemaining > 0 do
-  begin
-    var PC := Ctx.PC;
-    var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
-    if Page = nil then
-      Page := DecodePage(PC);
-    var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
-    CurPC := PC;
-    Ctx.PC := Ctx.NPC;
-    Ctx.NPC := Ctx.NPC + 4;
-    Dec(FRemaining);
-    Entry.Handler(Self, Entry.Op);
-    if Stopping then
-      Break;
+  // Guest float code needs IEEE defaults: no traps, round to nearest.
+  var SavedMask := GetExceptionMask;
+  var SavedRound := GetRoundMode;
+  SetExceptionMask(exAllArithmeticExceptions);
+  SetRoundMode(rmNearest);
+  try
+    while FRemaining > 0 do
+    begin
+      var PC := Ctx.PC;
+      var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
+      if Page = nil then
+        Page := DecodePage(PC);
+      var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
+      CurPC := PC;
+      Ctx.PC := Ctx.NPC;
+      Ctx.NPC := Ctx.NPC + 4;
+      Dec(FRemaining);
+      Entry.Handler(Self, Entry.Op);
+      if Stopping then
+        Break;
+    end;
+  finally
+    SetExceptionMask(SavedMask);
+    SetRoundMode(SavedRound);
   end;
   Result := TakeCycles;
   FRunLength := 0;
