@@ -464,6 +464,27 @@ begin
     Result := P;
 end;
 
+// A value as the GE's 24-bit floats hold it: 16 mantissa bits, truncated.
+function F24(V: Single): Single; inline;
+begin
+  var Bits := PCardinal(@V)^ and $FFFFFF00;
+  Result := PSingle(@Bits)^;
+end;
+
+function NormalizedF24(const P: TGEVec3): TGEVec3;
+var
+  L: Single;
+begin
+  L := F24(P.X * P.X + P.Y * P.Y + P.Z * P.Z);
+  if L > 0 then
+  begin
+    L := 1 / Sqrt(L);
+    Result.X := P.X * L; Result.Y := P.Y * L; Result.Z := P.Z * L;
+  end
+  else
+    Result := P;
+end;
+
 function Dot(const A, B: TGEVec3): Single; inline;
 begin
   Result := A.X * B.X + A.Y * B.Y + A.Z * B.Z;
@@ -481,37 +502,89 @@ begin
   Result.Z := GEFloat(C[Index + 2]);
 end;
 
+// pow as the GE's lighting unit computes it: log2 and exp2 linear between powers of two.
+function GEPow(X, E: Single): Single;
+begin
+  if not (X > 0) then
+  begin
+    if E = 0 then
+      Exit(1);
+    Exit(0);
+  end;
+  var Bits := PCardinal(@X)^;
+  var L2: Double := Integer((Bits shr 23) and $FF) - 127 + (Bits and $7FFFFF) / 8388608.0;
+  var Y: Double := L2 * E;
+  if IsNan(Y) then
+    Exit(1);
+  if Y > 127 then
+    Exit(Infinity);
+  if Y < -127 then
+    Exit(0);
+  var F := Floor(Y);
+  Result := Ldexp(1 + (Y - F), F);
+end;
+
+function Unit8(C: Cardinal; Shift: Integer): Single; inline;
+begin
+  Result := ((C shr Shift) and $FF) / 255;
+end;
+
+// Lighting works on colours as fractions of 255; the result goes back to
+// 8 bits as a fraction of 256, truncated.
+function LitChannel(V: Single): Integer; inline;
+begin
+  if not (V > 0) then
+    Exit(0);
+  V := V * 256;
+  if V >= 255 then
+    Result := 255
+  else
+    Result := Trunc(V);
+end;
+
 procedure TPSPGEEngine.Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
 var
   C: PGECmds;
   Upd: Cardinal;
-  MAR, MAG, MAB, MAA, MDR, MDG, MDB, MSR, MSG, MSB, ER, EG, EB, ALR, ALG, ALB, ALA: Integer;
-  LAR, LAG, LAB, LDR, LDG, LDB, LSPR, LSPG, LSPB: Integer;
-  LR, LG, LB, LSR, LSG, LSB, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, F, NdotH, Sp: Single;
+  MA, MD, MS, E, AL, LA, LD, LS: array[0..2] of Single;
+  Lit, Spec: array[0..2] of Single;
+  MAA, ALA, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp, Cutoff, Expo: Single;
   N, D, SD, H: TGEVec3;
-  L, Kind, LType: Integer;
+  L, Kind, LType, Ch: Integer;
   LT: Cardinal;
 begin
   C := @Regs.Cmd;
   Upd := C[GE_MATERIALUPDATE];
-  Color24(C[GE_MATERIALAMBIENT], MAR, MAG, MAB);
-  MAA := C[GE_MATERIALALPHA] and $FF;
-  Color24(C[GE_MATERIALDIFFUSE], MDR, MDG, MDB);
-  Color24(C[GE_MATERIALSPECULAR], MSR, MSG, MSB);
-  Color24(C[GE_MATERIALEMISSIVE], ER, EG, EB);
+  for Ch := 0 to 2 do
+  begin
+    MA[Ch] := Unit8(C[GE_MATERIALAMBIENT], Ch * 8);
+    MD[Ch] := Unit8(C[GE_MATERIALDIFFUSE], Ch * 8);
+    MS[Ch] := Unit8(C[GE_MATERIALSPECULAR], Ch * 8);
+    E[Ch] := Unit8(C[GE_MATERIALEMISSIVE], Ch * 8);
+    AL[Ch] := Unit8(C[GE_AMBIENTCOLOR], Ch * 8);
+  end;
+  MAA := Unit8(C[GE_MATERIALALPHA], 0);
+  ALA := Unit8(C[GE_AMBIENTALPHA], 0);
   if V.HasColor then
   begin
-    if (Upd and 1) <> 0 then begin MAR := V.R; MAG := V.G; MAB := V.B; MAA := V.A; end;
-    if (Upd and 2) <> 0 then begin MDR := V.R; MDG := V.G; MDB := V.B; end;
-    if (Upd and 4) <> 0 then begin MSR := V.R; MSG := V.G; MSB := V.B; end;
+    if (Upd and 1) <> 0 then
+    begin
+      MA[0] := V.R / 255; MA[1] := V.G / 255; MA[2] := V.B / 255; MAA := V.A / 255;
+    end;
+    if (Upd and 2) <> 0 then
+    begin
+      MD[0] := V.R / 255; MD[1] := V.G / 255; MD[2] := V.B / 255;
+    end;
+    if (Upd and 4) <> 0 then
+    begin
+      MS[0] := V.R / 255; MS[1] := V.G / 255; MS[2] := V.B / 255;
+    end;
   end;
-  Color24(C[GE_AMBIENTCOLOR], ALR, ALG, ALB);
-  ALA := C[GE_AMBIENTALPHA] and $FF;
-  LR := ER + ALR * MAR / 255;
-  LG := EG + ALG * MAG / 255;
-  LB := EB + ALB * MAB / 255;
-  LSR := 0; LSG := 0; LSB := 0;
-  A := (ALA * MAA) div 255;
+  for Ch := 0 to 2 do
+  begin
+    Lit[Ch] := E[Ch] + AL[Ch] * MA[Ch];
+    Spec[Ch] := 0;
+  end;
   N := Normalized(WN);
   Shine := GEFloat(C[GE_MATERIALSPECULARCOEF]);
   for L := 0 to 3 do
@@ -524,67 +597,70 @@ begin
     D := CmdVec(C^, GE_LX0 + L * 3);
     if LType <> 0 then
       D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
-    Dist := Sqrt(Dot(D, D));
-    D := Normalized(D);
+    Dist := Sqrt(F24(Dot(D, D)));
+    D := NormalizedF24(D);
     Att := 1;
     if LType <> 0 then
     begin
       Den := GEFloat(C[GE_LKA0 + L * 3]) + GEFloat(C[GE_LKA0 + L * 3 + 1]) * Dist + GEFloat(C[GE_LKA0 + L * 3 + 2]) * Dist * Dist;
       if Den <> 0 then
-        Att := 1 / Den;
+        Att := 1 / Den
+      else
+        Att := 0;
       if Att > 1 then
         Att := 1;
+      if not (Att > 0) then
+        Att := 0;
     end;
     Spot := 1;
     if LType = 2 then
     begin
       SD := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
-      CosA := -Dot(D, SD);
-      if CosA >= GEFloat(C[GE_LKO0 + L]) then
-        Spot := Power(Max(CosA, 0), GEFloat(C[GE_LKS0 + L]))
+      CosA := Dot(D, SD);
+      Cutoff := GEFloat(C[GE_LKO0 + L]);
+      Expo := GEFloat(C[GE_LKS0 + L]);
+      // An infinite direction lights everything or nothing by its sign.
+      if IsNan(CosA) then
+        Spot := Ord(GEFloat(C[GE_LDX0 + L * 3]) > 0)
+      else if CosA >= Cutoff then
+        Spot := Min(GEPow(Max(CosA, 0), Expo), 1E30)
       else
         Spot := 0;
     end;
-    Color24(C[GE_LAC0 + L * 3], LAR, LAG, LAB);
-    Color24(C[GE_LAC0 + L * 3 + 1], LDR, LDG, LDB);
-    Color24(C[GE_LAC0 + L * 3 + 2], LSPR, LSPG, LSPB);
+    for Ch := 0 to 2 do
+    begin
+      LA[Ch] := Unit8(C[GE_LAC0 + L * 3], Ch * 8);
+      LD[Ch] := Unit8(C[GE_LAC0 + L * 3 + 1], Ch * 8);
+      LS[Ch] := Unit8(C[GE_LAC0 + L * 3 + 2], Ch * 8);
+    end;
     NdotL := Dot(N, D);
-    if NdotL < 0 then
-      NdotL := 0;
-    Diff := NdotL;
+    Diff := Max(NdotL, 0);
     if Kind = 2 then
-      Diff := Power(NdotL, Shine);
-    F := Att * Spot;
-    LR := LR + F * (LAR * MAR / 255 + LDR * MDR / 255 * Diff);
-    LG := LG + F * (LAG * MAG / 255 + LDG * MDG / 255 * Diff);
-    LB := LB + F * (LAB * MAB / 255 + LDB * MDB / 255 * Diff);
-    if (Kind = 1) and (NdotL > 0) then
+      Diff := Min(GEPow(Diff, Shine), 1);
+    for Ch := 0 to 2 do
+      Lit[Ch] := Lit[Ch] + Att * Spot * (LA[Ch] * MA[Ch] + LD[Ch] * MD[Ch] * Diff);
+    if (Kind = 1) and (NdotL >= 0) then
     begin
       H := Normalized(Vec3(D.X, D.Y, D.Z + 1));
-      NdotH := Dot(N, H);
-      if NdotH > 0 then
-      begin
-        Sp := F * Power(NdotH, Shine);
-        LSR := LSR + Sp * LSPR * MSR / 255;
-        LSG := LSG + Sp * LSPG * MSG / 255;
-        LSB := LSB + Sp * LSPB * MSB / 255;
-      end;
+      NdotH := Max(Dot(N, H), 0);
+      Sp := Att * Spot * Min(GEPow(NdotH, Shine), 1);
+      for Ch := 0 to 2 do
+        Spec[Ch] := Spec[Ch] + Sp * LS[Ch] * MS[Ch];
     end;
   end;
   if (C[GE_LIGHTMODE] and 1) <> 0 then
   begin
-    SR := EnsureRange(Trunc(LSR), 0, 255);
-    SG := EnsureRange(Trunc(LSG), 0, 255);
-    SB := EnsureRange(Trunc(LSB), 0, 255);
+    SR := LitChannel(Spec[0]);
+    SG := LitChannel(Spec[1]);
+    SB := LitChannel(Spec[2]);
   end
   else
-  begin
-    LR := LR + LSR; LG := LG + LSG; LB := LB + LSB;
-  end;
-  R := EnsureRange(Trunc(LR), 0, 255);
-  G := EnsureRange(Trunc(LG), 0, 255);
-  B := EnsureRange(Trunc(LB), 0, 255);
-  A := EnsureRange(A, 0, 255);
+    for Ch := 0 to 2 do
+      Lit[Ch] := Lit[Ch] + Spec[Ch];
+  R := LitChannel(Lit[0]);
+  G := LitChannel(Lit[1]);
+  B := LitChannel(Lit[2]);
+  A := LitChannel(ALA * MAA);
 end;
 
 procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WN: TGEVec3; out S, T: Single);

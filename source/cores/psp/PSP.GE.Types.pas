@@ -186,7 +186,10 @@ implementation
 
 function GEFloat(V: Cardinal): Single;
 begin
+  // The GE has no NaN: the top exponent is a signed infinity.
   var Bits: Cardinal := V shl 8;
+  if (Bits and $7F800000) = $7F800000 then
+    Bits := Bits and $FF800000;
   Result := PSingle(@Bits)^;
 end;
 
