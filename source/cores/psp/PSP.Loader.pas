@@ -365,8 +365,13 @@ begin
           InfoAddr := LE32(Elf, S + 12);
       end;
     end;
+    // Otherwise the first segment's paddr is the module info's file offset
+    // (old SDKs put its address there instead).
     if InfoAddr = 0 then
-      InfoAddr := PAddr;
+      if PAddr >= SegVaddr[0] then
+        InfoAddr := PAddr
+      else
+        InfoAddr := SegVaddr[0] + PAddr - LE32(Elf, P0 + 4);
   end;
   if (InfoAddr = 0) or not FMemory.Valid(InfoAddr, 52) then
   begin

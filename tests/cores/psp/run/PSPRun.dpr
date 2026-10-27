@@ -7,7 +7,7 @@ program PSPRun;
 // -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
 
 uses
-  Winapi.Windows, System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
+  Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
 
 type
@@ -270,9 +270,10 @@ begin
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
       if not Quiet then
-        Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s',
+        Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s cpu=%.1fM (%.1f MHz host)',
           [Console.FrameNumber, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9,
-          BoolToStr(Console.Kernel.Exited, True), LastHash]));
+          BoolToStr(Console.Kernel.Exited, True), LastHash, Console.Executed / 1e6,
+          Console.Executed / 1e6 / Max(0.001, Watch.Elapsed.TotalSeconds)]));
       begin
         if Failed <> '' then
         begin

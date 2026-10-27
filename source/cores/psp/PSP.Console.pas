@@ -40,6 +40,7 @@ type
     FPendingExecArgs: TBytes;
     FBooted: Boolean;
     FStopAtFrame: Boolean;
+    FExecuted: Int64;
     procedure ResetServices;
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
     procedure Break_(C: TPSPCPU; Code: Cardinal);
@@ -72,6 +73,8 @@ type
     property Scheduler: TPSPScheduler read FScheduler;
     property AudioSamples: TArray<SmallInt> read FAudioSamples;
     property FrameNumber: UInt64 read FFrameNumber;
+    // CPU cycles run (instructions plus HLE costs), for speed measurements.
+    property Executed: Int64 read FExecuted;
     property OnLog: TPSPLogEvent read FOnLog write FOnLog;
   end;
 
@@ -343,6 +346,7 @@ begin
         Budget := 1;
       FRunDeadline := Deadline;
       var Used := FCPU.Run(Budget);
+      Inc(FExecuted, Used);
       FScheduler.AddCycles(Used);
       if FKernel.Current <> nil then
         Inc(FKernel.Current.RunClocks, Used);
