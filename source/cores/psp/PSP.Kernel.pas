@@ -139,6 +139,8 @@ type
     Seq: Int64;
     // Runs once when the thread exits or is terminated.
     OnExit: TProc<TPSPThread>;
+    // Deleted as soon as it exits by itself (a module's start thread).
+    DeleteOnExit: Boolean;
     constructor Create;
     destructor Destroy; override;
     class function IdType: Integer; override;

@@ -335,6 +335,9 @@ begin
   FIntStack := FKernelPartition.Alloc($10000, akLow, 0, 256, 'interrupt stack') + $10000;
   // The first 16 KB of user memory belong to the kernel on hardware.
   FUserPartition.Alloc($4000, akAddress, PSPUserBase, 256, 'reserved');
+  // The recording setup (PSPLink) keeps about 280 KB near the top of user
+  // memory, under a 2 KB hole.
+  FUserPartition.Alloc($45800, akAddress, PSPUserEnd - $46000, 256, 'psplink');
   // The two idle threads have ids of their own.
   FIdleThreadIds[0] := FNextUID;
   Inc(FNextUID, 2);
@@ -1070,7 +1073,15 @@ end;
 procedure TPSPKernel.ThreadExitTrap;
 begin
   Spend(PSPExitThreadNs);
+  var T := FCurrent;
   ExitCurrent(FCPU.Ctx.GPR[2]);
+  if (T <> nil) and T.DeleteOnExit and (FCurrent = T) then
+  begin
+    T.Ctx := FCPU.Ctx;
+    FCurrent := nil;
+    DeleteThread(T);
+    Reschedule;
+  end;
 end;
 
 procedure TPSPKernel.Trap(Code: Cardinal);
