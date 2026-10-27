@@ -661,7 +661,8 @@ begin
   end;
   if Mode = 2 then
   begin
-    if ResultPtr <> 0 then
+    // A try that fails leaves the count alone, unless it would take part.
+    if (WaitMode = 1) and (ResultPtr <> 0) then
       FMemory.Write32(ResultPtr, Done);
     FHLE.Result(SCE_KERNEL_ERROR_MPP_FULL);
     Exit;
@@ -731,10 +732,10 @@ begin
       if (Done < Size) and (MP.Senders.Count > 0) then
       begin
         var S := MP.Senders.First;
-        var Before := S.Wait.Data[3];
+        var Progress: Boolean;
         if MP.BufSize = 0 then
         begin
-          // No buffer: straight from the sender.
+          // No buffer: straight from each sender in turn.
           var M := Size - Done;
           if M > S.Wait.Data[1] - S.Wait.Data[3] then
             M := S.Wait.Data[1] - S.Wait.Data[3];
@@ -742,6 +743,7 @@ begin
             FMemory.Copy(Buf + Done, S.Wait.Data[0] + S.Wait.Data[3], M);
           Inc(S.Wait.Data[3], M);
           Inc(Done, M);
+          Progress := M > 0;
           if PipeDone(S) then
           begin
             PipeFinish(Self, S);
@@ -749,8 +751,11 @@ begin
           end;
         end
         else
+        begin
           MP.Settle;
-        if (S.Wait.Data[3] = Before) and (MP.Used = 0) then
+          Progress := MP.Used > 0;
+        end;
+        if not Progress then
           Break;
       end
       else
@@ -769,7 +774,8 @@ begin
   end;
   if Mode = 2 then
   begin
-    if ResultPtr <> 0 then
+    // A try that fails leaves the count alone, unless it would take part.
+    if (WaitMode = 1) and (ResultPtr <> 0) then
       FMemory.Write32(ResultPtr, Done);
     FHLE.Result(SCE_KERNEL_ERROR_MPP_EMPTY);
     Exit;
