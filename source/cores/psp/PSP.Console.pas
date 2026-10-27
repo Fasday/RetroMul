@@ -42,6 +42,7 @@ type
     FStopAtFrame: Boolean;
     FExecuted: Int64;
     procedure ResetServices;
+    procedure ResetMachine(KeepClock: Boolean);
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
     procedure Break_(C: TPSPCPU; Code: Cardinal);
     procedure SyncTime;
@@ -206,11 +207,12 @@ begin
   end;
 end;
 
-procedure TPSPConsole.Reset;
+procedure TPSPConsole.ResetMachine(KeepClock: Boolean);
 begin
   FMemory.Reset;
   FCPU.Reset;
-  FScheduler.Reset;
+  if not KeepClock then
+    FScheduler.Reset;
   FKernel.Reset;
   FIO.Reset;
   FIO.Disc := FDisc;
@@ -223,9 +225,14 @@ begin
   FDisplay.Reset;
   FDisplay.Register;
   ResetServices;
-  FFrameNumber := 0;
   FPendingExec := '';
   FBooted := False;
+end;
+
+procedure TPSPConsole.Reset;
+begin
+  ResetMachine(False);
+  FFrameNumber := 0;
   var Path := FProgram.BootPath;
   if Path = '' then
   begin
@@ -317,16 +324,8 @@ begin
       var Data: TBytes;
       if FIO.ReadAll(Path, Data) = 0 then
       begin
-        FKernel.Reset;
-        FMemory.Reset;
-        FCPU.Reset;
-        FIO.Reset;
-        FIO.Disc := FDisc;
-        FIO.Register;
-        FLoader.Reset;
-        FLoader.Register;
-        FDisplay.Register;
-        ResetServices;
+        // The new program starts on a freshly reset machine; time goes on.
+        ResetMachine(True);
         Boot(Data, Path);
       end
       else

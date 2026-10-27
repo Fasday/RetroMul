@@ -67,12 +67,17 @@ type
     procedure Relocate(const Elf: TBytes; M: TPSPModule; const SegVaddr: TArray<Cardinal>);
     procedure RelocateTypeB(const Elf: TBytes; Offset, Size: Cardinal; M: TPSPModule; const SegVaddr: TArray<Cardinal>);
     procedure ReadModuleInfo(M: TPSPModule; InfoAddr: Cardinal);
+    procedure SectionSizes(const Elf: TBytes; M: TPSPModule; Base: Cardinal);
     procedure LinkStub(const S: TPSPImportStub);
     procedure RelinkLibrary(const Lib: string);
     function FindExport(const Lib: string; NID: Cardinal): Cardinal;
     function ModuleOfAddress(Address: Cardinal): TPSPModule;
     procedure StartModuleThread(M: TPSPModule; ArgSize, ArgPtr, StatusPtr, OptPtr: Cardinal; const ArgData: TBytes; Wait: Boolean);
-    procedure WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal);
+    procedure WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal; Linger: Int64);
+    function ThreadOptions(OptPtr: Cardinal; var Prio: Integer; var Stack, Attr: Cardinal): Cardinal;
+    function NoRetry(T: TPSPThread): Boolean;
+    procedure hKprintf;
+    procedure hIcacheClearAll;
     procedure hLoadModule;
     procedure hLoadModuleByID;
     procedure hLoadModuleBufferUsbWlan;
@@ -385,9 +390,48 @@ begin
     M.Entry := 0;
   FKernel.AddObject(M);
   FModules.Add(M);
+  SectionSizes(Elf, M, Base);
   ReadModuleInfo(M, InfoAddr);
   FKernel.CPU.FlushDecoded;
   Result := 0;
+end;
+
+// Text (code and read-only data), data and bss sizes as the module manager
+// reports them: from the allocated sections when the file has them.
+procedure TPSPLoader.SectionSizes(const Elf: TBytes; M: TPSPModule; Base: Cardinal);
+begin
+  var ShOff := LE32(Elf, 32);
+  var ShNum := LE16(Elf, 48);
+  if (ShOff = 0) or (ShNum = 0) or (ShOff + ShNum * 40 > Cardinal(Length(Elf))) then
+    Exit;
+  var TextEnd: Cardinal := 0;
+  var DataEnd: Cardinal := 0;
+  var BssEnd: Cardinal := 0;
+  var Found := False;
+  for var I := 0 to ShNum - 1 do
+  begin
+    var S := ShOff + Cardinal(I) * 40;
+    var Kind := LE32(Elf, S + 4);
+    var Flags := LE32(Elf, S + 8);
+    var Addr := Base + LE32(Elf, S + 12);
+    var Size := LE32(Elf, S + 20);
+    if ((Flags and 2) = 0) or (Size = 0) or (Addr < M.TextAddr) then
+      Continue;
+    if Kind >= $70000000 then
+      Continue;
+    Found := True;
+    var Stop := Addr + Size - M.TextAddr;
+    if Kind = 8 then
+      Inc(BssEnd, Size)
+    else if (Flags and 1) <> 0 then
+      Inc(DataEnd, Size)
+    else if Stop > TextEnd then
+      TextEnd := Stop;
+  end;  if not Found then
+    Exit;
+  M.TextSize := TextEnd;
+  M.DataSize := DataEnd;
+  M.BssSize := BssEnd;
 end;
 
 procedure TPSPLoader.Relocate(const Elf: TBytes; M: TPSPModule; const SegVaddr: TArray<Cardinal>);
@@ -768,40 +812,94 @@ begin
   end;
 end;
 
+// The module manager deletes its start and stop threads once they end.
+procedure ScheduleThreadDelete(K: TPSPKernel; T: TPSPThread);
+begin
+  var Id := T.UID;
+  K.AddTimer(K.Scheduler.Now, nil,
+    procedure
+    begin
+      var X := K.GetObject(Id, TPSPThread);
+      if (X <> nil) and ((TPSPThread(X).Status and PSPThreadDormant) <> 0) then
+        K.DeleteThread(TPSPThread(X));
+    end);
+end;
+
+// A SceKernelSMOption's stack size, priority and attributes for a module's
+// start or stop thread. Returns 0 or the error the module manager gives.
+function TPSPLoader.ThreadOptions(OptPtr: Cardinal; var Prio: Integer; var Stack, Attr: Cardinal): Cardinal;
+begin
+  Result := 0;
+  if OptPtr = 0 then
+    Exit;
+  // Programs built for the 6.xx SDK must give the option's size; older ones
+  // have it ignored.
+  var Size := FMemory.Read32(OptPtr);
+  if (FKernel.CompiledSdkVersion >= $06000000) and (Size <> $14) then
+    Exit(SCE_KERNEL_ERROR_ILLEGAL_SIZE);
+  var Part := Integer(FMemory.Read32(OptPtr + 4));
+  var OS := FMemory.Read32(OptPtr + 8);
+  var OP := Integer(FMemory.Read32(OptPtr + 12));
+  var OA := FMemory.Read32(OptPtr + 16);
+  if not (Part in [0, 2, 6]) then
+    Exit(SCE_KERNEL_ERROR_PARTITION_MISMATCH);
+  if OS <> 0 then
+  begin
+    if OS < $200 then
+      Exit(SCE_KERNEL_ERROR_ILLEGAL_STACK_SIZE);
+    Stack := OS;
+  end;
+  if OP <> 0 then
+  begin
+    if (OP < 1) or (OP > 126) then
+      Exit(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Prio := OP;
+  end;
+  if (OA and not Cardinal($00F06000)) <> 0 then
+    Exit(SCE_KERNEL_ERROR_ERROR);
+  Attr := Attr or OA;
+end;
+
 procedure TPSPLoader.StartModuleThread(M: TPSPModule; ArgSize, ArgPtr, StatusPtr, OptPtr: Cardinal; const ArgData: TBytes; Wait: Boolean);
 begin
   var Prio: Integer := $20;
   var Stack: Cardinal := $40000;
-  var Attr: Cardinal := $80000000;
-  if (M.StartPriority >= 8) and (M.StartPriority <= 119) then
+  var Attr: Cardinal := $800000FF;
+  if (M.StartPriority >= 1) and (M.StartPriority <= 126) then
     Prio := M.StartPriority;
   if M.StartStack >= $200 then
     Stack := M.StartStack;
   if M.StartAttr <> 0 then
-    Attr := M.StartAttr or $80000000;
-  if (OptPtr <> 0) and (FMemory.Read32(OptPtr) >= 20) then
+    Attr := Attr or (M.StartAttr and $00F06000);
+  var Err := ThreadOptions(OptPtr, Prio, Stack, Attr);
+  if Err <> 0 then
   begin
-    var OP := FMemory.Read32(OptPtr + 8);
-    var OS := FMemory.Read32(OptPtr + 12);
-    var OA := FMemory.Read32(OptPtr + 16);
-    if (Integer(OP) >= 8) and (OP <= 119) then Prio := OP;
-    if OS >= $200 then Stack := OS;
-    if OA <> 0 then Attr := OA or $80000000;
+    FHLE.Result(Err);
+    Exit;
   end;
-  var T := FKernel.CreateThread('SceModmgrStart', M.Entry, Prio, Stack, Attr, M.GP, M.UID);
+  var T := FKernel.CreateThread('SceModmgrStart', M.Entry, Prio, Stack, $80000000, M.GP, M.UID);
   if T = nil then
   begin
     FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
     Exit;
   end;
+  T.Attr := Attr;
   M.Started := True;
   FHLE.Result(M.UID);
   FKernel.StartThread(T, ArgSize, ArgPtr, ArgData);
   if Wait and FKernel.CanWait then
-    WaitForModuleThread(T, M.UID, StatusPtr);
+    WaitForModuleThread(T, M.UID, StatusPtr, 0)
+  else
+  begin
+    var K := FKernel;
+    T.OnExit := procedure(X: TPSPThread)
+      begin
+        ScheduleThreadDelete(K, X);
+      end;
+  end;
 end;
 
-procedure TPSPLoader.WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal);
+procedure TPSPLoader.WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal; Linger: Int64);
 begin
   var Caller := FKernel.Current;
   var K := FKernel;
@@ -810,8 +908,20 @@ begin
     begin
       if StatusPtr <> 0 then
         Mem.Write32(StatusPtr, X.ExitStatus);
+      ScheduleThreadDelete(K, X);
       if Caller.IsWaiting and (Caller.Wait.HLETag = 'module') and (Caller.Wait.Id = X.UID) then
-        K.EndWait(Caller, Id);
+      begin
+        // The module manager deletes the thread and tidies up before it returns.
+        if Linger > 0 then
+          K.AddTimer(K.Scheduler.Now + Linger, Caller,
+            procedure
+            begin
+              if Caller.IsWaiting and (Caller.Wait.HLETag = 'module') then
+                K.EndWait(Caller, Id);
+            end)
+        else
+          K.EndWait(Caller, Id);
+      end;
     end;
   FKernel.BeginWait(PSPWaitThreadEnd, nil, T.UID, 0, False, StartRetry, nil, 'module');
   if Caller.Wait.HLETag = 'module' then
@@ -829,17 +939,48 @@ begin
   if Err <> 0 then
   begin
     FHLE.Log('sceKernelLoadModule %s -> %.8x', [Path, Err]);
-    begin FHLE.Result(Err); Exit; end;
+    FHLE.Result(Err);
+    Exit;
   end;
-  var M: TPSPModule;
-  Err := Load(Data, Path, M);
-  if Err <> 0 then
+  if not FKernel.CanWait then
   begin
-    FHLE.Log('sceKernelLoadModule %s failed %.8x', [Path, Err]);
-    begin FHLE.Result(Err); Exit; end;
+    var M: TPSPModule;
+    Err := Load(Data, Path, M);
+    if Err <> 0 then
+      FHLE.Result(Err)
+    else
+      FHLE.Result(M.UID);
+    Exit;
   end;
-  FHLE.Log('sceKernelLoadModule %s -> %s %x', [Path, M.Name, M.UID]);
-  FHLE.Result(M.UID);
+  // The file is read while the caller waits; the module reaches memory at the end.
+  var Caller := FKernel.Current;
+  var Latency := Int64(2000000) + Int64(Length(Data)) * 1000000000 div (8 * 1024 * 1024);
+  FHLE.Result(0);
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, NoRetry, nil, 'loadmodule');
+  var L := Self;
+  FKernel.AddTimer(FKernel.Scheduler.Now + Latency, Caller,
+    procedure
+    begin
+      if not (Caller.IsWaiting and (Caller.Wait.HLETag = 'loadmodule')) then
+        Exit;
+      var M: TPSPModule;
+      var E := L.Load(Data, Path, M);
+      if E <> 0 then
+      begin
+        L.FHLE.Log('sceKernelLoadModule %s failed %.8x', [Path, E]);
+        L.FKernel.EndWait(Caller, E);
+      end
+      else
+      begin
+        L.FHLE.Log('sceKernelLoadModule %s -> %s %x', [Path, M.Name, M.UID]);
+        L.FKernel.EndWait(Caller, M.UID);
+      end;
+    end);
+end;
+
+function TPSPLoader.NoRetry(T: TPSPThread): Boolean;
+begin
+  Result := False;
 end;
 
 procedure TPSPLoader.hLoadModuleByID;
@@ -858,16 +999,23 @@ procedure TPSPLoader.hStartModule;
 begin
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE);
+    Exit;
+  end;
   if M.Started then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ALREADY_STARTED); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ALREADY_STARTED);
+    Exit;
+  end;
   var StatusPtr := FHLE.Arg(3);
   if M.Fake or (M.Entry = 0) then
   begin
     M.Started := True;
     if StatusPtr <> 0 then
       FMemory.Write32(StatusPtr, 0);
-    begin FHLE.Result(M.UID); Exit; end;
+    FHLE.Result(M.UID);
+    Exit;
   end;
   StartModuleThread(M, FHLE.Arg(1), FHLE.Arg(2), StatusPtr, FHLE.Arg(4), nil, True);
 end;
@@ -876,36 +1024,83 @@ procedure TPSPLoader.hStopModule;
 begin
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE);
+    Exit;
+  end;
   if not M.Started then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_STARTED); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_STARTED);
+    Exit;
+  end;
   if M.Stopped then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ALREADY_STOPPED); Exit; end;
-  M.Stopped := True;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ALREADY_STOPPED);
+    Exit;
+  end;
   var StatusPtr := FHLE.Arg(3);
+  var Prio: Integer := $20;
+  var Stack: Cardinal := $40000;
+  var Attr: Cardinal := $800000FF;
+  if (M.StopPriority >= 1) and (M.StopPriority <= 126) then
+    Prio := M.StopPriority;
+  if M.StopStack >= $200 then
+    Stack := M.StopStack;
+  if M.StopAttr <> 0 then
+    Attr := Attr or (M.StopAttr and $00F06000);
+  var Err := ThreadOptions(FHLE.Arg(4), Prio, Stack, Attr);
+  if Err <> 0 then
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
+  M.Stopped := True;
   if M.Fake or (M.StopEntry = 0) then
   begin
     if StatusPtr <> 0 then
       FMemory.Write32(StatusPtr, 0);
-    begin FHLE.Result(M.UID); Exit; end;
+    FHLE.Result(0);
+    Exit;
   end;
-  var T := FKernel.CreateThread('SceModmgrStop', M.StopEntry, $20, $40000, $80000000, M.GP, M.UID);
+  var T := FKernel.CreateThread('SceModmgrStop', M.StopEntry, Prio, Stack, $80000000, M.GP, M.UID);
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
-  FHLE.Result(M.UID);
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
+  T.Attr := Attr;
+  FHLE.Result(0);
   FKernel.StartThread(T, FHLE.Arg(1), FHLE.Arg(2));
   if FKernel.CanWait then
-    WaitForModuleThread(T, M.UID, StatusPtr);
+    WaitForModuleThread(T, 0, StatusPtr, 1500000);
 end;
 
 procedure TPSPLoader.hUnloadModule;
 begin
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE);
+    Exit;
+  end;
   if M.Started and not M.Stopped and not M.Fake then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_STOPPED); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_STOPPED);
+    Exit;
+  end;
   var Id := M.UID;
+  if not M.Fake then
+  begin
+    // What is left behind: text as break 1, data and bss as $FFFFFFFF.
+    var A := M.TextAddr;
+    while A < M.TextAddr + M.TextSize do
+    begin
+      FMemory.Write32(A, $0000004D);
+      Inc(A, 4);
+    end;
+    if M.Size > M.TextSize then
+      FMemory.Fill(M.TextAddr + M.TextSize, $FF, M.Size - M.TextSize);
+  end;
   if M.Block <> 0 then
     FKernel.UserPartition.FreeBlock(M.Block);
   FModules.Remove(M);
@@ -914,6 +1109,18 @@ begin
       FStubs.Delete(I);
   FKernel.DeleteObject(M);
   FHLE.Result(Id);
+  if FKernel.CanWait then
+  begin
+    var Caller := FKernel.Current;
+    var K := FKernel;
+    FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, NoRetry, nil, 'unloadmodule');
+    FKernel.AddTimer(FKernel.Scheduler.Now + 300000, Caller,
+      procedure
+      begin
+        if Caller.IsWaiting and (Caller.Wait.HLETag = 'unloadmodule') then
+          K.EndWait(Caller, Id);
+      end);
+  end;
 end;
 
 procedure TPSPLoader.hStopUnloadSelfModule;
@@ -956,13 +1163,26 @@ end;
 procedure TPSPLoader.hGetModuleIdList;
 begin
   var Buf := FHLE.Arg(0);
-  var Size := FHLE.Arg(1);
+  var Size := FHLE.ArgInt(1);
   var CountPtr := FHLE.Arg(2);
+  if (Buf = 0) or (Size < 0) or ((Buf and $80000000) <> 0) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
+  // Whole entries, and the first bytes of a partial one.
   var N := 0;
   for var M in FModules do
   begin
-    if Cardinal(N + 1) * 4 <= Size then
-      FMemory.Write32(Buf + Cardinal(N) * 4, M.UID);
+    var Off := N * 4;
+    if Off < Size then
+    begin
+      var Id := M.UID;
+      var Bytes := Size - Off;
+      if Bytes > 4 then
+        Bytes := 4;
+      FMemory.WriteBytes(Buf + Cardinal(Off), Id, Bytes);
+    end;
     Inc(N);
   end;
   if CountPtr <> 0 then
@@ -1030,11 +1250,25 @@ begin
     FOnLoadExec(Path, ArgSize, ArgPtr);
 end;
 
+procedure TPSPLoader.hKprintf;
+begin
+  // The format is printed as is: the kernel's own printf is not emulated.
+  FKernel.DebugWrite(FMemory.ReadAnsi(FHLE.Arg(0), 4096));
+  FHLE.Result(0);
+end;
+
+procedure TPSPLoader.hIcacheClearAll;
+begin
+  FHLE.Result(0);
+end;
+
 procedure TPSPLoader.Register;
 const
   L = 'ModuleMgrForUser';
 begin
   var H := FHLE;
+  H.Register('KDebugForKernel', $84F370BC, 'Kprintf', hKprintf);
+  H.Register('LoadCoreForKernel', $D8779AC6, 'sceKernelIcacheClearAll', hIcacheClearAll);
   H.Register(L, $977DE386, 'sceKernelLoadModule', hLoadModule);
   H.Register(L, $B7F46618, 'sceKernelLoadModuleByID', hLoadModuleByID);
   H.Register(L, $710F61B5, 'sceKernelLoadModuleMs', hLoadModule);

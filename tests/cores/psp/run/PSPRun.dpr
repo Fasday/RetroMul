@@ -199,13 +199,26 @@ begin
     var Memstick := TPath.Combine(Scratch, 'ms0');
     if TestMode then
     begin
+      // host0:/ is the test suite's root on hardware (usbhostfs): the test's
+      // folder is copied to the same place under the scratch root.
       var Host := TPath.Combine(Scratch, 'host0');
-      ForceDirectories(Host);
+      var Rel := '';
+      var At := HostRoot.ToLower.LastIndexOf('\tests\');
+      if At >= 0 then
+        Rel := HostRoot.Substring(At + 1);
+      var Dest := Host;
+      if Rel <> '' then
+        Dest := TPath.Combine(Host, Rel);
+      ForceDirectories(Dest);
       for var F in TDirectory.GetFiles(HostRoot) do
-        TFile.Copy(F, TPath.Combine(Host, ExtractFileName(F)), True);
+        TFile.Copy(F, TPath.Combine(Dest, ExtractFileName(F)), True);
       for var D in TDirectory.GetDirectories(HostRoot) do
-        TDirectory.Copy(D, TPath.Combine(Host, ExtractFileName(D)));
+        TDirectory.Copy(D, TPath.Combine(Dest, ExtractFileName(D)));
       HostRoot := Host;
+      if Rel <> '' then
+        Prog.BootPath := 'host0:/' + Rel.Replace('\', '/') + '/' + ExtractFileName(FileName)
+      else
+        Prog.BootPath := 'host0:/' + ExtractFileName(FileName);
     end;
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
