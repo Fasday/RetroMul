@@ -1,9 +1,9 @@
-﻿unit Core.Adapter.PSP;
+unit Core.Adapter.PSP;
 
 interface
 
 uses System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, PSP.Media, PSP.Console, PCM.Audio;
+  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, PCM.Audio;
 
 type
   TPSPKeyMap = array[TEmulatorButton] of UInt32;
