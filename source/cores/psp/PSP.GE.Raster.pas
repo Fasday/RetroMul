@@ -403,7 +403,7 @@ begin
   end;
 
   if not S.Through then
-    if (Z < S.MinZ) or (Z > S.MaxZ) then
+    if (F.Z < S.MinZ) or (F.Z > S.MaxZ) then
       Exit;
 
   if S.Textured then
