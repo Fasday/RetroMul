@@ -88,6 +88,7 @@ begin
   T.Priority := T.InitPriority;
   T.Wait := Default(TPSPWait);
   T.Frames.Clear;
+  T.BusyNs := 0;
   T.Fresh := True;
   T.Status := PSPThreadReady;
   Inc(FThreadSeq);
@@ -270,11 +271,14 @@ begin
   var ModuleId: Cardinal := 0;
   if FCurrent <> nil then
     ModuleId := FCurrent.ModuleId;
-  Spend(PSPCreateThreadNs + Int64(AlignUp(StackSize, 256)) * 42 div 10);
   var T := CreateThread(Name, Entry, Prio, StackSize, Attr, FCPU.Ctx.GPR[28], ModuleId);
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+    begin Spend(PSPCreateThreadNs); FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  // Filling the stack is most of it, and other threads may run meanwhile.
+  SpendPreemptible(PSPCreateThreadNs + Int64(AlignUp(StackSize, 256)) * 42 div 10);
   FHLE.Result(T.UID);
+  // Creating a thread leaves dispatching enabled again.
+  FDispatchSuspended := False;
   NotifyThreadEvent(PSPThreadEventCreate, T);
 end;
 

@@ -141,6 +141,10 @@ type
     OnExit: TProc<TPSPThread>;
     // Deleted as soon as it exits by itself (a module's start thread).
     DeleteOnExit: Boolean;
+    // Kernel work a call left to do on the thread's time, where better
+    // threads may preempt it, and where the thread goes on afterwards.
+    BusyNs: Int64;
+    BusyPC, BusyNPC: Cardinal;
     constructor Create;
     destructor Destroy; override;
     class function IdType: Integer; override;
@@ -255,6 +259,8 @@ type
     FSubIntr: array[0..66, 0..31] of TPSPInterruptHandler;
     // The virtual timer whose handler is running.
     FFiringVTimer: Cardinal;
+    // Where threads go to spend long kernel calls.
+    FBusyStub: Cardinal;
     // Main interrupt handlers; the firmware's drivers hold some from the start.
     FIntrHandlers: array[0..67] of TPSPInterruptHandler;
     FTrapBase: Cardinal;
@@ -299,6 +305,9 @@ type
     procedure DropWaitTimer(T: TPSPThread);
     procedure RegisterAll;
     procedure RegisterKernelAliases;
+    procedure hKernelBusy;
+    // Spends the time as kernel work the scheduler may interrupt.
+    procedure SpendPreemptible(Ns: Int64);
     procedure hCheckExitCallback;
     procedure hIoForKernel;
     function WaitDeadline(TimeoutPtr: Cardinal; out TimeoutEnd: Int64): Int64;

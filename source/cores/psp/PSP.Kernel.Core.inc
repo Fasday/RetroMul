@@ -26,6 +26,8 @@ const
   PSPDeleteThreadNs = 65000;
   PSPTerminateThreadNs = 10000;
   PSPSyncCallNs = 2500;
+  // Long calls are spent in slices this long.
+  PSPBusyChunkNs = 10000;
   PSPNotifyWakeNs = 8000;
   // Leaving an interrupt that ran a handler, and handing the CPU to another
   // thread from there.
@@ -363,6 +365,49 @@ begin
   FScheduler.Cancel(TPSPEvent.Kernel);
   FHLE.Clear;
   RegisterAll;
+  FHLE.Register('PSPKernelInternal', $00000001, 'kernel busy', hKernelBusy);
+  FBusyStub := FTrapBase + $10;
+  FMemory.Write32(FBusyStub, (Cardinal(FHLE.Find('PSPKernelInternal', $00000001)) shl 6) or $0C);
+  FMemory.Write32(FBusyStub + 4, 0);
+end;
+
+procedure TPSPKernel.SpendPreemptible(Ns: Int64);
+begin
+  var T := FCurrent;
+  if (T = nil) or InInterrupt or (Ns <= PSPBusyChunkNs) then
+  begin
+    Spend(Ns);
+    Exit;
+  end;
+  // The call returns through a stub that spends the time a slice at a time.
+  T.BusyNs := Ns;
+  T.BusyPC := FCPU.Ctx.PC;
+  T.BusyNPC := FCPU.Ctx.NPC;
+  FCPU.Ctx.PC := FBusyStub;
+  FCPU.Ctx.NPC := FBusyStub + 4;
+end;
+
+procedure TPSPKernel.hKernelBusy;
+begin
+  // Registers stay as the call left them.
+  var T := FCurrent;
+  if T = nil then
+    Exit;
+  var Chunk := T.BusyNs;
+  if Chunk > PSPBusyChunkNs then
+    Chunk := PSPBusyChunkNs;
+  Dec(T.BusyNs, Chunk);
+  Spend(Chunk - Int64(FHLE.CycleCost) * 1000 div FScheduler.MHz);
+  if T.BusyNs > 0 then
+  begin
+    FCPU.Ctx.PC := FBusyStub;
+    FCPU.Ctx.NPC := FBusyStub + 4;
+  end
+  else
+  begin
+    FCPU.Ctx.PC := T.BusyPC;
+    FCPU.Ctx.NPC := T.BusyNPC;
+  end;
 end;
 
 function TPSPKernel.AddObject(Obj: TPSPKernelObject): Cardinal;
