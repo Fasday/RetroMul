@@ -298,6 +298,10 @@ end;
 
 procedure TPSPConsole.RunUntil(At: Int64);
 begin
+  // HLE call costs can carry a slice past its deadline; what fell due must still run.
+  var Due: TPSPEvent;
+  while (FScheduler.Now >= At) and FScheduler.TakeDue(Due) do
+    DispatchEvent(Due);
   while FScheduler.Now < At do
   begin
     var E: TPSPEvent;
