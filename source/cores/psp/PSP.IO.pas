@@ -293,8 +293,40 @@ end;
 
 function HostReadOnly(const Name: string): Boolean;
 begin
+{$IFDEF MSWINDOWS}
   var A := FileGetAttr(Name);
   Result := (A <> -1) and ((A and faReadOnly) <> 0);
+{$ELSE}
+  try
+    Result := not (TFileAttribute.faOwnerWrite in TFile.GetAttributes(Name));
+  except
+    Result := False;
+  end;
+{$ENDIF}
+end;
+
+procedure HostSetReadOnly(const Name: string; ReadOnly: Boolean);
+begin
+{$IFDEF MSWINDOWS}
+  var A := FileGetAttr(Name);
+  if A = -1 then
+    Exit;
+  if ReadOnly then
+    A := A or faReadOnly
+  else
+    A := A and not faReadOnly;
+  FileSetAttr(Name, A);
+{$ELSE}
+  try
+    var A := TFile.GetAttributes(Name);
+    if ReadOnly then
+      A := A - [TFileAttribute.faOwnerWrite, TFileAttribute.faGroupWrite, TFileAttribute.faOthersWrite]
+    else
+      A := A + [TFileAttribute.faOwnerWrite];
+    TFile.SetAttributes(Name, A);
+  except
+  end;
+{$ENDIF}
 end;
 
 function TPSPIO.HostFileName(const Path: string): string;
@@ -1211,15 +1243,7 @@ begin
     ReadOnly := (FMemory.Read32(StatPtr) and $92) = 0;
   if (Bits and 2) <> 0 then
     ReadOnly := (FMemory.Read32(StatPtr + 4) and 1) <> 0;
-  var A := FileGetAttr(Name);
-  if A <> -1 then
-  begin
-    if ReadOnly then
-      A := A or faReadOnly
-    else
-      A := A and not faReadOnly;
-    FileSetAttr(Name, A);
-  end;
+  HostSetReadOnly(Name, ReadOnly);
   DeviceYield(0, 20000);
 end;
 
