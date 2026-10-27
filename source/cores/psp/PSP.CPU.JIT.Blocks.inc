@@ -25,20 +25,21 @@ begin
   J.BranchTest(jcNe, jw32, JT0, JImm(3), Miss);
   J.Move(jw32, JT1, JT0);
   J.Alu(jaAnd, jw32, JT1, JImm($1FFFF000));
-  J.Shift(jsShr, jw32, jrT1, 9);
+  J.Shift(jsShr, jw32, jrT1, PSPPageShift - PtrShift);
   J.Move(jw64, JT2, JImm(Int64(NativeUInt(@FPages[0]))));
   J.Alu(jaAdd, jw64, JT1, JT2);
-  J.Move(jw64, JT1, JMem(jrT1, 0));
-  J.BranchTest(jcEq, jw64, JT1, JT1, Miss);
+  J.Move(JPtr, JT1, JMem(jrT1, 0));
+  J.BranchTest(jcEq, JPtr, JT1, JT1, Miss);
   J.Move(jw32, JT2, JT0);
   J.Alu(jaAnd, jw32, JT2, JImm(PSPPageMask and not 3));
-  J.Shift(jsShl, jw32, jrT2, 1);
+  if PtrShift > 2 then
+    J.Shift(jsShl, jw32, jrT2, PtrShift - 2);
   J.Alu(jaAdd, jw64, JT1, JT2);
-  J.Move(jw64, JT1, JMem(jrT1, 0));
-  J.BranchTest(jcEq, jw64, JT1, JT1, Miss);
+  J.Move(JPtr, JT1, JMem(jrT1, 0));
+  J.BranchTest(jcEq, JPtr, JT1, JT1, Miss);
   J.Branch(jcNe, jw32, JMem(jrT1, OffBlockPC), JT0, Miss);
-  J.Move(jw64, JT1, JMem(jrT1, OffBlockCode));
-  J.BranchTest(jcEq, jw64, JT1, JT1, Miss);
+  J.Move(JPtr, JT1, JMem(jrT1, OffBlockCode));
+  J.BranchTest(jcEq, JPtr, JT1, JT1, Miss);
   J.JumpIndirect(JT1);
   J.Bind(Miss);
   J.Move(jw32, JMem(jrSelf, OffPC), JTarget);
@@ -456,7 +457,7 @@ begin
     J.Move(jw32, JMem(jrSelf, OffPC), JImm(E.Target));
     J.Move(jw32, JMem(jrSelf, OffNPC), JImm(Cardinal(E.Target + 4)));
     J.Move(jw64, JT0, JImm(Int64(NativeUInt(E))));
-    J.Move(jw64, JMem(jrCtx, OffLastExit), JT0);
+    J.Move(JPtr, JMem(jrCtx, OffLastExit), JT0);
     J.JumpTo(FExit);
   end;
   J.ForgetLabels;

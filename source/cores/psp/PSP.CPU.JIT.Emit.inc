@@ -91,10 +91,10 @@ begin
     J.Alu(jaAdd, jw32, JT0, JImm(FieldSImm(Op)));
   J.Move(jw32, JT1, JT0);
   J.Alu(jaAnd, jw32, JT1, JImm($1FFFF000));
-  J.Shift(jsShr, jw32, jrT1, 9);
+  J.Shift(jsShr, jw32, jrT1, PSPPageShift - PtrShift);
   J.Alu(jaAdd, jw64, JT1, JPages);
-  J.Move(jw64, JT1, JMem(jrT1, 0));
-  J.BranchTest(jcEq, jw64, JT1, JT1, S.Slow);
+  J.Move(JPtr, JT1, JMem(jrT1, 0));
+  J.BranchTest(jcEq, JPtr, JT1, JT1, S.Slow);
   J.Move(jw32, JT2, JT0);
   J.Alu(jaAnd, jw32, JT2, JImm(PSPPageMask));
   J.Alu(jaAdd, jw64, JT1, JT2);
@@ -153,10 +153,10 @@ begin
   J.Alu(jaAdd, jw64, JT2, JMarks);
   J.Move(jw8, JT2, JMem(jrT2, 0));
   J.BranchTest(jcNe, jw32, JT2, JT2, S.Slow);
-  J.Shift(jsShl, jw32, jrT1, 3);
+  J.Shift(jsShl, jw32, jrT1, PtrShift);
   J.Alu(jaAdd, jw64, JT1, JPages);
-  J.Move(jw64, JT1, JMem(jrT1, 0));
-  J.BranchTest(jcEq, jw64, JT1, JT1, S.Slow);
+  J.Move(JPtr, JT1, JMem(jrT1, 0));
+  J.BranchTest(jcEq, JPtr, JT1, JT1, S.Slow);
   J.Move(jw32, JT2, JT0);
   J.Alu(jaAnd, jw32, JT2, JImm(PSPPageMask));
   J.Alu(jaAdd, jw64, JT1, JT2);

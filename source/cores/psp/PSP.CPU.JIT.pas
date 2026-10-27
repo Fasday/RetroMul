@@ -197,6 +197,15 @@ const
 
   JitBufferSize = 64 * 1024 * 1024;
 
+  // A host pointer's width (the model runs on 32-bit hosts too).
+  {$IFDEF CPU64BITS}
+  JPtr = jw64;
+  PtrShift = 3;
+  {$ELSE}
+  JPtr = jw32;
+  PtrShift = 2;
+  {$ENDIF}
+
   jrPages = jrS0;
   jrMarks = jrS1;
   jrTarget = jrS2;
