@@ -1129,19 +1129,135 @@ end;
 
 procedure TPSPMpeg.hBaseYCrCbCopyVme;
 begin
-  FHLE.Unimplemented('BaseYCrCbCopyVme');
+  var Dst := FHLE.Arg(0);
+  var Src := FHLE.Arg(1);
+  var Flags := FHLE.Arg(2);
+  var H := Integer(FMemory.Read32(Src));
+  var W := Integer(FMemory.Read32(Src + 4));
+  if (W <= 0) or (H <= 0) or (W > 1024) or (H > 1024) or (W * H > 720 * 576) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+    Exit;
+  end;
+  // Each half is copied in 128-byte lines of the ME's padded layout.
+  var Lines := W div 16 + 2;
+  if (W and $7F) = $50 then
+    Inc(Lines);
+  var LumaBytes := Cardinal(Lines * (H div 16) * 128);
+  var ChromaBytes := LumaBytes div 4;
+  for var Half := 0 to 1 do
+    if (Flags and (1 shl Half)) <> 0 then
+    begin
+      var Bufs: array[0..2] of Integer;
+      if Half = 0 then
+      begin
+        Bufs[0] := 0;
+        Bufs[1] := 2;
+        Bufs[2] := 3;
+      end
+      else
+      begin
+        Bufs[0] := 1;
+        Bufs[1] := 4;
+        Bufs[2] := 5;
+      end;
+      for var K := 0 to 2 do
+      begin
+        var S := FMemory.Read32(Src + 16 + Cardinal(Bufs[K]) * 4);
+        var D := FMemory.Read32(Dst + 16 + Cardinal(Bufs[K]) * 4);
+        var N := LumaBytes;
+        if K > 0 then
+          N := ChromaBytes;
+        if (S <> 0) and (D <> 0) then
+          FMemory.Copy(D, S, N);
+      end;
+    end;
   FHLE.Result(0);
+end;
+
+type
+  TPSPCscSample = reference to procedure(Field, X, Row: Integer; out Y, Cb, Cr: Integer);
+
+procedure CscFields(Memory: TPSPMemory; Out_, Second: Cardinal; Stride, W, H: Integer; SkipSecondField: Boolean;
+  const Sample: TPSPCscSample);
+begin
+  // The ME keeps a picture as two fields: interleaved into one buffer when no
+  // second buffer is given, otherwise the first field goes to the first buffer
+  // and the second to the second one.
+  var Rows := H div 2;
+  for var F := 1 downto 0 do
+  begin
+    if (F = 1) and SkipSecondField then
+      Continue;
+    for var R := 0 to Rows - 1 do
+    begin
+      var Line: Cardinal;
+      if Second = 0 then
+        Line := Out_ + Cardinal((2 * R + F) * Stride) * 4
+      else if F = 0 then
+        Line := Out_ + Cardinal(R * Stride) * 4
+      else
+        Line := Second + Cardinal(R * Stride) * 4;
+      for var X := 0 to W - 1 do
+      begin
+        var Y, Cb, Cr, Rv, Gv, Bv: Integer;
+        Sample(F, X, R, Y, Cb, Cr);
+        PSPYCbCrToRGB(Y, Cb, Cr, Rv, Gv, Bv);
+        Memory.Write32(Line + Cardinal(X) * 4, PSPPackPixel(Rv, Gv, Bv, PSPPixel8888));
+      end;
+    end;
+  end;
 end;
 
 procedure TPSPMpeg.hBaseCscVme;
 begin
-  FHLE.Unimplemented('BaseCscVme');
+  var Out_ := FHLE.Arg(0);
+  var Second := FHLE.Arg(1);
+  var Stride := FHLE.ArgInt(2);
+  var Desc := FHLE.Arg(3);
+  var H := Integer(FMemory.Read32(Desc)) * 16;
+  var W := Integer(FMemory.Read32(Desc + 4)) * 16;
+  var Bufs: array[0..5] of Cardinal;
+  for var I := 0 to 5 do
+    Bufs[I] := FMemory.Read32(Desc + 16 + Cardinal(I) * 4);
+  var Mem := FMemory;
+  CscFields(FMemory, Out_, Second, Stride, W, H, False,
+    procedure(Field, X, Row: Integer; out Y, Cb, Cr: Integer)
+    begin
+      Y := Mem.Read8(Bufs[Field] + Cardinal(Row * W + X));
+      var C := Cardinal((Row div 2) * (W div 2) + X div 2);
+      Cb := Mem.Read8(Bufs[2 + Field * 2] + C);
+      Cr := Mem.Read8(Bufs[3 + Field * 2] + C);
+    end);
   FHLE.Result(0);
 end;
 
 procedure TPSPMpeg.hBaseCscAvc;
 begin
-  FHLE.Unimplemented('BaseCscAvc');
+  var Out_ := FHLE.Arg(0);
+  var Second := FHLE.Arg(1);
+  var Stride := FHLE.ArgInt(2);
+  var Desc := FHLE.Arg(3);
+  var MbH := Integer(FMemory.Read32(Desc));
+  var MbW := Integer(FMemory.Read32(Desc + 4));
+  var OneField := FMemory.Read32(Desc + 8) <> 0;
+  var H := MbH * 16;
+  var W := MbW * 16;
+  var Bufs: array[0..7] of Cardinal;
+  for var I := 0 to 7 do
+    Bufs[I] := FMemory.Read32(Desc + 16 + Cardinal(I) * 4);
+  var Mem := FMemory;
+  var FieldRows := H div 2;
+  CscFields(FMemory, Out_, Second, Stride, W, H, OneField,
+    procedure(Field, X, Row: Integer; out Y, Cb, Cr: Integer)
+    begin
+      // Luma per field and macroblock column parity, each column 16 wide.
+      var Mb := X div 16;
+      Y := Mem.Read8(Bufs[Field * 2 + (Mb and 1)] + Cardinal(((Mb div 2) * FieldRows + Row) * 16 + (X and 15)));
+      var C := Cardinal((Row div 2) * (W div 2) + X div 2);
+      Cb := Mem.Read8(Bufs[4 + Field * 2] + C);
+      Cr := Mem.Read8(Bufs[5 + Field * 2] + C);
+    end);
   FHLE.Result(0);
 end;
 
