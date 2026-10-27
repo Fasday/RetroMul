@@ -103,7 +103,7 @@ end;
 
 function TPSPGEEngine.Execute(Op, PC: Cardinal): Integer;
 begin
-  Result := 4;
+  Result := 12;
   var Cmd := Op shr 24;
   var P := Op and $FFFFFF;
   case Cmd of
@@ -114,7 +114,8 @@ begin
     GE_PRIM:
       begin
         Regs.Cmd[Cmd] := Op;
-        FPrimCost := 0;
+        // Primitive setup, per vertex and per pixel.
+        FPrimCost := 1000;
         DrawPrim(Op);
         Exit(4 + Integer(Min(FPrimCost, 100000000)));
       end;
@@ -900,7 +901,7 @@ begin
       Exit;
   end;
   GEDrawTriangle(FRaster, A, B, C);
-  Inc(FPrimCost, 200);
+  Inc(FPrimCost, 100 + Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) * 3 div 512);
 end;
 
 procedure TPSPGEEngine.AddVertex(const V: TGEVertex; Clip: Boolean);
@@ -962,7 +963,7 @@ begin
         if ((N and 1) = 1) and not FAsmClip[0] and not FAsmClip[1] then
         begin
           GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
-          Inc(FPrimCost, Int64(Abs(FAsmBuf[1].X - FAsmBuf[0].X) div 16) * (Abs(FAsmBuf[1].Y - FAsmBuf[0].Y) div 16) div 2);
+          Inc(FPrimCost, 100 + Int64(Abs(FAsmBuf[1].X - FAsmBuf[0].X) div 16) * (Abs(FAsmBuf[1].Y - FAsmBuf[0].Y) div 16) * 3);
         end;
       end;
   end;
@@ -1000,7 +1001,7 @@ begin
     end;
     ReadVertex(Index, VType, Raw);
     TransformVertex(Raw, VType, V, Clip);
-    Inc(FPrimCost, 20);
+    Inc(FPrimCost, 40);
     AddVertex(V, Clip or not HasPos);
   end;
   if IdxKind <> 0 then
