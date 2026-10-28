@@ -3,9 +3,9 @@ unit PSP.Utility;
 // sceUtility: savedata, dialogs, on-screen keyboard, system parameters, modules.
 // One dialog type is current at a time (the last one started); its status runs
 // NONE -> INIT -> RUNNING -> FINISHED -> SHUTDOWN -> NONE on the master clock.
-// Nothing is drawn: a TPSPDialogView can be attached to draw running dialogs
-// and supply the buttons they react to. Without one, message dialogs answer
-// themselves after a while so programs do not stall.
+// Running dialogs draw over the game's framebuffer and use the controller's
+// sampled buttons. A TPSPDialogView can replace the built-in software view;
+// the headless test runner keeps the non-interactive path.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
@@ -38,8 +38,11 @@ type
     Aborted: Boolean;
     // A result the dialog finishes with on its own (bad parameters).
     Error: Cardinal;
-    // Savedata work done on the first Update.
+    // Savedata work has completed (interactive modes first wait for a choice).
     Done: Boolean;
+    Selection, Stage, OskField: Integer;
+    Choices: TArray<string>;
+    Text: string;
   end;
 
   // Draws a running dialog and returns the buttons (PSP_CTRL_*) held for it.
@@ -56,13 +59,16 @@ type
     FHtmlMemory: Cardinal;
     FModules: TList<Cardinal>;
     FDelayWord: Cardinal;
-    FView: TPSPDialogView;
+    FView, FSoftwareView: TPSPDialogView;
     FLastButtons: Cardinal;
     // The dialog's own threads, as one guest thread that keeps the CPU until FWorkUntil.
     FWorkIndex: Integer;
     FWorkStub: Cardinal;
     FWorkThread: TPSPThread;
     FWorkUntil: Int64;
+    function Interactive: Boolean;
+    function ConfirmButton: Cardinal;
+    function CancelButton: Cardinal;
     procedure Work(D: TPSPDialog; Ns: Int64);
     procedure hDialogThread;
     function Dialog(Kind: TPSPDialogType): TPSPDialog; inline;
@@ -154,7 +160,8 @@ const
 implementation
 
 uses
-  System.Math, System.IOUtils, System.Hash, PSP.SysMem, PSP.IO, PSP.SFO, PSP.Settings;
+  System.Math, System.IOUtils, System.Hash, PSP.SysMem, PSP.IO, PSP.SFO, PSP.Settings,
+  PSP.Font, PSP.Display, PSP.GE, PSP.GE.Types;
 
 const
   // A message dialog leaves INIT this long after InitStart, or sooner when the
@@ -172,7 +179,14 @@ const
   UpdateYieldUs = 100;
   PSP_CTRL_CROSS = $4000;
   PSP_CTRL_CIRCLE = $2000;
+  PSP_CTRL_UP = $10;
+  PSP_CTRL_RIGHT = $20;
+  PSP_CTRL_DOWN = $40;
+  PSP_CTRL_LEFT = $80;
+  PSP_CTRL_START = $8;
+  PSP_CTRL_SQUARE = $8000;
 
+{$I PSP.Utility.View.inc}
 {$I PSP.Utility.Dialogs.inc}
 {$I PSP.Utility.Savedata.inc}
 
@@ -185,10 +199,13 @@ begin
     FDialogs[K].Kind := K;
   end;
   FModules := TList<Cardinal>.Create;
+  FSoftwareView := TSoftwareDialogView.Create(System);
+  FView := FSoftwareView;
 end;
 
 destructor TPSPUtility.Destroy;
 begin
+  FSoftwareView.Free;
   for var K := Low(TPSPDialogType) to High(TPSPDialogType) do
     FDialogs[K].Free;
   FModules.Free;
@@ -320,6 +337,14 @@ begin
   D.Aborted := False;
   D.Error := 0;
   D.Done := False;
+  D.Selection := 0;
+  D.Stage := 0;
+  D.OskField := 0;
+  D.Choices := nil;
+  D.Text := '';
+  FLastButtons := FSystem.Display.SampledButtons;
+  if (Kind = dtMsg) and (Size > $23C) and ((FMemory.Read32(P + $23C) and $100) <> 0) then
+    D.Selection := 1;
   FHLE.Result(0);
   if FHLE.TraceCalls then
     TraceStart(D);
@@ -430,10 +455,31 @@ begin
   end;
 end;
 
+function TPSPUtility.Interactive: Boolean;
+begin
+  Result := (FView <> nil) and ((FView <> FSoftwareView) or FSystem.IO.HasDisplay);
+end;
+
+function TPSPUtility.ConfirmButton: Cardinal;
+begin
+  if PSPSettings.ButtonSwap = 0 then
+    Result := PSP_CTRL_CIRCLE
+  else
+    Result := PSP_CTRL_CROSS;
+end;
+
+function TPSPUtility.CancelButton: Cardinal;
+begin
+  if PSPSettings.ButtonSwap = 0 then
+    Result := PSP_CTRL_CROSS
+  else
+    Result := PSP_CTRL_CIRCLE;
+end;
+
 function TPSPUtility.Pressed(D: TPSPDialog): Cardinal;
 begin
   Result := 0;
-  if FView = nil then
+  if not Interactive then
     Exit;
   var Buttons := FView.Update(D, FMemory);
   Result := Buttons and not FLastButtons;

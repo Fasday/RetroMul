@@ -166,6 +166,11 @@ begin
   // The library's own kernel calls let other threads run meanwhile.
   var T := FKernel.Current;
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, nil, 'font');
+  if T.Wait.HLETag <> 'font' then
+    Exit;
+  // The operation is already done; releasing its internal driver wait does not
+  // turn a successfully measured or drawn glyph into an error.
+  T.Wait.FailAsZero := Value = 0;
   FKernel.AddTimer(FKernel.Scheduler.Now + Int64(YieldUs) * 1000, T,
     procedure
     begin

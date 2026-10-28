@@ -140,6 +140,8 @@ type
     property Width: Cardinal read FWidth;
     property Format: Cardinal read FFormat;
     property VCount: Cardinal read FVCount;
+    // The buttons of the controller's latest sample (what a read returns now).
+    property SampledButtons: Cardinal read FLastButtons;
     property FrameDone: Boolean read FFrameDone write FFrameDone;
     property InVBlank: Boolean read InVBlankNow;
   end;

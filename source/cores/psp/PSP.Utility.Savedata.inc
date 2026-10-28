@@ -1,8 +1,8 @@
 { PSP.Utility: savedata. A save is the folder ms0:/PSP/SAVEDATA/<game><save>
   with a PARAM.SFO; files written by the secure modes with a key are listed in
   its SAVEDATA_FILE_LIST, and SAVEDATA_PARAMS[0] records the protection mode.
-  The data itself is stored as given (the mode is kept, not applied). Every
-  mode works without UI: list modes take the first listed save. }
+  The data itself is stored as given (the mode is kept, not applied). In the
+  headless runner list modes take the first listed save. }
 
 const
   SdMode = $30;
@@ -70,7 +70,7 @@ type
     Mode: Integer;
     GameName, SaveName, FileName: string;
     Key: TBytes;
-    HasKey, HasVersion: Boolean;
+    HasKey, HasVersion, Selected: Boolean;
     SecureVersion: Integer;
     Root: string;
     function Run: Cardinal;
@@ -484,7 +484,7 @@ end;
 function TSavedataRunner.Load: Cardinal;
 begin
   var Name := SaveName;
-  if Mode = 4 then
+  if (Mode = 4) and not Selected then
     FirstExisting(Name);
   if not ParamOk then
     Exit(SD_LOAD_PARAM);
@@ -564,7 +564,7 @@ end;
 function TSavedataRunner.Save: Cardinal;
 begin
   var Name := SaveName;
-  if Mode = 5 then
+  if (Mode = 5) and not Selected then
   begin
     var L := Listed;
     if Length(L) > 0 then
@@ -825,9 +825,17 @@ begin
     1, 3, 5: Result := Save;
     6:
       begin
-        var Name: string;
-        if FirstExisting(Name) then
-          DeleteSave(Name);
+        if Selected then
+        begin
+          if DeleteSave(SaveName) then
+            Exit(0);
+        end
+        else
+        begin
+          var Name: string;
+          if FirstExisting(Name) then
+            DeleteSave(Name);
+        end;
         Result := SD_DELETE_NO_DATA;
       end;
     7:
@@ -866,7 +874,6 @@ procedure TPSPUtility.StepSavedata(D: TPSPDialog);
 begin
   if D.Done then
     Exit;
-  D.Done := True;
   var R := TSavedataRunner.Create;
   try
     var P := D.Params;
@@ -893,6 +900,82 @@ begin
       R.Root := TPath.Combine(FSystem.IO.MemstickRoot, 'PSP' + PathDelim + 'SAVEDATA');
       ForceDirectories(R.Root);
     end;
+    if Interactive and (R.Mode >= 2) and (R.Mode <= 6) then
+    begin
+      if D.Stage = 0 then
+      begin
+        var Candidates: TArray<string>;
+        if R.Mode in [4, 5, 6] then
+          Candidates := R.Listed;
+        if Length(Candidates) = 0 then
+          Candidates := [R.SaveName];
+        for var Name in Candidates do
+          try
+            if (R.Mode in [3, 5]) or TDirectory.Exists(R.Dir(Name)) then
+              D.Choices := D.Choices + [Name];
+          except
+            on ESaveName do;
+          end;
+        case R.Mode of
+          2, 4: D.Text := 'Select saved data to load.';
+          3, 5: D.Text := 'Select where to save this data.';
+          6: D.Text := 'Select saved data to delete.';
+        end;
+        if Length(D.Choices) = 0 then
+          D.Text := 'There is no saved data.';
+        D.Stage := 1;
+      end;
+      var B := Pressed(D);
+      if (B and CancelButton) <> 0 then
+      begin
+        FMemory.Write32(P + DialogResult, 1);
+        D.Done := True;
+        Finish(D);
+        Exit;
+      end;
+      if D.Stage = 1 then
+      begin
+        if (B and PSP_CTRL_UP) <> 0 then
+          D.Selection := Max(0, D.Selection - 1);
+        if (B and PSP_CTRL_DOWN) <> 0 then
+          D.Selection := Min(Max(0, High(D.Choices)), D.Selection + 1);
+      end;
+      if (B and ConfirmButton) = 0 then
+        Exit;
+      if Length(D.Choices) = 0 then
+      begin
+        if R.Mode = 6 then
+          FMemory.Write32(P + DialogResult, SD_DELETE_NO_DATA)
+        else
+          FMemory.Write32(P + DialogResult, SD_LOAD_NO_DATA);
+        D.Done := True;
+        Finish(D);
+        Exit;
+      end;
+      R.SaveName := D.Choices[D.Selection];
+      R.Selected := True;
+      FMemory.WriteString(P + SdSaveName, RawByteString(R.SaveName), 20);
+      if D.Stage = 1 then
+      begin
+        var Overwrite := False;
+        if R.Mode in [3, 5] then
+          try
+            Overwrite := TDirectory.Exists(R.Dir(R.SaveName));
+          except
+            on ESaveName do;
+          end;
+        if Overwrite or (R.Mode = 6) then
+        begin
+          D.Stage := 2;
+          if R.Mode = 6 then
+            D.Text := 'Delete this saved data? This cannot be undone.'
+          else
+            D.Text := 'Overwrite this saved data?';
+          Exit;
+        end;
+      end;
+    end;
+    D.Done := True;
     var Res: Cardinal;
     try
       Res := R.Run;
