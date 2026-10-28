@@ -290,6 +290,7 @@ begin
 end;
 
 {$I PSP.VFPU.Arith.inc}
+{$I PSP.VFPU.Fast.inc}
 {$I PSP.VFPU.Conv.inc}
 {$I PSP.VFPU.Matrix.inc}
 {$I PSP.VFPU.Decode.inc}

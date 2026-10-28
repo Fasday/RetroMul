@@ -15,9 +15,9 @@ const
 
 function VFlush(X: Cardinal): Cardinal; inline;
 function VIsNaN(X: Cardinal): Boolean; inline;
-function VAdd(A, B: Cardinal): Cardinal;
-function VSub(A, B: Cardinal): Cardinal;
-function VMul(A, B: Cardinal): Cardinal;
+function VAdd(A, B: Cardinal): Cardinal; inline;
+function VSub(A, B: Cardinal): Cardinal; inline;
+function VMul(A, B: Cardinal): Cardinal; inline;
 function VDiv(A, B: Cardinal): Cardinal;
 // Sum of up to four exact products (or plain terms), with the VFPU's alignment.
 function VSum4(const A, B: array of Cardinal; Count: Integer; Skip: Cardinal): Cardinal;
