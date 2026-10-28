@@ -1,8 +1,6 @@
 unit PSP.Misc;
 
-// Small libraries: sceCcc, sceReg, and the network libraries (sceNet*,
-// sceHttp, sceSsl, sceParseUri/Http, sceUsb, sceWlan) as a PSP sees them with
-// no network around.
+// Small libraries: sceCcc and sceReg.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface

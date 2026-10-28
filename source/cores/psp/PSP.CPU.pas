@@ -42,9 +42,8 @@ type
     LLBit: Cardinal;
     V: array[0..127] of Cardinal;
     VC: array[0..15] of Cardinal;
-    // The last value the VFPU's S prefix stage produced in each lane, which an
-    // out-of-range swizzle replays for the integer unpack instructions.
-    VLatch: array[0..3] of Cardinal;
+    // Prefix state the VFPU keeps decoded between a prefix and its consumer.
+    VPrefix: array[0..3] of Cardinal;
   end;
   PPSPContext = ^TPSPContext;
 
@@ -84,6 +83,9 @@ type
     COP0: array[0..31] of Cardinal;
     // VFPU condition hazards: where the last mtvc to CC and the last vcmp were, and the CC before each.
     VccWritePC, VccWriteOld, VcmpPC, VcmpOld: Cardinal;
+    // The last value the VFPU's S prefix stage produced in each lane, which an
+    // out-of-range swizzle replays for the integer unpack instructions.
+    VLatch: array[0..3] of Cardinal;
     Memory: TPSPMemory;
     CurPC: Cardinal;
     Stopping: Boolean;
@@ -1128,6 +1130,7 @@ begin
   FCmpPC := 0;
   VccWritePC := 0;
   VcmpPC := 0;
+  FillChar(VLatch, SizeOf(VLatch), 0);
   Ctx.VC[VFPU_PFXS] := $E4;
   Ctx.VC[VFPU_PFXT] := $E4;
   Ctx.VC[VFPU_CC] := $3F;

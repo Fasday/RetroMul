@@ -874,6 +874,8 @@ begin
   else
     F.Id := AllocFd;
   FFiles.Add(F.Id, F);
+  if FKernel.Trace then
+    FHLE.Log('sceIoOpen %s -> fd %d', [Path, F.Id]);
   if Host then
     DeviceYield(Cardinal(F.Id), 30000)
   else
@@ -938,7 +940,9 @@ begin
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
-  if F.Kind = dkHost then
+  // The caller waits for the drive, the UMD's as the memory stick's (GTA
+  // Liberty City Stories streams the city only when its reads take time).
+  if (F.Kind = dkHost) or (F.Kind = dkUMD) then
     DeviceYield(Cardinal(R), ReadLatency(F, Max(R, 0)))
   else
     FHLE.Result(Cardinal(R));

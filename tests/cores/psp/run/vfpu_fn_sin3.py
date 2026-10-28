@@ -64,7 +64,7 @@ for fn, inp, o in pts:
     ex = mpmath.sin(t * mpmath.pi / 2)
     y = abs(mpmath.mpf(f(o)))
     e = ((o >> 23) & 0xFF) - 127
-    ulp = mpmath.power(2, e - 21)
+    ulp = max(mpmath.power(2, e - 21), mpmath.power(2, -28))
     lo = (y - ex) * 2 ** 28
     hi = (y + ulp - ex) * 2 ** 28
     rows.append((fr, float(lo), float(hi), lo <= 0 < hi, fn, inp, o))

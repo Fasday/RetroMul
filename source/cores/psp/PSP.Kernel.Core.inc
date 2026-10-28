@@ -33,7 +33,7 @@ const
   // Leaving an interrupt that ran a handler, and handing the CPU to another
   // thread from there.
   PSPIntrExitNs = 30000;
-  PSPIntrDispatchNs = 14000;
+  PSPIntrDispatchNs = 20000;
   // Thread event handler kinds.
   PSPThreadEventCreate = 1;
   PSPThreadEventStart = 2;
@@ -373,6 +373,18 @@ begin
   FMemory.Write32(FBusyStub + 4, 0);
 end;
 
+procedure TPSPKernel.ScrambleCallerSaved;
+begin
+  var C := PPSPContext(@FCPU.Ctx);
+  C.GPR[1] := $DEADBEEF;
+  for var I := 4 to 15 do
+    C.GPR[I] := $DEADBEEF;
+  C.GPR[24] := $DEADBEEF;
+  C.GPR[25] := $DEADBEEF;
+  C.HI := $DEADBEEF;
+  C.LO := $DEADBEEF;
+end;
+
 procedure TPSPKernel.SpendPreemptible(Ns: Int64);
 begin
   var T := FCurrent;
@@ -644,7 +656,10 @@ end;
 
 procedure TPSPKernel.AfterSyscall;
 begin
-  if FRescheduleNeeded then
+  // An interrupt about to be taken runs first; the dispatch happens on its
+  // way out.
+  if FRescheduleNeeded and not ((FPendingInts.Count > 0) and (FIntFrames.Count = 0) and (FIntrSuspendLevel = 0) and
+    FCPU.InterruptsEnabled) then
     Reschedule;
 end;
 

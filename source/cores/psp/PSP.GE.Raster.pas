@@ -25,7 +25,8 @@ type
     W: Single;           // 1/w for perspective (1 in through mode)
     R, G, B, A: Integer; // primary colour, 0..255
     SR, SG, SB: Integer; // secondary (specular) colour
-    S, T: Single;        // texture coordinates in texels (already / q)
+    S, T: Single;        // texture coordinates in texels, still to divide by Q
+    Q: Single;           // texture projection divisor (1 but for TEXMAPMODE's matrix)
     Fog: Single;         // 0 = fog colour, 1 = no fog
   end;
   PGEVertex = ^TGEVertex;
@@ -62,6 +63,7 @@ type
     DepthFunc: Integer;
     DepthWrite: Boolean;
     MinZ, MaxZ: Integer;
+    DepthClamp: Boolean;
     Blend: Boolean;
     BlendOp, BlendSrc, BlendDst: Integer;
     FixA, FixB: Cardinal;
@@ -87,7 +89,21 @@ type
     Z: Integer;
     S, T: Single;
     Fog: Single;
+    // Level of detail in 1/16 levels when the texture needs it.
+    Lod: Integer;
   end;
+
+// The level of detail: TEXLEVEL's mode picks the texels per pixel (Scale,
+// in level 0 texels), TEXLODSLOPE times w, or only the bias.
+function TexLod(const S: TGERaster; Scale, W: Single): Integer;
+begin
+  case S.Tex.LevelMode of
+    0: Result := GELog16(Scale) + S.Tex.LodBias;
+    2: Result := GELog16(S.Tex.Slope * W) + 16 + S.Tex.LodBias;
+  else
+    Result := S.Tex.LodBias;
+  end;
+end;
 
 function Clamp255(V: Integer): Integer; inline;
 begin
@@ -295,7 +311,11 @@ procedure ApplyTexture(const S: TGERaster; var F: TGEFragment);
 var
   TR, TG, TB, TA: Integer;
 begin
-  var C := GESampleTexture(S.Tex, F.S, F.T);
+  var C: Cardinal;
+  if S.Tex.NeedLod then
+    C := GESampleTextureLod(S.Tex, F.S, F.T, F.Lod)
+  else
+    C := GESampleTexture(S.Tex, F.S, F.T);
   TR := C and $FF;
   TG := (C shr 8) and $FF;
   TB := (C shr 16) and $FF;
@@ -410,8 +430,14 @@ begin
     Exit;
   end;
 
+  // The depth range test sees the depth clamped only with depth clamping on.
   if not S.Through then
-    if (F.Z < S.MinZ) or (F.Z > S.MaxZ) then
+    if S.DepthClamp then
+    begin
+      if (Z < S.MinZ) or (Z > S.MaxZ) then
+        Exit;
+    end
+    else if (F.Z < S.MinZ) or (F.Z > S.MaxZ) then
       Exit;
 
   if S.Textured then
@@ -564,6 +590,7 @@ begin
   F.Z := V.Z;
   F.S := V.S; F.T := V.T;
   F.Fog := V.Fog;
+  F.Lod := 0;
 end;
 
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
@@ -613,6 +640,24 @@ begin
   if not ((DY1 < 0) or ((DY1 = 0) and (DX1 > 0))) then Bias1 := -1;
   if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then Bias2 := -1;
   var FArea := 1.0 / Area;
+  // For the level of detail: per pixel, how S and T (perspective correct)
+  // change along x and y, from the steps of the weights.
+  var NeedLod := S.Textured and S.Tex.NeedLod;
+  var NSX, NSY, NTX, NTY, DQX, DQY: Single;
+  NSX := 0; NSY := 0; NTX := 0; NTY := 0; DQX := 0; DQY := 0;
+  F.Lod := 0;
+  if NeedLod then
+  begin
+    var BX0 := -16 * DY0 * FArea; var BY0 := 16 * DX0 * FArea;
+    var BX1 := -16 * DY1 * FArea; var BY1 := 16 * DX1 * FArea;
+    var BX2 := -16 * DY2 * FArea; var BY2 := 16 * DX2 * FArea;
+    NSX := A0.S * A0.W * BX0 + A1.S * A1.W * BX1 + A2.S * A2.W * BX2;
+    NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
+    NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
+    NTY := A0.T * A0.W * BY0 + A1.T * A1.W * BY1 + A2.T * A2.W * BY2;
+    DQX := A0.Q * A0.W * BX0 + A1.Q * A1.W * BX1 + A2.Q * A2.W * BX2;
+    DQY := A0.Q * A0.W * BY0 + A1.Q * A1.W * BY1 + A2.Q * A2.W * BY2;
+  end;
   for var PY := PY1 to PY2 do
   begin
     var SY := Int64(PY) * 16 + 8;
@@ -646,16 +691,28 @@ begin
       F.Z := Round(A0.Z * W0 + A1.Z * W1 + A2.Z * W2);
       if S.Textured then
       begin
-        var Q := A0.W * W0 + A1.W * W1 + A2.W * W2;
-        if Q <> 0 then
+        // S, T and Q go through the perspective (1/w) and then S and T are
+        // divided by Q; where Q is not positive the GE takes the last texel.
+        var Q := A0.Q * A0.W * W0 + A1.Q * A1.W * W1 + A2.Q * A2.W * W2;
+        var IW := A0.W * W0 + A1.W * W1 + A2.W * W2;
+        if (Q <> 0) and ((Q > 0) = (IW > 0)) then
         begin
           F.S := (A0.S * A0.W * W0 + A1.S * A1.W * W1 + A2.S * A2.W * W2) / Q;
           F.T := (A0.T * A0.W * W0 + A1.T * A1.W * W1 + A2.T * A2.W * W2) / Q;
+          if NeedLod then
+          begin
+            var Scale := Max(Max(Abs(NSX - F.S * DQX), Abs(NSY - F.S * DQY)),
+              Max(Abs(NTX - F.T * DQX), Abs(NTY - F.T * DQY))) / Abs(Q);
+            var W: Single := 1;
+            if IW <> 0 then
+              W := 1 / IW;
+            F.Lod := TexLod(S, Scale, W);
+          end;
         end
         else
         begin
-          F.S := A0.S;
-          F.T := A0.T;
+          F.S := S.Tex.Levels[0].Width - 0.5;
+          F.T := S.Tex.Levels[0].Height - 0.5;
         end;
       end;
       F.Fog := A0.Fog * W0 + A1.Fog * W1 + A2.Fog * W2;
@@ -684,17 +741,61 @@ begin
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
   SetupFragment(F, V1);
-  var DS: Single := 0; var DT: Single := 0;
-  if V1.X <> V0.X then DS := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
-  if V1.Y <> V0.Y then DT := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+  // S runs along x and T along y, except when the corners are flipped in
+  // one axis only: then the texture is turned, S along y and T along x.
+  var Turned := (V0.X > V1.X) <> (V0.Y > V1.Y);
+  // Q goes with S, and divides both.
+  var SX: Single := 0; var SY: Single := 0; var TX: Single := 0; var TY: Single := 0;
+  var QX: Single := 0; var QY: Single := 0;
+  if V1.X <> V0.X then
+  begin
+    if Turned then
+      TX := (V1.T - V0.T) / ((V1.X - V0.X) / 16)
+    else
+    begin
+      SX := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
+      QX := (V1.Q - V0.Q) / ((V1.X - V0.X) / 16);
+    end;
+  end;
+  if V1.Y <> V0.Y then
+  begin
+    if Turned then
+    begin
+      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16);
+      QY := (V1.Q - V0.Q) / ((V1.Y - V0.Y) / 16);
+    end
+    else
+      TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+  end;
+  var Projected := (V0.Q <> 1) or (V1.Q <> 1);
+  var Lod := 0;
+  if S.Textured and S.Tex.NeedLod then
+  begin
+    var W: Single := 1;
+    if V1.W > 0 then
+      W := 1 / V1.W;
+    Lod := TexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), W);
+  end;
   for var PY := PY1 to PY2 do
     for var PX := PX1 to PX2 do
     begin
       SetupFragment(F, V1);
+      F.Lod := Lod;
       if S.Textured then
       begin
-        F.S := V0.S + DS * ((PX * 16 + 8 - V0.X) / 16);
-        F.T := V0.T + DT * ((PY * 16 + 8 - V0.Y) / 16);
+        var FX := (PX * 16 + 8 - V0.X) / 16;
+        var FY := (PY * 16 + 8 - V0.Y) / 16;
+        F.S := V0.S + SX * FX + SY * FY;
+        F.T := V0.T + TX * FX + TY * FY;
+        if Projected then
+        begin
+          var Q := V0.Q + QX * FX + QY * FY;
+          if Q <> 0 then
+          begin
+            F.S := F.S / Q;
+            F.T := F.T / Q;
+          end;
+        end;
       end;
       PlotPixel(S, PX, PY, F);
     end;
@@ -750,6 +851,12 @@ begin
     F.Z := Round(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;
+    var Q := V0.Q + (V1.Q - V0.Q) * T;
+    if (Q <> 1) and (Q <> 0) then
+    begin
+      F.S := F.S / Q;
+      F.T := F.T / Q;
+    end;
     F.Fog := V0.Fog + (V1.Fog - V0.Fog) * T;
     PlotPixel(S, PX, PY, F);
   end;
@@ -760,6 +867,11 @@ var
   F: TGEFragment;
 begin
   SetupFragment(F, V);
+  if (V.Q <> 1) and (V.Q <> 0) then
+  begin
+    F.S := V.S / V.Q;
+    F.T := V.T / V.Q;
+  end;
   PlotPixel(S, (V.X + $100000) div 16 - $10000, (V.Y + $100000) div 16 - $10000, F);
 end;
 

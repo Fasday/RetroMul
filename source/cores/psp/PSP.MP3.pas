@@ -139,6 +139,12 @@ const
   Mpeg2Bitrates: array[1..14] of Integer = (8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160);
   Mpeg1Rates: array[0..2] of Integer = (44100, 48000, 32000);
 
+// Guest addresses wrap at 4 GB, as the CPU's address arithmetic does.
+function GuestAdd(Base: Cardinal; Offset: Int64): Cardinal; inline;
+begin
+  Result := Cardinal((Int64(Base) + Offset) and $FFFFFFFF);
+end;
+
 function PSPMp3ParseHeader(const H: array of Byte; out Info: TPSPMp3Header): Boolean;
 begin
   Info := Default(TPSPMp3Header);
@@ -405,7 +411,7 @@ begin
     N := H.RingSize - Off;
   if N <= 0 then
     Exit(0);
-  Dst := H.RingBase + Cardinal(Off);
+  Dst := GuestAdd(H.RingBase, Off);
   SrcPos := H.StreamStart + H.WriteFile;
   Result := N;
 end;
@@ -414,7 +420,7 @@ function TPSPMp3.ReadRing(H: TPSPMp3Handle; Pos: Int64; Count: Integer): TBytes;
 begin
   SetLength(Result, Count);
   for var I := 0 to Count - 1 do
-    Result[I] := FMemory.Read8(H.RingBase + Cardinal((Pos + I) mod H.RingSize));
+    Result[I] := FMemory.Read8(GuestAdd(H.RingBase, (Pos + I) mod H.RingSize));
 end;
 
 function TPSPMp3.NextPass(H: TPSPMp3Handle): Boolean;
@@ -481,7 +487,7 @@ begin
       Samples := Info.SamplesPerFrame;
       SetLength(PCM, Samples * 2);
     end;
-    var Out := H.Pcm + Cardinal(H.PcmHalf) * PcmSlot;
+    var Out := GuestAdd(H.Pcm, Int64(H.PcmHalf) * PcmSlot);
     if Length(PCM) > 0 then
       FMemory.WriteBytes(Out, PCM[0], Samples * 4);
     Bytes := Samples * 4;
@@ -594,7 +600,7 @@ begin
   H.BufSize := BufSize;
   H.Pcm := Pcm;
   H.PcmSize := PcmSize;
-  H.RingBase := Buf + RingHead;
+  H.RingBase := GuestAdd(Buf, RingHead);
   H.Half := (Min(BufSize, $7FFFFFF) - RingHead) div 2;
   H.RingSize := H.Half * 2;
   H.LoopNum := -1;
@@ -626,8 +632,8 @@ begin
   var Found := -1;
   for var I := 0 to SyncSearch - 1 do
   begin
-    var B0 := FMemory.Read8(H.RingBase + Cardinal((Base + I) mod H.RingSize));
-    var B1 := FMemory.Read8(H.RingBase + Cardinal((Base + I + 1) mod H.RingSize));
+    var B0 := FMemory.Read8(GuestAdd(H.RingBase, (Base + I) mod H.RingSize));
+    var B1 := FMemory.Read8(GuestAdd(H.RingBase, (Base + I + 1) mod H.RingSize));
     if (B0 = $FF) and ((B1 and $E0) = $E0) then
     begin
       Found := I;
@@ -676,7 +682,7 @@ begin
   var Bytes: Integer;
   var E := DecodeOne(H, Bytes);
   if OutPtr <> 0 then
-    FMemory.Write32(OutPtr, H.Pcm + Cardinal(H.PcmHalf) * PcmSlot);
+    FMemory.Write32(OutPtr, GuestAdd(H.Pcm, Int64(H.PcmHalf) * PcmSlot));
   if (E = 0) and (Bytes > 0) then
     H.PcmHalf := H.PcmHalf xor 1;
   if E <> 0 then

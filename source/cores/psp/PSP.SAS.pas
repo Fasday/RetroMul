@@ -106,7 +106,6 @@ type
     FRevVolLeft, FRevVolRight: Integer;
     FDry, FWet: Boolean;
     FDryL, FDryR, FWetL, FWetR: TArray<Integer>;
-    FVoiceBuf: TArray<Integer>;
     // Reverb work area (SPU style, 22.05 kHz).
     FRevBuffer: TArray<SmallInt>;
     FRevPos: Integer;
@@ -130,7 +129,7 @@ type
     procedure RenderVoice(var V: TPSPSasVoice; Count: Integer);
     procedure Reverb(Count: Integer);
     procedure ReverbSample(InL, InR: Integer; out OutL, OutR: Integer);
-    procedure Mix(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
+    procedure MixGrain(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
     procedure CoreWait;
     procedure hInit;
     procedure hCore;
@@ -681,7 +680,7 @@ begin
   end;
 end;
 
-procedure TPSPSasCore.Mix(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
+procedure TPSPSasCore.MixGrain(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
 begin
   var N := FGrain;
   if Length(FDryL) < N then
@@ -1015,7 +1014,7 @@ end;
 procedure TPSPSasCore.hCore;
 begin
   FHLE.Result(0);
-  Mix(FHLE.Arg(1), False, 0, 0);
+  MixGrain(FHLE.Arg(1), False, 0, 0);
   CoreWait;
 end;
 
@@ -1027,7 +1026,7 @@ begin
     Exit;
   end;
   FHLE.Result(0);
-  Mix(FHLE.Arg(1), True, FHLE.ArgInt(2), FHLE.ArgInt(3));
+  MixGrain(FHLE.Arg(1), True, FHLE.ArgInt(2), FHLE.ArgInt(3));
   CoreWait;
 end;
 
