@@ -420,13 +420,15 @@ begin
               var Rms := 0.0;
               if SumN > 0 then
                 Rms := Sqrt(SumSq / SumN);
-              Writeln(ErrOutput, Format('frame %d hash %s audio peak %d rms %.0f', [F, H, Peak, Rms]));
+              Writeln(ErrOutput, Format('frame %d hash %s audio peak %d rms %.0f host=%.3fs guest=%.3fs',
+                [F, H, Peak, Rms, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9]));
               Peak := 0;
               SumSq := 0;
               SumN := 0;
             end
             else
-              Writeln(ErrOutput, Format('frame %d hash %s', [F, H]));
+              Writeln(ErrOutput, Format('frame %d hash %s host=%.3fs guest=%.3fs',
+                [F, H, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9]));
           end;
           if OutDir <> '' then
             SaveBMP(Frame, TPath.Combine(OutDir, Format('f%.5d.bmp', [F])));
