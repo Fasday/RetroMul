@@ -1128,6 +1128,7 @@ begin
       T.Levels[L].Ptr := nil;
       if (L < T.LevelCount) and (T.Levels[L].Size > 0) then
         T.Levels[L].Ptr := FMemory.HostPtr(T.Levels[L].Addr, T.Levels[L].Size);
+      GEFitLevel(T^, T.Levels[L]);
     end;
     T.Level := 0;
     T.ClampU := (C[GE_TEXWRAP] and 1) <> 0;

@@ -20,6 +20,9 @@ type
     // otherwise), for reads without the guest page table.
     Ptr: PByte;
     Size: Cardinal;
+    // Every texel the sampler can address lies in Ptr's Size bytes (set by
+    // GEFitLevel; False only costs speed).
+    Fits: Boolean;
   end;
 
   PGETexLevel = ^TGETexLevel;
@@ -52,10 +55,53 @@ function GESampleTextureLod(const T: TGETexture; S, TT: Single; Lod: Integer): C
 function GELog16(V: Single): Integer;
 function GEFetchTexel(const T: TGETexture; Level, X, Y: Integer): Cardinal;
 function GEDecode16(Format: Integer; P: Cardinal): Cardinal;
+// One past the furthest byte from a level's start the sampler may read
+// (texel coordinates are wrapped or clamped into the level).
+function GELevelReach(const T: TGETexture; const L: TGETexLevel): UInt64;
+// Sets L.Fits.
+procedure GEFitLevel(const T: TGETexture; var L: TGETexLevel);
+
+var
+  // Tests: every texel through the general fetch, the reference for the
+  // sampler's fast path.
+  GEGenericTexels: Boolean;
 
 implementation
 
-function GEDecode16(Format: Integer; P: Cardinal): Cardinal;
+const
+  // Bits a texel by texture format (DXT by their blocks).
+  TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
+
+function GELevelReach(const T: TGETexture; const L: TGETexLevel): UInt64;
+begin
+  var Bits := TexBits[T.Format and 15];
+  var W := UInt64(Max(L.Width, 1));
+  var H := UInt64(Max(L.Height, 1));
+  var BW := UInt64(Max(L.BufWidth, 0));
+  if T.Format >= 8 then
+  begin
+    var BlockBytes: UInt64 := 16;
+    if T.Format = 8 then BlockBytes := 8;
+    Result := (((H - 1) shr 2) * (BW div 4) + ((W - 1) shr 2)) * BlockBytes + BlockBytes;
+  end
+  else
+  begin
+    var RowBytes := (BW * UInt64(Bits)) div 8;
+    var LastByte := ((W - 1) * UInt64(Bits)) div 8;
+    if T.Swizzle then
+      Result := ((((H - 1) shr 3) * (RowBytes shr 4) + (LastByte shr 4)) shl 7) + 128
+    else
+      Result := (H - 1) * RowBytes + LastByte + UInt64(Max(1, Bits div 8));
+  end;
+end;
+
+procedure GEFitLevel(const T: TGETexture; var L: TGETexLevel);
+begin
+  L.Fits := (L.Ptr <> nil) and (T.Format <= 7) and (L.Width > 0) and (L.Height > 0) and (L.BufWidth >= 0) and
+    (GELevelReach(T, L) <= L.Size);
+end;
+
+function Decode16(Format: Integer; P: Cardinal): Cardinal; inline;
 begin
   case Format of
     0:
@@ -78,13 +124,18 @@ begin
   end;
 end;
 
-function ClutLookup(const T: TGETexture; Index: Cardinal): Cardinal;
+function GEDecode16(Format: Integer; P: Cardinal): Cardinal;
+begin
+  Result := Decode16(Format, P);
+end;
+
+function ClutLookup(const T: TGETexture; Index: Cardinal): Cardinal; inline;
 begin
   var I := ((Index shr T.ClutShift) and Cardinal(T.ClutMask)) or (Cardinal(T.ClutOffset) and $1FF);
   if T.ClutFormat = 3 then
     Result := PCardinal(T.Clut + (I and $FF) * 4)^
   else
-    Result := GEDecode16(T.ClutFormat, PWord(T.Clut + (I and $1FF) * 2)^);
+    Result := Decode16(T.ClutFormat, PWord(T.Clut + (I and $1FF) * 2)^);
 end;
 
 // Byte offset of texel (X, Y) for a format of Bits per texel, swizzled or linear.
@@ -160,13 +211,53 @@ begin
     Result := M.Read32(L.Addr + Off);
 end;
 
+function FetchTexel(const T: TGETexture; L: PGETexLevel; X, Y: Integer): Cardinal; forward;
+
 function GEFetchTexel(const T: TGETexture; Level, X, Y: Integer): Cardinal;
 begin
-  var L: PGETexLevel := @T.Levels[Level];
+  Result := FetchTexel(T, @T.Levels[Level], X, Y);
+end;
+
+// The common formats from a level's contiguous bytes, inline in the sampler.
+function FastTexel(const T: TGETexture; L: PGETexLevel; X, Y: Integer): Cardinal; inline;
+begin
+  if (L.Ptr <> nil) and (T.Format <= 7) then
+  begin
+    var Bits := 16;
+    case T.Format of
+      3, 7: Bits := 32;
+      4: Bits := 4;
+      5: Bits := 8;
+    end;
+    var Off := TexelOffset(T, L^, X, Y, Bits);
+    if Off + Cardinal(Max(1, Bits shr 3)) <= L.Size then
+      case T.Format of
+        0, 1, 2: Exit(Decode16(T.Format, PWord(L.Ptr + Off)^));
+        3: Exit(PCardinal(L.Ptr + Off)^);
+        4:
+          begin
+            var B := Cardinal(L.Ptr[Off]);
+            if (X and 1) <> 0 then
+              B := B shr 4
+            else
+              B := B and $F;
+            Exit(ClutLookup(T, B));
+          end;
+        5: Exit(ClutLookup(T, L.Ptr[Off]));
+        6: Exit(ClutLookup(T, PWord(L.Ptr + Off)^));
+      else
+        Exit(ClutLookup(T, PCardinal(L.Ptr + Off)^));
+      end;
+  end;
+  Result := FetchTexel(T, L, X, Y);
+end;
+
+function FetchTexel(const T: TGETexture; L: PGETexLevel; X, Y: Integer): Cardinal;
+begin
   var M := T.Memory;
   case T.Format of
     0, 1, 2:
-      Result := GEDecode16(T.Format, TexR16(L^, M, TexelOffset(T, L^, X, Y, 16)));
+      Result := Decode16(T.Format, TexR16(L^, M, TexelOffset(T, L^, X, Y, 16)));
     3:
       Result := TexR32(L^, M, TexelOffset(T, L^, X, Y, 32));
     4:
@@ -262,11 +353,84 @@ begin
     Result := V and (Size - 1);
 end;
 
+// A texel of a level holding all its texels: its byte offset (as TexelOffset,
+// for non-negative coordinates) and its colour (as FetchTexel, formats 0-7).
+function FitOffset(Swizzle: Boolean; RowBytes, Bits, X, Y: Integer): Cardinal; inline;
+begin
+  var ByteX := (X * Bits) shr 3;
+  if Swizzle then
+    Result := Cardinal((((Y shr 3) * (RowBytes shr 4) + (ByteX shr 4)) shl 7) + ((Y and 7) shl 4) + (ByteX and 15))
+  else
+    Result := Cardinal(Y * RowBytes + ByteX);
+end;
+
+function FitTexel(const T: TGETexture; P: PByte; Off: Cardinal; X: Integer): Cardinal; inline;
+begin
+  case T.Format of
+    0, 1, 2: Result := Decode16(T.Format, PWord(P + Off)^);
+    3: Result := PCardinal(P + Off)^;
+    4:
+      begin
+        var B := Cardinal(P[Off]);
+        if (X and 1) <> 0 then
+          B := B shr 4
+        else
+          B := B and $F;
+        Result := ClutLookup(T, B);
+      end;
+    5: Result := ClutLookup(T, P[Off]);
+    6: Result := ClutLookup(T, PWord(P + Off)^);
+  else
+    Result := ClutLookup(T, PCardinal(P + Off)^);
+  end;
+end;
+
 // A texel of one level, nearest or bilinear (4-bit weights); S and TT are
 // in texels of that level.
 function SampleLevel(const T: TGETexture; Level: Integer; S, TT: Single; Linear: Boolean): Cardinal;
 begin
-  var L := T.Levels[Level];
+  var L: PGETexLevel := @T.Levels[Level];
+  if L.Fits and not GEGenericTexels then
+  begin
+    var Bits := TexBits[T.Format];
+    var RowBytes := (L.BufWidth * Bits) shr 3;
+    var P := L.Ptr;
+    if not Linear then
+    begin
+      var X := WrapCoord(TexFloor(S), L.Width, T.ClampU);
+      var Y := WrapCoord(TexFloor(TT), L.Height, T.ClampV);
+      Exit(FitTexel(T, P, FitOffset(T.Swizzle, RowBytes, Bits, X, Y), X));
+    end;
+    var FS := S - 0.5;
+    var FT := TT - 0.5;
+    var X0 := TexFloor(FS);
+    var Y0 := TexFloor(FT);
+    var FracX := Trunc((FS - X0) * 16);
+    var FracY := Trunc((FT - Y0) * 16);
+    var XA := WrapCoord(X0, L.Width, T.ClampU);
+    var XB := WrapCoord(X0 + 1, L.Width, T.ClampU);
+    var YA := WrapCoord(Y0, L.Height, T.ClampV);
+    var YB := WrapCoord(Y0 + 1, L.Height, T.ClampV);
+    var Sw := T.Swizzle;
+    var C00 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YA), XA);
+    var C10 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YA), XB);
+    var C01 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YB), XA);
+    var C11 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YB), XB);
+    Result := 0;
+    for var Sh := 0 to 3 do
+    begin
+      var Shift := Sh * 8;
+      var A := Integer((C00 shr Shift) and $FF);
+      var B := Integer((C10 shr Shift) and $FF);
+      var C := Integer((C01 shr Shift) and $FF);
+      var D := Integer((C11 shr Shift) and $FF);
+      var Top := A * (16 - FracX) + B * FracX;
+      var Bottom := C * (16 - FracX) + D * FracX;
+      var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
+      Result := Result or (Cardinal(V) shl Shift);
+    end;
+    Exit;
+  end;
   if not Linear then
   begin
     var X := WrapCoord(TexFloor(S), L.Width, T.ClampU);
@@ -289,7 +453,7 @@ begin
           end;
       end;
     end;
-    Exit(GEFetchTexel(T, Level, X, Y));
+    Exit(FastTexel(T, L, X, Y));
   end;
   var FS := S - 0.5;
   var FT := TT - 0.5;
@@ -301,10 +465,10 @@ begin
   var XB := WrapCoord(X0 + 1, L.Width, T.ClampU);
   var YA := WrapCoord(Y0, L.Height, T.ClampV);
   var YB := WrapCoord(Y0 + 1, L.Height, T.ClampV);
-  var C00 := GEFetchTexel(T, Level, XA, YA);
-  var C10 := GEFetchTexel(T, Level, XB, YA);
-  var C01 := GEFetchTexel(T, Level, XA, YB);
-  var C11 := GEFetchTexel(T, Level, XB, YB);
+  var C00 := FastTexel(T, L, XA, YA);
+  var C10 := FastTexel(T, L, XB, YA);
+  var C01 := FastTexel(T, L, XA, YB);
+  var C11 := FastTexel(T, L, XB, YB);
   Result := 0;
   for var Sh := 0 to 3 do
   begin

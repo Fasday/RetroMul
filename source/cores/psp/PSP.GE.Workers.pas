@@ -23,7 +23,8 @@ interface
 
 uses
   {$IFDEF MSWINDOWS}Winapi.Windows,{$ENDIF}
-  System.SysUtils, System.Classes, System.Math, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster;
+  System.SysUtils, System.Classes, System.Math, System.Diagnostics, PSP.Types, PSP.Memory, PSP.GE.Texture,
+  PSP.GE.Raster;
 
 type
   TGEJobKind = (gjTriangle, gjSprite, gjLine, gjPoint);
@@ -71,6 +72,7 @@ type
     FOwner: TGEWorkers;
     FStart, FDone: THandle;
     FError: Exception;
+    FBusy: Int64;
   protected
     procedure Execute; override;
   public
@@ -110,6 +112,10 @@ type
     FSavedFault: TPSPVRAMFault;
     FBatchesDrawn, FBackground, FQueued, FAlone, FAccessSyncs, FSplits: Int64;
     FAloneWhy: array[0..6] of Int64;
+    // Host time spent waiting for the pool, by what waited (statistics).
+    FWaitReason: Integer;
+    FWaitTicks: array[0..4] of Int64;
+    FSerialTicks: Int64;
     {$IFDEF MSWINDOWS}
     FWorkers: array of TGEWorker;
     procedure StartWorkers;
@@ -147,9 +153,13 @@ type
 
 implementation
 
+var
+  GKickArea: Int64 = 400000;
+  GKickCount: Integer = 4096;
+  GReleaseArea: Int64 = 60000;
+  GBandsPerThread: Integer = 3;
+
 const
-  // Bits a texel by texture format (DXT by their blocks).
-  TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
   AloneNames: array[0..6] of string = ('stride', 'wrap', 'depth layout', 'depth on colour', 'texture layout',
     'texture beyond its level', 'own texture');
 
@@ -194,31 +204,6 @@ begin
   Result := (A.Base = B.Base) and (A.Stride = B.Stride) and (A.Bytes = B.Bytes) and (A.Permutation = B.Permutation);
 end;
 
-// One past the furthest byte from a level's start the sampler may read (as
-// PSP.GE.Texture addresses texels: wrapped or clamped into the level).
-function LevelReach(const T: TGETexture; const L: TGETexLevel): UInt64;
-begin
-  var Bits := TexBits[T.Format and 15];
-  var W := UInt64(Max(L.Width, 1));
-  var H := UInt64(Max(L.Height, 1));
-  var BW := UInt64(Max(L.BufWidth, 0));
-  if T.Format >= 8 then
-  begin
-    var BlockBytes: UInt64 := 16;
-    if T.Format = 8 then BlockBytes := 8;
-    Result := (((H - 1) shr 2) * (BW div 4) + ((W - 1) shr 2)) * BlockBytes + BlockBytes;
-  end
-  else
-  begin
-    var RowBytes := (BW * UInt64(Bits)) div 8;
-    var LastByte := ((W - 1) * UInt64(Bits)) div 8;
-    if T.Swizzle then
-      Result := ((((H - 1) shr 3) * (RowBytes shr 4) + (LastByte shr 4)) shl 7) + 128
-    else
-      Result := (H - 1) * RowBytes + LastByte + UInt64(Max(1, Bits div 8));
-  end;
-end;
-
 {$IFDEF MSWINDOWS}
 constructor TGEWorker.Create(Owner: TGEWorkers);
 begin
@@ -249,7 +234,9 @@ begin
     try
       var B := FOwner.FFlight;
       SetModes(B.MXCSR, B.FPUControl);
+      var T := TStopwatch.GetTimeStamp;
       FOwner.WorkBands(B);
+      Inc(FBusy, TStopwatch.GetTimeStamp - T);
     except
       FError := Exception(AcquireExceptionObject);
     end;
@@ -278,6 +265,17 @@ begin
       SetLength(FBatches[I].Cluts, ClutCapacity * 1024);
     end;
   FBatch := @FBatches[0];
+  FWaitReason := 4;
+  // Measurements: PSP_GE_TUNE=kick area,kick count,area started when the GE
+  // stops,bands a thread.
+  var Tune := GetEnvironmentVariable('PSP_GE_TUNE').Split([',']);
+  if Length(Tune) = 4 then
+  begin
+    GKickArea := StrToInt64(Tune[0]);
+    GKickCount := StrToInt(Tune[1]);
+    GReleaseArea := StrToInt64(Tune[2]);
+    GBandsPerThread := StrToInt(Tune[3]);
+  end;
   FClutIndex := -1;
   FStateDirty := True;
 end;
@@ -335,7 +333,9 @@ procedure TGEWorkers.DrawAlone(const S: TGERaster; Kind: TGEJobKind; const A, B,
 begin
   Inc(FAlone);
   Inc(FAloneWhy[Why]);
+  FWaitReason := 3;
   Sync;
+  FWaitReason := 4;
   DrawJob(S, Kind, A, B, C);
 end;
 
@@ -368,13 +368,19 @@ end;
 procedure TGEWorkers.Fault;
 begin
   Inc(FAccessSyncs);
+  FWaitReason := 2;
   Sync;
+  FWaitReason := 4;
 end;
 
 procedure TGEWorkers.Release;
 begin
-  if (FBatch.Count > 0) and (FBatch.Area >= BackgroundArea) then
+  if (FBatch.Count > 0) and (FBatch.Area >= GReleaseArea) then
+  begin
+    FWaitReason := 0;
     Kick;
+    FWaitReason := 4;
+  end;
 end;
 
 procedure TGEWorkers.Sync;
@@ -399,8 +405,25 @@ begin
   if FFlight = nil then
     Exit;
   var B := FFlight;
-  for var I := 0 to FFlightThreads - 1 do
-    WaitForSingleObject(FWorkers[I].FDone, INFINITE);
+  var T := TStopwatch.GetTimeStamp;
+  try
+    // Rather than wait, draw the bands nobody has taken yet.
+    if B.NextBand < B.Bands then
+    begin
+      var SavedControl: Word;
+      var SavedMXCSR := GetModes(SavedControl);
+      SetModes(B.MXCSR, B.FPUControl);
+      try
+        WorkBands(B);
+      finally
+        SetModes(SavedMXCSR, SavedControl);
+      end;
+    end;
+  finally
+    for var I := 0 to FFlightThreads - 1 do
+      WaitForSingleObject(FWorkers[I].FDone, INFINITE);
+  end;
+  Inc(FWaitTicks[FWaitReason], TStopwatch.GetTimeStamp - T);
   FFlight := nil;
   B.Count := 0;
   B.StateCount := 0;
@@ -430,7 +453,7 @@ begin
   FStateDirty := True;
   var Rows := B.MaxY - B.MinY + 1;
   B.BandTop := B.MinY;
-  B.BandRows := Max(4, Rows div (FThreads * 3));
+  B.BandRows := Max(4, Rows div (FThreads * GBandsPerThread));
   B.Bands := (Rows + B.BandRows - 1) div B.BandRows;
   B.NextBand := 0;
   {$IFDEF MSWINDOWS}
@@ -461,6 +484,7 @@ begin
   var SavedControl: Word;
   var SavedMXCSR := GetModes(SavedControl);
   SetModes(B.MXCSR, B.FPUControl);
+  var T := TStopwatch.GetTimeStamp;
   try
     for var I := 0 to B.Count - 1 do
     begin
@@ -469,6 +493,7 @@ begin
     end;
   finally
     SetModes(SavedMXCSR, SavedControl);
+    Inc(FSerialTicks, TStopwatch.GetTimeStamp - T);
   end;
 end;
 
@@ -599,7 +624,7 @@ begin
         DrawAlone(S, Kind, A, B, C, 4);
         Exit;
       end;
-      var Reach := Max(LevelReach(S.Tex, L^), UInt64(L.Size));
+      var Reach := Max(GELevelReach(S.Tex, L^), UInt64(L.Size));
       var P := NativeUInt(L.Ptr);
       if (P >= Base) and (P < Base + PSPVRAMSize) then
       begin
@@ -678,7 +703,9 @@ begin
   if Split and (Batch.Count > 0) then
   begin
     Inc(FSplits);
+    FWaitReason := 1;
     Kick;
+    FWaitReason := 4;
     Batch := FBatch;
   end;
 
@@ -808,6 +835,13 @@ begin
     Inc(Batch.Area, Int64(Y2 - Y1 + 1) * (X2 - X1 + 1))
   else
     Inc(Batch.Area, Int64(Y2 - Y1 + 1));
+  // A full batch starts drawing while the next one fills.
+  if (Batch.Area >= GKickArea) or (Batch.Count >= GKickCount) then
+  begin
+    FWaitReason := 1;
+    Kick;
+    FWaitReason := 4;
+  end;
 end;
 
 function TGEWorkers.Describe: string;
@@ -817,6 +851,17 @@ begin
   for var I := 0 to High(FAloneWhy) do
     if FAloneWhy[I] > 0 then
       Result := Result + Format(', %s %d', [AloneNames[I], FAloneWhy[I]]);
+  var F := TStopwatch.Frequency;
+  var Busy: Int64 := 0;
+  {$IFDEF MSWINDOWS}
+  for var W in FWorkers do Inc(Busy, W.FBusy);
+  {$ENDIF}
+  Result := Result + Format('; pool busy %.2fs', [Busy / F]);
+
+  Result := Result + Format('; waited %.2fs (GE stop %.2f, split %.2f, access %.2f, alone %.2f, other %.2f), ' +
+    'drawn on the emulator thread %.2fs', [(FWaitTicks[0] + FWaitTicks[1] + FWaitTicks[2] + FWaitTicks[3] +
+    FWaitTicks[4]) / F, FWaitTicks[0] / F, FWaitTicks[1] / F, FWaitTicks[2] / F, FWaitTicks[3] / F, FWaitTicks[4] / F,
+    FSerialTicks / F]);
 end;
 
 end.

@@ -78,6 +78,11 @@ type
     KeepMask: Cardinal;
   end;
 
+var
+  // Tests: every pixel through the generic pipeline, the reference for the
+  // specialised ones.
+  GEGenericPixels: Boolean;
+
 // Fills in the fields derived from the others.
 procedure GEPrepareRaster(var S: TGERaster);
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
