@@ -49,6 +49,8 @@ type
     FLastU, FLastV: Single;
     FLastN: TGEVec3;
     FAsm: array[0..2] of TGEAsmVertex;
+    FPatchCP: array of TGEInVertex;
+    FPatchGrid: array of TGEAsmVertex;
     FCullOn, FCullCW, FDepthClamp: Boolean;
     procedure SetupVertexFormat(VType: Cardinal);
     procedure DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
@@ -71,6 +73,7 @@ type
     procedure EmitSprite(const A, B: TGEAsmVertex);
     procedure AddVertex(const A: TGEAsmVertex);
     procedure DrawPrim(Op: Cardinal);
+    procedure DrawPatch(Op: Cardinal; Spline: Boolean);
     procedure ImmediateVertex(Op: Cardinal);
     procedure LoadClut(Op: Cardinal);
     procedure BlockTransfer(Op: Cardinal);
@@ -135,6 +138,13 @@ begin
         // Primitive setup, per vertex and per pixel.
         FPrimCost := 1000;
         DrawPrim(Op);
+        Exit(4 + Integer(Min(FPrimCost, 100000000)));
+      end;
+    GE_BEZIER, GE_SPLINE:
+      begin
+        Regs.Cmd[Cmd] := Op;
+        FPrimCost := 1000;
+        DrawPatch(Op, Cmd = GE_SPLINE);
         Exit(4 + Integer(Min(FPrimCost, 100000000)));
       end;
     GE_BBOX:
@@ -1416,6 +1426,201 @@ begin
   end;
   BoxVisible := OutMask = 0;
   AdvanceVertices(Count, VType);
+end;
+
+{ Patches }
+
+type
+  TGEPatchWeights = array[0..3] of Single;
+
+// The four weights of a Bezier segment's control points at T.
+procedure BezierWeights(T: Single; out W: TGEPatchWeights);
+begin
+  var S := 1 - T;
+  W[0] := S * S * S;
+  W[1] := 3 * T * S * S;
+  W[2] := 3 * T * T * S;
+  W[3] := T * T * T;
+end;
+
+// The weights of control points Seg..Seg+3 of a uniform cubic B-spline of N
+// points at Seg + T. An open end repeats its knot, so the curve starts (or
+// ends) at the end point.
+procedure SplineWeights(N, Seg: Integer; T: Single; StartOpen, EndOpen: Boolean; out W: TGEPatchWeights);
+var
+  K: array[0..7] of Single;
+  Left, Right: array[0..3] of Single;
+begin
+  // Knots Seg .. Seg+7 of the full vector (k[i] = i - 3, clamped at the ends).
+  for var I := 0 to 7 do
+  begin
+    var KI := Seg + I - 3;
+    if StartOpen and (KI < 0) then
+      KI := 0;
+    if EndOpen and (KI > N - 3) then
+      KI := N - 3;
+    K[I] := KI;
+  end;
+  var X := Seg + T;
+  W[0] := 1;
+  for var D := 1 to 3 do
+  begin
+    Left[D] := X - K[4 - D];
+    Right[D] := K[3 + D] - X;
+    var Saved: Single := 0;
+    for var R := 0 to D - 1 do
+    begin
+      var Den := Right[R + 1] + Left[D - R];
+      var Tmp: Single := 0;
+      if Den <> 0 then
+        Tmp := W[R] / Den;
+      W[R] := Saved + Right[R + 1] * Tmp;
+      Saved := Left[D - R] * Tmp;
+    end;
+    W[D] := Saved;
+  end;
+end;
+
+// BEZIER and SPLINE: a grid of UCount x VCount control points, as patches
+// (Bezier: 4x4 points sharing edges; spline: every 4x4 window) each cut into
+// PATCHDIVISION's U x V cells. Each row of cells goes out as a strip
+// (top-left, bottom-left, top-right, ...), drawn as triangles, a line strip
+// or points by PATCHPRIMITIVE.
+procedure TPSPGEEngine.DrawPatch(Op: Cardinal; Spline: Boolean);
+var
+  WU, WV: TGEPatchWeights;
+  Ev: TGEInVertex;
+begin
+  var C: PGECmds := @Regs.Cmd;
+  var UCount := Integer(Op and $FF);
+  var VCount := Integer((Op shr 8) and $FF);
+  var VType := C[GE_VTYPE];
+  SetupVertexFormat(VType);
+  var Total := UCount * VCount;
+  if (UCount < 4) or (VCount < 4) then
+  begin
+    AdvanceVertices(Total, VType);
+    Exit;
+  end;
+  if Length(FPatchCP) < Total then
+    SetLength(FPatchCP, Total);
+  for var I := 0 to Total - 1 do
+    ReadVertex(VertexIndex(I, VType), VType, FPatchCP[I]);
+  AdvanceVertices(Total, VType);
+
+  var UDiv := Max(Integer(C[GE_PATCHDIVISION] and $FF), 1);
+  var VDiv := Max(Integer((C[GE_PATCHDIVISION] shr 8) and $FF), 1);
+  var USegs, VSegs: Integer;
+  if Spline then
+  begin
+    USegs := UCount - 3;
+    VSegs := VCount - 3;
+  end
+  else
+  begin
+    USegs := (UCount - 1) div 3;
+    VSegs := (VCount - 1) div 3;
+  end;
+  var UStartOpen := ((Op shr 16) and 1) <> 0;
+  var UEndOpen := ((Op shr 17) and 1) <> 0;
+  var VStartOpen := ((Op shr 18) and 1) <> 0;
+  var VEndOpen := ((Op shr 19) and 1) <> 0;
+  var HasTC := (VType and 3) <> 0;
+  var HasNrm := ((VType shr 5) and 3) <> 0;
+  var HasPos := ((VType shr 7) and 3) <> 0;
+
+  BuildRaster;
+  FCullOn := ((C[GE_CULLENABLE] and 1) <> 0) and not FRaster.ClearMode;
+  FCullCW := ((C[GE_CULL] and 1) <> 0) <> ((C[GE_PATCHFACING] and 1) <> 0);
+  FDepthClamp := (C[GE_CLIPENABLE] and 1) <> 0;
+  if FRaster.Textured then
+    Inc(FPrimCost, GETexPrimCost);
+  var PrimType := 4;
+  case C[GE_PATCHPRIMITIVE] and 3 of
+    1: PrimType := 2;
+    2, 3: PrimType := 0;
+  end;
+  var Cols := UDiv + 1;
+  if Length(FPatchGrid) < Cols * (VDiv + 1) then
+    SetLength(FPatchGrid, Cols * (VDiv + 1));
+
+  for var PV := 0 to VSegs - 1 do
+    for var PU := 0 to USegs - 1 do
+    begin
+      var U0, V0: Integer;
+      if Spline then
+      begin
+        U0 := PU;
+        V0 := PV;
+      end
+      else
+      begin
+        U0 := PU * 3;
+        V0 := PV * 3;
+      end;
+      for var J := 0 to VDiv do
+      begin
+        var TV: Single := J / VDiv;
+        if Spline then
+          SplineWeights(VCount, PV, TV, VStartOpen, VEndOpen, WV)
+        else
+          BezierWeights(TV, WV);
+        for var I := 0 to UDiv do
+        begin
+          var TU: Single := I / UDiv;
+          if Spline then
+            SplineWeights(UCount, PU, TU, UStartOpen, UEndOpen, WU)
+          else
+            BezierWeights(TU, WU);
+          Ev := Default(TGEInVertex);
+          var CR, CG, CB, CA: Single;
+          CR := 0; CG := 0; CB := 0; CA := 0;
+          for var B := 0 to 3 do
+            for var A := 0 to 3 do
+            begin
+              var W := WU[A] * WV[B];
+              var P: ^TGEInVertex := @FPatchCP[(V0 + B) * UCount + U0 + A];
+              Ev.P.X := Ev.P.X + P.P.X * W;
+              Ev.P.Y := Ev.P.Y + P.P.Y * W;
+              Ev.P.Z := Ev.P.Z + P.P.Z * W;
+              Ev.N.X := Ev.N.X + P.N.X * W;
+              Ev.N.Y := Ev.N.Y + P.N.Y * W;
+              Ev.N.Z := Ev.N.Z + P.N.Z * W;
+              Ev.U := Ev.U + P.U * W;
+              Ev.V := Ev.V + P.V * W;
+              CR := CR + P.R * W; CG := CG + P.G * W; CB := CB + P.B * W; CA := CA + P.A * W;
+              for var K := 0 to 7 do
+                Ev.Weights[K] := Ev.Weights[K] + P.Weights[K] * W;
+            end;
+          Ev.HasColor := FPatchCP[0].HasColor;
+          Ev.R := EnsureRange(Ceil(CR - 0.001), 0, 255);
+          Ev.G := EnsureRange(Ceil(CG - 0.001), 0, 255);
+          Ev.B := EnsureRange(Ceil(CB - 0.001), 0, 255);
+          Ev.A := EnsureRange(Ceil(CA - 0.001), 0, 255);
+          if not HasTC then
+          begin
+            Ev.U := PU + TU;
+            Ev.V := PV + TV;
+          end;
+          if not HasNrm then
+            Ev.N := FPatchCP[0].N;
+          TransformVertex(Ev, VType, FPatchGrid[J * Cols + I]);
+          if not HasPos then
+            FPatchGrid[J * Cols + I].Code := GEOutNone;
+          Inc(FPrimCost, 40);
+        end;
+      end;
+      for var J := 0 to VDiv - 1 do
+      begin
+        FAsmType := PrimType;
+        FAsmCount := 0;
+        for var I := 0 to UDiv do
+        begin
+          AddVertex(FPatchGrid[J * Cols + I]);
+          AddVertex(FPatchGrid[(J + 1) * Cols + I]);
+        end;
+      end;
+    end;
 end;
 
 // A vertex given by registers $F0-$F9 (screen x, y in 1/16, z, s, t, q,
