@@ -27,7 +27,7 @@ begin
   var Z := F.Z;
   if Z < 0 then Z := 0;
   if Z > 65535 then Z := 65535;
-  var ZA := (S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
   var ZP := PWord(S.VRAM + ZA);
   if not TestFunc(S.DepthFunc, Z, ZP^) then Exit;
   if S.DepthWrite then ZP^ := Word(Z);

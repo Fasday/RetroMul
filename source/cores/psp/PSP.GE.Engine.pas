@@ -978,6 +978,7 @@ begin
   S.FBFormat := C[GE_FRAMEBUFPIXFORMAT] and 3;
   S.ZAddr := C[GE_ZBUFPTR] and $1FFFF0;
   S.ZStride := C[GE_ZBUFWIDTH] and $7FC;
+  S.ZPermutation := FMemory.VRAMShift;
   S.ScissorX1 := C[GE_SCISSOR1] and $3FF;
   S.ScissorY1 := (C[GE_SCISSOR1] shr 10) and $3FF;
   S.ScissorX2 := C[GE_SCISSOR2] and $3FF;

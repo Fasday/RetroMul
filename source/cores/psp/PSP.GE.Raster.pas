@@ -35,6 +35,7 @@ type
     VRAM: PByte;
     FBAddr, FBStride, FBFormat: Cardinal;
     ZAddr, ZStride: Cardinal;
+    ZPermutation: Integer;
     ScissorX1, ScissorY1, ScissorX2, ScissorY2: Integer;
     // Rows this pass may touch (a band for a render thread).
     BandY1, BandY2: Integer;
@@ -394,7 +395,7 @@ begin
   if S.FBFormat = 3 then
     Bpp := 4;
   var PAddr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * Bpp) and (PSPVRAMSize - 1);
-  var ZAddr := (S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var ZAddr := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
   var Old: Cardinal;
   if Bpp = 4 then
     Old := PCardinal(S.VRAM + PAddr)^
@@ -647,7 +648,7 @@ begin
       var A := S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X1)) * 2;
       for var X := X1 to X2 do
       begin
-        PWord(S.VRAM + (A and (PSPVRAMSize - 1)))^ := Word(Z);
+        PWord(S.VRAM + PSPDepthOffset(A, S.ZPermutation))^ := Word(Z);
         Inc(A, 2);
       end;
     end;

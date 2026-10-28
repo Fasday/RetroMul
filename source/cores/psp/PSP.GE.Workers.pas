@@ -138,7 +138,11 @@ begin
     if (S.ZStride <= Cardinal(S.ScissorX2)) or (S.ZStride = 0) then Exit(False);
     Z1 := Base + S.ZAddr + (NativeUInt(Y1) * S.ZStride + Cardinal(S.ScissorX1)) * 2;
     Z2 := Base + S.ZAddr + (NativeUInt(Y2) * S.ZStride + Cardinal(S.ScissorX2) + 1) * 2;
-    if (Z2 > Base + PSPVRAMSize) or Overlap(C1, C2, Z1, Z2) then Exit(False);
+    if Z2 > Base + PSPVRAMSize then Exit(False);
+    // Depth's bank permutation stays within a 64 KB block.
+    Z1 := Base + ((Z1 - Base) and not NativeUInt($FFFF));
+    Z2 := Base + (((Z2 - Base) + $FFFF) and not NativeUInt($FFFF));
+    if Overlap(C1, C2, Z1, Z2) then Exit(False);
   end;
   if S.Textured then
     for var I := 0 to S.Tex.LevelCount - 1 do
