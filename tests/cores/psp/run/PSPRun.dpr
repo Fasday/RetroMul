@@ -87,6 +87,32 @@ begin
   Result := H.HashAsString.Substring(0, 16);
 end;
 
+procedure SaveWav(Data: TMemoryStream; const Name: string);
+begin
+  // 44.1 kHz 16-bit stereo, as the console mixes it.
+  var S := TFileStream.Create(Name, fmCreate);
+  try
+    var Header: array[0..43] of Byte;
+    FillChar(Header, SizeOf(Header), 0);
+    Move(AnsiString('RIFF')[1], Header[0], 4);
+    PCardinal(@Header[4])^ := 36 + Data.Size;
+    Move(AnsiString('WAVEfmt ')[1], Header[8], 8);
+    PCardinal(@Header[16])^ := 16;
+    PWord(@Header[20])^ := 1;
+    PWord(@Header[22])^ := 2;
+    PCardinal(@Header[24])^ := 44100;
+    PCardinal(@Header[28])^ := 44100 * 4;
+    PWord(@Header[32])^ := 4;
+    PWord(@Header[34])^ := 16;
+    Move(AnsiString('data')[1], Header[36], 4);
+    PCardinal(@Header[40])^ := Data.Size;
+    S.WriteBuffer(Header, SizeOf(Header));
+    S.WriteBuffer(Data.Memory^, Data.Size);
+  finally
+    S.Free;
+  end;
+end;
+
 procedure SaveBMP(const F: TEmulatorFrame; const Name: string);
 begin
   var S := TFileStream.Create(Name, fmCreate);
@@ -129,7 +155,7 @@ begin
   try
     if ParamCount < 1 then
     begin
-      Writeln('PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]');
+      Writeln('PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict] [-wav file]');
       Halt(2);
     end;
     var FileName := ExpandFileName(ParamStr(1));
@@ -147,6 +173,7 @@ begin
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
+    var WavFile := '';
     var I := 2;
     while I <= ParamCount do
     begin
@@ -163,6 +190,7 @@ begin
       else if A = '-state' then ShowState := True
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
+      else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-press' then
       begin
         Inc(I);
@@ -248,6 +276,9 @@ begin
         Console.IO.HasDisplay := False;
       if not Quiet then
         Writeln(ErrOutput, Format('title=%s id=%s', [Prog.Title, Prog.DiscId]));
+      var Wav: TMemoryStream := nil;
+      if WavFile <> '' then
+        Wav := TMemoryStream.Create;
       var Watch := TStopwatch.StartNew;
       var Frame: TEmulatorFrame;
       var LastHash := '';
@@ -271,6 +302,8 @@ begin
         var Text := Console.TakeOutput;
         if Text <> '' then
           Write(Text);
+        if (Wav <> nil) and (Length(Console.AudioSamples) > 0) then
+          Wav.WriteBuffer(Console.AudioSamples[0], Length(Console.AudioSamples) * 2);
         if (Every > 0) and (F mod Every = 0) then
         begin
           var H := FrameHash(Frame);
@@ -279,15 +312,21 @@ begin
           if OutDir <> '' then
             SaveBMP(Frame, TPath.Combine(OutDir, Format('f%.5d.bmp', [F])));
         end;
-        LastHash := FrameHash(Frame);
         if Console.Kernel.Exited then
           Break;
       end;
+      // Hashing every frame would cost as much as emulating it.
+      LastHash := FrameHash(Frame);
       var Text := Console.TakeOutput;
       if Text <> '' then
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      if Wav <> nil then
+      begin
+        SaveWav(Wav, WavFile);
+        Wav.Free;
+      end;
       if ShowState then
       begin
         Writeln(ErrOutput, Console.Kernel.DescribeThreads);
