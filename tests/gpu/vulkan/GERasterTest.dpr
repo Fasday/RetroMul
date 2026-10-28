@@ -5,7 +5,7 @@ program GERasterTest;
 
 uses
   System.SysUtils, System.Math, System.Diagnostics, PSP.Types, PSP.Memory,
-  PSP.GE.Raster, PSP.GE.GPU;
+  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.GPU;
 
 const
   Permutations: array[0..4] of Integer = (0, 9, 10, 11, 12);
@@ -119,11 +119,37 @@ begin
   GEPrepareRaster(Result);
 end;
 
-procedure Draw(Kind: Integer; const S: TGERaster; const A, B, C: TGEVertex);
+var
+  // Level pointers into each memory, as the engine sets them (the CPU
+  // renderer's queue only queues textured primitives with them).
+  HostLevels: Boolean;
+
+procedure SetLevels(var T: TGERaster; M: TPSPMemory);
+const
+  Bits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
 begin
+  T.Tex.Memory := M;
+  for var L := 0 to 7 do
+  begin
+    var V: PGETexLevel := @T.Tex.Levels[L];
+    V.Size := Cardinal(V.BufWidth * V.Height * Bits[T.Tex.Format and 15]) div 8;
+    V.Ptr := nil;
+    if (L < T.Tex.LevelCount) and (V.Size > 0) then
+      V.Ptr := M.HostPtr(V.Addr, V.Size);
+    GEFitLevel(T.Tex, V^);
+  end;
+end;
+
+procedure Draw(Kind: Integer; const Source: TGERaster; const A, B, C: TGEVertex);
+begin
+  var S := Source;
+  if HostLevels then
+    SetLevels(S, CPU);
   var D := S;
   D.VRAM := @DeviceMemory.VRAM[0];
   D.Tex.Memory := DeviceMemory;
+  if HostLevels then
+    SetLevels(D, DeviceMemory);
   case Kind of
     0: begin GEDrawTriangle(S, A, B, C); GPU.DrawTriangle(D, A, B, C); end;
     1: begin GEDrawSprite(S, A, B); GPU.DrawSprite(D, A, B); end;
@@ -143,6 +169,8 @@ begin
       var Error: string;
       if not CreateGEGPUBackend(DeviceMemory, False, GPU, Error) then
         raise Exception.Create(Error);
+      // The GPU draws all it can; runs on the CPU are tested at the end.
+      GPU.CPURunPixels := 0;
       var Watch := TStopwatch.StartNew;
       for var I := 0 to PSPVRAMSize - 1 do CPU.VRAM[I] := Byte(Rand);
       Move(CPU.VRAM[0], DeviceMemory.VRAM[0], PSPVRAMSize);
@@ -380,8 +408,47 @@ begin
         GPU.Release;
       end;
       Compare;
+      // CPU-drawn primitives start runs on the CPU renderer's queue, which
+      // end in GPU batches again: interleaved with CPU writes to held pages,
+      // GE stops and other budgets.
+      HostLevels := True;
+      var Queued := GPU.Stats.CPURunPrims;
+      for var I := 1 to 8000 do
+      begin
+        var T := State;
+        if Rand mod 4 = 0 then
+        begin
+          // It textures from the pixels it draws: drawn on the CPU.
+          T.ClearMode := False;
+          T.Textured := True;
+          T.Tex.Swizzle := False;
+          T.Tex.Format := 3;
+          T.Tex.LevelCount := 1;
+          T.Tex.NeedLod := False;
+          T.Tex.Levels[0].Addr := PSPVRAMBase + $20000;
+          T.Tex.Levels[0].Width := 64; T.Tex.Levels[0].Height := 64; T.Tex.Levels[0].BufWidth := 512;
+        end;
+        GEPrepareRaster(T);
+        if Rand mod 50 = 0 then
+          GPU.CPURunPixels := Between(0, 300000);
+        Draw(Rand mod 4, T, Vertex, Vertex, Vertex);
+        if I mod 23 = 0 then GPU.Release;
+        if I mod 31 = 0 then
+        begin
+          var WA := PSPVRAMBase + $20000 + Cardinal(Between(0, 4095) * 4);
+          var WV := Rand;
+          CPU.Write32(WA, WV); DeviceMemory.Write32(WA, WV);
+        end;
+        if I mod 41 = 0 then Compare;
+      end;
+      Compare;
+      HostLevels := False;
+      Queued := GPU.Stats.CPURunPrims - Queued;
+      if Queued < 1000 then
+        raise Exception.CreateFmt('only %d primitives drawn in runs on the CPU', [Queued]);
       Writeln(Format('PASS: %d primitives, %d whole-VRAM compares, %.2f seconds', [Draws, Checks, Watch.Elapsed.TotalSeconds]));
-      Writeln(Format('GPU %d primitives, CPU fallback %d, %d submissions', [GPU.Stats.Prims, GPU.Stats.Fallbacks, GPU.Stats.Batches]));
+      Writeln(Format('GPU %d primitives, CPU fallback %d, %d submissions, %d in runs on the CPU queue',
+        [GPU.Stats.Prims, GPU.Stats.Fallbacks, GPU.Stats.Batches, GPU.Stats.CPURunPrims]));
     except
       on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;
     end;

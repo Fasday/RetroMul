@@ -29,7 +29,8 @@ interface
 
 uses
   System.SysUtils, System.Types, System.Math, System.Diagnostics, System.Generics.Collections, PSP.Types, PSP.Memory,
-  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
+  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend, PSP.GE.Workers, RM.Vulkan.Bindings, RM.Vulkan.Loader,
+  RM.Vulkan.Compute;
 
 const
   VRAMPageCount = PSPVRAMSize div PSPPageSize;
@@ -40,6 +41,8 @@ type
     // Waits for everything drawn: in all, for an access to held or watched
     // memory, before a primitive drawn on the CPU. Pages compared and read back.
     Syncs, AccessSyncs, FallbackSyncs, ComparedPages, ReadbackPages: Int64;
+    // Primitives the GPU could draw, drawn on the CPU after a CPU-drawn one.
+    CPURunPrims: Int64;
     Tiles, Binned: Int64;
     CheckedBatches, BadBatches, BadBytes: Int64;
     // Host seconds waiting for the GPU; GPU seconds uploading, drawing, copying back.
@@ -117,6 +120,7 @@ type
     FUploadCount: Integer;
     FWatched: array[0..VRAMPageCount - 1] of Boolean;
     FWatchedBanks: array[0..VRAMPageCount div 16 - 1] of Boolean;
+    FWatchedRAM: Boolean;
     FBins: TArray<Cardinal>;
     FBinCount: Integer;
     FShadow: TBytes;
@@ -143,6 +147,20 @@ type
     FLastClutData: Integer;
     FSyncing: Boolean;
     FReleasePrims: Integer;
+    // After a CPU-drawn primitive (the GPU synchronized and idle), the next
+    // ones go to the CPU renderer's queue too while they cover fewer than
+    // FCPUBudget pixels in all: a GPU primitive between two CPU ones would
+    // cost a sync. The queue holds and watches pages as the GPU does, so it
+    // is drained before the GPU uses memory again.
+    FCPURun: Boolean;
+    FCPUBudget, FCPURunPixels: Int64;
+    FQueue: TGEWorkers;
+    FQueued: Boolean;
+    FQueueClut: array[0..1023] of Byte;
+    FQueueClutValid: Boolean;
+    function OnCPU(Pixels: Int64): Boolean;
+    procedure Enqueue(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
+    procedure DrainQueue;
     procedure Bind(Slot: Integer);
     // Sends the batch to the GPU; with ReadBack, also every page drawn since
     // the last read back, to be put into guest memory when it completes.
@@ -183,6 +201,8 @@ type
     // Where the batch buffers are.
     function Describe: string;
     property Compute: TVulkanCompute read FCompute;
+    // Pixels a run of primitives after a CPU-drawn one may cover (0: none).
+    property CPURunPixels: Int64 read FCPURunPixels write FCPURunPixels;
     property Stats: TGEGPUStats read FStats;
     property OnMessage: TGEGPUMessage read FOnMessage write FOnMessage;
   end;
@@ -225,6 +245,10 @@ const
   // A batch this large starts drawing when the GE stops (PSP_GPU_RELEASE
   // for measurements).
   ReleasePrims = 256;
+  // Pixels drawn on the CPU after a CPU-drawn primitive, about two screens:
+  // runs of interleaved CPU-drawn primitives stay on the CPU, at its speed
+  // (PSP_GPU_CPURUN for measurements, 0 for none).
+  CPURunPixels = 262144;
 
 type
   TGEGPUPush = record
@@ -816,15 +840,18 @@ begin
   FLastState := -1;
   FLastClutData := -1;
   FReleasePrims := StrToIntDef(GetEnvironmentVariable('PSP_GPU_RELEASE'), ReleasePrims);
+  FCPURunPixels := StrToInt64Def(GetEnvironmentVariable('PSP_GPU_CPURUN'), CPURunPixels);
+  FQueue := TGEWorkers.Create(FMemory);
   FMemory.OnVRAMFault := VRAMFault;
 end;
 
 destructor TGEGPUBackend.Destroy;
 begin
   try
-    if (FMemory.HeldVRAMPages > 0) or (FMemory.WatchedPages > 0) or (FPrimCount > 0) or (FDrawnCount > 0) then
+    if Pending or FQueued then
       Sync;
   finally
+    FQueue.Free;
     FMemory.ReleaseVRAM;
     FMemory.ReleaseWatches;
     FMemory.OnVRAMFault := nil;
@@ -949,6 +976,7 @@ begin
     Hi := $1FFFFFFF;
   for var Page := Integer(Lo shr PSPPageShift) to Integer(Hi shr PSPPageShift) do
     FMemory.WatchPage(Page);
+  FWatchedRAM := True;
 end;
 
 // Everything has been drawn and given back: guest memory is free again.
@@ -959,6 +987,7 @@ begin
   for var I := 0 to FVerifiedCount - 1 do
     FVerified[FVerifiedList[I]] := False;
   FVerifiedCount := 0;
+  FWatchedRAM := False;
   FillChar(FHeld, SizeOf(FHeld), 0);
   FillChar(FWatched, SizeOf(FWatched), 0);
   FillChar(FWatchedBanks, SizeOf(FWatchedBanks), 0);
@@ -1010,6 +1039,10 @@ end;
 // (Sync).
 procedure TGEGPUBackend.Release;
 begin
+  // The queue, too, keeps its primitives across GE runs (a large batch
+  // starts drawing in the background).
+  if FQueued then
+    FQueue.Release;
   if FCheck then
     Sync
   else if FPrimCount >= FReleasePrims then
@@ -1555,11 +1588,78 @@ begin
   FCheckPrims.Add(C);
 end;
 
+// A primitive the GPU can draw (Pixels in its box) is drawn on the CPU when
+// it follows a CPU-drawn one closely enough. Guest memory has everything:
+// nothing is pending on the GPU during the run, whose pages the next GPU
+// batch compares and uploads as usual.
+function TGEGPUBackend.OnCPU(Pixels: Int64): Boolean;
+begin
+  if FCPURun and (Pixels <= FCPUBudget) then
+  begin
+    Dec(FCPUBudget, Pixels);
+    Inc(FStats.CPURunPrims);
+    Exit(True);
+  end;
+  // The GPU draws next: the queue's primitives come first.
+  FCPURun := False;
+  DrainQueue;
+  Result := False;
+end;
+
+// The CPU renderer's queue draws exactly as PSP.GE.Raster in order (in row
+// bands, in the background), holding and watching what it uses meanwhile.
+procedure TGEGPUBackend.Enqueue(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
+begin
+  if FCheck or (FQueue = nil) then
+  begin
+    case Kind of
+      KindTriangle: GEDrawTriangle(S, V0, V1, V2);
+      KindSprite: GEDrawSprite(S, V0, V1);
+      KindLine: GEDrawLine(S, V0, V1);
+    else
+      GEDrawPoint(S, V0);
+    end;
+    Exit;
+  end;
+  FQueued := True;
+  if S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7) and
+    (not FQueueClutValid or not SameBytes(S.Tex.Clut, @FQueueClut[0], SizeOf(FQueueClut))) then
+  begin
+    Move(S.Tex.Clut^, FQueueClut[0], SizeOf(FQueueClut));
+    FQueueClutValid := True;
+    FQueue.ClutChanged;
+  end;
+  FQueue.StateChanged;
+  case Kind of
+    KindTriangle: FQueue.Triangle(S, V0, V1, V2);
+    KindSprite: FQueue.Sprite(S, V0, V1);
+    KindLine: FQueue.Line(S, V0, V1);
+  else
+    FQueue.Point(S, V0);
+  end;
+end;
+
+procedure TGEGPUBackend.DrainQueue;
+begin
+  if FQueued then
+  begin
+    FQueued := False;
+    FQueue.Sync;
+  end;
+end;
+
+// Draws everything on the GPU and starts a run on the CPU, whose queue the
+// primitive goes to.
 procedure TGEGPUBackend.Fallback;
 begin
   if Pending then
+  begin
     Inc(FStats.FallbackSyncs);
-  Sync;
+    Sync;
+  end;
+  // Check mode compares every batch with the CPU: no runs there.
+  FCPURun := not FCheck and (FCPURunPixels > 0);
+  FCPUBudget := FCPURunPixels;
   Inc(FStats.Fallbacks);
   var N := 0;
   FReasons.TryGetValue(FWhy, N);
@@ -1633,6 +1733,11 @@ begin
   PY2 := Min(PY2, Min(S.ScissorY2, S.BandY2));
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
+  if OnCPU(Int64(PX2 - PX1 + 1) * (PY2 - PY1 + 1)) then
+  begin
+    Enqueue(KindTriangle, S, V0, V1, V2);
+    Exit;
+  end;
   var DX0 := X2 - X1; var DY0 := Y2 - Y1;
   var DX1 := X0 - X2; var DY1 := Y0 - Y2;
   var DX2 := X1 - X0; var DY2 := Y1 - Y0;
@@ -1666,7 +1771,7 @@ begin
   if not Ok or not Place(S, State, Tex, PX1, PY1, PX2, PY2) then
   begin
     Fallback;
-    GEDrawTriangle(S, V0, V1, V2);
+    Enqueue(KindTriangle, S, V0, V1, V2);
     Exit;
   end;
   var P := NewPrim;
@@ -1757,6 +1862,11 @@ begin
   PY2 := Min(PY2, Min(S.ScissorY2, S.BandY2));
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
+  if OnCPU(Int64(PX2 - PX1 + 1) * (PY2 - PY1 + 1)) then
+  begin
+    Enqueue(KindSprite, S, V0, V1, V1);
+    Exit;
+  end;
   var Turned := (V0.X > V1.X) <> (V0.Y > V1.Y);
   var SX: Single := 0; var SY: Single := 0; var TX: Single := 0; var TY: Single := 0;
   var QX: Single := 0; var QY: Single := 0;
@@ -1788,7 +1898,7 @@ begin
   if not Ok or not Place(S, State, Tex, PX1, PY1, PX2, PY2) then
   begin
     Fallback;
-    GEDrawSprite(S, V0, V1);
+    Enqueue(KindSprite, S, V0, V1, V1);
     Exit;
   end;
   var P := NewPrim;
@@ -1914,11 +2024,16 @@ begin
   BY2 := Min(BY2, Min(S.ScissorY2, S.BandY2));
   if (BX1 > BX2) or (BY1 > BY2) then
     Exit;
+  if OnCPU(Length(Frags)) then
+  begin
+    Enqueue(KindLine, S, V0, V1, V1);
+    Exit;
+  end;
   var State := PackState(S, Tex, Ok);
   if not Ok or not Place(S, State, Tex, BX1, BY1, BX2, BY2) then
   begin
     Fallback;
-    GEDrawLine(S, V0, V1);
+    Enqueue(KindLine, S, V0, V1, V1);
     Exit;
   end;
   var Ofs := AddData(Length(Frags) * FragWords * 4);
@@ -1966,11 +2081,16 @@ begin
   if (PX < S.ScissorX1) or (PX > S.ScissorX2) or (PY < S.ScissorY1) or (PY > S.ScissorY2) or (PY < S.BandY1) or
     (PY > S.BandY2) then
     Exit;
+  if OnCPU(1) then
+  begin
+    Enqueue(KindPoint, S, V, V, V);
+    Exit;
+  end;
   var State := PackState(S, Tex, Ok);
   if not Ok or not Place(S, State, Tex, PX, PY, PX, PY) then
   begin
     Fallback;
-    GEDrawPoint(S, V);
+    Enqueue(KindPoint, S, V, V, V);
     Exit;
   end;
   var Ofs := AddData(FragWords * 4);
@@ -2183,10 +2303,10 @@ begin
   S.PageCount := 0;
 end;
 
+// Work or held and watched pages of the GPU's own (not of the queue's).
 function TGEGPUBackend.Pending: Boolean;
 begin
-  Result := (FPrimCount > 0) or (FDrawnCount > 0) or (FUploadCount > 0) or (FMemory.HeldVRAMPages > 0) or
-    (FMemory.WatchedPages > 0);
+  Result := (FPrimCount > 0) or (FDrawnCount > 0) or (FUploadCount > 0) or (FVerifiedCount > 0) or FWatchedRAM;
   for var I := 0 to High(FSlots) do
     Result := Result or FSlots[I].Busy;
 end;
@@ -2197,6 +2317,8 @@ begin
     Exit;
   FSyncing := True;
   try
+    // The CPU queue's primitives come before anything the GPU draws next.
+    DrainQueue;
     if Pending then
       Inc(FStats.Syncs);
     Submit(True);

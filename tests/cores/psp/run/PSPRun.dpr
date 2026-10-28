@@ -564,8 +564,8 @@ begin
         begin
           Writeln(ErrOutput, Format('gpu: %d tiles, %d tile primitives', [St.Tiles, St.Binned]));
           Writeln(ErrOutput, Format('gpu: %d syncs (%d by access, %d before CPU-drawn primitives), ' +
-            '%d pages compared, %d read back', [St.Syncs, St.AccessSyncs, St.FallbackSyncs, St.ComparedPages,
-            St.ReadbackPages]));
+            '%d pages compared, %d read back, %d primitives drawn on the CPU after CPU-drawn ones', [St.Syncs,
+            St.AccessSyncs, St.FallbackSyncs, St.ComparedPages, St.ReadbackPages, St.CPURunPrims]));
           Write(ErrOutput, GPU.Report);
         end;
         if GPUMode = 2 then
