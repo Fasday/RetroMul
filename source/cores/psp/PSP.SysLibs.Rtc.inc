@@ -202,11 +202,14 @@ begin
   FHLE.Result(0);
 end;
 
+// Tick arithmetic is modulo 2^64, including negative counts.
+{$Q-}
 procedure TPSPSysLibs.TickAdd(Units: UInt64; Count: UInt64);
 begin
   WriteTick(FHLE.Arg(0), ReadTick(FHLE.Arg(1)) + Count * Units);
   FHLE.Result(0);
 end;
+{$IFDEF PSP_CHECKED}{$Q+}{$ENDIF}
 
 procedure TPSPSysLibs.hRtcTickAddTicks;
 begin
