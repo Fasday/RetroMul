@@ -584,6 +584,137 @@ begin
   Result := True;
 end;
 
+// Texel coordinates Lo..Hi as the sampler wraps or clamps them into a level
+// Size (a power of two) wide: the range they all fall into.
+procedure TexelRange(var Lo, Hi: Int64; Size: Integer; Clamp: Boolean);
+begin
+  if Clamp then
+  begin
+    Lo := EnsureRange(Lo, 0, Size - 1);
+    Hi := EnsureRange(Hi, 0, Size - 1);
+  end
+  else if Hi - Lo + 1 >= Size then
+  begin
+    Lo := 0;
+    Hi := Size - 1;
+  end
+  else
+  begin
+    Lo := Lo and (Size - 1);
+    Hi := Hi and (Size - 1);
+    if Lo > Hi then
+    begin
+      Lo := 0;
+      Hi := Size - 1;
+    end;
+  end;
+end;
+
+const
+  TexelLimit = 1048576.0;
+
+// The bytes of an unswizzled level (whose rows are Full) holding the texels
+// that coordinates within MinS..MaxS, MinT..MaxT computed with rounding errors
+// can sample: two texels more either way for those and the bilinear
+// neighbours, and more for large coordinates.
+function TexelWindow(const S: TGERaster; MinS, MaxS, MinT, MaxT: Double; const Full: TGEGPUSpan): TGEGPUSpan;
+begin
+  Result := Full;
+  var L: PGETexLevel := @S.Tex.Levels[S.Tex.Level];
+  var Bits := 0;
+  case S.Tex.Format of
+    0, 1, 2, 6: Bits := 16;
+    3, 7: Bits := 32;
+    4: Bits := 4;
+    5: Bits := 8;
+  else
+    Exit;
+  end;
+  if (L.Width <= 0) or (L.Height <= 0) or (L.BufWidth <= 0) then
+    Exit;
+  // Also not NaNs.
+  if not ((Abs(MinS) < TexelLimit) and (Abs(MaxS) < TexelLimit) and (Abs(MinT) < TexelLimit) and
+    (Abs(MaxT) < TexelLimit)) then
+    Exit;
+  var Margin := 2 + Ceil(Max(Max(Abs(MinS), Abs(MaxS)), Max(Abs(MinT), Abs(MaxT))) / 65536);
+  var X1 := Int64(Floor(MinS)) - Margin;
+  var X2 := Int64(Floor(MaxS)) + Margin;
+  var Y1 := Int64(Floor(MinT)) - Margin;
+  var Y2 := Int64(Floor(MaxT)) + Margin;
+  TexelRange(X1, X2, L.Width, S.Tex.ClampU);
+  TexelRange(Y1, Y2, L.Height, S.Tex.ClampV);
+  var RowBytes := Int64(L.BufWidth) * Bits div 8;
+  var First := X1 * Bits div 8;
+  var Last := X2 * Bits div 8 + Max(1, Bits div 8) - 1;
+  Result := RowSpan(Int64(L.Addr) + Y1 * RowBytes + First, RowBytes, Last - First + 1, Y2 - Y1 + 1);
+end;
+
+// The texels a triangle can sample. Its pixels' S and T (GEDrawTriangle) are
+// combinations of the vertices' S/Q and T/Q with non-negative weights when
+// every vertex has positive Q and W.
+function TriangleTexels(const S: TGERaster; const V0, V1, V2: TGEVertex; const Full: TGEGPUSpan): TGEGPUSpan;
+begin
+  Result := Full;
+  var MinS, MaxS, MinT, MaxT: Double;
+  for var I := 0 to 2 do
+  begin
+    var V: PGEVertex := @V0;
+    if I = 1 then V := @V1;
+    if I = 2 then V := @V2;
+    if not ((V.Q >= 1E-15) and (V.W >= 1E-15)) then
+      Exit;
+    var CS: Double := V.S / V.Q;
+    var CT: Double := V.T / V.Q;
+    if not ((Abs(CS) < TexelLimit) and (Abs(CT) < TexelLimit)) then
+      Exit;
+    if I = 0 then
+    begin
+      MinS := CS; MaxS := CS; MinT := CT; MaxT := CT;
+    end
+    else
+    begin
+      MinS := Min(MinS, CS); MaxS := Max(MaxS, CS);
+      MinT := Min(MinT, CT); MaxT := Max(MaxT, CT);
+    end;
+  end;
+  Result := TexelWindow(S, MinS, MaxS, MinT, MaxT, Full);
+end;
+
+// The texels an unprojected sprite (box PX1..PX2, PY1..PY2) can sample. S
+// and T are linear across the box, so every pixel's lie between their values
+// at the corner pixels (GEDrawSprite).
+function SpriteTexels(const S: TGERaster; const V0: TGEVertex; SX, SY, TX, TY: Single;
+  PX1, PY1, PX2, PY2: Integer; const Full: TGEGPUSpan): TGEGPUSpan;
+begin
+  var MinS, MaxS, MinT, MaxT: Double;
+  for var Corner := 0 to 3 do
+  begin
+    var PX := PX1;
+    if Corner and 1 <> 0 then
+      PX := PX2;
+    var PY := PY1;
+    if Corner and 2 <> 0 then
+      PY := PY2;
+    var FX: Double := (PX * 16 + 8 - V0.X) / 16;
+    var FY: Double := (PY * 16 + 8 - V0.Y) / 16;
+    var CS: Double := V0.S + SX * FX + SY * FY;
+    var CT: Double := V0.T + TX * FX + TY * FY;
+    // Also not NaNs (which Min and Max would drop).
+    if not ((Abs(CS) < TexelLimit) and (Abs(CT) < TexelLimit)) then
+      Exit(Full);
+    if Corner = 0 then
+    begin
+      MinS := CS; MaxS := CS; MinT := CT; MaxT := CT;
+    end
+    else
+    begin
+      MinS := Min(MinS, CS); MaxS := Max(MaxS, CS);
+      MinT := Min(MinT, CT); MaxT := Max(MaxT, CT);
+    end;
+  end;
+  Result := TexelWindow(S, MinS, MaxS, MinT, MaxT, Full);
+end;
+
 function TouchesVRAM(Address, Size: Cardinal): Boolean;
 begin
   var Lo := Int64(Address and $1FFFFFFF);
@@ -1404,6 +1535,9 @@ begin
   var FArea := 1.0 / Area;
 
   var State := PackState(S, Tex, InVRAM, Ok);
+  // Only the texels it samples: it may draw beside them in the same buffer.
+  if Ok and InVRAM and (Tex.Stride > 0) then
+    Tex := TriangleTexels(S, V0, V1, V2, Tex);
   if not Ok or not Place(S, State, Tex, InVRAM, PX1, PY1, PX2, PY2) then
   begin
     Fallback;
@@ -1503,6 +1637,9 @@ begin
   end;
 
   var State := PackState(S, Tex, InVRAM, Ok);
+  // Only the texels it samples: it may draw beside them in the same buffer.
+  if Ok and InVRAM and (Tex.Stride > 0) and (V0.Q = 1) and (V1.Q = 1) then
+    Tex := SpriteTexels(S, V0, SX, SY, TX, TY, PX1, PY1, PX2, PY2, Tex);
   if not Ok or not Place(S, State, Tex, InVRAM, PX1, PY1, PX2, PY2) then
   begin
     Fallback;

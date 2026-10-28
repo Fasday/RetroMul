@@ -224,6 +224,84 @@ begin
         if I mod 53 = 0 then Compare;
       end;
       Compare;
+      // Sprites sampling a window of the buffer they draw into: only the
+      // texels they reach decide whether they read their own pixels.
+      for var I := 1 to 4000 do
+      begin
+        var T := State;
+        T.ClearMode := False;
+        T.Textured := True;
+        T.Tex.Swizzle := False;
+        T.Tex.Format := Rand mod 8;
+        T.Tex.Levels[0].Width := 64;
+        T.Tex.Levels[0].Height := 64;
+        T.Tex.Levels[0].BufWidth := 256 shl (Rand mod 2);
+        T.Tex.Levels[0].Addr := PSPVRAMBase + Cardinal($20000 + Between(0, 2) * 2048 + Between(0, 8) * 16);
+        GEPrepareRaster(T);
+        var P := Vertex; var Q := Vertex;
+        P.X := Between(0, 60 * 16); P.Y := Between(0, 44 * 16);
+        Q.X := P.X + Between(-24, 24) * 16 + Between(-8, 8); Q.Y := P.Y + Between(-12, 12) * 16 + Between(-8, 8);
+        P.Q := 1; Q.Q := 1;
+        P.S := Between(-4 * 16, 70 * 16) / 16; Q.S := P.S + Between(-40 * 16, 40 * 16) / 16;
+        P.T := Between(-4 * 16, 70 * 16) / 16; Q.T := P.T + Between(-40 * 16, 40 * 16) / 16;
+        if Rand mod 8 = 0 then Q.S := P.S;
+        Draw(1, T, P, Q, Q);
+        if I mod 29 = 0 then GPU.Release;
+        if I mod 41 = 0 then Compare;
+      end;
+      Compare;
+      // The same layout for texels and pixels, one texel a pixel, the window
+      // shifted by about the box's size: whether a sprite reads what it has
+      // drawn depends on its last texels, and the filter's neighbours.
+      for var I := 1 to 16000 do
+      begin
+        var T := State;
+        T.ClearMode := False;
+        T.Textured := True;
+        T.FBFormat := 3;
+        T.Tex.Swizzle := False;
+        T.Tex.Format := 3;
+        T.Tex.Levels[0].Width := 64;
+        T.Tex.Levels[0].Height := 64;
+        T.Tex.Levels[0].BufWidth := 512;
+        var C := Between(0, 2) * 4;
+        var R := Between(0, 2);
+        T.Tex.Levels[0].Addr := PSPVRAMBase + Cardinal($20000 + R * 2048 + C * 4);
+        T.AlphaTest := False; T.StencilTest := False; T.DepthTest := False; T.ColorTest := False;
+        T.MaskRGB := 0; T.MaskA := 0;
+        GEPrepareRaster(T);
+        var BX := Between(8, 48); var BY := Between(6, 36);
+        var W := Between(1, 10); var H := Between(1, 8);
+        var P := Vertex; var Q := Vertex;
+        P.X := BX * 16; P.Y := BY * 16; Q.X := (BX + W) * 16; Q.Y := (BY + H) * 16;
+        P.Q := 1; Q.Q := 1;
+        var DX := Between(-W - 3, W + 3) + Between(-15, 15) / 16;
+        var DY := Between(-H - 3, H + 3) + Between(-15, 15) / 16;
+        if Rand mod 2 = 0 then DY := Between(-1, 1) * Between(-15, 15) / 16;
+        P.S := BX - C + DX; Q.S := P.S + W;
+        P.T := BY - R + DY; Q.T := P.T + H;
+        if Flag then
+          Draw(1, T, P, Q, Q)
+        else
+        begin
+          // Two corners and a third, with S/Q and T/Q (what is sampled) as
+          // on the sprite, through any positive Q and W.
+          var V: array[0..2] of TGEVertex;
+          V[0] := P; V[1] := Q; V[2] := P;
+          if Flag then begin V[2].X := Q.X; V[2].S := Q.S; end else begin V[2].Y := Q.Y; V[2].T := Q.T; end;
+          for var K := 0 to 2 do
+          begin
+            V[K].W := Between(4, 32) / 16;
+            V[K].Q := Between(8, 24) / 16;
+            V[K].S := V[K].S * V[K].Q;
+            V[K].T := V[K].T * V[K].Q;
+          end;
+          Draw(0, T, V[0], V[1], V[2]);
+        end;
+        if I mod 13 = 0 then GPU.Release;
+        if I mod 31 = 0 then Compare;
+      end;
+      Compare;
       // Bilinear floor narrows its argument to Single in the current reference.
       S.Tex.Format := 3;
       S.Tex.Linear := True;
