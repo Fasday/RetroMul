@@ -1,6 +1,6 @@
 # Compiles the PSP core for the other targets the application ships on:
-# Win32, Linux64 (with a Linux SDK made from WSL: -Sdk), Android32/64 (dccaarm,
-# dccaarm64: compile only, no link). build_targets.ps1 [-Targets win32,linux64,android64]
+# Win32, Linux64, Android32/64. Compile a unit, without linking an executable.
+# build_targets.ps1 [-Targets win32,linux64,android64]
 param([string[]]$Targets = @('win32', 'linux64', 'android32', 'android64'), [string]$Sdk = 'D:\LinuxSDK\ubuntu-22.04')
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\..\..\.."
@@ -21,11 +21,10 @@ foreach ($t in $Targets) {
   $libdir = switch ($t) { 'win32' { 'win32' } 'linux64' { 'linux64' } 'android32' { 'android' } 'android64' { 'android64' } }
   $u = "$paths;$studio\lib\$libdir\release"
   Write-Output "== $t"
-  # Units compiling is what counts here; linking needs each platform's SDK set up.
-  $msgs = & "$studio\bin\$compiler.exe" -B -Q '-$O+' "-NS$ns" "-E$out" "-NU$out\dcu" "-NO$out\dcu" "-U$u" "-I$u" @extra "$PSScriptRoot\PSPCompile.dpr" 2>&1 |
-    Where-Object { $_ -match 'Error|Fatal' }
-  $compileErrors = @($msgs | Where-Object { $_ -notmatch 'E2597|F2588|F1026' })
-  $msgs
-  if ($compileErrors.Count -gt 0) { $failed += $t }
+  $msgs = & "$studio\bin\$compiler.exe" -B -Q '-$O+' "-NS$ns" "-E$out" "-NU$out\dcu" "-NO$out\dcu" "-U$u" "-I$u" @extra "$PSScriptRoot\PSPCompileUnit.pas" 2>&1
+  $exitCode = $LASTEXITCODE
+  $msgs | Where-Object { $_ -match 'Error|Fatal' }
+  if ($exitCode -ne 0) { $failed += $t }
+  else { Write-Output "$t core units compiled" }
 }
 if ($failed.Count -gt 0) { throw "failed: $($failed -join ', ')" }
