@@ -691,17 +691,34 @@ begin
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
   SetupFragment(F, V1);
-  var DS: Single := 0; var DT: Single := 0;
-  if V1.X <> V0.X then DS := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
-  if V1.Y <> V0.Y then DT := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+  // S runs along x and T along y, except when the corners are flipped in
+  // one axis only: then the texture is turned, S along y and T along x.
+  var Turned := (V0.X > V1.X) <> (V0.Y > V1.Y);
+  var SX: Single := 0; var SY: Single := 0; var TX: Single := 0; var TY: Single := 0;
+  if V1.X <> V0.X then
+  begin
+    if Turned then
+      TX := (V1.T - V0.T) / ((V1.X - V0.X) / 16)
+    else
+      SX := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
+  end;
+  if V1.Y <> V0.Y then
+  begin
+    if Turned then
+      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16)
+    else
+      TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+  end;
   for var PY := PY1 to PY2 do
     for var PX := PX1 to PX2 do
     begin
       SetupFragment(F, V1);
       if S.Textured then
       begin
-        F.S := V0.S + DS * ((PX * 16 + 8 - V0.X) / 16);
-        F.T := V0.T + DT * ((PY * 16 + 8 - V0.Y) / 16);
+        var FX := (PX * 16 + 8 - V0.X) / 16;
+        var FY := (PY * 16 + 8 - V0.Y) / 16;
+        F.S := V0.S + SX * FX + SY * FY;
+        F.T := V0.T + TX * FX + TY * FY;
       end;
       PlotPixel(S, PX, PY, F);
     end;
