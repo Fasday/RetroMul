@@ -1,7 +1,8 @@
 unit PSP.SysLibs;
 
-// Small system libraries: UtilsForUser, scePower, sceUmdUser, sceRtc,
-// sceImpose, sceHprm, sceDmac, sceOpenPSID and offline network stubs.
+// Small system libraries: UtilsForUser, scePower (and the power and
+// volatile memory locks of sceSuspendForUser), sceUmdUser, sceRtc,
+// sceImpose, sceHprm, sceDmac and sceOpenPSID.
 // Wall-clock time is a fixed epoch plus guest time, so runs repeat exactly.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
@@ -35,6 +36,9 @@ type
     FUmd: TPSPUmdDrive;
     FUmdTimeout: Cardinal;
     FPowerCallbacks: array[0..15] of Cardinal;
+    // The volatile memory (the upper 4 MB of user RAM) and who waits for it, in order.
+    FVolatileLocked: Boolean;
+    FVolatileWaiters: TList<TPSPThread>;
     // PLL = 1332 / FPllN MHz, CPU = PLL * FCpuK / 511.
     FPllN: Integer;
     FCpuK: Integer;
@@ -99,6 +103,11 @@ type
     procedure hPowerVolatileUnlock;
     procedure hKernelPowerLock;
     procedure hKernelPowerTick;
+    procedure VolatileGrant(Ptr, SizePtr: Cardinal);
+    procedure VolatileAbort(T: TPSPThread);
+    procedure hVolatileMemLock;
+    procedure hVolatileMemTryLock;
+    procedure hVolatileMemUnlock;
     // UMD
     procedure hUmdActivate;
     procedure hUmdDeactivate;
@@ -223,11 +232,13 @@ begin
   inherited Create(System);
   FUmd := TPSPUmdDrive.Create;
   FUmd.Name := 'SceUmdDriveStat';
+  FVolatileWaiters := TList<TPSPThread>.Create;
 end;
 
 destructor TPSPSysLibs.Destroy;
 begin
   FUmd.Free;
+  FVolatileWaiters.Free;
   inherited;
 end;
 
@@ -242,6 +253,8 @@ begin
   // A word the kernel reads wait timeouts from (it takes them by pointer).
   FUmdTimeout := FKernel.AllocKernel(16, 'umd timeout');
   FillChar(FPowerCallbacks, SizeOf(FPowerCallbacks), 0);
+  FVolatileLocked := False;
+  FVolatileWaiters.Clear;
   FPllN := 6;
   FCpuK := 511;
 end;
