@@ -114,14 +114,14 @@ begin
       end;
     $18:
       case (Op shr 23) and 7 of
-        0: Result := OpVADD;
-        1: Result := OpVSUB;
+        0: Result := FloatBinaryHandlers[0, VSz(Op) - 1];
+        1: Result := FloatBinaryHandlers[1, VSz(Op) - 1];
         2: Result := OpVSBN;
         7: Result := OpVDIV;
       end;
     $19:
       case (Op shr 23) and 7 of
-        0: Result := OpVMUL;
+        0: Result := FloatBinaryHandlers[2, VSz(Op) - 1];
         1: Result := OpVDOT;
         2: Result := OpVSCL;
         4: Result := OpVHDP;

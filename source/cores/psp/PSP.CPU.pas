@@ -74,6 +74,7 @@ type
     FCmpPC, FCmpOld: Cardinal;
     function DecodePage(PC: Cardinal): PPSPDecodedPage;
     procedure CodeWrite(Address, Size: Cardinal);
+    procedure Interpret;
   public
     // The run's budget (Run, TakeCycles, AddCycles), for a runner.
     FRunLength, FRemaining, FAccounted: Integer;
@@ -315,13 +316,43 @@ begin
   C.Ctx.LO := C.Ctx.GPR[RS(Op)];
 end;
 
+function LeadingZeros(V: Cardinal): Cardinal;
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+asm
+  BSR EAX, ECX
+  JNZ @Found
+  MOV EAX, 63
+@Found:
+  XOR EAX, 31
+end;
+{$ELSEIF Defined(CPUX86)}
+asm
+  BSR EAX, EAX
+  JNZ @Found
+  MOV EAX, 63
+@Found:
+  XOR EAX, 31
+end;
+{$ELSE}
+begin
+  if V = 0 then
+    Exit(32);
+  Result := 31;
+  if V >= $10000 then begin V := V shr 16; Dec(Result, 16); end;
+  if V >= $100 then begin V := V shr 8; Dec(Result, 8); end;
+  if V >= $10 then begin V := V shr 4; Dec(Result, 4); end;
+  if V >= 4 then begin V := V shr 2; Dec(Result, 2); end;
+  if V >= 2 then Dec(Result);
+end;
+{$ENDIF}
+
 procedure OpCLZ(C: TPSPCPU; Op: Cardinal);
 begin
   var V := C.Ctx.GPR[RS(Op)];
-  var N: Cardinal := 0;
-  while (N < 32) and ((V and ($80000000 shr N)) = 0) do
-    Inc(N);
-  C.Ctx.GPR[RD(Op)] := N;
+  if (V and $80000000) <> 0 then
+    C.Ctx.GPR[RD(Op)] := 0
+  else
+    C.Ctx.GPR[RD(Op)] := LeadingZeros(V);
 end;
 
 procedure OpCLO(C: TPSPCPU; Op: Cardinal);
@@ -780,13 +811,11 @@ end;
 procedure OpBITREV(C: TPSPCPU; Op: Cardinal);
 begin
   var V := C.Ctx.GPR[RT(Op)];
-  var R: Cardinal := 0;
-  for var I := 0 to 31 do
-  begin
-    R := (R shl 1) or (V and 1);
-    V := V shr 1;
-  end;
-  C.Ctx.GPR[RD(Op)] := R;
+  V := ((V shr 1) and $55555555) or ((V and $55555555) shl 1);
+  V := ((V shr 2) and $33333333) or ((V and $33333333) shl 2);
+  V := ((V shr 4) and $0F0F0F0F) or ((V and $0F0F0F0F) shl 4);
+  V := ((V shr 8) and $00FF00FF) or ((V and $00FF00FF) shl 8);
+  C.Ctx.GPR[RD(Op)] := (V shr 16) or (V shl 16);
 end;
 
 { SPECIAL2 (Allegrex) }
@@ -1184,6 +1213,26 @@ begin
     Runner.CodeWritten(Address, Size);
 end;
 
+// Outside Run's FP-environment try/finally, the dispatch loop can keep its locals in registers.
+procedure TPSPCPU.Interpret;
+begin
+  while FRemaining > 0 do
+  begin
+    var PC := Ctx.PC;
+    var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
+    if Page = nil then
+      Page := DecodePage(PC);
+    var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
+    CurPC := PC;
+    Ctx.PC := Ctx.NPC;
+    Ctx.NPC := Ctx.NPC + 4;
+    Dec(FRemaining);
+    Entry.Handler(Self, Entry.Op);
+    if Stopping then
+      Break;
+  end;
+end;
+
 function TPSPCPU.Run(MaxCycles: Integer): Integer;
 begin
   Stopping := False;
@@ -1200,21 +1249,7 @@ begin
     if Runner <> nil then
       Runner.Run(Self)
     else
-    while FRemaining > 0 do
-    begin
-      var PC := Ctx.PC;
-      var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
-      if Page = nil then
-        Page := DecodePage(PC);
-      var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
-      CurPC := PC;
-      Ctx.PC := Ctx.NPC;
-      Ctx.NPC := Ctx.NPC + 4;
-      Dec(FRemaining);
-      Entry.Handler(Self, Entry.Op);
-      if Stopping then
-        Break;
-    end;
+      Interpret;
   finally
     SetExceptionMask(SavedMask);
     SetRoundMode(SavedRound);

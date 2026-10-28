@@ -114,18 +114,36 @@ end;
 procedure LoadV(C: TPSPCPU; Reg: Cardinal; N: Integer; var R: TV4); inline;
 begin
   var P: PIdx4 := @VecIdx[N - 1, Reg];
-  for var I := 0 to 3 do
-    if I < N then
-      R[I] := C.Ctx.V[P[I]]
-    else
-      R[I] := 0;
+  R[0] := C.Ctx.V[P[0]];
+  if N = 4 then
+  begin
+    R[1] := C.Ctx.V[P[1]];
+    R[2] := C.Ctx.V[P[2]];
+    R[3] := C.Ctx.V[P[3]];
+  end
+  else
+  begin
+    R[1] := 0;
+    R[2] := 0;
+    R[3] := 0;
+    for var I := 1 to N - 1 do
+      R[I] := C.Ctx.V[P[I]];
+  end;
 end;
 
 procedure StoreV(C: TPSPCPU; Reg: Cardinal; N: Integer; const R: TV4); inline;
 begin
   var P: PIdx4 := @VecIdx[N - 1, Reg];
-  for var I := 0 to N - 1 do
-    C.Ctx.V[P[I]] := R[I];
+  if N = 4 then
+  begin
+    C.Ctx.V[P[0]] := R[0];
+    C.Ctx.V[P[1]] := R[1];
+    C.Ctx.V[P[2]] := R[2];
+    C.Ctx.V[P[3]] := R[3];
+  end
+  else
+    for var I := 0 to N - 1 do
+      C.Ctx.V[P[I]] := R[I];
 end;
 
 // Applies an S/T prefix to the lanes read; returns the lanes whose swizzle
@@ -173,9 +191,17 @@ end;
 
 procedure Latch(C: TPSPCPU; const R: TV4; Lanes: Cardinal); inline;
 begin
-  for var I := 0 to 3 do
-    if ((Lanes shr I) and 1) <> 0 then
-      C.VLatch[I] := R[I];
+  if Lanes = $F then
+  begin
+    C.VLatch[0] := R[0];
+    C.VLatch[1] := R[1];
+    C.VLatch[2] := R[2];
+    C.VLatch[3] := R[3];
+  end
+  else
+    for var I := 0 to 3 do
+      if ((Lanes shr I) and 1) <> 0 then
+        C.VLatch[I] := R[I];
 end;
 
 function ReadS(C: TPSPCPU; Op: Cardinal; N: Integer; var R: TV4): Cardinal; inline;
@@ -226,8 +252,7 @@ begin
   Zero := Zero and ((Cardinal(1) shl N) - 1);
   if (DPfx or Zero) = 0 then
   begin
-    for var I := 0 to N - 1 do
-      C.Ctx.V[P[I]] := R[I];
+    StoreV(C, Reg, N, R);
     Exit;
   end;
   for var I := 0 to N - 1 do
@@ -277,6 +302,11 @@ end;
 
 procedure WriteLast(C: TPSPCPU; Reg: Cardinal; N: Integer; const R: TV4; Zero: Boolean);
 begin
+  if not Zero and (C.Ctx.VC[VFPU_PFXD] = 0) then
+  begin
+    StoreV(C, Reg, N, R);
+    Exit;
+  end;
   var P: PIdx4 := @VecIdx[N - 1, Reg];
   for var I := 0 to N - 2 do
     C.Ctx.V[P[I]] := R[I];
@@ -290,6 +320,7 @@ begin
 end;
 
 {$I PSP.VFPU.Arith.inc}
+{$I PSP.VFPU.Fast.inc}
 {$I PSP.VFPU.Conv.inc}
 {$I PSP.VFPU.Matrix.inc}
 {$I PSP.VFPU.Decode.inc}

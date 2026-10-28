@@ -204,12 +204,8 @@ begin
   var Y: Single := PSingle(@B)^;
   var RS: Single := X + Y;
   var R := BitsOf(RS);
-  var XD: Double := X;
-  var YD: Double := Y;
-  var S: Double := XD + YD;
-  var BB: Double := S - XD;
-  var Err: Double := (XD - (S - BB)) + (YD - BB);
-  if (S = 0) and (Err = 0) then
+  var S: Double := Double(X) + Double(Y);
+  if (R and $7FFFFFFF) = 0 then
   begin
     if Mode = 3 then
       FpuDone(C, D, $80000000, 0)
@@ -217,12 +213,21 @@ begin
       FpuDone(C, D, 0, 0);
     Exit;
   end;
-  var T: Double := S - Double(RS);
-  var Dir: Integer;
-  if T <> 0 then
-    Dir := SignOf(T)
-  else
-    Dir := SignOf(Err);
+  var Gap := Integer(A and $7F800000) - Integer(B and $7F800000);
+  var E := R and $7F800000;
+  if (Mode = 0) and (E <> 0) and (E <> $7F800000) then
+  begin
+    FpuDone(C, D, R, Ord((S <> Double(RS)) or (Abs(Gap) >= (30 shl 23))));
+    Exit;
+  end;
+  var Dir := SignOf(S - Double(RS));
+  // With at most 29 exponent bits between operands the double sum is exact.
+  // Otherwise the single is the larger operand and the error has the smaller's sign.
+  if Dir = 0 then
+    if Gap >= (30 shl 23) then
+      Dir := 1 - Integer(B shr 31) * 2
+    else if Gap <= -(30 shl 23) then
+      Dir := 1 - Integer(A shr 31) * 2;
   var Tiny := ((R and $7F800000) = 0) and ((R and $7FFFFF) <> 0);
   if Tiny and Flush then
   begin
@@ -272,9 +277,15 @@ begin
   end;
   var X: Single := PSingle(@A)^;
   var Y: Single := PSingle(@B)^;
-  var RS: Single := X * Y;
-  var R := BitsOf(RS);
   var P: Double := Double(X) * Double(Y);
+  var RS: Single := P;
+  var R := BitsOf(RS);
+  var E := R and $7F800000;
+  if (C.Ctx.FCR31 and 3 = 0) and (E > $00800000) and (E <> $7F800000) then
+  begin
+    FpuDone(C, D, R, Ord(P <> Double(RS)));
+    Exit;
+  end;
   var Dir := SignOf(P - Double(RS));
   var Tiny := Abs(P) < FLT_MIN_D;
   if Tiny and ((C.Ctx.FCR31 and FCR31_FS) <> 0) then
