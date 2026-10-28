@@ -25,7 +25,8 @@ type
     W: Single;           // 1/w for perspective (1 in through mode)
     R, G, B, A: Integer; // primary colour, 0..255
     SR, SG, SB: Integer; // secondary (specular) colour
-    S, T: Single;        // texture coordinates in texels (already / q)
+    S, T: Single;        // texture coordinates in texels, still to divide by Q
+    Q: Single;           // texture projection divisor (1 but for TEXMAPMODE's matrix)
     Fog: Single;         // 0 = fog colour, 1 = no fog
   end;
   PGEVertex = ^TGEVertex;
@@ -654,8 +655,8 @@ begin
     NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
     NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
     NTY := A0.T * A0.W * BY0 + A1.T * A1.W * BY1 + A2.T * A2.W * BY2;
-    DQX := A0.W * BX0 + A1.W * BX1 + A2.W * BX2;
-    DQY := A0.W * BY0 + A1.W * BY1 + A2.W * BY2;
+    DQX := A0.Q * A0.W * BX0 + A1.Q * A1.W * BX1 + A2.Q * A2.W * BX2;
+    DQY := A0.Q * A0.W * BY0 + A1.Q * A1.W * BY1 + A2.Q * A2.W * BY2;
   end;
   for var PY := PY1 to PY2 do
   begin
@@ -690,8 +691,11 @@ begin
       F.Z := Round(A0.Z * W0 + A1.Z * W1 + A2.Z * W2);
       if S.Textured then
       begin
-        var Q := A0.W * W0 + A1.W * W1 + A2.W * W2;
-        if Q <> 0 then
+        // S, T and Q go through the perspective (1/w) and then S and T are
+        // divided by Q; where Q is not positive the GE takes the last texel.
+        var Q := A0.Q * A0.W * W0 + A1.Q * A1.W * W1 + A2.Q * A2.W * W2;
+        var IW := A0.W * W0 + A1.W * W1 + A2.W * W2;
+        if (Q <> 0) and ((Q > 0) = (IW > 0)) then
         begin
           F.S := (A0.S * A0.W * W0 + A1.S * A1.W * W1 + A2.S * A2.W * W2) / Q;
           F.T := (A0.T * A0.W * W0 + A1.T * A1.W * W1 + A2.T * A2.W * W2) / Q;
@@ -699,13 +703,16 @@ begin
           begin
             var Scale := Max(Max(Abs(NSX - F.S * DQX), Abs(NSY - F.S * DQY)),
               Max(Abs(NTX - F.T * DQX), Abs(NTY - F.T * DQY))) / Abs(Q);
-            F.Lod := TexLod(S, Scale, 1 / Q);
+            var W: Single := 1;
+            if IW <> 0 then
+              W := 1 / IW;
+            F.Lod := TexLod(S, Scale, W);
           end;
         end
         else
         begin
-          F.S := A0.S;
-          F.T := A0.T;
+          F.S := S.Tex.Levels[0].Width - 0.5;
+          F.T := S.Tex.Levels[0].Height - 0.5;
         end;
       end;
       F.Fog := A0.Fog * W0 + A1.Fog * W1 + A2.Fog * W2;
@@ -737,21 +744,30 @@ begin
   // S runs along x and T along y, except when the corners are flipped in
   // one axis only: then the texture is turned, S along y and T along x.
   var Turned := (V0.X > V1.X) <> (V0.Y > V1.Y);
+  // Q goes with S, and divides both.
   var SX: Single := 0; var SY: Single := 0; var TX: Single := 0; var TY: Single := 0;
+  var QX: Single := 0; var QY: Single := 0;
   if V1.X <> V0.X then
   begin
     if Turned then
       TX := (V1.T - V0.T) / ((V1.X - V0.X) / 16)
     else
+    begin
       SX := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
+      QX := (V1.Q - V0.Q) / ((V1.X - V0.X) / 16);
+    end;
   end;
   if V1.Y <> V0.Y then
   begin
     if Turned then
-      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16)
+    begin
+      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16);
+      QY := (V1.Q - V0.Q) / ((V1.Y - V0.Y) / 16);
+    end
     else
       TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
   end;
+  var Projected := (V0.Q <> 1) or (V1.Q <> 1);
   var Lod := 0;
   if S.Textured and S.Tex.NeedLod then
   begin
@@ -771,6 +787,15 @@ begin
         var FY := (PY * 16 + 8 - V0.Y) / 16;
         F.S := V0.S + SX * FX + SY * FY;
         F.T := V0.T + TX * FX + TY * FY;
+        if Projected then
+        begin
+          var Q := V0.Q + QX * FX + QY * FY;
+          if Q <> 0 then
+          begin
+            F.S := F.S / Q;
+            F.T := F.T / Q;
+          end;
+        end;
       end;
       PlotPixel(S, PX, PY, F);
     end;
@@ -826,6 +851,12 @@ begin
     F.Z := Round(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;
+    var Q := V0.Q + (V1.Q - V0.Q) * T;
+    if (Q <> 1) and (Q <> 0) then
+    begin
+      F.S := F.S / Q;
+      F.T := F.T / Q;
+    end;
     F.Fog := V0.Fog + (V1.Fog - V0.Fog) * T;
     PlotPixel(S, PX, PY, F);
   end;
@@ -836,6 +867,11 @@ var
   F: TGEFragment;
 begin
   SetupFragment(F, V);
+  if (V.Q <> 1) and (V.Q <> 0) then
+  begin
+    F.S := V.S / V.Q;
+    F.T := V.T / V.Q;
+  end;
   PlotPixel(S, (V.X + $100000) div 16 - $10000, (V.Y + $100000) div 16 - $10000, F);
 end;
 

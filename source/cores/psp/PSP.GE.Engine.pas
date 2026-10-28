@@ -56,7 +56,7 @@ type
     procedure Skin(const V: TGEInVertex; VType: Cardinal; var P, N: TGEVec3);
     procedure Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
     function LightVector(L: Integer; const WP: TGEVec3): TGEVec3;
-    procedure TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
+    procedure TexGen(const V: TGEInVertex; const P, N, WP, WN: TGEVec3; out S, T, Q: Single);
     procedure ClipPosition(const P: TGEVec3; out CX, CY, CZ, CW: Double; out VP: TGEVec3);
     procedure Project(var A: TGEAsmVertex);
     procedure TransformVertex(const V: TGEInVertex; VType: Cardinal; out O: TGEAsmVertex);
@@ -783,39 +783,34 @@ begin
   Result := D;
 end;
 
-procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const WP, WN: TGEVec3; out S, T: Single);
+procedure TPSPGEEngine.TexGen(const V: TGEInVertex; const P, N, WP, WN: TGEVec3; out S, T, Q: Single);
 var
   C: PGECmds;
-  Src, N, LU, LV: TGEVec3;
-  Q: Single;
+  Src, NW, LU, LV: TGEVec3;
 begin
   C := @Regs.Cmd;
+  Q := 1;
   case C[GE_TEXMAPMODE] and 3 of
     1:
       begin
         case (C[GE_TEXMAPMODE] shr 8) and 3 of
-          0: Src := V.P;
+          0: Src := P;
           1: Src := Vec3(V.U, V.V, 0);
-          2: Src := Normalized(V.N);
+          2: Src := Normalized(N);
         else
-          Src := V.N;
+          Src := N;
         end;
         S := GEFloat(Regs.TGen[0]) * Src.X + GEFloat(Regs.TGen[3]) * Src.Y + GEFloat(Regs.TGen[6]) * Src.Z + GEFloat(Regs.TGen[9]);
         T := GEFloat(Regs.TGen[1]) * Src.X + GEFloat(Regs.TGen[4]) * Src.Y + GEFloat(Regs.TGen[7]) * Src.Z + GEFloat(Regs.TGen[10]);
         Q := GEFloat(Regs.TGen[2]) * Src.X + GEFloat(Regs.TGen[5]) * Src.Y + GEFloat(Regs.TGen[8]) * Src.Z + GEFloat(Regs.TGen[11]);
-        if Q <> 0 then
-        begin
-          S := S / Q;
-          T := T / Q;
-        end;
       end;
     2:
       begin
-        N := Normalized(WN);
+        NW := Normalized(WN);
         LU := LightVector(Integer(C[GE_TEXSHADELS] and 3), WP);
         LV := LightVector(Integer((C[GE_TEXSHADELS] shr 8) and 3), WP);
-        S := (1 + Dot(N, LU)) / 2;
-        T := (1 + Dot(N, LV)) / 2;
+        S := (1 + Dot(NW, LU)) / 2;
+        T := (1 + Dot(NW, LV)) / 2;
       end;
   else
     begin
@@ -890,7 +885,7 @@ var
   R, G, B, A, SR, SG, SB: Integer;
   P, N, WP, WN, VP: TGEVec3;
   CX, CY, CZ, CW: Double;
-  S, T: Single;
+  S, T, Q: Single;
 begin
   O := Default(TGEAsmVertex);
   C := @Regs.Cmd;
@@ -912,6 +907,7 @@ begin
     O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
     O.V.S := V.U;
     O.V.T := V.V;
+    O.V.Q := 1;
     O.V.Fog := 1;
     Exit;
   end;
@@ -938,7 +934,8 @@ begin
     Light(V, WP, WN, R, G, B, A, SR, SG, SB);
   O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
   O.V.SR := SR; O.V.SG := SG; O.V.SB := SB;
-  TexGen(V, WP, WN, S, T);
+  TexGen(V, P, N, WP, WN, S, T, Q);
+  O.V.Q := Q;
   O.V.S := S * (1 shl (C[GE_TEXSIZE0] and $F));
   O.V.T := T * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
   O.V.Fog := (GEFloat(C[GE_FOG1]) + VP.Z) * GEFloat(C[GE_FOG2]);
@@ -1114,6 +1111,7 @@ begin
   Result.V.SB := A.V.SB + Round((B.V.SB - A.V.SB) * T);
   Result.V.S := A.V.S + (B.V.S - A.V.S) * T;
   Result.V.T := A.V.T + (B.V.T - A.V.T) * T;
+  Result.V.Q := A.V.Q + (B.V.Q - A.V.Q) * T;
   Result.V.Fog := A.V.Fog + (B.V.Fog - A.V.Fog) * T;
 end;
 
@@ -1467,6 +1465,7 @@ begin
     Q := 1;
   V.S := GEFloat(C[$F3]) / Q * (1 shl (C[GE_TEXSIZE0] and $F));
   V.T := GEFloat(C[$F4]) / Q * (1 shl ((C[GE_TEXSIZE0] shr 8) and $F));
+  V.Q := 1;
   V.Fog := (C[$F8] and $FF) / 255;
   Inc(FPrimCost, 40);
   AV := Default(TGEAsmVertex);
