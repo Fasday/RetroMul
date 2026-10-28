@@ -392,8 +392,25 @@ begin
     M.Entry := 0;
   FKernel.AddObject(M);
   FModules.Add(M);
-  SectionSizes(Elf, M, Base);
-  ReadModuleInfo(M, InfoAddr);
+  // Some games ship libfont as a plain ELF rather than a ~PSP module. It is
+  // the same firmware service: do not replace sceLibFont's HLE stubs with code
+  // that needs the firmware's private registry and font files in flash0.
+  M.Name := FMemory.ReadString(InfoAddr + 4, 28);
+  if M.Name = 'sceFont_Library' then
+  begin
+    M.Fake := True;
+    FKernel.UserPartition.FreeBlock(M.Block);
+    M.Block := 0;
+    M.Base := 0;
+    M.Size := 0;
+    M.Entry := 0;
+    FHLE.Log('loader: %s (%s) is provided by HLE', [M.Name, Path]);
+  end
+  else
+  begin
+    SectionSizes(Elf, M, Base);
+    ReadModuleInfo(M, InfoAddr);
+  end;
   FKernel.CPU.FlushDecoded;
   Result := 0;
 end;
