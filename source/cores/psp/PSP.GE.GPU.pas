@@ -14,9 +14,13 @@ unit PSP.GE.GPU;
 // a held page, or a write to a watched one, first draws everything (Sync)
 // and copies the drawn pages back into guest memory. The GPU's copy of a page
 // is compared with guest memory when a batch first uses it in an epoch;
-// textures in main memory are copied into the batch. What the kernel cannot
-// draw the same way (pixels sharing memory, a primitive texturing from the
-// pixels it draws) is drawn by PSP.GE.Raster after a Sync.
+// textures in main memory are copied into the batch. Mipmapped textures and
+// the level of detail are sampled as GESampleTextureLod does. What the
+// kernel cannot draw the same way (pixels sharing memory, a primitive
+// texturing from the pixels it draws) is drawn after a Sync by the CPU
+// renderer's queue (PSP.GE.Workers), and so is a run of the primitives
+// after it, so that interleaved CPU and GPU primitives do not each cost a
+// Sync; the queue is drained before the GPU draws again.
 //
 // In check mode every batch, run whenever the GE stops, is also drawn by
 // PSP.GE.Raster into guest memory, which keeps the CPU's result, and the two
