@@ -324,6 +324,11 @@ var
 begin
   Backend := nil;
   Taken := False;
+  if Assigned(Memory.OnVRAMFault) then
+  begin
+    Error := 'This memory already has a VRAM device.';
+    Exit(False);
+  end;
   {$IFDEF CPUX86}
   Error := 'The Win32/x87 raster reference is not qualified for GPU rendering; use Win64.';
   Exit(False);
@@ -332,7 +337,7 @@ begin
     Exit(False);
   var F := Compute.Features;
   if not (F.Int64 and F.Int16 and F.Int8 and F.Float64 and F.Storage8 and F.Storage16 and F.DenormPreserve32 and
-    F.DenormPreserve64 and F.RoundEven32 and F.RoundEven64 and F.SignedZeroInfNan32) then
+    F.DenormPreserve64 and F.RoundEven32 and F.RoundEven64 and F.SignedZeroInfNan32 and F.SignedZeroInfNan64) then
   begin
     Error := Compute.Name + ' lacks 64/16/8-bit integers, doubles, small storage or IEEE float controls.';
     Compute.Free;

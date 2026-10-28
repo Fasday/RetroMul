@@ -532,7 +532,7 @@ begin
   else
     MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Visible, [Local or Coherent, Local, Coherent]);
   end;
-  if MemoryType < 0 then
+  if (MemoryType < 0) and (Kind = vbkDevice) then
     MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, 0, []);
   if MemoryType < 0 then
     raise EVulkanError.Create('No Vulkan memory type for a buffer.');

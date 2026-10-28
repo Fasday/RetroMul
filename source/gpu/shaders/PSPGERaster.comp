@@ -168,7 +168,7 @@ void splitDXT(uint c, out int r, out int g, out int b)
   b = int(c & 0x1Fu) << 3;
 }
 
-uint dxtColor(uint c0, uint c1, uint index, bool alpha1)
+uint dxtColor(uint c0, uint c1, uint index)
 {
   int r0, g0, b0, r1, g1, b1;
   splitDXT(c0, r0, g0, b0);
@@ -223,7 +223,7 @@ uint fetchTexel(uint s, int level, int x, int y)
     uint c0 = texRead16(colorBlock + 4u);
     uint c1 = texRead16(colorBlock + 6u);
     uint index = (bits >> uint(((y & 3) * 4 + (x & 3)) * 2)) & 3u;
-    uint result = dxtColor(c0, c1, index, format == 8);
+    uint result = dxtColor(c0, c1, index);
     if (format == 9)
     {
       uint aw = texRead16(block + 8u + uint((y & 3) * 2));
@@ -473,7 +473,7 @@ uint stencilBits(uint format, int v)
 
 uint pixelKeepMask(uint s)
 {
-  return states[s + 104u];
+  return stUint(s, ST_KEEPMASK);
 }
 
 int texLerp(int a, int b, int t, int dbl)
@@ -605,7 +605,7 @@ void plotPixel(uint s, int x, int y, Fragment f)
 
   if (!stFlag(s, SF_THROUGH))
   {
-    int rangeZ = stFlag(s, 1u << 19) ? z : f.z;
+    int rangeZ = stFlag(s, SF_DEPTHCLAMP) ? z : f.z;
     if (rangeZ < stInt(s, ST_MINZ) || rangeZ > stInt(s, ST_MAXZ))
       return;
   }

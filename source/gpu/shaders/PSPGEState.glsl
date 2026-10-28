@@ -60,6 +60,7 @@ const uint ST_TEXBASE = 69u;
 const uint ST_TEXDATA = 70u;
 const uint ST_CLUTDATA = 71u;
 const uint ST_LEVELS = 72u; // 8 x (address, width, height, buffer width)
+const uint ST_KEEPMASK = 104u;
 
 const uint SF_THROUGH = 1u << 0;
 const uint SF_CLEARMODE = 1u << 1;
@@ -80,6 +81,7 @@ const uint SF_DEPTHWRITE = 1u << 15;
 const uint SF_BLEND = 1u << 16;
 const uint SF_DITHER = 1u << 17;
 const uint SF_LOGICOP = 1u << 18;
+const uint SF_DEPTHCLAMP = 1u << 19;
 
 int stInt(uint s, uint index)
 {
