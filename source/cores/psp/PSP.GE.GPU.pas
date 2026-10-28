@@ -55,6 +55,14 @@ type
     Stride, Width, Rows: Int64;
   end;
 
+  // The VRAM a primitive's texture reads: one span a level it can sample.
+  TGEGPUReads = record
+    Count: Integer;
+    Spans: array[0..7] of TGEGPUSpan;
+    // Only TGETexture.Level is sampled (the first span, when in VRAM).
+    OneLevel: Boolean;
+  end;
+
   TGEGPUPass = record
     First, Count: Integer;
     X1, Y1, X2, Y2: Integer;
@@ -124,8 +132,7 @@ type
     FLastClut: array[0..1023] of Byte;
     FLastState: Integer;
     FLastTranslation: Integer;
-    FLastTex: TGEGPUSpan;
-    FLastTexInVRAM: Boolean;
+    FLastTex: TGEGPUReads;
     FCheck: Boolean;
     FCheckPrims: TList<TGEGPUCheckPrim>;
     FStats: TGEGPUStats;
@@ -155,8 +162,8 @@ type
     procedure Grow(Slot: Integer; var Buffer: TVulkanBuffer; Bytes: Int64);
     function AddData(Bytes: Integer): Integer;
     function NewPrim: PCardinal;
-    function PackState(const S: TGERaster; out Tex: TGEGPUSpan; out TexInVRAM, Ok: Boolean): Integer;
-    function Place(const S: TGERaster; State: Integer; const Tex: TGEGPUSpan; TexInVRAM: Boolean;
+    function PackState(const S: TGERaster; out Tex: TGEGPUReads; out Ok: Boolean): Integer;
+    function Place(const S: TGERaster; State: Integer; const Tex: TGEGPUReads;
       X1, Y1, X2, Y2: Integer): Boolean;
     procedure Record_(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
     procedure Fallback;
@@ -207,8 +214,14 @@ const
   ST_FLAGS = 11;
   ST_DITHER = 42;
   ST_TEXFORMAT = 58;
-  ST_TEXSOURCE = 68;
   ST_LEVELS = 72;
+  ST_LEVELDATA = 107;
+  ST_MINFILTER = 115;
+  ST_MAXLEVEL = 116;
+  ST_LEVELMODE = 117;
+  ST_LODBIAS = 118;
+  ST_SLOPE = 119;
+  NoData = Cardinal($FFFFFFFF);
   // A batch this large starts drawing when the GE stops (PSP_GPU_RELEASE
   // for measurements).
   ReleasePrims = 256;
@@ -567,9 +580,9 @@ end;
 // The guest bytes the texture unit can read for the current level: Size from
 // Addr, and when unswizzled, only the first Width bytes of each of Rows rows
 // of Stride bytes (texel coordinates are wrapped or clamped into the level).
-function TextureBytes(const T: TGETexture; out Addr, Size: Cardinal; out Stride, Width, Rows: Int64): Boolean;
+function TextureBytes(const T: TGETexture; Level: Integer; out Addr, Size: Cardinal; out Stride, Width, Rows: Int64): Boolean;
 begin
-  var L := T.Levels[T.Level];
+  var L := T.Levels[Level];
   Addr := L.Addr;
   Size := 0;
   Stride := 0;
@@ -681,7 +694,7 @@ end;
 function TriangleTexels(const S: TGERaster; const V0, V1, V2: TGEVertex; const Full: TGEGPUSpan): TGEGPUSpan;
 begin
   Result := Full;
-  var MinS, MaxS, MinT, MaxT: Double;
+  var MinS: Double := 0; var MaxS: Double := 0; var MinT: Double := 0; var MaxT: Double := 0;
   for var I := 0 to 2 do
   begin
     var V: PGEVertex := @V0;
@@ -712,7 +725,7 @@ end;
 function SpriteTexels(const S: TGERaster; const V0: TGEVertex; SX, SY, TX, TY: Single;
   PX1, PY1, PX2, PY2: Integer; const Full: TGEGPUSpan): TGEGPUSpan;
 begin
-  var MinS, MaxS, MinT, MaxT: Double;
+  var MinS: Double := 0; var MaxS: Double := 0; var MinT: Double := 0; var MaxT: Double := 0;
   for var Corner := 0 to 3 do
   begin
     var PX := PX1;
@@ -739,6 +752,25 @@ begin
     end;
   end;
   Result := TexelWindow(S, MinS, MaxS, MinT, MaxT, Full);
+end;
+
+// PSP.GE.Raster's TexLod (not exported), the same expressions and types.
+function TexLod(const S: TGERaster; Scale, W: Single): Integer;
+begin
+  case S.Tex.LevelMode of
+    0: Result := GELog16(Scale) + S.Tex.LodBias;
+    2: Result := GELog16(S.Tex.Slope * W) + 16 + S.Tex.LodBias;
+  else
+    Result := S.Tex.LodBias;
+  end;
+end;
+
+// Whether Size bytes from Address all lie in VRAM's mirrors.
+function InVRAM(Address, Size: Cardinal): Boolean;
+begin
+  var Phys := Int64(Address and $1FFFFFFF);
+  Result := (Phys >= PSPVRAMBase) and (Phys + Size <= PSPVRAMBase + 4 * PSPVRAMSize) and
+    (Int64(Address) + Size <= $100000000);
 end;
 
 function TouchesVRAM(Address, Size: Cardinal): Boolean;
@@ -1082,49 +1114,79 @@ begin
   Inc(FPrimCount);
 end;
 
-function TGEGPUBackend.PackState(const S: TGERaster; out Tex: TGEGPUSpan; out TexInVRAM, Ok: Boolean): Integer;
+function TGEGPUBackend.PackState(const S: TGERaster; out Tex: TGEGPUReads; out Ok: Boolean): Integer;
+var
+  LevelData: array[0..7] of Cardinal;
 begin
   Ok := True;
-  if S.Textured and S.Tex.NeedLod then
-  begin
-    Tex := Default(TGEGPUSpan);
-    TexInVRAM := False;
-    FWhy := 'LOD-dependent texture sampling';
-    Ok := False;
-    Exit(-1);
-  end;
   var UsesClut := S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7);
   // A texture's copy in the batch stays valid: its pages are watched.
   if (FLastState >= 0) and (FLastTranslation = FMemory.VRAMShift) and SameBytes(@S, @FLastRaster, SizeOf(TGERaster)) and
     (not UsesClut or SameBytes(S.Tex.Clut, @FLastClut[0], SizeOf(FLastClut))) then
   begin
     Tex := FLastTex;
-    TexInVRAM := FLastTexInVRAM;
     Exit(FLastState);
   end;
-  Tex := Default(TGEGPUSpan);
-  TexInVRAM := False;
-  var Source: Cardinal := 0;
-  var Base: Cardinal := 0;
-  var DataOfs: Cardinal := 0;
+  Tex.Count := 0;
+  Tex.OneLevel := True;
+  for var L := 0 to 7 do
+    LevelData[L] := NoData;
   var ClutOfs: Cardinal := 0;
   if S.Textured then
   begin
-    var Addr, Size: Cardinal;
-    var RowStride, RowWidth, Rows: Int64;
-    if TextureBytes(S.Tex, Addr, Size, RowStride, RowWidth, Rows) and (Size > 0) then
+    // The levels GESampleTexture or GESampleTextureLod can sample.
+    var First := S.Tex.Level;
+    var Last := S.Tex.Level;
+    if S.Tex.NeedLod then
     begin
-      if Size > $1000000 then
+      First := 0;
+      Last := 0;
+      if (S.Tex.MinFilter >= 4) and (S.Tex.MaxLevel > 0) then
+      begin
+        Last := S.Tex.MaxLevel;
+        // Level coordinates are scaled by level 0's size (a power of two).
+        var W0 := S.Tex.Levels[0].Width;
+        var H0 := S.Tex.Levels[0].Height;
+        if (Last > 7) or (W0 <= 0) or (H0 <= 0) or (W0 and (W0 - 1) <> 0) or (H0 and (H0 - 1) <> 0) then
+        begin
+          FWhy := 'mipmaps of unusual sizes';
+          Ok := False;
+          Exit(-1);
+        end;
+      end;
+    end;
+    Tex.OneLevel := (First = Last) and (First = S.Tex.Level);
+    var Addrs, Sizes: array[0..7] of Cardinal;
+    var Strides, Widths, Rows: array[0..7] of Int64;
+    var Valid: array[0..7] of Boolean;
+    for var L := First to Last do
+    begin
+      Valid[L] := TextureBytes(S.Tex, L, Addrs[L], Sizes[L], Strides[L], Widths[L], Rows[L]) and (Sizes[L] > 0);
+      if Valid[L] and (Sizes[L] > $1000000) then
       begin
         FWhy := 'texture larger than 16 MB';
         Ok := False;
         Exit(-1);
       end;
-      var Phys := Int64(Addr and $1FFFFFFF);
-      if (Phys >= PSPVRAMBase) and (Phys + Size <= PSPVRAMBase + 4 * PSPVRAMSize) and (Int64(Addr) + Size <= $100000000) then
+    end;
+    // Copies of levels outside VRAM that reach it need VRAM as drawn so far,
+    // before any copy is made into this batch.
+    for var L := First to Last do
+      if Valid[L] and not InVRAM(Addrs[L], Sizes[L]) and TouchesVRAM(Addrs[L], Sizes[L]) then
       begin
-        TexInVRAM := True;
-        Tex := Span(Addr, Size);
+        Sync;
+        Break;
+      end;
+    for var L := First to Last do
+    begin
+      if not Valid[L] then
+        Continue;
+      var Addr := Addrs[L];
+      var Size := Sizes[L];
+      if InVRAM(Addr, Size) then
+      begin
+        var Phys := Int64(Addr and $1FFFFFFF);
+        var R := Span(Addr, Size);
         var FirstMirror := (Phys - PSPVRAMBase) div PSPVRAMSize;
         var LastMirror := (Phys + Size - 1 - PSPVRAMBase) div PSPVRAMSize;
         if (FirstMirror and 1 <> 0) or (FirstMirror <> LastMirror) then
@@ -1132,7 +1194,7 @@ begin
           // The odd mirrors permute bytes within aligned blocks (as
           // TPSPMemory.VRAMOffset and PSPDepthOffset).
           var Block := PermutationBlock(FMemory.VRAMShift);
-          Tex := BlockSpan(Tex, Block);
+          R := BlockSpan(R, Block);
           var Alignment := 1;
           case S.Tex.Format of
             0, 1, 2, 6: Alignment := 2;
@@ -1141,35 +1203,34 @@ begin
           // An unaligned native read can cross the mapped block's upper edge.
           if Addr and Cardinal(Alignment - 1) <> 0 then
           begin
-            if Tex.Lo + Tex.Len + Block > PSPVRAMSize then
+            if R.Lo + R.Len + Block > PSPVRAMSize then
             begin
               FWhy := 'unaligned texture near the physical VRAM boundary';
               Ok := False;
               Exit(-1);
             end;
-            Tex := Span(Tex.Lo, Tex.Len + Block);
+            R := Span(R.Lo, R.Len + Block);
           end;
         end
-        else if RowStride > 0 then
-          Tex := RowSpan(Addr, RowStride, RowWidth, Rows);
+        else if Strides[L] > 0 then
+          R := RowSpan(Addr, Strides[L], Widths[L], Rows[L]);
+        Tex.Spans[Tex.Count] := R;
+        Inc(Tex.Count);
       end
       else
       begin
-        if TouchesVRAM(Addr, Size) then
-          Sync;
-        Source := 1;
-        Base := Addr;
         // The batch's copy of the same bytes: they are watched since.
         var Key := UInt64(Addr) or (UInt64(Size) shl 32);
         var Old: Integer;
         if FSnapshots.TryGetValue(Key, Old) then
-          DataOfs := Old
+          LevelData[L] := Cardinal(Old)
         else
         begin
-          DataOfs := AddData(Size);
+          var DataOfs := AddData(Size);
           WatchRAM(Addr, Size);
           FMemory.ReadBytes(Addr, FData[DataOfs], Size);
           FSnapshots.AddOrSetValue(Key, DataOfs);
+          LevelData[L] := Cardinal(DataOfs);
         end;
       end;
     end;
@@ -1223,6 +1284,7 @@ begin
   if S.Dither then Flags := Flags or (1 shl 17);
   if S.LogicOp then Flags := Flags or (1 shl 18);
   if S.DepthClamp then Flags := Flags or (1 shl 19);
+  if S.Textured and S.Tex.NeedLod then Flags := Flags or (1 shl 20);
   W[104] := S.KeepMask;
   W[105] := Cardinal(S.ZPermutation);
   W[106] := Cardinal(FMemory.VRAMShift);
@@ -1271,10 +1333,14 @@ begin
     W[65] := Cardinal(S.Tex.ClutShift);
     W[66] := Cardinal(S.Tex.ClutMask);
     W[67] := Cardinal(S.Tex.ClutOffset);
-    W[ST_TEXSOURCE] := Source;
-    W[69] := Base;
-    W[70] := DataOfs;
     W[71] := ClutOfs;
+    for var L := 0 to 7 do
+      W[ST_LEVELDATA + L] := LevelData[L];
+    W[ST_MINFILTER] := Cardinal(S.Tex.MinFilter);
+    W[ST_MAXLEVEL] := Cardinal(S.Tex.MaxLevel);
+    W[ST_LEVELMODE] := Cardinal(S.Tex.LevelMode);
+    W[ST_LODBIAS] := Cardinal(S.Tex.LodBias);
+    W[ST_SLOPE] := PCardinal(@S.Tex.Slope)^;
     for var L := 0 to 7 do
     begin
       W[ST_LEVELS + L * 4] := S.Tex.Levels[L].Addr;
@@ -1289,7 +1355,6 @@ begin
   FLastState := Result;
   FLastTranslation := FMemory.VRAMShift;
   FLastTex := Tex;
-  FLastTexInVRAM := TexInVRAM;
 end;
 
 // Whether a pass already reads (and keeps apart from what it draws) a span.
@@ -1302,12 +1367,13 @@ begin
 end;
 
 // Puts the next primitive (covering the box) into a pass. False when the
-// kernel cannot draw it exactly as the CPU does.
-function TGEGPUBackend.Place(const S: TGERaster; State: Integer; const Tex: TGEGPUSpan; TexInVRAM: Boolean;
+// kernel cannot draw it exactly as the CPU does. Pixels of a box no wider
+// than the stride all have their own bytes, even past the stride's end.
+function TGEGPUBackend.Place(const S: TGERaster; State: Integer; const Tex: TGEGPUReads;
   X1, Y1, X2, Y2: Integer): Boolean;
 begin
   var UsesZ := (S.ClearMode and S.ClearDepth) or (not S.ClearMode and S.DepthTest);
-  // Within the last pass's box, with its buffers and a texture it reads:
+  // Within the last pass's box, with its buffers and textures it reads:
   // everything below has been checked and held for the whole box already.
   if FPassCount > 0 then
   begin
@@ -1315,11 +1381,20 @@ begin
     if (X1 >= P.X1) and (Y1 >= P.Y1) and (X2 <= P.X2) and (Y2 <= P.Y2) and (P.FBAddr = S.FBAddr) and
       (P.FBStride = S.FBStride) and (P.FBFormat = S.FBFormat) and
       (not UsesZ or (P.UsesZ and (P.ZAddr = S.ZAddr) and (P.ZStride = S.ZStride) and
-        (P.ZPermutation = S.ZPermutation))) and
-      (not TexInVRAM or Covered(P^, Tex)) then
+        (P.ZPermutation = S.ZPermutation))) then
     begin
-      Inc(P.Count);
-      Exit(True);
+      var Known := True;
+      for var I := 0 to Tex.Count - 1 do
+        if not Covered(P^, Tex.Spans[I]) then
+        begin
+          Known := False;
+          Break;
+        end;
+      if Known then
+      begin
+        Inc(P.Count);
+        Exit(True);
+      end;
     end;
   end;
 
@@ -1327,21 +1402,22 @@ begin
   if S.FBFormat = 3 then
     Bpp := 4;
   // Distinct pixels must not share memory.
-  if (X2 >= Integer(S.FBStride)) or ((Int64(Y2 - Y1) * S.FBStride + X2 - X1 + 1) * Bpp > PSPVRAMSize) then
+  if (X2 - X1 + 1 > Integer(S.FBStride)) or ((Int64(Y2 - Y1) * S.FBStride + X2 - X1 + 1) * Bpp > PSPVRAMSize) then
   begin FWhy := 'pixels share colour memory'; Exit(False); end;
   var FB := TargetSpan(S.FBAddr, S.FBStride, Bpp, X1, Y1, X2, Y2);
   var Z := Default(TGEGPUSpan);
   if UsesZ then
   begin
-    if (X2 >= Integer(S.ZStride)) or ((Int64(Y2 - Y1) * S.ZStride + X2 - X1 + 1) * 2 > PSPVRAMSize) then
+    if (X2 - X1 + 1 > Integer(S.ZStride)) or ((Int64(Y2 - Y1) * S.ZStride + X2 - X1 + 1) * 2 > PSPVRAMSize) then
     begin FWhy := 'pixels share depth memory'; Exit(False); end;
     Z := BlockSpan(TargetSpan(S.ZAddr, S.ZStride, 2, X1, Y1, X2, Y2), PermutationBlock(S.ZPermutation));
     if Overlap(FB, Z) then
     begin FWhy := 'colour and depth share memory'; Exit(False); end;
   end;
   // A texture read from the pixels being drawn depends on the drawing order.
-  if TexInVRAM and (Overlap(Tex, FB) or Overlap(Tex, Z)) then
-  begin FWhy := 'texture from the pixels drawn'; Exit(False); end;
+  for var I := 0 to Tex.Count - 1 do
+    if Overlap(Tex.Spans[I], FB) or Overlap(Tex.Spans[I], Z) then
+    begin FWhy := 'texture from the pixels drawn'; Exit(False); end;
 
   var NewPass := FPassCount = 0;
   var PFB := FB;
@@ -1380,14 +1456,19 @@ begin
         if PassZ then
           PZ := BlockSpan(TargetSpan(ZAddr, ZStride, 2, UX1, UY1, UX2, UY2), PermutationBlock(ZPermutation));
       end;
-      if Changed and (((Int64(UY2 - UY1) * S.FBStride + UX2 - UX1 + 1) * Bpp > PSPVRAMSize) or
-        (PassZ and ((UX2 >= Integer(ZStride)) or ((Int64(UY2 - UY1) * ZStride + UX2 - UX1 + 1) * 2 > PSPVRAMSize) or
+      var TexReadsPass := False;
+      for var I := 0 to Tex.Count - 1 do
+        if Overlap(Tex.Spans[I], PFB) or Overlap(Tex.Spans[I], PZ) then
+          TexReadsPass := True;
+      if Changed and ((UX2 - UX1 + 1 > Integer(S.FBStride)) or
+        ((Int64(UY2 - UY1) * S.FBStride + UX2 - UX1 + 1) * Bpp > PSPVRAMSize) or
+        (PassZ and ((UX2 - UX1 + 1 > Integer(ZStride)) or ((Int64(UY2 - UY1) * ZStride + UX2 - UX1 + 1) * 2 > PSPVRAMSize) or
         Overlap(PFB, PZ)))) then
       begin
         NewPass := True;
         Split('memory span');
       end
-      else if TexInVRAM and (Overlap(Tex, PFB) or Overlap(Tex, PZ)) then
+      else if TexReadsPass then
       begin
         NewPass := True;
         Split('texture reads the pass');
@@ -1444,14 +1525,15 @@ begin
     P.Z := PZ;
     Hold(PZ);
   end;
-  if TexInVRAM and not Covered(P^, Tex) then
-  begin
-    if P.ReadCount = Length(P.Reads) then
-      SetLength(P.Reads, Max(8, P.ReadCount * 2));
-    P.Reads[P.ReadCount] := Tex;
-    Inc(P.ReadCount);
-    WatchVRAM(Tex);
-  end;
+  for var I := 0 to Tex.Count - 1 do
+    if not Covered(P^, Tex.Spans[I]) then
+    begin
+      if P.ReadCount = Length(P.Reads) then
+        SetLength(P.Reads, Max(8, P.ReadCount * 2));
+      P.Reads[P.ReadCount] := Tex.Spans[I];
+      Inc(P.ReadCount);
+      WatchVRAM(Tex.Spans[I]);
+    end;
   Result := True;
 end;
 
@@ -1518,8 +1600,8 @@ end;
 
 procedure TGEGPUBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 var
-  Tex: TGEGPUSpan;
-  InVRAM, Ok: Boolean;
+  Tex: TGEGPUReads;
+  Ok: Boolean;
 begin
   BeginPrim;
   // The set-up of GEDrawTriangle.
@@ -1560,11 +1642,28 @@ begin
   if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then Bias := Bias or 4;
   var FArea := 1.0 / Area;
 
-  var State := PackState(S, Tex, InVRAM, Ok);
+  var State := PackState(S, Tex, Ok);
+  var NeedLod := Ok and S.Textured and S.Tex.NeedLod;
+  if NeedLod then
+  begin
+    // GEDrawTriangle keeps the last pixel's level of detail where Q or 1/w
+    // is not positive: with finite positive Q*w and w at the corners, every
+    // covered pixel has its own.
+    var AQ0: Single := A0.Q * A0.W;
+    var AQ1: Single := A1.Q * A1.W;
+    var AQ2: Single := A2.Q * A2.W;
+    if not ((AQ0 > 0) and (AQ0 <= MaxSingle) and (AQ1 > 0) and (AQ1 <= MaxSingle) and (AQ2 > 0) and
+      (AQ2 <= MaxSingle) and (A0.W > 0) and (A0.W <= MaxSingle) and (A1.W > 0) and (A1.W <= MaxSingle) and
+      (A2.W > 0) and (A2.W <= MaxSingle)) then
+    begin
+      FWhy := 'level of detail with non-positive Q or w';
+      Ok := False;
+    end;
+  end;
   // Only the texels it samples: it may draw beside them in the same buffer.
-  if Ok and InVRAM and (Tex.Stride > 0) then
-    Tex := TriangleTexels(S, V0, V1, V2, Tex);
-  if not Ok or not Place(S, State, Tex, InVRAM, PX1, PY1, PX2, PY2) then
+  if Ok and (Tex.Count = 1) and Tex.OneLevel and (Tex.Spans[0].Stride > 0) then
+    Tex.Spans[0] := TriangleTexels(S, V0, V1, V2, Tex.Spans[0]);
+  if not Ok or not Place(S, State, Tex, PX1, PY1, PX2, PY2) then
   begin
     Fallback;
     GEDrawTriangle(S, V0, V1, V2);
@@ -1614,13 +1713,33 @@ begin
     PutPlane(P + 78, A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
     PutPlane(P + 84, A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
   end;
+  if NeedLod then
+  begin
+    // GEDrawTriangle's steps of S, T and Q along x and y, as it rounds them.
+    var BX0 := -16 * DY0 * FArea; var BY0 := 16 * DX0 * FArea;
+    var BX1 := -16 * DY1 * FArea; var BY1 := 16 * DX1 * FArea;
+    var BX2 := -16 * DY2 * FArea; var BY2 := 16 * DX2 * FArea;
+    var NSX, NSY, NTX, NTY, DQX, DQY: Single;
+    NSX := A0.S * A0.W * BX0 + A1.S * A1.W * BX1 + A2.S * A2.W * BX2;
+    NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
+    NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
+    NTY := A0.T * A0.W * BY0 + A1.T * A1.W * BY1 + A2.T * A2.W * BY2;
+    DQX := A0.Q * A0.W * BX0 + A1.Q * A1.W * BX1 + A2.Q * A2.W * BX2;
+    DQY := A0.Q * A0.W * BY0 + A1.Q * A1.W * BY1 + A2.Q * A2.W * BY2;
+    P[90] := PCardinal(@NSX)^;
+    P[91] := PCardinal(@NSY)^;
+    P[92] := PCardinal(@NTX)^;
+    P[93] := PCardinal(@NTY)^;
+    P[94] := PCardinal(@DQX)^;
+    P[95] := PCardinal(@DQY)^;
+  end;
   Record_(KindTriangle, S, V0, V1, V2);
 end;
 
 procedure TGEGPUBackend.DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
 var
-  Tex: TGEGPUSpan;
-  InVRAM, Ok: Boolean;
+  Tex: TGEGPUReads;
+  Ok: Boolean;
 begin
   BeginPrim;
   // The set-up of GEDrawSprite.
@@ -1662,11 +1781,11 @@ begin
       TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
   end;
 
-  var State := PackState(S, Tex, InVRAM, Ok);
+  var State := PackState(S, Tex, Ok);
   // Only the texels it samples: it may draw beside them in the same buffer.
-  if Ok and InVRAM and (Tex.Stride > 0) and (V0.Q = 1) and (V1.Q = 1) then
-    Tex := SpriteTexels(S, V0, SX, SY, TX, TY, PX1, PY1, PX2, PY2, Tex);
-  if not Ok or not Place(S, State, Tex, InVRAM, PX1, PY1, PX2, PY2) then
+  if Ok and (Tex.Count = 1) and Tex.OneLevel and (Tex.Spans[0].Stride > 0) and (V0.Q = 1) and (V1.Q = 1) then
+    Tex.Spans[0] := SpriteTexels(S, V0, SX, SY, TX, TY, PX1, PY1, PX2, PY2, Tex.Spans[0]);
+  if not Ok or not Place(S, State, Tex, PX1, PY1, PX2, PY2) then
   begin
     Fallback;
     GEDrawSprite(S, V0, V1);
@@ -1689,6 +1808,16 @@ begin
   P[39] := PCardinal(@QY)^;
   P[40] := PCardinal(@V0.Q)^;
   P[41] := Ord((V0.Q <> 1) or (V1.Q <> 1));
+  // One level of detail for the whole sprite, as GEDrawSprite computes it.
+  var Lod := 0;
+  if S.Textured and S.Tex.NeedLod then
+  begin
+    var W: Single := 1;
+    if V1.W > 0 then
+      W := 1 / V1.W;
+    Lod := TexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), W);
+  end;
+  P[42] := Cardinal(Lod);
   Record_(KindSprite, S, V0, V1, V1);
 end;
 
@@ -1709,8 +1838,8 @@ var
   F: TGEGPUFragment;
   Frags: TArray<TGEGPUFragment>;
   Pos: TArray<TPoint>;
-  Tex: TGEGPUSpan;
-  InVRAM, Ok: Boolean;
+  Tex: TGEGPUReads;
+  Ok: Boolean;
 begin
   BeginPrim;
   // GEDrawLine, keeping the fragments.
@@ -1785,8 +1914,8 @@ begin
   BY2 := Min(BY2, Min(S.ScissorY2, S.BandY2));
   if (BX1 > BX2) or (BY1 > BY2) then
     Exit;
-  var State := PackState(S, Tex, InVRAM, Ok);
-  if not Ok or not Place(S, State, Tex, InVRAM, BX1, BY1, BX2, BY2) then
+  var State := PackState(S, Tex, Ok);
+  if not Ok or not Place(S, State, Tex, BX1, BY1, BX2, BY2) then
   begin
     Fallback;
     GEDrawLine(S, V0, V1);
@@ -1828,8 +1957,8 @@ end;
 
 procedure TGEGPUBackend.DrawPoint(const S: TGERaster; const V: TGEVertex);
 var
-  Tex: TGEGPUSpan;
-  InVRAM, Ok: Boolean;
+  Tex: TGEGPUReads;
+  Ok: Boolean;
 begin
   BeginPrim;
   var PX := (V.X + $100000) div 16 - $10000;
@@ -1837,8 +1966,8 @@ begin
   if (PX < S.ScissorX1) or (PX > S.ScissorX2) or (PY < S.ScissorY1) or (PY > S.ScissorY2) or (PY < S.BandY1) or
     (PY > S.BandY2) then
     Exit;
-  var State := PackState(S, Tex, InVRAM, Ok);
-  if not Ok or not Place(S, State, Tex, InVRAM, PX, PY, PX, PY) then
+  var State := PackState(S, Tex, Ok);
+  if not Ok or not Place(S, State, Tex, PX, PY, PX, PY) then
   begin
     Fallback;
     GEDrawPoint(S, V);

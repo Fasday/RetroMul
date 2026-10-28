@@ -302,6 +302,66 @@ begin
         if I mod 31 = 0 then Compare;
       end;
       Compare;
+      // Mipmaps and the level of detail (GESampleTextureLod): every filter
+      // and TEXLEVEL mode, biases and slopes, levels in RAM and in VRAM
+      // mirrors, per-pixel LOD of triangles (any Q and w), sprites, lines, points.
+      for var I := 1 to 8000 do
+      begin
+        var T := State;
+        T.ClearMode := False;
+        T.Textured := True;
+        T.Tex.LevelCount := Between(1, 8);
+        T.Tex.MaxLevel := T.Tex.LevelCount - 1;
+        T.Tex.MinFilter := Rand mod 8;
+        T.Tex.LevelMode := Rand mod 4;
+        T.Tex.LodBias := Between(-40, 40);
+        case Rand mod 5 of
+          0: T.Tex.Slope := 0;
+          1: T.Tex.Slope := Between(1, 4000) / 1000;
+          2: T.Tex.Slope := -Between(1, 4000) / 1000;
+          3: T.Tex.Slope := Between(1, 1000) / 100000;
+        else
+          T.Tex.Slope := Between(1, 100) * 3.25;
+        end;
+        var Size := 8 shl (Rand mod 4);
+        var InRAM := Flag;
+        for var L := 0 to 7 do
+        begin
+          T.Tex.Levels[L].Width := Max(1, Size shr L);
+          T.Tex.Levels[L].Height := Max(1, (Size shl (Rand mod 2)) shr L);
+          if Rand mod 6 = 0 then T.Tex.Levels[L].Width := 1 shl (Rand mod 7);
+          T.Tex.Levels[L].BufWidth := Max(T.Tex.Levels[L].Width, 16);
+          if InRAM then
+            T.Tex.Levels[L].Addr := PSPRAMBase + $10000 + Cardinal(L) * $800 + Cardinal(Rand mod 4) * 16
+          else
+            T.Tex.Levels[L].Addr := PSPVRAMBase + Cardinal(Rand mod 4) * PSPVRAMSize + $60000 + Cardinal(L) * $800;
+        end;
+        // Levels sharing a mipmap's pages, one of them in RAM.
+        if Rand mod 8 = 0 then T.Tex.Levels[Between(0, 7)].Addr := PSPRAMBase + $12000;
+        if Rand mod 25 = 0 then T.Tex.Levels[0].Width := 24;
+        T.Tex.NeedLod := ((T.Tex.MinFilter >= 4) and (T.Tex.MaxLevel > 0)) or
+          (((T.Tex.MinFilter and 1) <> 0) <> T.Tex.Linear);
+        GEPrepareRaster(T);
+        var VA := Vertex; var VB := Vertex; var VC := Vertex;
+        // Minified, magnified, flat and huge texture coordinates.
+        var Spread := 1 shl (Rand mod 12);
+        VA.S := Between(-Spread, Spread) / 4; VB.S := Between(-Spread, Spread) / 4; VC.S := Between(-Spread, Spread) / 4;
+        VA.T := Between(-Spread, Spread) / 4; VB.T := Between(-Spread, Spread) / 4; VC.T := Between(-Spread, Spread) / 4;
+        if Rand mod 16 = 0 then begin VB.S := VA.S; VC.S := VA.S; VB.T := VA.T; VC.T := VA.T; end;
+        if Rand mod 32 = 0 then VA.S := 3e30;
+        if Rand mod 3 <> 0 then
+        begin
+          VA.Q := Between(1, 32) / 8; VB.Q := Between(1, 32) / 8; VC.Q := Between(1, 32) / 8;
+        end;
+        if Rand mod 4 = 0 then
+        begin
+          VA.Q := 1; VB.Q := 1;
+        end;
+        Draw(Rand mod 4, T, VA, VB, VC);
+        if I mod 37 = 0 then GPU.Release;
+        if I mod 59 = 0 then Compare;
+      end;
+      Compare;
       // Bilinear floor narrows its argument to Single in the current reference.
       S.Tex.Format := 3;
       S.Tex.Linear := True;

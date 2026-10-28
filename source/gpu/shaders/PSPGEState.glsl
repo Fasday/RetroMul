@@ -63,6 +63,15 @@ const uint ST_LEVELS = 72u; // 8 x (address, width, height, buffer width)
 const uint ST_KEEPMASK = 104u;
 const uint ST_ZPERMUTATION = 105u;
 const uint ST_VRAMSHIFT = 106u;
+// Per level, where its texels come from: NO_DATA for the VRAM buffer, else
+// the offset in the data buffer of a copy of the guest bytes from its address.
+const uint ST_LEVELDATA = 107u; // 8 words
+const uint ST_MINFILTER = 115u;
+const uint ST_MAXLEVEL = 116u;
+const uint ST_LEVELMODE = 117u;
+const uint ST_LODBIAS = 118u;
+const uint ST_SLOPE = 119u; // float bits
+const uint NO_DATA = 0xFFFFFFFFu;
 
 const uint SF_THROUGH = 1u << 0;
 const uint SF_CLEARMODE = 1u << 1;
@@ -84,6 +93,8 @@ const uint SF_BLEND = 1u << 16;
 const uint SF_DITHER = 1u << 17;
 const uint SF_LOGICOP = 1u << 18;
 const uint SF_DEPTHCLAMP = 1u << 19;
+// TGETexture.NeedLod: sampled through GESampleTextureLod.
+const uint SF_NEEDLOD = 1u << 20;
 
 int stInt(uint s, uint index)
 {

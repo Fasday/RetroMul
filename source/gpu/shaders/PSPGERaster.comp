@@ -235,6 +235,11 @@ uint dxtColor(uint c0, uint c1, uint index)
 uint fetchTexel(uint s, int level, int x, int y)
 {
   uint addr = stLevelAddr(s, level);
+  // Each level comes from VRAM or from the batch's copy of its guest bytes.
+  uint data = states[s + ST_LEVELDATA + uint(level)];
+  g_texSource = data == NO_DATA ? 0u : 1u;
+  g_texBase = addr;
+  g_texData = data;
   int bufWidth = stLevelBufWidth(s, level);
   bool swizzle = stInt(s, ST_TEXSWIZZLE) != 0;
   int format = stInt(s, ST_TEXFORMAT);
@@ -315,14 +320,13 @@ int wrapCoord(int v, int size, bool clampIt)
   return v & (size - 1);
 }
 
-uint sampleTexture(uint s, float fs, float ft)
+// SampleLevel: S and T in texels of the level.
+uint sampleLevel(uint s, int level, float fs, float ft, bool linear)
 {
-  int level = stInt(s, ST_TEXLEVEL);
   int width = stLevelWidth(s, level);
   int height = stLevelHeight(s, level);
   bool clampU = stInt(s, ST_TEXCLAMPU) != 0;
   bool clampV = stInt(s, ST_TEXCLAMPV) != 0;
-  bool linear = stInt(s, ST_TEXLINEAR) != 0;
   int xa, xb, ya, yb;
   int64_t fracX = 0l, fracY = 0l;
   if (!linear)
@@ -372,6 +376,119 @@ uint sampleTexture(uint s, float fs, float ft)
   return result;
 }
 
+float powerRecip(int size)
+{
+  return uintBitsToFloat(uint(127 - findMSB(size)) << 23);
+}
+
+// GESampleTexture, or GESampleTextureLod for a texture that needs the level
+// of detail: up to level 0 the magnification filter; past it the
+// minification one, from the nearest level or two levels mixed by 1/16.
+// Levels past 0 take level 0 texels times their size over level 0's, in
+// single precision (powers of two: dividing is multiplying by the exact
+// reciprocal). One sampling site, for the size of the kernel.
+uint sampleTexture(uint s, float fs, float ft, int lod)
+{
+  int levels[2];
+  levels[0] = stInt(s, ST_TEXLEVEL);
+  levels[1] = 0;
+  int count = 1;
+  int frac = 0;
+  bool linear = stInt(s, ST_TEXLINEAR) != 0;
+  if (stFlag(s, SF_NEEDLOD))
+  {
+    levels[0] = 0;
+    if (lod > 0)
+    {
+      int minFilter = stInt(s, ST_MINFILTER);
+      int maxLevel = stInt(s, ST_MAXLEVEL);
+      linear = (minFilter & 1) != 0;
+      if (minFilter >= 4 && maxLevel != 0)
+      {
+        if (lod > maxLevel * 16)
+          lod = maxLevel * 16;
+        int level = lod >> 4;
+        frac = lod & 15;
+        if (minFilter < 6)
+        {
+          if (frac >= 8)
+            level++;
+          if (level > maxLevel)
+            level = maxLevel;
+        }
+        else if (frac != 0 && level < maxLevel)
+        {
+          levels[1] = level + 1;
+          count = 2;
+        }
+        levels[0] = level;
+      }
+    }
+  }
+  uint c[2];
+  for (int i = 0; i < count; i++)
+  {
+    int level = levels[i];
+    float ls = fs, lt = ft;
+    if (level > 0 && stFlag(s, SF_NEEDLOD))
+    {
+      precise float su = fs * float(stLevelWidth(s, level));
+      precise float tv = ft * float(stLevelHeight(s, level));
+      precise float ss = su * powerRecip(stLevelWidth(s, 0));
+      precise float tt = tv * powerRecip(stLevelHeight(s, 0));
+      ls = ss;
+      lt = tt;
+    }
+    c[i] = sampleLevel(s, level, ls, lt, linear);
+  }
+  if (count == 1)
+    return c[0];
+  uint result = 0u;
+  for (uint shift = 0u; shift < 32u; shift += 8u)
+  {
+    int v = (int((c[0] >> shift) & 0xFFu) * (16 - frac) + int((c[1] >> shift) & 0xFFu) * frac) >> 4;
+    result |= uint(v) << shift;
+  }
+  return result;
+}
+
+// System.Math.Max for Singles: NaN in A wins, NaN in B is taken, equal values
+// give A when B is negative (-0).
+float delphiMax(float a, float b)
+{
+  if (a != b)
+  {
+    if (!isnan(a))
+      return b < a ? a : b;
+    return a;
+  }
+  return (floatBitsToUint(b) & 0x80000000u) != 0u ? a : b;
+}
+
+// GELog16: the exponent and 4 bits of mantissa, in 1/16.
+int geLog16(float v)
+{
+  if (!(v > 0.0))
+    return -0x10000;
+  uint bits = floatBitsToUint(v);
+  return (int((bits >> 23) & 0xFFu) - 127) * 16 + int((bits >> 19) & 0xFu);
+}
+
+// PSP.GE.Raster.TexLod.
+int texLod(uint s, float scale, float w)
+{
+  int mode = stInt(s, ST_LEVELMODE);
+  int bias = stInt(s, ST_LODBIAS);
+  if (mode == 0)
+    return geLog16(scale) + bias;
+  if (mode == 2)
+  {
+    precise float sw = uintBitsToFloat(stUint(s, ST_SLOPE)) * w;
+    return geLog16(sw) + 16 + bias;
+  }
+  return bias;
+}
+
 // ---- PSP.GE.Raster pixel pipeline -----------------------------------------
 
 struct Fragment
@@ -381,6 +498,8 @@ struct Fragment
   int z;
   float s, t;
   float fog;
+  // Level of detail in 1/16 levels when the texture needs it.
+  int lod;
 };
 
 bool testFunc(int func, int a, int b)
@@ -532,7 +651,7 @@ int texMul(int c, int t, int dbl)
 
 void applyTexture(uint s, inout Fragment f)
 {
-  uint c = sampleTexture(s, f.s, f.t);
+  uint c = sampleTexture(s, f.s, f.t, f.lod);
   int tr = int(c & 0xFFu);
   int tg = int((c >> 8) & 0xFFu);
   int tb = int((c >> 16) & 0xFFu);
@@ -816,6 +935,7 @@ void setupFragment(uint p, uint v, out Fragment f)
   f.z = vInt(p, v, 2u);
   f.s = vFloat(p, v, 11u); f.t = vFloat(p, v, 12u);
   f.fog = vFloat(p, v, 13u);
+  f.lod = 0;
 }
 
 int64_t primInt64(uint o)
@@ -875,6 +995,7 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
   f.z = roundRasterD(zz);
   f.s = 0.0;
   f.t = 0.0;
+  f.lod = 0;
   if (stFlag(s, SF_TEXTURED))
   {
     float aw0 = vFloat(p, V0, 3u), aw1 = vFloat(p, V1, 3u), aw2 = vFloat(p, V2, 3u);
@@ -896,6 +1017,28 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
       }
       f.s = st[0];
       f.t = st[1];
+      if (stFlag(s, SF_NEEDLOD))
+      {
+        // How S and T change per pixel (single precision, with the steps of
+        // the perspective-weighted sums the host packed), over |Q|.
+        float nsx = uintBitsToFloat(prims[p + 90u]), nsy = uintBitsToFloat(prims[p + 91u]);
+        float ntx = uintBitsToFloat(prims[p + 92u]), nty = uintBitsToFloat(prims[p + 93u]);
+        float dqx = uintBitsToFloat(prims[p + 94u]), dqy = uintBitsToFloat(prims[p + 95u]);
+        precise float a = f.s * dqx;
+        precise float b = f.s * dqy;
+        precise float c = f.t * dqx;
+        precise float d = f.t * dqy;
+        precise float ea = nsx - a;
+        precise float eb = nsy - b;
+        precise float ec = ntx - c;
+        precise float ed = nty - d;
+        float m = delphiMax(delphiMax(abs(ea), abs(eb)), delphiMax(abs(ec), abs(ed)));
+        float scale = float(divD(double(m), abs(q)));
+        float w = 1.0;
+        if (iw != 0.0lf)
+          w = float(divD(1.0lf, iw));
+        f.lod = texLod(s, scale, w);
+      }
     }
     else
     {
@@ -913,6 +1056,8 @@ void spriteFragment(uint p, uint s, int px, int py, out Fragment f)
   setupFragment(p, V1, f);
   if (stFlag(s, SF_TEXTURED))
   {
+    // The sprite's level of detail, as the host computed it.
+    f.lod = int(prims[p + 42u]);
     int x0 = vInt(p, V0, 0u), y0 = vInt(p, V0, 1u);
     precise double u = double(px * 16 + 8 - x0) * 0.0625lf;
     precise double v = double(py * 16 + 8 - y0) * 0.0625lf;
@@ -953,6 +1098,7 @@ bool listFragment(uint p, int px, int py, out Fragment f)
   f.s = uintBitsToFloat(data32[o + 10u]);
   f.t = uintBitsToFloat(data32[o + 11u]);
   f.fog = uintBitsToFloat(data32[o + 12u]);
+  f.lod = 0;
   return true;
 }
 
@@ -971,9 +1117,6 @@ void main()
     if (px < int(prims[p + 2u]) || py < int(prims[p + 3u]) || px > int(prims[p + 4u]) || py > int(prims[p + 5u]))
       continue;
     uint s = prims[p + 1u] * 128u;
-    g_texSource = stUint(s, ST_TEXSOURCE);
-    g_texBase = stUint(s, ST_TEXBASE);
-    g_texData = stUint(s, ST_TEXDATA);
     g_clutData = stUint(s, ST_CLUTDATA);
     g_vramShift = stInt(s, ST_VRAMSHIFT);
     uint kind = prims[p];
