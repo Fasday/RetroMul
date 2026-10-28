@@ -119,6 +119,9 @@ type
     procedure hStdin;
     function IoctlCommon(F: TPSPOpenFile; Cmd, InPtr, InLen, OutPtr, OutLen: Cardinal): Cardinal;
   public
+    // No emulator: device, as on hardware: test programs then write their
+    // output and screenshots to host0: the way they did when recorded.
+    NoEmulatorDevice: Boolean;
     constructor Create(Kernel: TPSPKernel);
     destructor Destroy; override;
     procedure Reset;
@@ -216,7 +219,7 @@ begin
   else if (Device = 'ms0') or (Device = 'fatms0') or (Device = 'ms') or (Device = 'flash0') or (Device = 'flash1') or
     (Device = 'host0') or (Device = 'host') or (Device = 'ef0') or (Device = 'fatms') then
     Result := dkHost
-  else if (Device = 'emulator') or (Device = 'kemulator') then
+  else if ((Device = 'emulator') or (Device = 'kemulator')) and not NoEmulatorDevice then
     Result := dkEmulator
   else if Device.StartsWith('tty') then
     Result := dkTTY

@@ -4,7 +4,8 @@ program PSPRun;
 
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
-// -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
+// -test: isolated pspautotests host0: tree, no display, stops at exit.
+// -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
 
 uses
@@ -240,6 +241,7 @@ begin
     var TraceKernel := False;
     var WatchOn := False;
     var ShowState := False;
+    var HwMode := False;
     var HistoryLen := 0;
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
@@ -259,6 +261,7 @@ begin
       else if A = '-trace' then TraceKernel := True
       else if A = '-watch' then WatchOn := True
       else if A = '-state' then ShowState := True
+      else if A = '-hw' then HwMode := True
       else if A = '-history' then begin Inc(I); HistoryLen := StrToInt(ParamStr(I)); end
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
@@ -365,6 +368,7 @@ begin
       Console.HLE.NoClobber := GetEnvironmentVariable('PSP_NOCLOBBER') <> '';
       if TestMode then
         Console.IO.HasDisplay := False;
+      Console.IO.NoEmulatorDevice := HwMode;
       var History: THistoryRunner := nil;
       if HistoryLen > 0 then
       begin
@@ -440,6 +444,30 @@ begin
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      if HwMode then
+      begin
+        // As recorded on hardware: the program wrote its output and screenshot to host0:.
+        var OutName := TPath.Combine(HostRoot, '__testoutput.txt');
+        if FileExists(OutName) then
+        begin
+          // The guest may leave stdout open when it exits.
+          var Output := TFileStream.Create(OutName, fmOpenRead or fmShareDenyNone);
+          try
+            var Bytes: TBytes;
+            SetLength(Bytes, Output.Size);
+            if Length(Bytes) > 0 then
+            begin
+              Output.ReadBuffer(Bytes[0], Length(Bytes));
+              Write(TEncoding.ANSI.GetString(Bytes));
+            end;
+          finally
+            Output.Free;
+          end;
+        end;
+        var ShotName := TPath.Combine(HostRoot, '__screenshot.bmp');
+        if (ShotFile <> '') and FileExists(ShotName) then
+          TFile.Copy(ShotName, ShotFile, True);
+      end;
       if History <> nil then
         History.Dump;
       if ShowState then
