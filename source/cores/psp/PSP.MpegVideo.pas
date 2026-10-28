@@ -111,6 +111,18 @@ function PSPPixelBytes(Format: Integer): Integer; inline;
 // Writes a picture as RGB into a frame buffer of Stride pixels.
 procedure PSPWritePicture(const Pic: TPSPPicture; Dest: PByte; Stride, Format: Integer; MaxRows: Integer = -1);
 
+type
+  // The ME's two-field picture: luma per field and macroblock column parity
+  // (16-byte rows, a column pair after the other), chroma per field and plane,
+  // each field keeping the chroma rows of its parity.
+  TPSPMePlanes = array[0..7] of PByte;
+
+// The sizes of the eight planes of a picture of MbW x MbH macroblocks.
+function PSPMePlaneSizes(MbW, MbH: Integer; out Sizes: TArray<Cardinal>): Cardinal;
+procedure PSPWriteMePlanes(const Pic: TPSPPicture; const Planes: TPSPMePlanes; MbW, MbH: Integer);
+// Pixels X0..X0+W-1 of row Row of field Field.
+procedure PSPCscMeRow(const Planes: TPSPMePlanes; MbW, MbH, Field, Row, X0, W: Integer; Dest: PByte; Format: Integer);
+
 implementation
 
 uses
@@ -196,6 +208,68 @@ begin
       else
         PWord(Line + X * 2)^ := Word(P);
     end;
+  end;
+end;
+
+function PSPMePlaneSizes(MbW, MbH: Integer; out Sizes: TArray<Cardinal>): Cardinal;
+begin
+  var Luma := Cardinal(((MbW + 1) div 2) * 16 * (MbH * 8));
+  var Chroma := Cardinal(MbW * 8 * MbH * 4);
+  Sizes := [Luma, Luma, Luma, Luma, Chroma, Chroma, Chroma, Chroma];
+  Result := 4 * Luma + 4 * Chroma;
+end;
+
+procedure PSPWriteMePlanes(const Pic: TPSPPicture; const Planes: TPSPMePlanes; MbW, MbH: Integer);
+begin
+  var FieldRows := MbH * 8;
+  var W := Min(Pic.Width, MbW * 16);
+  var H := Min(Pic.Height, MbH * 16);
+  for var Y := 0 to H - 1 do
+  begin
+    var Field := Y and 1;
+    var Row := Y shr 1;
+    var Src := PByte(@Pic.Y[Y * Pic.Width]);
+    var X := 0;
+    var Mb := 0;
+    while X < W do
+    begin
+      Move(Src[X], Planes[Field * 2 + (Mb and 1)][((Mb shr 1) * FieldRows + Row) * 16], Min(16, W - X));
+      Inc(X, 16);
+      Inc(Mb);
+    end;
+  end;
+  var CW := (Pic.Width + 1) div 2;
+  var CH := (Pic.Height + 1) div 2;
+  var N := Min(CW, MbW * 8);
+  for var Field := 0 to 1 do
+    for var K := 0 to MbH * 4 - 1 do
+    begin
+      var SrcRow := 2 * K + Field;
+      if SrcRow >= CH then
+        Break;
+      Move(Pic.Cb[SrcRow * CW], Planes[4 + Field * 2][K * MbW * 8], N);
+      Move(Pic.Cr[SrcRow * CW], Planes[5 + Field * 2][K * MbW * 8], N);
+    end;
+end;
+
+procedure PSPCscMeRow(const Planes: TPSPMePlanes; MbW, MbH, Field, Row, X0, W: Integer; Dest: PByte; Format: Integer);
+begin
+  var FieldRows := MbH * 8;
+  var Cb := Planes[4 + Field * 2] + (Row shr 1) * (MbW * 8);
+  var Cr := Planes[5 + Field * 2] + (Row shr 1) * (MbW * 8);
+  var Bpp := PSPPixelBytes(Format);
+  for var I := 0 to W - 1 do
+  begin
+    var X := X0 + I;
+    var Mb := X shr 4;
+    var R, G, B: Integer;
+    PSPYCbCrToRGB(Planes[Field * 2 + (Mb and 1)][((Mb shr 1) * FieldRows + Row) * 16 + (X and 15)],
+      Cb[X shr 1], Cr[X shr 1], R, G, B);
+    var P := PSPPackPixel(R, G, B, Format);
+    if Bpp = 4 then
+      PCardinal(Dest + I * 4)^ := P
+    else
+      PWord(Dest + I * 2)^ := Word(P);
   end;
 end;
 
