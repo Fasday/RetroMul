@@ -105,6 +105,45 @@ type
     Timer: Int64;
   end;
 
+  TAdhocMac = array[0..5] of Byte;
+
+  TAdhocDatagram = record
+    Data: TBytes;
+    Port: Integer;
+  end;
+
+  // A PDP or PTP socket of sceNetAdhoc.
+  TAdhocSocket = class
+  public
+    Id: Integer;
+    Ptp: Boolean;
+    Port: Integer;
+    BufSize: Integer;
+    Alert: Cardinal;
+    Deleted: Boolean;
+    Queue: TQueue<TAdhocDatagram>;
+    QueuedBytes: Integer;
+    // PTP: 0 closed, 1 listening, 2 SYN sent, 4 established.
+    State: Integer;
+    PeerMac: TAdhocMac;
+    PeerPort: Integer;
+    Pending: TList<TAdhocSocket>;
+    Peer: TAdhocSocket;
+    RecvData: TBytes;
+    RecvLen: Integer;
+    PeerClosed, Refused: Boolean;
+    constructor Create;
+    destructor Destroy; override;
+  end;
+
+  TMatchingContext = class
+  public
+    Id: Integer;
+    Mode, MaxNum, Port: Integer;
+    Running: Boolean;
+    HelloOpt: TBytes;
+  end;
+
   TPSPNet = class(TPSPService)
   private
     FWorkerIndex: Integer;
@@ -133,11 +172,39 @@ type
     // Open descriptors; every socket the stack still has (closed ones
     // finishing their connection, accepted ones not yet handed out).
     FSockets: TDictionary<Integer, TInetSocket>;
-    FPcbs: TObjectList<TInetSocket>;
+    FPcbs: TList<TInetSocket>;
+    // Sockets the stack is done with, kept until reset: pending events and
+    // waiters may still look at them.
+    FDeadPcbs: TObjectList<TInetSocket>;
     FWaiters: TObjectList<TInetWaiter>;
     FNextFd: Integer;
     FNextEphemeral: Integer;
     FErrno: TDictionary<Cardinal, Integer>;
+    // sceNetAdhocctl
+    FAdhocctlInited, FAdhocctlBroken: Boolean;
+    FAdhocctlState: Integer;
+    FAdhocctlWorker: TPSPNetWorker;
+    FAdhocctlHandlers: array[0..3] of TNetHandler;
+    FAdhocId: TBytes;
+    FAdhocGroup: RawByteString;
+    // The WLAN device has been brought up by a group operation.
+    FAdhocDeviceUp: Boolean;
+    FGameModePending: Boolean;
+    FGameModeTimer: Int64;
+    // sceNetAdhocDiscover
+    FDiscoverStatus, FDiscoverPhase: Integer;
+    FDiscoverParam: Cardinal;
+    // sceNetAdhoc
+    FAdhocInited: Boolean;
+    FAdhocObjs: TList<TAdhocSocket>;
+    FAdhocDead: TObjectList<TAdhocSocket>;
+    FNextAdhocId: Integer;
+    FNextAdhocPort: Integer;
+    // sceNetAdhocMatching
+    FMatchingInited: Boolean;
+    FMatchingPool: Cardinal;
+    FMatching: TObjectDictionary<Integer, TMatchingContext>;
+    FLastMatchingId: Integer;
     procedure hWorker;
     function StartWorker(const Name: string; Priority: Integer; StackSize: Cardinal): TPSPNetWorker;
     procedure StopWorker(var W: TPSPNetWorker);
@@ -206,6 +273,8 @@ type
     procedure hZero;
     // sceNetInet
     {$I PSP.Net.InetDecl.inc}
+    // Ad hoc
+    {$I PSP.Net.AdhocDecl.inc}
   public
     constructor Create(System: TPSPSystem); override;
     destructor Destroy; override;
@@ -220,7 +289,7 @@ uses
 
 const
   // The console's own MAC address.
-  PSPEtherAddr: array[0..5] of Byte = ($00, $1F, $A7, $52, $4D, $50);
+  PSPEtherAddr: TAdhocMac = ($00, $1F, $A7, $52, $4D, $50);
 
   SCE_NET_ERROR_INVALID_ARG = Cardinal($80410103);
   SCE_NET_ERROR_INVALID_THREAD = Cardinal($80410104);
@@ -266,6 +335,8 @@ const
 {$I PSP.Net.Uri.inc}
 {$I PSP.Net.Inet.inc}
 {$I PSP.Net.InetCalls.inc}
+{$I PSP.Net.Adhoc.inc}
+{$I PSP.Net.AdhocSock.inc}
 
 { TPSPNetWorker }
 
@@ -292,9 +363,13 @@ begin
   FResolvers := TObjectDictionary<Integer, TNetResolver>.Create([doOwnsValues]);
   FHttpIds := TDictionary<Cardinal, Integer>.Create;
   FSockets := TDictionary<Integer, TInetSocket>.Create;
-  FPcbs := TObjectList<TInetSocket>.Create;
+  FPcbs := TList<TInetSocket>.Create;
+  FDeadPcbs := TObjectList<TInetSocket>.Create;
   FWaiters := TObjectList<TInetWaiter>.Create;
   FErrno := TDictionary<Cardinal, Integer>.Create;
+  FAdhocObjs := TList<TAdhocSocket>.Create;
+  FAdhocDead := TObjectList<TAdhocSocket>.Create;
+  FMatching := TObjectDictionary<Integer, TMatchingContext>.Create([doOwnsValues]);
 end;
 
 destructor TPSPNet.Destroy;
@@ -304,8 +379,18 @@ begin
   FHttpIds.Free;
   FWaiters.Free;
   FSockets.Free;
+  for var S in FPcbs do
+    if not FDeadPcbs.Contains(S) then
+      FDeadPcbs.Add(S);
   FPcbs.Free;
+  FDeadPcbs.Free;
   FErrno.Free;
+  for var S in FAdhocObjs do
+    if not FAdhocDead.Contains(S) then
+      FAdhocDead.Add(S);
+  FAdhocObjs.Free;
+  FAdhocDead.Free;
+  FMatching.Free;
   inherited;
 end;
 
@@ -327,6 +412,7 @@ begin
   FNextConnection := $01000001;
   FNextRequest := $02000001;
   InetReset;
+  AdhocReset;
   FWorkerStub := FKernel.AllocKernel(16, 'net thread');
 end;
 
@@ -490,10 +576,16 @@ end;
 
 procedure TPSPNet.hNetGetLocalEtherAddr;
 begin
+  // Known once a group or scan operation has brought the radio up.
   var Mac := FHLE.Arg(0);
   if Mac = 0 then
   begin
     FHLE.Result(SCE_NET_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if not FAdhocDeviceUp then
+  begin
+    FHLE.Result($80410180);
     Exit;
   end;
   FMemory.WriteBytes(Mac, PSPEtherAddr[0], 6);
@@ -1169,6 +1261,7 @@ begin
   X.Register(S, $191CDEFF, 'sceSslEnd', hZero);
 
   InetRegister;
+  AdhocRegister;
 end;
 
 initialization

@@ -81,7 +81,11 @@ procedure TPSPNet.InetReset;
 begin
   FWaiters.Clear;
   FSockets.Clear;
+  for var S in FPcbs do
+    if not FDeadPcbs.Contains(S) then
+      FDeadPcbs.Add(S);
   FPcbs.Clear;
+  FDeadPcbs.Clear;
   FErrno.Clear;
   FInetInited := False;
   FNextFd := 1;
@@ -141,7 +145,8 @@ begin
   for var W in FWaiters.ToArray do
     if W.Sock = S then
       W.Sock := nil;
-  FPcbs.Remove(S);
+  if FPcbs.Remove(S) >= 0 then
+    FDeadPcbs.Add(S);
 end;
 
 function TPSPNet.EphemeralPort(Kind: Integer): Integer;
