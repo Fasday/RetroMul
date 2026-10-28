@@ -490,6 +490,59 @@ begin
   FCtrlWaiters.Remove(T);
 end;
 
+// A 16-bit pixel as shown (format 0: 565, 1: 5551, else 4444): each channel
+// widened to 8 bits, R in bits 16..23, B in 0..7, alpha opaque.
+function DisplayColour16(Format, C: Cardinal): Cardinal;
+var
+  R, G, B: Cardinal;
+begin
+  case Format of
+    0:
+      begin
+        R := C and $1F;
+        G := (C shr 5) and $3F;
+        B := (C shr 11) and $1F;
+        R := (R shl 3) or (R shr 2);
+        G := (G shl 2) or (G shr 4);
+        B := (B shl 3) or (B shr 2);
+      end;
+    1:
+      begin
+        R := C and $1F;
+        G := (C shr 5) and $1F;
+        B := (C shr 10) and $1F;
+        R := (R shl 3) or (R shr 2);
+        G := (G shl 3) or (G shr 2);
+        B := (B shl 3) or (B shr 2);
+      end;
+  else
+    R := (C and $F) * 17;
+    G := ((C shr 4) and $F) * 17;
+    B := ((C shr 8) and $F) * 17;
+  end;
+  Result := $FF000000 or (R shl 16) or (G shl 8) or B;
+end;
+
+type
+  TDisplayHalf = array[0..255] of Cardinal;
+  PDisplayHalf = ^TDisplayHalf;
+
+var
+  // DisplayColour16(F, C) = GDisplayLo[F, C and $FF] or GDisplayHi[F, C shr 8]:
+  // in every format the bits of the colour from either byte are apart (green
+  // widened, in 565 G = A + 8B: (A shl 2) or (B shl 5) or (B shr 1)).
+  GDisplayLo, GDisplayHi: array[0..2] of TDisplayHalf;
+
+procedure InitDisplayColours;
+begin
+  for var F := 0 to 2 do
+    for var I := 0 to 255 do
+    begin
+      GDisplayLo[F, I] := DisplayColour16(F, I);
+      GDisplayHi[F, I] := DisplayColour16(F, Cardinal(I) shl 8);
+    end;
+end;
+
 procedure TPSPDisplay.Render(var Frame: TEmulatorFrame);
 begin
   Frame.Width := PSPFrameWidth;
@@ -514,43 +567,24 @@ begin
     // One loop a format (the colours as before: R in bits 16..23, B in 0..7).
     case FFormat of
       3:
-        for var X := 0 to PSPFrameWidth - 1 do
+        // Two pixels at a time: R and B swapped, alpha opaque.
+        for var X := 0 to PSPFrameWidth div 2 - 1 do
         begin
-          var C := PCardinal(Row + X * 4)^;
-          PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or ((C and $FF) shl 16) or (C and $FF00) or ((C shr 16) and $FF);
-        end;
-      0:
-        for var X := 0 to PSPFrameWidth - 1 do
-        begin
-          var C := Cardinal(PWord(Row + X * 2)^);
-          var R := C and $1F;
-          var G := (C shr 5) and $3F;
-          var B := (C shr 11) and $1F;
-          R := (R shl 3) or (R shr 2);
-          G := (G shl 2) or (G shr 4);
-          B := (B shl 3) or (B shr 2);
-          PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
-        end;
-      1:
-        for var X := 0 to PSPFrameWidth - 1 do
-        begin
-          var C := Cardinal(PWord(Row + X * 2)^);
-          var R := C and $1F;
-          var G := (C shr 5) and $1F;
-          var B := (C shr 10) and $1F;
-          R := (R shl 3) or (R shr 2);
-          G := (G shl 3) or (G shr 2);
-          B := (B shl 3) or (B shr 2);
-          PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
+          var C := PUInt64(Row + X * 8)^;
+          PUInt64(PByte(Dest) + X * 8)^ := UInt64($FF000000FF000000) or ((C and UInt64($000000FF000000FF)) shl 16) or
+            (C and UInt64($0000FF000000FF00)) or ((C shr 16) and UInt64($000000FF000000FF));
         end;
     else
-      for var X := 0 to PSPFrameWidth - 1 do
       begin
-        var C := Cardinal(PWord(Row + X * 2)^);
-        var R := (C and $F) * 17;
-        var G := ((C shr 4) and $F) * 17;
-        var B := ((C shr 8) and $F) * 17;
-        PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
+        // DisplayColour16 by the pixel's low and high byte.
+        var T := Min(FFormat, 2);
+        var Lo: PDisplayHalf := @GDisplayLo[T];
+        var Hi: PDisplayHalf := @GDisplayHi[T];
+        for var X := 0 to PSPFrameWidth - 1 do
+        begin
+          var C := Cardinal(PWord(Row + X * 2)^);
+          PCardinal(PByte(Dest) + X * 4)^ := Lo[C and $FF] or Hi[C shr 8];
+        end;
       end;
     end;
   end;
@@ -1102,5 +1136,8 @@ begin
   H.Register(C, $A68FD260, 'sceCtrlClearRapidFire', hCtrlZero);
   H.Register(C, $6841BE1A, 'sceCtrlSetRapidFire', hCtrlZero);
 end;
+
+initialization
+  InitDisplayColours;
 
 end.

@@ -192,6 +192,9 @@ end;
 
 var
   Bad: Integer;
+  RowsChecked, PortsChecked: Int64;
+  // Batches the Win64 assembler finished itself.
+  FastRows, FastPorts: Int64;
   Specials: TArray<Double>;
 
 procedure Fail(const What: string);
@@ -259,6 +262,72 @@ begin
   Q := RefRow24P(M0, M1, M2, M3, X, Y, Z, 1);
   if not Same(R, Q) then
     Fail(Format('Row24P %x %x %x %x %g %g %g: %g against %g', [M0, M1, M2, M3, X, Y, Z, R, Q]));
+  // Rows24 (in registers where it can) on four rows: plain and with the
+  // projection's T24'd term.
+  var Rows: array[0..3] of TGERow24;
+  var Raw: array[0..3, 0..3] of Cardinal;
+  for var K := 0 to 3 do
+  begin
+    for var J := 0 to 3 do
+    begin
+      Raw[K, J] := RandomReg;
+      Rows[K][J] := GEFloat(Raw[K, J]);
+    end;
+    if K = 3 then
+      Rows[K][3] := T24(Rows[K][3]);
+  end;
+  var Res: array[0..3] of Double;
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  if Rows24Fast(@Rows[0], X, Y, Z, @Res[0], 4) then
+    Inc(FastRows);
+  {$ENDIF}
+  Rows24(@Rows[0], X, Y, Z, @Res[0], 4);
+  for var K := 0 to 3 do
+  begin
+    if K = 3 then
+      Q := RefRow24P(Raw[K, 0], Raw[K, 1], Raw[K, 2], Raw[K, 3], X, Y, Z, 1)
+    else
+      Q := RefRow24(Raw[K, 0], Raw[K, 1], Raw[K, 2], Raw[K, 3], X, Y, Z);
+    if not Same(Res[K], Q) then
+      Fail(Format('Rows24 row %d %x %x %x %x %g %g %g: %g against %g', [K, Raw[K, 0], Raw[K, 1], Raw[K, 2],
+        Raw[K, 3], X, Y, Z, Res[K], Q]));
+  end;
+  Inc(RowsChecked, 4);
+end;
+
+procedure CheckPort;
+begin
+  // As Project: clip coordinates times 1/w, to the viewport's GEFloats.
+  var V: array[0..2] of Double;
+  var Port: array[0..5] of Double;
+  var Raw: array[0..5] of Cardinal;
+  for var K := 0 to 2 do
+  begin
+    V[K] := RandomDouble;
+    if Bits64 mod 2 = 0 then
+      V[K] := RefT24(Single(RandomDouble));
+  end;
+  for var K := 0 to 5 do
+  begin
+    Raw[K] := RandomReg;
+    Port[K] := GEFloat(Raw[K]);
+  end;
+  var RW := RandomDouble;
+  if Bits64 mod 2 = 0 then
+    RW := RefRecip24(RandomDouble);
+  var Res: array[0..2] of Double;
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  if Port24Fast(@V[0], RW, @Port[0], @Res[0]) then
+    Inc(FastPorts);
+  {$ENDIF}
+  Port24(@V[0], RW, @Port[0], @Res[0]);
+  for var K := 0 to 2 do
+  begin
+    var Q := RefAdd24(RefT24(RefT24(V[K] * RW) * GEFloat(Raw[K * 2])), GEFloat(Raw[K * 2 + 1]));
+    if not Same(Res[K], Q) then
+      Fail(Format('Port24 %d %g %g %x %x: %g against %g', [K, V[K], RW, Raw[K * 2], Raw[K * 2 + 1], Res[K], Q]));
+  end;
+  Inc(PortsChecked, 3);
 end;
 
 begin
@@ -285,8 +354,15 @@ begin
       CheckSingles(RandomSingle, RandomSingle);
     if I mod 4 = 1 then
       CheckRows;
+    if I mod 4 = 2 then
+      CheckPort;
   end;
-  Writeln(Count, ' random pairs (and singles and matrix rows), ', Bad, ' differences');
+  Writeln(Count, ' random pairs (and singles), ', RowsChecked, ' Rows24 rows, ', PortsChecked, ' Port24 values, ',
+    Bad, ' differences');
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  Writeln(Format('in assembler: %.1f%% of Rows24 batches, %.1f%% of Port24 batches',
+    [100 * FastRows / Max(RowsChecked div 4, 1), 100 * FastPorts / Max(PortsChecked div 3, 1)]));
+  {$ENDIF}
   var W := TStopwatch.StartNew;
   var S: Double := 0;
   for var I := 1 to 10000000 do

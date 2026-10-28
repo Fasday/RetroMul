@@ -84,6 +84,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('game')
     ap.add_argument('--lines', help='per source line within routines whose name contains this')
+    ap.add_argument('--callers', help='the callers of routines whose name contains this (from the stack)')
     ap.add_argument('--exe', default=str(RUN / 'bin/PSPRun_win64.exe'))
     ap.add_argument('--frames', type=int, default=3000)
     ap.add_argument('--skip', type=float, default=5)
@@ -117,6 +118,8 @@ def main():
     time.sleep(args.skip)
     counts = Counter()
     lines = Counter()
+    callers = Counter()
+    laddrs, lwhere = [], []
     if args.lines:
         laddrs, lwhere = load_lines(str(Path(args.exe).with_suffix('.map')))
     ctx = hp.CONTEXT()
@@ -133,6 +136,25 @@ def main():
                         k = bisect.bisect_right(laddrs, rip) - 1
                         if k >= 0:
                             lines[lwhere[k]] += 1
+                    if args.callers and args.callers in names[i]:
+                        # The first stack word that points into the exe's
+                        # code outside the routine: its caller (roughly).
+                        stack = (ctypes.c_uint64 * 24)()
+                        got = ctypes.c_size_t()
+                        caller = '?'
+                        if hp.k32.ReadProcessMemory(hproc, ctypes.c_void_p(ctx.Rsp), stack, ctypes.sizeof(stack),
+                                                    ctypes.byref(got)):
+                            for word in stack:
+                                r = word - base - 0x1000
+                                j = bisect.bisect_right(addrs, r) - 1
+                                if 0 <= j < len(names) and r - addrs[j] < 0x100000 and j != i and word > base:
+                                    caller = names[j]
+                                    if args.lines and laddrs:
+                                        k = bisect.bisect_right(laddrs, r - 1) - 1
+                                        if k >= 0:
+                                            caller += ' ' + lwhere[k]
+                                    break
+                        callers[caller] += 1
                 elif ctx.Rip >= 0x7FF000000000:
                     counts['?system'] += 1
                 else:
@@ -152,6 +174,10 @@ def main():
     if args.lines:
         print('lines of %s:' % args.lines)
         for n, c in lines.most_common(args.top):
+            print('%6.2f%% %s' % (100.0 * c / total, n))
+    if args.callers:
+        print('callers of %s:' % args.callers)
+        for n, c in callers.most_common(args.top):
             print('%6.2f%% %s' % (100.0 * c / total, n))
 
 

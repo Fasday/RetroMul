@@ -77,6 +77,9 @@ type
     Proj: array[0..15] of Double;
     // T24 of the projection's translation column (w = 1).
     ProjW: array[0..3] of Double;
+    // The rows as ClipPosition uses them (factors, the term added):
+    // World's and View's x, y, z, Proj's x, y, z, w.
+    Rows: array[0..9, 0..3] of Double;
     WorldS, TGen: TGESingle12;
     Bone: array[0..95] of Single;
     BoneCount: Integer;
@@ -114,6 +117,10 @@ type
     FGeomPort: array[0..7] of Cardinal;
     FGeomBones: array[0..95] of Cardinal;
     FGeomCached: Boolean;
+    // What BuildRaster built FRaster from (the 77 registers of GERasterRuns,
+    // the VRAM layout), while FRaster is as it built it.
+    FRasterKey: array[0..79] of Cardinal;
+    FRasterKeyValid: Boolean;
     procedure PrepareLight;
     procedure PrepareGeometry;
     procedure PrepareBones(Count: Integer);
@@ -162,6 +169,9 @@ type
     procedure SaveContext(Address: Cardinal);
     procedure RestoreContext(Address: Cardinal);
     property Memory: TPSPMemory read FMemory;
+    // RAM's host memory where TPSPMemory maps it linearly, else nil: reading
+    // it there is reading it through TPSPMemory.
+    property RAMBase: PByte read FRAMBase;
   end;
 
 const
@@ -217,6 +227,7 @@ begin
   FGeomValid := False;
   FLightValid := False;
   FLightRegsValid := False;
+  FRasterKeyValid := False;
   BoxVisible := True;
   if FWorkers <> nil then
   begin
@@ -423,6 +434,12 @@ begin
   Result := PSingle(@Bits)^;
 end;
 
+const
+  // Fixed point fractions by multiplying with the power of two (exact, as
+  // the division was).
+  VInv128: Double = 1 / 128;
+  VInv32768: Double = 1 / 32768;
+
 procedure TPSPGEEngine.DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
 var
   M: TPSPMemory;
@@ -434,7 +451,15 @@ begin
   var Physical := Addr and $1FFFFFFF;
   if (FRAMBase <> nil) and (Physical >= PSPRAMBase) and (Physical - PSPRAMBase <= PSPRAMSize - Cardinal(FVSize)) then
     P := FRAMBase + (Physical - PSPRAMBase);
-  V := Default(TGEInVertex);
+  // (Default(TGEInVertex) without REP STOS: all its bytes zero.)
+  var Q: PUInt64 := @V;
+  for var I := 1 to SizeOf(TGEInVertex) div 8 do
+  begin
+    Q^ := 0;
+    Inc(Q);
+  end;
+  if SizeOf(TGEInVertex) mod 8 <> 0 then
+    PCardinal(PByte(@V) + SizeOf(TGEInVertex) - 4)^ := 0;
   Through := (VType and (1 shl 23)) <> 0;
   var Tc := VType and 3;
   var Col := (VType shr 2) and 7;
@@ -445,8 +470,8 @@ begin
   if Wgt <> 0 then
     for var I := 0 to WCount - 1 do
       case Wgt of
-        1: V.Weights[I] := VB(P, M, Addr, Cardinal(I)) / 128;
-        2: V.Weights[I] := VH(P, M, Addr, Cardinal(I * 2)) / 32768;
+        1: V.Weights[I] := VB(P, M, Addr, Cardinal(I)) * VInv128;
+        2: V.Weights[I] := VH(P, M, Addr, Cardinal(I * 2)) * VInv32768;
         3: V.Weights[I] := VF(P, M, Addr, Cardinal(I * 4));
       end;
   var TA := Cardinal(FOffTC);
@@ -460,8 +485,8 @@ begin
     1:
       begin
         // Also in through mode, where they are texels / 128.
-        V.U := VB(P, M, Addr, TA) / 128;
-        V.V := VB(P, M, Addr, TA + 1) / 128;
+        V.U := VB(P, M, Addr, TA) * VInv128;
+        V.V := VB(P, M, Addr, TA + 1) * VInv128;
       end;
     2:
       begin
@@ -469,8 +494,8 @@ begin
         V.V := VH(P, M, Addr, TA + 2);
         if not Through then
         begin
-          V.U := V.U / 32768;
-          V.V := V.V / 32768;
+          V.U := V.U * VInv32768;
+          V.V := V.V * VInv32768;
         end;
       end;
     3:
@@ -517,13 +542,13 @@ begin
     case Nrm of
       1:
         begin
-          V.N.X := ShortInt(VB(P, M, Addr, NA)) / 128; V.N.Y := ShortInt(VB(P, M, Addr, NA + 1)) / 128;
-          V.N.Z := ShortInt(VB(P, M, Addr, NA + 2)) / 128;
+          V.N.X := ShortInt(VB(P, M, Addr, NA)) * VInv128; V.N.Y := ShortInt(VB(P, M, Addr, NA + 1)) * VInv128;
+          V.N.Z := ShortInt(VB(P, M, Addr, NA + 2)) * VInv128;
         end;
       2:
         begin
-          V.N.X := SmallInt(VH(P, M, Addr, NA)) / 32768; V.N.Y := SmallInt(VH(P, M, Addr, NA + 2)) / 32768;
-          V.N.Z := SmallInt(VH(P, M, Addr, NA + 4)) / 32768;
+          V.N.X := SmallInt(VH(P, M, Addr, NA)) * VInv32768; V.N.Y := SmallInt(VH(P, M, Addr, NA + 2)) * VInv32768;
+          V.N.Z := SmallInt(VH(P, M, Addr, NA + 4)) * VInv32768;
         end;
       3:
         begin
@@ -542,8 +567,8 @@ begin
         // Through mode has no 8-bit positions: they read as the origin.
         if not Through then
         begin
-          V.P.X := ShortInt(VB(P, M, Addr, PA)) / 128; V.P.Y := ShortInt(VB(P, M, Addr, PA + 1)) / 128;
-          V.P.Z := ShortInt(VB(P, M, Addr, PA + 2)) / 128;
+          V.P.X := ShortInt(VB(P, M, Addr, PA)) * VInv128; V.P.Y := ShortInt(VB(P, M, Addr, PA + 1)) * VInv128;
+          V.P.Z := ShortInt(VB(P, M, Addr, PA + 2)) * VInv128;
         end;
       2:
         if Through then
@@ -552,8 +577,8 @@ begin
         end
         else
         begin
-          V.P.X := SmallInt(VH(P, M, Addr, PA)) / 32768; V.P.Y := SmallInt(VH(P, M, Addr, PA + 2)) / 32768;
-          V.P.Z := SmallInt(VH(P, M, Addr, PA + 4)) / 32768;
+          V.P.X := SmallInt(VH(P, M, Addr, PA)) * VInv32768; V.P.Y := SmallInt(VH(P, M, Addr, PA + 2)) * VInv32768;
+          V.P.Z := SmallInt(VH(P, M, Addr, PA + 4)) * VInv32768;
         end;
       3:
         begin
@@ -842,6 +867,290 @@ begin
     Result := A
   else
     Result := B;
+end;
+
+type
+  // A matrix row as the vertex unit uses it: three factors and the term added.
+  TGERow24 = array[0..3] of Double;
+  PGERow24 = ^TGERow24;
+
+// Count rows times (X, Y, Z): Add24(T24(M0 * X + M1 * Y + M2 * Z), T) each.
+procedure Rows24Pascal(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer);
+begin
+  for var I := 0 to Count - 1 do
+  begin
+    Res^ := Add24(T24(Rows[0] * X + Rows[1] * Y + Rows[2] * Z), Rows[3]);
+    Inc(Rows);
+    Inc(Res);
+  end;
+end;
+
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+// The same in registers, for terms both normal within Add24's fast range (or
+// a zero term); False where some row is not (Res then undefined): Rows24Pascal.
+function Rows24Fast(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer): Boolean;
+asm
+  .NOFRAME
+  // RCX Rows, XMM1..XMM3 X, Y, Z, [RSP+40] Res, [RSP+48] Count.
+  MOV R11, RCX
+  MOV R10, [RSP+40]
+@@Row:
+  MOVSD XMM0, [R11]
+  MULSD XMM0, XMM1
+  MOVSD XMM4, [R11+8]
+  MULSD XMM4, XMM2
+  ADDSD XMM0, XMM4
+  MOVSD XMM4, [R11+16]
+  MULSD XMM4, XMM3
+  ADDSD XMM0, XMM4
+  // A := T24 of the sum (normal), XA its exponent.
+  MOVQ RAX, XMM0
+  MOV RDX, RAX
+  SHR RDX, 52
+  AND EDX, $7FF
+  JZ @@Slow
+  CMP EDX, $7FF
+  JE @@Slow
+  MOV R8, $FFFFFFE000000000
+  AND RAX, R8
+  // B := the term, XB its exponent; a zero term adds nothing (T24(A)).
+  MOV R8, [R11+24]
+  MOV R9, R8
+  ADD R9, R9
+  JZ @@BZero
+  MOV R9, R8
+  SHR R9, 52
+  AND R9D, $7FF
+  JZ @@Slow
+  // X := Max(XA, XB) in 889..1165; each cut below the larger one's 16th bit.
+  MOV ECX, EDX
+  CMP R9D, ECX
+  JLE @@Max
+  MOV ECX, R9D
+@@Max:
+  CMP ECX, 889
+  JL @@Slow
+  CMP ECX, 1165
+  JG @@Slow
+  SUB EDX, ECX
+  NEG EDX
+  SUB R9D, ECX
+  NEG R9D
+  CMP EDX, 16
+  JGE @@AZero
+  LEA RCX, [RDX+37]
+  SHR RAX, CL
+  SHL RAX, CL
+  MOVQ XMM0, RAX
+  JMP @@ADone
+@@AZero:
+  XORPD XMM0, XMM0
+@@ADone:
+  CMP R9D, 16
+  JGE @@BCut
+  LEA RCX, [R9+37]
+  SHR R8, CL
+  SHL R8, CL
+  MOVQ XMM4, R8
+  JMP @@BDone
+@@BCut:
+  XORPD XMM4, XMM4
+@@BDone:
+  ADDSD XMM0, XMM4
+  // T24 of the sum: a zero is itself; else normal (the range keeps it so).
+  MOVQ RAX, XMM0
+  MOV RDX, RAX
+  ADD RDX, RDX
+  JZ @@Store
+  MOV RDX, RAX
+  SHR RDX, 52
+  AND EDX, $7FF
+  JZ @@Slow
+  CMP EDX, $7FF
+  JE @@Slow
+  MOV RDX, $FFFFFFE000000000
+  AND RAX, RDX
+  MOVQ XMM0, RAX
+  JMP @@Store
+@@BZero:
+  MOVQ XMM0, RAX
+@@Store:
+  MOVSD [R10], XMM0
+  ADD R10, 8
+  ADD R11, 32
+  DEC DWORD PTR [RSP+48]
+  JNZ @@Row
+  MOV EAX, 1
+  RET
+@@Slow:
+  XOR EAX, EAX
+end;
+{$ENDIF}
+
+procedure Rows24(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer); inline;
+begin
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  if not Rows24Fast(Rows, X, Y, Z, Res, Count) then
+  {$ENDIF}
+    Rows24Pascal(Rows, X, Y, Z, Res, Count);
+end;
+
+// Three clip coordinates (V) to the viewport (Port: scale and centre of x, y,
+// z): Add24(T24(T24(V * RW) * Scale), Centre) each.
+procedure Port24Pascal(V: PDouble; RW: Double; Port: PDouble; Res: PDouble);
+begin
+  for var I := 0 to 2 do
+  begin
+    Res^ := Add24(T24(T24(V^ * RW) * Port^), PDouble(PByte(Port) + 8)^);
+    Inc(V);
+    Inc(Port, 2);
+    Inc(Res);
+  end;
+end;
+
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+// The same in registers where every value on the way is normal or zero and
+// the sums within Add24's fast range; False else (Res then undefined).
+function Port24Fast(V: PDouble; RW: Double; Port: PDouble; Res: PDouble): Boolean;
+asm
+  .NOFRAME
+  // RCX V (kept in R10), XMM1 RW, R8 Port, R9 Res; the count in RCX's home.
+  MOV R10, RCX
+  MOV DWORD PTR [RSP+8], 3
+@@Value:
+  // T24(V * RW): a normal one cut, a zero kept.
+  MOVSD XMM0, [R10]
+  MULSD XMM0, XMM1
+  MOVQ RAX, XMM0
+  MOV RDX, RAX
+  SHR RDX, 52
+  AND EDX, $7FF
+  JZ @@Zero1
+  CMP EDX, $7FF
+  JE @@Slow
+  MOV R11, $FFFFFFE000000000
+  AND RAX, R11
+  JMP @@Scale
+@@Zero1:
+  MOV RDX, RAX
+  ADD RDX, RDX
+  JNZ @@Slow
+@@Scale:
+  // A := T24(that * Scale) in RAX, EDX its exponent (0: a zero).
+  MOVQ XMM0, RAX
+  MULSD XMM0, [R8]
+  MOVQ RAX, XMM0
+  MOV RDX, RAX
+  SHR RDX, 52
+  AND EDX, $7FF
+  JZ @@Zero2
+  CMP EDX, $7FF
+  JE @@Slow
+  MOV R11, $FFFFFFE000000000
+  AND RAX, R11
+  JMP @@Add
+@@Zero2:
+  MOV RDX, RAX
+  ADD RDX, RDX
+  JNZ @@Slow
+@@Add:
+  // Add24(A, C), C the centre in R11.
+  MOV R11, [R8+8]
+  TEST EDX, EDX
+  JZ @@AZero
+  // A zero C: T24(A), that is A.
+  MOV RCX, R11
+  ADD RCX, RCX
+  JZ @@Store
+  MOV RCX, R11
+  SHR RCX, 52
+  AND ECX, $7FF
+  JZ @@Slow
+  // Both normal: X := Max(XA, XC) in 889..1165, each cut below the larger
+  // one's 16th bit (A has no bits there).
+  CMP EDX, ECX
+  JL @@CLarger
+  CMP EDX, 889
+  JL @@Slow
+  CMP EDX, 1165
+  JG @@Slow
+  SUB EDX, ECX
+  CMP EDX, 16
+  JGE @@Store
+  LEA ECX, [EDX+37]
+  SHR R11, CL
+  SHL R11, CL
+  JMP @@Sum
+@@CLarger:
+  CMP ECX, 889
+  JL @@Slow
+  CMP ECX, 1165
+  JG @@Slow
+  SUB ECX, EDX
+  MOV RDX, $FFFFFFE000000000
+  AND R11, RDX
+  CMP ECX, 16
+  JGE @@OnlyC
+  ADD ECX, 37
+  SHR RAX, CL
+  SHL RAX, CL
+@@Sum:
+  MOVQ XMM0, RAX
+  MOVQ XMM2, R11
+  ADDSD XMM0, XMM2
+  // T24 of the sum: a zero is itself; else normal (the range keeps it so).
+  MOVQ RAX, XMM0
+  MOV RDX, RAX
+  ADD RDX, RDX
+  JZ @@Store
+  MOV RDX, RAX
+  SHR RDX, 52
+  AND EDX, $7FF
+  JZ @@Slow
+  CMP EDX, $7FF
+  JE @@Slow
+  MOV R11, $FFFFFFE000000000
+  AND RAX, R11
+  JMP @@Store
+@@OnlyC:
+  MOV RAX, R11
+  JMP @@Store
+@@AZero:
+  // T24(C).
+  MOV RAX, R11
+  MOV RDX, RAX
+  SHR RDX, 52
+  AND EDX, $7FF
+  JZ @@CZero
+  CMP EDX, $7FF
+  JE @@Slow
+  MOV R11, $FFFFFFE000000000
+  AND RAX, R11
+  JMP @@Store
+@@CZero:
+  MOV RDX, RAX
+  ADD RDX, RDX
+  JNZ @@Slow
+@@Store:
+  MOV [R9], RAX
+  ADD R10, 8
+  ADD R8, 16
+  ADD R9, 8
+  DEC DWORD PTR [RSP+8]
+  JNZ @@Value
+  MOV EAX, 1
+  RET
+@@Slow:
+  XOR EAX, EAX
+end;
+{$ENDIF}
+
+procedure Port24(V: PDouble; RW: Double; Port: PDouble; Res: PDouble); inline;
+begin
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  if not Port24Fast(V, RW, Port, Res) then
+  {$ENDIF}
+    Port24Pascal(V, RW, Port, Res);
 end;
 
 // A value as the GE's 24-bit floats hold it: 16 mantissa bits, truncated.
@@ -1184,18 +1493,16 @@ begin
   if not FGeomValid then
     PrepareGeometry;
   var G: ^TGEGeometry := @FGeom;
-  var PX := T24(P.X); var PY := T24(P.Y); var PZ := T24(P.Z);
-  var AX := Add24(T24(G.World[0] * PX + G.World[3] * PY + G.World[6] * PZ), G.World[9]);
-  var AY := Add24(T24(G.World[1] * PX + G.World[4] * PY + G.World[7] * PZ), G.World[10]);
-  var AZ := Add24(T24(G.World[2] * PX + G.World[5] * PY + G.World[8] * PZ), G.World[11]);
-  var BX := Add24(T24(G.View[0] * AX + G.View[3] * AY + G.View[6] * AZ), G.View[9]);
-  var BY := Add24(T24(G.View[1] * AX + G.View[4] * AY + G.View[7] * AZ), G.View[10]);
-  var BZ := Add24(T24(G.View[2] * AX + G.View[5] * AY + G.View[8] * AZ), G.View[11]);
-  CX := Add24(T24(G.Proj[0] * BX + G.Proj[4] * BY + G.Proj[8] * BZ), G.ProjW[0]);
-  CY := Add24(T24(G.Proj[1] * BX + G.Proj[5] * BY + G.Proj[9] * BZ), G.ProjW[1]);
-  CZ := Add24(T24(G.Proj[2] * BX + G.Proj[6] * BY + G.Proj[10] * BZ), G.ProjW[2]);
-  CW := Add24(T24(G.Proj[3] * BX + G.Proj[7] * BY + G.Proj[11] * BZ), G.ProjW[3]);
-  VP := Vec3(BX, BY, BZ);
+  var A, B: array[0..2] of Double;
+  var Q: array[0..3] of Double;
+  Rows24(@G.Rows[0], T24(P.X), T24(P.Y), T24(P.Z), @A[0], 3);
+  Rows24(@G.Rows[3], A[0], A[1], A[2], @B[0], 3);
+  Rows24(@G.Rows[6], B[0], B[1], B[2], @Q[0], 4);
+  CX := Q[0];
+  CY := Q[1];
+  CZ := Q[2];
+  CW := Q[3];
+  VP := Vec3(B[0], B[1], B[2]);
 end;
 
 procedure TPSPGEEngine.PrepareGeometry;
@@ -1229,6 +1536,18 @@ begin
     G.Proj[I] := GEFloat(Regs.Proj[I]);
   for var I := 0 to 3 do
     G.ProjW[I] := T24(G.Proj[12 + I]);
+  for var R := 0 to 2 do
+  begin
+    G.Rows[R, 0] := G.World[R]; G.Rows[R, 1] := G.World[R + 3]; G.Rows[R, 2] := G.World[R + 6];
+    G.Rows[R, 3] := G.World[R + 9];
+    G.Rows[3 + R, 0] := G.View[R]; G.Rows[3 + R, 1] := G.View[R + 3]; G.Rows[3 + R, 2] := G.View[R + 6];
+    G.Rows[3 + R, 3] := G.View[R + 9];
+  end;
+  for var R := 0 to 3 do
+  begin
+    G.Rows[6 + R, 0] := G.Proj[R]; G.Rows[6 + R, 1] := G.Proj[R + 4]; G.Rows[6 + R, 2] := G.Proj[R + 8];
+    G.Rows[6 + R, 3] := G.ProjW[R];
+  end;
   G.XScale := GEFloat(C[GE_VIEWPORTXSCALE]);
   G.XCenter := GEFloat(C[GE_VIEWPORTXCENTER]);
   G.YScale := GEFloat(C[GE_VIEWPORTYSCALE]);
@@ -1275,9 +1594,12 @@ begin
     PrepareGeometry;
   var G: ^TGEGeometry := @FGeom;
   var RW := Recip24(A.CW);
-  var SX := Add24(T24(T24(A.CX * RW) * G.XScale), G.XCenter);
-  var SY := Add24(T24(T24(A.CY * RW) * G.YScale), G.YCenter);
-  var SZ := Add24(T24(T24(A.CZ * RW) * G.ZScale), G.ZCenter);
+  // Add24(T24(T24(A.CX * RW) * G.XScale), G.XCenter) and so on.
+  var Screen: array[0..2] of Double;
+  Port24(@A.CX, RW, @G.XScale, @Screen[0]);
+  var SX := Screen[0];
+  var SY := Screen[1];
+  var SZ := Screen[2];
   if not ((SX >= 0) and (SX <= 4096) and (SY >= 0) and (SY <= 4096)) then
   begin
     A.Code := A.Code or GEOutScreen;
@@ -1363,6 +1685,11 @@ end;
 const
   // Bits a texel by texture format (DXT by their blocks).
   TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
+  // The registers BuildRaster reads, as runs (first, count); with them a few
+  // it does not ($1D, $25, $26).
+  GERasterRuns: array[0..8, 0..1] of Byte = ((GE_VTYPE, 1), (GE_CLIPENABLE, 13), (GE_SHADEMODE, 1),
+    (GE_FRAMEBUFPTR, 20), (GE_TEXSIZE0, 8), (GE_TEXMODE, 2), (GE_CLUTFORMAT, 6), (GE_FOGCOLOR, 2),
+    (GE_FRAMEBUFPIXFORMAT, 24));
 
 procedure TPSPGEEngine.BuildRaster;
 var
@@ -1370,6 +1697,43 @@ var
 begin
   S := @FRaster;
   var C: PGECmds := @Regs.Cmd;
+  // The same registers, VRAM layout and texture memory build the same state
+  // (byte for byte): keep it, and the CPU queue its copy of it.
+  var Diff: Cardinal := 0;
+  var K: PCardinal := @FRasterKey[0];
+  for var R := 0 to High(GERasterRuns) do
+  begin
+    var P: PCardinal := @C[GERasterRuns[R, 0]];
+    for var I := 0 to GERasterRuns[R, 1] - 1 do
+    begin
+      Diff := Diff or (P^ xor K^);
+      K^ := P^;
+      Inc(P);
+      Inc(K);
+    end;
+  end;
+  var Extra: array[0..2] of Cardinal;
+  Extra[0] := Cardinal(FMemory.VRAMShift);
+  Extra[1] := Cardinal(UInt64(NativeUInt(@FMemory.VRAM[0])));
+  Extra[2] := Cardinal(UInt64(NativeUInt(@FMemory.VRAM[0])) shr 32);
+  for var I := 0 to 2 do
+  begin
+    Diff := Diff or (Extra[I] xor K^);
+    K^ := Extra[I];
+    Inc(K);
+  end;
+  var Same := FRasterKeyValid and (Diff = 0);
+  if Same and S.Textured then
+    for var L := 0 to S.Tex.LevelCount - 1 do
+      if (S.Tex.Levels[L].Size > 0) and
+        (FMemory.HostPtr(S.Tex.Levels[L].Addr, S.Tex.Levels[L].Size) <> S.Tex.Levels[L].Ptr) then
+      begin
+        Same := False;
+        Break;
+      end;
+  if Same then
+    Exit;
+  FRasterKeyValid := True;
   S.VRAM := @FMemory.VRAM[0];
   S.FBAddr := C[GE_FRAMEBUFPTR] and $1FFFF0;
   S.FBStride := C[GE_FRAMEBUFWIDTH] and $7FC;
@@ -2058,7 +2422,10 @@ begin
   begin
     FAsmType := PrimType;
     FAsmCount := 0;
+    // (A state built anew, changed below: the next one is built anew too.)
+    FRasterKeyValid := False;
     BuildRaster;
+    FRasterKeyValid := False;
     FRaster.Through := Through;
     FRaster.Gouraud := (Op and $40000) <> 0;
     FRaster.Flat := not FRaster.Gouraud;

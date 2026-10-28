@@ -14,6 +14,11 @@ snapshot, not the newer integration-round-4 build described in the workers' note
 python tests\cores\psp\jit\t24_check.py
 python tests\cores\psp\jit\t24_check.py --win32
 python tests\cores\psp\jit\game_compare.py
+python tests\cores\psp\jit\display_check.py
+.\tests\cores\psp\jit\baseline.ps1                 # PSPRun at 8f60810 (+ the pool statistic)
+python tests\cores\psp\jit\emuspeed.py --before tests\cores\psp\jit\bin\baseline-8f60810\PSPRun_win64.exe --rounds 2
+python tests\cores\psp\jit\emuprof.py Tekken_6 --frames 7000 --skip 50 [--lines ROUTINE] [--callers ROUTINE]
+python tests\cores\psp\jit\disasm.py TPSPGEEngine.ClipPosition
 ```
 
 `PSPJitTest` compares the interpreter with native generated code and HW.JIT's
@@ -68,6 +73,92 @@ There are also:
   extreme exponents are covered. NaNs are compared as NaNs; all other results,
   including signed zeros, are compared by bits. Win64 Add24: 78.6 -> 9.8 ns;
   Win32: 120.3 -> 40.4 ns in the recorded run.
+
+## Speed round: the emulator thread (2026-10-28, after merging pr/psp-core 8f60810)
+
+With the CPU raster in a background pool, the emulator thread (guest CPU, HLE,
+GE commands and vertices, display conversion, media) is the other limit.
+
+**Method.** `baseline.ps1` builds 8f60810 with only the pool's "helping the pool"
+statistic added. `emuspeed.py` runs each game headless with PSPAdapterRun
+`-mash`'s presses at 60 frames a second (Start/Cross every 75 frames from 480 to
+2160, then Cross every 102 frames to 2820; Tekken 6 is in an arcade battle from
+about frame 3600). Tekken runs 6,000 frames and the others 3,600, with a frame
+hash every 200. **Own cpu** is the emulator thread's CPU time (GetThreadTimes)
+minus the time it spent drawing for the CPU renderer: bands while it waits for
+the pool, plus small batches. Old and new alternate, two rounds per game, one
+game at a time on the shared machine. Every run of a game must give the same
+frame hashes and the same guest cycles.
+
+| Game | Own cpu before (runs) | After (runs) | Median speed-up | Hashes, guest cycles (all runs identical) |
+|---|---:|---:|---:|---|
+| Tekken 6 (battle) | 56.01, 53.46 s | 34.45, 33.43 s | **1.61x** | 30, 1738.8M, `d72283b87b407db4` |
+| GTA LCS (prototype) | 109.03, 101.23 s | 68.02, 68.08 s | **1.54x** | 18, 1048.4M, `dc18ddd5e351eaca` |
+| SF DM | 9.36, 6.94 s | 6.95, 3.85 s | 1.51x (noisy) | 18, 1720.8M, `8490408262f24e88` |
+| Daxter | 35.27, 35.33 s | 24.54, 25.80 s | **1.40x** | 18, 1929.6M, `52ad2bfe0448468b` |
+| MGS PW | 8.34, 7.73 s | 5.72, 6.98 s | 1.27x (noisy) | 18, 173.1M, `566cbf744b2c9949` |
+| God of War | 23.44, 25.60 s | 20.47, 21.82 s | 1.16x | 18, 308.3M, `a9477253632aa047` |
+| GTA VCS | 67.25, 68.63 s | 59.89, 58.27 s | 1.15x | 18, 2283.3M, `bdacaf1ffd4615dc` |
+
+Wall times moved with the machine's load (GPU worker runs at the same time). An
+earlier quiet single run measured Tekken at 76.6 -> 65.6 s wall and Daxter at
+39.4 -> 29.6 s. God of War, GTA VCS, SF DM and MGS PW stay bound by the CPU
+raster pool: the emulator thread mostly helps or waits for it, and that code
+belongs to the GE worker. God of War's movies (H.264, about 12% of its samples)
+are spread over many decoder routines and were left alone.
+
+**What changed** (Tekken battle profile before: Add24 7%, ClipPosition 7%,
+Workers.Add 4.5%, Light 4%, DecodeVertex 3.6%, Render 2.3%):
+
+* Vertex arithmetic without RTL helpers. Add24's fast path is inline, including
+  its zero cases. Recip24 builds Frexp's mantissa and exponent, and Ldexp's power
+  of two, from the bits. FloorInt, MaxS/MinS, and GEPow without Floor/Ldexp.
+  Special values still go through the former code (Add24Slow, Recip24Slow,
+  T24Special).
+* Matrices, viewport and bones are decoded once per primitive (PrepareGeometry,
+  PrepareBones), kept while the registers compare equal. ClipPosition uses the
+  rows in that form. On Win64, `Rows24Fast` and `Port24Fast` (assembler) run the
+  matrix rows and the viewport in registers. They return False on anything
+  outside the fast range, and then the Pascal versions run.
+* Lighting: the setup is kept while its registers, MXCSR and x87 control word
+  compare equal. A directional light's vector and half vector are made once.
+* DecodeVertex reads RAM directly where TPSPMemory maps it linearly. Fixed-point
+  fractions multiply by exact powers of two, and the vertex is zeroed without
+  REP STOS. Strips and fans index a ring instead of moving vertices.
+* BuildRaster keeps FRaster while the 77 registers it reads, the VRAM layout and
+  the texture host pointers are the same. The CPU queue then neither copies nor
+  compares the state again. ImmediateVertex, which edits FRaster afterwards,
+  forces the next build.
+* TGEWorkers.Add bookkeeping only. A state's texture analysis is done once per
+  state, a target that grows holds only the new pages, and the previous
+  primitive's watched ranges are not looked up again. The flush, band and
+  exactness rules are untouched.
+* TPSPGE.RunHW fetches display-list words directly from RAM, which is the same
+  memory Read32 maps; RAM pages are never held.
+* Display.Render converts 8888 pixels two at a time in a UInt64, and 16-bit
+  pixels through per-byte tables.
+
+**Exactness evidence.**
+
+* All 7 games: identical frame hashes and guest cycles in every run, old and new.
+* `queuecheck.py`: 7/7 SAME (serial vs pool).
+* GEWorkersCheck: PASS.
+* `t24_check.py`: 50,000,000 pairs, 50,000,000 Rows24 rows and 37,500,000 Port24
+  values on each of Win64 (a quarter to a third of the batches in assembler, the
+  rest through the Pascal fallback) and Win32, 0 differences against
+  Frexp/Int/Ldexp/Floor/Math.Max/Min and the former Row24/Row24P on register
+  values.
+* `display_check.py`: all 3 x 65,536 16-bit values and 1,000,000 8888 pairs, 0
+  differences.
+* PSPJitTest 300: no difference.
+* pspautotests: 527/638 with the same status set JIT on and off, and the full
+  report identical to the baseline exe's.
+* `run/build_targets.ps1`: Win32, Linux64, Android32 and Android64 compile.
+
+**Shared files changed:** `PSP.GE.Engine.pas` (vertex pipeline, BuildRaster key,
+RAMBase), `PSP.GE.Workers.pas` (Add's bookkeeping and the help statistic only),
+`PSP.GE.pas` (RunHW's list fetch), `PSP.Display.pas` (Render). Not touched:
+PSP.GE.Raster/Texture/Pixel*.inc, PSP.GE.GPU*, shaders, VFPU handlers, HW.JIT.
 
 ## Native CPU-only improvement
 
