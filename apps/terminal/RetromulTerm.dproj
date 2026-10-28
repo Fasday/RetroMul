@@ -434,6 +434,7 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.SysLibs.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.SysMem.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Types.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.CPU.JIT.pas"/>
         <DCCReference Include="..\..\source\media\Core.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.CABAC.pas"/>

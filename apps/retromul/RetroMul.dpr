@@ -77,6 +77,7 @@ uses
   PSP.SysLibs in '..\..\source\cores\psp\PSP.SysLibs.pas',
   PSP.SysMem in '..\..\source\cores\psp\PSP.SysMem.pas',
   PSP.Types in '..\..\source\cores\psp\PSP.Types.pas',
+  PSP.CPU.JIT in '..\..\source\cores\psp\PSP.CPU.JIT.pas',
   Core.PSP.Archive in '..\..\source\adapters\Core.PSP.Archive.pas',
   Core.Adapter.PSP in '..\..\source\adapters\Core.Adapter.PSP.pas',
   System.SysUtils,
