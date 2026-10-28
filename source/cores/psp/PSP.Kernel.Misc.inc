@@ -82,7 +82,8 @@ end;
 
 procedure TPSPKernel.hCpuResumeIntr;
 begin
-  FCPU.InterruptsEnabled := FHLE.Arg(0) <> 0;
+  // It is mtic a0, $0: only bit 0 counts.
+  FCPU.InterruptsEnabled := (FHLE.Arg(0) and 1) <> 0;
   FHLE.Result(0);
   if FCPU.InterruptsEnabled and (FPendingInts.Count > 0) then
     FCPU.Stop;
