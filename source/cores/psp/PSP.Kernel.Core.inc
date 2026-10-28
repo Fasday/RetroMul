@@ -33,7 +33,7 @@ const
   // Leaving an interrupt that ran a handler, and handing the CPU to another
   // thread from there.
   PSPIntrExitNs = 30000;
-  PSPIntrDispatchNs = 14000;
+  PSPIntrDispatchNs = 20000;
   // Thread event handler kinds.
   PSPThreadEventCreate = 1;
   PSPThreadEventStart = 2;
@@ -655,7 +655,10 @@ end;
 
 procedure TPSPKernel.AfterSyscall;
 begin
-  if FRescheduleNeeded then
+  // An interrupt about to be taken runs first; the dispatch happens on its
+  // way out.
+  if FRescheduleNeeded and not ((FPendingInts.Count > 0) and (FIntFrames.Count = 0) and (FIntrSuspendLevel = 0) and
+    FCPU.InterruptsEnabled) then
     Reschedule;
 end;
 
