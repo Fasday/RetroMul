@@ -100,7 +100,8 @@ type
     procedure Arm(Index: Integer; Buffer: Cardinal);
     procedure InstallWaiter(Index: Integer);
     procedure RenderDescriptor(const D: TPSPAudioDescriptor);
-    procedure ArmDescriptor(Buffer: Cardinal; Volume: Integer);
+    // SetupUs: for an idle DMA, how far into the call playback starts.
+    procedure ArmDescriptor(Buffer: Cardinal; Volume: Integer; SetupUs: Integer = 0);
     procedure RetireDescriptor;
     procedure StopOutput2;
     procedure WakeOutput2(Result: Cardinal);
@@ -427,7 +428,7 @@ begin
   end;
 end;
 
-procedure TPSPAudio.ArmDescriptor(Buffer: Cardinal; Volume: Integer);
+procedure TPSPAudio.ArmDescriptor(Buffer: Cardinal; Volume: Integer; SetupUs: Integer);
 begin
   var D := Default(TPSPAudioDescriptor);
   D.Buffer := Buffer;
@@ -436,7 +437,7 @@ begin
   if FO2Armed > 0 then
     D.StartAt := FO2Desc[FO2Armed - 1].EndAt
   else
-    D.StartAt := FScheduler.Now;
+    D.StartAt := FScheduler.Now + Int64(SetupUs) * 1000;
   D.EndAt := D.StartAt + Int64(D.Count) * 1000000000 div FO2Freq;
   FO2Desc[FO2Armed] := D;
   Inc(FO2Armed);
@@ -600,9 +601,6 @@ end;
 procedure TPSPAudio.ChannelOutput(Ch: Integer; Left, Right: Integer; Buffer: Cardinal; Blocking: Boolean);
 begin
   var C: PPSPAudioChannel := @FCh[Ch];
-  if FHLE.TraceCalls then
-    FHLE.Log('audio %d: ch %d rest %d playing %s mixer %s next tick %d', [FScheduler.Now div 1000, Ch, C.Rest,
-      BoolToStr(C.Playing, True), BoolToStr(FMixRunning, True), TickTime(FMixTick) div 1000]);
   if C.Waiter <> nil then
   begin
     FHLE.Result(SCE_AUDIO_ERROR_OUTPUT_BUSY);
@@ -1012,8 +1010,9 @@ begin
   var Count := FO2Count;
   if FO2Armed = 0 then
   begin
+    // The setup takes most of the call; the DMA starts at its end.
     Cost(120);
-    ArmDescriptor(Buffer, Volume);
+    ArmDescriptor(Buffer, Volume, 120);
     FHLE.Result(Cardinal(Count));
     Exit;
   end;
