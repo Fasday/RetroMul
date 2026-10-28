@@ -5,6 +5,18 @@ type
 
 procedure LoadM(C: TPSPCPU; Reg: Cardinal; N: Integer; var M: TM4);
 begin
+  if N = 4 then
+  begin
+    for var K := 0 to 3 do
+    begin
+      var P: PIdx4 := @MatIdx[3, Reg, K];
+      M[K][0] := C.Ctx.V[P[0]];
+      M[K][1] := C.Ctx.V[P[1]];
+      M[K][2] := C.Ctx.V[P[2]];
+      M[K][3] := C.Ctx.V[P[3]];
+    end;
+    Exit;
+  end;
   for var K := 0 to 3 do
     for var I := 0 to 3 do
       if (K < N) and (I < N) then
