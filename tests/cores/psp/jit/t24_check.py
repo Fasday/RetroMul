@@ -22,7 +22,7 @@ DCC = Path(r'C:\Program Files (x86)\Embarcadero\Studio\37.0\bin') / ('dcc32.exe'
 
 def main():
     src = (ROOT / 'source/cores/psp/PSP.GE.Engine.pas').read_text(encoding='utf-8-sig')
-    first = src.index('function T24(V: Double): Double;')
+    first = src.index('function T24Special(V: Double): Double;')
     last = src.index('// The GE\'s 1/x:', first)
     actual = src[first:last]
     if not all('function ' + name in actual for name in ('T24(', 'Exp24(', 'Add24(')):

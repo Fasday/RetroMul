@@ -6,9 +6,11 @@ program PSPAdapterRun;
 // PSPAdapterRun <file> <seconds> [out.png] [-mute] [-interpreter] [-gpu]
 // -frame N: capture exactly guest frame N (fail if it was missed).
 // -lifecycle: pause/resume, Reset, then Stop/Start during the run.
+// -mash: Start and Cross (Enter, Z) in turn every 1.25 s from 8 s to 36 s, then
+// Cross every 1.7 s until 47 s. -from S: measure the frame rate from S seconds.
 
 uses
-  System.SysUtils, System.Classes, System.Diagnostics, System.Hash, Core.Emulation, Core.Emulation.Types,
+  System.SysUtils, System.Classes, System.Diagnostics, System.Hash, System.UITypes, Core.Emulation, Core.Emulation.Types,
   Core.EmulatorFactory, Core.Snapshots, Core.Adapter.PSP;
 
 function Hash(const Frame: TEmulatorFrame): string;
@@ -29,6 +31,8 @@ begin
     var Vulkan := False;
     var Lifecycle := False;
     var Capture := 0;
+    var Mash := False;
+    var From: Double := 0;
     var I := 3;
     while I <= ParamCount do
     begin
@@ -38,6 +42,8 @@ begin
       else if A = '-gpu' then Vulkan := True
       else if A = '-lifecycle' then Lifecycle := True
       else if A = '-frame' then begin Inc(I); Capture := StrToInt(ParamStr(I)); end
+      else if A = '-mash' then Mash := True
+      else if A = '-from' then begin Inc(I); From := StrToFloat(ParamStr(I), TFormatSettings.Invariant); end
       else OutFile := A;
       Inc(I);
     end;
@@ -78,9 +84,18 @@ begin
           Phase := 2;
           Writeln('lifecycle: stop/start');
         end;
+        if Mash then
+        begin
+          var T := Watch.Elapsed.TotalSeconds;
+          var Start := (T >= 8) and (T < 36) and (Trunc((T - 8) / 1.25) mod 2 = 0) and (Frac((T - 8) / 1.25) < 0.2);
+          var Cross := ((T >= 8) and (T < 36) and (Trunc((T - 8) / 1.25) mod 2 = 1) and (Frac((T - 8) / 1.25) < 0.2)) or
+            ((T >= 36) and (T < 47) and (Frac((T - 36) / 1.7) < 0.15));
+          Core.SetKeyState(vkReturn, Start);
+          Core.SetKeyState(vkZ, Cross);
+        end;
         if Core.TryGetFrame(Frame) then
         begin
-          if Got = 0 then
+          if (Got = 0) or ((From > 0) and (FirstAt < From) and (Watch.Elapsed.TotalSeconds >= From)) then
           begin
             First := Frame.FrameNumber;
             FirstAt := Watch.Elapsed.TotalSeconds;
@@ -107,8 +122,8 @@ begin
       if Lifecycle then
         Writeln(Format('%d frames shown across reset/restart; final guest frame %d', [Got, LastFrame.FrameNumber]))
       else
-        Writeln(Format('%d frames shown, guest frames %d..%d in %.1f s: %.1f guest fps', [Got, First, LastFrame.FrameNumber,
-          Span, (Int64(LastFrame.FrameNumber) - Int64(First)) / Span]));
+        Writeln(Format('%d frames shown, guest frames %d..%d in %.1f s: %.1f guest fps (reported %.1f)', [Got, First,
+          LastFrame.FrameNumber, Span, (Int64(LastFrame.FrameNumber) - Int64(First)) / Span, LastFrame.FramesPerSecond]));
       Writeln(Format('frame %d hash %s', [LastFrame.FrameNumber, Hash(LastFrame)]));
       if Adapter is TPSPCoreAdapter then
         Writeln('renderer: ', TPSPCoreAdapter(Adapter).RendererStatus);

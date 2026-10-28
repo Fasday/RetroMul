@@ -565,7 +565,9 @@ begin
         if GPUMode = 2 then
           Writeln(ErrOutput, Format('gpu check: %d of %d batches differ (%d bytes)', [St.BadBatches, St.CheckedBatches,
             St.BadBytes]));
-      end;
+      end
+      else if not Quiet then
+        Writeln(ErrOutput, 'ge cpu: ' + TPSPGE(Console.System.Find(TPSPGE)).Engine.Workers.Describe);
     finally
       if Watcher <> nil then
       begin

@@ -16,6 +16,9 @@ const
   PSPPageSize = 1 shl PSPPageShift;
   PSPPageMask = PSPPageSize - 1;
   PSPPageCount = $20000000 shr PSPPageShift;
+  // Page marks (CodeMarks): decoded code, and pages a device reads later.
+  PSPPageCode = 1;
+  PSPPageWatched = 2;
 
 type
   TPSPCodeWrite = procedure(Address, Size: Cardinal) of object;
@@ -35,7 +38,11 @@ type
     FHeldCount: Integer;
     FOnVRAMFault: TPSPVRAMFault;
     FVRAMShift: Integer;
+    FWatched: TArray<Integer>;
+    FWatchCount: Integer;
     function VRAMOffset(Address: Cardinal): Cardinal;
+    function LinearPtr(Address, Size: Cardinal): PByte;
+    procedure WatchRange(Address, Size: Cardinal);
     function MirrorPtr(Address: Cardinal): PByte;
     procedure MapRange(Physical, Size: Cardinal; Base: PByte);
     function Unmapped(Address: Cardinal; Write: Boolean): Cardinal;
@@ -57,6 +64,8 @@ type
     // Host pointer for Size bytes starting at Address, or nil when the range
     // leaves its region.
     function Ptr(Address: Cardinal; Size: Cardinal = 1): PByte;
+    // As Ptr for reading only: watched pages need not be given back first.
+    function ReadPtr(Address: Cardinal; Size: Cardinal = 1): PByte;
     // As Ptr, without bringing back held VRAM pages: for readers that only
     // look after the device gave them back (the GE's CPU rasterizer).
     function HostPtr(Address: Cardinal; Size: Cardinal = 1): PByte;
@@ -82,6 +91,12 @@ type
     procedure ReleaseVRAM;
     function VRAMHeld(Page: Integer): Boolean; inline;
     property HeldVRAMPages: Integer read FHeldCount;
+    // Pages (of the whole map, by physical address) a device still reads:
+    // any write to one, by the CPU, the HLE or DMA (stores, WriteN, Ptr),
+    // first calls OnVRAMFault, which must finish reading and release them.
+    procedure WatchPage(Page: Integer);
+    procedure ReleaseWatches;
+    property WatchedPages: Integer read FWatchCount;
     // The page table and the code marks themselves, for generated code that
     // reads them (PSP.CPU.JIT).
     function PageTable: PPointer; inline;
@@ -141,7 +156,7 @@ end;
 
 procedure TPSPMemory.Reset;
 begin
-  if FHeldCount > 0 then
+  if (FHeldCount > 0) or (FWatchCount > 0) then
     FOnVRAMFault();
   FillChar(FRAM[0], Length(FRAM), 0);
   FillChar(FVRAM[0], Length(FVRAM), 0);
@@ -326,6 +341,7 @@ end;
 procedure TPSPMemory.Write8(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then FOnVRAMFault();
   var P := FPages[Page];
   if P = nil then
   begin
@@ -333,7 +349,7 @@ begin
     if P <> nil then
     begin
       PByte(P)^ := Byte(Value);
-      if FCodePages[Page] <> 0 then CodeWrite(Address, 1);
+      if (FCodePages[Page] and PSPPageCode) <> 0 then CodeWrite(Address, 1);
       Exit;
     end;
     P := Fault(Address);
@@ -341,7 +357,7 @@ begin
   if P <> nil then
   begin
     P[Address and PSPPageMask] := Byte(Value);
-    if FCodePages[Page] <> 0 then
+    if (FCodePages[Page] and PSPPageCode) <> 0 then
       CodeWrite(Address, 1);
   end
   else
@@ -351,6 +367,7 @@ end;
 procedure TPSPMemory.Write16(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then FOnVRAMFault();
   var P := FPages[Page];
   if P = nil then
   begin
@@ -358,7 +375,7 @@ begin
     if P <> nil then
     begin
       PWord(P)^ := Word(Value);
-      if FCodePages[Page] <> 0 then CodeWrite(Address, 2);
+      if (FCodePages[Page] and PSPPageCode) <> 0 then CodeWrite(Address, 2);
       Exit;
     end;
     P := Fault(Address);
@@ -366,7 +383,7 @@ begin
   if P <> nil then
   begin
     PWord(P + (Address and PSPPageMask))^ := Word(Value);
-    if FCodePages[Page] <> 0 then
+    if (FCodePages[Page] and PSPPageCode) <> 0 then
       CodeWrite(Address, 2);
   end
   else
@@ -376,6 +393,7 @@ end;
 procedure TPSPMemory.Write32(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then FOnVRAMFault();
   var P := FPages[Page];
   if P = nil then
   begin
@@ -383,7 +401,7 @@ begin
     if P <> nil then
     begin
       PCardinal(P)^ := Value;
-      if FCodePages[Page] <> 0 then CodeWrite(Address, 4);
+      if (FCodePages[Page] and PSPPageCode) <> 0 then CodeWrite(Address, 4);
       Exit;
     end;
     P := Fault(Address);
@@ -391,7 +409,7 @@ begin
   if P <> nil then
   begin
     PCardinal(P + (Address and PSPPageMask))^ := Value;
-    if FCodePages[Page] <> 0 then
+    if (FCodePages[Page] and PSPPageCode) <> 0 then
       CodeWrite(Address, 4);
   end
   else
@@ -409,10 +427,56 @@ begin
   Write32(Address, PCardinal(@Value)^);
 end;
 
+procedure TPSPMemory.WatchRange(Address, Size: Cardinal);
+begin
+  if Size = 0 then
+    Size := 1;
+  var First := (Address and $1FFFFFFF) shr PSPPageShift;
+  var Last := (UInt64(Address and $1FFFFFFF) + Size - 1) shr PSPPageShift;
+  if Last >= PSPPageCount then
+    Last := PSPPageCount - 1;
+  for var Page := First to Cardinal(Last) do
+    if (FCodePages[Page] and PSPPageWatched) <> 0 then
+    begin
+      FOnVRAMFault();
+      Exit;
+    end;
+end;
+
+procedure TPSPMemory.WatchPage(Page: Integer);
+begin
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then
+    Exit;
+  FCodePages[Page] := FCodePages[Page] or PSPPageWatched;
+  if FWatchCount = Length(FWatched) then
+    SetLength(FWatched, FWatchCount * 2 + 64);
+  FWatched[FWatchCount] := Page;
+  Inc(FWatchCount);
+end;
+
+procedure TPSPMemory.ReleaseWatches;
+begin
+  for var I := 0 to FWatchCount - 1 do
+    FCodePages[FWatched[I]] := FCodePages[FWatched[I]] and not PSPPageWatched;
+  FWatchCount := 0;
+end;
+
 function TPSPMemory.Ptr(Address: Cardinal; Size: Cardinal): PByte;
+begin
+  if FWatchCount > 0 then
+    WatchRange(Address, Size);
+  Result := ReadPtr(Address, Size);
+end;
+
+function TPSPMemory.ReadPtr(Address: Cardinal; Size: Cardinal): PByte;
 begin
   if FHeldCount > 0 then
     FaultRange(Address, Size);
+  Result := LinearPtr(Address, Size);
+end;
+
+function TPSPMemory.LinearPtr(Address: Cardinal; Size: Cardinal): PByte;
+begin
   var Physical := Address and $1FFFFFFF;
   if Size = 0 then
     Size := 1;
@@ -444,7 +508,7 @@ begin
       Exit(nil);
     Exit(@FVRAM[Offset]);
   end;
-  Result := Ptr(Address, Size);
+  Result := LinearPtr(Address, Size);
 end;
 
 function TPSPMemory.Valid(Address, Size: Cardinal): Boolean;
@@ -452,14 +516,14 @@ begin
   var P := Address and $1FFFFFFF;
   if (P >= PSPVRAMBase) and (P < PSPVRAMBase + 4 * PSPVRAMSize) then
     Exit(UInt64(P) + Size <= PSPVRAMBase + 4 * PSPVRAMSize);
-  Result := Ptr(Address, Size) <> nil;
+  Result := LinearPtr(Address, Size) <> nil;
 end;
 
 procedure TPSPMemory.ReadBytes(Address: Cardinal; var Buffer; Size: Cardinal);
 begin
   if Size = 0 then
     Exit;
-  var P := Ptr(Address, Size);
+  var P := ReadPtr(Address, Size);
   if P <> nil then
     Move(P^, Buffer, Size)
   else
@@ -478,7 +542,7 @@ begin
     var First := (Address and $1FFFFFFF) shr PSPPageShift;
     var Last := ((Address and $1FFFFFFF) + Size - 1) shr PSPPageShift;
     for var Page := First to Last do
-      if FCodePages[Page] <> 0 then
+      if (FCodePages[Page] and PSPPageCode) <> 0 then
       begin
         CodeWrite(Address, Size);
         Break;
@@ -500,7 +564,7 @@ begin
     var First := (Address and $1FFFFFFF) shr PSPPageShift;
     var Last := ((Address and $1FFFFFFF) + Size - 1) shr PSPPageShift;
     for var Page := First to Last do
-      if FCodePages[Page] <> 0 then
+      if (FCodePages[Page] and PSPPageCode) <> 0 then
       begin
         CodeWrite(Address, Size);
         Break;
@@ -520,7 +584,7 @@ begin
   if Last >= PSPPageCount then
     Last := PSPPageCount - 1;
   for var Page := First to Last do
-    if FCodePages[Page] <> 0 then
+    if (FCodePages[Page] and PSPPageCode) <> 0 then
     begin
       CodeWrite(Address, Size);
       Break;
@@ -531,15 +595,15 @@ procedure TPSPMemory.Copy(Dest, Source, Size: Cardinal);
 begin
   if Size = 0 then
     Exit;
-  var S := Ptr(Source, Size);
   var D := Ptr(Dest, Size);
+  var S := ReadPtr(Source, Size);
   if (S <> nil) and (D <> nil) then
   begin
     Move(S^, D^, Size);
     var First := (Dest and $1FFFFFFF) shr PSPPageShift;
     var Last := ((Dest and $1FFFFFFF) + Size - 1) shr PSPPageShift;
     for var Page := First to Last do
-      if FCodePages[Page] <> 0 then
+      if (FCodePages[Page] and PSPPageCode) <> 0 then
       begin
         CodeWrite(Dest, Size);
         Break;
@@ -582,17 +646,22 @@ end;
 
 procedure TPSPMemory.MarkCode(Address: Cardinal);
 begin
-  FCodePages[(Address and $1FFFFFFF) shr PSPPageShift] := 1;
+  var Page := (Address and $1FFFFFFF) shr PSPPageShift;
+  FCodePages[Page] := FCodePages[Page] or PSPPageCode;
 end;
 
 procedure TPSPMemory.ClearCodeMarks;
 begin
-  FillChar(FCodePages, SizeOf(FCodePages), 0);
+  if FWatchCount = 0 then
+    FillChar(FCodePages, SizeOf(FCodePages), 0)
+  else
+    for var Page := 0 to High(FCodePages) do
+      FCodePages[Page] := FCodePages[Page] and not PSPPageCode;
 end;
 
 function TPSPMemory.IsCode(Address: Cardinal): Boolean;
 begin
-  Result := FCodePages[(Address and $1FFFFFFF) shr PSPPageShift] <> 0;
+  Result := (FCodePages[(Address and $1FFFFFFF) shr PSPPageShift] and PSPPageCode) <> 0;
 end;
 
 function TPSPMemory.PageTable: PPointer;

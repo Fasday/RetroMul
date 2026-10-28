@@ -18,10 +18,17 @@ compute tiles and synchronizes held VRAM pages before CPU access. Unsupported
 primitives use the software path. CPU/GPU equality is verified separately from
 agreement with hardware-recorded pspautotests.
 
-On Windows, large CPU-rendered primitives use a fixed row-band pool (six total
-drawing threads by default, `PSP_GE_THREADS=1` for serial). Every dispatch joins
-before returning; feedback/aliasing cases remain serial. Other hosts use the
-serial renderer. See the combined-build results in
+On Windows the CPU renderer queues primitives in batches (`PSP.GE.Workers`) and
+draws a batch on a pool while the emulator goes on (processor count minus two
+threads, at most ten; `PSP_GE_THREADS=1` draws every primitive at once). Each
+thread takes whole bands of rows and draws the batch's primitives in order, so
+the result does not depend on the thread count. Batches outlive GE command runs:
+the VRAM pages they draw into are held and the pages their textures come from
+are watched (`TPSPMemory.HoldVRAM`/`WatchPage`), so any later access by the CPU,
+DMA, the display or the GE itself draws the queue first. Feedback and aliasing
+layouts start a new batch or are drawn alone. `tests/cores/psp/run/queuecheck.py`
+compares game frames with `PSP_GE_THREADS=1`; `GEWorkersCheck` compares VRAM.
+Other hosts use the serial renderer. See the combined-build results in
 [`INTEGRATION.md`](../../../tests/cores/psp/run/INTEGRATION.md).
 
 Frontend `psp.ini` settings:

@@ -45,6 +45,7 @@ type
     FError: string;
     FVulkanRenderer: Boolean;
     FRendererStatus: string;
+    FRate: TEmulationFrameRate;
   protected
     procedure Execute; override;
   public
@@ -227,6 +228,7 @@ begin
         // Without sound, guest time follows the host clock from this point.
         var ClockHost := TStopwatch.GetTimeStamp;
         var ClockGuest := FConsole.Scheduler.Now;
+        FRate.Reset(FConsole.FrameNumber, ClockHost);
         while not Terminated do
         begin
           var Paused, Reset: Boolean;
@@ -260,6 +262,7 @@ begin
           begin
             ClockHost := TStopwatch.GetTimeStamp;
             ClockGuest := FConsole.Scheduler.Now;
+            FRate.Reset(FConsole.FrameNumber, ClockHost);
           end;
           if Paused then
           begin
@@ -283,6 +286,8 @@ begin
           FConsole.Input := Input;
           var Frame: TEmulatorFrame;
           FConsole.RunFrame(Frame);
+          // Frames emulated per host second, not the PSP's nominal refresh rate.
+          Frame.FramesPerSecond := FRate.Update(Frame.FrameNumber, TStopwatch.GetTimeStamp, TStopwatch.Frequency);
           if AudioEnabled and not AudioFailed then
           try
             if FAudio = nil then

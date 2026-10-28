@@ -38,6 +38,27 @@ type
     Code: Integer;
   end;
 
+  TGERGB = array[0..2] of Single;
+
+  // The lighting registers as Light reads them, decoded once a primitive.
+  TGELightUnit = record
+    On: Boolean;
+    Kind, LType: Integer;
+    Pos, SpotDir: TGEVec3;
+    KA, KB, KC, Cutoff, Expo: Single;
+    SpotPositive: Boolean;
+    LA, LD, LS: array[0..2] of Single;
+  end;
+  PGELightUnit = ^TGELightUnit;
+
+  TGELightSetup = record
+    MA, MD, MS, E, AL: TGERGB;
+    MAA, ALA, Shine: Single;
+    View: TGEVec3;
+    Separate: Boolean;
+    Lights: array[0..3] of TGELightUnit;
+  end;
+
   TPSPGEEngine = class
   private
     FMemory: TPSPMemory;
@@ -54,6 +75,9 @@ type
     FPatchCP: array of TGEInVertex;
     FPatchGrid: array of TGEAsmVertex;
     FCullOn, FCullCW, FDepthClamp: Boolean;
+    FLight: TGELightSetup;
+    FLightValid: Boolean;
+    procedure PrepareLight;
     procedure SetupVertexFormat(VType: Cardinal);
     procedure DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
     function ReadVertex(Index: Integer; VType: Cardinal; out V: TGEInVertex): Boolean;
@@ -85,6 +109,8 @@ type
     BoxVisible: Boolean;
     // Draws the primitives instead of PSP.GE.Raster when set (not owned).
     Backend: TGERasterBackend;
+    // The CPU renderer's queue and pool, used without a backend.
+    property Workers: TGEWorkers read FWorkers;
     constructor Create(Memory: TPSPMemory);
     destructor Destroy; override;
     // The GE stops running for now: the backend makes what it drew visible.
@@ -112,7 +138,7 @@ constructor TPSPGEEngine.Create(Memory: TPSPMemory);
 begin
   inherited Create;
   FMemory := Memory;
-  FWorkers := TGEWorkers.Create;
+  FWorkers := TGEWorkers.Create(FMemory);
   Reset;
 end;
 
@@ -124,8 +150,14 @@ end;
 
 procedure TPSPGEEngine.ReleaseBackend;
 begin
+  // The CPU queue stays: what it holds and watches brings it back on access.
   if Backend <> nil then
+  begin
+    FWorkers.Sync;
     Backend.Release;
+  end
+  else
+    FWorkers.Release;
 end;
 
 procedure TPSPGEEngine.Reset;
@@ -134,6 +166,11 @@ begin
   for var I := 0 to 255 do
     Regs.Cmd[I] := Cardinal(I) shl 24;
   BoxVisible := True;
+  if FWorkers <> nil then
+  begin
+    FWorkers.Sync;
+    FWorkers.ClutChanged;
+  end;
   FillChar(FClut, SizeOf(FClut), 0);
 end;
 
@@ -528,10 +565,19 @@ end;
   truncated after every operation; an add first truncates both terms to the
   precision of the larger one. }
 
-function T24(V: Double): Double;
+function T24Special(V: Double): Double;
 var
   E: Integer;
   M: Double;
+begin
+  if (V = 0) or IsNan(V) or IsInfinite(V) then
+    Exit(V);
+  Frexp(V, M, E);
+  // |M| in [0.5, 1): 16 significant bits.
+  Result := Ldexp(Int(M * 65536), E - 16);
+end;
+
+function T24(V: Double): Double; inline;
 begin
   // A normal double: the significand cut to 16 bits (toward zero) in its
   // bits; the rest through Frexp and Ldexp.
@@ -540,13 +586,10 @@ begin
   if (X <> 0) and (X <> $7FF) then
   begin
     Bits := Bits and UInt64($FFFFFFE000000000);
-    Exit(PDouble(@Bits)^);
-  end;
-  if (V = 0) or IsNan(V) or IsInfinite(V) then
-    Exit(V);
-  Frexp(V, M, E);
-  // |M| in [0.5, 1): 16 significant bits.
-  Result := Ldexp(Int(M * 65536), E - 16);
+    Result := PDouble(@Bits)^;
+  end
+  else
+    Result := T24Special(V);
 end;
 
 function Exp24(V: Double): Integer; inline;
@@ -707,29 +750,68 @@ begin
     Result := Trunc(V);
 end;
 
-procedure TPSPGEEngine.Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
+// The registers lighting reads do not change within a primitive.
+procedure TPSPGEEngine.PrepareLight;
 var
   C: PGECmds;
-  Upd: Cardinal;
-  MA, MD, MS, E, AL, LA, LD, LS: array[0..2] of Single;
-  Lit, Spec: array[0..2] of Single;
-  MAA, ALA, Shine, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp, Cutoff, Expo: Single;
-  N, D, SD, H, VW: TGEVec3;
-  L, Kind, LType, Ch: Integer;
-  LT: Cardinal;
 begin
   C := @Regs.Cmd;
-  Upd := C[GE_MATERIALUPDATE];
-  for Ch := 0 to 2 do
+  for var Ch := 0 to 2 do
   begin
-    MA[Ch] := Unit8(C[GE_MATERIALAMBIENT], Ch * 8);
-    MD[Ch] := Unit8(C[GE_MATERIALDIFFUSE], Ch * 8);
-    MS[Ch] := Unit8(C[GE_MATERIALSPECULAR], Ch * 8);
-    E[Ch] := Unit8(C[GE_MATERIALEMISSIVE], Ch * 8);
-    AL[Ch] := Unit8(C[GE_AMBIENTCOLOR], Ch * 8);
+    FLight.MA[Ch] := Unit8(C[GE_MATERIALAMBIENT], Ch * 8);
+    FLight.MD[Ch] := Unit8(C[GE_MATERIALDIFFUSE], Ch * 8);
+    FLight.MS[Ch] := Unit8(C[GE_MATERIALSPECULAR], Ch * 8);
+    FLight.E[Ch] := Unit8(C[GE_MATERIALEMISSIVE], Ch * 8);
+    FLight.AL[Ch] := Unit8(C[GE_AMBIENTCOLOR], Ch * 8);
   end;
-  MAA := Unit8(C[GE_MATERIALALPHA], 0);
-  ALA := Unit8(C[GE_AMBIENTALPHA], 0);
+  FLight.MAA := Unit8(C[GE_MATERIALALPHA], 0);
+  FLight.ALA := Unit8(C[GE_AMBIENTALPHA], 0);
+  // The exponent keeps the top 4 bits of its mantissa.
+  FLight.Shine := GEFloat(C[GE_MATERIALSPECULARCOEF] and $FFF800);
+  // The viewer is at infinity along view space +z.
+  FLight.View := Vec3(GEFloat(Regs.View[2]), GEFloat(Regs.View[5]), GEFloat(Regs.View[8]));
+  FLight.Separate := (C[GE_LIGHTMODE] and 1) <> 0;
+  for var L := 0 to 3 do
+  begin
+    var U: PGELightUnit := @FLight.Lights[L];
+    U.On := (C[GE_LIGHTENABLE0 + L] and 1) <> 0;
+    var LT := C[GE_LIGHTTYPE0 + L];
+    U.Kind := LT and 3;
+    U.LType := (LT shr 8) and 3;
+    U.Pos := CmdVec(C^, GE_LX0 + L * 3);
+    U.KA := GEFloat(C[GE_LKA0 + L * 3]);
+    U.KB := GEFloat(C[GE_LKA0 + L * 3 + 1]);
+    U.KC := GEFloat(C[GE_LKA0 + L * 3 + 2]);
+    U.SpotDir := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
+    U.Cutoff := GEFloat(C[GE_LKO0 + L]);
+    U.Expo := GEFloat(C[GE_LKS0 + L]);
+    U.SpotPositive := GEFloat(C[GE_LDX0 + L * 3]) > 0;
+    for var Ch := 0 to 2 do
+    begin
+      U.LA[Ch] := Unit8(C[GE_LAC0 + L * 3], Ch * 8);
+      U.LD[Ch] := Unit8(C[GE_LAC0 + L * 3 + 1], Ch * 8);
+      U.LS[Ch] := Unit8(C[GE_LAC0 + L * 3 + 2], Ch * 8);
+    end;
+  end;
+  FLightValid := True;
+end;
+
+procedure TPSPGEEngine.Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
+var
+  Upd: Cardinal;
+  MA, MD, MS: TGERGB;
+  Lit, Spec: array[0..2] of Single;
+  MAA, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp: Single;
+  N, D, H: TGEVec3;
+  Ch: Integer;
+begin
+  if not FLightValid then
+    PrepareLight;
+  Upd := Regs.Cmd[GE_MATERIALUPDATE];
+  MA := FLight.MA;
+  MD := FLight.MD;
+  MS := FLight.MS;
+  MAA := FLight.MAA;
   if V.HasColor then
   begin
     if (Upd and 1) <> 0 then
@@ -747,30 +829,24 @@ begin
   end;
   for Ch := 0 to 2 do
   begin
-    Lit[Ch] := E[Ch] + AL[Ch] * MA[Ch];
+    Lit[Ch] := FLight.E[Ch] + FLight.AL[Ch] * MA[Ch];
     Spec[Ch] := 0;
   end;
   N := Normalized(WN);
-  // The exponent keeps the top 4 bits of its mantissa.
-  Shine := GEFloat(C[GE_MATERIALSPECULARCOEF] and $FFF800);
-  // The viewer is at infinity along view space +z.
-  VW := Vec3(GEFloat(Regs.View[2]), GEFloat(Regs.View[5]), GEFloat(Regs.View[8]));
-  for L := 0 to 3 do
+  for var L := 0 to 3 do
   begin
-    if (C[GE_LIGHTENABLE0 + L] and 1) = 0 then
+    var U: PGELightUnit := @FLight.Lights[L];
+    if not U.On then
       Continue;
-    LT := C[GE_LIGHTTYPE0 + L];
-    Kind := LT and 3;
-    LType := (LT shr 8) and 3;
-    D := CmdVec(C^, GE_LX0 + L * 3);
-    if LType <> 0 then
+    D := U.Pos;
+    if U.LType <> 0 then
       D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
     Dist := Sqrt(F24(Dot(D, D)));
     D := NormalizedF24(D);
     Att := 1;
-    if LType <> 0 then
+    if U.LType <> 0 then
     begin
-      Den := GEFloat(C[GE_LKA0 + L * 3]) + GEFloat(C[GE_LKA0 + L * 3 + 1]) * Dist + GEFloat(C[GE_LKA0 + L * 3 + 2]) * Dist * Dist;
+      Den := U.KA + U.KB * Dist + U.KC * Dist * Dist;
       if Den <> 0 then
         Att := 1 / Den
       else
@@ -781,42 +857,35 @@ begin
         Att := 0;
     end;
     Spot := 1;
-    if LType = 2 then
+    if U.LType = 2 then
     begin
-      SD := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
-      CosA := Dot(D, SD);
-      Cutoff := GEFloat(C[GE_LKO0 + L]);
-      Expo := GEFloat(C[GE_LKS0 + L]);
+      CosA := Dot(D, U.SpotDir);
       // An infinite direction lights everything or nothing by its sign.
       if IsNan(CosA) then
-        Spot := Ord(GEFloat(C[GE_LDX0 + L * 3]) > 0)
-      else if CosA >= Cutoff then
-        Spot := Min(GEPow(Max(CosA, 0), Expo), 1E30)
+        Spot := Ord(U.SpotPositive)
+      else if CosA >= U.Cutoff then
+        Spot := Min(GEPow(Max(CosA, 0), U.Expo), 1E30)
       else
         Spot := 0;
     end;
-    for Ch := 0 to 2 do
-    begin
-      LA[Ch] := Unit8(C[GE_LAC0 + L * 3], Ch * 8);
-      LD[Ch] := Unit8(C[GE_LAC0 + L * 3 + 1], Ch * 8);
-      LS[Ch] := Unit8(C[GE_LAC0 + L * 3 + 2], Ch * 8);
-    end;
     NdotL := Dot(N, D);
     Diff := Max(NdotL, 0);
-    if Kind = 2 then
-      Diff := Min(GEPow(Diff, Shine), 1);
+    if U.Kind = 2 then
+      Diff := Min(GEPow(Diff, FLight.Shine), 1);
     for Ch := 0 to 2 do
-      Lit[Ch] := Lit[Ch] + Att * Spot * (LA[Ch] * MA[Ch] + LD[Ch] * MD[Ch] * Diff);
-    if (Kind = 1) and (NdotL >= 0) then
+      Lit[Ch] := Lit[Ch] + Att * Spot * (U.LA[Ch] * MA[Ch] + U.LD[Ch] * MD[Ch] * Diff);
+    if (U.Kind = 1) and (NdotL >= 0) then
     begin
+      var VW := FLight.View;
       H := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
       NdotH := Max(Dot(N, H), 0);
-      Sp := Att * Spot * Min(GEPow(NdotH, Shine), 1);
+      Sp := Att * Spot * Min(GEPow(NdotH, FLight.Shine), 1);
       for Ch := 0 to 2 do
-        Spec[Ch] := Spec[Ch] + Sp * LS[Ch] * MS[Ch];
+        Spec[Ch] := Spec[Ch] + Sp * U.LS[Ch] * MS[Ch];
     end;
   end;
-  if (C[GE_LIGHTMODE] and 1) <> 0 then
+  var ALA := FLight.ALA;
+  if FLight.Separate then
   begin
     SR := LitChannel(Spec[0]);
     SG := LitChannel(Spec[1]);
@@ -1128,6 +1197,7 @@ begin
   S.MaskRGB := C[GE_MASKRGB] and $FFFFFF;
   S.MaskA := C[GE_MASKALPHA] and $FF;
   GEPrepareRaster(S^);
+  FWorkers.StateChanged;
 end;
 
 { Primitives }
@@ -1278,7 +1348,7 @@ begin
       CopyColors(Q.V, B.V);
   end;
   if ((P.Code or Q.Code) and GEOutScreen) = 0 then
-    if Backend <> nil then Backend.DrawLine(FRaster, P.V, Q.V) else GEDrawLine(FRaster, P.V, Q.V);
+    if Backend <> nil then Backend.DrawLine(FRaster, P.V, Q.V) else FWorkers.Line(FRaster, P.V, Q.V);
 end;
 
 procedure TPSPGEEngine.EmitSprite(const A, B: TGEAsmVertex);
@@ -1299,7 +1369,7 @@ begin
   case FAsmType of
     0:
       if (A.Code and (GEOutNone or GEOutPlanes or GEOutScreen)) = 0 then
-        if Backend <> nil then Backend.DrawPoint(FRaster, A.V) else GEDrawPoint(FRaster, A.V);
+        if Backend <> nil then Backend.DrawPoint(FRaster, A.V) else FWorkers.Point(FRaster, A.V);
     1:
       begin
         FAsm[N and 1] := A;
@@ -1359,6 +1429,7 @@ begin
   var PrimType := Integer((Op shr 16) and 7);
   var Count := Integer(Op and $FFFF);
   var VType := Regs.Cmd[GE_VTYPE];
+  FLightValid := False;
   SetupVertexFormat(VType);
   var HasPos := ((VType shr 7) and 3) <> 0;
   if PrimType <> 7 then
@@ -1563,6 +1634,7 @@ begin
   var UCount := Integer(Op and $FF);
   var VCount := Integer((Op shr 8) and $FF);
   var VType := C[GE_VTYPE];
+  FLightValid := False;
   SetupVertexFormat(VType);
   var Total := UCount * VCount;
   if (UCount < 4) or (VCount < 4) then
@@ -1755,6 +1827,7 @@ begin
     Bytes := Length(FClut);
   if Bytes > 0 then
     FMemory.ReadBytes(Addr, FClut[0], Bytes);
+  FWorkers.ClutChanged;
 end;
 
 // Transfers address VRAM's 8MB of mirrors with wrap-around at the end.

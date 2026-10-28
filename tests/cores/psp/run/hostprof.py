@@ -1,6 +1,6 @@
 """Sampling profiler for a running PSPRun (or any dcc64 -GD build) on Windows.
 
-  hostprof.py EXE [args...] [--seconds 20] [--rate 500] [--top 40]
+  hostprof.py EXE [args...] [--main] [--skip 0] [--seconds 20] [--rate 500] [--top 40]
 
 Starts EXE, samples the instruction pointer of all its threads, maps the
 addresses to routines with the .map file next to the exe, prints the hottest.
@@ -75,8 +75,11 @@ def load_map(path):
 
 def main():
     args = sys.argv[1:]
-    seconds, rate, top = 20.0, 500, 40
-    for flag in ('--seconds', '--rate', '--top'):
+    seconds, rate, top, skip = 20.0, 500, 40, 0.0
+    main_only = '--main' in args
+    if main_only:
+        args.remove('--main')
+    for flag in ('--seconds', '--rate', '--top', '--skip'):
         if flag in args:
             i = args.index(flag)
             v = args[i + 1]
@@ -85,19 +88,50 @@ def main():
                 seconds = float(v)
             elif flag == '--rate':
                 rate = int(v)
+            elif flag == '--skip':
+                skip = float(v)
             else:
                 top = int(v)
     exe = args[0]
     mp = os.path.splitext(exe)[0] + '.map'
     addrs, names = load_map(mp)
     proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(0.5)
+    time.sleep(0.5 + skip)
     hproc = k32.OpenProcess(0x1F0FFF, False, proc.pid)
     psapi = ctypes.WinDLL('psapi')
-    mods = (ctypes.c_void_p * 1)()
+    mods = (ctypes.c_void_p * 1024)()
     need = wt.DWORD()
     psapi.EnumProcessModules(hproc, mods, ctypes.sizeof(mods), ctypes.byref(need))
     base = mods[0] or 0x140000000
+
+    class MODULEINFO(ctypes.Structure):
+        _fields_ = [('base', ctypes.c_void_p), ('size', wt.DWORD), ('entry', ctypes.c_void_p)]
+
+    modules = []
+    for m in mods[1:need.value // ctypes.sizeof(ctypes.c_void_p)]:
+        info = MODULEINFO()
+        name = ctypes.create_unicode_buffer(260)
+        if m and psapi.GetModuleInformation(hproc, ctypes.c_void_p(m), ctypes.byref(info), ctypes.sizeof(info)):
+            psapi.GetModuleBaseNameW(hproc, ctypes.c_void_p(m), name, 260)
+            modules.append((info.base, info.size, name.value))
+
+    def module_of(rip):
+        for b, s, n in modules:
+            if b <= rip < b + s:
+                return n
+        return '?'
+
+    main_tid = None
+    if main_only:
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+        te = THREADENTRY32()
+        te.dwSize = ctypes.sizeof(te)
+        ok = k32.Thread32First(snap, ctypes.byref(te))
+        while ok and main_tid is None:
+            if te.th32OwnerProcessID == proc.pid:
+                main_tid = te.th32ThreadID
+            ok = k32.Thread32Next(snap, ctypes.byref(te))
+        k32.CloseHandle(snap)
     counts = Counter()
     total = 0
     end = time.time() + seconds
@@ -108,7 +142,7 @@ def main():
         te.dwSize = ctypes.sizeof(te)
         ok = k32.Thread32First(snap, ctypes.byref(te))
         while ok:
-            if te.th32OwnerProcessID == proc.pid:
+            if te.th32OwnerProcessID == proc.pid and (main_tid is None or te.th32ThreadID == main_tid):
                 h = k32.OpenThread(THREAD_ALL, False, te.th32ThreadID)
                 if h:
                     if k32.SuspendThread(h) != 0xFFFFFFFF:
@@ -119,7 +153,7 @@ def main():
                             if 0 <= i < len(names) and rip - addrs[i] < 0x100000:
                                 counts[names[i]] += 1
                             else:
-                                counts['?%x' % ctx.Rip] += 1
+                                counts['?%s' % module_of(ctx.Rip)] += 1
                             total += 1
                         k32.ResumeThread(h)
                     k32.CloseHandle(h)

@@ -1,9 +1,21 @@
 unit PSP.GE.Workers;
 
-// A fixed pool for a single primitive's independent row bands. Dispatch is
-// synchronous: all bands finish before the GE executes another command or
-// gives control back to the CPU. No VRAM readers/writers need asynchronous
-// fences, and GE order, including framebuffer textures, stays unchanged.
+// The CPU renderer's primitive queue. Primitives queue in a batch with a copy
+// of their raster state and CLUT; the pool draws a batch with every thread
+// taking whole bands of rows and drawing each primitive of the batch that
+// reaches its band, in order. A pixel belongs to one band and sees its
+// primitives in GE order, so the result does not depend on the thread count.
+// One batch may be drawn in the background while the next one fills; it is
+// always finished before the next starts.
+//
+// Batches outlive the GE's command runs. The VRAM pages their primitives draw
+// into are held (TPSPMemory.HoldVRAM): any access to them by the CPU, DMA,
+// the display or the GE's own reads first draws everything queued. The pages
+// their textures come from are watched (TPSPMemory.WatchPage): a write there
+// first draws everything queued. A primitive whose buffers or texture overlap
+// its batch's in another layout starts a new batch. Primitives whose rows
+// alias each other or their own texture, or that could read a held page
+// through the page table, are drawn alone after everything queued.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 
@@ -11,64 +23,210 @@ interface
 
 uses
   {$IFDEF MSWINDOWS}Winapi.Windows,{$ENDIF}
-  System.SysUtils, System.Classes, System.Math, PSP.Types, PSP.GE.Raster;
+  System.SysUtils, System.Classes, System.Math, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster;
 
 type
+  TGEJobKind = (gjTriangle, gjSprite, gjLine, gjPoint);
+
   TGEJob = record
-    Raster: TGERaster;
+    State: Integer;
+    Kind: TGEJobKind;
+    Y1, Y2: Integer;
     V: array[0..2] of TGEVertex;
-    Sprite: Boolean;
+  end;
+  PGEJob = ^TGEJob;
+
+  // VRAM bytes [Lo, Hi) that a batch writes as a buffer (Bytes 2 or 4 a
+  // colour pixel, 0 for depth, which also has a permutation) or reads.
+  TGERange = record
+    Base, Stride, Bytes: Cardinal;
+    Permutation: Integer;
+    Lo, Hi: Cardinal;
+  end;
+  PGERange = ^TGERange;
+  PGERaster = ^TGERaster;
+
+  TGEBatch = record
+    Jobs: TArray<TGEJob>;
+    Count: Integer;
+    States: TArray<TGERaster>;
+    StateCount: Integer;
+    Cluts: TArray<Byte>;
+    ClutCount: Integer;
+    MinY, MaxY: Integer;
+    Area: Int64;
+    // The floating-point modes the primitives were given.
     MXCSR: UInt32;
     FPUControl: Word;
+    BandTop, BandRows, Bands: Integer;
+    NextBand: Integer;
   end;
+  PGEBatch = ^TGEBatch;
+
+  TGEWorkers = class;
 
   {$IFDEF MSWINDOWS}
   TGEWorker = class(TThread)
   private
+    FOwner: TGEWorkers;
     FStart, FDone: THandle;
     FError: Exception;
-    FJob: TGEJob;
   protected
     procedure Execute; override;
   public
-    constructor Create;
+    constructor Create(Owner: TGEWorkers);
     destructor Destroy; override;
   end;
-
   {$ENDIF}
 
   TGEWorkers = class
+  private const
+    JobCapacity = 16384;
+    ClutCapacity = 1024;
+    RangeCapacity = 16;
+    WatchCapacity = 256;
+    // Smaller batches are drawn on the calling thread.
+    ParallelArea = 24000;
+    // A batch this large is started in the background when the GE stops.
+    BackgroundArea = 60000;
   private
+    FMemory: TPSPMemory;
+    FThreads: Integer;
+    FBatches: array[0..1] of TGEBatch;
+    FBatch: PGEBatch;
+    FFlight: PGEBatch;
+    FFlightThreads: Integer;
+    FStateDirty: Boolean;
+    FLastSource: Pointer;
+    FClutIndex: Integer;
+    FClutGeneration, FClutSnapshot: Cardinal;
+    FTargets: array[0..RangeCapacity - 1] of TGERange;
+    FTargetCount: Integer;
+    FReads: array[0..RangeCapacity - 1] of TGERange;
+    FReadCount: Integer;
+    FWatches: array[0..WatchCapacity - 1] of TGERange;
+    FWatchCount: Integer;
+    FHolding: Boolean;
+    FSavedFault: TPSPVRAMFault;
+    FBatchesDrawn, FBackground, FQueued, FAlone, FAccessSyncs, FSplits: Int64;
+    FAloneWhy: array[0..6] of Int64;
     {$IFDEF MSWINDOWS}
     FWorkers: array of TGEWorker;
-    FThreads: Integer;
     procedure StartWorkers;
     {$ENDIF}
-    procedure Draw(const S: TGERaster; const A, B, C: TGEVertex; Sprite: Boolean);
+    procedure Add(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex);
+    procedure DrawAlone(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex; Why: Integer);
+    procedure Attach;
+    procedure Hold(Lo, Hi: Cardinal);
+    procedure Watch(Lo, Hi: Cardinal);
+    procedure Fault;
+    // Starts drawing the filling batch (in the background when large enough)
+    // and begins the next one.
+    procedure Kick;
+    procedure WaitFlight;
+    procedure DrawSerial(B: PGEBatch);
+    procedure WorkBands(B: PGEBatch);
   public
-    constructor Create;
+    constructor Create(Memory: TPSPMemory);
     destructor Destroy; override;
     procedure Triangle(const S: TGERaster; const A, B, C: TGEVertex);
     procedure Sprite(const S: TGERaster; const A, B: TGEVertex);
+    procedure Line(const S: TGERaster; const A, B: TGEVertex);
+    procedure Point(const S: TGERaster; const A: TGEVertex);
+    // The raster state the engine passes has changed since the last primitive.
+    procedure StateChanged; inline;
+    // The CLUT the raster state points to has been loaded again.
+    procedure ClutChanged; inline;
+    // The GE stops running for now: a large batch starts in the background.
+    procedure Release;
+    // Draws everything queued and gives the held and watched pages back.
+    procedure Sync;
+    function Describe: string;
+    property Threads: Integer read FThreads;
   end;
 
 implementation
 
-procedure RunJob(const J: TGEJob);
+const
+  // Bits a texel by texture format (DXT by their blocks).
+  TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
+  AloneNames: array[0..6] of string = ('stride', 'wrap', 'depth layout', 'depth on colour', 'texture layout',
+    'texture beyond its level', 'own texture');
+
+// The pool exists on Windows only; elsewhere every primitive is drawn at once.
+function GetModes(out Control: Word): UInt32; inline;
 begin
-  if J.Sprite then
-    GEDrawSprite(J.Raster, J.V[0], J.V[1])
+  {$IFDEF MSWINDOWS}
+  Control := Get8087CW;
+  Result := GetMXCSR;
+  {$ELSE}
+  Control := 0;
+  Result := 0;
+  {$ENDIF}
+end;
+
+procedure SetModes(MXCSR: UInt32; Control: Word); inline;
+begin
+  {$IFDEF MSWINDOWS}
+  SetMXCSR(MXCSR);
+  Set8087CW(Control);
+  {$ENDIF}
+end;
+
+procedure DrawJob(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex); inline;
+begin
+  case Kind of
+    gjTriangle: GEDrawTriangle(S, A, B, C);
+    gjSprite: GEDrawSprite(S, A, B);
+    gjLine: GEDrawLine(S, A, B);
   else
-    GEDrawTriangle(J.Raster, J.V[0], J.V[1], J.V[2]);
+    GEDrawPoint(S, A);
+  end;
+end;
+
+function Overlaps(Lo1, Hi1, Lo2, Hi2: Cardinal): Boolean; inline;
+begin
+  Result := (Lo1 < Hi2) and (Lo2 < Hi1);
+end;
+
+function SameLayout(const A, B: TGERange): Boolean; inline;
+begin
+  Result := (A.Base = B.Base) and (A.Stride = B.Stride) and (A.Bytes = B.Bytes) and (A.Permutation = B.Permutation);
+end;
+
+// One past the furthest byte from a level's start the sampler may read (as
+// PSP.GE.Texture addresses texels: wrapped or clamped into the level).
+function LevelReach(const T: TGETexture; const L: TGETexLevel): UInt64;
+begin
+  var Bits := TexBits[T.Format and 15];
+  var W := UInt64(Max(L.Width, 1));
+  var H := UInt64(Max(L.Height, 1));
+  var BW := UInt64(Max(L.BufWidth, 0));
+  if T.Format >= 8 then
+  begin
+    var BlockBytes: UInt64 := 16;
+    if T.Format = 8 then BlockBytes := 8;
+    Result := (((H - 1) shr 2) * (BW div 4) + ((W - 1) shr 2)) * BlockBytes + BlockBytes;
+  end
+  else
+  begin
+    var RowBytes := (BW * UInt64(Bits)) div 8;
+    var LastByte := ((W - 1) * UInt64(Bits)) div 8;
+    if T.Swizzle then
+      Result := ((((H - 1) shr 3) * (RowBytes shr 4) + (LastByte shr 4)) shl 7) + 128
+    else
+      Result := (H - 1) * RowBytes + LastByte + UInt64(Max(1, Bits div 8));
+  end;
 end;
 
 {$IFDEF MSWINDOWS}
-constructor TGEWorker.Create;
+constructor TGEWorker.Create(Owner: TGEWorkers);
 begin
-  inherited Create(False);
+  FOwner := Owner;
   FStart := CreateEvent(nil, False, False, nil);
   FDone := CreateEvent(nil, False, False, nil);
   if (FStart = 0) or (FDone = 0) then RaiseLastOSError;
+  inherited Create(False);
 end;
 
 destructor TGEWorker.Destroy;
@@ -84,35 +242,50 @@ end;
 
 procedure TGEWorker.Execute;
 begin
-  // Match the emulator thread's default IEEE rounding, denormals and masked
-  // exceptions; its exact control word is also copied on every dispatch.
   while True do
   begin
     WaitForSingleObject(FStart, INFINITE);
     if Terminated then Exit;
     try
-      Set8087CW(FJob.FPUControl);
-      SetMXCSR(FJob.MXCSR);
-      RunJob(FJob);
+      var B := FOwner.FFlight;
+      SetModes(B.MXCSR, B.FPUControl);
+      FOwner.WorkBands(B);
     except
       FError := Exception(AcquireExceptionObject);
     end;
     SetEvent(FDone);
   end;
 end;
-
 {$ENDIF}
 
-constructor TGEWorkers.Create;
+constructor TGEWorkers.Create(Memory: TPSPMemory);
 begin
-  inherited;
+  inherited Create;
+  FMemory := Memory;
+  FThreads := 1;
   {$IFDEF MSWINDOWS}
-  FThreads := EnsureRange(StrToIntDef(GetEnvironmentVariable('PSP_GE_THREADS'), Min(6, TThread.ProcessorCount)), 1, 12);
+  // The pool draws while the emulator thread goes on: leave it and one more.
+  FThreads := EnsureRange(StrToIntDef(GetEnvironmentVariable('PSP_GE_THREADS'),
+    Min(10, TThread.ProcessorCount - 2)), 1, 16);
   {$ENDIF}
+  if FMemory = nil then
+    FThreads := 1;
+  if FThreads > 1 then
+    for var I := 0 to 1 do
+    begin
+      SetLength(FBatches[I].Jobs, JobCapacity);
+      SetLength(FBatches[I].States, 64);
+      SetLength(FBatches[I].Cluts, ClutCapacity * 1024);
+    end;
+  FBatch := @FBatches[0];
+  FClutIndex := -1;
+  FStateDirty := True;
 end;
 
 destructor TGEWorkers.Destroy;
 begin
+  if FHolding or (FBatch.Count > 0) or (FFlight <> nil) then
+    Sync;
   {$IFDEF MSWINDOWS}
   for var W in FWorkers do W.Free;
   {$ENDIF}
@@ -123,122 +296,527 @@ end;
 procedure TGEWorkers.StartWorkers;
 begin
   if Length(FWorkers) <> 0 then Exit;
-  SetLength(FWorkers, FThreads - 1);
-  for var I := 0 to High(FWorkers) do FWorkers[I] := TGEWorker.Create;
+  SetLength(FWorkers, FThreads);
+  for var I := 0 to High(FWorkers) do FWorkers[I] := TGEWorker.Create(Self);
 end;
-
-function Overlap(A, B, C, D: NativeUInt): Boolean; inline;
-begin
-  Result := (A < D) and (C < B);
-end;
-
-// Bands may not write the same physical storage (short strides, wraparound,
-// overlapping depth and colour targets), or read storage another band may
-// be writing. Such primitives retain the original single-thread order.
-function Independent(const S: TGERaster; Y1, Y2: Integer): Boolean;
-begin
-  var Bpp := 2;
-  if S.FBFormat = 3 then Bpp := 4;
-  if (S.FBStride <= Cardinal(S.ScissorX2)) or (S.FBStride = 0) then Exit(False);
-  var Base := NativeUInt(S.VRAM);
-  var C1 := Base + S.FBAddr + (NativeUInt(Y1) * S.FBStride + Cardinal(S.ScissorX1)) * Cardinal(Bpp);
-  var C2 := Base + S.FBAddr + (NativeUInt(Y2) * S.FBStride + Cardinal(S.ScissorX2) + 1) * Cardinal(Bpp);
-  if C2 > Base + PSPVRAMSize then Exit(False);
-  var HasZ := S.DepthTest or (S.ClearMode and S.ClearDepth);
-  var Z1, Z2: NativeUInt;
-  Z1 := 0; Z2 := 0;
-  if HasZ then
-  begin
-    if (S.ZStride <= Cardinal(S.ScissorX2)) or (S.ZStride = 0) then Exit(False);
-    Z1 := Base + S.ZAddr + (NativeUInt(Y1) * S.ZStride + Cardinal(S.ScissorX1)) * 2;
-    Z2 := Base + S.ZAddr + (NativeUInt(Y2) * S.ZStride + Cardinal(S.ScissorX2) + 1) * 2;
-    if Z2 > Base + PSPVRAMSize then Exit(False);
-    // Depth's bank permutation stays within a 64 KB block.
-    Z1 := Base + ((Z1 - Base) and not NativeUInt($FFFF));
-    Z2 := Base + (((Z2 - Base) + $FFFF) and not NativeUInt($FFFF));
-    if Overlap(C1, C2, Z1, Z2) then Exit(False);
-  end;
-  if S.Textured then
-    for var I := 0 to S.Tex.LevelCount - 1 do
-    begin
-      var L := S.Tex.Levels[I];
-      if (L.Ptr = nil) or (L.Width > L.BufWidth) then Exit(False);
-      if S.Tex.Swizzle and ((L.Height < 8) or (L.BufWidth and 31 <> 0)) then Exit(False);
-      if (S.Tex.Format >= 8) and ((L.Height < 4) or (L.BufWidth < 4)) then Exit(False);
-      var T1 := NativeUInt(L.Ptr);
-      if Overlap(T1, T1 + L.Size, C1, C2) or (HasZ and Overlap(T1, T1 + L.Size, Z1, Z2)) then Exit(False);
-      // Bytes fetched outside the contiguous level use the guest memory
-      // reader: only RAM textures are safe without further address analysis.
-      if Overlap(T1, T1 + L.Size, Base, Base + PSPVRAMSize) then Exit(False);
-    end;
-  Result := True;
-end;
-
 {$ENDIF}
 
-procedure TGEWorkers.Draw(const S: TGERaster; const A, B, C: TGEVertex; Sprite: Boolean);
-var
-  Job: TGEJob;
+procedure TGEWorkers.StateChanged;
 begin
-  Job.Raster := S;
-  Job.V[0] := A; Job.V[1] := B; Job.V[2] := C;
-  Job.Sprite := Sprite;
+  FStateDirty := True;
+end;
+
+procedure TGEWorkers.ClutChanged;
+begin
+  Inc(FClutGeneration);
+end;
+
+procedure TGEWorkers.Triangle(const S: TGERaster; const A, B, C: TGEVertex);
+begin
+  Add(S, gjTriangle, A, B, C);
+end;
+
+procedure TGEWorkers.Sprite(const S: TGERaster; const A, B: TGEVertex);
+begin
+  Add(S, gjSprite, A, B, B);
+end;
+
+procedure TGEWorkers.Line(const S: TGERaster; const A, B: TGEVertex);
+begin
+  Add(S, gjLine, A, B, B);
+end;
+
+procedure TGEWorkers.Point(const S: TGERaster; const A: TGEVertex);
+begin
+  Add(S, gjPoint, A, A, A);
+end;
+
+procedure TGEWorkers.DrawAlone(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex; Why: Integer);
+begin
+  Inc(FAlone);
+  Inc(FAloneWhy[Why]);
+  Sync;
+  DrawJob(S, Kind, A, B, C);
+end;
+
+procedure TGEWorkers.Attach;
+begin
+  if FHolding then Exit;
+  FSavedFault := FMemory.OnVRAMFault;
+  FMemory.OnVRAMFault := Fault;
+  FHolding := True;
+end;
+
+procedure TGEWorkers.Hold(Lo, Hi: Cardinal);
+begin
+  if Hi <= Lo then Exit;
+  Attach;
+  for var Page := Integer(Lo shr PSPPageShift) to Integer((Hi - 1) shr PSPPageShift) do
+    FMemory.HoldVRAM(Page);
+end;
+
+// Physical bytes [Lo, Hi) of the whole map.
+procedure TGEWorkers.Watch(Lo, Hi: Cardinal);
+begin
+  if Hi <= Lo then Exit;
+  Attach;
+  for var Page := Integer(Lo shr PSPPageShift) to Integer((Hi - 1) shr PSPPageShift) do
+    if Page < PSPPageCount then
+      FMemory.WatchPage(Page);
+end;
+
+procedure TGEWorkers.Fault;
+begin
+  Inc(FAccessSyncs);
+  Sync;
+end;
+
+procedure TGEWorkers.Release;
+begin
+  if (FBatch.Count > 0) and (FBatch.Area >= BackgroundArea) then
+    Kick;
+end;
+
+procedure TGEWorkers.Sync;
+begin
+  if FBatch.Count > 0 then
+    Kick;
+  WaitFlight;
+  if FHolding then
+  begin
+    FHolding := False;
+    FMemory.ReleaseVRAM;
+    FMemory.ReleaseWatches;
+    FWatchCount := 0;
+    FMemory.OnVRAMFault := FSavedFault;
+    FSavedFault := nil;
+  end;
+end;
+
+procedure TGEWorkers.WaitFlight;
+begin
   {$IFDEF MSWINDOWS}
-  var X1 := Min(A.X, B.X); var X2 := Max(A.X, B.X);
-  var Y1 := Min(A.Y, B.Y); var Y2 := Max(A.Y, B.Y);
-  if not Sprite then
-  begin
-    X1 := Min(X1, C.X); X2 := Max(X2, C.X);
-    Y1 := Min(Y1, C.Y); Y2 := Max(Y2, C.Y);
-  end;
-  X1 := Max(S.ScissorX1, X1 div 16 - 1);
-  X2 := Min(S.ScissorX2, X2 div 16 + 1);
-  Y1 := Max(Max(S.ScissorY1, S.BandY1), Y1 div 16 - 1);
-  Y2 := Min(Min(S.ScissorY2, S.BandY2), Y2 div 16 + 1);
-  var Rows := Y2 - Y1 + 1;
-  if (FThreads = 1) or (Rows < 24) or (Int64(X2 - X1 + 1) * Rows < 16384) or not Independent(S, Y1, Y2) then
-  begin
-    RunJob(Job);
+  if FFlight = nil then
     Exit;
-  end;
-  StartWorkers;
-  Job.MXCSR := GetMXCSR;
-  Job.FPUControl := Get8087CW;
-  var N := Min(FThreads, Rows div 12);
-  for var I := 1 to N - 1 do
-  begin
-    Job.Raster.BandY1 := Y1 + Rows * I div N;
-    Job.Raster.BandY2 := Y1 + Rows * (I + 1) div N - 1;
-    FWorkers[I - 1].FJob := Job;
-    SetEvent(FWorkers[I - 1].FStart);
-  end;
-  Job.Raster.BandY1 := Y1;
-  Job.Raster.BandY2 := Y1 + Rows div N - 1;
-  try
-    RunJob(Job);
-  finally
-    for var I := 0 to N - 2 do WaitForSingleObject(FWorkers[I].FDone, INFINITE);
-  end;
-  for var I := 0 to N - 2 do
+  var B := FFlight;
+  for var I := 0 to FFlightThreads - 1 do
+    WaitForSingleObject(FWorkers[I].FDone, INFINITE);
+  FFlight := nil;
+  B.Count := 0;
+  B.StateCount := 0;
+  B.ClutCount := 0;
+  B.Area := 0;
+  for var I := 0 to FFlightThreads - 1 do
     if FWorkers[I].FError <> nil then
     begin
       var E := FWorkers[I].FError;
       FWorkers[I].FError := nil;
       raise E;
     end;
-  {$ELSE}
-  RunJob(Job);
   {$ENDIF}
 end;
 
-procedure TGEWorkers.Triangle(const S: TGERaster; const A, B, C: TGEVertex);
+procedure TGEWorkers.Kick;
 begin
-  Draw(S, A, B, C, False);
+  WaitFlight;
+  var B := FBatch;
+  if B.Count = 0 then
+    Exit;
+  Inc(FBatchesDrawn);
+  // The next primitives go into the other batch, with their own lists.
+  FTargetCount := 0;
+  FReadCount := 0;
+  FClutIndex := -1;
+  FStateDirty := True;
+  var Rows := B.MaxY - B.MinY + 1;
+  B.BandTop := B.MinY;
+  B.BandRows := Max(4, Rows div (FThreads * 3));
+  B.Bands := (Rows + B.BandRows - 1) div B.BandRows;
+  B.NextBand := 0;
+  {$IFDEF MSWINDOWS}
+  if (B.Area >= ParallelArea) and (B.Bands > 1) then
+  begin
+    Inc(FBackground);
+    StartWorkers;
+    FFlight := B;
+    FFlightThreads := Min(FThreads, B.Bands);
+    for var I := 0 to FFlightThreads - 1 do
+      SetEvent(FWorkers[I].FStart);
+    if FBatch = @FBatches[0] then FBatch := @FBatches[1] else FBatch := @FBatches[0];
+    Exit;
+  end;
+  {$ENDIF}
+  try
+    DrawSerial(B);
+  finally
+    B.Count := 0;
+    B.StateCount := 0;
+    B.ClutCount := 0;
+    B.Area := 0;
+  end;
 end;
 
-procedure TGEWorkers.Sprite(const S: TGERaster; const A, B: TGEVertex);
+procedure TGEWorkers.DrawSerial(B: PGEBatch);
 begin
-  Draw(S, A, B, B, True);
+  var SavedControl: Word;
+  var SavedMXCSR := GetModes(SavedControl);
+  SetModes(B.MXCSR, B.FPUControl);
+  try
+    for var I := 0 to B.Count - 1 do
+    begin
+      var J: PGEJob := @B.Jobs[I];
+      DrawJob(B.States[J.State], J.Kind, J.V[0], J.V[1], J.V[2]);
+    end;
+  finally
+    SetModes(SavedMXCSR, SavedControl);
+  end;
+end;
+
+procedure TGEWorkers.WorkBands(B: PGEBatch);
+var
+  Local: TGERaster;
+begin
+  while True do
+  begin
+    var Band := AtomicIncrement(B.NextBand) - 1;
+    if Band >= B.Bands then
+      Break;
+    var Y1 := B.BandTop + Band * B.BandRows;
+    var Y2 := Y1 + B.BandRows - 1;
+    var Current := -1;
+    for var I := 0 to B.Count - 1 do
+    begin
+      var J: PGEJob := @B.Jobs[I];
+      if (J.Y2 < Y1) or (J.Y1 > Y2) then
+        Continue;
+      if J.State <> Current then
+      begin
+        Current := J.State;
+        Local := B.States[Current];
+        Local.BandY1 := Max(Local.BandY1, Y1);
+        Local.BandY2 := Min(Local.BandY2, Y2);
+      end;
+      DrawJob(Local, J.Kind, J.V[0], J.V[1], J.V[2]);
+    end;
+  end;
+end;
+
+procedure TGEWorkers.Add(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex);
+var
+  Col, Dep: TGERange;
+  Tex: array[0..7] of TGERange;
+  Watched: array[0..39] of TGERange;
+begin
+  if FThreads <= 1 then
+  begin
+    DrawJob(S, Kind, A, B, C);
+    Exit;
+  end;
+  if (S.ScissorX1 > S.ScissorX2) or (S.ScissorY1 > S.ScissorY2) then
+    Exit;
+  // Rows and columns the primitive may reach (lines and points: the scissor).
+  var Y1 := Max(S.ScissorY1, S.BandY1);
+  var Y2 := Min(S.ScissorY2, S.BandY2);
+  var X1 := S.ScissorX1;
+  var X2 := S.ScissorX2;
+  if Kind in [gjTriangle, gjSprite] then
+  begin
+    var MinY := Min(A.Y, B.Y); var MaxY := Max(A.Y, B.Y);
+    var MinX := Min(A.X, B.X); var MaxX := Max(A.X, B.X);
+    if Kind = gjTriangle then
+    begin
+      MinY := Min(MinY, C.Y); MaxY := Max(MaxY, C.Y);
+      MinX := Min(MinX, C.X); MaxX := Max(MaxX, C.X);
+    end;
+    Y1 := Max(Y1, MinY div 16 - 2);
+    Y2 := Min(Y2, MaxY div 16 + 2);
+    X1 := Max(X1, MinX div 16 - 2);
+    X2 := Min(X2, MaxX div 16 + 2);
+  end;
+  if (Y1 > Y2) or (X1 > X2) then
+    Exit;
+
+  // The buffers it draws into. Columns past the stride would write the next
+  // row, which may be another band's.
+  if Cardinal(X2) >= S.FBStride then
+  begin
+    DrawAlone(S, Kind, A, B, C, 0);
+    Exit;
+  end;
+  var Bpp: Cardinal := 2;
+  if S.FBFormat = 3 then Bpp := 4;
+  Col.Base := S.FBAddr; Col.Stride := S.FBStride; Col.Bytes := Bpp; Col.Permutation := 0;
+  Col.Lo := S.FBAddr + (Cardinal(Y1) * S.FBStride + Cardinal(X1)) * Bpp;
+  Col.Hi := S.FBAddr + (Cardinal(Y2) * S.FBStride + Cardinal(X2) + 1) * Bpp;
+  if Col.Hi > PSPVRAMSize then
+  begin
+    DrawAlone(S, Kind, A, B, C, 1);
+    Exit;
+  end;
+  var HasZ := S.DepthTest or (S.ClearMode and S.ClearDepth);
+  if HasZ then
+  begin
+    Dep.Base := S.ZAddr; Dep.Stride := S.ZStride; Dep.Bytes := 0; Dep.Permutation := S.ZPermutation;
+    // Depth's bank permutation (PSPDepthOffset) stays within an aligned block:
+    // 2 KB untranslated, else of 16 times the translation width.
+    var Block: Cardinal := $800;
+    if S.ZPermutation > 0 then
+      Block := Cardinal(1) shl Min(S.ZPermutation + 4, 21);
+    Dep.Lo := (S.ZAddr + (Cardinal(Y1) * S.ZStride + Cardinal(X1)) * 2) and not (Block - 1);
+    Dep.Hi := (S.ZAddr + (Cardinal(Y2) * S.ZStride + Cardinal(X2) + 1) * 2 + Block - 1) and not (Block - 1);
+    if (Cardinal(X2) >= S.ZStride) or (Dep.Hi > PSPVRAMSize) then
+    begin
+      DrawAlone(S, Kind, A, B, C, 2);
+      Exit;
+    end;
+    if Overlaps(Col.Lo, Col.Hi, Dep.Lo, Dep.Hi) then
+    begin
+      DrawAlone(S, Kind, A, B, C, 3);
+      Exit;
+    end;
+  end;
+
+  // The texture levels: in VRAM they must lie within their level and apart
+  // from this primitive's buffers; elsewhere, reads past the level go
+  // through the page table, so they must stay in RAM (never held).
+  var TexCount := 0;
+  var WatchedCount := 0;
+  var UsesClut := False;
+  if S.Textured then
+  begin
+    UsesClut := S.Tex.Format in [4..7];
+    if (S.Tex.Format > 10) or (S.Tex.LevelCount > 8) then
+    begin
+      DrawAlone(S, Kind, A, B, C, 4);
+      Exit;
+    end;
+    var Base := NativeUInt(S.VRAM);
+    for var I := 0 to S.Tex.LevelCount - 1 do
+    begin
+      var L: PGETexLevel := @S.Tex.Levels[I];
+      if (L.Ptr = nil) or (L.Width <= 0) or (L.Height <= 0) or (L.BufWidth < 0) then
+      begin
+        DrawAlone(S, Kind, A, B, C, 4);
+        Exit;
+      end;
+      var Reach := Max(LevelReach(S.Tex, L^), UInt64(L.Size));
+      var P := NativeUInt(L.Ptr);
+      if (P >= Base) and (P < Base + PSPVRAMSize) then
+      begin
+        var R: TGERange;
+        R := Default(TGERange);
+        R.Lo := Cardinal(P - Base);
+        R.Hi := R.Lo + L.Size;
+        if (Reach > L.Size) or (R.Hi > PSPVRAMSize) then
+        begin
+          DrawAlone(S, Kind, A, B, C, 5);
+          Exit;
+        end;
+        if Overlaps(R.Lo, R.Hi, Col.Lo, Col.Hi) or (HasZ and Overlaps(R.Lo, R.Hi, Dep.Lo, Dep.Hi)) then
+        begin
+          DrawAlone(S, Kind, A, B, C, 6);
+          Exit;
+        end;
+        Tex[TexCount] := R;
+        Inc(TexCount);
+        // Every mirror of its 64 KB blocks: odd mirrors permute within them.
+        for var M := 0 to 3 do
+        begin
+          Watched[WatchedCount] := Default(TGERange);
+          Watched[WatchedCount].Lo := PSPVRAMBase + Cardinal(M) * PSPVRAMSize + (R.Lo and not Cardinal($FFFF));
+          Watched[WatchedCount].Hi := PSPVRAMBase + Cardinal(M) * PSPVRAMSize + ((R.Hi + $FFFF) and not Cardinal($FFFF));
+          Inc(WatchedCount);
+        end;
+      end
+      else
+      begin
+        var Lo := UInt64(L.Addr and $1FFFFFFF);
+        if (Reach > L.Size) and ((Lo < PSPRAMBase) or (Lo + Reach > PSPRAMBase + PSPRAMSize)) then
+        begin
+          DrawAlone(S, Kind, A, B, C, 5);
+          Exit;
+        end;
+        Watched[WatchedCount] := Default(TGERange);
+        Watched[WatchedCount].Lo := Cardinal(Lo);
+        Watched[WatchedCount].Hi := Cardinal(Min(Lo + Reach, UInt64($20000000)));
+        Inc(WatchedCount);
+      end;
+    end;
+  end;
+
+  // Another layout of the same bytes, or bytes the batch reads and this one
+  // writes (or the reverse), start a new batch. So do other floating-point
+  // modes: a batch draws in the modes it was given, not in those of whoever
+  // later makes it draw (the guest CPU's, say).
+  var Batch := FBatch;
+  var FPUControl: Word;
+  var MXCSR := GetModes(FPUControl) and not UInt32($3F);
+  var Split := (Batch.Count = JobCapacity) or (FTargetCount > RangeCapacity - 2) or
+    (FReadCount > RangeCapacity - 8) or
+    (UsesClut and (Batch.ClutCount = ClutCapacity) and ((FClutIndex < 0) or (FClutSnapshot <> FClutGeneration))) or
+    ((Batch.Count > 0) and ((MXCSR <> Batch.MXCSR) or (FPUControl <> Batch.FPUControl)));
+  if not Split and (Batch.Count > 0) then
+  begin
+    for var I := 0 to FTargetCount - 1 do
+    begin
+      var T: PGERange := @FTargets[I];
+      if not SameLayout(T^, Col) and Overlaps(T.Lo, T.Hi, Col.Lo, Col.Hi) then Split := True;
+      if HasZ and not SameLayout(T^, Dep) and Overlaps(T.Lo, T.Hi, Dep.Lo, Dep.Hi) then Split := True;
+      for var J := 0 to TexCount - 1 do
+        if Overlaps(T.Lo, T.Hi, Tex[J].Lo, Tex[J].Hi) then Split := True;
+      if Split then Break;
+    end;
+    if not Split then
+      for var I := 0 to FReadCount - 1 do
+        if Overlaps(FReads[I].Lo, FReads[I].Hi, Col.Lo, Col.Hi) or
+          (HasZ and Overlaps(FReads[I].Lo, FReads[I].Hi, Dep.Lo, Dep.Hi)) then
+        begin
+          Split := True;
+          Break;
+        end;
+  end;
+  if Split and (Batch.Count > 0) then
+  begin
+    Inc(FSplits);
+    Kick;
+    Batch := FBatch;
+  end;
+
+  // The buffers, held until drawn; the textures, watched.
+  var Found := False;
+  for var I := 0 to FTargetCount - 1 do
+    if SameLayout(FTargets[I], Col) then
+    begin
+      if (Col.Lo < FTargets[I].Lo) or (Col.Hi > FTargets[I].Hi) then
+      begin
+        FTargets[I].Lo := Min(FTargets[I].Lo, Col.Lo);
+        FTargets[I].Hi := Max(FTargets[I].Hi, Col.Hi);
+        Hold(FTargets[I].Lo, FTargets[I].Hi);
+      end;
+      Found := True;
+      Break;
+    end;
+  if not Found then
+  begin
+    FTargets[FTargetCount] := Col;
+    Inc(FTargetCount);
+    Hold(Col.Lo, Col.Hi);
+  end;
+  if HasZ then
+  begin
+    Found := False;
+    for var I := 0 to FTargetCount - 1 do
+      if SameLayout(FTargets[I], Dep) then
+      begin
+        if (Dep.Lo < FTargets[I].Lo) or (Dep.Hi > FTargets[I].Hi) then
+        begin
+          FTargets[I].Lo := Min(FTargets[I].Lo, Dep.Lo);
+          FTargets[I].Hi := Max(FTargets[I].Hi, Dep.Hi);
+          Hold(FTargets[I].Lo, FTargets[I].Hi);
+        end;
+        Found := True;
+        Break;
+      end;
+    if not Found then
+    begin
+      FTargets[FTargetCount] := Dep;
+      Inc(FTargetCount);
+      Hold(Dep.Lo, Dep.Hi);
+    end;
+  end;
+  for var J := 0 to TexCount - 1 do
+  begin
+    Found := False;
+    for var I := 0 to FReadCount - 1 do
+      if (Tex[J].Lo >= FReads[I].Lo) and (Tex[J].Hi <= FReads[I].Hi) then
+      begin
+        Found := True;
+        Break;
+      end;
+    if not Found then
+    begin
+      FReads[FReadCount] := Tex[J];
+      Inc(FReadCount);
+    end;
+  end;
+  for var J := 0 to WatchedCount - 1 do
+  begin
+    Found := False;
+    for var I := 0 to FWatchCount - 1 do
+      if (Watched[J].Lo >= FWatches[I].Lo) and (Watched[J].Hi <= FWatches[I].Hi) then
+      begin
+        Found := True;
+        Break;
+      end;
+    if not Found then
+    begin
+      if FWatchCount < WatchCapacity then
+      begin
+        FWatches[FWatchCount] := Watched[J];
+        Inc(FWatchCount);
+      end;
+      Watch(Watched[J].Lo, Watched[J].Hi);
+    end;
+  end;
+
+  // The state, with the batch's own copy of the CLUT as loaded now.
+  if UsesClut and ((FClutIndex < 0) or (FClutSnapshot <> FClutGeneration)) then
+  begin
+    FClutIndex := Batch.ClutCount;
+    Inc(Batch.ClutCount);
+    Move(S.Tex.Clut^, Batch.Cluts[FClutIndex * 1024], 1024);
+    FClutSnapshot := FClutGeneration;
+    FStateDirty := True;
+  end;
+  if FStateDirty or (FLastSource <> @S) or (Batch.StateCount = 0) then
+  begin
+    if Batch.StateCount = Length(Batch.States) then
+      SetLength(Batch.States, Batch.StateCount * 2);
+    var N: PGERaster := @Batch.States[Batch.StateCount];
+    N^ := S;
+    if UsesClut then
+      N.Tex.Clut := @Batch.Cluts[FClutIndex * 1024];
+    if (Batch.StateCount = 0) or not CompareMem(N, @Batch.States[Batch.StateCount - 1], SizeOf(TGERaster)) then
+      Inc(Batch.StateCount);
+    FStateDirty := False;
+    FLastSource := @S;
+  end;
+
+  var J: PGEJob := @Batch.Jobs[Batch.Count];
+  J.State := Batch.StateCount - 1;
+  J.Kind := Kind;
+  J.Y1 := Y1;
+  J.Y2 := Y2;
+  J.V[0] := A;
+  J.V[1] := B;
+  J.V[2] := C;
+  if Batch.Count = 0 then
+  begin
+    Batch.MinY := Y1;
+    Batch.MaxY := Y2;
+    Batch.MXCSR := MXCSR;
+    Batch.FPUControl := FPUControl;
+  end
+  else
+  begin
+    Batch.MinY := Min(Batch.MinY, Y1);
+    Batch.MaxY := Max(Batch.MaxY, Y2);
+  end;
+  Inc(Batch.Count);
+  Inc(FQueued);
+  if Kind in [gjTriangle, gjSprite] then
+    Inc(Batch.Area, Int64(Y2 - Y1 + 1) * (X2 - X1 + 1))
+  else
+    Inc(Batch.Area, Int64(Y2 - Y1 + 1));
+end;
+
+function TGEWorkers.Describe: string;
+begin
+  Result := Format('%d threads, %d batches (%d in the background, %d split, %d synchronized by access), ' +
+    '%d queued, %d drawn alone', [FThreads, FBatchesDrawn, FBackground, FSplits, FAccessSyncs, FQueued, FAlone]);
+  for var I := 0 to High(FAloneWhy) do
+    if FAloneWhy[I] > 0 then
+      Result := Result + Format(', %s %d', [AloneNames[I], FAloneWhy[I]]);
 end;
 
 end.
