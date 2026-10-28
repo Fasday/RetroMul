@@ -589,7 +589,9 @@ end;
 function TPSPPsDemux.VideoAuSize(Q: TPSPEsQueue): Integer;
 begin
   if Q.Sizes.Count > 0 then
-    Exit(Integer(Q.Sizes.Peek and $FFFF));
+    // The table word combines a 23-bit length with flags above it. In
+    // particular, an IDR may exceed 64 KB; bit 23 is the AU attribute.
+    Exit(Integer(Q.Sizes.Peek and $7FFFFF));
   // No table: up to the next access unit delimiter.
   var N := Q.Length;
   var I := 4;
