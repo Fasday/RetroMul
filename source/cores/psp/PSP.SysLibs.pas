@@ -1,7 +1,8 @@
 unit PSP.SysLibs;
 
-// Small system libraries: UtilsForUser, scePower, sceUmdUser, sceRtc,
-// sceImpose, sceHprm, sceDmac, sceOpenPSID and offline network stubs.
+// Small system libraries: UtilsForUser, scePower (and the power and
+// volatile memory locks of sceSuspendForUser), sceUmdUser, sceRtc,
+// sceImpose, sceHprm, sceDmac and sceOpenPSID.
 // Wall-clock time is a fixed epoch plus guest time, so runs repeat exactly.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}

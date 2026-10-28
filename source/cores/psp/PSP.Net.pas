@@ -2,9 +2,10 @@ unit PSP.Net;
 
 // The network libraries as a PSP sees them with nowhere to connect to:
 // sceNet, sceWlanDrv, sceNetApctl (no access points, no profiles),
-// sceNetResolver (no DNS server), sceHttp and sceSsl, sceParseUri, and
-// sceNetInet with its loopback interface: sockets on 127.0.0.1 talk to each
-// other as on hardware. The libraries' own threads (apctl's event thread)
+// sceNetResolver (no DNS server), sceHttp and sceSsl, sceParseUri,
+// sceNetInet with its loopback interface (sockets on 127.0.0.1 talk to each
+// other as on hardware), ad hoc with nobody else around, and sceUsb with no
+// cable. The libraries' own threads (apctl's and adhocctl's event threads)
 // are guest threads running a stub that calls back into the service.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
@@ -167,6 +168,8 @@ type
     FHttpInited: Boolean;
     FHttpIds: TDictionary<Cardinal, Integer>;
     FNextTemplate, FNextConnection, FNextRequest: Cardinal;
+    // sceUsb
+    FUsbStarted, FUsbActivated: Boolean;
     // sceNetInet
     FInetInited: Boolean;
     // Open descriptors; every socket the stack still has (closed ones
@@ -271,6 +274,12 @@ type
     procedure hHttpReadData;
     procedure hHttpSetting;
     procedure hZero;
+    // sceUsb
+    procedure hUsbStart;
+    procedure hUsbActivate;
+    procedure hUsbDeactivate;
+    procedure hUsbGetState;
+    procedure hUsbWaitState;
     // sceNetInet
     {$I PSP.Net.InetDecl.inc}
     // Ad hoc
@@ -411,6 +420,8 @@ begin
   FNextTemplate := 1;
   FNextConnection := $01000001;
   FNextRequest := $02000001;
+  FUsbStarted := False;
+  FUsbActivated := False;
   InetReset;
   AdhocReset;
   FWorkerStub := FKernel.AllocKernel(16, 'net thread');
@@ -1149,6 +1160,64 @@ begin
   FHLE.Result(0);
 end;
 
+{ sceUsb: drivers start and activate, but no cable is ever plugged in. }
+
+const
+  PSP_USB_CONNECTION_NOT_ESTABLISHED = $001;
+  PSP_USB_CABLE_DISCONNECTED = $010;
+  PSP_USB_DEACTIVATED = $100;
+  PSP_USB_ACTIVATED = $200;
+  SCE_USB_ERROR_INVALID_ARGUMENT = Cardinal($80243002);
+  SCE_KERNEL_ERROR_WAIT_TIMEOUT_USB = Cardinal($800201A8);
+
+procedure TPSPNet.hUsbStart;
+begin
+  if FHLE.Arg(0) = 0 then
+    FHLE.Result(SCE_USB_ERROR_INVALID_ARGUMENT)
+  else
+  begin
+    FUsbStarted := True;
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hUsbActivate;
+begin
+  FUsbActivated := True;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hUsbDeactivate;
+begin
+  FUsbActivated := False;
+  FHLE.Result(0);
+end;
+
+function UsbState(Activated: Boolean): Cardinal;
+begin
+  Result := PSP_USB_CABLE_DISCONNECTED or PSP_USB_CONNECTION_NOT_ESTABLISHED;
+  if Activated then
+    Result := Result or PSP_USB_ACTIVATED
+  else
+    Result := Result or PSP_USB_DEACTIVATED;
+end;
+
+procedure TPSPNet.hUsbGetState;
+begin
+  FHLE.Result(UsbState(FUsbActivated));
+end;
+
+procedure TPSPNet.hUsbWaitState;
+begin
+  // Waits for any (mode 0) or all (mode 1) of the bits; the state never changes.
+  var Want := FHLE.Arg(0);
+  var State := UsbState(FUsbActivated);
+  if ((FHLE.Arg(1) = 0) and ((State and Want) <> 0)) or ((FHLE.Arg(1) <> 0) and ((State and Want) = Want)) then
+    FHLE.Result(State)
+  else
+    FHLE.Result(SCE_KERNEL_ERROR_WAIT_TIMEOUT_USB);
+end;
+
 procedure TPSPNet.Register;
 const
   N = 'sceNet';
@@ -1259,6 +1328,16 @@ begin
 
   X.Register(S, $957ECBE2, 'sceSslInit', hZero);
   X.Register(S, $191CDEFF, 'sceSslEnd', hZero);
+
+  X.Register('sceUsb', $AE5DE6AF, 'sceUsbStart', hUsbStart);
+  X.Register('sceUsb', $C2464FA0, 'sceUsbStop', hZero);
+  X.Register('sceUsb', $586DB82C, 'sceUsbActivate', hUsbActivate);
+  X.Register('sceUsb', $C572A9C8, 'sceUsbDeactivate', hUsbDeactivate);
+  X.Register('sceUsb', $C21645A4, 'sceUsbGetState', hUsbGetState);
+  X.Register('sceUsb', $112CC951, 'sceUsbGetDrvState', hZero);
+  X.Register('sceUsb', $4E537366, 'sceUsbGetDrvList', hZero);
+  X.Register('sceUsb', $5BE0E002, 'sceUsbWaitState', hUsbWaitState);
+  X.Register('sceUsb', $1C360735, 'sceUsbWaitCancel', hZero);
 
   InetRegister;
   AdhocRegister;
