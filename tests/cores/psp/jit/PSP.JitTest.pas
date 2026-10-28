@@ -5,12 +5,18 @@ unit PSP.JitTest;
 // are branches too, jumps, JR/JALR), loads and stores of every size aligned
 // or not (LWL/LWR/SWL/SWR, LL/SC) in RAM, VRAM, the scratchpad and unmapped
 // space, stores into the program's own code (by its instructions and by the
-// kernel), syscalls that add cycles, stop the run, rewrite code or switch
-// the context, some COP1: each runs from the same state on the interpreter,
-// the recompiler's code (this target's backend) and the code run by HW.JIT's
-// model, in the same budgets. After each Run the contexts, CurPC, the cycles
-// it returns, Stopping, the faults and the kernel's log must match; at the
-// end the memories, byte for byte.
+// kernel), syscalls (also in JR's delay slot, as kernel stubs are) that add
+// cycles, stop the run, rewrite code, switch the context, move the PC or
+// drop the decoded code, some COP1, and handlers of the test's own in the
+// VFPU's place (they read PC, NPC, CurPC and the budget, stop the run, add
+// cycles, store into code, move the PC, branch): each runs from the same
+// state on the interpreter, the recompiler's code (this target's backend)
+// and the code run by HW.JIT's model, in the same budgets, through both
+// segments, with the recompiler now and then switched off. After each Run
+// the contexts, CurPC, the cycles it returns, Stopping, the faults and the
+// kernel's log (with the registers' hash at each syscall) must match; at the
+// end the memories, byte for byte. Also a benchmark (bench): instructions
+// per second of hot loops.
 
 interface
 
@@ -151,8 +157,12 @@ begin
   // Stops the run, adds cycles, or both.
   if (Op and 1) <> 0 then
     C.Stop;
+  C.Ctx.V[(Op shr 4) and 127] := Cardinal(C.TakeCycles);
   C.AddCycles((Op shr 1) and 7);
   C.Ctx.V[Op and 127] := C.Ctx.V[Op and 127] + 1;
+  // (Now and then on elsewhere, as a kernel call can.)
+  if (Op and $3000) = $3000 then
+    C.SetPC(C.Ctx.PC + 8);
 end;
 
 procedure TestStore(C: TPSPCPU; Op: Cardinal);
@@ -164,10 +174,10 @@ end;
 procedure TestBranch(C: TPSPCPU; Op: Cardinal);
 begin
   // A branch on GPR[1]'s low bit (likely where bit 17 is set), as the
-  // interpreter's branches.
+  // interpreter's branches (from its own address: CurPC).
   var Taken := ((C.Ctx.GPR[1] and 1) <> 0) = ((Op and $10000) <> 0);
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + Cardinal(Integer(SmallInt(Word(Op))) * 4)
+    C.Ctx.NPC := C.CurPC + 4 + Cardinal(Integer(SmallInt(Word(Op))) * 4)
   else if (Op and $20000) <> 0 then
   begin
     C.Ctx.PC := C.Ctx.NPC;
@@ -278,7 +288,7 @@ begin
   var I := 0;
   while I < CodeWords - 2 do
   begin
-    var Op: Cardinal;
+    var Op: Cardinal := 0;
     // Branches forward mostly (backward ones loop for good where their
     // condition holds).
     var Offset := Integer(Next(31));
@@ -369,10 +379,22 @@ begin
           Op := ($11 shl 26) or (8 shl 21) or (Next(4) shl 16) or Rel;                           // BC1x
         end;
       90..91:
-        case Next(4) of
+        case Next(6) of
           0: Op := ($10 shl 26) or (Dest shl 16) or (Next(32) shl 11);                           // MFC0
           1: Op := ($1C shl 26) or (Dest shl 16) or $24;                                         // MFIC
           2: Op := ($1C shl 26) or (Src shl 16) or $26;                                          // MTIC
+          3:
+            begin
+              // MTC0 (not Status, EPC, ErrorEPC), now and then ERET.
+              var R := Next(32);
+              if R in [12, 14, 30] then
+                R := 13;
+              if Next(6) = 0 then
+                Op := ($10 shl 26) or ($10 shl 21) or $18
+              else
+                Op := ($10 shl 26) or (4 shl 21) or (Src shl 16) or (R shl 11);
+            end;
+          4: Op := (Cardinal($D) shl 26) or (31 shl 21) or (31 shl 16) or (1 + Next(3));          // ORI $31 (JR's low bits)
         else
           Op := (Cardinal($30) shl 26) or (28 shl 21) or (Next(2) shl 16) or (Next(64) * 4);               // LL (maybe $0)
         end;
@@ -386,6 +408,35 @@ begin
         else
           Op := (Cardinal($12) shl 26) or (8 shl 21) or (Next(4) shl 16) or Rel;
         end;
+      96, 97:
+        if I < CodeWords - 3 then
+        begin
+          // A branch in the delay slot of another to the same label (as
+          // compilers emit runs of bvt): taken or not, likely or not; the
+          // interpreter runs the pair.
+          for var K := 0 to 1 do
+          begin
+            var R := (Cardinal(Offset - K) and $FFFF);
+            var B: Cardinal;
+            case Next(6) of
+              0: B := (Cardinal(Pick([4, 5, $14, $15])) shl 26) or (Src shl 21) or (Src shl 16) or R;
+              1: B := (Cardinal(Pick([6, 7, $16, $17])) shl 26) or (Src shl 21) or R;
+              2: B := (1 shl 26) or (Src shl 21) or (Pick([0, 1, 2, 3, $10, $11, $12, $13]) shl 16) or R;
+              3: B := (Cardinal($11) shl 26) or (8 shl 21) or (Next(4) shl 16) or R;
+            else
+              B := (Cardinal($12) shl 26) or (8 shl 21) or (Next(4) shl 16) or R;
+            end;
+            if K = 0 then
+            begin
+              Code[I] := B;
+              Inc(I);
+            end
+            else
+              Op := B;
+          end;
+        end
+        else
+          Op := 0;
     else
       Op := 0;
     end;
@@ -460,6 +511,10 @@ begin
   for var R := 0 to 31 do
     M.CPU.Ctx.FPR[R] := Regs[(R * 7) mod 32] xor $3F000000;
   M.CPU.SetPC(Start);
+  // (ERET's targets in the code.)
+  M.CPU.COP0[12] := Regs[5] and 6;
+  M.CPU.COP0[14] := Start + (Regs[6] and $3FFC);
+  M.CPU.COP0[30] := Start + (Regs[7] and $3FFC);
   M.Other := M.CPU.Ctx;
   M.Other.PC := OtherPC;
   M.Other.NPC := OtherPC + 4;
@@ -787,7 +842,7 @@ begin
           M.Memory.WriteBytes(Func, FuncCode[0], Length(FuncCode) * 4);
         end;
         M.CPU.SetPC(Start);
-        var Total: Int64 := 0;
+        var Total: Int64;
         var Target: Int64 := 100000000;
         case Kind of
           1: Target := 1000000000;
