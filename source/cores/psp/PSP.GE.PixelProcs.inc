@@ -428,7 +428,9 @@ begin
     Result := PlotPixel;
     Exit;
   end;
-  var Kind := Ord(S.Textured) or (Ord(S.Blend) shl 1) or (Ord(S.DepthTest) shl 2);
+  // A depth test that always passes and writes nothing has no effect.
+  var Depth := S.DepthTest and ((S.DepthFunc <> 1) or S.DepthWrite);
+  var Kind := Ord(S.Textured) or (Ord(S.Blend) shl 1) or (Ord(Depth) shl 2);
   if S.FogEnabled or Secondary or S.StencilTest then
     Result := PixelProcsExtra[S.FBFormat, Kind]
   else

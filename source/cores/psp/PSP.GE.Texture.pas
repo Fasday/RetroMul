@@ -26,6 +26,9 @@ type
   end;
 
   PGETexLevel = ^TGETexLevel;
+  PGETexture = ^TGETexture;
+  // A texture's level 0 sampled at (S, TT) in texels (GEPrepareSampler).
+  TGESampler = function(T: PGETexture; S, TT: Single): Cardinal;
 
   TGETexture = record
     Memory: TPSPMemory;
@@ -46,6 +49,15 @@ type
     // CLUT cache as loaded, and the index transform.
     Clut: PByte;
     ClutFormat, ClutShift, ClutMask, ClutOffset: Integer;
+    // Formats 4 and 5 (GEPreparePalette): the colour of every index such a
+    // texel can hold, through the index transform and the CLUT as it was
+    // then. While PalValid is False the sampler reads the CLUT itself.
+    PalValid: Boolean;
+    Pal: array[0..255] of Cardinal;
+    // GEPrepareSampler: the sampler for this texture's format and filter
+    // when its level 0 holds all its texels and no level of detail applies
+    // (nil: GESampleTexture).
+    Sampler: TGESampler;
   end;
 
 function GESampleTexture(const T: TGETexture; S, TT: Single): Cardinal;
@@ -60,6 +72,11 @@ function GEDecode16(Format: Integer; P: Cardinal): Cardinal;
 function GELevelReach(const T: TGETexture; const L: TGETexLevel): UInt64;
 // Sets L.Fits.
 procedure GEFitLevel(const T: TGETexture; var L: TGETexLevel);
+// Fills Pal from the CLUT and the index transform for formats 4 and 5 (sets
+// PalValid; other formats leave it False).
+procedure GEPreparePalette(var T: TGETexture);
+// Sets Sampler from the format, the filter, level 0's Fits and PalValid.
+procedure GEPrepareSampler(var T: TGETexture);
 
 var
   // Tests: every texel through the general fetch, the reference for the
@@ -101,8 +118,10 @@ begin
     (GELevelReach(T, L) <= L.Size);
 end;
 
-function Decode16(Format: Integer; P: Cardinal): Cardinal; inline;
+function Decode16(Format: Integer; Texel: Cardinal): Cardinal; inline;
 begin
+  // Read once: the inliner would evaluate an argument expression at every use.
+  var P := Texel;
   case Format of
     0:
       begin
@@ -136,6 +155,30 @@ begin
     Result := PCardinal(T.Clut + (I and $FF) * 4)^
   else
     Result := Decode16(T.ClutFormat, PWord(T.Clut + (I and $1FF) * 2)^);
+end;
+
+procedure GEPreparePalette(var T: TGETexture);
+begin
+  T.PalValid := False;
+  var N := 0;
+  case T.Format of
+    4: N := 16;
+    5: N := 256;
+  end;
+  if (N = 0) or (T.Clut = nil) then
+    Exit;
+  for var I := 0 to N - 1 do
+    T.Pal[I] := ClutLookup(T, Cardinal(I));
+  T.PalValid := True;
+end;
+
+// A CLUT4/CLUT8 texel's colour: Pal holds ClutLookup of every such index.
+function PalLookup(const T: TGETexture; Index: Cardinal): Cardinal; inline;
+begin
+  if T.PalValid then
+    Result := T.Pal[Index]
+  else
+    Result := ClutLookup(T, Index);
 end;
 
 // Byte offset of texel (X, Y) for a format of Bits per texel, swizzled or linear.
@@ -241,9 +284,9 @@ begin
               B := B shr 4
             else
               B := B and $F;
-            Exit(ClutLookup(T, B));
+            Exit(PalLookup(T, B));
           end;
-        5: Exit(ClutLookup(T, L.Ptr[Off]));
+        5: Exit(PalLookup(T, L.Ptr[Off]));
         6: Exit(ClutLookup(T, PWord(L.Ptr + Off)^));
       else
         Exit(ClutLookup(T, PCardinal(L.Ptr + Off)^));
@@ -340,17 +383,51 @@ end;
 
 function WrapCoord(V, Size: Integer; Clamp: Boolean): Integer; inline;
 begin
+  // V is read once (the inliner would evaluate an expression at every use).
+  Result := V;
   if Clamp then
   begin
-    if V < 0 then
+    if Result < 0 then
       Result := 0
-    else if V >= Size then
-      Result := Size - 1
-    else
-      Result := V;
+    else if Result >= Size then
+      Result := Size - 1;
   end
   else
-    Result := V and (Size - 1);
+    Result := Result and (Size - 1);
+end;
+
+// TexFloor(S) from the bits of S where that is simple: for S in [0, 2^23)
+// floor(S) is the significand shifted by the exponent.
+function NearestCoord(S: Single): Integer; inline;
+begin
+  var B := PCardinal(@S)^;
+  if B < $3F800000 then
+    Result := 0
+  else if B < $4B000000 then
+    Result := Integer(((B and $7FFFFF) or $800000) shr (150 - (B shr 23)))
+  else
+    Result := TexFloor(S);
+end;
+
+// The bilinear filter's first texel X0 = TexFloor(S - 0.5) and its 4-bit
+// weight Frac = Trunc((S - 0.5 - X0) * 16) (an Int64, as Trunc gives it). For S in [0.5, 2^22) S - 0.5 is
+// exact in single precision and the two are floor(16 * S) - 8 split into
+// whole texels and sixteenths, from the bits of S; elsewhere as stated.
+procedure LinearCoord(S: Single; out X0: Integer; out Frac: Int64); inline;
+begin
+  var B := PCardinal(@S)^;
+  if (B >= $3F000000) and (B < $4A800000) then
+  begin
+    var R := Integer((((B and $7FFFFF) or $800000) shl 2) shr (148 - (B shr 23))) - 8;
+    X0 := R shr 4;
+    Frac := R and 15;
+  end
+  else
+  begin
+    var FS := S - 0.5;
+    X0 := TexFloor(FS);
+    Frac := Trunc((FS - X0) * 16);
+  end;
 end;
 
 // A texel of a level holding all its texels: its byte offset (as TexelOffset,
@@ -362,6 +439,26 @@ begin
     Result := Cardinal((((Y shr 3) * (RowBytes shr 4) + (ByteX shr 4)) shl 7) + ((Y and 7) shl 4) + (ByteX and 15))
   else
     Result := Cardinal(Y * RowBytes + ByteX);
+end;
+
+// FitOffset split into the part of the row and the part of the byte column:
+// the offset is their sum.
+function FitRow(Swizzle: Boolean; RowBytes, Row: Integer): Integer; inline;
+begin
+  var Y := Row;
+  if Swizzle then
+    Result := (((Y shr 3) * (RowBytes shr 4)) shl 7) + ((Y and 7) shl 4)
+  else
+    Result := Y * RowBytes;
+end;
+
+function FitColumn(Swizzle: Boolean; Column: Integer): Integer; inline;
+begin
+  var ByteX := Column;
+  if Swizzle then
+    Result := ((ByteX shr 4) shl 7) + (ByteX and 15)
+  else
+    Result := ByteX;
 end;
 
 function FitTexel(const T: TGETexture; P: PByte; Off: Cardinal; X: Integer): Cardinal; inline;
@@ -376,83 +473,190 @@ begin
           B := B shr 4
         else
           B := B and $F;
-        Result := ClutLookup(T, B);
+        Result := PalLookup(T, B);
       end;
-    5: Result := ClutLookup(T, P[Off]);
+    5: Result := PalLookup(T, P[Off]);
     6: Result := ClutLookup(T, PWord(P + Off)^);
   else
     Result := ClutLookup(T, PCardinal(P + Off)^);
   end;
 end;
 
+// A CLUT4 texel: the low nibble for even X, the high one for odd.
+function Nibble(B: Cardinal; X: Integer): Cardinal; inline;
+begin
+  if (X and 1) <> 0 then
+    Result := B shr 4
+  else
+    Result := B and $F;
+end;
+
+// The bilinear mix of four texels with 4-bit weights, every channel
+// (Top * (16 - FracY) + Bottom * FracY) shr 8 with Top and Bottom mixed by
+// FracX. With weights in 0..16 the products of two channels at a time fit
+// 16-bit lanes of a 32-bit word (at most 255 * 16 * 16), so the lanes give
+// the per channel result exactly.
+function Bilerp(T00, T10, T01, T11: Cardinal; FracX, FracY: Int64): Cardinal; inline;
+begin
+  var C00 := T00; var C10 := T10; var C01 := T01; var C11 := T11;
+  if (UInt64(FracX) <= 16) and (UInt64(FracY) <= 16) then
+  begin
+    var IX := Cardinal(16 - FracX);
+    var FX := Cardinal(FracX);
+    var IY := Cardinal(16 - FracY);
+    var FY := Cardinal(FracY);
+    var TopRB := (C00 and $00FF00FF) * IX + (C10 and $00FF00FF) * FX;
+    var BotRB := (C01 and $00FF00FF) * IX + (C11 and $00FF00FF) * FX;
+    var TopGA := ((C00 shr 8) and $00FF00FF) * IX + ((C10 shr 8) and $00FF00FF) * FX;
+    var BotGA := ((C01 shr 8) and $00FF00FF) * IX + ((C11 shr 8) and $00FF00FF) * FX;
+    Exit((((TopRB * IY + BotRB * FY) shr 8) and $00FF00FF) or ((TopGA * IY + BotGA * FY) and $FF00FF00));
+  end;
+  Result := 0;
+  for var Sh := 0 to 3 do
+  begin
+    var Shift := Sh * 8;
+    var A := Integer((C00 shr Shift) and $FF);
+    var B := Integer((C10 shr Shift) and $FF);
+    var C := Integer((C01 shr Shift) and $FF);
+    var D := Integer((C11 shr Shift) and $FF);
+    var Top := A * (16 - FracX) + B * FracX;
+    var Bottom := C * (16 - FracX) + D * FracX;
+    var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
+    Result := Result or (Cardinal(V) shl Shift);
+  end;
+end;
+
+// The reference sampler (GEGenericTexels): every texel through FetchTexel,
+// the CLUT itself, channel by channel.
+function SampleGeneric(const T: TGETexture; L: PGETexLevel; S, TT: Single; Linear: Boolean): Cardinal;
+begin
+  if not Linear then
+  begin
+    var X := WrapCoord(TexFloor(S), L.Width, T.ClampU);
+    var Y := WrapCoord(TexFloor(TT), L.Height, T.ClampV);
+    Exit(FetchTexel(T, L, X, Y));
+  end;
+  var FS := S - 0.5;
+  var FT := TT - 0.5;
+  var X0 := TexFloor(FS);
+  var Y0 := TexFloor(FT);
+  var FracX := Trunc((FS - X0) * 16);
+  var FracY := Trunc((FT - Y0) * 16);
+  var XA := WrapCoord(X0, L.Width, T.ClampU);
+  var XB := WrapCoord(X0 + 1, L.Width, T.ClampU);
+  var YA := WrapCoord(Y0, L.Height, T.ClampV);
+  var YB := WrapCoord(Y0 + 1, L.Height, T.ClampV);
+  var C00 := FetchTexel(T, L, XA, YA);
+  var C10 := FetchTexel(T, L, XB, YA);
+  var C01 := FetchTexel(T, L, XA, YB);
+  var C11 := FetchTexel(T, L, XB, YB);
+  Result := 0;
+  for var Sh := 0 to 3 do
+  begin
+    var Shift := Sh * 8;
+    var A := Integer((C00 shr Shift) and $FF);
+    var B := Integer((C10 shr Shift) and $FF);
+    var C := Integer((C01 shr Shift) and $FF);
+    var D := Integer((C11 shr Shift) and $FF);
+    var Top := A * (16 - FracX) + B * FracX;
+    var Bottom := C * (16 - FracX) + D * FracX;
+    var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
+    Result := Result or (Cardinal(V) shl Shift);
+  end;
+end;
+
 // A texel of one level, nearest or bilinear (4-bit weights); S and TT are
-// in texels of that level.
+// in texels of that level. Levels that hold all their texels read them
+// straight from their bytes, by format; CLUT4/8 through the palette.
 function SampleLevel(const T: TGETexture; Level: Integer; S, TT: Single; Linear: Boolean): Cardinal;
 begin
   var L: PGETexLevel := @T.Levels[Level];
-  if L.Fits and not GEGenericTexels then
+  if GEGenericTexels then
+    Exit(SampleGeneric(T, L, S, TT, Linear));
+  if L.Fits then
   begin
     var Bits := TexBits[T.Format];
     var RowBytes := (L.BufWidth * Bits) shr 3;
     var P := L.Ptr;
+    var Sw := T.Swizzle;
     if not Linear then
     begin
-      var X := WrapCoord(TexFloor(S), L.Width, T.ClampU);
-      var Y := WrapCoord(TexFloor(TT), L.Height, T.ClampV);
-      Exit(FitTexel(T, P, FitOffset(T.Swizzle, RowBytes, Bits, X, Y), X));
+      var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
+      var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+      var Off := FitOffset(Sw, RowBytes, Bits, X, Y);
+      case T.Format of
+        3: Exit(PCardinal(P + Off)^);
+        4: if T.PalValid then Exit(T.Pal[Nibble(P[Off], X)]);
+        5: if T.PalValid then Exit(T.Pal[P[Off]]);
+      end;
+      Exit(FitTexel(T, P, Off, X));
     end;
-    var FS := S - 0.5;
-    var FT := TT - 0.5;
-    var X0 := TexFloor(FS);
-    var Y0 := TexFloor(FT);
-    var FracX := Trunc((FS - X0) * 16);
-    var FracY := Trunc((FT - Y0) * 16);
+    var X0, Y0: Integer;
+    var FracX, FracY: Int64;
+    LinearCoord(S, X0, FracX);
+    LinearCoord(TT, Y0, FracY);
     var XA := WrapCoord(X0, L.Width, T.ClampU);
     var XB := WrapCoord(X0 + 1, L.Width, T.ClampU);
     var YA := WrapCoord(Y0, L.Height, T.ClampV);
     var YB := WrapCoord(Y0 + 1, L.Height, T.ClampV);
-    var Sw := T.Swizzle;
-    var C00 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YA), XA);
-    var C10 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YA), XB);
-    var C01 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YB), XA);
-    var C11 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YB), XB);
-    Result := 0;
-    for var Sh := 0 to 3 do
-    begin
-      var Shift := Sh * 8;
-      var A := Integer((C00 shr Shift) and $FF);
-      var B := Integer((C10 shr Shift) and $FF);
-      var C := Integer((C01 shr Shift) and $FF);
-      var D := Integer((C11 shr Shift) and $FF);
-      var Top := A * (16 - FracX) + B * FracX;
-      var Bottom := C * (16 - FracX) + D * FracX;
-      var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
-      Result := Result or (Cardinal(V) shl Shift);
+    var RA := FitRow(Sw, RowBytes, YA);
+    var RB := FitRow(Sw, RowBytes, YB);
+    var C00, C10, C01, C11: Cardinal;
+    case T.Format of
+      4:
+        if T.PalValid then
+        begin
+          var CA := FitColumn(Sw, XA shr 1);
+          var CB := FitColumn(Sw, XB shr 1);
+          C00 := T.Pal[Nibble(P[RA + CA], XA)];
+          C10 := T.Pal[Nibble(P[RA + CB], XB)];
+          C01 := T.Pal[Nibble(P[RB + CA], XA)];
+          C11 := T.Pal[Nibble(P[RB + CB], XB)];
+          Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
+        end;
+      5:
+        if T.PalValid then
+        begin
+          var CA := FitColumn(Sw, XA);
+          var CB := FitColumn(Sw, XB);
+          C00 := T.Pal[P[RA + CA]];
+          C10 := T.Pal[P[RA + CB]];
+          C01 := T.Pal[P[RB + CA]];
+          C11 := T.Pal[P[RB + CB]];
+          Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
+        end;
+      3:
+        begin
+          var CA := FitColumn(Sw, XA * 4);
+          var CB := FitColumn(Sw, XB * 4);
+          C00 := PCardinal(P + RA + CA)^;
+          C10 := PCardinal(P + RA + CB)^;
+          C01 := PCardinal(P + RB + CA)^;
+          C11 := PCardinal(P + RB + CB)^;
+          Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
+        end;
+      0, 1, 2:
+        begin
+          var F := T.Format;
+          var CA := FitColumn(Sw, XA * 2);
+          var CB := FitColumn(Sw, XB * 2);
+          C00 := Decode16(F, PWord(P + RA + CA)^);
+          C10 := Decode16(F, PWord(P + RA + CB)^);
+          C01 := Decode16(F, PWord(P + RB + CA)^);
+          C11 := Decode16(F, PWord(P + RB + CB)^);
+          Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
+        end;
     end;
-    Exit;
+    C00 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YA), XA);
+    C10 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YA), XB);
+    C01 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YB), XA);
+    C11 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YB), XB);
+    Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
   end;
   if not Linear then
   begin
     var X := WrapCoord(TexFloor(S), L.Width, T.ClampU);
     var Y := WrapCoord(TexFloor(TT), L.Height, T.ClampV);
-    if not T.Swizzle and (L.Ptr <> nil) then
-    begin
-      var Pixel := Cardinal(Y * L.BufWidth + X);
-      case T.Format of
-        3: if UInt64(Pixel) * 4 + 4 <= L.Size then Exit(PCardinal(L.Ptr + Pixel * 4)^);
-        5: if Pixel < L.Size then Exit(ClutLookup(T, L.Ptr[Pixel]));
-        4:
-          begin
-            var Off := Cardinal(Y * (L.BufWidth div 2) + X div 2);
-            if Off < L.Size then
-            begin
-              var B := L.Ptr[Off];
-              if X and 1 <> 0 then B := B shr 4;
-              Exit(ClutLookup(T, B and $F));
-            end;
-          end;
-      end;
-    end;
     Exit(FastTexel(T, L, X, Y));
   end;
   var FS := S - 0.5;
@@ -469,18 +673,137 @@ begin
   var C10 := FastTexel(T, L, XB, YA);
   var C01 := FastTexel(T, L, XA, YB);
   var C11 := FastTexel(T, L, XB, YB);
-  Result := 0;
-  for var Sh := 0 to 3 do
-  begin
-    var Shift := Sh * 8;
-    var A := Integer((C00 shr Shift) and $FF);
-    var B := Integer((C10 shr Shift) and $FF);
-    var C := Integer((C01 shr Shift) and $FF);
-    var D := Integer((C11 shr Shift) and $FF);
-    var Top := A * (16 - FracX) + B * FracX;
-    var Bottom := C * (16 - FracX) + D * FracX;
-    var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
-    Result := Result or (Cardinal(V) shl Shift);
+  Result := Bilerp(C00, C10, C01, C11, FracX, FracY);
+end;
+
+// Samplers for level 0 of a level that holds all its texels, by format and
+// filter (TGETexture.Sampler, chosen by GEPrepareSampler): SampleLevel's
+// fast path without its dispatch.
+
+function SampleFit3N(T: PGETexture; S, TT: Single): Cardinal;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var Sw := T.Swizzle;
+  Result := PCardinal(L.Ptr + FitRow(Sw, L.BufWidth * 4, Y) + FitColumn(Sw, X * 4))^;
+end;
+
+function SampleFit4N(T: PGETexture; S, TT: Single): Cardinal;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var Sw := T.Swizzle;
+  Result := T.Pal[Nibble(L.Ptr[FitRow(Sw, L.BufWidth shr 1, Y) + FitColumn(Sw, X shr 1)], X)];
+end;
+
+function SampleFit5N(T: PGETexture; S, TT: Single): Cardinal;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var Sw := T.Swizzle;
+  Result := T.Pal[L.Ptr[FitRow(Sw, L.BufWidth, Y) + FitColumn(Sw, X)]];
+end;
+
+function SampleFit16N(T: PGETexture; S, TT: Single): Cardinal;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var Sw := T.Swizzle;
+  Result := Decode16(T.Format, PWord(L.Ptr + FitRow(Sw, L.BufWidth * 2, Y) + FitColumn(Sw, X * 2))^);
+end;
+
+function SampleFit3L(T: PGETexture; S, TT: Single): Cardinal;
+var
+  X0, Y0: Integer;
+  FracX, FracY: Int64;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  LinearCoord(S, X0, FracX);
+  LinearCoord(TT, Y0, FracY);
+  var Sw := T.Swizzle;
+  var RowBytes := L.BufWidth * 4;
+  var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
+  var RB := FitRow(Sw, RowBytes, WrapCoord(Y0 + 1, L.Height, T.ClampV));
+  var CA := FitColumn(Sw, WrapCoord(X0, L.Width, T.ClampU) * 4);
+  var CB := FitColumn(Sw, WrapCoord(X0 + 1, L.Width, T.ClampU) * 4);
+  var P := L.Ptr;
+  Result := Bilerp(PCardinal(P + RA + CA)^, PCardinal(P + RA + CB)^, PCardinal(P + RB + CA)^,
+    PCardinal(P + RB + CB)^, FracX, FracY);
+end;
+
+function SampleFit4L(T: PGETexture; S, TT: Single): Cardinal;
+var
+  X0, Y0: Integer;
+  FracX, FracY: Int64;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  LinearCoord(S, X0, FracX);
+  LinearCoord(TT, Y0, FracY);
+  var Sw := T.Swizzle;
+  var RowBytes := L.BufWidth shr 1;
+  var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
+  var RB := FitRow(Sw, RowBytes, WrapCoord(Y0 + 1, L.Height, T.ClampV));
+  var XA := WrapCoord(X0, L.Width, T.ClampU);
+  var XB := WrapCoord(X0 + 1, L.Width, T.ClampU);
+  var CA := FitColumn(Sw, XA shr 1);
+  var CB := FitColumn(Sw, XB shr 1);
+  var P := L.Ptr;
+  Result := Bilerp(T.Pal[Nibble(P[RA + CA], XA)], T.Pal[Nibble(P[RA + CB], XB)], T.Pal[Nibble(P[RB + CA], XA)],
+    T.Pal[Nibble(P[RB + CB], XB)], FracX, FracY);
+end;
+
+function SampleFit5L(T: PGETexture; S, TT: Single): Cardinal;
+var
+  X0, Y0: Integer;
+  FracX, FracY: Int64;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  LinearCoord(S, X0, FracX);
+  LinearCoord(TT, Y0, FracY);
+  var Sw := T.Swizzle;
+  var RowBytes := L.BufWidth;
+  var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
+  var RB := FitRow(Sw, RowBytes, WrapCoord(Y0 + 1, L.Height, T.ClampV));
+  var CA := FitColumn(Sw, WrapCoord(X0, L.Width, T.ClampU));
+  var CB := FitColumn(Sw, WrapCoord(X0 + 1, L.Width, T.ClampU));
+  var P := L.Ptr;
+  Result := Bilerp(T.Pal[P[RA + CA]], T.Pal[P[RA + CB]], T.Pal[P[RB + CA]], T.Pal[P[RB + CB]], FracX, FracY);
+end;
+
+function SampleFit16L(T: PGETexture; S, TT: Single): Cardinal;
+var
+  X0, Y0: Integer;
+  FracX, FracY: Int64;
+begin
+  var L: PGETexLevel := @T.Levels[0];
+  LinearCoord(S, X0, FracX);
+  LinearCoord(TT, Y0, FracY);
+  var Sw := T.Swizzle;
+  var RowBytes := L.BufWidth * 2;
+  var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
+  var RB := FitRow(Sw, RowBytes, WrapCoord(Y0 + 1, L.Height, T.ClampV));
+  var CA := FitColumn(Sw, WrapCoord(X0, L.Width, T.ClampU) * 2);
+  var CB := FitColumn(Sw, WrapCoord(X0 + 1, L.Width, T.ClampU) * 2);
+  var P := L.Ptr;
+  var F := T.Format;
+  Result := Bilerp(Decode16(F, PWord(P + RA + CA)^), Decode16(F, PWord(P + RA + CB)^), Decode16(F, PWord(P + RB + CA)^),
+    Decode16(F, PWord(P + RB + CB)^), FracX, FracY);
+end;
+
+procedure GEPrepareSampler(var T: TGETexture);
+begin
+  T.Sampler := nil;
+  if (T.Level <> 0) or T.NeedLod or not T.Levels[0].Fits then
+    Exit;
+  case T.Format of
+    0, 1, 2: if T.Linear then T.Sampler := SampleFit16L else T.Sampler := SampleFit16N;
+    3: if T.Linear then T.Sampler := SampleFit3L else T.Sampler := SampleFit3N;
+    4: if T.PalValid then if T.Linear then T.Sampler := SampleFit4L else T.Sampler := SampleFit4N;
+    5: if T.PalValid then if T.Linear then T.Sampler := SampleFit5L else T.Sampler := SampleFit5N;
   end;
 end;
 

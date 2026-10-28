@@ -74,8 +74,11 @@ type
     LogicFunc: Integer;
     MaskRGB: Cardinal;
     MaskA: Integer;
-    // Derived by GEPrepareRaster: the pixel bits the masks keep.
+    // Derived by GEPrepareRaster: the pixel bits the masks keep; the blend
+    // equation when it is a common one (1: source alpha, one minus source
+    // alpha; 2: source alpha, fixed colour; both added), else 0.
     KeepMask: Cardinal;
+    BlendKind: Integer;
   end;
 
 var
@@ -129,14 +132,15 @@ begin
 end;
 {$ENDIF}
 
+// V is read once: the inliner would otherwise evaluate an argument
+// expression for every use.
 function Clamp255(V: Integer): Integer; inline;
 begin
-  if V < 0 then
+  Result := V;
+  if Result < 0 then
     Result := 0
-  else if V > 255 then
-    Result := 255
-  else
-    Result := V;
+  else if Result > 255 then
+    Result := 255;
 end;
 
 function TestFunc(Func, A, B: Integer): Boolean; inline;
@@ -322,6 +326,20 @@ end;
 procedure GEPrepareRaster(var S: TGERaster);
 begin
   S.KeepMask := PixelKeepMask(S);
+  // The common blend equations, for the specialised pipelines (BlendTerm's
+  // kinds 2 and 3, and 10-15 for the fixed colour, added).
+  S.BlendKind := 0;
+  if S.Blend and (S.BlendOp = 0) and (S.BlendSrc = 2) then
+    if S.BlendDst = 3 then
+      S.BlendKind := 1
+    else if S.BlendDst >= 10 then
+      S.BlendKind := 2;
+  if S.Textured then
+  begin
+    if not S.Tex.PalValid then
+      GEPreparePalette(S.Tex);
+    GEPrepareSampler(S.Tex);
+  end;
 end;
 
 // a * (255 - t) + b * t over 256, rounded up, doubled before the shift.
@@ -343,6 +361,8 @@ begin
   var C: Cardinal;
   if S.Tex.NeedLod then
     C := GESampleTextureLod(S.Tex, F.S, F.T, F.Lod)
+  else if Assigned(S.Tex.Sampler) and not GEGenericTexels then
+    C := S.Tex.Sampler(@S.Tex, F.S, F.T)
   else
     C := GESampleTexture(S.Tex, F.S, F.T);
   TR := C and $FF;
@@ -615,18 +635,17 @@ end;
 // Pixel pipelines specialised on target format, texture, blend and depth.
 {$I PSP.GE.PixelProcs.inc}
 
-// A clear-mode sprite without dither: the same bits into every pixel, as
-// PlotPixel's clear path writes them.
+// A clear-mode sprite: the bits PlotPixel's clear path writes, the same in
+// every pixel but for the dither matrix's 4x4 pattern of colours.
 procedure ClearRect(const S: TGERaster; X1, Y1, X2, Y2: Integer; const V: TGEVertex);
+var
+  Bits: array[0..15] of Cardinal;
 begin
   var Fmt := S.FBFormat;
   var SetMask: Cardinal := 0;
-  var SetBits: Cardinal := 0;
+  var StencilSet: Cardinal := 0;
   if S.ClearColor then
-  begin
     SetMask := EncodeColor(Fmt, 255, 255, 255);
-    SetBits := EncodeColor(Fmt, V.R, V.G, V.B);
-  end;
   if S.ClearStencil then
   begin
     var SV: Integer;
@@ -637,10 +656,22 @@ begin
       SV := V.A;
     end;
     SetMask := SetMask or StencilBits(Fmt, $FF);
-    SetBits := SetBits or StencilBits(Fmt, SV);
+    StencilSet := StencilBits(Fmt, SV);
   end;
   var W := SetMask and not S.KeepMask;
-  SetBits := SetBits and W;
+  for var I := 0 to 15 do
+  begin
+    var C := StencilSet;
+    if S.ClearColor then
+      if S.Dither then
+      begin
+        var D := S.DitherMatrix[I];
+        C := C or EncodeColor(Fmt, Clamp255(V.R + D), Clamp255(V.G + D), Clamp255(V.B + D));
+      end
+      else
+        C := C or EncodeColor(Fmt, V.R, V.G, V.B);
+    Bits[I] := C and W;
+  end;
   var Z := V.Z;
   if Z < 0 then Z := 0;
   if Z > 65535 then Z := 65535;
@@ -651,14 +682,16 @@ begin
   begin
     if W <> 0 then
     begin
+      var Row := (Y and 3) * 4;
       var A := S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X1)) * Bpp;
       for var X := X1 to X2 do
       begin
         var PA := A and (PSPVRAMSize - 1);
+        var B := Bits[Row + (X and 3)];
         if Bpp = 4 then
-          PCardinal(S.VRAM + PA)^ := (PCardinal(S.VRAM + PA)^ and not W) or SetBits
+          PCardinal(S.VRAM + PA)^ := (PCardinal(S.VRAM + PA)^ and not W) or B
         else
-          PWord(S.VRAM + PA)^ := Word((PWord(S.VRAM + PA)^ and not W) or SetBits);
+          PWord(S.VRAM + PA)^ := Word((PWord(S.VRAM + PA)^ and not W) or B);
         Inc(A, Bpp);
       end;
     end;
@@ -866,6 +899,11 @@ begin
   var ConstantZ := (A0.Z = A1.Z) and (A0.Z = A2.Z);
   var NeedWeights := S.Textured or S.FogEnabled or Secondary or not ConstantZ;
   var Plot := SelectPixel(S, Secondary);
+  // The vertices' S, T and Q times 1/w, products in single precision as in
+  // the per pixel expressions they come from.
+  var QW0 := A0.Q * A0.W; var QW1 := A1.Q * A1.W; var QW2 := A2.Q * A2.W;
+  var SW0 := A0.S * A0.W; var SW1 := A1.S * A1.W; var SW2 := A2.S * A2.W;
+  var TW0 := A0.T * A0.W; var TW1 := A1.T * A1.W; var TW2 := A2.T * A2.W;
   for var PY := PY1 to PY2 do
   begin
     var SY := Int64(PY) * 16 + 8;
@@ -926,12 +964,12 @@ begin
       begin
         // S, T and Q go through the perspective (1/w) and then S and T are
         // divided by Q; where Q is not positive the GE takes the last texel.
-        var Q := A0.Q * A0.W * W0 + A1.Q * A1.W * W1 + A2.Q * A2.W * W2;
+        var Q := QW0 * W0 + QW1 * W1 + QW2 * W2;
         var IW := A0.W * W0 + A1.W * W1 + A2.W * W2;
         if (Q <> 0) and ((Q > 0) = (IW > 0)) then
         begin
-          F.S := (A0.S * A0.W * W0 + A1.S * A1.W * W1 + A2.S * A2.W * W2) / Q;
-          F.T := (A0.T * A0.W * W0 + A1.T * A1.W * W1 + A2.T * A2.W * W2) / Q;
+          F.S := (SW0 * W0 + SW1 * W1 + SW2 * W2) / Q;
+          F.T := (TW0 * W0 + TW1 * W1 + TW2 * W2) / Q;
           if NeedLod then
           begin
             var Scale := Max(Max(Abs(NSX - F.S * DQX), Abs(NSY - F.S * DQY)),
@@ -976,7 +1014,7 @@ begin
   PY2 := Min(PY2, Min(S.ScissorY2, S.BandY2));
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
-  if S.ClearMode and not S.Dither then
+  if S.ClearMode and not GEGenericPixels then
   begin
     ClearRect(S, PX1, PY1, PX2, PY2, V1);
     Exit;
@@ -1018,20 +1056,29 @@ begin
       W := 1 / V1.W;
     Lod := TexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), W);
   end;
+  SetupFragment(F, V1);
+  F.Lod := Lod;
   for var PY := PY1 to PY2 do
+  begin
+    // The per row terms of S = V0.S + SX * FX + SY * FY (and T, Q), in the
+    // type and order of that expression. FX and FY are 1/16 multiples, so the
+    // division by 16 is a multiplication.
+    var FY: Extended := (PY * 16 + 8 - V0.Y) * 0.0625;
+    var SYFY: Extended := SY * FY;
+    var TYFY: Extended := TY * FY;
+    var QYFY: Extended := QY * FY;
     for var PX := PX1 to PX2 do
     begin
-      SetupFragment(F, V1);
-      F.Lod := Lod;
+      // The pipelines change only the colour.
+      F.R := V1.R; F.G := V1.G; F.B := V1.B; F.A := V1.A;
       if S.Textured then
       begin
-        var FX := (PX * 16 + 8 - V0.X) / 16;
-        var FY := (PY * 16 + 8 - V0.Y) / 16;
-        F.S := V0.S + SX * FX + SY * FY;
-        F.T := V0.T + TX * FX + TY * FY;
+        var FX: Extended := (PX * 16 + 8 - V0.X) * 0.0625;
+        F.S := V0.S + SX * FX + SYFY;
+        F.T := V0.T + TX * FX + TYFY;
         if Projected then
         begin
-          var Q := V0.Q + QX * FX + QY * FY;
+          var Q := V0.Q + QX * FX + QYFY;
           if Q <> 0 then
           begin
             F.S := F.S / Q;
@@ -1041,6 +1088,7 @@ begin
       end;
       Plot(S, PX, PY, F);
     end;
+  end;
 end;
 
 procedure GEDrawLine(const S: TGERaster; const V0, V1: TGEVertex);

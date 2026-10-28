@@ -534,7 +534,10 @@ var
 begin
   if FThreads <= 1 then
   begin
+    // Serial reference: the drawing time is the CPU renderer's cost.
+    var T := TStopwatch.GetTimeStamp;
     DrawJob(S, Kind, A, B, C);
+    Inc(FSerialTicks, TStopwatch.GetTimeStamp - T);
     Exit;
   end;
   if (S.ScissorX1 > S.ScissorX2) or (S.ScissorY1 > S.ScissorY2) then

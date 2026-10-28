@@ -10,7 +10,21 @@ begin
     if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
   end;
 {$IFDEF GEPIX_TEXTURE}
-  ApplyTexture(S, F);
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
 {$ENDIF}
 {$IFDEF GEPIX_EXTRA}
   // Secondary colour, then fog, as PlotPixel.
@@ -118,9 +132,29 @@ begin
 {$ELSE}
   DecodePixel(2, Old, DR, DG, DB, DA);
 {$ENDIF}
-  R := BlendChannel(S, R, DR, F.A, DA, 0);
-  G := BlendChannel(S, G, DG, F.A, DA, 8);
-  B := BlendChannel(S, B, DB, F.A, DA, 16);
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
 {$ENDIF}
   if S.Dither then
   begin

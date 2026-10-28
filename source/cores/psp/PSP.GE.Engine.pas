@@ -65,6 +65,8 @@ type
     FWorkers: TGEWorkers;
     FClut: array[0..1023] of Byte;
     FRaster: TGERaster;
+    // The texture format and CLUT register FRaster.Tex.Pal was made for.
+    FPalKey: Cardinal;
     FVSize: Integer;
     FOffTC, FOffC, FOffN, FOffP: Integer;
     FPrimCost: Int64;
@@ -172,6 +174,8 @@ begin
     FWorkers.ClutChanged;
   end;
   FillChar(FClut, SizeOf(FClut), 0);
+  FRaster.Tex.PalValid := False;
+  FRaster.Tex.Sampler := nil;
 end;
 
 function TPSPGEEngine.Address(Param: Cardinal): Cardinal;
@@ -1146,6 +1150,13 @@ begin
     T.ClutShift := (CF shr 2) and $1F;
     T.ClutMask := (CF shr 8) and $FF;
     T.ClutOffset := ((CF shr 16) and $1F) shl 4;
+    // GEPrepareRaster makes the palette again when these or the CLUT change.
+    var PalKey := (CF and $1FFFFF) or (Cardinal(T.Format) shl 24);
+    if PalKey <> FPalKey then
+    begin
+      FPalKey := PalKey;
+      T.PalValid := False;
+    end;
     S.TexFunc := C[GE_TEXFUNC] and 7;
     S.TexAlpha := (C[GE_TEXFUNC] and $100) <> 0;
     S.ColorDouble := (C[GE_TEXFUNC] and $10000) <> 0;
@@ -1829,6 +1840,8 @@ begin
   if Bytes > 0 then
     FMemory.ReadBytes(Addr, FClut[0], Bytes);
   FWorkers.ClutChanged;
+  FRaster.Tex.PalValid := False;
+  FRaster.Tex.Sampler := nil;
 end;
 
 // Transfers address VRAM's 8MB of mirrors with wrap-around at the end.
