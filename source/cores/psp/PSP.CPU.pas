@@ -74,6 +74,7 @@ type
     FCmpPC, FCmpOld: Cardinal;
     function DecodePage(PC: Cardinal): PPSPDecodedPage;
     procedure CodeWrite(Address, Size: Cardinal);
+    procedure Interpret;
   public
     // The run's budget (Run, TakeCycles, AddCycles), for a runner.
     FRunLength, FRemaining, FAccounted: Integer;
@@ -347,12 +348,20 @@ end;
 
 procedure OpCLZ(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.GPR[RD(Op)] := LeadingZeros(C.Ctx.GPR[RS(Op)]);
+  var V := C.Ctx.GPR[RS(Op)];
+  if (V and $80000000) <> 0 then
+    C.Ctx.GPR[RD(Op)] := 0
+  else
+    C.Ctx.GPR[RD(Op)] := LeadingZeros(V);
 end;
 
 procedure OpCLO(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.GPR[RD(Op)] := LeadingZeros(not C.Ctx.GPR[RS(Op)]);
+  var V := C.Ctx.GPR[RS(Op)];
+  var N: Cardinal := 0;
+  while (N < 32) and ((V and ($80000000 shr N)) <> 0) do
+    Inc(N);
+  C.Ctx.GPR[RD(Op)] := N;
 end;
 
 procedure OpMULT(C: TPSPCPU; Op: Cardinal);
@@ -1204,6 +1213,26 @@ begin
     Runner.CodeWritten(Address, Size);
 end;
 
+// Outside Run's FP-environment try/finally, the dispatch loop can keep its locals in registers.
+procedure TPSPCPU.Interpret;
+begin
+  while FRemaining > 0 do
+  begin
+    var PC := Ctx.PC;
+    var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
+    if Page = nil then
+      Page := DecodePage(PC);
+    var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
+    CurPC := PC;
+    Ctx.PC := Ctx.NPC;
+    Ctx.NPC := Ctx.NPC + 4;
+    Dec(FRemaining);
+    Entry.Handler(Self, Entry.Op);
+    if Stopping then
+      Break;
+  end;
+end;
+
 function TPSPCPU.Run(MaxCycles: Integer): Integer;
 begin
   Stopping := False;
@@ -1220,21 +1249,7 @@ begin
     if Runner <> nil then
       Runner.Run(Self)
     else
-    while FRemaining > 0 do
-    begin
-      var PC := Ctx.PC;
-      var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
-      if Page = nil then
-        Page := DecodePage(PC);
-      var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
-      CurPC := PC;
-      Ctx.PC := Ctx.NPC;
-      Ctx.NPC := Ctx.NPC + 4;
-      Dec(FRemaining);
-      Entry.Handler(Self, Entry.Op);
-      if Stopping then
-        Break;
-    end;
+      Interpret;
   finally
     SetExceptionMask(SavedMask);
     SetRoundMode(SavedRound);
