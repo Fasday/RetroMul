@@ -156,8 +156,22 @@ begin
   var Hi := Lo + Size;
   if Size = 0 then
     Hi := Lo + 1;
-  if (Hi > PSPVRAMBase) and (Lo < PSPVRAMBase + 4 * PSPVRAMSize) then
-    FOnVRAMFault();
+  if Lo < PSPVRAMBase then
+    Lo := PSPVRAMBase;
+  if Hi > PSPVRAMBase + 4 * PSPVRAMSize then
+    Hi := PSPVRAMBase + 4 * PSPVRAMSize;
+  if Hi - Lo > PSPVRAMSize then
+    Hi := Lo + PSPVRAMSize;
+  var Page := Lo shr PSPPageShift;
+  while Page < (Hi + PSPPageMask) shr PSPPageShift do
+  begin
+    if FHeld[Page and (PSPVRAMSize div PSPPageSize - 1)] then
+    begin
+      FOnVRAMFault();
+      Exit;
+    end;
+    Inc(Page);
+  end;
 end;
 
 procedure TPSPMemory.HoldVRAM(Page: Integer);

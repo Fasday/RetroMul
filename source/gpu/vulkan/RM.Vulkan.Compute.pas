@@ -56,7 +56,8 @@ type
 
   // A compute pipeline whose set 0 holds storage buffers at bindings
   // 0..Buffers-1, with an optional push constant block and uint32
-  // specialization constants (constant_id = index).
+  // specialization constants (constant_id = index). It has Sets descriptor
+  // sets (for buffers in flight at the same time); dispatches use ActiveSet.
   TVulkanKernel = class
   private
     FOwner: TVulkanCompute;
@@ -64,18 +65,21 @@ type
     FLayout: VkPipelineLayout;
     FPipeline: VkPipeline;
     FPool: VkDescriptorPool;
-    FSet: VkDescriptorSet;
+    FSets: TArray<VkDescriptorSet>;
+    FActive: Integer;
     FBuffers: Integer;
     FPushSize: Cardinal;
   public
     constructor Create(Owner: TVulkanCompute; const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal;
-      const Spec: array of Cardinal);
+      const Spec: array of Cardinal; Sets: Integer = 1);
     destructor Destroy; override;
-    // Not while a command buffer using the kernel is pending.
-    procedure Bind(Binding: Integer; Buffer: TVulkanBuffer; Offset: UInt64 = 0; Size: UInt64 = VK_WHOLE_SIZE);
+    // Not while a command buffer using the set is pending.
+    procedure Bind(Binding: Integer; Buffer: TVulkanBuffer; Offset: UInt64 = 0; Size: UInt64 = VK_WHOLE_SIZE); overload;
+    procedure Bind(SetIndex, Binding: Integer; Buffer: TVulkanBuffer; Offset: UInt64 = 0; Size: UInt64 = VK_WHOLE_SIZE); overload;
     property Pipeline: VkPipeline read FPipeline;
     property Layout: VkPipelineLayout read FLayout;
     property PushSize: Cardinal read FPushSize;
+    property ActiveSet: Integer read FActive write FActive;
   end;
 
   TVulkanCommands = class
@@ -87,6 +91,7 @@ type
     FQueryCount: Cardinal;
     FRecording, FPending: Boolean;
     FBound: TVulkanKernel;
+    FBoundSet: Integer;
     FSpin: Int64;
   public
     constructor Create(Owner: TVulkanCompute; Timestamps: Cardinal = 0);
@@ -144,7 +149,8 @@ type
       Usage: Cardinal = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT or VK_BUFFER_USAGE_TRANSFER_SRC_BIT or VK_BUFFER_USAGE_TRANSFER_DST_BIT): TVulkanBuffer;
     function CreateShaderModule(const Code: array of Cardinal): VkShaderModule;
     function CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal = 0): TVulkanKernel; overload;
-    function CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal; const Spec: array of Cardinal): TVulkanKernel; overload;
+    function CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal; const Spec: array of Cardinal;
+      Sets: Integer = 1): TVulkanKernel; overload;
     function CreateCommands(Timestamps: Cardinal = 0): TVulkanCommands;
     function CreateTimeline(Initial: UInt64 = 0): VkSemaphore;
     procedure DestroyTimeline(Semaphore: VkSemaphore);
@@ -438,9 +444,9 @@ begin
 end;
 
 function TVulkanCompute.CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal;
-  const Spec: array of Cardinal): TVulkanKernel;
+  const Spec: array of Cardinal; Sets: Integer): TVulkanKernel;
 begin
-  Result := TVulkanKernel.Create(Self, Code, Buffers, PushSize, Spec);
+  Result := TVulkanKernel.Create(Self, Code, Buffers, PushSize, Spec, Sets);
 end;
 
 function TVulkanCompute.CreateCommands(Timestamps: Cardinal): TVulkanCommands;
@@ -624,8 +630,9 @@ end;
 { TVulkanKernel }
 
 constructor TVulkanKernel.Create(Owner: TVulkanCompute; const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal;
-  const Spec: array of Cardinal);
+  const Spec: array of Cardinal; Sets: Integer);
 var
+  Layouts: TArray<VkDescriptorSetLayout>;
   Bindings: TArray<VkDescriptorSetLayoutBinding>;
   SetInfo: VkDescriptorSetLayoutCreateInfo;
   Push: VkPushConstantRange;
@@ -702,22 +709,28 @@ begin
     API.vkDestroyShaderModule(Device, Module, nil);
   end;
 
+  if Sets < 1 then
+    Sets := 1;
+  SetLength(FSets, Sets);
   if Buffers > 0 then
   begin
     PoolSize.&type := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    PoolSize.descriptorCount := Buffers;
+    PoolSize.descriptorCount := Buffers * Sets;
     PoolInfo := Default(VkDescriptorPoolCreateInfo);
     PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    PoolInfo.maxSets := 1;
+    PoolInfo.maxSets := Sets;
     PoolInfo.poolSizeCount := 1;
     PoolInfo.pPoolSizes := @PoolSize;
     CheckVulkan(API.vkCreateDescriptorPool(Device, @PoolInfo, nil, @FPool), 'vkCreateDescriptorPool');
+    SetLength(Layouts, Sets);
+    for var I := 0 to Sets - 1 do
+      Layouts[I] := FSetLayout;
     Allocate := Default(VkDescriptorSetAllocateInfo);
     Allocate.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     Allocate.descriptorPool := FPool;
-    Allocate.descriptorSetCount := 1;
-    Allocate.pSetLayouts := @FSetLayout;
-    CheckVulkan(API.vkAllocateDescriptorSets(Device, @Allocate, @FSet), 'vkAllocateDescriptorSets');
+    Allocate.descriptorSetCount := Sets;
+    Allocate.pSetLayouts := @Layouts[0];
+    CheckVulkan(API.vkAllocateDescriptorSets(Device, @Allocate, @FSets[0]), 'vkAllocateDescriptorSets');
   end;
 end;
 
@@ -740,18 +753,23 @@ begin
 end;
 
 procedure TVulkanKernel.Bind(Binding: Integer; Buffer: TVulkanBuffer; Offset, Size: UInt64);
+begin
+  Bind(0, Binding, Buffer, Offset, Size);
+end;
+
+procedure TVulkanKernel.Bind(SetIndex, Binding: Integer; Buffer: TVulkanBuffer; Offset, Size: UInt64);
 var
   Info: VkDescriptorBufferInfo;
   Write: VkWriteDescriptorSet;
 begin
-  if (Binding < 0) or (Binding >= FBuffers) then
-    raise ERangeError.CreateFmt('Kernel binding %d out of range.', [Binding]);
+  if (Binding < 0) or (Binding >= FBuffers) or (SetIndex < 0) or (SetIndex > High(FSets)) then
+    raise ERangeError.CreateFmt('Kernel binding %d of set %d out of range.', [Binding, SetIndex]);
   Info.buffer := Buffer.Handle;
   Info.offset := Offset;
   Info.range := Size;
   Write := Default(VkWriteDescriptorSet);
   Write.sType := VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  Write.dstSet := FSet;
+  Write.dstSet := FSets[SetIndex];
   Write.dstBinding := Binding;
   Write.descriptorCount := 1;
   Write.descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -834,9 +852,14 @@ begin
   if FBound <> Kernel then
   begin
     API.vkCmdBindPipeline(FHandle, VK_PIPELINE_BIND_POINT_COMPUTE, Kernel.FPipeline);
-    if Kernel.FSet <> 0 then
-      API.vkCmdBindDescriptorSets(FHandle, VK_PIPELINE_BIND_POINT_COMPUTE, Kernel.FLayout, 0, 1, @Kernel.FSet, 0, nil);
+    FBoundSet := -1;
     FBound := Kernel;
+  end;
+  if (FBoundSet <> Kernel.FActive) and (Kernel.FSets[Kernel.FActive] <> 0) then
+  begin
+    API.vkCmdBindDescriptorSets(FHandle, VK_PIPELINE_BIND_POINT_COMPUTE, Kernel.FLayout, 0, 1,
+      @Kernel.FSets[Kernel.FActive], 0, nil);
+    FBoundSet := Kernel.FActive;
   end;
   if Size > 0 then
     API.vkCmdPushConstants(FHandle, Kernel.FLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Size, @Push);

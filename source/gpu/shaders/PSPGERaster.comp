@@ -1,8 +1,9 @@
 #version 450
 // The GE's rasterizer and pixel pipeline, the same arithmetic as
-// PSP.GE.Raster and PSP.GE.Texture on the CPU, bit for bit. One invocation
-// per pixel of a pass (primitives with one render target) walks the pass's
-// primitives in order, so each pixel sees them as the CPU draws them.
+// PSP.GE.Raster and PSP.GE.Texture on the CPU, bit for bit. A pass is a run
+// of primitives with one render target, binned by 16x16 pixel tiles: one
+// workgroup per tile, one invocation per pixel walks the tile's primitives in
+// order, so each pixel sees them as the CPU draws them.
 //
 // Delphi semantics kept: Integer is int, Cardinal is uint, `div` truncates,
 // `shr` on an Integer is a logical shift. Single op Single and Integer op
@@ -19,7 +20,7 @@
 #include "FloatControls.glsl"
 #include "SoftDouble.glsl"
 
-layout(local_size_x = 8, local_size_y = 8) in;
+layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(std430, binding = 0) buffer Vram32 { uint vram32[]; };
 layout(std430, binding = 1) buffer Vram16 { uint16_t vram16[]; };
@@ -28,10 +29,12 @@ layout(std430, binding = 3) readonly buffer Prims { uint prims[]; };
 layout(std430, binding = 4) readonly buffer States { uint states[]; };
 layout(std430, binding = 5) readonly buffer Data8 { uint8_t data8[]; };
 layout(std430, binding = 6) readonly buffer Data32 { uint data32[]; };
+// Per pass: (first, count) of every tile, row by row, into a list of primitive indices.
+layout(std430, binding = 7) readonly buffer Bins { uint bins[]; };
 
 layout(push_constant) uniform Pass
 {
-  uint first, count;
+  uint table, tilesX;
   int x1, y1, x2, y2;
 } pc;
 
@@ -885,13 +888,16 @@ bool listFragment(uint p, int px, int py, out Fragment f)
 
 void main()
 {
-  int px = pc.x1 + int(gl_GlobalInvocationID.x);
-  int py = pc.y1 + int(gl_GlobalInvocationID.y);
-  if (px > pc.x2 || py > pc.y2)
+  uint tile = pc.table + (gl_WorkGroupID.y * pc.tilesX + gl_WorkGroupID.x) * 2u;
+  uint first = bins[tile];
+  uint count = bins[tile + 1u];
+  int px = ((pc.x1 >> 4) + int(gl_WorkGroupID.x)) * 16 + int(gl_LocalInvocationID.x);
+  int py = ((pc.y1 >> 4) + int(gl_WorkGroupID.y)) * 16 + int(gl_LocalInvocationID.y);
+  if (px < pc.x1 || py < pc.y1 || px > pc.x2 || py > pc.y2)
     return;
-  for (uint i = 0u; i < pc.count; i++)
+  for (uint i = 0u; i < count; i++)
   {
-    uint p = (pc.first + i) * 64u;
+    uint p = bins[first + i] * 64u;
     if (px < int(prims[p + 2u]) || py < int(prims[p + 3u]) || px > int(prims[p + 4u]) || py > int(prims[p + 5u]))
       continue;
     uint s = prims[p + 1u] * 128u;

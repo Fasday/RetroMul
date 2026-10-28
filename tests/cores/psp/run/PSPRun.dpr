@@ -246,7 +246,7 @@ begin
             end;
           TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := GPU;
           if not Quiet then
-            Writeln(ErrOutput, 'gpu: ' + GPU.Compute.Name);
+            Writeln(ErrOutput, 'gpu: ' + GPU.Compute.Name + ', ' + GPU.Describe);
         end
         else
           Writeln(ErrOutput, 'gpu: unavailable (' + Error + '), the GE draws on the CPU');
@@ -340,6 +340,11 @@ begin
           Writeln(ErrOutput, Format('gpu: %d batches, %d passes, %d prims, %d on the CPU, %d pages uploaded, ' +
             '%.2fs waiting (gpu: %.3fs upload, %.3fs drawing, %.3fs readback)', [St.Batches, St.Passes, St.Prims,
             St.Fallbacks, St.UploadedPages, St.WaitSeconds, St.UploadSeconds, St.DrawSeconds, St.ReadbackSeconds]));
+        if not Quiet then
+        begin
+          Writeln(ErrOutput, Format('gpu: %d tiles, %d tile primitives', [St.Tiles, St.Binned]));
+          Write(ErrOutput, GPU.Report);
+        end;
         if GPUMode = 2 then
           Writeln(ErrOutput, Format('gpu check: %d of %d batches differ (%d bytes)', [St.BadBatches, St.CheckedBatches,
             St.BadBytes]));
