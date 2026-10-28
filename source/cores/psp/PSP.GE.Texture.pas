@@ -496,21 +496,25 @@ end;
 // FracX. With weights in 0..16 the products of two channels at a time fit
 // 16-bit lanes of a 32-bit word (at most 255 * 16 * 16), so the lanes give
 // the per channel result exactly.
+function BilerpPacked(T00, T10, T01, T11, FracX, FracY: Cardinal): Cardinal; inline;
+begin
+  var C00 := T00; var C10 := T10; var C01 := T01; var C11 := T11;
+  var FX := FracX;
+  var IX := 16 - FX;
+  var FY := FracY;
+  var IY := 16 - FY;
+  var TopRB := (C00 and $00FF00FF) * IX + (C10 and $00FF00FF) * FX;
+  var BotRB := (C01 and $00FF00FF) * IX + (C11 and $00FF00FF) * FX;
+  var TopGA := ((C00 shr 8) and $00FF00FF) * IX + ((C10 shr 8) and $00FF00FF) * FX;
+  var BotGA := ((C01 shr 8) and $00FF00FF) * IX + ((C11 shr 8) and $00FF00FF) * FX;
+  Result := (((TopRB * IY + BotRB * FY) shr 8) and $00FF00FF) or ((TopGA * IY + BotGA * FY) and $FF00FF00);
+end;
+
 function Bilerp(T00, T10, T01, T11: Cardinal; FracX, FracY: Int64): Cardinal; inline;
 begin
   var C00 := T00; var C10 := T10; var C01 := T01; var C11 := T11;
   if (UInt64(FracX) <= 16) and (UInt64(FracY) <= 16) then
-  begin
-    var IX := Cardinal(16 - FracX);
-    var FX := Cardinal(FracX);
-    var IY := Cardinal(16 - FracY);
-    var FY := Cardinal(FracY);
-    var TopRB := (C00 and $00FF00FF) * IX + (C10 and $00FF00FF) * FX;
-    var BotRB := (C01 and $00FF00FF) * IX + (C11 and $00FF00FF) * FX;
-    var TopGA := ((C00 shr 8) and $00FF00FF) * IX + ((C10 shr 8) and $00FF00FF) * FX;
-    var BotGA := ((C01 shr 8) and $00FF00FF) * IX + ((C11 shr 8) and $00FF00FF) * FX;
-    Exit((((TopRB * IY + BotRB * FY) shr 8) and $00FF00FF) or ((TopGA * IY + BotGA * FY) and $FF00FF00));
-  end;
+    Exit(BilerpPacked(C00, C10, C01, C11, Cardinal(FracX), Cardinal(FracY)));
   Result := 0;
   for var Sh := 0 to 3 do
   begin
@@ -678,52 +682,95 @@ end;
 
 // Samplers for level 0 of a level that holds all its texels, by format and
 // filter (TGETexture.Sampler, chosen by GEPrepareSampler): SampleLevel's
-// fast path without its dispatch.
+// fast path without its dispatch, for ordinary coordinates.
+
+// The samplers' coordinates where they come straight from the bits of S
+// (NearestCoord and LinearCoord without their other cases): nearest for
+// B < $4B000000; bilinear (floor(16 * S) - 8: the texel times 16 plus the
+// weight) for B in [$3F000000, $4A800000).
+function NearestBits(Bits: Cardinal): Integer; inline;
+begin
+  var B := Bits;
+  if B < $3F800000 then
+    Result := 0
+  else
+    Result := Integer(((B and $7FFFFF) or $800000) shr (150 - (B shr 23)));
+end;
+
+function LinearBits(Bits: Cardinal): Integer; inline;
+begin
+  var B := Bits;
+  Result := Integer((((B and $7FFFFF) or $800000) shl 2) shr (148 - (B shr 23))) - 8;
+end;
+
+function LinearInRange(B: Cardinal): Boolean; inline;
+begin
+  Result := (B >= $3F000000) and (B < $4A800000);
+end;
 
 function SampleFit3N(T: PGETexture; S, TT: Single): Cardinal;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if (BS >= $4B000000) or (BT >= $4B000000) then
+    Exit(SampleLevel(T^, 0, S, TT, False));
   var L: PGETexLevel := @T.Levels[0];
-  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
-  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var X := WrapCoord(NearestBits(BS), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestBits(BT), L.Height, T.ClampV);
   var Sw := T.Swizzle;
   Result := PCardinal(L.Ptr + FitRow(Sw, L.BufWidth * 4, Y) + FitColumn(Sw, X * 4))^;
 end;
 
 function SampleFit4N(T: PGETexture; S, TT: Single): Cardinal;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if (BS >= $4B000000) or (BT >= $4B000000) then
+    Exit(SampleLevel(T^, 0, S, TT, False));
   var L: PGETexLevel := @T.Levels[0];
-  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
-  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var X := WrapCoord(NearestBits(BS), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestBits(BT), L.Height, T.ClampV);
   var Sw := T.Swizzle;
   Result := T.Pal[Nibble(L.Ptr[FitRow(Sw, L.BufWidth shr 1, Y) + FitColumn(Sw, X shr 1)], X)];
 end;
 
 function SampleFit5N(T: PGETexture; S, TT: Single): Cardinal;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if (BS >= $4B000000) or (BT >= $4B000000) then
+    Exit(SampleLevel(T^, 0, S, TT, False));
   var L: PGETexLevel := @T.Levels[0];
-  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
-  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var X := WrapCoord(NearestBits(BS), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestBits(BT), L.Height, T.ClampV);
   var Sw := T.Swizzle;
   Result := T.Pal[L.Ptr[FitRow(Sw, L.BufWidth, Y) + FitColumn(Sw, X)]];
 end;
 
 function SampleFit16N(T: PGETexture; S, TT: Single): Cardinal;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if (BS >= $4B000000) or (BT >= $4B000000) then
+    Exit(SampleLevel(T^, 0, S, TT, False));
   var L: PGETexLevel := @T.Levels[0];
-  var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
-  var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
+  var X := WrapCoord(NearestBits(BS), L.Width, T.ClampU);
+  var Y := WrapCoord(NearestBits(BT), L.Height, T.ClampV);
   var Sw := T.Swizzle;
   Result := Decode16(T.Format, PWord(L.Ptr + FitRow(Sw, L.BufWidth * 2, Y) + FitColumn(Sw, X * 2))^);
 end;
 
 function SampleFit3L(T: PGETexture; S, TT: Single): Cardinal;
-var
-  X0, Y0: Integer;
-  FracX, FracY: Int64;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if not (LinearInRange(BS) and LinearInRange(BT)) then
+    Exit(SampleLevel(T^, 0, S, TT, True));
+  var RS := LinearBits(BS);
+  var RT := LinearBits(BT);
+  var X0 := RS shr 4;
+  var Y0 := RT shr 4;
   var L: PGETexLevel := @T.Levels[0];
-  LinearCoord(S, X0, FracX);
-  LinearCoord(TT, Y0, FracY);
   var Sw := T.Swizzle;
   var RowBytes := L.BufWidth * 4;
   var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
@@ -731,18 +778,21 @@ begin
   var CA := FitColumn(Sw, WrapCoord(X0, L.Width, T.ClampU) * 4);
   var CB := FitColumn(Sw, WrapCoord(X0 + 1, L.Width, T.ClampU) * 4);
   var P := L.Ptr;
-  Result := Bilerp(PCardinal(P + RA + CA)^, PCardinal(P + RA + CB)^, PCardinal(P + RB + CA)^,
-    PCardinal(P + RB + CB)^, FracX, FracY);
+  Result := BilerpPacked(PCardinal(P + RA + CA)^, PCardinal(P + RA + CB)^, PCardinal(P + RB + CA)^,
+    PCardinal(P + RB + CB)^, Cardinal(RS) and 15, Cardinal(RT) and 15);
 end;
 
 function SampleFit4L(T: PGETexture; S, TT: Single): Cardinal;
-var
-  X0, Y0: Integer;
-  FracX, FracY: Int64;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if not (LinearInRange(BS) and LinearInRange(BT)) then
+    Exit(SampleLevel(T^, 0, S, TT, True));
+  var RS := LinearBits(BS);
+  var RT := LinearBits(BT);
+  var X0 := RS shr 4;
+  var Y0 := RT shr 4;
   var L: PGETexLevel := @T.Levels[0];
-  LinearCoord(S, X0, FracX);
-  LinearCoord(TT, Y0, FracY);
   var Sw := T.Swizzle;
   var RowBytes := L.BufWidth shr 1;
   var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
@@ -752,18 +802,21 @@ begin
   var CA := FitColumn(Sw, XA shr 1);
   var CB := FitColumn(Sw, XB shr 1);
   var P := L.Ptr;
-  Result := Bilerp(T.Pal[Nibble(P[RA + CA], XA)], T.Pal[Nibble(P[RA + CB], XB)], T.Pal[Nibble(P[RB + CA], XA)],
-    T.Pal[Nibble(P[RB + CB], XB)], FracX, FracY);
+  Result := BilerpPacked(T.Pal[Nibble(P[RA + CA], XA)], T.Pal[Nibble(P[RA + CB], XB)], T.Pal[Nibble(P[RB + CA], XA)],
+    T.Pal[Nibble(P[RB + CB], XB)], Cardinal(RS) and 15, Cardinal(RT) and 15);
 end;
 
 function SampleFit5L(T: PGETexture; S, TT: Single): Cardinal;
-var
-  X0, Y0: Integer;
-  FracX, FracY: Int64;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if not (LinearInRange(BS) and LinearInRange(BT)) then
+    Exit(SampleLevel(T^, 0, S, TT, True));
+  var RS := LinearBits(BS);
+  var RT := LinearBits(BT);
+  var X0 := RS shr 4;
+  var Y0 := RT shr 4;
   var L: PGETexLevel := @T.Levels[0];
-  LinearCoord(S, X0, FracX);
-  LinearCoord(TT, Y0, FracY);
   var Sw := T.Swizzle;
   var RowBytes := L.BufWidth;
   var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
@@ -771,17 +824,21 @@ begin
   var CA := FitColumn(Sw, WrapCoord(X0, L.Width, T.ClampU));
   var CB := FitColumn(Sw, WrapCoord(X0 + 1, L.Width, T.ClampU));
   var P := L.Ptr;
-  Result := Bilerp(T.Pal[P[RA + CA]], T.Pal[P[RA + CB]], T.Pal[P[RB + CA]], T.Pal[P[RB + CB]], FracX, FracY);
+  Result := BilerpPacked(T.Pal[P[RA + CA]], T.Pal[P[RA + CB]], T.Pal[P[RB + CA]], T.Pal[P[RB + CB]],
+    Cardinal(RS) and 15, Cardinal(RT) and 15);
 end;
 
 function SampleFit16L(T: PGETexture; S, TT: Single): Cardinal;
-var
-  X0, Y0: Integer;
-  FracX, FracY: Int64;
 begin
+  var BS := PCardinal(@S)^;
+  var BT := PCardinal(@TT)^;
+  if not (LinearInRange(BS) and LinearInRange(BT)) then
+    Exit(SampleLevel(T^, 0, S, TT, True));
+  var RS := LinearBits(BS);
+  var RT := LinearBits(BT);
+  var X0 := RS shr 4;
+  var Y0 := RT shr 4;
   var L: PGETexLevel := @T.Levels[0];
-  LinearCoord(S, X0, FracX);
-  LinearCoord(TT, Y0, FracY);
   var Sw := T.Swizzle;
   var RowBytes := L.BufWidth * 2;
   var RA := FitRow(Sw, RowBytes, WrapCoord(Y0, L.Height, T.ClampV));
@@ -790,8 +847,8 @@ begin
   var CB := FitColumn(Sw, WrapCoord(X0 + 1, L.Width, T.ClampU) * 2);
   var P := L.Ptr;
   var F := T.Format;
-  Result := Bilerp(Decode16(F, PWord(P + RA + CA)^), Decode16(F, PWord(P + RA + CB)^), Decode16(F, PWord(P + RB + CA)^),
-    Decode16(F, PWord(P + RB + CB)^), FracX, FracY);
+  Result := BilerpPacked(Decode16(F, PWord(P + RA + CA)^), Decode16(F, PWord(P + RA + CB)^),
+    Decode16(F, PWord(P + RB + CA)^), Decode16(F, PWord(P + RB + CB)^), Cardinal(RS) and 15, Cardinal(RT) and 15);
 end;
 
 procedure GEPrepareSampler(var T: TGETexture);

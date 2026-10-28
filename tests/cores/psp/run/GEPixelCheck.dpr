@@ -130,6 +130,14 @@ begin
         V[I].S := Integer(Next(600)) - 44; V[I].T := Integer(Next(600)) - 44;
         V[I].Fog := (Integer(Next(300)) - 20) / 255;
       end;
+      // One colour and depth (flat shaded or not): the triangles' constant paths.
+      if Next(3) = 0 then
+        for var I := 1 to 2 do
+        begin
+          V[I].R := V[0].R; V[I].G := V[0].G; V[I].B := V[0].B; V[I].A := V[0].A;
+          V[I].SR := V[0].SR; V[I].SG := V[0].SG; V[I].SB := V[0].SB;
+          if Next(4) <> 0 then V[I].Z := V[0].Z;
+        end;
       var Sprite := Next(4) = 0;
       GEGenericPixels := True;
       GEGenericTexels := True;
