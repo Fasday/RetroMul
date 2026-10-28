@@ -2847,14 +2847,19 @@ begin
           if (BaseMode and ModeFR) <> 0 then
           begin
             FPA := FPR[Step.D];
-            if Binary then FPB := FPR[Step.T];
+            if Binary then
+              FPB := FPR[Step.T];
             if F in [16, 20] then
-            begin FPA := FPA and $FFFFFFFF; FPB := FPB and $FFFFFFFF end;
+            begin
+              FPA := FPA and $FFFFFFFF;
+              FPB := FPB and $FFFFFFFF
+            end;
           end
           else
           begin
             FPA := FPBits(Integer(Step.D), F);
-            if Binary then FPB := FPBits(Integer(Step.T), F);
+            if Binary then
+              FPB := FPBits(Integer(Step.T), F);
           end;
           if Kind = KindCop1Compare then
           begin
@@ -3553,9 +3558,11 @@ begin
     // The watched code page tracks every CPU/DMA/RDP write. Never trust a
     // generation while a renderer may still write it, or across two pages.
     if ((FIdlePhysical and $FFF) <= $FF8) and FBus.RDPReadClean(FIdlePhysical) and
-      (FBus.CodeGeneration(FIdlePhysical) = FIdleGeneration) then Exit(True);
+      (FBus.CodeGeneration(FIdlePhysical) = FIdleGeneration) then
+      Exit(True);
     Result := (FBus.ReadRAM32(FIdlePhysical) = FIdleBranch) and (FBus.ReadRAM32(FIdlePhysical + 4) = FIdleSlot);
-    if Result then FIdleGeneration := FBus.CodeGeneration(FIdlePhysical);
+    if Result then
+      FIdleGeneration := FBus.CodeGeneration(FIdlePhysical);
   end
   else
     Result := (FBus.Read32(FIdlePhysical) = FIdleBranch) and (FBus.Read32(FIdlePhysical + 4) = FIdleSlot);

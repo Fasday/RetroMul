@@ -747,7 +747,8 @@ end;
 procedure TN64Bus.RDPWrite32(Address, Value: Cardinal);
 begin
   CodeWritten(Address);
-  if (Address and $FFF) > $FFC then CodeWritten(Address + 3);
+  if (Address and $FFF) > $FFC then
+    CodeWritten(Address + 3);
   {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
   PCardinal(@FRAM[Address])^ := (Cardinal(Swap(Word(Value and $FFFF))) shl 16) or Swap(Word(Value shr 16));
   {$ELSE}
@@ -792,7 +793,8 @@ end;
 procedure TN64Bus.RDPWrite32Hidden(Address, Value: Cardinal; HiddenHi, HiddenLo: Byte);
 begin
   CodeWritten(Address);
-  if (Address and $FFF) > $FFC then CodeWritten(Address + 3);
+  if (Address and $FFF) > $FFC then
+    CodeWritten(Address + 3);
   {$IF DEFINED(CPU386) or DEFINED(CPUX64)}
   PCardinal(@FRAM[Address])^ := (Cardinal(Swap(Word(Value and $FFFF))) shl 16) or Swap(Word(Value shr 16));
   {$ELSE}
