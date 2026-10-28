@@ -13,6 +13,10 @@ uses
   PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media;
 
 type
+  TPSPIoDriver = record
+    Arg, Funcs, GP: Cardinal;
+  end;
+
   TPSPDeviceKind = (dkNone, dkUMD, dkHost, dkEmulator, dkTTY, dkMsStor);
 
   TPSPOpenFile = class
@@ -25,6 +29,7 @@ type
     DiscStart, DiscSize, Position: Int64;
     RawSectors: Boolean;
     Flags: Cardinal;
+    GuestArg, GuestFuncs, GuestGP: Cardinal;
     IsDirectory: Boolean;
     Entries: TArray<TPSPDiscEntry>;
     EntryIndex: Integer;
@@ -49,6 +54,7 @@ type
     FMemory: TPSPMemory;
     FDisc: TPSPDisc;
     FFiles: TDictionary<Integer, TPSPOpenFile>;
+    FDrivers: TDictionary<string, TPSPIoDriver>;
     FMemstickRoot, FFlashRoot, FHostRoot: string;
     FCwd: string;
     FOnOutput: TPSPOutputEvent;
@@ -77,6 +83,10 @@ type
     function OnHostDevice(const Path: string): Boolean;
     function DeviceYieldRetry(T: TPSPThread): Boolean;
     function ReadLatency(F: TPSPOpenFile; Size: Int64): Int64;
+    procedure hAddDrv;
+    procedure hDelDrv;
+    function OpenGuestDriver(const Path: string; Flags, Mode: Cardinal): Boolean;
+    function CallFileDriver(F: TPSPOpenFile; Slot: Integer; const Args: array of Cardinal): Boolean;
     procedure hOpen;
     procedure hOpenAsync;
     procedure hClose;
@@ -179,6 +189,7 @@ begin
   FHLE := Kernel.HLE;
   FMemory := Kernel.Memory;
   FFiles := TDictionary<Integer, TPSPOpenFile>.Create;
+  FDrivers := TDictionary<string, TPSPIoDriver>.Create;
   FHasDisplay := True;
 end;
 
@@ -187,6 +198,7 @@ begin
   for var F in FFiles.Values do
     F.Free;
   FFiles.Free;
+  FDrivers.Free;
   inherited;
 end;
 
@@ -195,6 +207,7 @@ begin
   for var F in FFiles.Values do
     F.Free;
   FFiles.Clear;
+  FDrivers.Clear;
   FCwd := '';
 end;
 
@@ -854,9 +867,13 @@ end;
 
 { HLE }
 
+{$I PSP.IO.Drivers.inc}
+
 procedure TPSPIO.hOpen;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  if OpenGuestDriver(Path, FHLE.Arg(1), FHLE.Arg(2)) then
+    Exit;
   var F: TPSPOpenFile;
   var Err := OpenPath(Path, FHLE.Arg(1), FHLE.Arg(2), F);
   var Host := OnHostDevice(Path);
@@ -909,6 +926,8 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if CallFileDriver(F, 3, []) then
+    Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   FKernel.CancelTimersOf(F);
@@ -937,6 +956,8 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if CallFileDriver(F, 4, [FHLE.Arg(1), FHLE.Arg(2)]) then
+    Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
@@ -972,6 +993,8 @@ begin
   var F := GetFile(Fd);
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if CallFileDriver(F, 5, [FHLE.Arg(1), FHLE.Arg(2)]) then
+    Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   FHLE.Result(Cardinal(DoWrite(F, FHLE.Arg(1), FHLE.Arg(2))));
@@ -1595,6 +1618,8 @@ const
   L = 'IoFileMgrForUser';
 begin
   var H := FHLE;
+  H.Register('IoFileMgrForKernel', $8E982A74, 'sceIoAddDrv', hAddDrv);
+  H.Register('IoFileMgrForKernel', $C7F35804, 'sceIoDelDrv', hDelDrv);
   H.Register(L, $109F50BC, 'sceIoOpen', hOpen);
   H.Register(L, $89AA9906, 'sceIoOpenAsync', hOpenAsync);
   H.Register(L, $810C4BC3, 'sceIoClose', hClose);
