@@ -380,6 +380,7 @@ begin
   try
     if FGETime < Now then
       FGETime := Now;
+    var RAM := FEngine.RAMBase;
     while FHWRunning and not FHWHalted do
     begin
       if SameAddr(FHWPC, FHWStall) then
@@ -390,7 +391,12 @@ begin
         Exit;
       end;
       var PC := FHWPC;
-      var Op := FMemory.Read32(PC);
+      var Op: Cardinal;
+      var Physical := PC and $1FFFFFFF;
+      if (RAM <> nil) and (Physical >= PSPRAMBase) and (Physical - PSPRAMBase <= PSPRAMSize - 4) then
+        Op := PCardinal(RAM + (Physical - PSPRAMBase))^
+      else
+        Op := FMemory.Read32(PC);
       FHWPC := PC + 4;
       var Cmd := Op shr 24;
       Inc(FGETime, 4);
