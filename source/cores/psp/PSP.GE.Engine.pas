@@ -2488,6 +2488,8 @@ begin
   FWorkers.ClutChanged;
   FRaster.Tex.PalValid := False;
   FRaster.Tex.Sampler := nil;
+  // The next primitive builds its state (and palette) again.
+  FRasterKeyValid := False;
 end;
 
 // Transfers address VRAM's 8MB of mirrors with wrap-around at the end.
