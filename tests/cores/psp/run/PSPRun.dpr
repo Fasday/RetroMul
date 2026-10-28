@@ -354,6 +354,10 @@ begin
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick);
+    var Watcher: TWatch := nil;
+    var History: THistoryRunner := nil;
+    var OriginalRunner := Console.CPU.Runner;
+    var Wav := TList<SmallInt>.Create;
     try
       Console.OnLog := Sink.Log;
       Sink.Console := Console;
@@ -361,9 +365,9 @@ begin
       Console.IO.OnScreenshot := Sink.Screenshot;
       if WatchOn then
       begin
-        var Watcher := TWatch.Create(True);
+        Watcher := TWatch.Create(True);
         Watcher.Console := Console;
-        Watcher.FreeOnTerminate := True;
+        Watcher.FreeOnTerminate := False;
         Watcher.Start;
       end;
       Console.HLE.Strict := Strict;
@@ -373,7 +377,6 @@ begin
       if TestMode then
         Console.IO.HasDisplay := False;
       Console.IO.NoEmulatorDevice := HwMode;
-      var History: THistoryRunner := nil;
       if HistoryLen > 0 then
       begin
         History := THistoryRunner.Create;
@@ -387,7 +390,6 @@ begin
       var Frame: TEmulatorFrame;
       var LastHash := '';
       var Failed := '';
-      var Wav := TList<SmallInt>.Create;
       var Peak := 0;
       var SumSq: Double := 0;
       var SumN: Int64 := 0;
@@ -496,7 +498,6 @@ begin
         end;
       if WavFile <> '' then
         SaveWAV(Wav, WavFile);
-      Wav.Free;
       if not Quiet then
         Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s cpu=%.1fM (%.1f MHz host)',
           [Console.FrameNumber, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9,
@@ -520,6 +521,15 @@ begin
       if Failed <> '' then
         ExitCode := 1;
     finally
+      if Watcher <> nil then
+      begin
+        Watcher.Terminate;
+        Watcher.WaitFor;
+        Watcher.Free;
+      end;
+      Console.CPU.Runner := OriginalRunner;
+      History.Free;
+      Wav.Free;
       Console.Free;
       Sink.Free;
       Presses.Free;
