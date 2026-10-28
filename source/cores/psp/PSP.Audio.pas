@@ -600,9 +600,6 @@ end;
 procedure TPSPAudio.ChannelOutput(Ch: Integer; Left, Right: Integer; Buffer: Cardinal; Blocking: Boolean);
 begin
   var C: PPSPAudioChannel := @FCh[Ch];
-  if FHLE.TraceCalls then
-    FHLE.Log('audio %d: ch %d rest %d playing %s mixer %s next tick %d', [FScheduler.Now div 1000, Ch, C.Rest,
-      BoolToStr(C.Playing, True), BoolToStr(FMixRunning, True), TickTime(FMixTick) div 1000]);
   if C.Waiter <> nil then
   begin
     FHLE.Result(SCE_AUDIO_ERROR_OUTPUT_BUSY);

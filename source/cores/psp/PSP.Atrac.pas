@@ -101,6 +101,8 @@ type
     FScheduler: TPSPScheduler;
     FSlots: array of TPSPAtracSlot;
     FCtxBase: Cardinal;
+    // The file size an AA3 call passes; 0 while a RIFF header is parsed.
+    FAA3FileSize: Int64;
     procedure EnsureContexts;
     procedure Configure(At3Plus, At3: Integer);
     procedure ShortWait(Us: Integer; Result: Cardinal);
@@ -118,6 +120,7 @@ type
     function DecodeFrame(S: TPSPAtracSlot; out PCM: TArray<SmallInt>): Cardinal;
     function Prime(S: TPSPAtracSlot): Cardinal;
     function NextSamples(S: TPSPAtracSlot): Integer;
+    function ParseAA3(S: TPSPAtracSlot; Buf: Cardinal; ReadSize: Int64; out Codec: Integer): Cardinal;
     function ParseHeader(S: TPSPAtracSlot; Buf: Cardinal; ReadSize: Int64; out Codec: Integer): Cardinal;
     function Setup(S: TPSPAtracSlot; Buf: Cardinal; ReadSize, BufSize: Int64; OutChannels: Integer): Cardinal;
     function ResetInfo(S: TPSPAtracSlot; Sample: Integer; var First: array of Cardinal;
@@ -139,6 +142,7 @@ type
     procedure hSetMOutDataAndGetID;
     procedure hSetMOutHalfwayBufferAndGetID;
     procedure hSetAA3DataAndGetID;
+    procedure hSetAA3HalfwayBufferAndGetID;
     procedure hDecodeData;
     procedure hGetRemainFrame;
     procedure hGetStreamDataInfo;
@@ -733,8 +737,80 @@ begin
     Result := S.EndSample - S.DecodePos + 1;
 end;
 
+// An OMA file: an "ea3" tag, then a 96-byte EA3 header with the codec
+// parameters, then the frames. There is no sample count; the file size the
+// program passes decides how many frames there are.
+function TPSPAtrac.ParseAA3(S: TPSPAtracSlot; Buf: Cardinal; ReadSize: Int64; out Codec: Integer): Cardinal;
+const
+  Rates: array[0..7] of Integer = (32000, 44100, 48000, 88200, 96000, 0, 0, 0);
+begin
+  Codec := 0;
+  S.HasLoop := False;
+  if ReadSize < 10 then
+    Exit(ERROR_ATRAC_SIZE_TOO_SMALL);
+  if (FMemory.Read8(Buf) <> Ord('e')) or (FMemory.Read8(Buf + 1) <> Ord('a')) or (FMemory.Read8(Buf + 2) <> Ord('3')) then
+    Exit(ERROR_ATRAC_UNKNOWN_FORMAT);
+  var TagSize := Int64(10) + Int64((FMemory.Read8(Buf + 6) and $7F) shl 21) or Int64((FMemory.Read8(Buf + 7) and $7F) shl 14) or
+    Int64((FMemory.Read8(Buf + 8) and $7F) shl 7) or Int64(FMemory.Read8(Buf + 9) and $7F);
+  if TagSize + 96 > ReadSize then
+    Exit(ERROR_ATRAC_SIZE_TOO_SMALL);
+  var H := Buf + Cardinal(TagSize);
+  if (FMemory.Read8(H) <> Ord('E')) or (FMemory.Read8(H + 1) <> Ord('A')) or (FMemory.Read8(H + 2) <> Ord('3')) then
+    Exit(ERROR_ATRAC_UNKNOWN_FORMAT);
+  var P := (FMemory.Read8(H + 33) shl 16) or (FMemory.Read8(H + 34) shl 8) or FMemory.Read8(H + 35);
+  S.SampleRate := Rates[(P shr 13) and 7];
+  case FMemory.Read8(H + 32) of
+    0:
+      begin
+        Codec := CODEC_AT3;
+        S.Spf := 1024;
+        S.Delay := $45;
+        S.Channels := 2;
+        S.Joint := ((P shr 17) and 1) <> 0;
+        S.FrameSize := Integer(P and $3FF) * 8;
+        var Param := PSPAtrac3ParamFor(S.FrameSize, S.Joint, S.Channels);
+        var Bytes, Ch: Integer;
+        var J: Boolean;
+        if not PSPAtrac3Param(Param, Bytes, Ch, J) then
+          Exit(ERROR_ATRAC_UNKNOWN_FORMAT);
+        S.DecChannels := Ch;
+      end;
+    1:
+      begin
+        Codec := CODEC_AT3PLUS;
+        S.Spf := 2048;
+        S.Delay := $170;
+        S.Joint := False;
+        S.FrameSize := Integer(P and $3FF) * 8 + 8;
+        if ((P shr 10) and 7) = 1 then
+          S.Channels := 1
+        else
+          S.Channels := 2;
+        S.DecChannels := S.Channels;
+      end;
+  else
+    Exit(ERROR_ATRAC_UNKNOWN_FORMAT);
+  end;
+  if (S.FrameSize <= 0) or (S.SampleRate = 0) then
+    Exit(ERROR_ATRAC_UNKNOWN_FORMAT);
+  if (S.Codec <> 0) and (Codec <> S.Codec) then
+    Exit(ERROR_ATRAC_WRONG_CODECTYPE);
+  S.DataOff := TagSize + 96;
+  var DataSize := (Max(Int64(0), FAA3FileSize - S.DataOff) div S.FrameSize) * S.FrameSize;
+  var Total := (DataSize div S.FrameSize) * S.Spf;
+  S.FirstValid := S.Spf + S.Delay;
+  if Total <= S.FirstValid then
+    Exit(ERROR_ATRAC_BAD_CODEC_PARAMS);
+  S.EndSample := Integer(Total) - 1;
+  S.FileEnd := S.DataOff + DataSize;
+  S.Bitrate := Integer(Int64(S.FrameSize) * 8 * S.SampleRate div (Int64(S.Spf) * 1000));
+  Result := 0;
+end;
+
 function TPSPAtrac.ParseHeader(S: TPSPAtracSlot; Buf: Cardinal; ReadSize: Int64; out Codec: Integer): Cardinal;
 begin
+  if FAA3FileSize > 0 then
+    Exit(ParseAA3(S, Buf, ReadSize, Codec));
   Codec := 0;
   if ReadSize < 12 then
     Exit(ERROR_ATRAC_SIZE_TOO_SMALL);
@@ -1089,7 +1165,26 @@ end;
 
 procedure TPSPAtrac.hSetAA3DataAndGetID;
 begin
-  FHLE.Result(ERROR_ATRAC_UNKNOWN_FORMAT);
+  FAA3FileSize := FHLE.Arg(2);
+  if FAA3FileSize = 0 then
+    FAA3FileSize := FHLE.Arg(1);
+  try
+    SetDataAndGetIDCommon(FHLE.Arg(0), FHLE.Arg(1), FHLE.Arg(1), 2);
+  finally
+    FAA3FileSize := 0;
+  end;
+end;
+
+procedure TPSPAtrac.hSetAA3HalfwayBufferAndGetID;
+begin
+  FAA3FileSize := FHLE.Arg(3);
+  if FAA3FileSize = 0 then
+    FAA3FileSize := FHLE.Arg(2);
+  try
+    SetDataAndGetIDCommon(FHLE.Arg(0), FHLE.Arg(1), FHLE.Arg(2), 2);
+  finally
+    FAA3FileSize := 0;
+  end;
 end;
 
 procedure TPSPAtrac.hDecodeData;
@@ -1850,7 +1945,7 @@ begin
   H.Register(L, $472E3825, 'sceAtracSetMOutDataAndGetID', hSetMOutDataAndGetID);
   H.Register(L, $9CD7DE03, 'sceAtracSetMOutHalfwayBufferAndGetID', hSetMOutHalfwayBufferAndGetID);
   H.Register(L, $5622B7C1, 'sceAtracSetAA3DataAndGetID', hSetAA3DataAndGetID);
-  H.Register(L, $5DD66588, 'sceAtracSetAA3HalfwayBufferAndGetID', hSetAA3DataAndGetID);
+  H.Register(L, $5DD66588, 'sceAtracSetAA3HalfwayBufferAndGetID', hSetAA3HalfwayBufferAndGetID);
   H.Register(L, $6A8C3CD5, 'sceAtracDecodeData', hDecodeData);
   H.Register(L, $9AE849A7, 'sceAtracGetRemainFrame', hGetRemainFrame);
   H.Register(L, $5D268707, 'sceAtracGetStreamDataInfo', hGetStreamDataInfo);
