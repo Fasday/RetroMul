@@ -1,7 +1,8 @@
 unit PSP.SysLibs;
 
-// Small system libraries: UtilsForUser, scePower, sceUmdUser, sceRtc,
-// sceImpose, sceHprm, sceDmac, sceOpenPSID and offline network stubs.
+// Small system libraries: UtilsForUser, scePower (and the power and
+// volatile memory locks of sceSuspendForUser), sceUmdUser, sceRtc,
+// sceImpose, sceHprm, sceDmac and sceOpenPSID.
 // Wall-clock time is a fixed epoch plus guest time, so runs repeat exactly.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
@@ -35,6 +36,9 @@ type
     FUmd: TPSPUmdDrive;
     FUmdTimeout: Cardinal;
     FPowerCallbacks: array[0..15] of Cardinal;
+    // The volatile memory (the upper 4 MB of user RAM) and who waits for it, in order.
+    FVolatileLocked: Boolean;
+    FVolatileWaiters: TList<TPSPThread>;
     // PLL = 1332 / FPllN MHz, CPU = PLL * FCpuK / 511.
     FPllN: Integer;
     FCpuK: Integer;
@@ -61,6 +65,8 @@ type
     procedure hDcacheWritebackRange;
     procedure hDcacheInvalidateRange;
     procedure hLibcTime;
+    procedure hKernelMemset;
+    procedure hKernelMemcpy;
     procedure hLibcGettimeofday;
     procedure hLibcClock;
     procedure hMd5Digest;
@@ -97,6 +103,11 @@ type
     procedure hPowerVolatileUnlock;
     procedure hKernelPowerLock;
     procedure hKernelPowerTick;
+    procedure VolatileGrant(Ptr, SizePtr: Cardinal);
+    procedure VolatileAbort(T: TPSPThread);
+    procedure hVolatileMemLock;
+    procedure hVolatileMemTryLock;
+    procedure hVolatileMemUnlock;
     // UMD
     procedure hUmdActivate;
     procedure hUmdDeactivate;
@@ -221,23 +232,29 @@ begin
   inherited Create(System);
   FUmd := TPSPUmdDrive.Create;
   FUmd.Name := 'SceUmdDriveStat';
+  FVolatileWaiters := TList<TPSPThread>.Create;
 end;
 
 destructor TPSPSysLibs.Destroy;
 begin
   FUmd.Free;
+  FVolatileWaiters.Free;
   inherited;
 end;
 
 procedure TPSPSysLibs.Reset;
 begin
   FUmdCallback := 0;
-  FUmdActivated := False;
+  // A game booted from its disc finds the drive activated by the system
+  // (Metal Gear Acid 2 waits for READY without activating it).
+  FUmdActivated := FSystem.IO.Disc <> nil;
   FUmd.Waiters.Clear;
   FUmd.Kernel := FKernel;
   // A word the kernel reads wait timeouts from (it takes them by pointer).
   FUmdTimeout := FKernel.AllocKernel(16, 'umd timeout');
   FillChar(FPowerCallbacks, SizeOf(FPowerCallbacks), 0);
+  FVolatileLocked := False;
+  FVolatileWaiters.Clear;
   FPllN := 6;
   FCpuK := 511;
 end;
@@ -260,21 +277,23 @@ end;
 
 procedure TPSPSysLibs.hDcacheWritebackRange;
 begin
-  if FHLE.ArgInt(1) < 0 then
-    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE)
+  // (address, size): only a negative size is refused.
+  if Integer(FHLE.Arg(1)) < 0 then
+    FHLE.Result($80000104)
   else
     FHLE.Result(0);
 end;
 
 procedure TPSPSysLibs.hDcacheInvalidateRange;
 begin
+  // (address, size): the range must stay in user space and cover whole
+  // 64-byte lines.
   var P := FHLE.Arg(0);
   var Size := FHLE.Arg(1);
-  // Invalidating a range that is not whole cache lines would lose neighbouring data.
-  if Integer(P or Size or (P + Size)) < 0 then
-    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR)
-  else if Size = 0 then
+  if Size = 0 then
     FHLE.Result(0)
+  else if (Integer(Size) < 0) or (P >= $80000000) or (UInt64(P) + Size > $80000000) then
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR)
   else if ((P or Size) and 63) <> 0 then
     FHLE.Result($8002044C)
   else
@@ -283,10 +302,33 @@ end;
 
 procedure TPSPSysLibs.hLibcTime;
 begin
+  var P := FHLE.Arg(0);
+  if (P <> 0) and ((P >= $80000000) or not FMemory.Valid(P, 4)) then
+    begin FHLE.Result(0); Exit; end;
   var T := Cardinal((NowTicks - PSPUnixEpochTicks) div 1000000);
-  if FHLE.Arg(0) <> 0 then
-    FMemory.Write32(FHLE.Arg(0), T);
+  if P <> 0 then
+    FMemory.Write32(P, T);
   FHLE.Result(T);
+end;
+
+procedure TPSPSysLibs.hKernelMemset;
+begin
+  var Dst := FHLE.Arg(0);
+  var Size := FHLE.ArgInt(2);
+  if Size > 0 then
+    FMemory.Fill(Dst, FHLE.Arg(1) and $FF, Size);
+  FHLE.Result(Dst);
+end;
+
+procedure TPSPSysLibs.hKernelMemcpy;
+begin
+  var Dst := FHLE.Arg(0);
+  var Src := FHLE.Arg(1);
+  var Size := FHLE.ArgInt(2);
+  // A forward byte copy: an overlapping destination repeats the start.
+  for var I := 0 to Size - 1 do
+    FMemory.Write8(Dst + Cardinal(I), FMemory.Read8(Src + Cardinal(I)));
+  FHLE.Result(Dst);
 end;
 
 procedure TPSPSysLibs.hLibcGettimeofday;

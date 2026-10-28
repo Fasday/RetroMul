@@ -30,11 +30,25 @@ type
   end;
 
 const
+  PSPErrorIllegalVTimer = Cardinal($800201BF);
   // The thread manager arms its timer no sooner than this after the call, and
   // the handler starts a while after the timer goes off.
   PSPAlarmMinUs = 215;
   PSPAlarmLatencyNs = 41000;
   PSPSetAlarmNs = 42000;
+
+// Guest clock values wrap like the 64-bit counters they are.
+{$Q-}
+function WrapAdd(A, B: UInt64): UInt64;
+begin
+  Result := A + B;
+end;
+
+function WrapSub(A, B: UInt64): UInt64;
+begin
+  Result := A - B;
+end;
+{$IFDEF PSP_CHECKED}{$Q+}{$ENDIF}
 
 class function TPSPAlarm.IdType: Integer;
 begin
@@ -50,7 +64,7 @@ function TPSPVTimer.Current(NowUs: UInt64): UInt64;
 begin
   Result := Accumulated;
   if Active then
-    Inc(Result, NowUs - StartedAt);
+    Result := WrapAdd(Result, WrapSub(NowUs, StartedAt));
 end;
 
 class function TPSPThreadEventHandler.IdType: Integer;
@@ -79,13 +93,15 @@ begin
             K.DeleteObject(A)
           else
           begin
-            Inc(A.Schedule, Ret);
-            var At := Int64(A.Schedule) * 1000 + PSPAlarmLatencyNs;
-            if At < K.FScheduler.Now then
-              At := K.FScheduler.Now;
-            K.ArmAlarm(A, At);
+            // Counted from the schedule, unless that has already gone by.
+            var NowUs := UInt64(K.FScheduler.Now div 1000);
+            A.Schedule := WrapAdd(A.Schedule, Ret);
+            if A.Schedule <= NowUs then
+              A.Schedule := NowUs + Ret;
+            if A.Schedule < UInt64(High(Int64) div 4000) then
+              K.ArmAlarm(A, Int64(A.Schedule) * 1000);
           end;
-        end);
+        end, PSPAlarmLatencyNs, A.UID);
     end);
 end;
 
@@ -100,14 +116,14 @@ begin
   A.Handler := Handler;
   A.Common := FHLE.Arg(2);
   A.GP := FCPU.Ctx.GPR[28];
-  A.Schedule := UInt64(Start div 1000) + Us;
+  A.Schedule := WrapAdd(UInt64(Start div 1000), Us);
   AddObject(A);
   var Wait := Us;
   if Wait < PSPAlarmMinUs then
     Wait := PSPAlarmMinUs;
   var FireAt: Int64 := PSPNever;
   if Wait < UInt64(High(Int64) div 4000) then
-    FireAt := Start + Int64(Wait) * 1000 + PSPAlarmLatencyNs;
+    FireAt := Start + Int64(Wait) * 1000;
   if FireAt <> PSPNever then
     ArmAlarm(A, FireAt);
   Spend(PSPSetAlarmNs);
@@ -151,7 +167,7 @@ end;
 
 { Virtual timers }
 
-procedure TPSPKernel.ArmVTimer(Obj: TPSPKernelObject);
+procedure TPSPKernel.ArmVTimer(Obj: TPSPKernelObject; FromCall: Boolean);
 begin
   var V := TPSPVTimer(Obj);
   if V.TimerHandle <> 0 then
@@ -166,6 +182,9 @@ begin
   var Delta: UInt64 := 0;
   if V.Schedule > Cur then
     Delta := V.Schedule - Cur;
+  // Armed by a call, it goes off no sooner than an alarm would.
+  if FromCall and (Delta < PSPAlarmMinUs) then
+    Delta := PSPAlarmMinUs;
   if Delta > UInt64(High(Int64) div 4000) then
     Exit;
   var At := FScheduler.Now + Int64(Delta) * 1000 + PSPAlarmLatencyNs;
@@ -185,24 +204,28 @@ begin
       K.FMemory.Write32(Args + 4, Cardinal(V.Schedule shr 32));
       K.FMemory.Write32(Args + 8, Cardinal(Real));
       K.FMemory.Write32(Args + 12, Cardinal(Real shr 32));
+      K.FFiringVTimer := V.UID;
       K.QueueInterrupt(V.Handler, [V.UID, Args, Args + 8, V.Common], V.GP,
         procedure(Ret: Cardinal)
         begin
+          K.FFiringVTimer := 0;
           if not K.FObjects.ContainsKey(V.UID) then
             Exit;
           if Ret = 0 then
             V.Handler := 0
           else
           begin
-            Inc(V.Schedule, Ret);
-            K.ArmVTimer(V);
+            V.Schedule := WrapAdd(V.Schedule, Ret);
+            K.ArmVTimer(V, False);
           end;
-        end);
+        end, 0, V.UID);
     end);
 end;
 
 procedure TPSPKernel.hCreateVTimer;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
@@ -218,6 +241,8 @@ end;
 
 procedure TPSPKernel.hDeleteVTimer;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
@@ -243,7 +268,7 @@ procedure TPSPKernel.hGetVTimerBaseWide;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_UNKNOWN_VTID)))); Exit; end;
+    begin FHLE.Result64(UInt64(-1)); Exit; end;
   if V.Active then
     FHLE.Result64(V.StartedAt)
   else
@@ -266,7 +291,7 @@ procedure TPSPKernel.hGetVTimerTimeWide;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_UNKNOWN_VTID)))); Exit; end;
+    begin FHLE.Result64(UInt64(-1)); Exit; end;
   FHLE.Result64(V.Current(UInt64(NowUs)));
 end;
 
@@ -282,6 +307,8 @@ end;
 
 procedure TPSPKernel.hSetVTimerTime;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
@@ -296,9 +323,11 @@ end;
 
 procedure TPSPKernel.hSetVTimerTimeWide;
 begin
+  if InInterrupt then
+    begin FHLE.Result64(UInt64(-1)); Exit; end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_UNKNOWN_VTID)))); Exit; end;
+    begin FHLE.Result64(UInt64(-1)); Exit; end;
   var Old := V.Current(UInt64(NowUs));
   SetVTimerTimeTo(V, FHLE.Arg64(2));
   FHLE.Result64(Old);
@@ -306,6 +335,8 @@ end;
 
 procedure TPSPKernel.hStartVTimer;
 begin
+  if FHLE.Arg(0) = 0 then
+    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
@@ -319,6 +350,8 @@ end;
 
 procedure TPSPKernel.hStopVTimer;
 begin
+  if FHLE.Arg(0) = 0 then
+    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
@@ -332,9 +365,19 @@ end;
 
 procedure TPSPKernel.SetVTimerHandlerCommon(Schedule: UInt64; Handler, Common: Cardinal);
 begin
+  if FHLE.Arg(0) = 0 then
+    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  FHLE.Result(0);
+  // No handler only takes the old one away.
+  if Handler = 0 then
+  begin
+    V.Handler := 0;
+    ArmVTimer(V);
+    Exit;
+  end;
   V.Handler := Handler;
   V.Common := Common;
   V.GP := FCPU.Ctx.GPR[28];
@@ -359,12 +402,15 @@ end;
 
 procedure TPSPKernel.hCancelVTimerHandler;
 begin
-  var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
+  // Outside a handler 0 is refused; inside one, the timer being handled is.
+  var Id := FHLE.Arg(0);
+  if (not InInterrupt and (Id = 0)) or (InInterrupt and (FFiringVTimer <> 0) and (Id = FFiringVTimer)) then
+    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
+  var V := TPSPVTimer(VTimerOf(Id));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  // The schedule and the common value stay.
   V.Handler := 0;
-  V.Common := 0;
-  V.Schedule := 0;
   ArmVTimer(V);
   FHLE.Result(0);
 end;

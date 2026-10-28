@@ -5,7 +5,8 @@ unit PSP.Loader;
 // syscall stubs, or jumps into another guest module that exports the library.
 // Sony's firmware libraries a game ships on the disc are not loaded: their
 // libraries are served by HLE.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+// Relocation and address arithmetic wraps by design.
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -784,15 +785,24 @@ begin
   var Prio: Integer := $20;
   var Stack: Cardinal := $40000;
   var Attr: Cardinal := $80004000;
+  // A kernel module starts in a kernel thread.
+  var KernelMode := (M.Attr and $1000) <> 0;
+  if KernelMode then
+    Attr := 0;
   if (M.StartPriority >= 8) and (M.StartPriority <= 119) then
     Prio := M.StartPriority;
   if M.StartStack >= $200 then
     Stack := M.StartStack;
   if M.StartAttr <> 0 then
-    Attr := M.StartAttr or $80000000;
+    if KernelMode then
+      Attr := M.StartAttr
+    else
+      Attr := M.StartAttr or $80000000;
   var T := FKernel.CreateThread('user_main', M.Entry, Prio, Stack, Attr, M.GP, M.UID);
   if T = nil then
     raise EPSPError.Create('PSP: no memory for the main thread');
+  // The module manager deletes the start thread once module_start returns.
+  T.DeleteOnExit := True;
   var Arg := TEncoding.ANSI.GetBytes(Path);
   SetLength(Arg, Length(Arg) + 1);
   Arg[High(Arg)] := 0;

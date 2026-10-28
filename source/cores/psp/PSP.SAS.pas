@@ -106,7 +106,6 @@ type
     FRevVolLeft, FRevVolRight: Integer;
     FDry, FWet: Boolean;
     FDryL, FDryR, FWetL, FWetR: TArray<Integer>;
-    FVoiceBuf: TArray<Integer>;
     // Reverb work area (SPU style, 22.05 kHz).
     FRevBuffer: TArray<SmallInt>;
     FRevPos: Integer;
@@ -130,7 +129,7 @@ type
     procedure RenderVoice(var V: TPSPSasVoice; Count: Integer);
     procedure Reverb(Count: Integer);
     procedure ReverbSample(InL, InR: Integer; out OutL, OutR: Integer);
-    procedure Mix(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
+    procedure MixGrain(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
     procedure CoreWait;
     procedure hInit;
     procedure hCore;
@@ -681,7 +680,7 @@ begin
   end;
 end;
 
-procedure TPSPSasCore.Mix(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
+procedure TPSPSasCore.MixGrain(Output: Cardinal; WithMix: Boolean; MixLeft, MixRight: Integer);
 begin
   var N := FGrain;
   if Length(FDryL) < N then
@@ -826,7 +825,26 @@ var
   end;
 
 begin
-  R := @RevPresets[FRevType];
+  var Regs := RevPresets[FRevType];
+  if FRevType in [6, 7] then
+  begin
+    // ECHO and DELAY: the delay parameter sets the echo distance (the presets
+    // are its longest), the feedback parameter ECHO's wall reflection.
+    var D := $600 + FRevDelay * $A00 div 127;
+    Regs.R[10] := 2 * D - 1;
+    Regs.R[11] := D - 1;
+    Regs.R[12] := D + 5;
+    Regs.R[13] := 5;
+    Regs.R[16] := D + 5;
+    Regs.R[17] := 5;
+    Regs.R[26] := D + 4;
+    Regs.R[27] := D + 2;
+    if FRevType = 6 then
+      Regs.R[7] := Word(-(FRevFeedback shl 8))
+    else
+      Regs.R[7] := 0;
+  end;
+  R := @Regs;
   Size := R.Size * 4 div 8;
   if Size > Length(FRevBuffer) then
     Size := Length(FRevBuffer);
@@ -996,7 +1014,7 @@ end;
 procedure TPSPSasCore.hCore;
 begin
   FHLE.Result(0);
-  Mix(FHLE.Arg(1), False, 0, 0);
+  MixGrain(FHLE.Arg(1), False, 0, 0);
   CoreWait;
 end;
 
@@ -1008,7 +1026,7 @@ begin
     Exit;
   end;
   FHLE.Result(0);
-  Mix(FHLE.Arg(1), True, FHLE.ArgInt(2), FHLE.ArgInt(3));
+  MixGrain(FHLE.Arg(1), True, FHLE.ArgInt(2), FHLE.ArgInt(3));
   CoreWait;
 end;
 

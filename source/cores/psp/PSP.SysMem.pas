@@ -127,7 +127,7 @@ function TPSPPartition.Alloc(Size: Cardinal; Kind: TPSPAllocKind; Address, Align
 
 begin
   Result := 0;
-  if Size = 0 then
+  if (Size = 0) or (Size > FSize) then
     Exit;
   if Alignment < 256 then
     Alignment := 256;

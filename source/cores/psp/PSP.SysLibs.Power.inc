@@ -173,20 +173,121 @@ begin
   FHLE.Result(4135);
 end;
 
+const
+  SCE_KERNEL_ERROR_POWER_VMEM_IN_USE = Cardinal($802B0200);
+
+// The volatile memory lock: mode 0 only, waiters served in the order they
+// came. A lock that cannot wait still reports where the memory is; unlocking
+// it when free answers like a semaphore signalled past its maximum.
+procedure TPSPSysLibs.VolatileGrant(Ptr, SizePtr: Cardinal);
+begin
+  if Ptr <> 0 then
+    FMemory.Write32(Ptr, $08400000);
+  if SizePtr <> 0 then
+    FMemory.Write32(SizePtr, $00400000);
+end;
+
+procedure TPSPSysLibs.VolatileAbort(T: TPSPThread);
+begin
+  FVolatileWaiters.Remove(T);
+end;
+
+procedure TPSPSysLibs.hVolatileMemLock;
+begin
+  var Ptr := FHLE.Arg(1);
+  var SizePtr := FHLE.Arg(2);
+  if FHLE.Arg(0) <> 0 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
+  if FKernel.InInterrupt then
+  begin
+    VolatileGrant(Ptr, SizePtr);
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
+  if not FSystem.CPU.InterruptsEnabled then
+  begin
+    VolatileGrant(Ptr, SizePtr);
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
+  if not FVolatileLocked then
+  begin
+    FVolatileLocked := True;
+    VolatileGrant(Ptr, SizePtr);
+    FHLE.Result(0);
+    Exit;
+  end;
+  if not FKernel.CanWait then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
+  var T := FKernel.Current;
+  FVolatileWaiters.Add(T);
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, VolatileAbort, 'volatile');
+  T.Wait.Data[0] := Ptr;
+  T.Wait.Data[1] := SizePtr;
+end;
+
+procedure TPSPSysLibs.hVolatileMemTryLock;
+begin
+  if FHLE.Arg(0) <> 0 then
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE)
+  else if FVolatileLocked then
+    FHLE.Result(SCE_KERNEL_ERROR_POWER_VMEM_IN_USE)
+  else
+  begin
+    FVolatileLocked := True;
+    VolatileGrant(FHLE.Arg(1), FHLE.Arg(2));
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPSysLibs.hVolatileMemUnlock;
+begin
+  if FHLE.Arg(0) <> 0 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
+  if not FVolatileLocked then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_SEMA_OVF);
+    Exit;
+  end;
+  FHLE.Result(0);
+  // The lock passes to the first thread waiting for it.
+  while FVolatileWaiters.Count > 0 do
+  begin
+    var T := FVolatileWaiters[0];
+    FVolatileWaiters.Delete(0);
+    if T.IsWaiting and (T.Wait.HLETag = 'volatile') then
+    begin
+      VolatileGrant(T.Wait.Data[0], T.Wait.Data[1]);
+      FKernel.EndWait(T, 0);
+      Exit;
+    end;
+  end;
+  FVolatileLocked := False;
+end;
+
 // scePower's volatile memory calls are the sceSuspend ones under another name.
 procedure TPSPSysLibs.hPowerVolatileLock;
 begin
-  CallKernel('sceSuspendForUser', $3E0271D3);
+  hVolatileMemLock;
 end;
 
 procedure TPSPSysLibs.hPowerVolatileTryLock;
 begin
-  CallKernel('sceSuspendForUser', $A14F40B2);
+  hVolatileMemTryLock;
 end;
 
 procedure TPSPSysLibs.hPowerVolatileUnlock;
 begin
-  CallKernel('sceSuspendForUser', $A569E425);
+  hVolatileMemUnlock;
 end;
 
 procedure TPSPSysLibs.hKernelPowerLock;

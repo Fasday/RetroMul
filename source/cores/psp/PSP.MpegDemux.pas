@@ -82,6 +82,8 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    // Drops what is buffered; the packs that carried it are then free.
+    procedure Discard;
     procedure Append(const Src; Count: Integer);
     function Peek(Offset: Integer): Byte; inline;
     procedure Take(Count: Integer; out Dest: TBytes);
@@ -89,9 +91,11 @@ type
     property Length: Integer read FLength;
   end;
 
+  // The streams a pack carried data for and where that data ends in each.
   TPSPPackInfo = record
-    Queue: TPSPEsQueue;
-    EsEnd: Int64;
+    Count: Integer;
+    Queue: array[0..3] of TPSPEsQueue;
+    EsEnd: array[0..3] of Int64;
   end;
 
   // Parses packs in order and hands out access units. Packs are kept (as
@@ -100,6 +104,7 @@ type
   private
     FQueues: TObjectList<TPSPEsQueue>;
     FPending: TQueue<TPSPPackInfo>;
+    FPack: TPSPPackInfo;
     FParsed: Int64;
     procedure ParsePes(const P: PByte; Len: Integer; StreamId: Byte);
     procedure ParseTable(const P: PByte; Len: Integer);
@@ -229,8 +234,8 @@ begin
     if (S.StreamId and $F0) = $E0 then
     begin
       S.Kind := PSMFKindAvc;
-      S.Width := Data[O + 14] * 16;
-      S.Height := Data[O + 15] * 16;
+      S.Width := Data[O + 12] * 16;
+      S.Height := Data[O + 13] * 16;
     end
     else if S.StreamId = $BD then
     begin
@@ -307,6 +312,15 @@ begin
   FLength := 0;
   TotalIn := 0;
   TotalOut := 0;
+  Marks.Clear;
+  Sizes.Clear;
+  AudioSkip := 0;
+  AudioStarted := False;
+end;
+
+procedure TPSPEsQueue.Discard;
+begin
+  Drop(FLength);
   Marks.Clear;
   Sizes.Clear;
   AudioSkip := 0;
@@ -400,8 +414,9 @@ begin
   for var I in Items do
   begin
     var X := I;
-    if X.Queue = Q then
-      X.Queue := nil;
+    for var K := 0 to X.Count - 1 do
+      if X.Queue[K] = Q then
+        X.Queue[K] := nil;
     FPending.Enqueue(X);
   end;
   FQueues.Remove(Q);
@@ -486,16 +501,24 @@ begin
     Q.Marks.Add(M);
   end;
   Q.Append(P[Pay], Len - Pay);
-  var Info: TPSPPackInfo;
-  Info.Queue := Q;
-  Info.EsEnd := Q.TotalIn;
-  FPending.Enqueue(Info);
+  for var K := 0 to FPack.Count - 1 do
+    if FPack.Queue[K] = Q then
+    begin
+      FPack.EsEnd[K] := Q.TotalIn;
+      Exit;
+    end;
+  if FPack.Count <= High(FPack.Queue) then
+  begin
+    FPack.Queue[FPack.Count] := Q;
+    FPack.EsEnd[FPack.Count] := Q.TotalIn;
+    Inc(FPack.Count);
+  end;
 end;
 
 procedure TPSPPsDemux.FeedPack(const Pack: PByte);
 begin
   Inc(FParsed);
-  var Before := FPending.Count;
+  FPack := Default(TPSPPackInfo);
   var P := 0;
   while P + 4 <= PSMFPacketSize do
   begin
@@ -521,12 +544,8 @@ begin
     end;
     Inc(P, 6 + Len);
   end;
-  if FPending.Count = Before then
-  begin
-    // Nothing kept from this pack: it is done as soon as the ones before are.
-    var Info := Default(TPSPPackInfo);
-    FPending.Enqueue(Info);
-  end;
+  // A pack without data for a registered stream is done as soon as the ones before are.
+  FPending.Enqueue(FPack);
 end;
 
 function TPSPPsDemux.Held: Integer;
@@ -540,7 +559,11 @@ begin
   while FPending.Count > 0 do
   begin
     var I := FPending.Peek;
-    if (I.Queue <> nil) and (I.Queue.TotalOut < I.EsEnd) then
+    var Done := True;
+    for var K := 0 to I.Count - 1 do
+      if (I.Queue[K] <> nil) and (I.Queue[K].TotalOut < I.EsEnd[K]) then
+        Done := False;
+    if not Done then
       Break;
     FPending.Dequeue;
     Inc(Result);

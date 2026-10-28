@@ -140,7 +140,16 @@ begin
   if S = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
   var N := FHLE.ArgInt(1);
-  if Int64(S.Count) + N > S.MaxCount then
+  // What the waiters at the head take does not count against the maximum.
+  var Left := Int64(S.Count) + N;
+  for var I := 0 to S.Waiters.Count - 1 do
+  begin
+    var Need := Integer(S.Waiters.Item(I).Wait.Data[0]);
+    if Left < Need then
+      Break;
+    Dec(Left, Need);
+  end;
+  if Left > S.MaxCount then
     begin FHLE.Result(SCE_KERNEL_ERROR_SEMA_OVF); Exit; end;
   Spend(PSPSyncCallNs);
   Inc(S.Count, N);
@@ -150,6 +159,8 @@ end;
 
 procedure TPSPKernel.WaitSemaCommon(AllowCB: Boolean);
 begin
+  if RefuseWait then
+    Exit;
   var Need := FHLE.ArgInt(1);
   if Need <= 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
@@ -167,8 +178,6 @@ begin
       CheckCallbacksNow;
     Exit;
   end;
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   S.Waiters.Add(FCurrent);
   BeginWaitData(PSPWaitSema, S, S.UID, FHLE.Arg(2), AllowCB, SemaRetry, [Cardinal(Need)]);
 end;
@@ -255,8 +264,11 @@ end;
 
 procedure TPSPKernel.EventFlagAbort(T: TPSPThread);
 begin
-  // A wait that ends without the bits still reports the pattern.
+  // A wait that ends without the bits still reports the pattern, unless it
+  // timed out before it began.
   var E := TPSPEventFlag(T.Wait.Obj);
+  if T.Wait.Deadline = 0 then
+    Exit;
   if (T.Wait.Data[2] <> 0) and (E <> nil) and FObjects.ContainsKey(T.Wait.Id) then
     FMemory.Write32(T.Wait.Data[2], E.Pattern);
 end;
@@ -327,14 +339,16 @@ begin
   var Bits := FHLE.Arg(1);
   var Mode := FHLE.Arg(2);
   var OutPtr := FHLE.Arg(3);
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Err := EventFlagModeError(Mode, Bits);
   if Err <> 0 then
     begin FHLE.Result(Err); Exit; end;
+  if RefuseWait then
+    Exit;
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   if ((E.Attr and $200) = 0) and (E.Waiters.Count > 0) then

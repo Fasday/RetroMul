@@ -9,7 +9,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Generics.Collections, Core.Emulation.Types, Core.Storage,
   PSP.Types, PSP.Memory, PSP.Scheduler, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media, PSP.IO, PSP.Loader,
-  PSP.Display, PSP.Service, PSP.Audio;
+  PSP.Display, PSP.Service, PSP.Audio, PSP.CPU.JIT;
 
 type
   TPSPConsole = class
@@ -17,6 +17,7 @@ type
     FMemory: TPSPMemory;
     FScheduler: TPSPScheduler;
     FCPU: TPSPCPU;
+    FRecompiler: TPSPRecompiler;
     FHLE: TPSPHLE;
     FKernel: TPSPKernel;
     FIO: TPSPIO;
@@ -65,6 +66,9 @@ type
     property Input: TEmulatorInput read FInput write FInput;
     property Memory: TPSPMemory read FMemory;
     property CPU: TPSPCPU read FCPU;
+    // The CPU's recompiler (PSPJIT; nil: the interpreter only); Enabled
+    // switches between them.
+    property Recompiler: TPSPRecompiler read FRecompiler;
     property Kernel: TPSPKernel read FKernel;
     property HLE: TPSPHLE read FHLE;
     property IO: TPSPIO read FIO;
@@ -83,7 +87,7 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
-  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings;
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings, PSP.SFO, PSP.Net;
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin
@@ -107,6 +111,7 @@ begin
   FCPU := TPSPCPU.Create(FMemory);
   FCPU.OnSyscall := Syscall;
   FCPU.OnBreak := Break_;
+  FRecompiler := CreatePSPRecompiler(FCPU);
   FHLE := TPSPHLE.Create(FCPU, FMemory);
   FHLE.OnLog := HandleLog;
   FKernel := TPSPKernel.Create(FCPU, FMemory, FHLE, FScheduler);
@@ -143,6 +148,7 @@ begin
   FIO.Free;
   FKernel.Free;
   FHLE.Free;
+  FRecompiler.Free;
   FCPU.Free;
   FScheduler.Free;
   FMemory.Free;
@@ -277,10 +283,21 @@ begin
   SyncTime;
   if Code < PSPTrapCount then
     FKernel.Trap(Code)
-  else if not FHLE.Call(Code) then
-    raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
+  else
+  begin
+    var Caller := FKernel.Current;
+    var Back := C.Ctx.PC;
+    if not FHLE.Call(Code) then
+      raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
+    // A call that returns straight to its caller hands back the caller-saved
+    // registers scrambled, as the kernel does.
+    if (Caller <> nil) and (FKernel.Current = Caller) and (C.Ctx.PC = Back) then
+      FKernel.ScrambleCallerSaved;
+  end;
   FKernel.AfterSyscall;
-  // HLE costs are not in the CPU's budget: a loop of calls must still stop at the deadline.
+  // Call costs count toward the slice too: a loop of calls must not run past
+  // an event.
+  SyncTime;
   if (FScheduler.NextDue < FRunDeadline) or (FScheduler.Now >= FRunDeadline) then
     C.Stop;
 end;
@@ -298,6 +315,8 @@ end;
 
 procedure TPSPConsole.DispatchEvent(E: TPSPEvent);
 begin
+  // Every event is an interrupt on hardware, whose return breaks a pending ll/sc.
+  FCPU.Ctx.LLBit := 0;
   case E of
     TPSPEvent.VBlank: FDisplay.OnEvent;
     TPSPEvent.Kernel: FKernel.OnTimerEvent;

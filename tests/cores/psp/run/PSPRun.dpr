@@ -4,14 +4,15 @@ program PSPRun;
 
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
-//   [-gpu | -gpu-check]
-// -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
-// -gpu: the GE draws with the Vulkan compute renderer; -gpu-check also draws every
-// batch on the CPU, keeps the CPU's result and reports where the two differ.
+// -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
+// -test: isolated pspautotests host0: tree, no display, stops at exit.
+// -hw: omit the emulator device and collect the program's host0: output and screenshot.
+// -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
+// -calls [a,b,...]: at the end, how often each HLE function was called (names containing a, b, ...).
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
-  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.GPU;
+  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.GPU;
 
 type
   TPress = record
@@ -64,6 +65,71 @@ begin
   end;
 end;
 
+type
+  // The interpreter loop, keeping the last instructions run (-history N).
+  THistoryEntry = record
+    PC, Op, RA, SP, V0, A0: Cardinal;
+    Thread: Cardinal;
+  end;
+
+  THistoryRunner = class(TPSPRunner)
+    Console: TPSPConsole;
+    Ring: TArray<THistoryEntry>;
+    Head: Integer;
+    Count: Int64;
+    procedure Run(C: TPSPCPU); override;
+    procedure CodeWritten(Address, Size: Cardinal); override;
+    procedure Flushed; override;
+    procedure Dump;
+  end;
+
+procedure THistoryRunner.Run(C: TPSPCPU);
+begin
+  while C.FRemaining > 0 do
+  begin
+    var PC := C.Ctx.PC;
+    var Entry := C.Decoded(PC);
+    var H: ^THistoryEntry := @Ring[Head];
+    H.PC := PC;
+    H.Op := Entry.Op;
+    H.RA := C.Ctx.GPR[31];
+    H.SP := C.Ctx.GPR[29];
+    H.V0 := C.Ctx.GPR[2];
+    H.A0 := C.Ctx.GPR[4];
+    if Console.Kernel.Current <> nil then
+      H.Thread := Console.Kernel.Current.UID
+    else
+      H.Thread := 0;
+    Head := (Head + 1) mod Length(Ring);
+    Inc(Count);
+    C.CurPC := PC;
+    C.Ctx.PC := C.Ctx.NPC;
+    C.Ctx.NPC := C.Ctx.NPC + 4;
+    Dec(C.FRemaining);
+    Entry.Handler(C, Entry.Op);
+    if C.Stopping then
+      Break;
+  end;
+end;
+
+procedure THistoryRunner.CodeWritten(Address, Size: Cardinal);
+begin
+end;
+
+procedure THistoryRunner.Flushed;
+begin
+end;
+
+procedure THistoryRunner.Dump;
+begin
+  var N := Min(Count, Int64(Length(Ring)));
+  for var I := N downto 1 do
+  begin
+    var H := Ring[(Head - I + Length(Ring) * 2) mod Length(Ring)];
+    Writeln(ErrOutput, Format('[hist] %.8x %.8x ra=%.8x sp=%.8x v0=%.8x a0=%.8x th=%x', [H.PC, H.Op, H.RA, H.SP, H.V0, H.A0, H.Thread]));
+  end;
+end;
+
 function ButtonOf(const S: string): TEmulatorButton;
 begin
   var L := S.ToLower;
@@ -92,6 +158,9 @@ end;
 
 procedure SaveBMP(const F: TEmulatorFrame; const Name: string);
 begin
+  // Nothing displayed yet.
+  if Length(F.Pixels) < F.Width * F.Height then
+    Exit;
   var S := TFileStream.Create(Name, fmCreate);
   try
     var RowSize := F.Width * 3;
@@ -128,6 +197,33 @@ begin
   end;
 end;
 
+procedure SaveWAV(const Samples: TList<SmallInt>; const Name: string);
+begin
+  var S := TFileStream.Create(Name, fmCreate);
+  try
+    var DataSize := Cardinal(Samples.Count) * 2;
+    var Header: array[0..43] of Byte;
+    FillChar(Header, SizeOf(Header), 0);
+    Move(AnsiString('RIFF')[1], Header[0], 4);
+    PCardinal(@Header[4])^ := 36 + DataSize;
+    Move(AnsiString('WAVEfmt ')[1], Header[8], 8);
+    PCardinal(@Header[16])^ := 16;
+    PWord(@Header[20])^ := 1;
+    PWord(@Header[22])^ := 2;
+    PCardinal(@Header[24])^ := 44100;
+    PCardinal(@Header[28])^ := 44100 * 4;
+    PWord(@Header[32])^ := 4;
+    PWord(@Header[34])^ := 16;
+    Move(AnsiString('data')[1], Header[36], 4);
+    PCardinal(@Header[40])^ := DataSize;
+    S.WriteBuffer(Header, SizeOf(Header));
+    if Samples.Count > 0 then
+      S.WriteBuffer(Samples.List[0], DataSize);
+  finally
+    S.Free;
+  end;
+end;
+
 begin
   try
     if ParamCount < 1 then
@@ -146,10 +242,16 @@ begin
     var Strict := False;
     var TraceKernel := False;
     var WatchOn := False;
+    var ShowState := False;
+    var HwMode := False;
+    var HistoryLen := 0;
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
     var GPUMode := 0;
+    var WavFile := '';
+    var CallsOn := False;
+    var CallsFilter := '';
     var I := 2;
     while I <= ParamCount do
     begin
@@ -163,10 +265,15 @@ begin
       else if A = '-strict' then Strict := True
       else if A = '-trace' then TraceKernel := True
       else if A = '-watch' then WatchOn := True
+      else if A = '-state' then ShowState := True
+      else if A = '-hw' then HwMode := True
+      else if A = '-history' then begin Inc(I); HistoryLen := StrToInt(ParamStr(I)); end
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-gpu' then GPUMode := 1
       else if A = '-gpu-check' then GPUMode := 2
+      else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
+      else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
       else if A = '-press' then
       begin
         Inc(I);
@@ -218,11 +325,30 @@ begin
       var Dest := Host;
       if Rel <> '' then
         Dest := TPath.Combine(Host, Rel);
+      // Tests also read data next to their folder (../sample.at3, ../mp3/sample.mp3): the data
+      // files of the whole test group (tests/<group>) come along, without sources and programs.
+      var Parts := Rel.Split(['\'], TStringSplitOptions.ExcludeEmpty);
+      if Length(Parts) >= 2 then
+      begin
+        var GroupDir := TPath.Combine(HostRoot.Substring(0, At + 1), Parts[0] + '\' + Parts[1]);
+        for var F in TDirectory.GetFiles(GroupDir, '*', TSearchOption.soAllDirectories) do
+        begin
+          var X := ExtractFileExt(F).ToLower;
+          if (X = '.c') or (X = '.cpp') or (X = '.h') or (X = '.expected') or (X = '.bmp') or (X = '.prx') or
+            (X = '.mak') or (X = '.s') or (X = '.exp') or SameText(ExtractFileName(F), 'Makefile') then
+            Continue;
+          var Target := TPath.Combine(Host, F.Substring(At + 1));
+          ForceDirectories(ExtractFileDir(Target));
+          TFile.Copy(F, Target, True);
+        end;
+      end;
       ForceDirectories(Dest);
-      for var F in TDirectory.GetFiles(HostRoot) do
-        TFile.Copy(F, TPath.Combine(Dest, ExtractFileName(F)), True);
-      for var D in TDirectory.GetDirectories(HostRoot) do
-        TDirectory.Copy(D, TPath.Combine(Dest, ExtractFileName(D)));
+      for var F in TDirectory.GetFiles(HostRoot, '*', TSearchOption.soAllDirectories) do
+      begin
+        var Target := TPath.Combine(Dest, F.Substring(HostRoot.Length + 1));
+        ForceDirectories(ExtractFileDir(Target));
+        TFile.Copy(F, Target, True);
+      end;
       HostRoot := Host;
       if Rel <> '' then
         Prog.BootPath := 'host0:/' + Rel.Replace('\', '/') + '/' + ExtractFileName(FileName)
@@ -265,14 +391,28 @@ begin
       Console.HLE.Strict := Strict;
       Console.Kernel.Trace := TraceKernel;
       Console.HLE.TraceCalls := TraceKernel;
+      Console.HLE.NoClobber := GetEnvironmentVariable('PSP_NOCLOBBER') <> '';
       if TestMode then
         Console.IO.HasDisplay := False;
+      Console.IO.NoEmulatorDevice := HwMode;
+      var History: THistoryRunner := nil;
+      if HistoryLen > 0 then
+      begin
+        History := THistoryRunner.Create;
+        History.Console := Console;
+        SetLength(History.Ring, HistoryLen);
+        Console.CPU.Runner := History;
+      end;
       if not Quiet then
         Writeln(ErrOutput, Format('title=%s id=%s', [Prog.Title, Prog.DiscId]));
       var Watch := TStopwatch.StartNew;
       var Frame: TEmulatorFrame;
       var LastHash := '';
       var Failed := '';
+      var Wav := TList<SmallInt>.Create;
+      var Peak := 0;
+      var SumSq: Double := 0;
+      var SumN: Int64 := 0;
       for var F := 1 to Frames do
       begin
         var Input := Default(TEmulatorInput);
@@ -285,32 +425,100 @@ begin
         except
           on E: Exception do
           begin
-            Failed := E.ClassName + ': ' + E.Message;
+            Failed := E.ClassName + ': ' + E.Message + Format(' at %p (image base %p)', [ExceptAddr, Pointer(HInstance)]);
             Break;
           end;
         end;
         var Text := Console.TakeOutput;
         if Text <> '' then
           Write(Text);
+        if WavFile <> '' then
+          for var Smp in Console.AudioSamples do
+          begin
+            Wav.Add(Smp);
+            Peak := Max(Peak, Abs(Integer(Smp)));
+            SumSq := SumSq + Sqr(Double(Smp));
+            Inc(SumN);
+          end;
         if (Every > 0) and (F mod Every = 0) then
         begin
           var H := FrameHash(Frame);
           if not Quiet then
-            Writeln(ErrOutput, Format('frame %d hash %s', [F, H]));
+          begin
+            if WavFile <> '' then
+            begin
+              var Rms := 0.0;
+              if SumN > 0 then
+                Rms := Sqrt(SumSq / SumN);
+              Writeln(ErrOutput, Format('frame %d hash %s audio peak %d rms %.0f', [F, H, Peak, Rms]));
+              Peak := 0;
+              SumSq := 0;
+              SumN := 0;
+            end
+            else
+              Writeln(ErrOutput, Format('frame %d hash %s', [F, H]));
+          end;
           if OutDir <> '' then
             SaveBMP(Frame, TPath.Combine(OutDir, Format('f%.5d.bmp', [F])));
         end;
-        LastHash := FrameHash(Frame);
         if Console.Kernel.Exited then
           Break;
       end;
+      LastHash := FrameHash(Frame);
       var Text := Console.TakeOutput;
       if Text <> '' then
         Write(Text);
       if OutDir <> '' then
         SaveBMP(Frame, TPath.Combine(OutDir, 'last.bmp'));
+      if HwMode then
+      begin
+        // As recorded on hardware: the program wrote its output and screenshot to host0:.
+        var OutName := TPath.Combine(HostRoot, '__testoutput.txt');
+        if FileExists(OutName) then
+        begin
+          // The guest may leave stdout open when it exits.
+          var Output := TFileStream.Create(OutName, fmOpenRead or fmShareDenyNone);
+          try
+            var Bytes: TBytes;
+            SetLength(Bytes, Output.Size);
+            if Length(Bytes) > 0 then
+            begin
+              Output.ReadBuffer(Bytes[0], Length(Bytes));
+              Write(TEncoding.ANSI.GetString(Bytes));
+            end;
+          finally
+            Output.Free;
+          end;
+        end;
+        var ShotName := TPath.Combine(HostRoot, '__screenshot.bmp');
+        if (ShotFile <> '') and FileExists(ShotName) then
+          TFile.Copy(ShotName, ShotFile, True);
+      end;
+      if History <> nil then
+        History.Dump;
+      if ShowState then
+      begin
+        Writeln(ErrOutput, Console.Kernel.DescribeThreads);
+        Writeln(ErrOutput, Console.Loader.Describe);
+      end;
       for var K := 0 to DumpLen div 4 - 1 do
         Writeln(ErrOutput, Format('[dump] %.8x %.8x', [DumpAt + Cardinal(K) * 4, Console.Memory.Read32(DumpAt + Cardinal(K) * 4)]));
+      if CallsOn then
+        for var K := 0 to Console.HLE.Count - 1 do
+        begin
+          var Fn := Console.HLE.FunctionInfo(K);
+          if (Fn = nil) or (Fn.Calls = 0) then
+            Continue;
+          var Show := CallsFilter = '';
+          for var Part in CallsFilter.Split([',']) do
+            if (Part <> '') and Fn.Name.ToLower.Contains(Part.ToLower) then
+              Show := True;
+          if Show then
+            Writeln(ErrOutput, Format('[calls] %s %d', [Fn.Name, Fn.Calls]));
+        end;
+      if WavFile <> '' then
+        SaveWAV(Wav, WavFile);
+      Wav.Free;
       if not Quiet then
         Writeln(ErrOutput, Format('frames=%d time=%.2fs guest=%.2fs exited=%s hash=%s cpu=%.1fM (%.1f MHz host)',
           [Console.FrameNumber, Watch.Elapsed.TotalSeconds, Console.Scheduler.Now / 1e9,
@@ -368,6 +576,7 @@ begin
     on E: Exception do
     begin
       Writeln(ErrOutput, E.ClassName, ': ', E.Message);
+      Writeln(ErrOutput, Format('at %p (image base %p)', [ExceptAddr, Pointer(HInstance)]));
       ExitCode := 3;
     end;
   end;

@@ -119,6 +119,9 @@ type
     procedure hStdin;
     function IoctlCommon(F: TPSPOpenFile; Cmd, InPtr, InLen, OutPtr, OutLen: Cardinal): Cardinal;
   public
+    // No emulator: device, as on hardware: test programs then write their
+    // output and screenshots to host0: the way they did when recorded.
+    NoEmulatorDevice: Boolean;
     constructor Create(Kernel: TPSPKernel);
     destructor Destroy; override;
     procedure Reset;
@@ -216,7 +219,7 @@ begin
   else if (Device = 'ms0') or (Device = 'fatms0') or (Device = 'ms') or (Device = 'flash0') or (Device = 'flash1') or
     (Device = 'host0') or (Device = 'host') or (Device = 'ef0') or (Device = 'fatms') then
     Result := dkHost
-  else if (Device = 'emulator') or (Device = 'kemulator') then
+  else if ((Device = 'emulator') or (Device = 'kemulator')) and not NoEmulatorDevice then
     Result := dkEmulator
   else if Device.StartsWith('tty') then
     Result := dkTTY
@@ -293,8 +296,40 @@ end;
 
 function HostReadOnly(const Name: string): Boolean;
 begin
+{$IFDEF MSWINDOWS}
   var A := FileGetAttr(Name);
   Result := (A <> -1) and ((A and faReadOnly) <> 0);
+{$ELSE}
+  try
+    Result := not (TFileAttribute.faOwnerWrite in TFile.GetAttributes(Name));
+  except
+    Result := False;
+  end;
+{$ENDIF}
+end;
+
+procedure HostSetReadOnly(const Name: string; ReadOnly: Boolean);
+begin
+{$IFDEF MSWINDOWS}
+  var A := FileGetAttr(Name);
+  if A = -1 then
+    Exit;
+  if ReadOnly then
+    A := A or faReadOnly
+  else
+    A := A and not faReadOnly;
+  FileSetAttr(Name, A);
+{$ELSE}
+  try
+    var A := TFile.GetAttributes(Name);
+    if ReadOnly then
+      A := A - [TFileAttribute.faOwnerWrite, TFileAttribute.faGroupWrite, TFileAttribute.faOthersWrite]
+    else
+      A := A + [TFileAttribute.faOwnerWrite];
+    TFile.SetAttributes(Name, A);
+  except
+  end;
+{$ENDIF}
 end;
 
 function TPSPIO.HostFileName(const Path: string): string;
@@ -328,7 +363,7 @@ end;
 
 function ParseLBN(const Rest: string; out LBA, Size: Cardinal): Boolean;
 begin
-  // /sce_lbn0x<lba>_size0x<size>
+  // /sce_lbn<lba>_size<size>: both hexadecimal, with or without 0x.
   var S := Rest.ToLower;
   var P := S.IndexOf('sce_lbn');
   Result := False;
@@ -340,10 +375,16 @@ begin
     Exit;
   var A := S.Substring(0, Q);
   var B := S.Substring(Q + 5);
-  if A.StartsWith('0x') then A := '$' + A.Substring(2);
-  if B.StartsWith('0x') then B := '$' + B.Substring(2);
+  if A.StartsWith('0x') then A := A.Substring(2);
+  if B.StartsWith('0x') then B := B.Substring(2);
+  var N := 0;
+  while (N < B.Length) and CharInSet(B.Chars[N], ['0'..'9', 'a'..'f']) do
+    Inc(N);
+  B := B.Substring(0, N);
+  if (A = '') or (B = '') then
+    Exit;
   var LA, LS: Int64;
-  Result := TryStrToInt64(A, LA) and TryStrToInt64(B, LS);
+  Result := TryStrToInt64('$' + A, LA) and TryStrToInt64('$' + B, LS);
   LBA := Cardinal(LA);
   Size := Cardinal(LS);
 end;
@@ -390,6 +431,9 @@ begin
       end;
     dkHost:
       begin
+        // The FAT driver refuses a wildcard in a name.
+        if Pos('?', Rest) > 0 then
+          Exit(SCE_ERROR_ERRNO_EINVAL);
         var Name := HostPath(Dev, Rest);
         if Name = '' then
           Exit(SCE_KERNEL_ERROR_NODEV);
@@ -836,6 +880,8 @@ begin
   else
     F.Id := AllocFd;
   FFiles.Add(F.Id, F);
+  if FKernel.Trace then
+    FHLE.Log('sceIoOpen %s -> fd %d', [Path, F.Id]);
   if Host then
     DeviceYield(Cardinal(F.Id), 30000)
   else
@@ -873,8 +919,12 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   FKernel.CancelTimersOf(F);
   FFiles.Remove(F.Id);
+  var Host := F.Kind = dkHost;
   F.Free;
-  FHLE.Result(0);
+  if Host then
+    DeviceYield(0, 20000)
+  else
+    FHLE.Result(0);
 end;
 
 procedure TPSPIO.hCloseAsync;
@@ -900,7 +950,12 @@ begin
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
-  FHLE.Result(Cardinal(R));
+  // The caller waits for the drive, the UMD's as the memory stick's (GTA
+  // Liberty City Stories streams the city only when its reads take time).
+  if (F.Kind = dkHost) or (F.Kind = dkUMD) then
+    DeviceYield(Cardinal(R), ReadLatency(F, Max(R, 0)))
+  else
+    FHLE.Result(Cardinal(R));
 end;
 
 procedure TPSPIO.hReadAsync;
@@ -954,7 +1009,10 @@ begin
     begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_ASYNC_BUSY)))); Exit; end;
   // (fd, pad, offset64 in a2/a3, whence in t0)
   var Offset := Int64(FHLE.Arg64(2));
-  FHLE.Result64(UInt64(DoSeek(F, Offset, FHLE.ArgInt(4))));
+  var R := DoSeek(F, Offset, FHLE.ArgInt(4));
+  FHLE.Result64(UInt64(R));
+  if F.Kind = dkHost then
+    DeviceYield(Cardinal(UInt64(R)), 20000);
 end;
 
 procedure TPSPIO.hLseekAsync;
@@ -975,7 +1033,11 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  FHLE.Result(Cardinal(DoSeek(F, FHLE.ArgInt(1), FHLE.ArgInt(2))));
+  var R := Cardinal(DoSeek(F, FHLE.ArgInt(1), FHLE.ArgInt(2)));
+  if F.Kind = dkHost then
+    DeviceYield(R, 20000)
+  else
+    FHLE.Result(R);
 end;
 
 procedure TPSPIO.hLseek32Async;
@@ -1130,7 +1192,11 @@ begin
             FMemory.Write32(P + 12, 512);
             FMemory.Write32(P + 16, 64);
           end;
-        $02425823, $02425824:
+        // FAT on the stick ready: 1 (0 without a stick, utility/savedata/nomemstick).
+        $02425823:
+          if OutPtr <> 0 then
+            FMemory.Write32(OutPtr, 1);
+        $02425824:
           if OutPtr <> 0 then
             FMemory.Write32(OutPtr, 0);
       end;
@@ -1211,15 +1277,7 @@ begin
     ReadOnly := (FMemory.Read32(StatPtr) and $92) = 0;
   if (Bits and 2) <> 0 then
     ReadOnly := (FMemory.Read32(StatPtr + 4) and 1) <> 0;
-  var A := FileGetAttr(Name);
-  if A <> -1 then
-  begin
-    if ReadOnly then
-      A := A or faReadOnly
-    else
-      A := A and not faReadOnly;
-    FileSetAttr(Name, A);
-  end;
+  HostSetReadOnly(Name, ReadOnly);
   DeviceYield(0, 20000);
 end;
 

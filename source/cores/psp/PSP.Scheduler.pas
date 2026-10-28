@@ -4,7 +4,7 @@ unit PSP.Scheduler;
 // slot each; ties are broken by declaration order. The CPU converts cycles at
 // the current clock (MHz) with an exact remainder, so the timeline does not
 // depend on how runs are sliced.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 

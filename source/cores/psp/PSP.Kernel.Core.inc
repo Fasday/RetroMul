@@ -6,21 +6,34 @@ const
   // A timeout never fires sooner than this after the call, and the woken thread
   // gets the CPU a little later still.
   PSPMinTimeoutUs = 205;
-  PSPWaitLatencyNs = 32500;
-  PSPDelayLatencyNs = 22500;
+  PSPWaitLatencyNs = 28300;
+  PSPDelayLatencyNs = 18400;
   // How far into a wait or delay call the kernel checks whether the time asked
   // for has already passed (then it returns at once, without blocking).
-  PSPWaitCheckNs = 1400;
+  PSPWaitCheckNs = 1700;
   PSPDelayCheckNs = 500;
   PSPFreshCheckNs = 1500;
+  // The rest of that slower path, after the check, before the thread is off
+  // the CPU.
+  PSPFreshBlockNs = 20000;
+  PSPPipeCheckNs = 2900;
+  PSPThreadEndCheckNs = 2000;
   // Thread manager call costs (ns) as a test on hardware measures them.
   PSPCreateThreadNs = 185000;
   PSPStartThreadNs = 15000;
   PSPFirstRunNs = 13000;
   PSPExitThreadNs = 13000;
   PSPDeleteThreadNs = 65000;
-  PSPTerminateThreadNs = 8000;
+  PSPTerminateThreadNs = 10000;
   PSPSyncCallNs = 2500;
+  // Long calls are spent in slices this long.
+  PSPBusyChunkNs = 10000;
+  PSPBusyResumeNs = 20000;
+  PSPNotifyWakeNs = 8000;
+  // Leaving an interrupt that ran a handler, and handing the CPU to another
+  // thread from there.
+  PSPIntrExitNs = 30000;
+  PSPIntrDispatchNs = 20000;
   // Thread event handler kinds.
   PSPThreadEventCreate = 1;
   PSPThreadEventStart = 2;
@@ -205,7 +218,9 @@ end;
 
 procedure TPSPThread.SetResult(Value: Cardinal);
 begin
-  if (Frames.Count > 0) and (Frames.Last.Kind = fkCallback) and Frames.Last.WasWaiting then
+  // A wait the thread is blocked in belongs to the level it runs at.
+  if ((Status and PSPThreadWaiting) = 0) and (Frames.Count > 0) and (Frames.Last.Kind = fkCallback) and
+    Frames.Last.WasWaiting then
   begin
     // The wait belongs to the context the callback frame restores.
     var F := Frames.Last;
@@ -297,6 +312,7 @@ begin
   FBlocks.Clear;
   for var I := 0 to 127 do
     FReady[I].Clear;
+  FillChar(FReadyMask, SizeOf(FReadyMask), 0);
   FThreads.Clear;
   FTimers.Clear;
   FIntFrames.Clear;
@@ -304,7 +320,13 @@ begin
   FVolatileWaiters.Clear;
   FEventHandlers.Clear;
   FillChar(FSubIntr, SizeOf(FSubIntr), 0);
-  FillChar(FIntrEnabled, SizeOf(FIntrEnabled), 0);
+  FillChar(FIntrHandlers, SizeOf(FIntrHandlers), 0);
+  // Audio, DMA, GE, VBlank, ME and the last one belong to firmware drivers.
+  for var I in [10, 21, 25, 30, 31, 67] do
+  begin
+    FIntrHandlers[I].Handler := $88000000;
+    FIntrHandlers[I].Enabled := True;
+  end;
   FCurrent := nil;
   FNextUID := $00100001;
   FTimerSeq := 0;
@@ -335,6 +357,9 @@ begin
   FIntStack := FKernelPartition.Alloc($10000, akLow, 0, 256, 'interrupt stack') + $10000;
   // The first 16 KB of user memory belong to the kernel on hardware.
   FUserPartition.Alloc($4000, akAddress, PSPUserBase, 256, 'reserved');
+  // The recording setup (PSPLink) keeps about 280 KB near the top of user
+  // memory, under a 2 KB hole.
+  FUserPartition.Alloc($45800, akAddress, PSPUserEnd - $46000, 256, 'psplink');
   // The two idle threads have ids of their own.
   FIdleThreadIds[0] := FNextUID;
   Inc(FNextUID, 2);
@@ -343,6 +368,66 @@ begin
   FScheduler.Cancel(TPSPEvent.Kernel);
   FHLE.Clear;
   RegisterAll;
+  FHLE.Register('PSPKernelInternal', $00000001, 'kernel busy', hKernelBusy);
+  FBusyStub := FTrapBase + $10;
+  FMemory.Write32(FBusyStub, (Cardinal(FHLE.Find('PSPKernelInternal', $00000001)) shl 6) or $0C);
+  FMemory.Write32(FBusyStub + 4, 0);
+end;
+
+procedure TPSPKernel.ScrambleCallerSaved;
+begin
+  var C := PPSPContext(@FCPU.Ctx);
+  C.GPR[1] := $DEADBEEF;
+  for var I := 4 to 15 do
+    C.GPR[I] := $DEADBEEF;
+  C.GPR[24] := $DEADBEEF;
+  C.GPR[25] := $DEADBEEF;
+  C.HI := $DEADBEEF;
+  C.LO := $DEADBEEF;
+end;
+
+procedure TPSPKernel.SpendPreemptible(Ns: Int64);
+begin
+  var T := FCurrent;
+  if (T = nil) or InInterrupt or (Ns <= PSPBusyChunkNs) then
+  begin
+    Spend(Ns);
+    Exit;
+  end;
+  // The call returns through a stub that spends the time a slice at a time.
+  T.BusyNs := Ns;
+  T.BusyAt := FScheduler.Now;
+  T.BusyPC := FCPU.Ctx.PC;
+  T.BusyNPC := FCPU.Ctx.NPC;
+  FCPU.Ctx.PC := FBusyStub;
+  FCPU.Ctx.NPC := FBusyStub + 4;
+end;
+
+procedure TPSPKernel.hKernelBusy;
+begin
+  // Registers stay as the call left them.
+  var T := FCurrent;
+  if T = nil then
+    Exit;
+  // Taken off the CPU in the middle, the call costs more to pick up again.
+  if FScheduler.Now > T.BusyAt + 2000 then
+    Spend(PSPBusyResumeNs);
+  var Chunk := T.BusyNs;
+  if Chunk > PSPBusyChunkNs then
+    Chunk := PSPBusyChunkNs;
+  Dec(T.BusyNs, Chunk);
+  Spend(Chunk - Int64(FHLE.CycleCost) * 1000 div FScheduler.MHz);
+  T.BusyAt := FScheduler.Now;
+  if T.BusyNs > 0 then
+  begin
+    FCPU.Ctx.PC := FBusyStub;
+    FCPU.Ctx.NPC := FBusyStub + 4;
+  end
+  else
+  begin
+    FCPU.Ctx.PC := T.BusyPC;
+    FCPU.Ctx.NPC := T.BusyNPC;
+  end;
 end;
 
 function TPSPKernel.AddObject(Obj: TPSPKernelObject): Cardinal;
@@ -433,24 +518,40 @@ end;
 
 procedure TPSPKernel.PushReady(T: TPSPThread; Front: Boolean);
 begin
-  var Q := FReady[T.Priority and 127];
+  var P := T.Priority and 127;
+  var Q := FReady[P];
   Q.Remove(T);
   if Front then
     Q.Insert(0, T)
   else
     Q.Add(T);
+  FReadyMask[P shr 5] := FReadyMask[P shr 5] or (Cardinal(1) shl (P and 31));
 end;
 
 procedure TPSPKernel.RemoveReady(T: TPSPThread);
 begin
-  FReady[T.Priority and 127].Remove(T);
+  var P := T.Priority and 127;
+  var Q := FReady[P];
+  Q.Remove(T);
+  if Q.Count = 0 then
+    FReadyMask[P shr 5] := FReadyMask[P shr 5] and not (Cardinal(1) shl (P and 31));
 end;
+
+{$Q-}
+function LowestBit(X: Cardinal): Integer;
+const
+  DeBruijn: array[0..31] of Byte = (0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21,
+    19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9);
+begin
+  Result := DeBruijn[((X and (not X + 1)) * $077CB531) shr 27];
+end;
+{$IFDEF PSP_CHECKED}{$Q+}{$ENDIF}
 
 function TPSPKernel.BestReady: TPSPThread;
 begin
-  for var P := 0 to 127 do
-    if FReady[P].Count > 0 then
-      Exit(FReady[P][0]);
+  for var W := 0 to 3 do
+    if FReadyMask[W] <> 0 then
+      Exit(FReady[W * 32 + LowestBit(FReadyMask[W])][0]);
   Result := nil;
 end;
 
@@ -472,6 +573,18 @@ end;
 function TPSPKernel.CanWait: Boolean;
 begin
   Result := (FCurrent <> nil) and not InInterrupt and not FDispatchSuspended and FCPU.InterruptsEnabled;
+end;
+
+function TPSPKernel.RefuseWait: Boolean;
+begin
+  // A call that may block is turned away before it looks at anything else.
+  Result := True;
+  if InInterrupt or (FCurrent = nil) then
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT)
+  else if not CanWait then
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT)
+  else
+    Result := False;
 end;
 
 procedure TPSPKernel.T_(const Fmt: string; const Args: array of const);
@@ -560,7 +673,10 @@ end;
 
 procedure TPSPKernel.AfterSyscall;
 begin
-  if FRescheduleNeeded then
+  // An interrupt about to be taken runs first; the dispatch happens on its
+  // way out.
+  if FRescheduleNeeded and not ((FPendingInts.Count > 0) and (FIntFrames.Count = 0) and (FIntrSuspendLevel = 0) and
+    FCPU.InterruptsEnabled) then
     Reschedule;
 end;
 
@@ -575,7 +691,7 @@ begin
   TimeoutEnd := FScheduler.Now + Us * 1000;
   if Us < PSPMinTimeoutUs then
     Us := PSPMinTimeoutUs;
-  Result := FScheduler.Now + Us * 1000 + PSPWaitLatencyNs;
+  Result := FScheduler.Now + Us * 1000;
 end;
 
 procedure TPSPKernel.BeginWait(Kind: Integer; Obj: TPSPKernelObject; Id, TimeoutPtr: Cardinal; AllowCB: Boolean;
@@ -608,7 +724,11 @@ begin
     if I <= High(T.Wait.Data) then
       T.Wait.Data[I] := Data[I];
   var Check: Int64 := PSPWaitCheckNs;
-  if T.Fresh then
+  if FWaitCheckNs <> 0 then
+    Check := FWaitCheckNs;
+  FWaitCheckNs := 0;
+  var WasFresh := T.Fresh;
+  if WasFresh then
     Check := PSPFreshCheckNs;
   T.Fresh := False;
   if (TimeoutPtr <> 0) and ((FScheduler.Now + Check) div 1000 > FScheduler.Now div 1000 + Int64(FMemory.Read32(TimeoutPtr))) then
@@ -636,6 +756,8 @@ begin
     StartCallbacks(T);
     Exit;
   end;
+  if WasFresh then
+    Spend(PSPFreshBlockNs);
   RequestReschedule;
 end;
 
@@ -729,6 +851,8 @@ begin
   DropWaitTimer(T);
   if (Result <> 0) and Assigned(T.Wait.Abort) then
     T.Wait.Abort(T);
+  if (Result <> 0) and T.Wait.FailAsZero then
+    Result := 0;
   T.Wait := Default(TPSPWait);
   T.CallbacksPending := False;
   T.SetResult(Result);
@@ -799,10 +923,16 @@ begin
       tkWait:
         if (E.Thread <> nil) and E.Thread.IsWaiting then
         begin
+          // The timer interrupt and the wakeup take the CPU a while, from
+          // whatever was running.
           if E.Thread.Wait.Kind = PSPWaitDelay then
-            EndWait(E.Thread, 0)
+          begin
+            Spend(PSPDelayLatencyNs);
+            EndWait(E.Thread, 0);
+          end
           else
           begin
+            Spend(PSPWaitLatencyNs);
             var Obj := E.Thread.Wait.Obj;
             EndWait(E.Thread, SCE_KERNEL_ERROR_WAIT_TIMEOUT);
             if (Obj <> nil) and FObjects.ContainsKey(Obj.UID) then
@@ -974,7 +1104,8 @@ end;
 function TPSPKernel.CheckCallbacksNow(KeepResult: Boolean): Boolean;
 begin
   var T := FCurrent;
-  if (T = nil) or not T.HasPendingCallbacks or T.InCallback then
+  // One level of callbacks inside a callback, as with blocking CB waits.
+  if (T = nil) or not T.HasPendingCallbacks or (T.CallbackDepth >= 2) then
     Exit(False);
   StartCallbacks(T, KeepResult);
   Result := True;
@@ -1025,10 +1156,15 @@ begin
       F.OnReturn(Ret);
     if FIntFrames.Count = 0 then
     begin
+      DropStaleInterrupts;
       if FPendingInts.Count > 0 then
         StartNextInterrupt
       else
       begin
+        Spend(PSPIntrExitNs);
+        var Best := BestReady;
+        if (Best <> nil) and ((FCurrent = nil) or (Best.Priority < FCurrent.Priority)) and not FDispatchSuspended then
+          Spend(PSPIntrDispatchNs);
         if FCurrent = nil then
         begin
           FIdle := True;
@@ -1065,7 +1201,15 @@ end;
 procedure TPSPKernel.ThreadExitTrap;
 begin
   Spend(PSPExitThreadNs);
+  var T := FCurrent;
   ExitCurrent(FCPU.Ctx.GPR[2]);
+  if (T <> nil) and T.DeleteOnExit and (FCurrent = T) then
+  begin
+    T.Ctx := FCPU.Ctx;
+    FCurrent := nil;
+    DeleteThread(T);
+    Reschedule;
+  end;
 end;
 
 procedure TPSPKernel.Trap(Code: Cardinal);
@@ -1080,7 +1224,8 @@ end;
 
 { Interrupts }
 
-procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn);
+procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn;
+  EntryNs: Int64; OwnerUID: Cardinal);
 begin
   var P := Default(TPSPPendingInterrupt);
   P.Func := Func;
@@ -1090,6 +1235,8 @@ begin
   if Length(Args) > 3 then P.A3 := Args[3];
   P.GP := GP;
   P.OnReturn := OnReturn;
+  P.EntryNs := EntryNs;
+  P.OwnerUID := OwnerUID;
   FPendingInts.Enqueue(P);
   FCPU.Stop;
 end;
@@ -1135,6 +1282,14 @@ begin
   end;
 end;
 
+procedure TPSPKernel.DropStaleInterrupts;
+begin
+  // Handlers of alarms and timers deleted while they were pending never run.
+  while (FPendingInts.Count > 0) and (FPendingInts.Peek.OwnerUID <> 0) and
+    not FObjects.ContainsKey(FPendingInts.Peek.OwnerUID) do
+    FPendingInts.Dequeue;
+end;
+
 procedure TPSPKernel.StartNextInterrupt;
 begin
   var P := FPendingInts.Dequeue;
@@ -1146,11 +1301,14 @@ begin
   FIdle := False;
   if FCurrent <> nil then
     Inc(FCurrent.IntrPreemptCount);
+  if P.EntryNs > 0 then
+    Spend(P.EntryNs);
   EnterGuest(P.Func, FIntStack - 64, P.GP, [P.A0, P.A1, P.A2, P.A3]);
 end;
 
 procedure TPSPKernel.ProcessInterrupts;
 begin
+  DropStaleInterrupts;
   if (FPendingInts.Count = 0) or (FIntFrames.Count > 0) then
     Exit;
   if (FIntrSuspendLevel > 0) or not FCPU.InterruptsEnabled then
@@ -1176,7 +1334,7 @@ end;
 function TPSPKernel.Partition(Id: Integer): TPSPPartition;
 begin
   case Id of
-    1: Result := FKernelPartition;
+    1, 3, 4: Result := FKernelPartition;
     2, 6: Result := FUserPartition;
     5: Result := FVolatilePartition;
   else

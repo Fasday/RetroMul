@@ -14,6 +14,7 @@ $dirs += $src
 $dirs += "$src\gpu\vulkan"
 $dirs += "$src\gpu\shaders"
 $dirs += "$root\dependencies\PCMAudio"
+$dirs += "$root\dependencies\Delphi7z"
 $dirs += $PSScriptRoot
 $paths = $dirs -join ';'
 $name = [IO.Path]::GetFileNameWithoutExtension($Project)

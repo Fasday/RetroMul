@@ -55,8 +55,10 @@ type
     Avc: TPSPAvc;
     Atrac: TATRAC3PlusDecoder;
     PackPos: Integer;
+    // Where Start's initial pts put playback: a pack (from the EP map) and its picture.
+    SeekPack, FirstFrame: Integer;
     Ready: TQueue<TPSPPicture>;
-    Decoded: Integer;
+    Decoded, AudioFrames: Integer;
     StreamDone: Boolean;
     Shown: Integer;
     ShownPic: TPSPPicture;
@@ -69,15 +71,12 @@ type
     DeferNow, DeferClocks: Int64;
     LastVideoUpdates: Integer;
     ForceWrite: Boolean;
-    CacheValid: Boolean;
-    CacheFrame: Integer;
-    CacheBuffer: Cardinal;
-    CacheWidth, CacheFormat: Integer;
     constructor Create;
     destructor Destroy; override;
     procedure StopPlayback;
     procedure StartPlayback;
     function NextPicture(out Pic: TPSPPicture): Boolean;
+    function NextAudio(out Pcm: TArray<SmallInt>): Boolean;
   end;
 
   // A scePsmf handle: the guest's struct address and what was parsed into it.
@@ -123,6 +122,7 @@ type
     procedure hPlayerConfigPlayer;
     procedure hPlayerGetCurrentVideoStream;
     procedure hPlayerGetCurrentAudioStream;
+    procedure SelectStream(Kind: Integer; Specific: Boolean);
     procedure hPlayerSelectVideo;
     procedure hPlayerSelectAudio;
     procedure hPlayerSelectSpecificVideo;
@@ -202,6 +202,7 @@ begin
   AudioQ := nil;
   Ready.Clear;
   Decoded := 0;
+  AudioFrames := 0;
   StreamDone := False;
   Shown := -1;
   Updates := 0;
@@ -211,7 +212,6 @@ begin
   PendingFinish := False;
   LastVideoUpdates := -1;
   ForceWrite := True;
-  CacheValid := False;
 end;
 
 procedure TPSPPsmfPlayer.StartPlayback;
@@ -237,7 +237,7 @@ begin
         Starved := True;
     end;
   end;
-  PackPos := StreamStart;
+  PackPos := StreamStart + SeekPack * PSMFPacketSize;
 end;
 
 function TPSPPsmfPlayer.NextPicture(out Pic: TPSPPicture): Boolean;
@@ -252,12 +252,6 @@ begin
     begin
       Demux.FeedPack(@Data[PackPos]);
       Inc(PackPos, PSMFPacketSize);
-      if AudioQ <> nil then
-        while Demux.HasAu(AudioQ) do
-        begin
-          var A: TPSPAccessUnit;
-          Demux.NextAu(AudioQ, A);
-        end;
     end;
     var Au: TPSPAccessUnit;
     var Pictures: TArray<TPSPPicture>;
@@ -277,6 +271,35 @@ begin
   end;
   Pic := Ready.Dequeue;
   Inc(Decoded);
+  Result := True;
+end;
+
+function TPSPPsmfPlayer.NextAudio(out Pcm: TArray<SmallInt>): Boolean;
+begin
+  Pcm := nil;
+  if AudioQ = nil then
+    Exit(False);
+  while not Demux.HasAu(AudioQ) and (PackPos + PSMFPacketSize <= Length(Data)) do
+  begin
+    Demux.FeedPack(@Data[PackPos]);
+    Inc(PackPos, PSMFPacketSize);
+  end;
+  var Au: TPSPAccessUnit;
+  if not Demux.NextAu(AudioQ, Au) then
+    Exit(False);
+  Demux.TakeFreed;
+  Inc(AudioFrames);
+  try
+    if Atrac = nil then
+      Atrac := TATRAC3PlusDecoder.Create(2, 2);
+    if (Length(Au.Data) > 8) and (Au.Data[0] = $0F) and (Au.Data[1] = $D0) then
+      Pcm := Atrac.Decode(Copy(Au.Data, 8, Length(Au.Data) - 8));
+  except
+    on E: Exception do
+      Pcm := nil;
+  end;
+  if Length(Pcm) < 4096 then
+    SetLength(Pcm, 4096);
   Result := True;
 end;
 
@@ -473,18 +496,6 @@ begin
   var Path := FMemory.ReadString(Name, 1024);
   var Data: TBytes;
   var Err := FSystem.IO.ReadAll(Path, Data);
-  if (Err <> 0) and Path.StartsWith('host0:/') then
-  begin
-    // pspautotests name files from the suite's root, which is host0: on hardware;
-    // here host0: is the test's folder.
-    var Rest := Path.Substring(7);
-    while (Err <> 0) and (Rest.IndexOf('/') > 0) do
-    begin
-      Rest := Rest.Substring(Rest.IndexOf('/') + 1);
-      if Rest <> '' then
-        Err := FSystem.IO.ReadAll('host0:/' + Rest, Data);
-    end;
-  end;
   var Header: TPSPPsmfHeader;
   if (Err <> 0) or (Offset < 0) or (Offset + PSMFPacketSize > Length(Data)) or
     (Header.Parse(Copy(Data, Offset, PSMFPacketSize)) <> 0) then
@@ -586,10 +597,29 @@ begin
   var ANum := Integer(FMemory.Read32(D + 12));
   var PMode := Integer(FMemory.Read32(D + 16));
   var PSpeed := Integer(FMemory.Read32(D + 20));
-  if (InitPts <> 0) or (PMode < 0) or (PMode > 3) then
+  if (PMode < 0) or (PMode > 3) then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_PARAM);
     Exit;
+  end;
+  // A start other than the beginning needs an entry point at or before it.
+  var SeekPack := 0;
+  var SeekFrame := 0;
+  if InitPts <> 0 then
+  begin
+    var Entry := -1;
+    var V := P.Header.Find(PSMFKindAvc, Max(VNum, 0));
+    if (InitPts > 0) and (V >= 0) then
+      for var E := 0 to High(P.Header.Streams[V].EP) do
+        if P.Header.Streams[V].EP[E].Pts - P.Header.StartTime <= InitPts then
+          Entry := E;
+    if Entry < 0 then
+    begin
+      FHLE.Result(ERROR_PSMFPLAYER_INVALID_PARAM);
+      Exit;
+    end;
+    SeekPack := Integer(P.Header.Streams[V].EP[Entry].Offset);
+    SeekFrame := Integer((P.Header.Streams[V].EP[Entry].Pts - P.Header.StartTime) div FrameTicks);
   end;
   if (VCodec <> 0) and (VCodec <> $0E) then
   begin
@@ -634,6 +664,10 @@ begin
   P.Mode := PMode;
   P.Speed := PSpeed;
   var WasPlaying := P.Status <> PsmfStatusStandby;
+  if (SeekPack <> P.SeekPack) or (SeekFrame <> P.FirstFrame) then
+    Restart := True;
+  P.SeekPack := SeekPack;
+  P.FirstFrame := SeekFrame;
   if Restart then
     P.StartPlayback;
   P.Status := PsmfStatusPlaying;
@@ -772,11 +806,6 @@ begin
     PSPWritePicture(Pic, Dest, Width, Format);
     FMemory.Touched(Buffer, Bytes);
   end;
-  P.CacheValid := True;
-  P.CacheFrame := P.Shown;
-  P.CacheBuffer := Buffer;
-  P.CacheWidth := Width;
-  P.CacheFormat := Format;
 end;
 
 function TPSPPsmf.AdvanceVideo(P: TPSPPsmfPlayer): Boolean;
@@ -788,14 +817,18 @@ begin
   var Pic: TPSPPicture;
   if not P.NextPicture(Pic) then
     Exit;
-  Inc(P.Shown);
+  var First := P.Shown < 0;
+  if First then
+    P.Shown := P.FirstFrame
+  else
+    Inc(P.Shown);
   P.ShownPic := Pic;
   P.AfterLast := 0;
-  if P.Shown = 0 then
+  if First then
     P.NextDue := 8
   else
     case P.Mode of
-      0: Inc(P.NextDue, 2);
+      0, 4, 5: Inc(P.NextDue, 2);
       1: Inc(P.NextDue, 6);
     else
       P.NextDue := MaxInt;
@@ -859,7 +892,23 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
-  FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
+  // Audio runs a few frames ahead of the video clock (2048 samples = 4180 ticks).
+  if (P.Status <> PsmfStatusPlaying) or P.Starved or (P.AudioQ = nil) or (P.Updates < 5) or
+    (Int64(P.AudioFrames) * 4180 > Int64(P.Updates - 5) * 1502 + 4 * 4180) then
+  begin
+    FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
+    Exit;
+  end;
+  var Pcm: TArray<SmallInt>;
+  if not P.NextAudio(Pcm) then
+  begin
+    FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
+    Exit;
+  end;
+  var Dest := FHLE.Arg(1);
+  if Dest <> 0 then
+    FMemory.WriteBytes(Dest, Pcm[0], $2000);
+  FHLE.Result(0);
 end;
 
 procedure TPSPPsmf.hPlayerGetCurrentStatus;
@@ -966,7 +1015,7 @@ begin
   FHLE.Result(0);
 end;
 
-procedure TPSPPsmf.hPlayerSelectVideo;
+procedure TPSPPsmf.SelectStream(Kind: Integer; Specific: Boolean);
 begin
   var P := PlayerOf(FHLE.Arg(0));
   if (P = nil) or (P.Status <> PsmfStatusPlaying) then
@@ -974,22 +1023,76 @@ begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_STATUS);
     Exit;
   end;
-  FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
+  var Current := P.VideoNum;
+  if Kind <> PSMFKindAvc then
+    Current := P.AudioNum;
+  // Only another stream that is in the header and has data in the movie.
+  var Usable :=
+    function(Num: Integer): Boolean
+    begin
+      var I := P.Header.Find(Kind, Num);
+      Result := (I >= 0) and (Num <> Current) and
+        PSMFStreamPresent(P.Data, P.StreamStart, P.Header.Streams[I].StreamId, P.Header.Streams[I].PrivateId);
+    end;
+  var Num := -1;
+  if Specific then
+  begin
+    var Codec := FHLE.ArgInt(1);
+    var Ok := ((Kind = PSMFKindAvc) and ((Codec = 0) or (Codec = $0E))) or
+      ((Kind <> PSMFKindAvc) and ((Codec = 1) or (Codec = $0F)));
+    if Ok and Usable(FHLE.ArgInt(2)) then
+      Num := FHLE.ArgInt(2);
+  end
+  else
+  begin
+    var Count := P.Header.Count(Kind);
+    for var K := 1 to Count - 1 do
+      if Usable((Current + K) mod Count) then
+      begin
+        Num := (Current + K) mod Count;
+        Break;
+      end;
+  end;
+  if Num < 0 then
+  begin
+    FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
+    Exit;
+  end;
+  if Kind = PSMFKindAvc then
+  begin
+    P.VideoNum := Num;
+    P.StartPlayback;
+  end
+  else
+  begin
+    P.AudioNum := Num;
+    if P.AudioQ <> nil then
+      P.Demux.RemoveStream(P.AudioQ);
+    var I := P.Header.Find(Kind, Num);
+    P.AudioQ := P.Demux.AddStream(PSMFKindAtrac, $BD, P.Header.Streams[I].PrivateId);
+    FreeAndNil(P.Atrac);
+  end;
+  FHLE.Result(0);
+end;
+
+procedure TPSPPsmf.hPlayerSelectVideo;
+begin
+  SelectStream(PSMFKindAvc, False);
 end;
 
 procedure TPSPPsmf.hPlayerSelectAudio;
 begin
-  hPlayerSelectVideo;
+  SelectStream(PSMFKindAtrac, False);
 end;
 
 procedure TPSPPsmf.hPlayerSelectSpecificVideo;
 begin
-  hPlayerSelectVideo;
+  SelectStream(PSMFKindAvc, True);
 end;
 
 procedure TPSPPsmf.hPlayerSelectSpecificAudio;
 begin
-  hPlayerSelectVideo;
+  SelectStream(PSMFKindAtrac, True);
 end;
 
 procedure TPSPPsmf.hPlayerGetCurrentPlayMode;
@@ -1017,15 +1120,21 @@ begin
   P.ForceWrite := True;
   if (M = 4) or (M = 5) then
   begin
-    FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
-    Exit;
-  end;
-  if (M < 0) or (M > 3) then
+    // Fast forward and rewind jump between entry points.
+    var V := P.Header.Find(PSMFKindAvc, P.VideoNum);
+    if (V < 0) or (Length(P.Header.Streams[V].EP) = 0) then
+    begin
+      FHLE.Result(ERROR_PSMFPLAYER_INVALID_STREAM);
+      Exit;
+    end;
+    FHLE.Unimplemented('fast forward and rewind');
+  end
+  else if (M < 0) or (M > 3) then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_INVALID_CONFIG);
     Exit;
   end;
-  if (M <= 1) and (P.NextDue = MaxInt) then
+  if (M in [0, 1, 4, 5]) and (P.NextDue = MaxInt) then
     P.NextDue := P.Updates + 2;
   P.Mode := M;
   FHLE.Result(0);

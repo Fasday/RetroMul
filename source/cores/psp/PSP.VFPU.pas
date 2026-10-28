@@ -4,7 +4,7 @@ unit PSP.VFPU;
 // and its load/store instructions. Installs its decoder into PSP.CPU.
 // A register field names S<m><c><r>; Ctx.V holds it at m*16 + c*4 + r, so a
 // column is four consecutive words.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
 
@@ -171,9 +171,38 @@ begin
   end;
 end;
 
+procedure Latch(C: TPSPCPU; const R: TV4; Lanes: Cardinal); inline;
+begin
+  for var I := 0 to 3 do
+    if ((Lanes shr I) and 1) <> 0 then
+      C.VLatch[I] := R[I];
+end;
+
 function ReadS(C: TPSPCPU; Op: Cardinal; N: Integer; var R: TV4): Cardinal; inline;
 begin
   Result := ReadPfx(C, RegS(Op), N, C.Ctx.VC[VFPU_PFXS], R);
+  if C.Ctx.VC[VFPU_PFXS] <> PFX_NONE then
+    Latch(C, R, not Result and $F);
+end;
+
+// The S read of the unpack instructions: lanes the swizzle can't reach replay
+// the latch instead of reading zero, and unprefixed reads latch too.
+procedure ReadSL(C: TPSPCPU; Op: Cardinal; N: Integer; var R: TV4);
+begin
+  var Pfx := C.Ctx.VC[VFPU_PFXS];
+  if Pfx = PFX_NONE then
+  begin
+    LoadV(C, RegS(Op), N, R);
+    Latch(C, R, (Cardinal(1) shl N) - 1);
+    Exit;
+  end;
+  var Raw: TV4;
+  LoadV(C, RegS(Op), N, Raw);
+  var Z := ApplyPfx(Raw, N, Pfx, R);
+  Latch(C, R, not Z and $F);
+  for var I := 0 to 3 do
+    if ((Z shr I) and 1) <> 0 then
+      R[I] := C.VLatch[I];
 end;
 
 function ReadT(C: TPSPCPU; Op: Cardinal; N: Integer; var R: TV4): Cardinal; inline;

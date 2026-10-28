@@ -185,7 +185,7 @@ end;
 procedure OpVUC2I(C: TPSPCPU; Op: Cardinal);
 begin
   var S, D: TV4;
-  ReadS(C, Op, 1, S);
+  ReadSL(C, Op, 1, S);
   for var I := 0 to 3 do
     D[I] := (((S[0] shr (I * 8)) and $FF) * $01010101) shr 1;
   WriteD(C, Op, 4, D, 0);
@@ -195,7 +195,7 @@ end;
 procedure OpVC2I(C: TPSPCPU; Op: Cardinal);
 begin
   var S, D: TV4;
-  ReadS(C, Op, 1, S);
+  ReadSL(C, Op, 1, S);
   for var I := 0 to 3 do
     D[I] := ((S[0] shr (I * 8)) and $FF) shl 24;
   WriteD(C, Op, 4, D, 0);
@@ -208,7 +208,7 @@ begin
   if N > 2 then
     N := 2;
   var S, D: TV4;
-  ReadS(C, Op, N, S);
+  ReadSL(C, Op, N, S);
   for var I := 0 to N - 1 do
   begin
     D[I * 2] := (S[I] and $FFFF) shl 15;
@@ -224,7 +224,7 @@ begin
   if N > 2 then
     N := 2;
   var S, D: TV4;
-  ReadS(C, Op, N, S);
+  ReadSL(C, Op, N, S);
   for var I := 0 to N - 1 do
   begin
     D[I * 2] := (S[I] and $FFFF) shl 16;
@@ -441,31 +441,73 @@ end;
 
 { Random numbers }
 
+// The generator is three 32-bit sources added together: a 69069x+1 congruential
+// one, a 13/17/5 xorshift and a lag-2 add-with-carry (x' = 2x + x_prev + c). RCXi
+// holds the low halves of the four words in i and the high halves in i+4, as
+// the mantissas of numbers in [1, 2); the carry is spread over bits 16-19.
+procedure RndUnpack(C: TPSPCPU; var W: TV4; var Carry: Cardinal);
+begin
+  Carry := 0;
+  for var I := 0 to 3 do
+    W[I] := (C.Ctx.VC[VFPU_RCX0 + I] and $FFFF) or ((C.Ctx.VC[VFPU_RCX0 + 4 + I] and $FFFF) shl 16);
+  for var I := 0 to 7 do
+    Carry := Carry or (((C.Ctx.VC[VFPU_RCX0 + I] shr 16) and $F) shl (I * 4));
+end;
+
+procedure RndPack(C: TPSPCPU; const W: TV4; Carry: Cardinal);
+begin
+  for var I := 0 to 3 do
+  begin
+    C.Ctx.VC[VFPU_RCX0 + I] := $3F800000 or (W[I] and $FFFF) or (((Carry shr (I * 4)) and $F) shl 16);
+    C.Ctx.VC[VFPU_RCX0 + 4 + I] := $3F800000 or (W[I] shr 16) or (((Carry shr (16 + I * 4)) and $F) shl 16);
+  end;
+end;
+
 function RndNext(C: TPSPCPU): Cardinal;
 begin
-  // Placeholder generator over RCX0..RCX7 until the hardware's is known.
-  var X := C.Ctx.VC[VFPU_RCX0] xor (C.Ctx.VC[VFPU_RCX0 + 1] shl 7);
-  X := X xor (X shr 9) xor (X shl 13);
-  for var I := 7 downto 1 do
-    C.Ctx.VC[VFPU_RCX0 + I] := C.Ctx.VC[VFPU_RCX0 + I - 1];
-  C.Ctx.VC[VFPU_RCX0] := X;
-  Result := X;
+  var W: TV4;
+  var Carry: Cardinal;
+  RndUnpack(C, W, Carry);
+  W[0] := W[0] * 69069 + 1;
+  var J := W[1];
+  J := J xor (J shl 13);
+  J := J xor (J shr 17);
+  J := J xor (J shl 5);
+  W[1] := J;
+  // The carry kept for the next step isn't this sum's: it is the overflow of
+  // 2*prev + x + c past 2^32, less one, where x above prev adds up to c more.
+  var T := UInt64(W[2]) * 2 + W[3] + Carry;
+  if W[3] > W[2] then
+    if W[3] - W[2] < Carry then
+      Inc(T, W[3] - W[2])
+    else
+      Inc(T, Carry);
+  var S := Cardinal(UInt64(W[3]) * 2 + W[2] + Carry);
+  W[2] := W[3];
+  W[3] := S;
+  Carry := Cardinal(T shr 32);
+  if Carry > 0 then
+    Dec(Carry);
+  RndPack(C, W, Carry);
+  Result := W[0] + W[1] + W[3];
 end;
 
 procedure OpVRNDS(C: TPSPCPU; Op: Cardinal);
 begin
   var Seed := C.Ctx.V[VecIdx[0, RegS(Op)][0]];
-  for var I := 0 to 7 do
-    C.Ctx.VC[VFPU_RCX0 + I] := $3F800000;
-  C.Ctx.VC[VFPU_RCX0] := $3F800000 or (Seed and $FFFF);
+  var W: TV4;
+  for var I := 0 to 3 do
+    W[I] := Seed;
+  RndPack(C, W, Seed);
   EatPfx(C);
 end;
 
+// Lanes are drawn from the last one down; only the first draw sees the D prefix.
 procedure DoRnd(C: TPSPCPU; Op: Cardinal; Kind: Integer);
 begin
   var N := VSz(Op);
   var D: TV4;
-  for var I := 0 to N - 1 do
+  for var I := N - 1 downto 0 do
   begin
     var X := RndNext(C);
     case Kind of
@@ -475,7 +517,7 @@ begin
       D[I] := $40000000 or (X and $7FFFFF);
     end;
   end;
-  WriteD(C, Op, N, D, 0);
+  WriteLast(C, RegD(Op), N, D, False);
   EatPfx(C);
 end;
 
@@ -511,7 +553,7 @@ begin
     2: C.Ctx.VC[Index] := Value and $FFF;
     3: C.Ctx.VC[Index] := Value and $3F;
     4..6: C.Ctx.VC[Index] := Value;
-    8..15: C.Ctx.VC[Index] := Value;
+    8..15: C.Ctx.VC[Index] := $3F800000 or (Value and $FFFFF);
   end;
 end;
 

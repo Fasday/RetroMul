@@ -30,6 +30,8 @@ begin
   H.Register(U, $E860E75E, 'sceKernelUtilsMt19937Init', hMt19937Init);
   H.Register(U, $06FB8A63, 'sceKernelUtilsMt19937UInt', hMt19937UInt);
   H.Register(U, $37FB5C42, 'sceKernelGetGPI', hGetGPI);
+  H.Register('Kernel_Library', $A089ECA4, 'sceKernelMemset', hKernelMemset);
+  H.Register('Kernel_Library', $1839852A, 'sceKernelMemcpy', hKernelMemcpy);
   H.Register(U, $6AD345D7, 'sceKernelSetGPO', hZero);
 
   H.Register(P, $FDB5BFE9, 'scePowerGetCpuClockFrequencyInt', hPowerGetCpu);
@@ -87,6 +89,9 @@ begin
   H.Register(P, $23C31FFE, 'scePowerVolatileMemLock', hPowerVolatileLock);
   H.Register(P, $FA97A599, 'scePowerVolatileMemTryLock', hPowerVolatileTryLock);
   H.Register(P, $B3EDD801, 'scePowerVolatileMemUnlock', hPowerVolatileUnlock);
+  H.Register(S, $3E0271D3, 'sceKernelVolatileMemLock', hVolatileMemLock);
+  H.Register(S, $A14F40B2, 'sceKernelVolatileMemTryLock', hVolatileMemTryLock);
+  H.Register(S, $A569E425, 'sceKernelVolatileMemUnlock', hVolatileMemUnlock);
   H.Register(S, $EADB1BD7, 'sceKernelPowerLock', hKernelPowerLock);
   H.Register(S, $3AEE7261, 'sceKernelPowerUnlock', hKernelPowerLock);
   H.Register(S, $090CCB3F, 'sceKernelPowerTick', hKernelPowerTick);

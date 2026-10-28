@@ -12,7 +12,8 @@ type
     function Retry(T: TPSPThread): Boolean;
     // Takes the first message: 0 when it worked, else the error.
     function Take(out Msg: Cardinal): Cardinal;
-    function Contains(Msg: Cardinal): Boolean;
+    // 0 if Msg is not linked in yet; the error when it is or the ring is broken.
+    function CheckNew(Msg: Cardinal): Cardinal;
     procedure Put(Msg: Cardinal);
   end;
 
@@ -57,18 +58,20 @@ begin
     Result := Kernel.Memory.Read32(Tail);
 end;
 
-function TPSPMbx.Contains(Msg: Cardinal): Boolean;
+function TPSPMbx.CheckNew(Msg: Cardinal): Cardinal;
 begin
+  if Tail = 0 then
+    Exit(0);
   var P := First;
   for var I := 1 to Count do
   begin
     if P = 0 then
-      Break;
+      Exit(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
     if P = Msg then
-      Exit(True);
+      Exit(SCE_KERNEL_ERROR_MESSAGEBOX_DUPLICATE_MESSAGE);
     P := Kernel.Memory.Read32(P);
   end;
-  Result := False;
+  Result := 0;
 end;
 
 procedure TPSPMbx.Put(Msg: Cardinal);
@@ -426,14 +429,17 @@ begin
     EndWait(T, 0);
     Exit;
   end;
-  if B.Contains(Msg) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MESSAGEBOX_DUPLICATE_MESSAGE); Exit; end;
+  var Err := B.CheckNew(Msg);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   B.Put(Msg);
   FHLE.Result(0);
 end;
 
 procedure TPSPKernel.ReceiveMbxCommon(AllowCB: Boolean);
 begin
+  if RefuseWait then
+    Exit;
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
@@ -450,8 +456,6 @@ begin
       CheckCallbacksNow;
     Exit;
   end;
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   B.Waiters.Add(FCurrent);
   BeginWaitData(PSPWaitMbx, B, B.UID, FHLE.Arg(2), AllowCB, B.Retry, [OutPtr]);
@@ -588,11 +592,15 @@ end;
 // Mode: 0 waits, 1 waits with callbacks, 2 does not wait.
 procedure TPSPKernel.SendMsgPipeCommon(Mode: Integer);
 begin
+  var Buf := FHLE.Arg(1);
+  var Size := FHLE.Arg(2);
+  if Integer(Size) < 0 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  if (Mode <> 2) and RefuseWait then
+    Exit;
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
-  var Buf := FHLE.Arg(1);
-  var Size := FHLE.Arg(2);
   var WaitMode := FHLE.Arg(3);
   var ResultPtr := FHLE.Arg(4);
   var TimeoutPtr: Cardinal := 0;
@@ -653,7 +661,8 @@ begin
   end;
   if Mode = 2 then
   begin
-    if ResultPtr <> 0 then
+    // A try that fails leaves the count alone, unless it would take part.
+    if (WaitMode = 1) and (ResultPtr <> 0) then
       FMemory.Write32(ResultPtr, Done);
     FHLE.Result(SCE_KERNEL_ERROR_MPP_FULL);
     Exit;
@@ -662,6 +671,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   MP.Senders.Add(FCurrent);
+  FWaitCheckNs := PSPPipeCheckNs;
   BeginWaitData(PSPWaitMsgPipe, MP, MP.UID, TimeoutPtr, Mode = 1, MP.SendRetry,
     [Buf, Size, WaitMode, Done, 1, ResultPtr], MP.WaitAbort);
 end;
@@ -683,11 +693,15 @@ end;
 
 procedure TPSPKernel.ReceiveMsgPipeCommon(Mode: Integer);
 begin
+  var Buf := FHLE.Arg(1);
+  var Size := FHLE.Arg(2);
+  if Integer(Size) < 0 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  if (Mode <> 2) and RefuseWait then
+    Exit;
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
-  var Buf := FHLE.Arg(1);
-  var Size := FHLE.Arg(2);
   var WaitMode := FHLE.Arg(3);
   var ResultPtr := FHLE.Arg(4);
   var TimeoutPtr: Cardinal := 0;
@@ -718,10 +732,10 @@ begin
       if (Done < Size) and (MP.Senders.Count > 0) then
       begin
         var S := MP.Senders.First;
-        var Before := S.Wait.Data[3];
+        var Progress: Boolean;
         if MP.BufSize = 0 then
         begin
-          // No buffer: straight from the sender.
+          // No buffer: straight from each sender in turn.
           var M := Size - Done;
           if M > S.Wait.Data[1] - S.Wait.Data[3] then
             M := S.Wait.Data[1] - S.Wait.Data[3];
@@ -729,6 +743,7 @@ begin
             FMemory.Copy(Buf + Done, S.Wait.Data[0] + S.Wait.Data[3], M);
           Inc(S.Wait.Data[3], M);
           Inc(Done, M);
+          Progress := M > 0;
           if PipeDone(S) then
           begin
             PipeFinish(Self, S);
@@ -736,8 +751,11 @@ begin
           end;
         end
         else
+        begin
           MP.Settle;
-        if (S.Wait.Data[3] = Before) and (MP.Used = 0) then
+          Progress := MP.Used > 0;
+        end;
+        if not Progress then
           Break;
       end
       else
@@ -756,7 +774,8 @@ begin
   end;
   if Mode = 2 then
   begin
-    if ResultPtr <> 0 then
+    // A try that fails leaves the count alone, unless it would take part.
+    if (WaitMode = 1) and (ResultPtr <> 0) then
       FMemory.Write32(ResultPtr, Done);
     FHLE.Result(SCE_KERNEL_ERROR_MPP_EMPTY);
     Exit;
@@ -765,6 +784,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   FHLE.Result(0);
   MP.Receivers.Add(FCurrent);
+  FWaitCheckNs := PSPPipeCheckNs;
   BeginWaitData(PSPWaitMsgPipe, MP, MP.UID, TimeoutPtr, Mode = 1, MP.ReceiveRetry,
     [Buf, Size, WaitMode, Done, 0, ResultPtr], MP.WaitAbort);
 end;

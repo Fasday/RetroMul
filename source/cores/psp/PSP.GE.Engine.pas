@@ -523,6 +523,15 @@ var
   E: Integer;
   M: Double;
 begin
+  // A normal double: the significand cut to 16 bits (toward zero) in its
+  // bits; the rest through Frexp and Ldexp.
+  var Bits := PUInt64(@V)^;
+  var X := (Bits shr 52) and $7FF;
+  if (X <> 0) and (X <> $7FF) then
+  begin
+    Bits := Bits and UInt64($FFFFFFE000000000);
+    Exit(PDouble(@Bits)^);
+  end;
   if (V = 0) or IsNan(V) or IsInfinite(V) then
     Exit(V);
   Frexp(V, M, E);
@@ -534,6 +543,9 @@ function Exp24(V: Double): Integer; inline;
 var
   M: Double;
 begin
+  var X := Integer((PUInt64(@V)^ shr 52) and $7FF);
+  if (X <> 0) and (X <> $7FF) then
+    Exit(X - 1022);
   Frexp(V, M, Result);
 end;
 
@@ -543,6 +555,32 @@ begin
     Exit(T24(B));
   if B = 0 then
     Exit(T24(A));
+  // Both normal and the larger one's ulp a Single's power of two (Ldexp(1,
+  // ..) below): both cut at the larger one's 16th bit in their bits (the
+  // smaller to fewer bits, or nothing); the sum is exact.
+  var BA := PUInt64(@A)^;
+  var BB := PUInt64(@B)^;
+  var XA := Integer((BA shr 52) and $7FF);
+  var XB := Integer((BB shr 52) and $7FF);
+  var X := Max(XA, XB);
+  if (XA <> 0) and (XB <> 0) and (X >= 889) and (X <= 1165) then
+  begin
+    var TA: Double := 0;
+    var TB: Double := 0;
+    var KA := 16 - (X - XA);
+    var KB := 16 - (X - XB);
+    if KA > 0 then
+    begin
+      BA := BA and not ((UInt64(1) shl (53 - KA)) - 1);
+      TA := PDouble(@BA)^;
+    end;
+    if KB > 0 then
+    begin
+      BB := BB and not ((UInt64(1) shl (53 - KB)) - 1);
+      TB := PDouble(@BB)^;
+    end;
+    Exit(T24(TA + TB));
+  end;
   var E := Max(Exp24(A), Exp24(B));
   var Ulp := Ldexp(1, E - 16);
   Result := T24(Int(A / Ulp) * Ulp + Int(B / Ulp) * Ulp);

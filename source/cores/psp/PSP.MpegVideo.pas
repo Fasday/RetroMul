@@ -25,6 +25,9 @@ type
     Poc: Integer;
     Index: Integer;
     OutAt: Int64;
+    Idr: Boolean;
+    // The ME's SEI record of the access unit the picture came from.
+    Record_: TArray<Cardinal>;
   end;
 
   TPSPAvcSps = record
@@ -39,17 +42,22 @@ type
     UnitsInTick, TimeScale: Cardinal;
     Hrd: Boolean;
     CpbDelayLength, DpbDelayLength, TimeOffsetLength: Integer;
-    CpbCount: Integer;
+    CpbCount, InitDelayLength: Integer;
+    NalHrd, VclHrd: Boolean;
     PicStruct: Boolean;
     FullRange: Boolean;
     MaxDecFrameBuffering: Integer;
   end;
 
   TPSPAvcSei = record
-    HasBuffering, HasTiming: Boolean;
+    HasBuffering, HasTiming, HasRecovery: Boolean;
     CpbRemovalDelay, DpbOutputDelay: Cardinal;
     PicStruct: Integer;
   end;
+
+  // What the ME keeps of an access unit's SEI messages (41 words): flags,
+  // buffering period, picture timing with three clock timestamps, recovery point.
+  TPSPSeiRecord = array[0..40] of Cardinal;
 
   TPSPAvc = class
   private
@@ -65,6 +73,11 @@ type
     FLastSei: TPSPAvcSei;
     FLastPicture: TPSPPicture;
     FHasPicture: Boolean;
+    // Two records, used by alternate access units; fields an access unit does
+    // not carry keep what the one before last left.
+    FSlots: array[0..1] of TPSPSeiRecord;
+    FSlot: Integer;
+    FLastIdr: Boolean;
     procedure ParseSps(const Rbsp: TBytes);
     procedure ParsePps(const Rbsp: TBytes);
     procedure ParseSei(const Rbsp: TBytes; var Sei: TPSPAvcSei);
@@ -84,6 +97,9 @@ type
     property HasPicture: Boolean read FHasPicture;
     property LastPicture: TPSPPicture read FLastPicture;
     property Decoded: Int64 read FCount;
+    // The record of the last decoded access unit.
+    function CurrentRecord: TArray<Cardinal>;
+    property LastIdr: Boolean read FLastIdr;
   end;
 
 // Video colour conversion (BT.601, studio range) as the ME does it.
@@ -95,10 +111,25 @@ function PSPPixelBytes(Format: Integer): Integer; inline;
 // Writes a picture as RGB into a frame buffer of Stride pixels.
 procedure PSPWritePicture(const Pic: TPSPPicture; Dest: PByte; Stride, Format: Integer; MaxRows: Integer = -1);
 
+type
+  // The ME's two-field picture: luma per field and macroblock column parity
+  // (16-byte rows, a column pair after the other), chroma per field and plane,
+  // each field keeping the chroma rows of its parity.
+  TPSPMePlanes = array[0..7] of PByte;
+
+// The sizes of the eight planes of a picture of MbW x MbH macroblocks.
+function PSPMePlaneSizes(MbW, MbH: Integer; out Sizes: TArray<Cardinal>): Cardinal;
+procedure PSPWriteMePlanes(const Pic: TPSPPicture; const Planes: TPSPMePlanes; MbW, MbH: Integer);
+// Pixels X0..X0+W-1 of row Row of field Field.
+procedure PSPCscMeRow(const Planes: TPSPMePlanes; MbW, MbH, Field, Row, X0, W: Integer; Dest: PByte; Format: Integer);
+
 implementation
 
 uses
   System.Math;
+
+const
+  SeiClocks: array[0..8] of Integer = (1, 1, 1, 2, 2, 3, 3, 2, 3);
 
 function Clamp255(V: Integer): Integer; inline;
 begin
@@ -156,27 +187,125 @@ begin
     Result := 2;
 end;
 
+const
+  // Sums stay above -CscBias, so (sum + CscBias) shr 8 is the floor of
+  // sum / 256 offset by 512.
+  CscBias = 512 * 256;
+
+var
+  // PSPYCbCrToRGB in tables: the luma term, the chroma terms and the clamp.
+  CscY: array[0..255] of Integer;
+  CscRV, CscGU, CscGV, CscBU: array[0..255] of Integer;
+  CscClip: array[0..1279] of Byte;
+
+procedure InitCscTables;
+begin
+  for var I := 0 to 255 do
+  begin
+    CscY[I] := 298 * (I - 16) + 128;
+    CscRV[I] := 409 * (I - 128);
+    CscGU[I] := -100 * (I - 128);
+    CscGV[I] := -208 * (I - 128);
+    CscBU[I] := 516 * (I - 128);
+  end;
+  for var I := Low(CscClip) to High(CscClip) do
+    CscClip[I] := Clamp255(I - 512);
+end;
+
 procedure PSPWritePicture(const Pic: TPSPPicture; Dest: PByte; Stride, Format: Integer; MaxRows: Integer);
 begin
   var Rows := Pic.Height;
   if (MaxRows >= 0) and (MaxRows < Rows) then
     Rows := MaxRows;
+  var W := Pic.Width;
+  if (Rows <= 0) or (W <= 0) then
+    Exit;
   var Bpp := PSPPixelBytes(Format);
-  var CW := (Pic.Width + 1) div 2;
+  var CW := (W + 1) div 2;
   for var Y := 0 to Rows - 1 do
   begin
     var Line := Dest + NativeInt(Y) * Stride * Bpp;
-    for var X := 0 to Pic.Width - 1 do
+    var Ys := PByte(@Pic.Y[Y * W]);
+    var Cbs := PByte(@Pic.Cb[(Y shr 1) * CW]);
+    var Crs := PByte(@Pic.Cr[(Y shr 1) * CW]);
+    for var X := 0 to W - 1 do
     begin
-      var R, G, B: Integer;
-      var C := (Y div 2) * CW + (X div 2);
-      PSPYCbCrToRGB(Pic.Y[Y * Pic.Width + X], Pic.Cb[C], Pic.Cr[C], R, G, B);
-      var P := PSPPackPixel(R, G, B, Format);
-      if Bpp = 4 then
-        PCardinal(Line + X * 4)^ := P
+      var Cb := Cbs[X shr 1];
+      var Cr := Crs[X shr 1];
+      var L := CscY[Ys[X]];
+      var R: Integer := CscClip[(L + CscRV[Cr] + CscBias) shr 8];
+      var G: Integer := CscClip[(L + CscGU[Cb] + CscGV[Cr] + CscBias) shr 8];
+      var B: Integer := CscClip[(L + CscBU[Cb] + CscBias) shr 8];
+      if Format = PSPPixel8888 then
+        PCardinal(Line + X * 4)^ := Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16)
       else
-        PWord(Line + X * 2)^ := Word(P);
+        PWord(Line + X * 2)^ := Word(PSPPackPixel(R, G, B, Format));
     end;
+  end;
+end;
+
+function PSPMePlaneSizes(MbW, MbH: Integer; out Sizes: TArray<Cardinal>): Cardinal;
+begin
+  var Luma := Cardinal(((MbW + 1) div 2) * 16 * (MbH * 8));
+  var Chroma := Cardinal(MbW * 8 * MbH * 4);
+  Sizes := [Luma, Luma, Luma, Luma, Chroma, Chroma, Chroma, Chroma];
+  Result := 4 * Luma + 4 * Chroma;
+end;
+
+procedure PSPWriteMePlanes(const Pic: TPSPPicture; const Planes: TPSPMePlanes; MbW, MbH: Integer);
+begin
+  var FieldRows := MbH * 8;
+  var W := Min(Pic.Width, MbW * 16);
+  var H := Min(Pic.Height, MbH * 16);
+  for var Y := 0 to H - 1 do
+  begin
+    var Field := Y and 1;
+    var Row := Y shr 1;
+    var Src := PByte(@Pic.Y[Y * Pic.Width]);
+    var X := 0;
+    var Mb := 0;
+    while X < W do
+    begin
+      Move(Src[X], Planes[Field * 2 + (Mb and 1)][((Mb shr 1) * FieldRows + Row) * 16], Min(16, W - X));
+      Inc(X, 16);
+      Inc(Mb);
+    end;
+  end;
+  var CW := (Pic.Width + 1) div 2;
+  var CH := (Pic.Height + 1) div 2;
+  var N := Min(CW, MbW * 8);
+  for var Field := 0 to 1 do
+    for var K := 0 to MbH * 4 - 1 do
+    begin
+      var SrcRow := 2 * K + Field;
+      if SrcRow >= CH then
+        Break;
+      Move(Pic.Cb[SrcRow * CW], Planes[4 + Field * 2][K * MbW * 8], N);
+      Move(Pic.Cr[SrcRow * CW], Planes[5 + Field * 2][K * MbW * 8], N);
+    end;
+end;
+
+procedure PSPCscMeRow(const Planes: TPSPMePlanes; MbW, MbH, Field, Row, X0, W: Integer; Dest: PByte; Format: Integer);
+begin
+  var FieldRows := MbH * 8;
+  var Cb := Planes[4 + Field * 2] + (Row shr 1) * (MbW * 8);
+  var Cr := Planes[5 + Field * 2] + (Row shr 1) * (MbW * 8);
+  var Bpp := PSPPixelBytes(Format);
+  for var I := 0 to W - 1 do
+  begin
+    var X := X0 + I;
+    var Mb := X shr 4;
+    var U := Cb[X shr 1];
+    var V := Cr[X shr 1];
+    var L := CscY[Planes[Field * 2 + (Mb and 1)][((Mb shr 1) * FieldRows + Row) * 16 + (X and 15)]];
+    var R: Integer := CscClip[(L + CscRV[V] + CscBias) shr 8];
+    var G: Integer := CscClip[(L + CscGU[U] + CscGV[V] + CscBias) shr 8];
+    var B: Integer := CscClip[(L + CscBU[U] + CscBias) shr 8];
+    var P := PSPPackPixel(R, G, B, Format);
+    if Bpp = 4 then
+      PCardinal(Dest + I * 4)^ := P
+    else
+      PWord(Dest + I * 2)^ := Word(P);
   end;
 end;
 
@@ -246,6 +375,15 @@ begin
   FConfigured := True;
   FLastSei := Default(TPSPAvcSei);
   FHasPicture := False;
+  FillChar(FSlots, SizeOf(FSlots), 0);
+  FSlot := 0;
+  FLastIdr := False;
+end;
+
+function TPSPAvc.CurrentRecord: TArray<Cardinal>;
+begin
+  SetLength(Result, Length(FSlots[FSlot]));
+  Move(FSlots[FSlot][0], Result[0], SizeOf(FSlots[FSlot]));
 end;
 
 function TPSPAvc.ActiveSps: TPSPAvcSps;
@@ -272,7 +410,7 @@ var
       B.ReadUE;
       B.Skip(1);
     end;
-    B.Skip(5);
+    S.InitDelayLength := B.ReadBits(5) + 1;
     S.CpbDelayLength := B.ReadBits(5) + 1;
     S.DpbDelayLength := B.ReadBits(5) + 1;
     S.TimeOffsetLength := B.ReadBits(5);
@@ -379,6 +517,8 @@ begin
       if VclHrd then
         Hrd;
       S.Hrd := NalHrd or VclHrd;
+      S.NalHrd := NalHrd;
+      S.VclHrd := VclHrd;
       if S.Hrd then
         B.Skip(1);
       S.PicStruct := B.ReadBit;
@@ -462,22 +602,106 @@ begin
         end;
     if (S >= 0) and FSps[S].Valid then
     begin
+      var Sp := FSps[S];
       var B: TBitReader;
       B.Init(Payload);
       try
         case PayloadType of
-          0: Sei.HasBuffering := True;
-          1:
-            if FSps[S].Hrd then
+          0:
             begin
-              Sei.HasTiming := True;
-              Sei.CpbRemovalDelay := B.ReadBits(FSps[S].CpbDelayLength);
-              Sei.DpbOutputDelay := B.ReadBits(FSps[S].DpbDelayLength);
-              if FSps[S].PicStruct then
+              Sei.HasBuffering := True;
+              FSlots[FSlot][0] := FSlots[FSlot][0] or 1;
+              FSlots[FSlot][1] := B.ReadUE;
+              if Sp.NalHrd then
+              begin
+                FSlots[FSlot][2] := B.ReadBits(Sp.InitDelayLength);
+                FSlots[FSlot][3] := B.ReadBits(Sp.InitDelayLength);
+                for var K := 2 to Sp.CpbCount do
+                  B.Skip(2 * Sp.InitDelayLength);
+              end;
+              if Sp.VclHrd then
+              begin
+                FSlots[FSlot][4] := B.ReadBits(Sp.InitDelayLength);
+                FSlots[FSlot][5] := B.ReadBits(Sp.InitDelayLength);
+              end;
+            end;
+          1:
+            begin
+              FSlots[FSlot][0] := FSlots[FSlot][0] or 2;
+              if Sp.Hrd then
+              begin
+                Sei.HasTiming := True;
+                Sei.CpbRemovalDelay := B.ReadBits(Sp.CpbDelayLength);
+                Sei.DpbOutputDelay := B.ReadBits(Sp.DpbDelayLength);
+                FSlots[FSlot][6] := Sei.CpbRemovalDelay;
+                FSlots[FSlot][7] := Sei.DpbOutputDelay;
+              end;
+              if Sp.PicStruct then
+              begin
                 Sei.PicStruct := B.ReadBits(4);
-            end
-            else if FSps[S].PicStruct then
-              Sei.PicStruct := B.ReadBits(4);
+                var Clocks := 1;
+                if Sei.PicStruct <= 8 then
+                  Clocks := SeiClocks[Sei.PicStruct];
+                var Flags: Cardinal := Cardinal(Sei.PicStruct);
+                for var C := 0 to Clocks - 1 do
+                  if B.ReadBit then
+                  begin
+                    Flags := Flags or (Cardinal(1) shl (8 + C * 8));
+                    var W := 9 + C * 5;
+                    var CtType := B.ReadBits(2);
+                    var Nuit := B.ReadBits(1);
+                    var Counting := B.ReadBits(5);
+                    var Full := B.ReadBits(1);
+                    FSlots[FSlot][W] := CtType or (Nuit shl 8) or (Counting shl 16) or (Full shl 24);
+                    var Disc := B.ReadBits(1);
+                    var Dropped := B.ReadBits(1);
+                    var Frames := B.ReadBits(8);
+                    FSlots[FSlot][W + 1] := Disc or (Dropped shl 8) or (Frames shl 16);
+                    var Sec: Cardinal := 0;
+                    var Min_: Cardinal := 0;
+                    var Hour: Cardinal := 0;
+                    var Present: Cardinal := 0;
+                    if Full <> 0 then
+                    begin
+                      Sec := B.ReadBits(6);
+                      Min_ := B.ReadBits(6);
+                      Hour := B.ReadBits(5);
+                      Present := 7;
+                    end
+                    else if B.ReadBit then
+                    begin
+                      Sec := B.ReadBits(6);
+                      Present := 1;
+                      if B.ReadBit then
+                      begin
+                        Min_ := B.ReadBits(6);
+                        Present := 3;
+                        if B.ReadBit then
+                        begin
+                          Hour := B.ReadBits(5);
+                          Present := 7;
+                        end;
+                      end;
+                    end;
+                    FSlots[FSlot][W + 2] := Present;
+                    FSlots[FSlot][W + 3] := Sec or (Min_ shl 8) or (Hour shl 16);
+                    if Sp.TimeOffsetLength > 0 then
+                      FSlots[FSlot][W + 4] := B.ReadBits(Sp.TimeOffsetLength)
+                    else
+                      FSlots[FSlot][W + 4] := 0;
+                  end;
+                FSlots[FSlot][8] := Flags;
+              end;
+            end;
+          6:
+            begin
+              Sei.HasRecovery := True;
+              FSlots[FSlot][0] := FSlots[FSlot][0] or 4;
+              FSlots[FSlot][24] := B.ReadUE;
+              FSlots[FSlot][25] := B.ReadBits(1);
+              FSlots[FSlot][26] := B.ReadBits(1);
+              FSlots[FSlot][27] := B.ReadBits(2);
+            end;
         end;
       except
         on EBitstreamError do ;
@@ -595,6 +819,8 @@ function TPSPAvc.Decode(const Au: TBytes; out Pictures: TArray<TPSPPicture>): Ca
 begin
   Pictures := nil;
   Result := 0;
+  FSlot := Integer(FCount and 1);
+  FSlots[FSlot][0] := 0;
   var Nals := SplitAnnexB(Au);
   var Sei := Default(TPSPAvcSei);
   var Poc := Integer(FCount) * 2;
@@ -625,6 +851,7 @@ begin
   if S.Valid and (S.MaxRefs > 3) then
     Exit(Cardinal($80628002));
   FLastSei := Sei;
+  FLastIdr := Idr;
   var Packet := Default(TMediaPacket);
   Packet.Data := Au;
   Packet.PTS := FCount;
@@ -638,6 +865,7 @@ begin
       Exit(Cardinal($80628002));
     end;
   end;
+  var Prior: TArray<TPSPPicture> := nil;
   var Frame: TVideoFrame;
   while FDecoder.Receive(Frame) do
   begin
@@ -649,6 +877,8 @@ begin
     Pic.Cr := Frame.Planes[2];
     Pic.Poc := Poc;
     Pic.Index := FCount;
+    Pic.Idr := Idr;
+    Pic.Record_ := CurrentRecord;
     if S.Hrd and Sei.HasTiming then
     begin
       var Frames := Int64(Sei.DpbOutputDelay) div 2;
@@ -656,11 +886,19 @@ begin
     end
     else
       Pic.OutAt := FCount;
+    if Idr and not S.Hrd and (FHeld.Count > 0) then
+    begin
+      // An IDR picture bumps everything before it out of the buffer.
+      var Before: TArray<TPSPPicture>;
+      Drain(Before);
+      Prior := Prior + Before;
+    end;
     FHeld.Add(Pic);
     FLastPicture := Pic;
     FHasPicture := True;
   end;
   TakeDue(Pictures);
+  Pictures := Prior + Pictures;
   Inc(FCount);
 end;
 
@@ -683,5 +921,8 @@ begin
   end;
   Result := Length(Pictures);
 end;
+
+initialization
+  InitCscTables;
 
 end.

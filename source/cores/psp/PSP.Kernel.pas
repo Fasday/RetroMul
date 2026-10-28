@@ -84,6 +84,8 @@ type
     Abort: TPSPWaitAbort;
     Data: array[0..7] of Cardinal;
     HLETag: string;
+    // The call returns an address: a wait that fails gives 0.
+    FailAsZero: Boolean;
   end;
 
   TPSPCallback = class(TPSPKernelObject)
@@ -131,10 +133,18 @@ type
     // The first wait after a start goes down a slower path.
     Fresh: Boolean;
     StackPartition: TPSPPartition;
+    // The thread's block in each TLS pool, by the pool's slot.
+    TlsSlots: array[0..15] of Cardinal;
     ReleaseCount, PreemptCount, IntrPreemptCount: Cardinal;
     Seq: Int64;
     // Runs once when the thread exits or is terminated.
     OnExit: TProc<TPSPThread>;
+    // Deleted as soon as it exits by itself (a module's start thread).
+    DeleteOnExit: Boolean;
+    // Kernel work a call left to do on the thread's time, where better
+    // threads may preempt it, and where the thread goes on afterwards.
+    BusyNs, BusyAt: Int64;
+    BusyPC, BusyNPC: Cardinal;
     constructor Create;
     destructor Destroy; override;
     class function IdType: Integer; override;
@@ -207,6 +217,10 @@ type
   TPSPPendingInterrupt = record
     Func, A0, A1, A2, A3, GP: Cardinal;
     OnReturn: TPSPGuestReturn;
+    // Time the kernel spends before the handler starts.
+    EntryNs: Int64;
+    // The object it is for; dropped if that is deleted while pending.
+    OwnerUID: Cardinal;
   end;
 
   TPSPTimerKind = (tkWait, tkCustom);
@@ -234,6 +248,8 @@ type
     FObjects: TDictionary<Cardinal, TPSPKernelObject>;
     FNextUID: Cardinal;
     FReady: array[0..127] of TList<TPSPThread>;
+    // Bit P is set while FReady[P] has threads.
+    FReadyMask: array[0..3] of Cardinal;
     FCurrent: TPSPThread;
     FThreads: TList<TPSPThread>;
     FTimers: TList<TPSPTimer>;
@@ -243,7 +259,12 @@ type
     FIntFrames: TList<TPSPFrame>;
     FPendingInts: TQueue<TPSPPendingInterrupt>;
     FSubIntr: array[0..66, 0..31] of TPSPInterruptHandler;
-    FIntrEnabled: array[0..66] of Boolean;
+    // The virtual timer whose handler is running.
+    FFiringVTimer: Cardinal;
+    // Where threads go to spend long kernel calls.
+    FBusyStub: Cardinal;
+    // Main interrupt handlers; the firmware's drivers hold some from the start.
+    FIntrHandlers: array[0..67] of TPSPInterruptHandler;
     FTrapBase: Cardinal;
     FIntStack: Cardinal;
     FDispatchSuspended: Boolean;
@@ -264,6 +285,8 @@ type
     FEventHandlers: TList<TPSPKernelObject>;
     FIdleThreadIds: array[0..1] of Cardinal;
     FTlsplCount: Integer;
+    // How far into the next wait call its timeout is looked at (0: the usual).
+    FWaitCheckNs: Int64;
     procedure T_(const Fmt: string; const Args: array of const);
     procedure ScheduleTimerEvent;
     procedure PushReady(T: TPSPThread; Front: Boolean);
@@ -277,12 +300,19 @@ type
     procedure ReturnTrap;
     procedure ThreadExitTrap;
     procedure StartNextInterrupt;
+    procedure DropStaleInterrupts;
     procedure EnterGuest(Func, SP, GP: Cardinal; const Args: array of Cardinal);
     procedure WakeEndWaiters(T: TPSPThread);
     procedure KillThreadFrames(T: TPSPThread);
     procedure DropWaitTimer(T: TPSPThread);
     procedure RegisterAll;
     procedure RegisterKernelAliases;
+    function InternalWait(T: TPSPThread): Boolean;
+    procedure hKernelBusy;
+    // Spends the time as kernel work the scheduler may interrupt.
+    procedure SpendPreemptible(Ns: Int64);
+    procedure hCheckExitCallback;
+    procedure hIoForKernel;
     function WaitDeadline(TimeoutPtr: Cardinal; out TimeoutEnd: Int64): Int64;
     procedure WriteRemaining(T: TPSPThread);
     procedure FreeThreadStacks(T: TPSPThread);
@@ -413,6 +443,7 @@ type
     procedure hReferVplStatus;
     function PoolPartition(PartId: Integer): TPSPPartition;
     function TlsplOf(Id: Cardinal): TPSPKernelObject;
+    function TlsTake(Obj: TPSPKernelObject; out Addr: Cardinal): Boolean;
     procedure ReleaseTlsOf(T: TPSPThread);
     procedure AllocateVplCommon(Mode: Integer);
     procedure hCreateFpl;
@@ -437,7 +468,7 @@ type
     procedure hReferAlarmStatus;
     procedure SetAlarmCommon(Us: UInt64);
     procedure ArmAlarm(Obj: TPSPKernelObject; FireAt: Int64);
-    procedure ArmVTimer(Obj: TPSPKernelObject);
+    procedure ArmVTimer(Obj: TPSPKernelObject; FromCall: Boolean = True);
     function VTimerOf(Id: Cardinal): TPSPKernelObject;
     procedure SetVTimerTimeTo(Obj: TPSPKernelObject; Value: UInt64);
     procedure SetVTimerHandlerCommon(Schedule: UInt64; Handler, Common: Cardinal);
@@ -480,6 +511,7 @@ type
     procedure hIsSubInterruptOccurred;
     procedure hRegisterUserSpaceIntrStack;
     procedure hQueryIntrHandlerInfo;
+    function IntrHandlerCheck(I: Integer): Cardinal;
     procedure hEnableIntr;
     procedure hDisableIntr;
     procedure hRegisterIntrHandler;
@@ -560,6 +592,10 @@ type
     procedure RequestReschedule; inline;
     procedure AfterSyscall;
     function CanWait: Boolean;
+    // Sets the error and returns True when the current context may not block.
+    function RefuseWait: Boolean;
+    // What a syscall leaves in at, a0-a3, t0-t9, hi and lo.
+    procedure ScrambleCallerSaved;
     // Guest time the kernel spends in a call (ns), on the current CPU clock.
     procedure Spend(Ns: Int64);
     // Timers in guest ns. Returns a handle (sequence number) for CancelTimer.
@@ -569,7 +605,8 @@ type
     procedure OnTimerEvent;
     // Guest calls
     procedure CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal = 0);
-    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil);
+    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil;
+      EntryNs: Int64 = 0; OwnerUID: Cardinal = 0);
     procedure TriggerInterrupt(IntNo: Integer; SubNo: Integer = -1; Arg2: Cardinal = 0);
     // Queues the enabled sub-interrupt handlers of IntNo; Done runs after the
     // last one returns. Returns how many were queued (Done is not called for 0).

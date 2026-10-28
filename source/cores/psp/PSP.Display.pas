@@ -290,8 +290,14 @@ begin
     Inc(Tail, PSPIntrHandlerExtraNs);
   FKernel.BusyUntil := FScheduler.Now + Tail;
   FReleaseQueue.Clear;
+  // Better threads first, otherwise in the order they began to wait.
   for var T in FWaiters do
-    FReleaseQueue.Add(T);
+  begin
+    var I := FReleaseQueue.Count;
+    while (I > 0) and (FReleaseQueue[I - 1].Priority > T.Priority) do
+      Dec(I);
+    FReleaseQueue.Insert(I, T);
+  end;
   FWakeAt := FKernel.BusyUntil + PSPWakeLatencyNs;
   SchedulePhase(dpWake, FWakeAt);
 end;

@@ -191,7 +191,16 @@ begin
   var N := VSz(Op);
   var S, D: TV4;
   var Z := ReadS(C, Op, N, S);
-  D[0] := VSum4(S, Ones, 4, Z);
+  // A pending T prefix is merged into the constant ones vfad sums against.
+  var P := C.Ctx.VC[VFPU_PFXT];
+  if P = PFX_NONE then
+    D[0] := VSum4(S, Ones, 4, Z)
+  else
+  begin
+    var T: TV4;
+    ApplyPfx(S, N, P or $F055, T);
+    D[0] := VSum4(S, T, 4, Z);
+  end;
   WriteD(C, Op, 1, D, 0);
   EatPfx(C);
 end;
@@ -251,6 +260,9 @@ begin
     Bits := Bits or $10;
   if (Bits and All) = All then
     Bits := Bits or $20;
+  C.VcmpPC := C.CurPC;
+  C.VcmpOld := C.Ctx.VC[VFPU_CC];
+  C.VccWritePC := 0;
   // Lanes past the size keep their bits.
   C.Ctx.VC[VFPU_CC] := (C.Ctx.VC[VFPU_CC] and not (All or $30)) or Bits;
   EatPfx(C);
@@ -263,6 +275,7 @@ begin
   var N := VSz(Op);
   var S: TV4;
   var Z := ReadPfx(C, RegS(Op), N, SPfx, S);
+  Latch(C, S, not Z and $F);
   WritePfx(C, RegD(Op), N, S, Z, DPfx);
   EatPfx(C);
 end;
@@ -403,30 +416,47 @@ end;
 
 { Lane shuffles }
 
-procedure OpVBFY1(C: TPSPCPU; Op: Cardinal);
+// The butterflies add a swizzled copy of S to S. With a T prefix pending, the
+// two prefixed reads of S take the place of the swizzled pair, lane for lane.
+procedure DoBfy(C: TPSPCPU; Op: Cardinal; const IA, IB: TIdx4; Subs: Cardinal);
 begin
   var N := VSz(Op);
-  var S, D: TV4;
+  var S, A, B, D: TV4;
   var Z := ReadS(C, Op, N, S);
-  D[0] := VAdd(S[0], S[1]);
-  D[1] := VSub(S[0], S[1]);
-  D[2] := VAdd(S[2], S[3]);
-  D[3] := VSub(S[2], S[3]);
+  if C.Ctx.VC[VFPU_PFXT] = PFX_NONE then
+    for var I := 0 to 3 do
+    begin
+      A[I] := S[IA[I]];
+      B[I] := S[IB[I]];
+    end
+  else
+  begin
+    A := S;
+    Z := Z or ReadPfx(C, RegS(Op), N, C.Ctx.VC[VFPU_PFXT], B);
+  end;
+  for var I := 0 to 3 do
+    if ((Subs shr I) and 1) <> 0 then
+      D[I] := VSub(A[I], B[I])
+    else
+      D[I] := VAdd(A[I], B[I]);
   WriteD(C, Op, N, D, Z);
   EatPfx(C);
 end;
 
-procedure OpVBFY2(C: TPSPCPU; Op: Cardinal);
+procedure OpVBFY1(C: TPSPCPU; Op: Cardinal);
+const
+  IA: TIdx4 = (0, 0, 2, 2);
+  IB: TIdx4 = (1, 1, 3, 3);
 begin
-  var N := VSz(Op);
-  var S, D: TV4;
-  var Z := ReadS(C, Op, N, S);
-  D[0] := VAdd(S[0], S[2]);
-  D[1] := VAdd(S[1], S[3]);
-  D[2] := VSub(S[0], S[2]);
-  D[3] := VSub(S[1], S[3]);
-  WriteD(C, Op, N, D, Z);
-  EatPfx(C);
+  DoBfy(C, Op, IA, IB, $A);
+end;
+
+procedure OpVBFY2(C: TPSPCPU; Op: Cardinal);
+const
+  IA: TIdx4 = (0, 1, 0, 1);
+  IB: TIdx4 = (2, 3, 2, 3);
+begin
+  DoBfy(C, Op, IA, IB, $C);
 end;
 
 function SortMin(A, B: Cardinal): Cardinal; inline;

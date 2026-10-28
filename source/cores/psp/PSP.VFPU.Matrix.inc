@@ -307,6 +307,7 @@ end;
 
 { COP2 moves and branches }
 
+// mfvc right behind a vcmp still reads the CC from before it.
 procedure OpMFV(C: TPSPCPU; Op: Cardinal);
 begin
   var T := (Op shr 16) and 31;
@@ -314,26 +315,45 @@ begin
     Exit;
   if (Op and $80) = 0 then
     C.Ctx.GPR[T] := C.Ctx.V[VecIdx[0, Op and $7F][0]]
+  else if ((Op and $7F) = VFPU_CC) and (C.CurPC = C.VcmpPC + 4) then
+    C.Ctx.GPR[T] := C.VcmpOld
   else
     C.Ctx.GPR[T] := ReadCtrl(C, Op and $7F);
 end;
 
+// A CC written with mtvc reaches the branch unit a few instructions later,
+// unless a vcmp right before it holds the pipeline.
 procedure OpMTV(C: TPSPCPU; Op: Cardinal);
 begin
   var V := C.Ctx.GPR[(Op shr 16) and 31];
   if (Op and $80) = 0 then
     C.Ctx.V[VecIdx[0, Op and $7F][0]] := V
   else
+  begin
+    if (Op and $7F) = VFPU_CC then
+    begin
+      if C.CurPC = C.VcmpPC + 4 then
+        C.VccWritePC := 0
+      else
+      begin
+        C.VccWritePC := C.CurPC;
+        C.VccWriteOld := C.Ctx.VC[VFPU_CC];
+      end;
+    end;
     WriteCtrl(C, Op and $7F, V);
+  end;
 end;
 
 procedure OpBVC(C: TPSPCPU; Op: Cardinal);
 begin
-  var Bit := ((C.Ctx.VC[VFPU_CC] shr ((Op shr 18) and 7)) and 1) <> 0;
+  var CC := C.Ctx.VC[VFPU_CC];
+  if (C.VccWritePC <> 0) and (C.CurPC - C.VccWritePC <= 12) then
+    CC := C.VccWriteOld;
+  var Bit := ((CC shr ((Op shr 18) and 7)) and 1) <> 0;
   var Kind := (Op shr 16) and 3;
   var Taken := Bit = ((Kind and 1) <> 0);
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (Cardinal(Integer(SmallInt(Word(Op)))) shl 2)
+    C.Ctx.NPC := C.CurPC + 4 + (Cardinal(Integer(SmallInt(Word(Op)))) shl 2)
   else if (Kind and 2) <> 0 then
   begin
     C.Ctx.PC := C.Ctx.NPC;
