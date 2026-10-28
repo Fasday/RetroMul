@@ -60,23 +60,23 @@ begin
     Exit;
   end;
   var B := Pressed(D);
-  var Confirm: Cardinal := PSP_CTRL_CROSS;
-  var Cancel: Cardinal := PSP_CTRL_CIRCLE;
-  if PSPSettings.ButtonSwap = 0 then
-  begin
-    Confirm := PSP_CTRL_CIRCLE;
-    Cancel := PSP_CTRL_CROSS;
-  end;
+  var Options: Cardinal := 0;
+  if D.Size > MsgOptions then
+    Options := FMemory.Read32(P + MsgOptions);
   var Answer := 0;
-  var DefaultAnswer := MSG_BUTTON_YES;
-  if (D.Size > MsgOptions) and ((FMemory.Read32(P + MsgOptions) and MSG_OPTION_DEFAULT_NO) <> 0) then
-    DefaultAnswer := MSG_BUTTON_NO;
-  if (B and Confirm) <> 0 then
-    Answer := DefaultAnswer
-  else if (B and Cancel) <> 0 then
+  if (Options and $10) <> 0 then
+  begin
+    if (B and PSP_CTRL_LEFT) <> 0 then
+      D.Selection := 0;
+    if (B and PSP_CTRL_RIGHT) <> 0 then
+      D.Selection := 1;
+  end;
+  if (B and ConfirmButton) <> 0 then
+    Answer := MSG_BUTTON_YES + D.Selection
+  else if ((B and CancelButton) <> 0) and ((Options and $80) = 0) then
     Answer := MSG_BUTTON_BACK
-  else if (FView = nil) and (FKernel.Scheduler.Now - D.RunningAt >= HeadlessAnswerNs) then
-    Answer := DefaultAnswer;
+  else if not Interactive and (FKernel.Scheduler.Now - D.RunningAt >= HeadlessAnswerNs) then
+    Answer := MSG_BUTTON_YES + D.Selection;
   if (Answer <> 0) and (D.Updates >= MsgFadeUpdates) then
   begin
     if D.Size > MsgButton then
@@ -90,7 +90,63 @@ begin
   var P := D.Params;
   var Count := Integer(FMemory.Read32(P + $30));
   var Data := FMemory.Read32(P + $34);
-  // Without a keyboard on screen every field is confirmed with its initial text.
+  if Interactive and (Count > 0) and (Count <= 16) and (Data <> 0) then
+  begin
+    var F := Data + Cardinal(D.OskField) * 52;
+    var InText := FMemory.Read32(F + 32);
+    var Limit := Min(Integer(FMemory.Read32(F + 36)) - 1, 512);
+    var InputLimit := Integer(FMemory.Read32(F + 48));
+    if InputLimit > 0 then
+      Limit := Min(Limit, InputLimit);
+    if D.Stage = 0 then
+    begin
+      D.Text := '';
+      if InText <> 0 then
+        for var I := 0 to Max(0, Limit) - 1 do
+        begin
+          var C := FMemory.Read16(InText + Cardinal(I * 2));
+          if C = 0 then
+            Break;
+          D.Text := D.Text + Char(C);
+        end;
+      D.Stage := 1;
+    end;
+    var B := Pressed(D);
+    if (B and PSP_CTRL_LEFT) <> 0 then
+      D.Selection := (D.Selection + 9) mod 10 + (D.Selection div 10) * 10;
+    if (B and PSP_CTRL_RIGHT) <> 0 then
+      D.Selection := (D.Selection + 1) mod 10 + (D.Selection div 10) * 10;
+    if (B and PSP_CTRL_UP) <> 0 then
+      D.Selection := (D.Selection + 30) mod 40;
+    if (B and PSP_CTRL_DOWN) <> 0 then
+      D.Selection := (D.Selection + 10) mod 40;
+    if ((B and ConfirmButton) <> 0) and (Length(D.Text) < Limit) then
+      D.Text := D.Text + OskKeys[D.Selection + 1];
+    if ((B and PSP_CTRL_SQUARE) <> 0) and (D.Text <> '') then
+      Delete(D.Text, Length(D.Text), 1);
+    var Cancelled := (B and CancelButton) <> 0;
+    if not Cancelled and ((B and PSP_CTRL_START) = 0) then
+      Exit;
+    var OutText := FMemory.Read32(F + 40);
+    var ResultCode := OSK_RESULT_CHANGED;
+    if Cancelled then
+      ResultCode := 1
+    else if (OutText <> 0) and (Limit >= 0) then
+    begin
+      for var I := 1 to Length(D.Text) do
+        FMemory.Write16(OutText + Cardinal((I - 1) * 2), Ord(D.Text[I]));
+      FMemory.Write16(OutText + Cardinal(Length(D.Text) * 2), 0);
+    end;
+    FMemory.Write32(F + 44, Cardinal(ResultCode));
+    Inc(D.OskField);
+    D.Stage := 0;
+    if not Cancelled and (D.OskField < Count) then
+      Exit;
+    FMemory.Write32(P + DialogResult, 0);
+    Finish(D);
+    Exit;
+  end;
+  // A headless call confirms each field with its initial text.
   for var I := 0 to Count - 1 do
   begin
     var F := Data + Cardinal(I) * 52;
