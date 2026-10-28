@@ -447,6 +447,8 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.SFO.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Settings.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.Math.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Net.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Videocodec.pas"/>
         <DCCReference Include="..\..\source\media\Core.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.CABAC.pas"/>

@@ -92,6 +92,8 @@ uses
   PSP.SFO in '..\..\source\cores\psp\PSP.SFO.pas',
   PSP.Settings in '..\..\source\cores\psp\PSP.Settings.pas',
   PSP.VFPU.Math in '..\..\source\cores\psp\PSP.VFPU.Math.pas',
+  PSP.Net in '..\..\source\cores\psp\PSP.Net.pas',
+  PSP.Videocodec in '..\..\source\cores\psp\PSP.Videocodec.pas',
   Core.PSP.Archive in '..\..\source\adapters\Core.PSP.Archive.pas',
   Core.Adapter.PSP in '..\..\source\adapters\Core.Adapter.PSP.pas',
   System.SysUtils,
