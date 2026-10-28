@@ -953,6 +953,10 @@ end;
 
 { Raster state }
 
+const
+  // Bits a texel by texture format (DXT by their blocks).
+  TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
+
 procedure TPSPGEEngine.BuildRaster;
 var
   S: ^TGERaster;
@@ -992,6 +996,10 @@ begin
       T.Levels[L].BufWidth := C[GE_TEXBUFWIDTH0 + L] and $7FF;
       T.Levels[L].Width := 1 shl Min(C[GE_TEXSIZE0 + L] and $F, 9);
       T.Levels[L].Height := 1 shl Min((C[GE_TEXSIZE0 + L] shr 8) and $F, 9);
+      T.Levels[L].Size := Cardinal(T.Levels[L].BufWidth * T.Levels[L].Height * TexBits[T.Format]) div 8;
+      T.Levels[L].Ptr := nil;
+      if (L < T.LevelCount) and (T.Levels[L].Size > 0) then
+        T.Levels[L].Ptr := FMemory.Ptr(T.Levels[L].Addr, T.Levels[L].Size);
     end;
     T.Level := 0;
     T.ClampU := (C[GE_TEXWRAP] and 1) <> 0;
@@ -1060,6 +1068,7 @@ begin
   S.LogicFunc := C[GE_LOGICOP] and $F;
   S.MaskRGB := C[GE_MASKRGB] and $FFFFFF;
   S.MaskA := C[GE_MASKALPHA] and $FF;
+  GEPrepareRaster(S^);
 end;
 
 { Primitives }
