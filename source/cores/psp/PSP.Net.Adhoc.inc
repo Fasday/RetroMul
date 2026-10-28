@@ -32,11 +32,13 @@ const
   AdhocEventConnect = 1;
   AdhocEventDisconnect = 2;
   AdhocEventScan = 3;
-  // How long the radio takes for each operation.
-  AdhocCreateNs = 500000000;
-  AdhocDisconnectNs = 200000000;
-  AdhocScanNs = 1500000000;
+  // How long the radio takes for each operation, as hardware measures them.
+  AdhocCreateNs = 1115000000;
+  AdhocDisconnectNs = 105900000;
+  AdhocScanNs = 991800000;
   AdhocQuickNs = 5000000;
+  // GetParameter asks the WLAN driver and waits for it.
+  AdhocParameterNs = 13700000;
 
 procedure TPSPNet.AdhocReset;
 begin
@@ -370,7 +372,13 @@ begin
   Bssid[0] := (Bssid[0] or 2) and not 1;
   Bssid[5] := Bssid[5] xor $5A;
   FMemory.WriteBytes(P + 140, Bssid[0], 6);
-  FHLE.Result(0);
+  Run(nil, AdhocParameterNs, False,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Ret := 0;
+      Err := 0;
+      Result := Final;
+    end);
 end;
 
 procedure TPSPNet.hAdhocctlGetPeerList;
