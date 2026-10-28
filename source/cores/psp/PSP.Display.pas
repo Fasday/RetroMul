@@ -1,8 +1,12 @@
 unit PSP.Display;
 
-// sceDisplay and sceCtrl. A field is 286 lines at 59.94 Hz; vblank covers the
-// last 14. The framebuffer set with "next frame" latches at vblank start, and
-// the controller is sampled there too.
+// sceDisplay and sceCtrl. A field is 286 lines at 59.94 Hz. The vblank
+// interrupt comes at the end of line 285: hcount wraps to 0, vcount steps and
+// the vblank flag is on for the next ~818 us. The kernel's own interrupt code
+// holds the CPU for ~60 us (handlers run ~29 us in); threads waiting for
+// vblank get the CPU ~20 us after it lets go, one by one ~12 us
+// apart. The controller is sampled just after vblank ends (or every sampling
+// cycle when one is set).
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 
@@ -12,17 +16,28 @@ uses
   System.SysUtils, System.Generics.Collections, System.UITypes, Core.Emulation.Types,
   PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler;
 
+const
+  PSPLineNs = PSPFrameNs div PSPLinesPerFrame;
+  PSPVBlankNs = 818000;
+  PSPVSyncNs = 631500;
+  PSPIntrHandlerNs = 29000;
+  PSPIntrTailNs = 26000;
+  PSPIntrHandlerExtraNs = 10000;
+  PSPWakeLatencyNs = 20000;
+  PSPWakeStepNs = 12000;
+  PSPCtrlSampleNs = 830000;
+
 type
   TPSPFrameBuffer = record
     Address, Width, Format: Cardinal;
   end;
 
-  TPSPVBlankEvent = procedure of object;
-
   TPSPCtrlSample = record
     Time, Buttons: Cardinal;
     LX, LY: Byte;
   end;
+
+  TPSPDisplayPhase = (dpInterrupt, dpHandlers, dpWake, dpSample, dpNextField);
 
   TPSPDisplay = class
   private
@@ -30,34 +45,48 @@ type
     FHLE: TPSPHLE;
     FMemory: TPSPMemory;
     FScheduler: TPSPScheduler;
-    FCurrent, FPending: TPSPFrameBuffer;
+    FCurrentAddr, FLatchedAddr: Cardinal;
+    FWidth, FFormat: Cardinal;
     FHasPending: Boolean;
-    FFrameStart: Int64;
-    FInVBlank: Boolean;
+    FFieldStart: Int64;
+    FHcountOrigin: Int64;
+    FHcountAdjust: Int64;
     FVCount: Cardinal;
+    FPhase: TPSPDisplayPhase;
     FWaiters: TList<TPSPThread>;
+    FReleaseQueue: TList<TPSPThread>;
     FMode, FModeWidth, FModeHeight: Cardinal;
-    FOnVBlank: TPSPVBlankEvent;
     FFrameDone: Boolean;
+    FHandlersRan: Boolean;
+    FWakeAt, FSampleAt: Int64;
     // Controller
     FInput: Cardinal;
     FAnalogX, FAnalogY: Byte;
     FSamples: array[0..63] of TPSPCtrlSample;
-    FSampleHead, FSampleCount: Integer;
-    FSampleIndex: Int64;
+    FSampleHead: Integer;
+    FSampleIndex, FReadIndex: Int64;
     FSamplingMode, FSamplingCycle: Cardinal;
+    FCycleTimer: Int64;
     FLatchMake, FLatchBreak, FLatchPress, FLatchRelease, FLastButtons: Cardinal;
+    FLatchCount: Integer;
     FCtrlWaiters: TList<TPSPThread>;
     FIdleReset, FIdleBack: Integer;
-    procedure VBlankStart;
-    procedure VBlankEnd;
+    procedure SchedulePhase(Phase: TPSPDisplayPhase; At: Int64);
+    procedure Interrupt;
+    procedure InterruptDone;
+    procedure ReleaseNext;
+    function InVBlankNow: Boolean;
     function VBlankRetry(T: TPSPThread): Boolean;
     procedure VBlankAbort(T: TPSPThread);
-    procedure WaitVBlank(AllowCB, OnlyIfNotInVBlank: Boolean);
+    procedure WaitFields(Count: Integer; AllowCB: Boolean);
     procedure SampleController;
+    procedure StartCycleTimer;
     function CtrlRetry(T: TPSPThread): Boolean;
     procedure CtrlAbort(T: TPSPThread);
     procedure ReadSamples(Address: Cardinal; Count: Integer; Negative: Boolean; FromIndex: Int64);
+    procedure ReadBufferCommon(Negative: Boolean);
+    procedure PeekBufferCommon(Negative: Boolean);
+    function ValidPointer(Address: Cardinal): Boolean;
     procedure hSetMode;
     procedure hGetMode;
     procedure hSetFrameBuf;
@@ -66,14 +95,20 @@ type
     procedure hWaitVblankStartCB;
     procedure hWaitVblank;
     procedure hWaitVblankCB;
+    procedure hWaitVblankStartMulti;
+    procedure hWaitVblankStartMultiCB;
     procedure hGetVcount;
     procedure hIsVblank;
+    procedure hIsVsync;
     procedure hGetCurrentHcount;
     procedure hGetAccumulatedHcount;
+    procedure hAdjustAccumulatedHcount;
+    procedure hGetVblankRest;
     procedure hGetFramePerSec;
     procedure hIsForeground;
     procedure hSetHoldMode;
     procedure hSetResumeMode;
+    procedure hGetResumeMode;
     procedure hGetBrightness;
     procedure hCtrlSetSamplingCycle;
     procedure hCtrlGetSamplingCycle;
@@ -88,7 +123,6 @@ type
     procedure hCtrlSetIdleCancelThreshold;
     procedure hCtrlGetIdleCancelThreshold;
     procedure hCtrlZero;
-    procedure ReadBufferCommon(Negative: Boolean);
   public
     constructor Create(Kernel: TPSPKernel);
     destructor Destroy; override;
@@ -101,16 +135,14 @@ type
     // The 512x272 32-bit BMP the test programs write on hardware: every
     // framebuffer row of 512 pixels, bottom-up, alpha kept.
     function ScreenshotBMP: TBytes;
-    function LineNow: Int64;
-    property Current: TPSPFrameBuffer read FCurrent;
+    function Hcount: Integer;
+    property CurrentAddress: Cardinal read FCurrentAddr;
+    property Width: Cardinal read FWidth;
+    property Format: Cardinal read FFormat;
     property VCount: Cardinal read FVCount;
-    property OnVBlank: TPSPVBlankEvent read FOnVBlank write FOnVBlank;
     property FrameDone: Boolean read FFrameDone write FFrameDone;
-    property InVBlank: Boolean read FInVBlank;
+    property InVBlank: Boolean read InVBlankNow;
   end;
-
-const
-  PSPLineNs = PSPFrameNs div PSPLinesPerFrame;
 
 implementation
 
@@ -129,124 +161,210 @@ begin
   FMemory := Kernel.Memory;
   FScheduler := Kernel.Scheduler;
   FWaiters := TList<TPSPThread>.Create;
+  FReleaseQueue := TList<TPSPThread>.Create;
   FCtrlWaiters := TList<TPSPThread>.Create;
 end;
 
 destructor TPSPDisplay.Destroy;
 begin
   FWaiters.Free;
+  FReleaseQueue.Free;
   FCtrlWaiters.Free;
   inherited;
 end;
 
 procedure TPSPDisplay.Reset;
 begin
-  FCurrent := Default(TPSPFrameBuffer);
-  FPending := Default(TPSPFrameBuffer);
+  FCurrentAddr := 0;
+  FLatchedAddr := 0;
+  FWidth := 512;
+  FFormat := 3;
   FHasPending := False;
-  FFrameStart := FScheduler.Now;
-  FInVBlank := False;
   FVCount := 0;
   FWaiters.Clear;
+  FReleaseQueue.Clear;
   FCtrlWaiters.Clear;
   FMode := 0;
   FModeWidth := 480;
   FModeHeight := 272;
+  FFrameDone := False;
+  // Power-on was long ago: the next field starts a little after boot.
+  FFieldStart := FScheduler.Now + 4000000 - PSPFrameNs;
+  FHcountOrigin := FFieldStart;
+  FHcountAdjust := 0;
+  // The driver has been sampling since power-on.
+  FillChar(FSamples, SizeOf(FSamples), 0);
+  for var I := 0 to High(FSamples) do
+  begin
+    var At := FFieldStart - Int64(High(FSamples) - I) * PSPFrameNs + PSPCtrlSampleNs;
+    if At > 0 then
+      FSamples[I].Time := Cardinal(At div 1000);
+    FSamples[I].LX := 128;
+    FSamples[I].LY := 128;
+  end;
   FSampleHead := 0;
-  FSampleCount := 0;
-  FSampleIndex := 0;
+  FSampleIndex := Length(FSamples);
+  FReadIndex := FSampleIndex - 1;
   FSamplingMode := 0;
   FSamplingCycle := 0;
+  FCycleTimer := 0;
   FLatchMake := 0;
   FLatchBreak := 0;
   FLatchPress := 0;
-  FLatchRelease := 0;
+  FLatchRelease := $FFFFFFFF;
+  FLatchCount := 1;
   FLastButtons := 0;
+  FInput := 0;
   FAnalogX := 128;
   FAnalogY := 128;
   FIdleReset := -1;
   FIdleBack := -1;
-  FScheduler.Schedule(TPSPEvent.VBlank, FFrameStart + Int64(PSPLineNs) * PSPVisibleLines);
+  SchedulePhase(dpInterrupt, FFieldStart + PSPFrameNs);
 end;
 
-function TPSPDisplay.LineNow: Int64;
+procedure TPSPDisplay.SchedulePhase(Phase: TPSPDisplayPhase; At: Int64);
 begin
-  Result := (FScheduler.Now - FFrameStart) div PSPLineNs;
+  FPhase := Phase;
+  FScheduler.Schedule(TPSPEvent.VBlank, At);
+end;
+
+function TPSPDisplay.InVBlankNow: Boolean;
+begin
+  Result := FScheduler.Now - FFieldStart < PSPVBlankNs;
+end;
+
+function TPSPDisplay.Hcount: Integer;
+begin
+  Result := Integer(((FScheduler.Now - FFieldStart) * PSPLinesPerFrame div PSPFrameNs) mod PSPLinesPerFrame);
 end;
 
 procedure TPSPDisplay.OnEvent;
 begin
-  if FInVBlank then
-    VBlankEnd
-  else
-    VBlankStart;
+  case FPhase of
+    dpInterrupt: Interrupt;
+    dpHandlers:
+      begin
+        var D := Self;
+        var N := FKernel.QueueSubInterrupts(PSPInterruptVBlank, 0,
+          procedure
+          begin
+            D.FHandlersRan := True;
+            D.InterruptDone;
+          end);
+        if N = 0 then
+          InterruptDone;
+      end;
+    dpWake: ReleaseNext;
+    dpSample:
+      begin
+        if FSamplingCycle = 0 then
+          SampleController;
+        SchedulePhase(dpInterrupt, FFieldStart + PSPFrameNs);
+      end;
+    dpNextField:
+      SchedulePhase(dpInterrupt, FFieldStart + PSPFrameNs);
+  end;
 end;
 
-procedure TPSPDisplay.VBlankStart;
+procedure TPSPDisplay.Interrupt;
 begin
-  FInVBlank := True;
+  FFieldStart := FScheduler.Now;
   Inc(FVCount);
+  if FKernel.Trace then
+    FHLE.Log('%d vblank interrupt %d', [FScheduler.Now div 1000, FVCount]);
   if FHasPending then
   begin
-    FCurrent := FPending;
+    FCurrentAddr := FLatchedAddr;
     FHasPending := False;
   end;
-  SampleController;
   FFrameDone := True;
-  FScheduler.Schedule(TPSPEvent.VBlank, FFrameStart + PSPFrameNs);
-  while FWaiters.Count > 0 do
-  begin
-    var T := FWaiters[0];
-    FWaiters.Delete(0);
-    if T.IsWaiting and (T.Wait.HLETag = 'vblank') then
-      FKernel.EndWait(T, 0);
-  end;
-  FKernel.TriggerInterrupt(PSPInterruptVBlank);
-  if Assigned(FOnVBlank) then
-    FOnVBlank();
+  FHandlersRan := False;
+  FKernel.BusyUntil := FScheduler.Now + PSPIntrHandlerNs;
+  SchedulePhase(dpHandlers, FScheduler.Now + PSPIntrHandlerNs);
 end;
 
-procedure TPSPDisplay.VBlankEnd;
+procedure TPSPDisplay.InterruptDone;
 begin
-  FInVBlank := False;
-  FFrameStart := FFrameStart + PSPFrameNs;
-  FScheduler.Schedule(TPSPEvent.VBlank, FFrameStart + Int64(PSPLineNs) * PSPVisibleLines);
+  var Tail: Int64 := PSPIntrTailNs;
+  if FHandlersRan then
+    Inc(Tail, PSPIntrHandlerExtraNs);
+  FKernel.BusyUntil := FScheduler.Now + Tail;
+  FReleaseQueue.Clear;
+  for var T in FWaiters do
+    FReleaseQueue.Add(T);
+  FWakeAt := FKernel.BusyUntil + PSPWakeLatencyNs;
+  SchedulePhase(dpWake, FWakeAt);
+end;
+
+procedure TPSPDisplay.ReleaseNext;
+begin
+  // Waiters that were counted at this vblank are released one at a time.
+  while FReleaseQueue.Count > 0 do
+  begin
+    var T := FReleaseQueue[0];
+    FReleaseQueue.Delete(0);
+    if not FWaiters.Contains(T) then
+      Continue;
+    if not (T.IsWaiting and (T.Wait.HLETag = 'vblank')) then
+    begin
+      FWaiters.Remove(T);
+      Continue;
+    end;
+    if T.Wait.Data[1] > 1 then
+    begin
+      // Still more fields to wait for.
+      Dec(T.Wait.Data[1]);
+      Continue;
+    end;
+    FWaiters.Remove(T);
+    FKernel.EndWait(T, 0);
+    if FReleaseQueue.Count > 0 then
+    begin
+      SchedulePhase(dpWake, FScheduler.Now + PSPWakeStepNs);
+      Exit;
+    end;
+  end;
+  FSampleAt := FFieldStart + PSPCtrlSampleNs;
+  if FScheduler.Now < FSampleAt then
+    SchedulePhase(dpSample, FSampleAt)
+  else
+  begin
+    if FSamplingCycle = 0 then
+      SampleController;
+    SchedulePhase(dpInterrupt, FFieldStart + PSPFrameNs);
+  end;
 end;
 
 function TPSPDisplay.VBlankRetry(T: TPSPThread): Boolean;
 begin
-  Result := FVCount <> T.Wait.Data[0];
-  if Result then
-    T.SetResult(0)
-  else if not FWaiters.Contains(T) then
+  Result := False;
+  if not FWaiters.Contains(T) then
     FWaiters.Add(T);
 end;
 
 procedure TPSPDisplay.VBlankAbort(T: TPSPThread);
 begin
   FWaiters.Remove(T);
+  FReleaseQueue.Remove(T);
 end;
 
-procedure TPSPDisplay.WaitVBlank(AllowCB, OnlyIfNotInVBlank: Boolean);
+procedure TPSPDisplay.WaitFields(Count: Integer; AllowCB: Boolean);
 begin
   FHLE.Result(0);
-  if OnlyIfNotInVBlank and FInVBlank then
+  if not FKernel.CanWait then
   begin
-    if AllowCB then
-      FKernel.CheckCallbacks;
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
     Exit;
   end;
-  if not FKernel.CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
-  FWaiters.Add(FKernel.Current);
-  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, AllowCB, VBlankRetry, VBlankAbort, 'vblank');
   var T := FKernel.Current;
-  if (T <> nil) and (T.Wait.HLETag = 'vblank') then
-    T.Wait.Data[0] := FVCount
-  else if (T <> nil) and (T.Frames.Count > 0) then
+  FWaiters.Add(T);
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, AllowCB, VBlankRetry, VBlankAbort, 'vblank');
+  if T.Wait.HLETag = 'vblank' then
+    T.Wait.Data[1] := Cardinal(Count)
+  else if T.Frames.Count > 0 then
   begin
     var F := T.Frames.Last;
-    F.SavedWait.Data[0] := FVCount;
+    F.SavedWait.Data[1] := Cardinal(Count);
     T.Frames[T.Frames.Count - 1] := F;
   end;
 end;
@@ -284,16 +402,14 @@ begin
     S.LX := 128;
     S.LY := 128;
   end;
-  var Changed := FInput xor FLastButtons;
-  FLatchMake := FLatchMake or (Changed and FInput);
-  FLatchBreak := FLatchBreak or (Changed and not FInput);
+  FLatchMake := FLatchMake or (FInput and not FLastButtons);
+  FLatchBreak := FLatchBreak or (FLastButtons and not FInput);
   FLatchPress := FLatchPress or FInput;
   FLatchRelease := FLatchRelease or not FInput;
+  Inc(FLatchCount);
   FLastButtons := FInput;
   FSamples[FSampleHead] := S;
   FSampleHead := (FSampleHead + 1) mod Length(FSamples);
-  if FSampleCount < Length(FSamples) then
-    Inc(FSampleCount);
   Inc(FSampleIndex);
   while FCtrlWaiters.Count > 0 do
   begin
@@ -301,27 +417,40 @@ begin
     FCtrlWaiters.Delete(0);
     if T.IsWaiting and (T.Wait.HLETag = 'ctrl') then
     begin
-      var Count := Min(Integer(T.Wait.Data[1]), Integer(FSampleIndex - Int64(T.Wait.Data[2])));
+      var Count := Min(Integer(T.Wait.Data[1]), Integer(FSampleIndex - FReadIndex));
       ReadSamples(T.Wait.Data[0], Count, T.Wait.Data[3] <> 0, FSampleIndex - Count);
+      FReadIndex := FSampleIndex;
       FKernel.EndWait(T, Cardinal(Count));
     end;
   end;
+end;
+
+procedure TPSPDisplay.StartCycleTimer;
+begin
+  if FCycleTimer <> 0 then
+  begin
+    FKernel.CancelTimer(FCycleTimer);
+    FCycleTimer := 0;
+  end;
+  if FSamplingCycle = 0 then
+    Exit;
+  var D := Self;
+  FCycleTimer := FKernel.AddTimer(FScheduler.Now + Int64(FSamplingCycle) * 1000, Self,
+    procedure
+    begin
+      D.FCycleTimer := 0;
+      D.SampleController;
+      D.StartCycleTimer;
+    end);
 end;
 
 procedure TPSPDisplay.ReadSamples(Address: Cardinal; Count: Integer; Negative: Boolean; FromIndex: Int64);
 begin
   for var I := 0 to Count - 1 do
   begin
-    // Oldest of the requested samples first.
     var Age := Integer(FSampleIndex - (FromIndex + I));
     var Slot := (FSampleHead - Age + Length(FSamples) * 2) mod Length(FSamples);
     var S := FSamples[Slot];
-    if FSampleCount = 0 then
-    begin
-      S := Default(TPSPCtrlSample);
-      S.LX := 128;
-      S.LY := 128;
-    end;
     var A := Address + Cardinal(I) * 16;
     FMemory.Write32(A, S.Time);
     if Negative then
@@ -336,11 +465,12 @@ end;
 
 function TPSPDisplay.CtrlRetry(T: TPSPThread): Boolean;
 begin
-  Result := FSampleIndex > Int64(T.Wait.Data[2]);
+  Result := FSampleIndex > FReadIndex;
   if Result then
   begin
-    var Count := Min(Integer(T.Wait.Data[1]), Integer(FSampleIndex - Int64(T.Wait.Data[2])));
+    var Count := Min(Integer(T.Wait.Data[1]), Integer(FSampleIndex - FReadIndex));
     ReadSamples(T.Wait.Data[0], Count, T.Wait.Data[3] <> 0, FSampleIndex - Count);
+    FReadIndex := FSampleIndex;
     T.SetResult(Cardinal(Count));
   end
   else if not FCtrlWaiters.Contains(T) then
@@ -352,82 +482,67 @@ begin
   FCtrlWaiters.Remove(T);
 end;
 
-procedure PixelsFrom(Memory: TPSPMemory; const FB: TPSPFrameBuffer; var Frame: TEmulatorFrame);
-begin
-  var Bpp := 2;
-  if FB.Format = 3 then
-    Bpp := 4;
-  var Stride := FB.Width;
-  if Stride = 0 then
-    Stride := 512;
-  for var Y := 0 to PSPFrameHeight - 1 do
-  begin
-    var Row := Memory.Ptr(FB.Address + Cardinal(Y) * Stride * Cardinal(Bpp), PSPFrameWidth * Bpp);
-    var Dest := @Frame.Pixels[Y * PSPFrameWidth];
-    if Row = nil then
-    begin
-      FillChar(Dest^, PSPFrameWidth * 4, 0);
-      for var X := 0 to PSPFrameWidth - 1 do
-        Frame.Pixels[Y * PSPFrameWidth + X] := $FF000000;
-      Continue;
-    end;
-    case FB.Format of
-      3:
-        for var X := 0 to PSPFrameWidth - 1 do
-        begin
-          var C := PCardinal(Row + X * 4)^;
-          Frame.Pixels[Y * PSPFrameWidth + X] := $FF000000 or ((C and $FF) shl 16) or (C and $FF00) or ((C shr 16) and $FF);
-        end;
-      0:
-        for var X := 0 to PSPFrameWidth - 1 do
-        begin
-          var C := PWord(Row + X * 2)^;
-          var R := C and $1F;
-          var G := (C shr 5) and $3F;
-          var B := (C shr 11) and $1F;
-          R := (R shl 3) or (R shr 2);
-          G := (G shl 2) or (G shr 4);
-          B := (B shl 3) or (B shr 2);
-          Frame.Pixels[Y * PSPFrameWidth + X] := $FF000000 or (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
-        end;
-      1:
-        for var X := 0 to PSPFrameWidth - 1 do
-        begin
-          var C := PWord(Row + X * 2)^;
-          var R := C and $1F;
-          var G := (C shr 5) and $1F;
-          var B := (C shr 10) and $1F;
-          R := (R shl 3) or (R shr 2);
-          G := (G shl 3) or (G shr 2);
-          B := (B shl 3) or (B shr 2);
-          Frame.Pixels[Y * PSPFrameWidth + X] := $FF000000 or (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
-        end;
-      2:
-        for var X := 0 to PSPFrameWidth - 1 do
-        begin
-          var C := PWord(Row + X * 2)^;
-          var R := C and $F;
-          var G := (C shr 4) and $F;
-          var B := (C shr 8) and $F;
-          Frame.Pixels[Y * PSPFrameWidth + X] := $FF000000 or (Cardinal(R * 17) shl 16) or (Cardinal(G * 17) shl 8) or Cardinal(B * 17);
-        end;
-    end;
-  end;
-end;
-
 procedure TPSPDisplay.Render(var Frame: TEmulatorFrame);
 begin
   Frame.Width := PSPFrameWidth;
   Frame.Height := PSPFrameHeight;
   if Length(Frame.Pixels) <> PSPFrameWidth * PSPFrameHeight then
     SetLength(Frame.Pixels, PSPFrameWidth * PSPFrameHeight);
-  if FCurrent.Address = 0 then
+  var Bpp: Cardinal := 2;
+  if FFormat = 3 then
+    Bpp := 4;
+  for var Y := 0 to PSPFrameHeight - 1 do
   begin
-    for var I := 0 to High(Frame.Pixels) do
-      Frame.Pixels[I] := $FF000000;
-    Exit;
+    var Row: PByte := nil;
+    if FCurrentAddr <> 0 then
+      Row := FMemory.Ptr(FCurrentAddr + Cardinal(Y) * FWidth * Bpp, PSPFrameWidth * Bpp);
+    var Dest := PCardinal(@Frame.Pixels[Y * PSPFrameWidth]);
+    if Row = nil then
+    begin
+      for var X := 0 to PSPFrameWidth - 1 do
+        PCardinal(PByte(Dest) + X * 4)^ := $FF000000;
+      Continue;
+    end;
+    for var X := 0 to PSPFrameWidth - 1 do
+    begin
+      var R, G, B: Cardinal;
+      case FFormat of
+        3:
+          begin
+            var C := PCardinal(Row + X * 4)^;
+            R := C and $FF;
+            G := (C shr 8) and $FF;
+            B := (C shr 16) and $FF;
+          end;
+        0:
+          begin
+            var C := PWord(Row + X * 2)^;
+            R := C and $1F;
+            G := (C shr 5) and $3F;
+            B := (C shr 11) and $1F;
+            R := (R shl 3) or (R shr 2);
+            G := (G shl 2) or (G shr 4);
+            B := (B shl 3) or (B shr 2);
+          end;
+        1:
+          begin
+            var C := PWord(Row + X * 2)^;
+            R := C and $1F;
+            G := (C shr 5) and $1F;
+            B := (C shr 10) and $1F;
+            R := (R shl 3) or (R shr 2);
+            G := (G shl 3) or (G shr 2);
+            B := (B shl 3) or (B shr 2);
+          end;
+      else
+        var C := PWord(Row + X * 2)^;
+        R := (C and $F) * 17;
+        G := ((C shr 4) and $F) * 17;
+        B := ((C shr 8) and $F) * 17;
+      end;
+      PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
+    end;
   end;
-  PixelsFrom(FMemory, FCurrent, Frame);
 end;
 
 function TPSPDisplay.ScreenshotBMP: TBytes;
@@ -457,23 +572,21 @@ const
 begin
   SetLength(Result, 54 + 512 * 272 * 4);
   Move(Header, Result[0], 54);
-  var FB := FCurrent;
-  if (FB.Address = 0) or (FB.Width = 0) then
+  if (FCurrentAddr = 0) or (FWidth = 0) then
     Exit;
   var Bpp: Cardinal := 2;
-  if FB.Format = 3 then
+  if FFormat = 3 then
     Bpp := 4;
   for var Y := 0 to 271 do
   begin
-    var Row := FB.Address + Bpp * FB.Width * Cardinal(271 - Y);
-    var Dst := PCardinal(@Result[54 + Y * 512 * 4]);
+    var Row := FCurrentAddr + Bpp * FWidth * Cardinal(271 - Y);
+    var Dst := PByte(@Result[54 + Y * 512 * 4]);
     for var X := 0 to 511 do
     begin
-      var C: Cardinal;
       var R, G, B, A: Cardinal;
       if Bpp = 4 then
       begin
-        C := FMemory.Read32(Row + Cardinal(X) * 4);
+        var C := FMemory.Read32(Row + Cardinal(X) * 4);
         R := C and $FF;
         G := (C shr 8) and $FF;
         B := (C shr 16) and $FF;
@@ -481,8 +594,8 @@ begin
       end
       else
       begin
-        C := FMemory.Read16(Row + Cardinal(X) * 2);
-        case FB.Format of
+        var C := FMemory.Read16(Row + Cardinal(X) * 2);
+        case FFormat of
           0:
             begin
               R := E5(C and $1F);
@@ -504,9 +617,14 @@ begin
           A := E4((C shr 12) and $F);
         end;
       end;
-      PCardinal(PByte(Dst) + X * 4)^ := B or (G shl 8) or (R shl 16) or (A shl 24);
+      PCardinal(Dst + X * 4)^ := B or (G shl 8) or (R shl 16) or (A shl 24);
     end;
   end;
+end;
+
+function TPSPDisplay.ValidPointer(Address: Cardinal): Boolean;
+begin
+  Result := (Address <> 0) and FMemory.Valid(Address, 4) and (Address < $80000000);
 end;
 
 { HLE: display }
@@ -516,12 +634,21 @@ begin
   var Mode := FHLE.Arg(0);
   var W := FHLE.Arg(1);
   var H := FHLE.Arg(2);
-  if (Mode <> 0) or (W = 0) or (H = 0) or (W > 480) or (H > 272) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVAL); Exit; end;
+  if Mode <> 0 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
+  if (W <> 480) or (H <> 272) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+    Exit;
+  end;
   FMode := Mode;
   FModeWidth := W;
   FModeHeight := H;
-  FHLE.Result(0);
+  // Changing the mode waits for the next vblank.
+  WaitFields(1, False);
 end;
 
 procedure TPSPDisplay.hGetMode;
@@ -534,62 +661,130 @@ end;
 
 procedure TPSPDisplay.hSetFrameBuf;
 begin
-  var FB := Default(TPSPFrameBuffer);
-  FB.Address := FHLE.Arg(0);
-  FB.Width := FHLE.Arg(1);
-  FB.Format := FHLE.Arg(2);
+  var Address := FHLE.Arg(0);
+  var W := FHLE.Arg(1);
+  var Fmt := FHLE.Arg(2);
   var Sync := FHLE.Arg(3);
   if Sync > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVAL); Exit; end;
-  if FB.Address <> 0 then
   begin
-    if (FB.Format > 3) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_INVAL); Exit; end;
-    if (FB.Width = 0) or ((FB.Width and 63) <> 0) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_INVAL); Exit; end;
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
+  if Fmt > 3 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_FORMAT);
+    Exit;
+  end;
+  if Address <> 0 then
+  begin
+    if (W = 0) or ((W and 63) <> 0) then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+      Exit;
+    end;
+    var Physical := Address and $1FFFFFFF;
+    var InVRAM := (Physical >= PSPVRAMBase) and (Physical < PSPVRAMBase + 4 * PSPVRAMSize);
+    var InRAM := (Physical >= PSPRAMBase) and (Physical < PSPRAMBase + PSPRAMSize);
+    if ((Address and 15) <> 0) or not (InVRAM or InRAM) then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER);
+      Exit;
+    end;
   end;
   if Sync = 0 then
   begin
-    FCurrent := FB;
+    // An immediate change keeps the format and stride.
+    if (Address <> 0) and ((W <> FWidth) or (Fmt <> FFormat)) then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+      Exit;
+    end;
+    if (Address = 0) and (W <> 0) and ((W <> FWidth) or (Fmt <> FFormat)) then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+      Exit;
+    end;
+    if (Address = 0) and (W = 0) then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+      Exit;
+    end;
+    FCurrentAddr := Address;
+    FLatchedAddr := Address;
     FHasPending := False;
   end
   else
   begin
-    FPending := FB;
+    FLatchedAddr := Address;
     FHasPending := True;
+    FWidth := W;
+    FFormat := Fmt;
   end;
   FHLE.Result(0);
 end;
 
 procedure TPSPDisplay.hGetFrameBuf;
 begin
-  var FB := FCurrent;
+  var A := FCurrentAddr;
   if (FHLE.Arg(3) = 1) and FHasPending then
-    FB := FPending;
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), FB.Address);
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), FB.Width);
-  if FHLE.Arg(2) <> 0 then FMemory.Write32(FHLE.Arg(2), FB.Format);
+    A := FLatchedAddr;
+  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), A);
+  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), FWidth);
+  if FHLE.Arg(2) <> 0 then FMemory.Write32(FHLE.Arg(2), FFormat);
   FHLE.Result(0);
 end;
 
 procedure TPSPDisplay.hWaitVblankStart;
 begin
-  WaitVBlank(False, False);
+  WaitFields(1, False);
 end;
 
 procedure TPSPDisplay.hWaitVblankStartCB;
 begin
-  WaitVBlank(True, False);
+  WaitFields(1, True);
 end;
 
 procedure TPSPDisplay.hWaitVblank;
 begin
-  WaitVBlank(False, True);
+  FKernel.NowUs;
+  if InVBlankNow then
+  begin
+    FHLE.Result(1);
+    Exit;
+  end;
+  WaitFields(1, False);
 end;
 
 procedure TPSPDisplay.hWaitVblankCB;
 begin
-  WaitVBlank(True, True);
+  FKernel.NowUs;
+  if InVBlankNow then
+  begin
+    FHLE.Result(1);
+    FKernel.CheckCallbacks;
+    Exit;
+  end;
+  WaitFields(1, True);
+end;
+
+procedure TPSPDisplay.hWaitVblankStartMulti;
+begin
+  if FHLE.ArgInt(0) <= 0 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
+  WaitFields(FHLE.ArgInt(0), False);
+end;
+
+procedure TPSPDisplay.hWaitVblankStartMultiCB;
+begin
+  if FHLE.ArgInt(0) <= 0 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
+  WaitFields(FHLE.ArgInt(0), True);
 end;
 
 procedure TPSPDisplay.hGetVcount;
@@ -600,30 +795,61 @@ end;
 procedure TPSPDisplay.hIsVblank;
 begin
   FKernel.NowUs;
-  FHLE.Result(Ord(FInVBlank));
+  FHLE.Result(Ord(InVBlankNow));
+end;
+
+procedure TPSPDisplay.hIsVsync;
+begin
+  FKernel.NowUs;
+  var T := FScheduler.Now - FFieldStart;
+  FHLE.Result(Ord((T >= PSPVSyncNs) and (T < PSPVBlankNs)));
 end;
 
 procedure TPSPDisplay.hGetCurrentHcount;
 begin
   FKernel.NowUs;
-  FHLE.Result(Cardinal(LineNow mod PSPLinesPerFrame));
+  FHLE.Result(Cardinal(Hcount));
 end;
 
 procedure TPSPDisplay.hGetAccumulatedHcount;
 begin
   FKernel.NowUs;
-  FHLE.Result(Cardinal(Int64(FVCount) * PSPLinesPerFrame + LineNow));
+  var Lines := (FScheduler.Now - FHcountOrigin) * PSPLinesPerFrame div PSPFrameNs + FHcountAdjust;
+  FHLE.Result(Cardinal(Lines and $7FFFFFFF));
+end;
+
+procedure TPSPDisplay.hAdjustAccumulatedHcount;
+begin
+  var V := FHLE.ArgInt(0);
+  if V < 0 then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
+  FKernel.NowUs;
+  FHcountAdjust := Int64(V) - (FScheduler.Now - FHcountOrigin) * PSPLinesPerFrame div PSPFrameNs;
+  FHLE.Result(0);
+end;
+
+procedure TPSPDisplay.hGetVblankRest;
+begin
+  FKernel.NowUs;
+  var T := FScheduler.Now - FFieldStart;
+  if T < PSPVBlankNs then
+    FHLE.Result(0)
+  else
+    FHLE.Result(Cardinal((PSPFrameNs - T) div 1000));
 end;
 
 procedure TPSPDisplay.hGetFramePerSec;
 begin
   FHLE.ResultFloat(59.9400599);
-  FHLE.Result(PCardinal(@FHLE.CPU.Ctx.FPR[0])^);
+  FHLE.Result(FHLE.CPU.Ctx.FPR[0]);
 end;
 
 procedure TPSPDisplay.hIsForeground;
 begin
-  FHLE.Result(1);
+  FHLE.Result(Ord(FCurrentAddr <> 0));
 end;
 
 procedure TPSPDisplay.hSetHoldMode;
@@ -633,6 +859,13 @@ end;
 
 procedure TPSPDisplay.hSetResumeMode;
 begin
+  FHLE.Result(0);
+end;
+
+procedure TPSPDisplay.hGetResumeMode;
+begin
+  if FHLE.Arg(0) <> 0 then
+    FMemory.Write32(FHLE.Arg(0), 0);
   FHLE.Result(0);
 end;
 
@@ -649,15 +882,23 @@ procedure TPSPDisplay.hCtrlSetSamplingCycle;
 begin
   var C := FHLE.Arg(0);
   if (C <> 0) and ((C < 5555) or (C > 20000)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVAL); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   FHLE.Result(FSamplingCycle);
   FSamplingCycle := C;
+  StartCycleTimer;
 end;
 
 procedure TPSPDisplay.hCtrlGetSamplingCycle;
 begin
-  if FHLE.Arg(0) <> 0 then
-    FMemory.Write32(FHLE.Arg(0), FSamplingCycle);
+  if not ValidPointer(FHLE.Arg(0)) then
+  begin
+    FHLE.Result($80000023);
+    Exit;
+  end;
+  FMemory.Write32(FHLE.Arg(0), FSamplingCycle);
   FHLE.Result(0);
 end;
 
@@ -665,48 +906,72 @@ procedure TPSPDisplay.hCtrlSetSamplingMode;
 begin
   var M := FHLE.Arg(0);
   if M > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVAL); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   FHLE.Result(FSamplingMode);
   FSamplingMode := M;
 end;
 
 procedure TPSPDisplay.hCtrlGetSamplingMode;
 begin
-  if FHLE.Arg(0) <> 0 then
-    FMemory.Write32(FHLE.Arg(0), FSamplingMode);
+  if not ValidPointer(FHLE.Arg(0)) then
+  begin
+    FHLE.Result($80000023);
+    Exit;
+  end;
+  FMemory.Write32(FHLE.Arg(0), FSamplingMode);
   FHLE.Result(0);
+end;
+
+procedure TPSPDisplay.PeekBufferCommon(Negative: Boolean);
+begin
+  var N := FHLE.ArgInt(1);
+  if (N < 0) or (N > 64) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+    Exit;
+  end;
+  ReadSamples(FHLE.Arg(0), N, Negative, FSampleIndex - N);
+  // Copying costs about 0.2 us a sample.
+  FHLE.CPU.AddCycles(N * Integer(FScheduler.MHz) div 5);
+  FHLE.Result(Cardinal(N));
 end;
 
 procedure TPSPDisplay.hCtrlPeekBufferPositive;
 begin
-  var N := EnsureRange(FHLE.ArgInt(1), 0, 64);
-  ReadSamples(FHLE.Arg(0), N, False, FSampleIndex - N);
-  FHLE.Result(Cardinal(N));
+  PeekBufferCommon(False);
 end;
 
 procedure TPSPDisplay.hCtrlPeekBufferNegative;
 begin
-  var N := EnsureRange(FHLE.ArgInt(1), 0, 64);
-  ReadSamples(FHLE.Arg(0), N, True, FSampleIndex - N);
-  FHLE.Result(Cardinal(N));
+  PeekBufferCommon(True);
 end;
 
 procedure TPSPDisplay.ReadBufferCommon(Negative: Boolean);
 begin
   var Address := FHLE.Arg(0);
-  var N := EnsureRange(FHLE.ArgInt(1), 0, 64);
-  if not FKernel.CanWait then
+  var N := FHLE.ArgInt(1);
+  if (N < 0) or (N > 64) then
   begin
-    ReadSamples(Address, N, Negative, FSampleIndex - N);
-    begin FHLE.Result(Cardinal(N)); Exit; end;
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+    Exit;
   end;
-  // Reading waits for the next sample.
+  var Unread := FSampleIndex - FReadIndex;
+  if (Unread > 0) or not FKernel.CanWait then
+  begin
+    var Count := Min(Int64(N), Unread);
+    ReadSamples(Address, Count, Negative, FSampleIndex - Count);
+    FReadIndex := FSampleIndex;
+    FHLE.Result(Cardinal(Count));
+    Exit;
+  end;
   FCtrlWaiters.Add(FKernel.Current);
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, CtrlRetry, CtrlAbort, 'ctrl');
   var T := FKernel.Current;
   T.Wait.Data[0] := Address;
   T.Wait.Data[1] := Cardinal(N);
-  T.Wait.Data[2] := Cardinal(FSampleIndex);
   T.Wait.Data[3] := Ord(Negative);
 end;
 
@@ -723,33 +988,55 @@ end;
 procedure TPSPDisplay.hCtrlPeekLatch;
 begin
   var P := FHLE.Arg(0);
+  if not ValidPointer(P) then
+  begin
+    FHLE.Result($80000023);
+    Exit;
+  end;
   FMemory.Write32(P, FLatchMake);
   FMemory.Write32(P + 4, FLatchBreak);
   FMemory.Write32(P + 8, FLatchPress);
   FMemory.Write32(P + 12, FLatchRelease);
-  FHLE.Result(Cardinal(Min(FSampleCount, 1)));
+  FHLE.Result(Cardinal(FLatchCount));
 end;
 
 procedure TPSPDisplay.hCtrlReadLatch;
 begin
   hCtrlPeekLatch;
+  if FHLE.CPU.Ctx.GPR[2] = $80000023 then
+    Exit;
   FLatchMake := 0;
   FLatchBreak := 0;
   FLatchPress := 0;
   FLatchRelease := 0;
+  FLatchCount := 0;
 end;
 
 procedure TPSPDisplay.hCtrlSetIdleCancelThreshold;
 begin
-  FIdleReset := FHLE.ArgInt(0);
-  FIdleBack := FHLE.ArgInt(1);
+  var R := FHLE.ArgInt(0);
+  var B := FHLE.ArgInt(1);
+  if (R < -1) or (R > 128) or (B < -1) or (B > 128) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
+  FIdleReset := R;
+  FIdleBack := B;
   FHLE.Result(0);
 end;
 
 procedure TPSPDisplay.hCtrlGetIdleCancelThreshold;
 begin
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), Cardinal(FIdleReset));
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), Cardinal(FIdleBack));
+  var A := FHLE.Arg(0);
+  var B := FHLE.Arg(1);
+  if ((A <> 0) and not ValidPointer(A)) or ((B <> 0) and not ValidPointer(B)) then
+  begin
+    FHLE.Result($80000023);
+    Exit;
+  end;
+  if A <> 0 then FMemory.Write32(A, Cardinal(FIdleReset));
+  if B <> 0 then FMemory.Write32(B, Cardinal(FIdleBack));
   FHLE.Result(0);
 end;
 
@@ -772,14 +1059,20 @@ begin
   H.Register(D, $46F186C3, 'sceDisplayWaitVblankStartCB', hWaitVblankStartCB);
   H.Register(D, $36CDFADE, 'sceDisplayWaitVblank', hWaitVblank);
   H.Register(D, $8EB9EC49, 'sceDisplayWaitVblankCB', hWaitVblankCB);
+  H.Register(D, $40F1469C, 'sceDisplayWaitVblankStartMulti', hWaitVblankStartMulti);
+  H.Register(D, $77ED8B3A, 'sceDisplayWaitVblankStartMultiCB', hWaitVblankStartMultiCB);
   H.Register(D, $9C6EAAD7, 'sceDisplayGetVcount', hGetVcount);
   H.Register(D, $4D4E10EC, 'sceDisplayIsVblank', hIsVblank);
+  H.Register(D, $21038913, 'sceDisplayIsVsync', hIsVsync);
   H.Register(D, $773DD3A3, 'sceDisplayGetCurrentHcount', hGetCurrentHcount);
   H.Register(D, $210EAB3A, 'sceDisplayGetAccumulatedHcount', hGetAccumulatedHcount);
+  H.Register(D, $A83EF139, 'sceDisplayAdjustAccumulatedHcount', hAdjustAccumulatedHcount);
+  H.Register(D, $69B53541, 'sceDisplayGetVblankRest', hGetVblankRest);
   H.Register(D, $DBA6C4C4, 'sceDisplayGetFramePerSec', hGetFramePerSec);
   H.Register(D, $B4F378FA, 'sceDisplayIsForeground', hIsForeground);
   H.Register(D, $7ED59BC4, 'sceDisplaySetHoldMode', hSetHoldMode);
   H.Register(D, $A544C486, 'sceDisplaySetResumeMode', hSetResumeMode);
+  H.Register(D, $BF79F646, 'sceDisplayGetResumeMode', hGetResumeMode);
   H.Register(D, $31C4BAA8, 'sceDisplayGetBrightness', hGetBrightness);
   H.Register(C, $6A2774F3, 'sceCtrlSetSamplingCycle', hCtrlSetSamplingCycle);
   H.Register(C, $02BAAD91, 'sceCtrlGetSamplingCycle', hCtrlGetSamplingCycle);
