@@ -175,7 +175,7 @@ procedure Latch(C: TPSPCPU; const R: TV4; Lanes: Cardinal); inline;
 begin
   for var I := 0 to 3 do
     if ((Lanes shr I) and 1) <> 0 then
-      C.Ctx.VLatch[I] := R[I];
+      C.VLatch[I] := R[I];
 end;
 
 function ReadS(C: TPSPCPU; Op: Cardinal; N: Integer; var R: TV4): Cardinal; inline;
@@ -202,7 +202,7 @@ begin
   Latch(C, R, not Z and $F);
   for var I := 0 to 3 do
     if ((Z shr I) and 1) <> 0 then
-      R[I] := C.Ctx.VLatch[I];
+      R[I] := C.VLatch[I];
 end;
 
 function ReadT(C: TPSPCPU; Op: Cardinal; N: Integer; var R: TV4): Cardinal; inline;

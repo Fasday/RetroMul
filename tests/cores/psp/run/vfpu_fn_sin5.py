@@ -25,7 +25,7 @@ def quadrant(x, cosine):
 def model(fr):
     a = (fr // SEG) * SEG
     h = SEG / 2
-    s = lambda u: mpmath.sin(mpmath.mpf(u) / (1 << FA) * mpmath.pi / 2)
+    s = lambda u: (mpmath.nint(mpmath.sin(mpmath.mpf(u) / (1 << FA) * mpmath.pi / 2) * 2 ** 28) / 2 ** 28 if os.environ.get('RN') else mpmath.sin(mpmath.mpf(u) / (1 << FA) * mpmath.pi / 2))
     ya, ym, yb = s(a), s(a + h), s(a + SEG)
     u = (mpmath.mpf(fr) - a) / h
     return ya + (ym - ya) * u + (yb - 2 * ym + ya) / 2 * u * (u - 1)
