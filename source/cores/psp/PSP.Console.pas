@@ -328,8 +328,9 @@ begin
       var Data: TBytes;
       if FIO.ReadAll(Path, Data) = 0 then
       begin
-        FKernel.Reset;
+        // Memory first: the kernel writes its traps into it.
         FMemory.Reset;
+        FKernel.Reset;
         FCPU.Reset;
         FIO.Reset;
         FIO.Disc := FDisc;
