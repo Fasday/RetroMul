@@ -4,7 +4,7 @@ unit PSP.Memory;
 // KSEG0, KSEG1) folds to one physical map through `and $1FFFFFFF`; the map is a
 // table of 4 KB pages pointing into host buffers. Stores into pages that hold
 // decoded code notify the CPU.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
@@ -62,6 +62,10 @@ type
     procedure MarkCode(Address: Cardinal); inline;
     procedure ClearCodeMarks;
     function IsCode(Address: Cardinal): Boolean; inline;
+    // The page table and the code marks themselves, for generated code that
+    // reads them (PSP.CPU.JIT).
+    function PageTable: PPointer; inline;
+    function CodeMarks: PByte; inline;
     property OnCodeWrite: TPSPCodeWrite read FOnCodeWrite write FOnCodeWrite;
     property RAM: TBytes read FRAM;
     property VRAM: TBytes read FVRAM;
@@ -362,6 +366,16 @@ end;
 function TPSPMemory.IsCode(Address: Cardinal): Boolean;
 begin
   Result := FCodePages[(Address and $1FFFFFFF) shr PSPPageShift] <> 0;
+end;
+
+function TPSPMemory.PageTable: PPointer;
+begin
+  Result := @FPages[0];
+end;
+
+function TPSPMemory.CodeMarks: PByte;
+begin
+  Result := @FCodePages[0];
 end;
 
 end.

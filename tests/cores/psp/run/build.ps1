@@ -12,6 +12,7 @@ $src = "$root\source"
 $dirs = @(Get-ChildItem $src -Recurse -Directory | Where-Object { $_.FullName -notmatch '\\ui\\|\\ui$|\\__history|\\gpu' } | ForEach-Object { $_.FullName })
 $dirs += $src
 $dirs += "$root\dependencies\PCMAudio"
+$dirs += "$root\dependencies\Delphi7z"
 $dirs += $PSScriptRoot
 $paths = $dirs -join ';'
 $name = [IO.Path]::GetFileNameWithoutExtension($Project)

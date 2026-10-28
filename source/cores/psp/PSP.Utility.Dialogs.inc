@@ -486,7 +486,7 @@ begin
   case Id shr 8 of
     1: Result := (Id and $FF) <= 6;
     2: Result := (Id and $FF) <= 3;
-    3: Result := (Id and $FF) <= 7;
+    3: Result := (Id and $FF) <= 8;
     4: Result := (Id and $FF) <= 2;
     5: Result := (Id and $FF) <= 1;
     6: Result := (Id and $FF) = 0;
