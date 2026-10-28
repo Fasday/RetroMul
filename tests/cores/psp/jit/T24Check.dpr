@@ -5,6 +5,7 @@ program T24Check;
 // implementation, including Ldexp(1, ..)'s Single overload in Add24.
 {$APPTYPE CONSOLE}
 {$O+}{$Q-}{$R-}
+{$EXCESSPRECISION OFF}
 
 uses
   System.SysUtils, System.Math, System.Diagnostics;
