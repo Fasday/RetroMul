@@ -776,15 +776,18 @@ begin
         Inc(Clusters, SdClusters(Int64(UInt64(M.Read32(E)) or (UInt64(M.Read32(E + 4)) shl 32))));
       end;
     end;
-    var KB := Clusters * (SdClusterSize div 1024);
+    // What the stick lacks for a new save and for rewriting the existing one:
+    // nothing while there is room (programs take any other value as "full").
     var D := Dir(SaveName);
     var Existing: Int64 := 0;
     if TDirectory.Exists(D) then
-      Existing := SdUsedClusters(D) * (SdClusterSize div 1024);
-    M.Write32(S + 36, Cardinal(KB));
-    M.WriteString(S + 40, SdSizeString(KB), 8);
-    M.Write32(S + 48, Cardinal(System.Math.Max(0, KB - Existing)));
-    M.WriteString(S + 52, SdSizeString(System.Math.Max(0, KB - Existing)), 8);
+      Existing := SdUsedClusters(D);
+    var Lack := System.Math.Max(0, Clusters - SdFreeClusters) * (SdClusterSize div 1024);
+    var LackOver := System.Math.Max(0, Clusters - Existing - SdFreeClusters) * (SdClusterSize div 1024);
+    M.Write32(S + 36, Cardinal(Lack));
+    M.WriteString(S + 40, SdSizeString(Lack), 8);
+    M.Write32(S + 48, Cardinal(LackOver));
+    M.WriteString(S + 52, SdSizeString(LackOver), 8);
   end;
   Result := 0;
 end;
@@ -900,6 +903,8 @@ begin
         Res := SD_RW_NO_MS;
     end;
     FMemory.Write32(P + DialogResult, Res);
+    if FHLE.TraceCalls then
+      FHLE.Log('utility: savedata mode %d -> %.8x', [R.Mode, Res]);
   finally
     R.Free;
   end;

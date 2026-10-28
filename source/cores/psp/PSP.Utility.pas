@@ -80,6 +80,7 @@ type
     procedure StepOsk(D: TPSPDialog);
     procedure StepOther(D: TPSPDialog);
     procedure CheckMsgParams(D: TPSPDialog);
+    procedure TraceStart(D: TPSPDialog);
     function Pressed(D: TPSPDialog): Cardinal;
     // Savedata
     procedure StepSavedata(D: TPSPDialog);
@@ -320,6 +321,8 @@ begin
   D.Error := 0;
   D.Done := False;
   FHLE.Result(0);
+  if FHLE.TraceCalls then
+    TraceStart(D);
   case Kind of
     dtMsg:
       begin
@@ -408,6 +411,22 @@ begin
     dtOsk: StepOsk(D);
   else
     StepOther(D);
+  end;
+end;
+
+procedure TPSPUtility.TraceStart(D: TPSPDialog);
+begin
+  var P := D.Params;
+  case D.Kind of
+    dtMsg:
+      FHLE.Log('utility: message dialog mode %d error %.8x options %x "%s"', [FMemory.Read32(P + $34),
+        FMemory.Read32(P + $38), FMemory.Read32(P + $23C),
+        UTF8ToString(FMemory.ReadAnsi(P + $3C, 512)).Replace(#10, '|')]);
+    dtSavedata:
+      FHLE.Log('utility: savedata mode %d game "%s" save "%s" file "%s"', [FMemory.Read32(P + $30),
+        FMemory.ReadString(P + $3C, 13), FMemory.ReadString(P + $4C, 20), FMemory.ReadString(P + $64, 13)]);
+  else
+    FHLE.Log('utility: dialog %d size %x', [Ord(D.Kind), D.Size]);
   end;
 end;
 
