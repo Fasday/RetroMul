@@ -1470,7 +1470,8 @@ end;
 
 procedure TPSPGEEngine.LoadClut(Op: Cardinal);
 begin
-  var Addr := ((Regs.Cmd[GE_CLUTADDRUPPER] and $0F0000) shl 8) or (Regs.Cmd[GE_CLUTADDR] and $FFFFFF);
+  // The CLUT address loses its low 4 bits.
+  var Addr := (((Regs.Cmd[GE_CLUTADDRUPPER] and $0F0000) shl 8) or (Regs.Cmd[GE_CLUTADDR] and $FFFFFF)) and not Cardinal($F);
   var Bytes := Integer(Op and $3F) * 32;
   if Bytes > Length(FClut) then
     Bytes := Length(FClut);
