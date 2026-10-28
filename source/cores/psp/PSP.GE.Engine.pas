@@ -1478,11 +1478,48 @@ begin
     FMemory.ReadBytes(Addr, FClut[0], Bytes);
 end;
 
+// Transfers address VRAM's 8MB of mirrors with wrap-around at the end.
+function WrapVRAM(A: Cardinal): Cardinal; inline;
+begin
+  Result := A and $1FFFFFFF;
+  if (Result >= $04000000) and (Result < $08000000) then
+    Result := $04000000 or (Result and $7FFFFF);
+end;
+
+// Bytes at A, wrapping from the end of VRAM's mirrors to their start.
+procedure TransferRead(M: TPSPMemory; A: Cardinal; var Buf; Size: Cardinal);
+begin
+  var P := WrapVRAM(A);
+  var N := Size;
+  if (P >= $04000000) and (P < $08000000) and ((P and $7FFFFF) + Size > $800000) then
+    N := $800000 - (P and $7FFFFF);
+  M.ReadBytes(P, Buf, N);
+  if N < Size then
+    M.ReadBytes($04000000, PByte(@Buf)[N], Size - N);
+end;
+
+procedure TransferWrite(M: TPSPMemory; A: Cardinal; const Buf; Size: Cardinal);
+begin
+  var P := WrapVRAM(A);
+  var N := Size;
+  if (P >= $04000000) and (P < $08000000) and ((P and $7FFFFF) + Size > $800000) then
+    N := $800000 - (P and $7FFFFF);
+  M.WriteBytes(P, Buf, N);
+  if N < Size then
+    M.WriteBytes($04000000, PByte(@Buf)[N], Size - N);
+end;
+
+// TRANSFERSTART: a rectangle copy. The buffer addresses lose their low 4
+// bits, and each row moves in 64-byte pieces, each read before it is
+// written, so an overlapping copy repeats what it has just written once the
+// destination is 64 bytes or more past the source.
 procedure TPSPGEEngine.BlockTransfer(Op: Cardinal);
+var
+  Buf: array[0..63] of Byte;
 begin
   var C: PGECmds := @Regs.Cmd;
-  var Src := ((C[GE_TRANSFERSRCW] and $FF0000) shl 8) or (C[GE_TRANSFERSRC] and $FFFFFF);
-  var Dst := ((C[GE_TRANSFERDSTW] and $FF0000) shl 8) or (C[GE_TRANSFERDST] and $FFFFFF);
+  var Src := (((C[GE_TRANSFERSRCW] and $FF0000) shl 8) or (C[GE_TRANSFERSRC] and $FFFFFF)) and not Cardinal($F);
+  var Dst := (((C[GE_TRANSFERDSTW] and $FF0000) shl 8) or (C[GE_TRANSFERDST] and $FFFFFF)) and not Cardinal($F);
   var SrcW := Integer(C[GE_TRANSFERSRCW] and $7F8);
   var DstW := Integer(C[GE_TRANSFERDSTW] and $7F8);
   var SX := Integer(C[GE_TRANSFERSRCPOS] and $3FF);
@@ -1494,11 +1531,21 @@ begin
   var Bpp := 2;
   if (Op and 1) <> 0 then
     Bpp := 4;
+  var RowBytes := Cardinal(W * Bpp);
   for var Y := 0 to H - 1 do
   begin
     var SA := Src + Cardinal(((SY + Y) * SrcW + SX) * Bpp);
     var DA := Dst + Cardinal(((DY + Y) * DstW + DX) * Bpp);
-    FMemory.Copy(DA, SA, Cardinal(W * Bpp));
+    var Done: Cardinal := 0;
+    while Done < RowBytes do
+    begin
+      var N := RowBytes - Done;
+      if N > SizeOf(Buf) then
+        N := SizeOf(Buf);
+      TransferRead(FMemory, SA + Done, Buf, N);
+      TransferWrite(FMemory, DA + Done, Buf, N);
+      Inc(Done, N);
+    end;
   end;
   FPrimCost := Int64(W) * H * Bpp * 2;
 end;
