@@ -11,8 +11,9 @@ unit PSP.CPU.JIT;
 // cycles from the budget on entry where they fit (else the interpreter runs
 // what is left of the budget) and gives back those of a likely branch's
 // nullified delay slot. The common integer instructions, branches, jumps,
-// FPR moves and loads and stores (aligned or not: RAM directly, the rest
-// through the page table) are written out; every other instruction calls
+// FPR moves, VFPU scalar moves and scalar/quad loads and stores (aligned
+// or not: RAM directly, the rest through the page table) are written out;
+// every other instruction calls
 // the interpreter's handler (DecodeOp), with PC, NPC and CurPC as the
 // interpreter has them where it may read them, and the code stops after it
 // where it stopped the run or used up the cycles left. A store that reaches

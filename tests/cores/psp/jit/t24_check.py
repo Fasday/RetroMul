@@ -3,7 +3,8 @@
   python tests/cores/psp/jit/t24_check.py [--win32] [pairs=50000000]
 
 Extracts T24, Exp24 and Add24 from PSP.GE.Engine.pas, so this exercises the
-routines that ship, not another copy of them. Win64 dcc64 is required.
+routines that ship, not another copy of them. Uses the installed Delphi
+compiler (dcc64 by default, dcc32 with --win32).
 """
 from pathlib import Path
 import subprocess
