@@ -511,44 +511,47 @@ begin
         PCardinal(PByte(Dest) + X * 4)^ := $FF000000;
       Continue;
     end;
-    for var X := 0 to PSPFrameWidth - 1 do
-    begin
-      var R, G, B: Cardinal;
-      case FFormat of
-        3:
-          begin
-            var C := PCardinal(Row + X * 4)^;
-            R := C and $FF;
-            G := (C shr 8) and $FF;
-            B := (C shr 16) and $FF;
-          end;
-        0:
-          begin
-            var C := PWord(Row + X * 2)^;
-            R := C and $1F;
-            G := (C shr 5) and $3F;
-            B := (C shr 11) and $1F;
-            R := (R shl 3) or (R shr 2);
-            G := (G shl 2) or (G shr 4);
-            B := (B shl 3) or (B shr 2);
-          end;
-        1:
-          begin
-            var C := PWord(Row + X * 2)^;
-            R := C and $1F;
-            G := (C shr 5) and $1F;
-            B := (C shr 10) and $1F;
-            R := (R shl 3) or (R shr 2);
-            G := (G shl 3) or (G shr 2);
-            B := (B shl 3) or (B shr 2);
-          end;
-      else
-        var C := PWord(Row + X * 2)^;
-        R := (C and $F) * 17;
-        G := ((C shr 4) and $F) * 17;
-        B := ((C shr 8) and $F) * 17;
+    // One loop a format (the colours as before: R in bits 16..23, B in 0..7).
+    case FFormat of
+      3:
+        for var X := 0 to PSPFrameWidth - 1 do
+        begin
+          var C := PCardinal(Row + X * 4)^;
+          PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or ((C and $FF) shl 16) or (C and $FF00) or ((C shr 16) and $FF);
+        end;
+      0:
+        for var X := 0 to PSPFrameWidth - 1 do
+        begin
+          var C := Cardinal(PWord(Row + X * 2)^);
+          var R := C and $1F;
+          var G := (C shr 5) and $3F;
+          var B := (C shr 11) and $1F;
+          R := (R shl 3) or (R shr 2);
+          G := (G shl 2) or (G shr 4);
+          B := (B shl 3) or (B shr 2);
+          PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
+        end;
+      1:
+        for var X := 0 to PSPFrameWidth - 1 do
+        begin
+          var C := Cardinal(PWord(Row + X * 2)^);
+          var R := C and $1F;
+          var G := (C shr 5) and $1F;
+          var B := (C shr 10) and $1F;
+          R := (R shl 3) or (R shr 2);
+          G := (G shl 3) or (G shr 2);
+          B := (B shl 3) or (B shr 2);
+          PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
+        end;
+    else
+      for var X := 0 to PSPFrameWidth - 1 do
+      begin
+        var C := Cardinal(PWord(Row + X * 2)^);
+        var R := (C and $F) * 17;
+        var G := ((C shr 4) and $F) * 17;
+        var B := ((C shr 8) and $F) * 17;
+        PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
       end;
-      PCardinal(PByte(Dest) + X * 4)^ := $FF000000 or (R shl 16) or (G shl 8) or B;
     end;
   end;
 end;

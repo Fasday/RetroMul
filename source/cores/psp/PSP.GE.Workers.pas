@@ -64,6 +64,21 @@ type
   end;
   PGEBatch = ^TGEBatch;
 
+  // What Add finds of a raster state's texture levels, the same for every
+  // primitive with that state: the first level (in Add's order) a primitive
+  // is drawn alone for whatever its buffers (Fail: -1 the format, LevelCount
+  // none) and why, the VRAM levels' ranges before it (checked against each
+  // primitive's buffers), and the ranges read and watched.
+  TGETexInfo = record
+    Fail, FailWhy, LevelCount: Integer;
+    UsesClut: Boolean;
+    InVRAM: array[0..7] of Boolean;
+    Ranges: array[0..7] of TGERange;
+    TexCount, WatchedCount: Integer;
+    Tex: array[0..7] of TGERange;
+    Watched: array[0..39] of TGERange;
+  end;
+
   TGEWorkers = class;
 
   {$IFDEF MSWINDOWS}
@@ -108,6 +123,18 @@ type
     FReadCount: Integer;
     FWatches: array[0..WatchCapacity - 1] of TGERange;
     FWatchCount: Integer;
+    // The ranges the last primitive watched, all registered (in FWatches or
+    // through Watch) since FWatches was last emptied (FWatchEpoch): the same
+    // ranges need not be looked up again.
+    FWatchEpoch, FLastWatchEpoch: Int64;
+    FLastWatched: array[0..39] of TGERange;
+    FLastWatchedCount: Integer;
+    // The texture levels of the raster state last given (FTexSource), until
+    // it changes (StateChanged); FTexGen counts the analyses.
+    FTex: TGETexInfo;
+    FTexSource: Pointer;
+    FTexDirty: Boolean;
+    FTexGen, FLastWatchGen: Integer;
     FHolding: Boolean;
     FSavedFault: TPSPVRAMFault;
     FBatchesDrawn, FBackground, FQueued, FAlone, FAccessSyncs, FSplits: Int64;
@@ -116,6 +143,8 @@ type
     FWaitReason: Integer;
     FWaitTicks: array[0..4] of Int64;
     FSerialTicks: Int64;
+    // Of the waits: drawing bands on the emulator thread.
+    FHelpTicks: Int64;
     {$IFDEF MSWINDOWS}
     FWorkers: array of TGEWorker;
     procedure StartWorkers;
@@ -123,7 +152,9 @@ type
     procedure Add(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex);
     procedure DrawAlone(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex; Why: Integer);
     procedure Attach;
+    procedure AnalyseTexture(const S: TGERaster);
     procedure Hold(Lo, Hi: Cardinal);
+    procedure Extend(var T: TGERange; Lo, Hi: Cardinal);
     procedure Watch(Lo, Hi: Cardinal);
     procedure Fault;
     // Starts drawing the filling batch (in the background when large enough)
@@ -302,6 +333,7 @@ end;
 procedure TGEWorkers.StateChanged;
 begin
   FStateDirty := True;
+  FTexDirty := True;
 end;
 
 procedure TGEWorkers.ClutChanged;
@@ -356,6 +388,23 @@ begin
 end;
 
 // Physical bytes [Lo, Hi) of the whole map.
+// A target's range grows to [Lo, Hi): its pages are held (those of the
+// range before still are: holds are only given back by Sync, which also
+// empties the targets).
+procedure TGEWorkers.Extend(var T: TGERange; Lo, Hi: Cardinal);
+begin
+  if Lo < T.Lo then
+  begin
+    Hold(Lo, T.Lo);
+    T.Lo := Lo;
+  end;
+  if Hi > T.Hi then
+  begin
+    Hold(T.Hi, Hi);
+    T.Hi := Hi;
+  end;
+end;
+
 procedure TGEWorkers.Watch(Lo, Hi: Cardinal);
 begin
   if Hi <= Lo then Exit;
@@ -394,6 +443,7 @@ begin
     FMemory.ReleaseVRAM;
     FMemory.ReleaseWatches;
     FWatchCount := 0;
+    Inc(FWatchEpoch);
     FMemory.OnVRAMFault := FSavedFault;
     FSavedFault := nil;
   end;
@@ -413,10 +463,12 @@ begin
       var SavedControl: Word;
       var SavedMXCSR := GetModes(SavedControl);
       SetModes(B.MXCSR, B.FPUControl);
+      var H := TStopwatch.GetTimeStamp;
       try
         WorkBands(B);
       finally
         SetModes(SavedMXCSR, SavedControl);
+        Inc(FHelpTicks, TStopwatch.GetTimeStamp - H);
       end;
     end;
   finally
@@ -526,11 +578,90 @@ begin
   end;
 end;
 
+procedure TGEWorkers.AnalyseTexture(const S: TGERaster);
+begin
+  // Add's texture checks, in its order, but those against a primitive's
+  // buffers (InVRAM, Ranges).
+  var TI: ^TGETexInfo := @FTex;
+  FTexSource := @S;
+  FTexDirty := False;
+  Inc(FTexGen);
+  TI.TexCount := 0;
+  TI.WatchedCount := 0;
+  TI.UsesClut := False;
+  TI.LevelCount := 0;
+  TI.Fail := 0;
+  TI.FailWhy := 0;
+  if not S.Textured then
+    Exit;
+  TI.UsesClut := S.Tex.Format in [4..7];
+  if (S.Tex.Format > 10) or (S.Tex.LevelCount > 8) then
+  begin
+    TI.Fail := -1;
+    TI.FailWhy := 4;
+    Exit;
+  end;
+  TI.LevelCount := S.Tex.LevelCount;
+  TI.Fail := TI.LevelCount;
+  var Base := NativeUInt(S.VRAM);
+  for var I := 0 to S.Tex.LevelCount - 1 do
+  begin
+    TI.InVRAM[I] := False;
+    var L: PGETexLevel := @S.Tex.Levels[I];
+    if (L.Ptr = nil) or (L.Width <= 0) or (L.Height <= 0) or (L.BufWidth < 0) then
+    begin
+      TI.Fail := I;
+      TI.FailWhy := 4;
+      Exit;
+    end;
+    var Reach := Max(GELevelReach(S.Tex, L^), UInt64(L.Size));
+    var P := NativeUInt(L.Ptr);
+    if (P >= Base) and (P < Base + PSPVRAMSize) then
+    begin
+      var R: TGERange;
+      R := Default(TGERange);
+      R.Lo := Cardinal(P - Base);
+      R.Hi := R.Lo + L.Size;
+      if (Reach > L.Size) or (R.Hi > PSPVRAMSize) then
+      begin
+        TI.Fail := I;
+        TI.FailWhy := 5;
+        Exit;
+      end;
+      TI.InVRAM[I] := True;
+      TI.Ranges[I] := R;
+      TI.Tex[TI.TexCount] := R;
+      Inc(TI.TexCount);
+      // Every mirror of its 64 KB blocks: odd mirrors permute within them.
+      for var M := 0 to 3 do
+      begin
+        TI.Watched[TI.WatchedCount] := Default(TGERange);
+        TI.Watched[TI.WatchedCount].Lo := PSPVRAMBase + Cardinal(M) * PSPVRAMSize + (R.Lo and not Cardinal($FFFF));
+        TI.Watched[TI.WatchedCount].Hi := PSPVRAMBase + Cardinal(M) * PSPVRAMSize +
+          ((R.Hi + $FFFF) and not Cardinal($FFFF));
+        Inc(TI.WatchedCount);
+      end;
+    end
+    else
+    begin
+      var Lo := UInt64(L.Addr and $1FFFFFFF);
+      if (Reach > L.Size) and ((Lo < PSPRAMBase) or (Lo + Reach > PSPRAMBase + PSPRAMSize)) then
+      begin
+        TI.Fail := I;
+        TI.FailWhy := 5;
+        Exit;
+      end;
+      TI.Watched[TI.WatchedCount] := Default(TGERange);
+      TI.Watched[TI.WatchedCount].Lo := Cardinal(Lo);
+      TI.Watched[TI.WatchedCount].Hi := Cardinal(Min(Lo + Reach, UInt64($20000000)));
+      Inc(TI.WatchedCount);
+    end;
+  end;
+end;
+
 procedure TGEWorkers.Add(const S: TGERaster; Kind: TGEJobKind; const A, B, C: TGEVertex);
 var
   Col, Dep: TGERange;
-  Tex: array[0..7] of TGERange;
-  Watched: array[0..39] of TGERange;
 begin
   if FThreads <= 1 then
   begin
@@ -603,71 +734,34 @@ begin
 
   // The texture levels: in VRAM they must lie within their level and apart
   // from this primitive's buffers; elsewhere, reads past the level go
-  // through the page table, so they must stay in RAM (never held).
-  var TexCount := 0;
-  var WatchedCount := 0;
-  var UsesClut := False;
+  // through the page table, so they must stay in RAM (never held). (What
+  // depends on the state alone: AnalyseTexture.)
+  if FTexDirty or (FTexSource <> @S) then
+    AnalyseTexture(S);
+  var TI: ^TGETexInfo := @FTex;
   if S.Textured then
   begin
-    UsesClut := S.Tex.Format in [4..7];
-    if (S.Tex.Format > 10) or (S.Tex.LevelCount > 8) then
+    if TI.Fail < 0 then
     begin
-      DrawAlone(S, Kind, A, B, C, 4);
+      DrawAlone(S, Kind, A, B, C, TI.FailWhy);
       Exit;
     end;
-    var Base := NativeUInt(S.VRAM);
-    for var I := 0 to S.Tex.LevelCount - 1 do
-    begin
-      var L: PGETexLevel := @S.Tex.Levels[I];
-      if (L.Ptr = nil) or (L.Width <= 0) or (L.Height <= 0) or (L.BufWidth < 0) then
+    for var I := 0 to Min(TI.Fail, TI.LevelCount) - 1 do
+      if TI.InVRAM[I] and (Overlaps(TI.Ranges[I].Lo, TI.Ranges[I].Hi, Col.Lo, Col.Hi) or
+        (HasZ and Overlaps(TI.Ranges[I].Lo, TI.Ranges[I].Hi, Dep.Lo, Dep.Hi))) then
       begin
-        DrawAlone(S, Kind, A, B, C, 4);
+        DrawAlone(S, Kind, A, B, C, 6);
         Exit;
       end;
-      var Reach := Max(GELevelReach(S.Tex, L^), UInt64(L.Size));
-      var P := NativeUInt(L.Ptr);
-      if (P >= Base) and (P < Base + PSPVRAMSize) then
-      begin
-        var R: TGERange;
-        R := Default(TGERange);
-        R.Lo := Cardinal(P - Base);
-        R.Hi := R.Lo + L.Size;
-        if (Reach > L.Size) or (R.Hi > PSPVRAMSize) then
-        begin
-          DrawAlone(S, Kind, A, B, C, 5);
-          Exit;
-        end;
-        if Overlaps(R.Lo, R.Hi, Col.Lo, Col.Hi) or (HasZ and Overlaps(R.Lo, R.Hi, Dep.Lo, Dep.Hi)) then
-        begin
-          DrawAlone(S, Kind, A, B, C, 6);
-          Exit;
-        end;
-        Tex[TexCount] := R;
-        Inc(TexCount);
-        // Every mirror of its 64 KB blocks: odd mirrors permute within them.
-        for var M := 0 to 3 do
-        begin
-          Watched[WatchedCount] := Default(TGERange);
-          Watched[WatchedCount].Lo := PSPVRAMBase + Cardinal(M) * PSPVRAMSize + (R.Lo and not Cardinal($FFFF));
-          Watched[WatchedCount].Hi := PSPVRAMBase + Cardinal(M) * PSPVRAMSize + ((R.Hi + $FFFF) and not Cardinal($FFFF));
-          Inc(WatchedCount);
-        end;
-      end
-      else
-      begin
-        var Lo := UInt64(L.Addr and $1FFFFFFF);
-        if (Reach > L.Size) and ((Lo < PSPRAMBase) or (Lo + Reach > PSPRAMBase + PSPRAMSize)) then
-        begin
-          DrawAlone(S, Kind, A, B, C, 5);
-          Exit;
-        end;
-        Watched[WatchedCount] := Default(TGERange);
-        Watched[WatchedCount].Lo := Cardinal(Lo);
-        Watched[WatchedCount].Hi := Cardinal(Min(Lo + Reach, UInt64($20000000)));
-        Inc(WatchedCount);
-      end;
+    if TI.Fail < TI.LevelCount then
+    begin
+      DrawAlone(S, Kind, A, B, C, TI.FailWhy);
+      Exit;
     end;
   end;
+  var TexCount := TI.TexCount;
+  var WatchedCount := TI.WatchedCount;
+  var UsesClut := TI.UsesClut;
 
   // Another layout of the same bytes, or bytes the batch reads and this one
   // writes (or the reverse), start a new batch. So do other floating-point
@@ -688,7 +782,7 @@ begin
       if not SameLayout(T^, Col) and Overlaps(T.Lo, T.Hi, Col.Lo, Col.Hi) then Split := True;
       if HasZ and not SameLayout(T^, Dep) and Overlaps(T.Lo, T.Hi, Dep.Lo, Dep.Hi) then Split := True;
       for var J := 0 to TexCount - 1 do
-        if Overlaps(T.Lo, T.Hi, Tex[J].Lo, Tex[J].Hi) then Split := True;
+        if Overlaps(T.Lo, T.Hi, TI.Tex[J].Lo, TI.Tex[J].Hi) then Split := True;
       if Split then Break;
     end;
     if not Split then
@@ -715,11 +809,7 @@ begin
     if SameLayout(FTargets[I], Col) then
     begin
       if (Col.Lo < FTargets[I].Lo) or (Col.Hi > FTargets[I].Hi) then
-      begin
-        FTargets[I].Lo := Min(FTargets[I].Lo, Col.Lo);
-        FTargets[I].Hi := Max(FTargets[I].Hi, Col.Hi);
-        Hold(FTargets[I].Lo, FTargets[I].Hi);
-      end;
+        Extend(FTargets[I], Col.Lo, Col.Hi);
       Found := True;
       Break;
     end;
@@ -736,11 +826,7 @@ begin
       if SameLayout(FTargets[I], Dep) then
       begin
         if (Dep.Lo < FTargets[I].Lo) or (Dep.Hi > FTargets[I].Hi) then
-        begin
-          FTargets[I].Lo := Min(FTargets[I].Lo, Dep.Lo);
-          FTargets[I].Hi := Max(FTargets[I].Hi, Dep.Hi);
-          Hold(FTargets[I].Lo, FTargets[I].Hi);
-        end;
+          Extend(FTargets[I], Dep.Lo, Dep.Hi);
         Found := True;
         Break;
       end;
@@ -755,36 +841,47 @@ begin
   begin
     Found := False;
     for var I := 0 to FReadCount - 1 do
-      if (Tex[J].Lo >= FReads[I].Lo) and (Tex[J].Hi <= FReads[I].Hi) then
+      if (TI.Tex[J].Lo >= FReads[I].Lo) and (TI.Tex[J].Hi <= FReads[I].Hi) then
       begin
         Found := True;
         Break;
       end;
     if not Found then
     begin
-      FReads[FReadCount] := Tex[J];
+      FReads[FReadCount] := TI.Tex[J];
       Inc(FReadCount);
     end;
   end;
-  for var J := 0 to WatchedCount - 1 do
+  // (The previous primitive's ranges again, since FWatches was emptied: each
+  // is in FWatches or its pages are watched already.)
+  if (FLastWatchEpoch <> FWatchEpoch) or ((FLastWatchGen <> FTexGen) and ((WatchedCount <> FLastWatchedCount) or
+    ((WatchedCount > 0) and not CompareMem(@TI.Watched, @FLastWatched, WatchedCount * SizeOf(TGERange))))) then
   begin
-    Found := False;
-    for var I := 0 to FWatchCount - 1 do
-      if (Watched[J].Lo >= FWatches[I].Lo) and (Watched[J].Hi <= FWatches[I].Hi) then
-      begin
-        Found := True;
-        Break;
-      end;
-    if not Found then
+    for var J := 0 to WatchedCount - 1 do
     begin
-      if FWatchCount < WatchCapacity then
+      Found := False;
+      for var I := 0 to FWatchCount - 1 do
+        if (TI.Watched[J].Lo >= FWatches[I].Lo) and (TI.Watched[J].Hi <= FWatches[I].Hi) then
+        begin
+          Found := True;
+          Break;
+        end;
+      if not Found then
       begin
-        FWatches[FWatchCount] := Watched[J];
-        Inc(FWatchCount);
+        if FWatchCount < WatchCapacity then
+        begin
+          FWatches[FWatchCount] := TI.Watched[J];
+          Inc(FWatchCount);
+        end;
+        Watch(TI.Watched[J].Lo, TI.Watched[J].Hi);
       end;
-      Watch(Watched[J].Lo, Watched[J].Hi);
     end;
+    if WatchedCount > 0 then
+      Move(TI.Watched, FLastWatched, WatchedCount * SizeOf(TGERange));
+    FLastWatchedCount := WatchedCount;
   end;
+  FLastWatchEpoch := FWatchEpoch;
+  FLastWatchGen := FTexGen;
 
   // The state, with the batch's own copy of the CLUT as loaded now.
   if UsesClut and ((FClutIndex < 0) or (FClutSnapshot <> FClutGeneration)) then
@@ -859,9 +956,9 @@ begin
   Result := Result + Format('; pool busy %.2fs', [Busy / F]);
 
   Result := Result + Format('; waited %.2fs (GE stop %.2f, split %.2f, access %.2f, alone %.2f, other %.2f), ' +
-    'drawn on the emulator thread %.2fs', [(FWaitTicks[0] + FWaitTicks[1] + FWaitTicks[2] + FWaitTicks[3] +
-    FWaitTicks[4]) / F, FWaitTicks[0] / F, FWaitTicks[1] / F, FWaitTicks[2] / F, FWaitTicks[3] / F, FWaitTicks[4] / F,
-    FSerialTicks / F]);
+    'drawn on the emulator thread %.2fs, helping the pool %.2fs', [(FWaitTicks[0] + FWaitTicks[1] + FWaitTicks[2] +
+    FWaitTicks[3] + FWaitTicks[4]) / F, FWaitTicks[0] / F, FWaitTicks[1] / F, FWaitTicks[2] / F, FWaitTicks[3] / F,
+    FWaitTicks[4] / F, FSerialTicks / F, FHelpTicks / F]);
 end;
 
 end.
