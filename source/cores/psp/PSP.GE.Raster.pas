@@ -73,8 +73,12 @@ type
     LogicFunc: Integer;
     MaskRGB: Cardinal;
     MaskA: Integer;
+    // Derived by GEPrepareRaster: the pixel bits the masks keep.
+    KeepMask: Cardinal;
   end;
 
+// Fills in the fields derived from the others.
+procedure GEPrepareRaster(var S: TGERaster);
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 procedure GEDrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
 procedure GEDrawLine(const S: TGERaster; const V0, V1: TGEVertex);
@@ -295,6 +299,11 @@ begin
   end;
 end;
 
+procedure GEPrepareRaster(var S: TGERaster);
+begin
+  S.KeepMask := PixelKeepMask(S);
+end;
+
 // a * (255 - t) + b * t over 256, rounded up, doubled before the shift.
 function TexLerp(A, B, T, Dbl: Integer): Integer; inline;
 begin
@@ -398,7 +407,7 @@ begin
   if S.ClearMode then
   begin
     var NewP := Old;
-    var Keep := PixelKeepMask(S);
+    var Keep := S.KeepMask;
     if S.ClearColor then
     begin
       var CR := F.R; var CG := F.G; var CB := F.B;
@@ -489,7 +498,7 @@ begin
       NewStencil := StencilOp(S.StencilFail, S.FBFormat, Stencil, S.StencilRef);
       if NewStencil <> Stencil then
       begin
-        var Keep := PixelKeepMask(S);
+        var Keep := S.KeepMask;
         var NewP := (Old and not StencilBits(S.FBFormat, $FF)) or StencilBits(S.FBFormat, NewStencil);
         NewP := (NewP and not Keep) or (Old and Keep);
         if Bpp = 4 then PCardinal(S.VRAM + PAddr)^ := NewP else PWord(S.VRAM + PAddr)^ := Word(NewP);
@@ -509,7 +518,7 @@ begin
         NewStencil := StencilOp(S.StencilZFail, S.FBFormat, Stencil, S.StencilRef);
         if NewStencil <> Stencil then
         begin
-          var Keep := PixelKeepMask(S);
+          var Keep := S.KeepMask;
           var NewP := (Old and not StencilBits(S.FBFormat, $FF)) or StencilBits(S.FBFormat, NewStencil);
           NewP := (NewP and not Keep) or (Old and Keep);
           if Bpp = 4 then PCardinal(S.VRAM + PAddr)^ := NewP else PWord(S.VRAM + PAddr)^ := Word(NewP);
@@ -575,12 +584,71 @@ begin
     // The stencil channel follows the stencil operation, not the logic op.
     NewP := (NewP and not StencilBits(S.FBFormat, $FF)) or (Src and StencilBits(S.FBFormat, $FF));
   end;
-  var Keep := PixelKeepMask(S);
+  var Keep := S.KeepMask;
   NewP := (NewP and not Keep) or (Old and Keep);
   if Bpp = 4 then
     PCardinal(S.VRAM + PAddr)^ := NewP
   else
     PWord(S.VRAM + PAddr)^ := Word(NewP);
+end;
+
+// A clear-mode sprite without dither: the same bits into every pixel, as
+// PlotPixel's clear path writes them.
+procedure ClearRect(const S: TGERaster; X1, Y1, X2, Y2: Integer; const V: TGEVertex);
+begin
+  var Fmt := S.FBFormat;
+  var SetMask: Cardinal := 0;
+  var SetBits: Cardinal := 0;
+  if S.ClearColor then
+  begin
+    SetMask := EncodeColor(Fmt, 255, 255, 255);
+    SetBits := EncodeColor(Fmt, V.R, V.G, V.B);
+  end;
+  if S.ClearStencil then
+  begin
+    var SV: Integer;
+    case Fmt of
+      1: SV := V.A shr 7;
+      2: SV := V.A shr 4;
+    else
+      SV := V.A;
+    end;
+    SetMask := SetMask or StencilBits(Fmt, $FF);
+    SetBits := SetBits or StencilBits(Fmt, SV);
+  end;
+  var W := SetMask and not S.KeepMask;
+  SetBits := SetBits and W;
+  var Z := V.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var Bpp: Cardinal := 2;
+  if Fmt = 3 then
+    Bpp := 4;
+  for var Y := Y1 to Y2 do
+  begin
+    if W <> 0 then
+    begin
+      var A := S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X1)) * Bpp;
+      for var X := X1 to X2 do
+      begin
+        var PA := A and (PSPVRAMSize - 1);
+        if Bpp = 4 then
+          PCardinal(S.VRAM + PA)^ := (PCardinal(S.VRAM + PA)^ and not W) or SetBits
+        else
+          PWord(S.VRAM + PA)^ := Word((PWord(S.VRAM + PA)^ and not W) or SetBits);
+        Inc(A, Bpp);
+      end;
+    end;
+    if S.ClearDepth then
+    begin
+      var A := S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X1)) * 2;
+      for var X := X1 to X2 do
+      begin
+        PWord(S.VRAM + (A and (PSPVRAMSize - 1)))^ := Word(Z);
+        Inc(A, 2);
+      end;
+    end;
+  end;
 end;
 
 procedure SetupFragment(var F: TGEFragment; const V: TGEVertex); inline;
@@ -740,6 +808,11 @@ begin
   PY2 := Min(PY2, Min(S.ScissorY2, S.BandY2));
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
+  if S.ClearMode and not S.Dither then
+  begin
+    ClearRect(S, PX1, PY1, PX2, PY2, V1);
+    Exit;
+  end;
   SetupFragment(F, V1);
   // S runs along x and T along y, except when the corners are flipped in
   // one axis only: then the texture is turned, S along y and T along x.

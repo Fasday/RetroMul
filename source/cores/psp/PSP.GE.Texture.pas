@@ -16,7 +16,13 @@ type
     Addr: Cardinal;
     Width, Height: Integer;  // 1 shl size bits
     BufWidth: Integer;       // in texels
+    // The level's bytes in host memory when they are contiguous there (nil
+    // otherwise), for reads without the guest page table.
+    Ptr: PByte;
+    Size: Cardinal;
   end;
+
+  PGETexLevel = ^TGETexLevel;
 
   TGETexture = record
     Memory: TPSPMemory;
@@ -130,18 +136,42 @@ begin
   end;
 end;
 
+function TexR8(const L: TGETexLevel; M: TPSPMemory; Off: Cardinal): Cardinal; inline;
+begin
+  if (L.Ptr <> nil) and (Off < L.Size) then
+    Result := L.Ptr[Off]
+  else
+    Result := M.Read8(L.Addr + Off);
+end;
+
+function TexR16(const L: TGETexLevel; M: TPSPMemory; Off: Cardinal): Cardinal; inline;
+begin
+  if (L.Ptr <> nil) and (Off + 2 <= L.Size) then
+    Result := PWord(L.Ptr + Off)^
+  else
+    Result := M.Read16(L.Addr + Off);
+end;
+
+function TexR32(const L: TGETexLevel; M: TPSPMemory; Off: Cardinal): Cardinal; inline;
+begin
+  if (L.Ptr <> nil) and (Off + 4 <= L.Size) then
+    Result := PCardinal(L.Ptr + Off)^
+  else
+    Result := M.Read32(L.Addr + Off);
+end;
+
 function GEFetchTexel(const T: TGETexture; Level, X, Y: Integer): Cardinal;
 begin
-  var L := T.Levels[Level];
+  var L: PGETexLevel := @T.Levels[Level];
   var M := T.Memory;
   case T.Format of
     0, 1, 2:
-      Result := GEDecode16(T.Format, M.Read16(L.Addr + TexelOffset(T, L, X, Y, 16)));
+      Result := GEDecode16(T.Format, TexR16(L^, M, TexelOffset(T, L^, X, Y, 16)));
     3:
-      Result := M.Read32(L.Addr + TexelOffset(T, L, X, Y, 32));
+      Result := TexR32(L^, M, TexelOffset(T, L^, X, Y, 32));
     4:
       begin
-        var B := M.Read8(L.Addr + TexelOffset(T, L, X, Y, 4));
+        var B := TexR8(L^, M, TexelOffset(T, L^, X, Y, 4));
         if (X and 1) <> 0 then
           B := B shr 4
         else
@@ -149,11 +179,11 @@ begin
         Result := ClutLookup(T, B);
       end;
     5:
-      Result := ClutLookup(T, M.Read8(L.Addr + TexelOffset(T, L, X, Y, 8)));
+      Result := ClutLookup(T, TexR8(L^, M, TexelOffset(T, L^, X, Y, 8)));
     6:
-      Result := ClutLookup(T, M.Read16(L.Addr + TexelOffset(T, L, X, Y, 16)));
+      Result := ClutLookup(T, TexR16(L^, M, TexelOffset(T, L^, X, Y, 16)));
     7:
-      Result := ClutLookup(T, M.Read32(L.Addr + TexelOffset(T, L, X, Y, 32)));
+      Result := ClutLookup(T, TexR32(L^, M, TexelOffset(T, L^, X, Y, 32)));
     8, 9, 10:
       begin
         // 4x4 blocks in rows of BufWidth/4 blocks: the colour block (indices,
@@ -162,25 +192,25 @@ begin
         if T.Format = 8 then
           BlockBytes := 8;
         var BlocksPerRow := L.BufWidth div 4;
-        var Block := L.Addr + Cardinal(((Y shr 2) * BlocksPerRow + (X shr 2)) * BlockBytes);
-        var Bits := M.Read32(Block);
-        var C0 := M.Read16(Block + 4);
-        var C1 := M.Read16(Block + 6);
+        var Block := Cardinal(((Y shr 2) * BlocksPerRow + (X shr 2)) * BlockBytes);
+        var Bits := TexR32(L^, M, Block);
+        var C0 := TexR16(L^, M, Block + 4);
+        var C1 := TexR16(L^, M, Block + 6);
         var Pixel := (Y and 3) * 4 + (X and 3);
         Result := DXTColor(C0, C1, (Bits shr (Pixel * 2)) and 3);
         if T.Format = 9 then
         begin
           // 4 bits a texel, a row in 16 bits; widened without repeating.
-          var AW := M.Read16(Block + 8 + Cardinal((Y and 3) * 2));
+          var AW := TexR16(L^, M, Block + 8 + Cardinal((Y and 3) * 2));
           var A := (AW shr ((X and 3) * 4)) and $F;
           Result := (Result and $FFFFFF) or ((A shl 4) shl 24);
         end
         else if T.Format = 10 then
         begin
           // 48 bits of 3-bit indices, then the two end alphas.
-          var ABits := UInt64(M.Read32(Block + 8)) or (UInt64(M.Read16(Block + 12)) shl 32);
-          var A0 := M.Read8(Block + 14);
-          var A1 := M.Read8(Block + 15);
+          var ABits := UInt64(TexR32(L^, M, Block + 8)) or (UInt64(TexR16(L^, M, Block + 12)) shl 32);
+          var A0 := TexR8(L^, M, Block + 14);
+          var A1 := TexR8(L^, M, Block + 15);
           var AI := (ABits shr (Pixel * 3)) and 7;
           var A: Cardinal;
           if A0 > A1 then
