@@ -6,6 +6,7 @@ program PSPRun;
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
 // -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
+// -calls [a,b,...]: at the end, how often each HLE function was called (names containing a, b, ...).
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
@@ -245,6 +246,8 @@ begin
     var DumpLen := 0;
     var ShotFile := '';
     var WavFile := '';
+    var CallsOn := False;
+    var CallsFilter := '';
     var I := 2;
     while I <= ParamCount do
     begin
@@ -263,6 +266,7 @@ begin
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
+      else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
       else if A = '-press' then
       begin
         Inc(I);
@@ -449,6 +453,19 @@ begin
       end;
       for var K := 0 to DumpLen div 4 - 1 do
         Writeln(ErrOutput, Format('[dump] %.8x %.8x', [DumpAt + Cardinal(K) * 4, Console.Memory.Read32(DumpAt + Cardinal(K) * 4)]));
+      if CallsOn then
+        for var K := 0 to Console.HLE.Count - 1 do
+        begin
+          var Fn := Console.HLE.FunctionInfo(K);
+          if (Fn = nil) or (Fn.Calls = 0) then
+            Continue;
+          var Show := CallsFilter = '';
+          for var Part in CallsFilter.Split([',']) do
+            if (Part <> '') and Fn.Name.ToLower.Contains(Part.ToLower) then
+              Show := True;
+          if Show then
+            Writeln(ErrOutput, Format('[calls] %s %d', [Fn.Name, Fn.Calls]));
+        end;
       if WavFile <> '' then
         SaveWAV(Wav, WavFile);
       Wav.Free;
