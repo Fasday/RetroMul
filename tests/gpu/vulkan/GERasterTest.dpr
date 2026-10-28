@@ -187,6 +187,43 @@ begin
         Draw(1, S, A, B, B);
       end;
       Compare;
+      // Textures in the render target's own rows: columns beside what is
+      // drawn go to the GPU, overlapping ones (in any layout) to the CPU.
+      for var I := 1 to 4000 do
+      begin
+        var T := State;
+        T.ClearMode := False;
+        T.Textured := True;
+        T.Tex.Swizzle := Rand mod 4 = 0;
+        T.Tex.Format := Rand mod 8;
+        var Size := 16 shl (Rand mod 3);
+        T.Tex.Levels[0].Width := Size;
+        T.Tex.Levels[0].Height := 16 shl (Rand mod 3);
+        T.Tex.Levels[0].BufWidth := 256 shl (Rand mod 2);
+        var Offset := Between(-4, 40) * 2048 + Between(0, 511) * 4;
+        if Rand mod 4 = 0 then Offset := Between(-4, 40) * 1024 + Between(0, 255) * 4;
+        var Mirror: Cardinal := 0;
+        if Rand mod 5 = 0 then Mirror := Rand mod 4;
+        T.Tex.Levels[0].Addr := PSPVRAMBase + Mirror * PSPVRAMSize + Cardinal($20000 + Offset);
+        // Depth beside (or within) the colour rows, in another layout.
+        if Rand mod 3 = 0 then
+        begin
+          T.ZAddr := Cardinal($20000 + Between(0, 60) * 2048 + Between(0, 127) * 16);
+          T.ZStride := 256 shl (Rand mod 2);
+          T.DepthTest := True;
+        end;
+        GEPrepareRaster(T);
+        var P := Vertex; var Q := Vertex; var R := Vertex;
+        if Rand mod 3 = 0 then
+        begin
+          P.X := Between(0, 40) * 16; P.Y := Between(0, 40) * 16;
+          Q.X := P.X + Between(1, 24) * 16; Q.Y := P.Y + Between(1, 8) * 16;
+        end;
+        Draw(Rand mod 4, T, P, Q, R);
+        if I mod 37 = 0 then GPU.Release;
+        if I mod 53 = 0 then Compare;
+      end;
+      Compare;
       // Bilinear floor narrows its argument to Single in the current reference.
       S.Tex.Format := 3;
       S.Tex.Linear := True;

@@ -47,6 +47,9 @@ type
 
   TGEGPUSpan = record
     Lo, Len: Int64; // VRAM offset and length, may run past the end (wraps)
+    // When Stride > 0, only Rows rows of Width bytes, Stride bytes apart, from
+    // Lo (a render target's box, an unswizzled texture level).
+    Stride, Width, Rows: Int64;
   end;
 
   TGEGPUPass = record
@@ -412,6 +415,37 @@ function Span(Lo, Len: Int64): TGEGPUSpan; inline;
 begin
   Result.Lo := Lo and VRAMMask;
   Result.Len := Min(Len, Int64(PSPVRAMSize));
+  Result.Stride := 0;
+  Result.Width := 0;
+  Result.Rows := 0;
+end;
+
+// Rows bytes of Width, Stride apart (Width <= Stride), from Lo.
+function RowSpan(Lo, Stride, Width, Rows: Int64): TGEGPUSpan;
+begin
+  Result := Span(Lo, (Rows - 1) * Stride + Width);
+  if (Width <= Stride) and (Rows > 1) and (Result.Len < PSPVRAMSize) then
+  begin
+    Result.Stride := Stride;
+    Result.Width := Width;
+    Result.Rows := Rows;
+  end;
+end;
+
+function FloorDiv(A, B: Int64): Int64; inline;
+begin
+  Result := A div B;
+  if (A mod B <> 0) and ((A < 0) <> (B < 0)) then
+    Dec(Result);
+end;
+
+// Whether bytes [Lo, Hi) meet a row of R (R.Lo relative to them by Delta).
+function MeetsRows(const R: TGEGPUSpan; Delta, Lo, Hi: Int64): Boolean;
+begin
+  // Rows J with Delta + J * Stride < Hi and Delta + J * Stride + Width > Lo.
+  var First := Max(Int64(0), FloorDiv(Lo - Delta - R.Width, R.Stride) + 1);
+  var Last := Min(R.Rows - 1, FloorDiv(Hi - Delta - 1, R.Stride));
+  Result := First <= Last;
 end;
 
 function Overlap(const A, B: TGEGPUSpan): Boolean;
@@ -422,17 +456,65 @@ begin
   begin
     var Lo := B.Lo + Shift * Int64(PSPVRAMSize);
     if (A.Lo < Lo + B.Len) and (Lo < A.Lo + A.Len) then
-      Exit(True);
+    begin
+      // Rows: only the bytes in them count.
+      if (A.Stride = 0) and (B.Stride = 0) then
+        Exit(True);
+      if B.Stride = 0 then
+      begin
+        if MeetsRows(A, A.Lo, Lo, Lo + B.Len) then
+          Exit(True);
+      end
+      else if A.Stride = 0 then
+      begin
+        if MeetsRows(B, Lo, A.Lo, A.Lo + A.Len) then
+          Exit(True);
+      end
+      else if A.Stride = B.Stride then
+      begin
+        // B's rows start R bytes into a row of A, from Q rows below its first.
+        var D := Lo - A.Lo;
+        var Q := FloorDiv(D, A.Stride);
+        var R := D - Q * A.Stride;
+        // Row offsets K = Q + J - I between B's row J and A's row I.
+        var KMin := Q - (A.Rows - 1);
+        var KMax := Q + (B.Rows - 1);
+        if ((KMin <= 0) and (KMax >= 0) and (R < A.Width)) or
+          ((KMin <= -1) and (KMax >= -1) and (R > A.Stride - B.Width)) then
+          Exit(True);
+      end
+      else
+      begin
+        for var J := 0 to B.Rows - 1 do
+          if MeetsRows(A, A.Lo, Lo + J * B.Stride, Lo + J * B.Stride + B.Width) then
+            Exit(True);
+      end;
+    end;
   end;
   Result := False;
 end;
 
-// Bytes of a render target a box of pixels covers.
+// Whether every byte of R is one of Q's.
+function Contains(const Q, R: TGEGPUSpan): Boolean;
+begin
+  if (R.Lo < Q.Lo) or (R.Lo + R.Len > Q.Lo + Q.Len) then
+    Exit(False);
+  if Q.Stride = 0 then
+    Exit(True);
+  var D := R.Lo - Q.Lo;
+  var Row := D div Q.Stride;
+  var Column := D mod Q.Stride;
+  if R.Stride = 0 then
+    Result := (Column + R.Len <= Q.Width) and (Row < Q.Rows)
+  else
+    Result := (R.Stride = Q.Stride) and (Column + R.Width <= Q.Width) and (Row + R.Rows <= Q.Rows);
+end;
+
+// Bytes of a render target a box of pixels covers (X2 < Stride).
 function TargetSpan(Addr, Stride, Bpp: Cardinal; X1, Y1, X2, Y2: Integer): TGEGPUSpan;
 begin
   var First := Int64(Y1) * Stride + X1;
-  var Last := Int64(Y2) * Stride + X2;
-  Result := Span(Int64(Addr) + First * Bpp, (Last - First + 1) * Bpp);
+  Result := RowSpan(Int64(Addr) + First * Bpp, Int64(Stride) * Bpp, Int64(X2 - X1 + 1) * Bpp, Y2 - Y1 + 1);
 end;
 
 // EDRAM permutations of a translation (PSPDepthOffset, the odd mirrors) move
@@ -456,12 +538,17 @@ begin
   Result := Span(First, Last - First);
 end;
 
-// The guest bytes the texture unit can read for the current level.
-function TextureBytes(const T: TGETexture; out Addr, Size: Cardinal): Boolean;
+// The guest bytes the texture unit can read for the current level: Size from
+// Addr, and when unswizzled, only the first Width bytes of each of Rows rows
+// of Stride bytes (texel coordinates are wrapped or clamped into the level).
+function TextureBytes(const T: TGETexture; out Addr, Size: Cardinal; out Stride, Width, Rows: Int64): Boolean;
 begin
   var L := T.Levels[T.Level];
   Addr := L.Addr;
   Size := 0;
+  Stride := 0;
+  Width := 0;
+  Rows := 0;
   var W := L.Width;
   var H := L.Height;
   var Bits := 0;
@@ -488,7 +575,12 @@ begin
   if T.Swizzle then
     Size := Cardinal(((((H - 1) shr 3) * (RowBytes shr 4) + (ByteX shr 4)) shl 7) + 7 * 16 + 15 + Bytes)
   else
+  begin
     Size := Cardinal((H - 1) * RowBytes + ByteX + Bytes);
+    Stride := RowBytes;
+    Width := ByteX + Bytes;
+    Rows := H;
+  end;
   Result := True;
 end;
 
@@ -862,7 +954,8 @@ begin
   if S.Textured then
   begin
     var Addr, Size: Cardinal;
-    if TextureBytes(S.Tex, Addr, Size) and (Size > 0) then
+    var RowStride, RowWidth, Rows: Int64;
+    if TextureBytes(S.Tex, Addr, Size, RowStride, RowWidth, Rows) and (Size > 0) then
     begin
       if Size > $1000000 then
       begin
@@ -899,7 +992,9 @@ begin
             end;
             Tex := Span(Tex.Lo, Tex.Len + Block);
           end;
-        end;
+        end
+        else if RowStride > 0 then
+          Tex := RowSpan(Addr, RowStride, RowWidth, Rows);
       end
       else
       begin
@@ -1044,7 +1139,7 @@ end;
 function Covered(const P: TGEGPUPass; const R: TGEGPUSpan): Boolean;
 begin
   for var I := P.ReadCount - 1 downto 0 do
-    if (R.Lo >= P.Reads[I].Lo) and (R.Lo + R.Len <= P.Reads[I].Lo + P.Reads[I].Len) then
+    if Contains(P.Reads[I], R) then
       Exit(True);
   Result := False;
 end;
