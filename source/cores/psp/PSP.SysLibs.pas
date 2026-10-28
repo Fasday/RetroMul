@@ -234,7 +234,9 @@ end;
 procedure TPSPSysLibs.Reset;
 begin
   FUmdCallback := 0;
-  FUmdActivated := False;
+  // A game booted from its disc finds the drive activated by the system
+  // (Metal Gear Acid 2 waits for READY without activating it).
+  FUmdActivated := FSystem.IO.Disc <> nil;
   FUmd.Waiters.Clear;
   FUmd.Kernel := FKernel;
   // A word the kernel reads wait timeouts from (it takes them by pointer).

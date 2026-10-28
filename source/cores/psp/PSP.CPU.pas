@@ -6,7 +6,7 @@ unit PSP.CPU;
 // calls the same routines, so it cannot disagree with the interpreter.
 // Delay slots: PC is the next instruction, NPC the one after; a taken branch
 // replaces NPC.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
 
@@ -42,8 +42,9 @@ type
     LLBit: Cardinal;
     V: array[0..127] of Cardinal;
     VC: array[0..15] of Cardinal;
-    // Prefix state the VFPU keeps decoded between a prefix and its consumer.
-    VPrefix: array[0..3] of Cardinal;
+    // The last value the VFPU's S prefix stage produced in each lane, which an
+    // out-of-range swizzle replays for the integer unpack instructions.
+    VLatch: array[0..3] of Cardinal;
   end;
   PPSPContext = ^TPSPContext;
 
@@ -161,16 +162,18 @@ begin
   Result := Op and $FFFF;
 end;
 
+// Targets count from the branch's own address: a branch in the delay slot of
+// a taken one (compilers emit runs of bvt to one label) still reaches its label.
 procedure Branch(C: TPSPCPU; Op: Cardinal; Taken: Boolean); inline;
 begin
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2);
+    C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2);
 end;
 
 procedure BranchLikely(C: TPSPCPU; Op: Cardinal; Taken: Boolean); inline;
 begin
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2)
+    C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2)
   else
   begin
     // Not taken: the delay slot is nullified.
@@ -531,13 +534,13 @@ end;
 
 procedure OpJ(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := (C.Ctx.PC and $F0000000) or ((Op and $03FFFFFF) shl 2);
+  C.Ctx.NPC := ((C.CurPC + 4) and $F0000000) or ((Op and $03FFFFFF) shl 2);
 end;
 
 procedure OpJAL(C: TPSPCPU; Op: Cardinal);
 begin
   C.Ctx.GPR[31] := C.Ctx.NPC;
-  C.Ctx.NPC := (C.Ctx.PC and $F0000000) or ((Op and $03FFFFFF) shl 2);
+  C.Ctx.NPC := ((C.CurPC + 4) and $F0000000) or ((Op and $03FFFFFF) shl 2);
 end;
 
 procedure OpBEQ(C: TPSPCPU; Op: Cardinal);
@@ -547,7 +550,7 @@ end;
 
 procedure OpB(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2);
+  C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2);
 end;
 
 procedure OpBNE(C: TPSPCPU; Op: Cardinal);
@@ -793,7 +796,8 @@ end;
 
 procedure OpMTIC(C: TPSPCPU; Op: Cardinal);
 begin
-  C.InterruptsEnabled := C.Ctx.GPR[RT(Op)] <> 0;
+  // Only bit 0 is the enable flag.
+  C.InterruptsEnabled := (C.Ctx.GPR[RT(Op)] and 1) <> 0;
 end;
 
 procedure OpHALT(C: TPSPCPU; Op: Cardinal);

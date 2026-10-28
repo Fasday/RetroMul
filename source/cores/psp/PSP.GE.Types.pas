@@ -169,12 +169,16 @@ const
 type
   TGECmds = array[0..255] of Cardinal;
   PGECmds = ^TGECmds;
+  TGEMat12 = array[0..11] of Cardinal;
+  PGEMat12 = ^TGEMat12;
+  TGEMat16 = array[0..15] of Cardinal;
+  PGEMat16 = ^TGEMat16;
 
   TPSPGERegs = record
     Cmd: TGECmds;
     Bone: array[0..95] of Cardinal;
-    World, View, TGen: array[0..11] of Cardinal;
-    Proj: array[0..15] of Cardinal;
+    World, View, TGen: TGEMat12;
+    Proj: TGEMat16;
     BoneNum, WorldNum, ViewNum, ProjNum, TGenNum: Cardinal;
     VAddr, IAddr, Offset: Cardinal;
   end;

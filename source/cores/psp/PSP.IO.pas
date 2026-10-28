@@ -360,7 +360,7 @@ end;
 
 function ParseLBN(const Rest: string; out LBA, Size: Cardinal): Boolean;
 begin
-  // /sce_lbn0x<lba>_size0x<size>
+  // /sce_lbn<lba>_size<size>: both hexadecimal, with or without 0x.
   var S := Rest.ToLower;
   var P := S.IndexOf('sce_lbn');
   Result := False;
@@ -372,10 +372,16 @@ begin
     Exit;
   var A := S.Substring(0, Q);
   var B := S.Substring(Q + 5);
-  if A.StartsWith('0x') then A := '$' + A.Substring(2);
-  if B.StartsWith('0x') then B := '$' + B.Substring(2);
+  if A.StartsWith('0x') then A := A.Substring(2);
+  if B.StartsWith('0x') then B := B.Substring(2);
+  var N := 0;
+  while (N < B.Length) and CharInSet(B.Chars[N], ['0'..'9', 'a'..'f']) do
+    Inc(N);
+  B := B.Substring(0, N);
+  if (A = '') or (B = '') then
+    Exit;
   var LA, LS: Int64;
-  Result := TryStrToInt64(A, LA) and TryStrToInt64(B, LS);
+  Result := TryStrToInt64('$' + A, LA) and TryStrToInt64('$' + B, LS);
   LBA := Cardinal(LA);
   Size := Cardinal(LS);
 end;
@@ -1172,7 +1178,11 @@ begin
             FMemory.Write32(P + 12, 512);
             FMemory.Write32(P + 16, 64);
           end;
-        $02425823, $02425824:
+        // FAT on the stick ready: 1 (0 without a stick, utility/savedata/nomemstick).
+        $02425823:
+          if OutPtr <> 0 then
+            FMemory.Write32(OutPtr, 1);
+        $02425824:
           if OutPtr <> 0 then
             FMemory.Write32(OutPtr, 0);
       end;

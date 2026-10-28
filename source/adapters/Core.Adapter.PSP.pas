@@ -3,7 +3,7 @@ unit Core.Adapter.PSP;
 interface
 
 uses System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, PCM.Audio;
+  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, Core.PSP.Playback;
 
 type
   TPSPKeyMap = array[TEmulatorButton] of UInt32;
@@ -32,7 +32,7 @@ type
     FLock: TCriticalSection;
     FWake: TEvent;
     FConsole: TPSPConsole;
-    FAudio: TPCMAudio;
+    FAudio: TPSPAudioPlayback;
     FAudioEnabled: Boolean;
     FVolume: Single;
     FInput: TEmulatorInput;
@@ -93,7 +93,8 @@ type
 
 implementation
 
-uses System.UITypes, System.Diagnostics, System.Math, Core.PSP.Archive, PSP.Settings;
+uses {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF} System.UITypes, System.Diagnostics, System.Math, Core.PSP.Archive,
+  PSP.Settings;
 
 const
   KeyNames: array[TEmulatorButton] of string =
@@ -191,87 +192,123 @@ end;
 
 procedure TPSPWorker.Execute;
 begin
+  {$IFDEF MSWINDOWS}
+  var TimerSet := timeBeginPeriod(1) = TIMERR_NOERROR;
+  {$ENDIF}
   try
-    var AudioFormat := Default(TPCMAudioFormat);
-    AudioFormat.SampleRate := 44100;
-    AudioFormat.Channels := 2;
-    AudioFormat.BlockFrames := 4096;
-    AudioFormat.BlockCount := 8;
-    FAudio := TPCMAudio.Create(AudioFormat);
-    var Deadline := TStopwatch.GetTimeStamp / TStopwatch.Frequency;
-    while not Terminated do
-    begin
-      var Paused, Reset: Boolean;
-      var AudioEnabled: Boolean;
-      var Volume: Single;
-      var Input: TEmulatorInput;
-      var Recompiler: Boolean;
-      FLock.Acquire;
-      try
-        Recompiler := FRecompiler;
-        Paused := FPaused;
-        Reset := FReset;
-        FReset := False;
-        Input := FInput;
-        AudioEnabled := FAudioEnabled;
-        Volume := FVolume;
-      finally
-        FLock.Release;
-      end;
-      if Reset then begin FConsole.Reset; FAudio.Clear; end;
-      FAudio.SetPaused(Paused);
-      if Paused then
-      begin
-        FWake.WaitFor(20);
-        Deadline := TStopwatch.GetTimeStamp / TStopwatch.Frequency;
-        Continue;
-      end;
-      if FConsole.Recompiler <> nil then
-        FConsole.Recompiler.Enabled := Recompiler;
-      FConsole.Input := Input;
-      var Frame: TEmulatorFrame;
-      FConsole.RunFrame(Frame);
-      if AudioEnabled then
-      begin
-        var Samples := FConsole.AudioSamples;
-        if Volume<>1 then for var I := 0 to High(Samples) do Samples[I] := Round(Samples[I]*Volume);
-        var Offset := 0;
-        while Offset<Length(Samples) do
-        begin
-          var Count := Min(4096,(Length(Samples)-Offset) div 2);
-          var Block := Copy(Samples,Offset,Count*2);
-          FAudio.Submit(Block,Count);
-          Inc(Offset,Count*2);
-        end;
-      end;
-      FLock.Acquire;
-      try
-        FFrame := Frame;
-        FAvailable := True;
-      finally
-        FLock.Release;
-      end;
-      Deadline := Deadline + 1 / PSPFrameRate;
-      // Input updates can wake the worker but must not accelerate guest time.
+    try
+      var AudioFailed := False;
+      var WasEnabled := False;
+      // Without sound, guest time follows the host clock from this point.
+      var ClockHost := TStopwatch.GetTimeStamp;
+      var ClockGuest := FConsole.Scheduler.Now;
       while not Terminated do
       begin
-        var Remaining := Deadline - TStopwatch.GetTimeStamp / TStopwatch.Frequency;
-        if Remaining <= 0 then Break;
-        FWake.WaitFor(Cardinal(Max(1, Min(20, Trunc(Remaining * 1000)))));
+        var Paused, Reset: Boolean;
+        var AudioEnabled: Boolean;
+        var Volume: Single;
+        var Input: TEmulatorInput;
+        var Recompiler: Boolean;
+        FLock.Acquire;
+        try
+          Recompiler := FRecompiler;
+          Paused := FPaused;
+          Reset := FReset;
+          FReset := False;
+          Input := FInput;
+          AudioEnabled := FAudioEnabled;
+          Volume := FVolume;
+        finally
+          FLock.Release;
+        end;
+        var Restart := Reset or Paused or (AudioEnabled <> WasEnabled);
+        if Reset then
+          FConsole.Reset;
+        if Restart and (FAudio <> nil) and not AudioFailed then
+        try
+          FAudio.Clear;
+        except
+          AudioFailed := True;
+        end;
+        WasEnabled := AudioEnabled;
+        if Restart then
+        begin
+          ClockHost := TStopwatch.GetTimeStamp;
+          ClockGuest := FConsole.Scheduler.Now;
+        end;
+        if Paused then
+        begin
+          FWake.WaitFor(20);
+          Continue;
+        end;
+        // The sound queue is the real-time clock: a frame runs only when the
+        // device has room for its samples.
+        if AudioEnabled and not AudioFailed and (FAudio <> nil) then
+        try
+          if not FAudio.CanAdvance then
+          begin
+            FWake.WaitFor(1);
+            Continue;
+          end;
+        except
+          AudioFailed := True;
+        end;
+        if FConsole.Recompiler <> nil then
+          FConsole.Recompiler.Enabled := Recompiler;
+        FConsole.Input := Input;
+        var Frame: TEmulatorFrame;
+        FConsole.RunFrame(Frame);
+        if AudioEnabled and not AudioFailed then
+        try
+          if FAudio = nil then
+            FAudio := TPSPAudioPlayback.Create;
+          FAudio.Enqueue(FConsole.AudioSamples, Volume);
+        except
+          AudioFailed := True;
+        end;
+        FLock.Acquire;
+        try
+          FFrame := Frame;
+          FAvailable := True;
+        finally
+          FLock.Release;
+        end;
+        if not AudioEnabled or AudioFailed then
+        begin
+          var Target := ClockHost + (FConsole.Scheduler.Now - ClockGuest) * TStopwatch.Frequency div 1000000000;
+          // Input updates can wake the worker but must not accelerate guest time.
+          while not Terminated do
+          begin
+            var Remaining := (Target - TStopwatch.GetTimeStamp) * 1000 div TStopwatch.Frequency;
+            if Remaining <= 0 then
+            begin
+              if Remaining < -250 then
+              begin
+                ClockHost := TStopwatch.GetTimeStamp;
+                ClockGuest := FConsole.Scheduler.Now;
+              end;
+              Break;
+            end;
+            FWake.WaitFor(Cardinal(Min(Int64(20), Remaining)));
+          end;
+        end;
       end;
-      var Now := TStopwatch.GetTimeStamp / TStopwatch.Frequency;
-      if Deadline < Now - 0.1 then Deadline := Now;
-    end;
-  except
-    on E: Exception do
-    begin
-      FLock.Acquire;
-      try
-        FError := E.ClassName + ': ' + E.Message;
-      finally
-        FLock.Release;
+    except
+      on E: Exception do
+      begin
+        FLock.Acquire;
+        try
+          FError := E.ClassName + ': ' + E.Message;
+        finally
+          FLock.Release;
+        end;
       end;
     end;
+  finally
+    {$IFDEF MSWINDOWS}
+    if TimerSet then
+      timeEndPeriod(1);
+    {$ENDIF}
   end;
 end;
 

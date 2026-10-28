@@ -92,6 +92,7 @@ begin
   T.Priority := T.InitPriority;
   T.Wait := Default(TPSPWait);
   T.Frames.Clear;
+  T.BusyNs := 0;
   T.Fresh := True;
   T.Status := PSPThreadReady;
   Inc(FThreadSeq);
@@ -241,6 +242,8 @@ end;
 
 procedure TPSPKernel.hCreateThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var NamePtr := FHLE.Arg(0);
   var Entry := FHLE.Arg(1);
   var Prio := FHLE.ArgInt(2);
@@ -272,16 +275,21 @@ begin
   var ModuleId: Cardinal := 0;
   if FCurrent <> nil then
     ModuleId := FCurrent.ModuleId;
-  Spend(PSPCreateThreadNs + Int64(AlignUp(StackSize, 256)) * 42 div 10);
   var T := CreateThread(Name, Entry, Prio, StackSize, Attr, FCPU.Ctx.GPR[28], ModuleId);
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+    begin Spend(PSPCreateThreadNs); FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  // Filling the stack is most of it, and other threads may run meanwhile.
+  SpendPreemptible(PSPCreateThreadNs + Int64(AlignUp(StackSize, 256)) * 42 div 10);
   FHLE.Result(T.UID);
+  // Creating a thread leaves dispatching enabled again.
+  FDispatchSuspended := False;
   NotifyThreadEvent(PSPThreadEventCreate, T);
 end;
 
 procedure TPSPKernel.hStartThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if Id = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
@@ -346,6 +354,8 @@ end;
 
 procedure TPSPKernel.hDeleteThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   var T := ThreadById(Id);
   if T = nil then
@@ -359,12 +369,15 @@ end;
 
 procedure TPSPKernel.hTerminateThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  Spend(PSPSyncCallNs);
   if T.IsDormant then
     begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
   Spend(PSPTerminateThreadNs);
@@ -374,6 +387,8 @@ end;
 
 procedure TPSPKernel.hTerminateDeleteThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
@@ -571,8 +586,8 @@ end;
 
 procedure TPSPKernel.hSleepThread;
 begin
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  if RefuseWait then
+    Exit;
   FHLE.Result(0);
   if FCurrent.WakeupCount > 0 then
   begin
@@ -584,8 +599,8 @@ end;
 
 procedure TPSPKernel.hSleepThreadCB;
 begin
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  if RefuseWait then
+    Exit;
   FHLE.Result(0);
   if FCurrent.WakeupCount > 0 then
   begin
@@ -697,6 +712,8 @@ begin
   var T := TPSPThread(K.GetObject(Id, TPSPThread));
   if T = nil then
     begin H.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  if K.RefuseWait then
+    Exit;
   if T.IsDormant then
   begin
     H.Result(T.ExitStatus);
@@ -704,9 +721,8 @@ begin
       K.CheckCallbacksNow;
     Exit;
   end;
-  if not K.CanWait then
-    begin H.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
   T.EndWaiters.Add(K.FCurrent);
+  K.FWaitCheckNs := PSPThreadEndCheckNs;
   K.BeginWait(PSPWaitThreadEnd, T, Id, H.Arg(1), AllowCB, K.ThreadEndRetry);
 end;
 
@@ -730,18 +746,16 @@ end;
 procedure TPSPKernel.DelayCurrent(Microseconds: Int64; AllowCB: Boolean);
 begin
   FHLE.Result(0);
-  if not CanWait then
-  begin
-    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+  if RefuseWait then
     Exit;
-  end;
   if Assigned(FOnSyncTime) then
     FOnSyncTime();
   if Microseconds < 0 then
     Microseconds := 0;
   var T := FCurrent;
   var Check: Int64 := PSPDelayCheckNs;
-  if T.Fresh then
+  var WasFresh := T.Fresh;
+  if WasFresh then
     Check := PSPFreshCheckNs;
   T.Fresh := False;
   // A delay that is over by the time the kernel looks returns at once.
@@ -754,10 +768,14 @@ begin
   var Us := Microseconds;
   if Us < PSPMinTimeoutUs then
     Us := PSPMinTimeoutUs;
-  var Deadline := FScheduler.Now + Us * 1000 + PSPDelayLatencyNs;
+  var Deadline := FScheduler.Now + Us * 1000;
   BeginWait(PSPWaitDelay, nil, 0, 0, AllowCB, DelayRetry);
   if T.Wait.Kind = PSPWaitDelay then
-    SetWaitDeadline(T, Deadline)
+  begin
+    SetWaitDeadline(T, Deadline);
+    if WasFresh then
+      Spend(PSPFreshBlockNs);
+  end
   else if T.Frames.Count > 0 then
   begin
     // Callbacks started first; the saved wait carries the deadline.
@@ -940,6 +958,8 @@ end;
 
 procedure TPSPKernel.hSuspendDispatchThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   if not FCPU.InterruptsEnabled then
     begin FHLE.Result(SCE_KERNEL_ERROR_CPUDI); Exit; end;
   FHLE.Result(Ord(not FDispatchSuspended));
@@ -948,6 +968,8 @@ end;
 
 procedure TPSPKernel.hResumeDispatchThread;
 begin
+  if InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   if not FCPU.InterruptsEnabled then
     begin FHLE.Result(SCE_KERNEL_ERROR_CPUDI); Exit; end;
   FDispatchSuspended := FHLE.Arg(0) = 0;
@@ -980,7 +1002,8 @@ begin
   if not ReadName(FHLE.Arg(0), Name) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
   var Func := FHLE.Arg(1);
-  if (Func <> 0) and not FCurrent.IsKernel and not ValidUserAddress(Func) then
+  // Only a kernel address is refused.
+  if ((Func and $80000000) <> 0) and not FCurrent.IsKernel then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
   var CB := TPSPCallback.Create;
   CB.Name := Name;
@@ -1010,6 +1033,10 @@ begin
   if CB = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
   FHLE.Result(0);
+  // Getting a waiting thread to its callbacks takes the kernel a while.
+  var T := CB.Thread;
+  if (T <> nil) and (T <> FCurrent) and T.IsWaiting and T.Wait.AllowCB and not T.CallbacksPending then
+    Spend(PSPNotifyWakeNs);
   NotifyCallback(CB, FHLE.Arg(1));
 end;
 

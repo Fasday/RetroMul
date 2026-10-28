@@ -97,7 +97,7 @@ end;
 
 procedure TPSPKernel.hCpuResumeIntr;
 begin
-  FCPU.InterruptsEnabled := FHLE.Arg(0) <> 0;
+  FCPU.InterruptsEnabled := (FHLE.Arg(0) and 1) <> 0;
   FHLE.Result(0);
   if FCPU.InterruptsEnabled then
   begin
@@ -118,23 +118,44 @@ begin
   FHLE.Result(Ord(FHLE.Arg(0) = 0));
 end;
 
-function SubIntrValid(K: TPSPKernel; I, S: Integer): Boolean;
+const
+  // Interrupts with a sub-interrupt table user code may use.
+  PSPSubIntrHosts = [25, 30];
+  // Interrupts user code may not touch at all, and ones it may only release.
+  PSPIntrUserDenied = [7, 10, 12, 15..20, 22..24, 26, 31, 36, 50, 56..61, 65];
+  PSPIntrRegisterDenied = [4, 6, 21];
+  // VBlank sub-interrupts the firmware's drivers hold.
+  PSPVBlankFirmwareSubs = [18..20, 24..26];
+
+// 0 when the interrupt has a sub-interrupt table this caller may use.
+function SubIntrCheck(I, S: Integer; Registering: Boolean): Cardinal;
 begin
-  Result := (I >= 0) and (I <= High(K.FSubIntr)) and (S >= 0) and (S <= 31);
+  if (I < 0) or (I > 66) or (I in PSPIntrUserDenied) or (Registering and (I in PSPIntrRegisterDenied)) then
+    Exit(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+  if not (I in PSPSubIntrHosts) then
+    Exit(SCE_KERNEL_ERROR_NOTFOUND_HANDLER);
+  if (S < 0) or (S > 31) then
+    Exit(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+  Result := 0;
 end;
 
 procedure TPSPKernel.hRegisterSubIntrHandler;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  if FSubIntr[I, S].Handler <> 0 then
+  var Err := SubIntrCheck(I, S, True);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
+  if (FSubIntr[I, S].Handler <> 0) or ((I = 30) and (S in PSPVBlankFirmwareSubs)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER); Exit; end;
+  // The upper half of the table is the firmware's.
+  if S > 15 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  // A null handler is taken but leaves the slot free; an enable made before
+  // the handler came stays.
   FSubIntr[I, S].Handler := FHLE.Arg(2);
   FSubIntr[I, S].Arg := FHLE.Arg(3);
   FSubIntr[I, S].GP := FCPU.Ctx.GPR[28];
-  FSubIntr[I, S].Enabled := False;
   FHLE.Result(0);
 end;
 
@@ -142,8 +163,9 @@ procedure TPSPKernel.hReleaseSubIntrHandler;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   if FSubIntr[I, S].Handler = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
   FSubIntr[I, S] := Default(TPSPInterruptHandler);
@@ -154,10 +176,9 @@ procedure TPSPKernel.hEnableSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  if FSubIntr[I, S].Handler = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   FSubIntr[I, S].Enabled := True;
   FHLE.Result(0);
 end;
@@ -166,10 +187,9 @@ procedure TPSPKernel.hDisableSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  if FSubIntr[I, S].Handler = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   FSubIntr[I, S].Enabled := False;
   FHLE.Result(0);
 end;
@@ -178,8 +198,9 @@ procedure TPSPKernel.hSuspendSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   if FHLE.Arg(2) <> 0 then
     FMemory.Write32(FHLE.Arg(2), Ord(FSubIntr[I, S].Enabled));
   FSubIntr[I, S].Enabled := False;
@@ -190,8 +211,9 @@ procedure TPSPKernel.hResumeSubIntr;
 begin
   var I := FHLE.ArgInt(0);
   var S := FHLE.ArgInt(1);
-  if not SubIntrValid(Self, I, S) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  var Err := SubIntrCheck(I, S, False);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
   FSubIntr[I, S].Enabled := FHLE.Arg(2) <> 0;
   FHLE.Result(0);
 end;
@@ -211,32 +233,59 @@ begin
   FHLE.Result(0);
 end;
 
+// Checks an interrupt number and that something handles it; 0 when it does.
+function TPSPKernel.IntrHandlerCheck(I: Integer): Cardinal;
+begin
+  if (I < 0) or (I > High(FIntrHandlers)) then
+    Result := SCE_KERNEL_ERROR_ILLEGAL_INTRCODE
+  else if FIntrHandlers[I].Handler = 0 then
+    Result := SCE_KERNEL_ERROR_NOTFOUND_HANDLER
+  else
+    Result := 0;
+end;
+
 procedure TPSPKernel.hEnableIntr;
 begin
   var I := FHLE.ArgInt(0);
-  if (I < 0) or (I > High(FIntrEnabled)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  FIntrEnabled[I] := True;
+  var Err := IntrHandlerCheck(I);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
+  FIntrHandlers[I].Enabled := True;
   FHLE.Result(0);
 end;
 
 procedure TPSPKernel.hDisableIntr;
 begin
   var I := FHLE.ArgInt(0);
-  if (I < 0) or (I > High(FIntrEnabled)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
-  FIntrEnabled[I] := False;
+  var Err := IntrHandlerCheck(I);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
+  FIntrHandlers[I].Enabled := False;
   FHLE.Result(0);
 end;
 
 procedure TPSPKernel.hRegisterIntrHandler;
 begin
-  FHLE.Unimplemented('interrupt handlers');
+  // (intno, no, handler, arg1, arg2)
+  var I := FHLE.ArgInt(0);
+  if (I < 0) or (I > High(FIntrHandlers)) or (FHLE.Arg(2) = 0) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  if FIntrHandlers[I].Handler <> 0 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER); Exit; end;
+  FIntrHandlers[I].Handler := FHLE.Arg(2);
+  FIntrHandlers[I].Arg := FHLE.Arg(3);
+  FIntrHandlers[I].GP := FCPU.Ctx.GPR[28];
+  FIntrHandlers[I].Enabled := False;
   FHLE.Result(0);
 end;
 
 procedure TPSPKernel.hReleaseIntrHandler;
 begin
+  var I := FHLE.ArgInt(0);
+  var Err := IntrHandlerCheck(I);
+  if Err <> 0 then
+    begin FHLE.Result(Err); Exit; end;
+  FIntrHandlers[I] := Default(TPSPInterruptHandler);
   FHLE.Result(0);
 end;
 
@@ -285,7 +334,13 @@ begin
   var Addr := FHLE.Arg(4);
   var KernelCaller := (FCurrent <> nil) and FCurrent.IsKernel;
   if (PartId < 1) or (PartId > 6) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  begin
+    if KernelCaller then
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION)
+    else
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+    Exit;
+  end;
   if not KernelCaller and (PartId in [1, 3, 4]) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION); Exit; end;
   if (Kind < 0) or (Kind > 4) then
@@ -407,13 +462,14 @@ begin
   // (partition, size, attr, name)
   var PartId := FHLE.ArgInt(0);
   var Size := FHLE.Arg(1);
-  var Name: string;
-  ReadName(FHLE.Arg(3), Name);
   var P := Partition(PartId);
   if P = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION); Exit; end;
-  if Size = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  if Integer(Size) <= 0 then
+    begin FHLE.Result($800200DC); Exit; end;
+  var Name: string;
+  if not ReadName(FHLE.Arg(3), Name) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
   var Block := P.Alloc(Size, akLow, 0, 256, 'heap:' + Name);
   if Block = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
@@ -442,6 +498,11 @@ begin
   if H = nil then
     begin FHLE.Result(0); Exit; end;
   var Size := FHLE.Arg(1);
+  if Size > $7FFFFFF0 then
+    begin FHLE.Result(0); Exit; end;
+  // Even nothing gets a block.
+  if Size = 0 then
+    Size := 1;
   var A := H.Area.Alloc(Size, akLow, 0, 8, '');
   // The heap grows with more of its partition.
   if A = 0 then
@@ -451,6 +512,15 @@ end;
 
 procedure TPSPKernel.hAllocHeapMemoryWithOption;
 begin
+  // The option is (size, alignment); the alignment is 0 or a power of two
+  // from 4 to 128.
+  var Opt := FHLE.Arg(2);
+  if Opt <> 0 then
+  begin
+    var Align := FMemory.Read32(Opt + 4);
+    if (Align <> 0) and ((Align < 4) or (Align > $80) or ((Align and (Align - 1)) <> 0)) then
+      begin FHLE.Result(0); Exit; end;
+  end;
   hAllocHeapMemory;
 end;
 
@@ -591,9 +661,33 @@ end;
 procedure TPSPKernel.hRegisterExitCallback;
 begin
   var Id := FHLE.Arg(0);
-  if (FCompiledSdkVersion >= $03950000) and (GetObject(Id, TPSPCallback) = nil) then
+  // Programs built with SDK 3.95 or later have the id checked.
+  if (FCompiledSdkVersion >= $03090500) and (GetObject(Id, TPSPCallback) = nil) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
   FExitCallback := Id;
+  FHLE.Result(0);
+end;
+
+procedure TPSPKernel.hCheckExitCallback;
+begin
+  // LoadExecForUser_362A956B: checks the exit callback's argument block,
+  // (kind 0-3, params, common) with the callback's common pointing at its
+  // last word, and fills in the params (size >= 12, then two words).
+  var CB := TPSPCallback(GetObject(FExitCallback, TPSPCallback));
+  if CB = nil then
+    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  if (CB.Common = 0) or ((CB.Common and $80000000) <> 0) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  var Arg := CB.Common - 8;
+  if FMemory.Read32(Arg) > 3 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  var Params := FMemory.Read32(Arg + 4);
+  if (Params = 0) or ((Params and $80000000) <> 0) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  if FMemory.Read32(Params) < 12 then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE); Exit; end;
+  FMemory.Write32(Params + 4, 0);
+  FMemory.Write32(Params + 8, $FFFFFFFF);
   FHLE.Result(0);
 end;
 
@@ -617,6 +711,8 @@ procedure TPSPKernel.hVolatileMemLock;
 begin
   if FHLE.Arg(0) <> 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  if RefuseWait then
+    Exit;
   if not FVolatileLocked then
   begin
     FVolatileLocked := True;
@@ -893,6 +989,7 @@ begin
   H.Register('LoadExecForUser', $05572A5F, 'sceKernelExitGame', hExitGame);
   H.Register('LoadExecForUser', $2AC9954B, 'sceKernelExitGameWithStatus', hExitGame);
   H.Register('LoadExecForUser', $4AC57943, 'sceKernelRegisterExitCallback', hRegisterExitCallback);
+  H.Register('LoadExecForUser', $362A956B, 'LoadExecForUser_362A956B', hCheckExitCallback);
   H.Register('LoadExecForKernel', $05572A5F, 'sceKernelExitGame', hExitGame);
   H.Register('sceSuspendForUser', $3E0271D3, 'sceKernelVolatileMemLock', hVolatileMemLock);
   H.Register('sceSuspendForUser', $A14F40B2, 'sceKernelVolatileMemTryLock', hVolatileMemTryLock);
@@ -903,12 +1000,40 @@ begin
   RegisterKernelAliases;
 end;
 
+const
+  PSPIoForwardNids: array[0..16] of Cardinal = ($109F50BC, $810C4BC3, $6A638D83, $42EC03AC, $27EB27B8, $68963324,
+    $63632449, $54F5FB11, $B29DDF9C, $E3EB004C, $EB092469, $F27A9C51, $06A70004, $1117C65F, $779103A0, $ACE946E8,
+    $B8A740F4);
+  PSPIoForwardNames: array[0..16] of string = ('sceIoOpen', 'sceIoClose', 'sceIoRead', 'sceIoWrite', 'sceIoLseek',
+    'sceIoLseek32', 'sceIoIoctl', 'sceIoDevctl', 'sceIoDopen', 'sceIoDread', 'sceIoDclose', 'sceIoRemove',
+    'sceIoMkdir', 'sceIoRmdir', 'sceIoRename', 'sceIoGetstat', 'sceIoChstat');
+
+// Kernel modules reach the file calls through IoFileMgrForKernel: the same
+// calls as the user library, looked up when made.
+procedure TPSPKernel.hIoForKernel;
+begin
+  var Name := FHLE.CurrentName;
+  for var I := 0 to High(PSPIoForwardNames) do
+    if PSPIoForwardNames[I] = Name then
+    begin
+      var F := FHLE.FunctionInfo(FHLE.Find('IoFileMgrForUser', PSPIoForwardNids[I]));
+      if (F <> nil) and Assigned(F.Handler) then
+        F.Handler()
+      else
+        FHLE.Unimplemented('IoFileMgrForKernel ' + Name);
+      Exit;
+    end;
+  FHLE.Unimplemented('IoFileMgrForKernel ' + Name);
+end;
+
 procedure TPSPKernel.RegisterKernelAliases;
 const
   TK = 'ThreadManForKernel';
   SK = 'SysMemForKernel';
   IK = 'InterruptManagerForKernel';
 begin
+  for var I := 0 to High(PSPIoForwardNids) do
+    FHLE.Register('IoFileMgrForKernel', PSPIoForwardNids[I], PSPIoForwardNames[I], hIoForKernel);
   // Kernel modules import the same calls from the *ForKernel libraries.
   var H := FHLE;
   for var N in [Cardinal($446D8DE6), $F475845D, $AA73C935, $809CE29B, $9FA03CD3, $616403BA, $383F7BCC, $293B45B8,

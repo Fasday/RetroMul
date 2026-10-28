@@ -1064,6 +1064,7 @@
         <DCCReference Include="..\..\source\adapters\Core.Adapter.SG1000.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.Adapter.SNES.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.PS1.Playback.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.PSP.Playback.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.Adapter.PS1.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.BlockImage.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.DivStorage.pas"/>

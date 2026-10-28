@@ -422,6 +422,8 @@ end;
 // Mode: 0 waits, 1 waits with callbacks, 2 does not wait.
 procedure TPSPKernel.AllocateVplCommon(Mode: Integer);
 begin
+  if (Mode <> 2) and RefuseWait then
+    Exit;
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID); Exit; end;
@@ -591,6 +593,8 @@ end;
 
 procedure TPSPKernel.AllocateFplCommon(Mode: Integer);
 begin
+  if (Mode <> 2) and RefuseWait then
+    Exit;
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID); Exit; end;
@@ -832,8 +836,8 @@ procedure TPSPKernel.hAllocateTlspl;
 begin
   var OutPtr := FHLE.Arg(1);
   var TimeoutPtr := FHLE.Arg(2);
-  if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  if RefuseWait then
+    Exit;
   if ((OutPtr and $80000000) <> 0) or ((TimeoutPtr and $80000000) <> 0) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));

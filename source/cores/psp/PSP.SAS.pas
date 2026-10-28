@@ -826,7 +826,26 @@ var
   end;
 
 begin
-  R := @RevPresets[FRevType];
+  var Regs := RevPresets[FRevType];
+  if FRevType in [6, 7] then
+  begin
+    // ECHO and DELAY: the delay parameter sets the echo distance (the presets
+    // are its longest), the feedback parameter ECHO's wall reflection.
+    var D := $600 + FRevDelay * $A00 div 127;
+    Regs.R[10] := 2 * D - 1;
+    Regs.R[11] := D - 1;
+    Regs.R[12] := D + 5;
+    Regs.R[13] := 5;
+    Regs.R[16] := D + 5;
+    Regs.R[17] := 5;
+    Regs.R[26] := D + 4;
+    Regs.R[27] := D + 2;
+    if FRevType = 6 then
+      Regs.R[7] := Word(-(FRevFeedback shl 8))
+    else
+      Regs.R[7] := 0;
+  end;
+  R := @Regs;
   Size := R.Size * 4 div 8;
   if Size > Length(FRevBuffer) then
     Size := Length(FRevBuffer);
