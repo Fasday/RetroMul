@@ -106,6 +106,11 @@ begin
         V[I].X := Integer(Next(640 * 16)) - 80 * 16;
         V[I].Y := Integer(Next(400 * 16)) - 64 * 16;
         V[I].R := Next(256); V[I].G := Next(256); V[I].B := Next(256); V[I].A := Next(256);
+        if Test mod 3 = 0 then
+        begin
+          V[I].R := 80; V[I].G := 40; V[I].B := 20; V[I].A := 128;
+          V[I].SR := Next(128); V[I].SG := Next(128); V[I].SB := Next(128);
+        end;
         V[I].Z := Next(65536);
         V[I].W := 0.5 + Next(128) / 128;
         V[I].Q := 1;

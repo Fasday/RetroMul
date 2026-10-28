@@ -854,7 +854,9 @@ begin
   var Row2 := (OriginY - Y0) * DX2 - (OriginX - X0) * DY2;
   var Gouraud := S.Gouraud and not S.Flat and
     ((A0.R <> A1.R) or (A0.R <> A2.R) or (A0.G <> A1.G) or (A0.G <> A2.G) or
-     (A0.B <> A1.B) or (A0.B <> A2.B) or (A0.A <> A1.A) or (A0.A <> A2.A));
+     (A0.B <> A1.B) or (A0.B <> A2.B) or (A0.A <> A1.A) or (A0.A <> A2.A) or
+     (A0.SR <> A1.SR) or (A0.SR <> A2.SR) or (A0.SG <> A1.SG) or (A0.SG <> A2.SG) or
+     (A0.SB <> A1.SB) or (A0.SB <> A2.SB));
   var Secondary := (A0.SR or A0.SG or A0.SB or A1.SR or A1.SG or A1.SB or A2.SR or A2.SG or A2.SB) <> 0;
   var ConstantZ := (A0.Z = A1.Z) and (A0.Z = A2.Z);
   var NeedWeights := S.Textured or S.FogEnabled or Secondary or not ConstantZ;

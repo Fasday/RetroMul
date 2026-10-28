@@ -148,7 +148,9 @@ begin
     for var I := 0 to S.Tex.LevelCount - 1 do
     begin
       var L := S.Tex.Levels[I];
-      if L.Ptr = nil then Exit(False);
+      if (L.Ptr = nil) or (L.Width > L.BufWidth) then Exit(False);
+      if S.Tex.Swizzle and ((L.Height < 8) or (L.BufWidth and 31 <> 0)) then Exit(False);
+      if (S.Tex.Format >= 8) and ((L.Height < 4) or (L.BufWidth < 4)) then Exit(False);
       var T1 := NativeUInt(L.Ptr);
       if Overlap(T1, T1 + L.Size, C1, C2) or (HasZ and Overlap(T1, T1 + L.Size, Z1, Z2)) then Exit(False);
       // Bytes fetched outside the contiguous level use the guest memory
