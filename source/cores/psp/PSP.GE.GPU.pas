@@ -6,14 +6,18 @@ unit PSP.GE.GPU;
 // Primitives are set up here exactly as PSP.GE.Raster sets them up and go
 // with their packed raster state into a batch of passes: runs of primitives
 // with one render target, split wherever a texture reads memory the pass
-// draws. Sync runs the batch on the GPU's copy of VRAM and copies VRAM back
-// into guest memory. The GPU copy learns of every other write to VRAM by
-// comparing guest VRAM page by page with what it last handed back. What the
-// kernel cannot draw the same way (pixels sharing memory, a primitive
+// draws. The VRAM pages a batch draws into or textures from are held
+// (TPSPMemory.HoldVRAM), so the batch may grow while the CPU runs: the first
+// access to a held page runs it (Sync) on the GPU's copy of VRAM and copies
+// those pages back into guest memory. The GPU copy learns of every other
+// write to VRAM by comparing guest VRAM page by page with what it last
+// handed back; textures in main memory are copied when they are used. What
+// the kernel cannot draw the same way (pixels sharing memory, a primitive
 // texturing from the pixels it draws) is drawn by PSP.GE.Raster after a Sync.
 //
-// In check mode every batch is also drawn by PSP.GE.Raster into guest memory,
-// which keeps the CPU's result, and the two are compared.
+// In check mode every batch, run whenever the GE stops, is also drawn by
+// PSP.GE.Raster into guest memory, which keeps the CPU's result, and the two
+// are compared.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
@@ -81,7 +85,13 @@ type
     FOnMessage: TGEGPUMessage;
     FWhy: string;
     FReasons: TDictionary<string, Integer>;
+    FSnapshots: TDictionary<UInt64, Integer>;
+    FLastClutData: Integer;
+    FSyncing: Boolean;
     procedure Bind;
+    procedure Hold(const Span: TGEGPUSpan);
+    procedure BeginPrim;
+    procedure VRAMFault;
     procedure Grow(var Buffer: TVulkanBuffer; Bytes: Int64);
     function AddData(Bytes: Integer): Integer;
     function NewPrim: PCardinal;
@@ -90,7 +100,7 @@ type
       X1, Y1, X2, Y2: Integer): Boolean;
     procedure Record_(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
     procedure Fallback;
-    procedure CheckBatch;
+    procedure CheckBatch(const Held: array of Boolean);
     procedure Message(const Text: string);
   public
     constructor Create(Memory: TPSPMemory; Compute: TVulkanCompute; Check: Boolean);
@@ -99,8 +109,8 @@ type
     procedure DrawSprite(const S: TGERaster; const V0, V1: TGEVertex); override;
     procedure DrawLine(const S: TGERaster; const V0, V1: TGEVertex); override;
     procedure DrawPoint(const S: TGERaster; const V: TGEVertex); override;
-    procedure Access(Address, Size: Cardinal; Write: Boolean); override;
     procedure Sync; override;
+    procedure Release; override;
     property Compute: TVulkanCompute read FCompute;
     property Stats: TGEGPUStats read FStats;
     property OnMessage: TGEGPUMessage read FOnMessage write FOnMessage;
@@ -120,6 +130,7 @@ const
   StateWords = 128;
   FragWords = 16;
   PageSize = 4096;
+  VRAMPages = PSPVRAMSize div PageSize;
   VRAMMask = PSPVRAMSize - 1;
 
   KindTriangle = 0;
@@ -400,6 +411,7 @@ begin
   FCheck := Check;
   FCheckPrims := TList<TGEGPUCheckPrim>.Create;
   FReasons := TDictionary<string, Integer>.Create;
+  FSnapshots := TDictionary<UInt64, Integer>.Create;
   SetLength(FShadow, PSPVRAMSize);
   FVRAM := Compute.CreateBuffer(PSPVRAMSize + 256, vbkDevice);
   FUpload := Compute.CreateBuffer(PSPVRAMSize, vbkUpload);
@@ -416,10 +428,16 @@ begin
   FCmd.FullBarrier;
   FCmd.Run;
   FLastState := -1;
+  FLastClutData := -1;
+  FMemory.OnVRAMFault := VRAMFault;
 end;
 
 destructor TGEGPUBackend.Destroy;
 begin
+  if FMemory.HeldVRAMPages > 0 then
+    Sync;
+  FMemory.ReleaseVRAM;
+  FMemory.OnVRAMFault := nil;
   FCmd.Free;
   FKernel.Free;
   FDataBuf.Free;
@@ -428,6 +446,7 @@ begin
   FReadback.Free;
   FUpload.Free;
   FVRAM.Free;
+  FSnapshots.Free;
   FReasons.Free;
   FCheckPrims.Free;
   FCompute.Free;
@@ -438,6 +457,34 @@ procedure TGEGPUBackend.Message(const Text: string);
 begin
   if Assigned(FOnMessage) then
     FOnMessage(Text);
+end;
+
+procedure TGEGPUBackend.Hold(const Span: TGEGPUSpan);
+begin
+  if Span.Len <= 0 then
+    Exit;
+  var First := Span.Lo div PageSize;
+  var Last := (Span.Lo + Span.Len - 1) div PageSize;
+  for var Page := First to Last do
+    FMemory.HoldVRAM(Integer(Page mod (PSPVRAMSize div PageSize)));
+end;
+
+// Batches stay within the buffers' growth and a CPU memory compare's worth.
+procedure TGEGPUBackend.BeginPrim;
+begin
+  if (FPrimCount >= 65536) or (FDataSize >= 64 shl 20) then
+    Sync;
+end;
+
+procedure TGEGPUBackend.VRAMFault;
+begin
+  Sync;
+end;
+
+procedure TGEGPUBackend.Release;
+begin
+  if FCheck then
+    Sync;
 end;
 
 procedure TGEGPUBackend.Bind;
@@ -520,14 +567,30 @@ begin
           Sync;
         Source := 1;
         Base := Addr;
-        DataOfs := AddData(Size);
-        FMemory.ReadBytes(Addr, FData[DataOfs], Size);
+        // The batch's copy of the same bytes, while they are unchanged.
+        var Key := UInt64(Addr) or (UInt64(Size) shl 32);
+        var Old: Integer;
+        var Guest := FMemory.Ptr(Addr, Size);
+        if (Guest <> nil) and FSnapshots.TryGetValue(Key, Old) and CompareMem(@FData[Old], Guest, Size) then
+          DataOfs := Old
+        else
+        begin
+          DataOfs := AddData(Size);
+          FMemory.ReadBytes(Addr, FData[DataOfs], Size);
+          FSnapshots.AddOrSetValue(Key, DataOfs);
+        end;
       end;
     end;
     if UsesClut then
     begin
-      ClutOfs := AddData(1024);
-      Move(S.Tex.Clut^, FData[ClutOfs], 1024);
+      if (FLastClutData >= 0) and CompareMem(@FData[FLastClutData], S.Tex.Clut, 1024) then
+        ClutOfs := FLastClutData
+      else
+      begin
+        ClutOfs := AddData(1024);
+        Move(S.Tex.Clut^, FData[ClutOfs], 1024);
+        FLastClutData := ClutOfs;
+      end;
     end;
   end;
   if (FStateCount + 1) * StateWords > Length(FStates) then
@@ -709,6 +772,11 @@ begin
   P.X2 := Max(P.X2, X2); P.Y2 := Max(P.Y2, Y2);
   if TexInVRAM then
     P.Reads := P.Reads + [Tex];
+  Hold(FB);
+  if UsesZ then
+    Hold(Z);
+  if TexInVRAM then
+    Hold(Tex);
   Result := True;
 end;
 
@@ -764,6 +832,7 @@ var
   Tex: TGEGPUSpan;
   InVRAM, Ok: Boolean;
 begin
+  BeginPrim;
   // The set-up of GEDrawTriangle.
   var X0 := Int64(V0.X); var Y0 := Int64(V0.Y);
   var X1 := Int64(V1.X); var Y1 := Int64(V1.Y);
@@ -839,6 +908,7 @@ var
   Tex: TGEGPUSpan;
   InVRAM, Ok: Boolean;
 begin
+  BeginPrim;
   // The set-up of GEDrawSprite.
   var X1 := Min(V0.X, V1.X);
   var X2 := Max(V0.X, V1.X);
@@ -887,6 +957,7 @@ var
   Tex: TGEGPUSpan;
   InVRAM, Ok: Boolean;
 begin
+  BeginPrim;
   // GEDrawLine, keeping the fragments.
   var X0 := V0.X; var Y0 := V0.Y;
   var DX := V1.X - X0; var DY := V1.Y - Y0;
@@ -999,6 +1070,7 @@ var
   Tex: TGEGPUSpan;
   InVRAM, Ok: Boolean;
 begin
+  BeginPrim;
   var PX := (V.X + $100000) div 16 - $10000;
   var PY := (V.Y + $100000) div 16 - $10000;
   if (PX < S.ScissorX1) or (PX > S.ScissorX2) or (PY < S.ScissorY1) or (PY > S.ScissorY2) or (PY < S.BandY1) or
@@ -1041,106 +1113,135 @@ begin
   Record_(KindPoint, S, V, V, V);
 end;
 
-procedure TGEGPUBackend.Access(Address, Size: Cardinal; Write: Boolean);
-begin
-  if (FPrimCount > 0) and TouchesVRAM(Address, Size) then
-    Sync;
-end;
-
 procedure TGEGPUBackend.Sync;
 var
   Push: TGEGPUPush;
 begin
+  if FSyncing then
+    Exit;
   if FPrimCount = 0 then
   begin
     FPassCount := 0;
     FStateCount := 0;
     FDataSize := 0;
     FLastState := -1;
+    FLastClutData := -1;
+    FSnapshots.Clear;
+    FMemory.ReleaseVRAM;
     Exit;
   end;
-  Inc(FStats.Batches);
-  Inc(FStats.Passes, FPassCount);
-  Inc(FStats.Prims, FPrimCount);
-  Grow(FPrimBuf, Int64(FPrimCount) * PrimWords * 4);
-  Grow(FStateBuf, Int64(FStateCount) * StateWords * 4);
-  Grow(FDataBuf, Max(FDataSize, 16));
-  FPrimBuf.Write(0, FPrims[0], FPrimCount * PrimWords * 4);
-  FStateBuf.Write(0, FStates[0], FStateCount * StateWords * 4);
-  if FDataSize > 0 then
-    FDataBuf.Write(0, FData[0], FDataSize);
+  FSyncing := True;
+  try
+    Inc(FStats.Batches);
+    Inc(FStats.Passes, FPassCount);
+    Inc(FStats.Prims, FPrimCount);
+    Grow(FPrimBuf, Int64(FPrimCount) * PrimWords * 4);
+    Grow(FStateBuf, Int64(FStateCount) * StateWords * 4);
+    Grow(FDataBuf, Max(FDataSize, 16));
+    FPrimBuf.Write(0, FPrims[0], FPrimCount * PrimWords * 4);
+    FStateBuf.Write(0, FStates[0], FStateCount * StateWords * 4);
+    if FDataSize > 0 then
+      FDataBuf.Write(0, FData[0], FDataSize);
 
-  var VRAM: PByte := @FMemory.VRAM[0];
-  var Upload := FUpload.Data;
-  FCmd.Start;
-  FCmd.Timestamp(0);
-  var Run := -1;
-  var Uploaded := False;
-  for var Page := 0 to PSPVRAMSize div PageSize do
-  begin
-    var Dirty := (Page < PSPVRAMSize div PageSize) and
-      not CompareMem(VRAM + Page * PageSize, @FShadow[Page * PageSize], PageSize);
-    if Dirty then
+    var VRAM: PByte := @FMemory.VRAM[0];
+    var Upload := FUpload.Data;
+    FCmd.Start;
+    FCmd.Timestamp(0);
+    // Pages written outside the GPU since it last gave VRAM back.
+    var Run := -1;
+    var Uploaded := False;
+    for var Page := 0 to VRAMPages do
     begin
-      Move(VRAM[Page * PageSize], Upload[Page * PageSize], PageSize);
-      Move(VRAM[Page * PageSize], FShadow[Page * PageSize], PageSize);
-      Inc(FStats.UploadedPages);
-      if Run < 0 then
-        Run := Page;
-    end
-    else if Run >= 0 then
-    begin
-      FUpload.Flush(Run * PageSize, (Page - Run) * PageSize);
-      FCmd.Copy(FUpload, FVRAM, Run * PageSize, Run * PageSize, (Page - Run) * PageSize);
-      Uploaded := True;
-      Run := -1;
+      var Dirty := (Page < VRAMPages) and not CompareMem(VRAM + Page * PageSize, @FShadow[Page * PageSize], PageSize);
+      if Dirty then
+      begin
+        Move(VRAM[Page * PageSize], Upload[Page * PageSize], PageSize);
+        Move(VRAM[Page * PageSize], FShadow[Page * PageSize], PageSize);
+        Inc(FStats.UploadedPages);
+        if Run < 0 then
+          Run := Page;
+      end
+      else if Run >= 0 then
+      begin
+        FUpload.Flush(Run * PageSize, (Page - Run) * PageSize);
+        FCmd.Copy(FUpload, FVRAM, Run * PageSize, Run * PageSize, (Page - Run) * PageSize);
+        Uploaded := True;
+        Run := -1;
+      end;
     end;
+    if Uploaded then
+      FCmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT);
+    FCmd.Timestamp(1);
+    for var I := 0 to FPassCount - 1 do
+    begin
+      var P: PGEGPUPass := @FPasses[I];
+      Push.First := P.First;
+      Push.Count := P.Count;
+      Push.X1 := P.X1;
+      Push.Y1 := P.Y1;
+      Push.X2 := P.X2;
+      Push.Y2 := P.Y2;
+      FCmd.Dispatch(FKernel, (P.X2 - P.X1 + 8) div 8, (P.Y2 - P.Y1 + 8) div 8, 1, Push, SizeOf(Push));
+      FCmd.Barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT);
+    end;
+    FCmd.Timestamp(2);
+    // Only the held pages can have changed.
+    Run := -1;
+    for var Page := 0 to VRAMPages do
+    begin
+      var Held := (Page < VRAMPages) and FMemory.VRAMHeld(Page);
+      if Held then
+      begin
+        if Run < 0 then
+          Run := Page;
+      end
+      else if Run >= 0 then
+      begin
+        FCmd.Copy(FVRAM, FReadback, Run * PageSize, Run * PageSize, (Page - Run) * PageSize);
+        Run := -1;
+      end;
+    end;
+    FCmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+      VK_ACCESS_HOST_READ_BIT);
+    FCmd.Timestamp(3);
+    var Watch := TStopwatch.StartNew;
+    FCmd.Run;
+    FStats.WaitSeconds := FStats.WaitSeconds + Watch.Elapsed.TotalSeconds;
+    FStats.UploadSeconds := FStats.UploadSeconds + FCmd.Elapsed(0, 1) * 1e-9;
+    FStats.DrawSeconds := FStats.DrawSeconds + FCmd.Elapsed(1, 2) * 1e-9;
+    FStats.ReadbackSeconds := FStats.ReadbackSeconds + FCmd.Elapsed(2, 3) * 1e-9;
+    FReadback.Invalidate;
+    var Back := FReadback.Data;
+    var Held: array[0..VRAMPages - 1] of Boolean;
+    for var Page := 0 to VRAMPages - 1 do
+      Held[Page] := FMemory.VRAMHeld(Page);
+    FMemory.ReleaseVRAM;
+    if FCheck then
+      CheckBatch(Held);
+    for var Page := 0 to VRAMPages - 1 do
+      if Held[Page] then
+      begin
+        if not FCheck then
+          Move(Back[Page * PageSize], VRAM[Page * PageSize], PageSize);
+        Move(Back[Page * PageSize], FShadow[Page * PageSize], PageSize);
+      end;
+  finally
+    FPrimCount := 0;
+    FPassCount := 0;
+    FStateCount := 0;
+    FDataSize := 0;
+    FLastState := -1;
+    FLastClutData := -1;
+    FSnapshots.Clear;
+    FCheckPrims.Clear;
+    FSyncing := False;
   end;
-  if Uploaded then
-    FCmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-      VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT);
-  FCmd.Timestamp(1);
-  for var I := 0 to FPassCount - 1 do
-  begin
-    var P: PGEGPUPass := @FPasses[I];
-    Push.First := P.First;
-    Push.Count := P.Count;
-    Push.X1 := P.X1;
-    Push.Y1 := P.Y1;
-    Push.X2 := P.X2;
-    Push.Y2 := P.Y2;
-    FCmd.Dispatch(FKernel, (P.X2 - P.X1 + 8) div 8, (P.Y2 - P.Y1 + 8) div 8, 1, Push, SizeOf(Push));
-    FCmd.Barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT);
-  end;
-  FCmd.Timestamp(2);
-  FCmd.Copy(FVRAM, FReadback, 0, 0, PSPVRAMSize);
-  FCmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-    VK_ACCESS_HOST_READ_BIT);
-  FCmd.Timestamp(3);
-  var Watch := TStopwatch.StartNew;
-  FCmd.Run;
-  FStats.WaitSeconds := FStats.WaitSeconds + Watch.Elapsed.TotalSeconds;
-  FStats.UploadSeconds := FStats.UploadSeconds + FCmd.Elapsed(0, 1) * 1e-9;
-  FStats.DrawSeconds := FStats.DrawSeconds + FCmd.Elapsed(1, 2) * 1e-9;
-  FStats.ReadbackSeconds := FStats.ReadbackSeconds + FCmd.Elapsed(2, 3) * 1e-9;
-  FReadback.Invalidate;
-  if FCheck then
-    CheckBatch
-  else
-    Move(FReadback.Data^, VRAM^, PSPVRAMSize);
-  Move(FReadback.Data^, FShadow[0], PSPVRAMSize);
-
-  FPrimCount := 0;
-  FPassCount := 0;
-  FStateCount := 0;
-  FDataSize := 0;
-  FLastState := -1;
-  FCheckPrims.Clear;
 end;
 
-procedure TGEGPUBackend.CheckBatch;
+procedure TGEGPUBackend.CheckBatch(const Held: array of Boolean);
 begin
   Inc(FStats.CheckedBatches);
   for var I := 0 to FCheckPrims.Count - 1 do
@@ -1159,13 +1260,15 @@ begin
   var GPU := FReadback.Data;
   var Bad := 0;
   var First := -1;
-  for var I := 0 to PSPVRAMSize - 1 do
-    if CPU[I] <> GPU[I] then
-    begin
-      if First < 0 then
-        First := I;
-      Inc(Bad);
-    end;
+  for var Page := 0 to High(Held) do
+    if Held[Page] then
+      for var I := Page * PageSize to Page * PageSize + PageSize - 1 do
+        if CPU[I] <> GPU[I] then
+        begin
+          if First < 0 then
+            First := I;
+          Inc(Bad);
+        end;
   if Bad > 0 then
   begin
     Inc(FStats.BadBatches);

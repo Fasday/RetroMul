@@ -4,8 +4,10 @@ unit PSP.GE.Backend;
 // its complete raster state (a TGERaster snapshot and the vertices) to its
 // backend; without one it draws them itself with PSP.GE.Raster. A backend
 // may draw later or elsewhere (on the GPU), so the engine tells it when guest
-// memory is used outside it and when the GE stops: from then on guest memory
-// must hold everything drawn, exactly as if PSP.GE.Raster had drawn it.
+// memory is used outside it and when the GE stops: from then on the rest of
+// the machine must see everything drawn, exactly as if PSP.GE.Raster had
+// drawn it, either in guest memory or through VRAM pages the backend holds
+// (TPSPMemory.HoldVRAM), whose accesses make it give the data back first.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
@@ -25,6 +27,8 @@ type
     procedure Access(Address, Size: Cardinal; Write: Boolean); virtual;
     // Guest memory holds every primitive drawn so far.
     procedure Sync; virtual;
+    // The GE stops running for now (Sync unless the backend holds VRAM pages).
+    procedure Release; virtual;
   end;
 
   // Draws at once with PSP.GE.Raster, as the engine does without a backend.
@@ -44,6 +48,11 @@ end;
 
 procedure TGERasterBackend.Sync;
 begin
+end;
+
+procedure TGERasterBackend.Release;
+begin
+  Sync;
 end;
 
 procedure TGECPUBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);

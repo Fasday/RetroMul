@@ -66,8 +66,8 @@ type
     // Draws the primitives instead of PSP.GE.Raster when set (not owned).
     Backend: TGERasterBackend;
     constructor Create(Memory: TPSPMemory);
-    // Guest memory holds everything drawn: the GE stops here.
-    procedure SyncBackend; inline;
+    // The GE stops running for now: the backend makes what it drew visible.
+    procedure ReleaseBackend; inline;
     procedure Reset;
     // Address of a 24-bit pointer parameter with the BASE upper bits and OFFSET.
     function Address(Param: Cardinal): Cardinal; inline;
@@ -94,10 +94,10 @@ begin
   Reset;
 end;
 
-procedure TPSPGEEngine.SyncBackend;
+procedure TPSPGEEngine.ReleaseBackend;
 begin
   if Backend <> nil then
-    Backend.Sync;
+    Backend.Release;
 end;
 
 procedure TPSPGEEngine.Reset;
