@@ -58,6 +58,13 @@ type
     FDelayWord: Cardinal;
     FView: TPSPDialogView;
     FLastButtons: Cardinal;
+    // The dialog's own threads, as one guest thread that keeps the CPU until FWorkUntil.
+    FWorkIndex: Integer;
+    FWorkStub: Cardinal;
+    FWorkThread: TPSPThread;
+    FWorkUntil: Int64;
+    procedure Work(D: TPSPDialog; Ns: Int64);
+    procedure hDialogThread;
     function Dialog(Kind: TPSPDialogType): TPSPDialog; inline;
     function Busy: Boolean;
     procedure Yield(Us: Cardinal);
@@ -155,6 +162,7 @@ const
   MsgPumpedInitNs = 540000000;
   MsgFadeUpdates = 8;
   DialogShutdownNs = 25000000;
+  DialogShutdownWorkNs = 8000000;
   SavedataInitNs = 33000000;
   SavedataShutdownNs = 500000;
   // The utility's own thread runs at this priority: a caller below it never sees SHUTDOWN.
@@ -202,6 +210,50 @@ begin
   FModules.Clear;
   FDelayWord := FKernel.AllocKernel(16, 'utility delay');
   FLastButtons := 0;
+  FWorkStub := FKernel.AllocKernel(16, 'utility thread');
+  FWorkThread := nil;
+  FWorkUntil := 0;
+end;
+
+procedure TPSPUtility.Work(D: TPSPDialog; Ns: Int64);
+begin
+  // At the priority the program gave the dialog's threads.
+  var Prio := 0;
+  if D.Params <> 0 then
+    for var K := 0 to 3 do
+    begin
+      var P := Integer(FMemory.Read32(D.Params + 12 + Cardinal(K * 4)));
+      if (P > 0) and ((Prio = 0) or (P < Prio)) then
+        Prio := P;
+    end;
+  if Prio = 0 then
+    Exit;
+  FWorkUntil := FKernel.Scheduler.Now + Ns;
+  if (FWorkThread = nil) or (FKernel.ThreadById(FWorkThread.UID) <> FWorkThread) then
+  begin
+    // The thread loops on: syscall; j loop.
+    FMemory.Write32(FWorkStub, (Cardinal(FWorkIndex) shl 6) or $0C);
+    FMemory.Write32(FWorkStub + 4, (2 shl 26) or ((FWorkStub shr 2) and $03FFFFFF));
+    FMemory.Write32(FWorkStub + 8, 0);
+    FWorkThread := FKernel.CreateThread('SceUtilityDialog', FWorkStub, Prio, $800, 0, FSystem.CPU.Ctx.GPR[28]);
+    if FWorkThread <> nil then
+      FKernel.StartThread(FWorkThread, 0, 0);
+    Exit;
+  end;
+  if FWorkThread.Priority <> Prio then
+    FKernel.ChangePriority(FWorkThread, Prio);
+  if FWorkThread.IsWaiting and (FWorkThread.Wait.HLETag = 'utility thread') then
+    FKernel.EndWait(FWorkThread, 0);
+end;
+
+procedure TPSPUtility.hDialogThread;
+begin
+  var Left := FWorkUntil - FKernel.Scheduler.Now;
+  if Left > 0 then
+    // Busy: a slice of computing, then round again.
+    FSystem.CPU.AddCycles(Integer(Min(Left, Int64(100000)) * FKernel.Scheduler.MHz div 1000))
+  else
+    FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, nil, 'utility thread');
 end;
 
 function TPSPUtility.Dialog(Kind: TPSPDialogType): TPSPDialog;
@@ -336,7 +388,10 @@ begin
       Exit;
     end;
     Delay := SavedataShutdownNs;
-  end;
+  end
+  else
+    // Its threads spend part of the shutdown computing.
+    Work(D, DialogShutdownWorkNs);
   At(Delay, D,
     procedure
     begin
@@ -373,6 +428,8 @@ const
   U = 'sceUtility';
 begin
   var H := FHLE;
+  H.Register('RetroMulUtility', 1, 'UtilityDialogThread', hDialogThread);
+  FWorkIndex := H.Find('RetroMulUtility', 1);
   H.Register(U, $2AD8E239, 'sceUtilityMsgDialogInitStart', hMsgInitStart);
   H.Register(U, $9A1C91D7, 'sceUtilityMsgDialogGetStatus', hMsgGetStatus);
   H.Register(U, $95FC253B, 'sceUtilityMsgDialogUpdate', hMsgUpdate);
