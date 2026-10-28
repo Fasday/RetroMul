@@ -39,6 +39,7 @@ const
   PSPWaitCallback = 11;
   PSPWaitMutex = 12;
   PSPWaitLwMutex = 13;
+  PSPWaitTlspl = 14;
 
 type
   TPSPKernel = class;
@@ -55,6 +56,9 @@ type
     procedure RemoveWaiter(T: TPSPThread); virtual;
     // Puts a thread back in the queue after its callbacks ran.
     procedure AddWaiter(T: TPSPThread); virtual;
+    // A waiter left on its own (timeout, release, terminate): the ones behind
+    // it may be satisfiable now.
+    procedure WaiterGone; virtual;
     destructor Destroy; override;
   end;
   TPSPKernelObjectClass = class of TPSPKernelObject;
@@ -70,13 +74,18 @@ type
     Kind: Integer;
     Id: Cardinal;
     Obj: TPSPKernelObject;
+    // When the timeout fires (ns); PSPNever for none.
     Deadline: Int64;
+    // The end the caller asked for, for the time left written back.
+    TimeoutEnd: Int64;
     TimeoutPtr: Cardinal;
     AllowCB: Boolean;
     Retry: TPSPWaitRetry;
     Abort: TPSPWaitAbort;
-    Data: array[0..5] of Cardinal;
+    Data: array[0..7] of Cardinal;
     HLETag: string;
+    // The call returns an address: a wait that fails gives 0.
+    FailAsZero: Boolean;
   end;
 
   TPSPCallback = class(TPSPKernelObject)
@@ -99,6 +108,8 @@ type
     Callback: TPSPCallback;
     OnReturn: TPSPGuestReturn;
     CallbacksRan: Integer;
+    // Callbacks run on the way out of a call that did not wait: its result stays.
+    KeepResult: Boolean;
   end;
 
   TPSPThread = class(TPSPKernelObject)
@@ -114,23 +125,41 @@ type
     Callbacks: TList<TPSPCallback>;
     Frames: TList<TPSPFrame>;
     EndWaiters: TList<TPSPThread>;
+    // Stacks added by sceKernelExtendThreadStack, innermost last.
+    ExtraStacks: TList<Cardinal>;
     ModuleId: Cardinal;
     CallbacksPending: Boolean;
     SuspendedWhileWaiting: Boolean;
-    ReleaseCount, PreemptCount: Cardinal;
+    // The first wait after a start goes down a slower path.
+    Fresh: Boolean;
+    StackPartition: TPSPPartition;
+    // The thread's block in each TLS pool, by the pool's slot.
+    TlsSlots: array[0..15] of Cardinal;
+    ReleaseCount, PreemptCount, IntrPreemptCount: Cardinal;
     Seq: Int64;
     // Runs once when the thread exits or is terminated.
     OnExit: TProc<TPSPThread>;
+    // Deleted as soon as it exits by itself (a module's start thread).
+    DeleteOnExit: Boolean;
+    // Kernel work a call left to do on the thread's time, where better
+    // threads may preempt it, and where the thread goes on afterwards.
+    BusyNs, BusyAt: Int64;
+    BusyPC, BusyNPC: Cardinal;
     constructor Create;
     destructor Destroy; override;
     class function IdType: Integer; override;
     procedure RemoveWaiter(T: TPSPThread); override;
     procedure AddWaiter(T: TPSPThread); override;
     function IsWaiting: Boolean; inline;
+    function IsDormant: Boolean; inline;
+    function IsKernel: Boolean; inline;
     // Where a wait result goes: the thread's context, or the context a callback
     // frame will restore.
     procedure SetResult(Value: Cardinal);
     function HasPendingCallbacks: Boolean;
+    function InCallback: Boolean;
+    // A blocking CB wait inside a callback runs callbacks too, one level deep.
+    function CallbackDepth: Integer;
   end;
 
   // Threads waiting on an object, FIFO or by priority.
@@ -146,34 +175,35 @@ type
     function First: TPSPThread;
     function Count: Integer;
     function Item(I: Integer): TPSPThread;
+    function Contains(T: TPSPThread): Boolean;
     procedure Clear;
     property ByPriority: Boolean read FByPriority write FByPriority;
   end;
 
-  TPSPSema = class(TPSPKernelObject)
+  // An object with one wait queue, ordered by priority when Attr has $100.
+  TPSPWaitObject = class(TPSPKernelObject)
   public
     Attr: Cardinal;
-    Count, MaxCount, InitCount: Integer;
     Waiters: TPSPWaitQueue;
     constructor Create;
     destructor Destroy; override;
-    class function IdType: Integer; override;
     procedure RemoveWaiter(T: TPSPThread); override;
     procedure AddWaiter(T: TPSPThread); override;
-    function TryTake(T: TPSPThread): Boolean;
-    procedure WakeWaiters;
   end;
 
-  TPSPEventFlag = class(TPSPKernelObject)
+  TPSPSema = class(TPSPWaitObject)
   public
-    Attr: Cardinal;
-    Pattern, InitPattern: Cardinal;
-    Waiters: TPSPWaitQueue;
-    constructor Create;
-    destructor Destroy; override;
+    Count, MaxCount, InitCount: Integer;
     class function IdType: Integer; override;
-    procedure RemoveWaiter(T: TPSPThread); override;
-    procedure AddWaiter(T: TPSPThread); override;
+    function TryTake(T: TPSPThread): Boolean;
+    procedure WakeWaiters;
+    procedure WaiterGone; override;
+  end;
+
+  TPSPEventFlag = class(TPSPWaitObject)
+  public
+    Pattern, InitPattern: Cardinal;
+    class function IdType: Integer; override;
     function Matches(Bits, Mode: Cardinal): Boolean;
     function TryTake(T: TPSPThread): Boolean;
     procedure WakeWaiters;
@@ -187,6 +217,10 @@ type
   TPSPPendingInterrupt = record
     Func, A0, A1, A2, A3, GP: Cardinal;
     OnReturn: TPSPGuestReturn;
+    // Time the kernel spends before the handler starts.
+    EntryNs: Int64;
+    // The object it is for; dropped if that is deleted while pending.
+    OwnerUID: Cardinal;
   end;
 
   TPSPTimerKind = (tkWait, tkCustom);
@@ -223,20 +257,34 @@ type
     FIntFrames: TList<TPSPFrame>;
     FPendingInts: TQueue<TPSPPendingInterrupt>;
     FSubIntr: array[0..66, 0..31] of TPSPInterruptHandler;
+    // The virtual timer whose handler is running.
+    FFiringVTimer: Cardinal;
+    // Where threads go to spend long kernel calls.
+    FBusyStub: Cardinal;
+    // Main interrupt handlers; the firmware's drivers hold some from the start.
+    FIntrHandlers: array[0..67] of TPSPInterruptHandler;
     FTrapBase: Cardinal;
     FIntStack: Cardinal;
     FDispatchSuspended: Boolean;
     FIntrSuspendLevel: Integer;
-    FUserPartition, FKernelPartition, FVolatilePartition: TPSPPartition;
+    FUserPartition, FKernelPartition, FVolatilePartition, FStackPartition: TPSPPartition;
     FBlocks: TDictionary<Cardinal, TPSPKernelObject>;
     FOnExit: TPSPExitEvent;
     FOnSyncTime: TPSPTimeSync;
     FExited: Boolean;
     FExitCallback: Cardinal;
     FCompiledSdkVersion, FCompilerVersion: Cardinal;
+    FSdkVersionSet: Boolean;
     FDebugOut: TStringBuilder;
     FIdle: Boolean;
     FTrace: Boolean;
+    FVolatileLocked: Boolean;
+    FVolatileWaiters: TList<TPSPThread>;
+    FEventHandlers: TList<TPSPKernelObject>;
+    FIdleThreadIds: array[0..1] of Cardinal;
+    FTlsplCount: Integer;
+    // How far into the next wait call its timeout is looked at (0: the usual).
+    FWaitCheckNs: Int64;
     procedure T_(const Fmt: string; const Args: array of const);
     procedure ScheduleTimerEvent;
     procedure PushReady(T: TPSPThread; Front: Boolean);
@@ -244,18 +292,33 @@ type
     function BestReady: TPSPThread;
     procedure SwitchTo(T: TPSPThread);
     procedure DispatchThread(T: TPSPThread);
-    procedure StartCallbacks(T: TPSPThread);
+    procedure StartCallbacks(T: TPSPThread; KeepResult: Boolean = False);
     function RunNextCallback(T: TPSPThread; var Frame: TPSPFrame): Boolean;
     procedure FinishCallbackFrame(T: TPSPThread);
     procedure ReturnTrap;
     procedure ThreadExitTrap;
     procedure StartNextInterrupt;
+    procedure DropStaleInterrupts;
     procedure EnterGuest(Func, SP, GP: Cardinal; const Args: array of Cardinal);
     procedure WakeEndWaiters(T: TPSPThread);
     procedure KillThreadFrames(T: TPSPThread);
+    procedure DropWaitTimer(T: TPSPThread);
     procedure RegisterAll;
-    function WaitTimeoutValue(TimeoutPtr: Cardinal): Int64;
+    procedure RegisterKernelAliases;
+    procedure hKernelBusy;
+    // Spends the time as kernel work the scheduler may interrupt.
+    procedure SpendPreemptible(Ns: Int64);
+    procedure hCheckExitCallback;
+    procedure hIoForKernel;
+    function WaitDeadline(TimeoutPtr: Cardinal; out TimeoutEnd: Int64): Int64;
     procedure WriteRemaining(T: TPSPThread);
+    procedure FreeThreadStacks(T: TPSPThread);
+    procedure NotifyThreadEvent(Kind: Cardinal; T: TPSPThread);
+    function ReadName(Ptr: Cardinal; out Name: string): Boolean;
+    function ValidPriorityFor(P: Integer): Boolean;
+    procedure YieldCurrent;
+    function ValidUserAddress(Address: Cardinal): Boolean;
+    function WriteInfo(Ptr: Cardinal; const Buf; StructSize: Cardinal): Boolean;
     // HLE handlers
     procedure hCreateThread;
     procedure hStartThread;
@@ -292,6 +355,9 @@ type
     procedure hSuspendDispatchThread;
     procedure hResumeDispatchThread;
     procedure hReferSystemStatus;
+    procedure hExtendThreadStack;
+    procedure hReferThreadProfiler;
+    procedure hDonateWakeupThread;
     procedure hCreateCallback;
     procedure hDeleteCallback;
     procedure hNotifyCallback;
@@ -316,6 +382,111 @@ type
     procedure hPollEventFlag;
     procedure hCancelEventFlag;
     procedure hReferEventFlagStatus;
+    procedure WaitSemaCommon(AllowCB: Boolean);
+    procedure WaitEventFlagCommon(AllowCB: Boolean);
+    // Mutexes
+    procedure hCreateMutex;
+    procedure hDeleteMutex;
+    procedure hLockMutex;
+    procedure hLockMutexCB;
+    procedure hTryLockMutex;
+    procedure hUnlockMutex;
+    procedure hCancelMutex;
+    procedure hReferMutexStatus;
+    procedure LockMutexCommon(AllowCB: Boolean);
+    procedure hCreateLwMutex;
+    procedure hDeleteLwMutex;
+    procedure hLockLwMutex;
+    procedure hLockLwMutexCB;
+    procedure hTryLockLwMutex;
+    procedure hTryLockLwMutex600;
+    procedure hUnlockLwMutex;
+    procedure hReferLwMutexStatus;
+    procedure hReferLwMutexStatusByID;
+    procedure LockLwMutexCommon(AllowCB, IsTry: Boolean; TryError: Cardinal);
+    procedure ReferLwMutex(Obj: TPSPKernelObject; InfoPtr: Cardinal);
+    procedure ReleaseMutexesOf(T: TPSPThread);
+    // Message boxes and pipes
+    procedure hCreateMbx;
+    procedure hDeleteMbx;
+    procedure hSendMbx;
+    procedure hReceiveMbx;
+    procedure hReceiveMbxCB;
+    procedure hPollMbx;
+    procedure hCancelReceiveMbx;
+    procedure hReferMbxStatus;
+    procedure ReceiveMbxCommon(AllowCB: Boolean);
+    procedure hCreateMsgPipe;
+    procedure hDeleteMsgPipe;
+    procedure hSendMsgPipe;
+    procedure hSendMsgPipeCB;
+    procedure hTrySendMsgPipe;
+    procedure hReceiveMsgPipe;
+    procedure hReceiveMsgPipeCB;
+    procedure hTryReceiveMsgPipe;
+    procedure hCancelMsgPipe;
+    procedure hReferMsgPipeStatus;
+    function UserPartitionCheck(PartId: Integer): Cardinal;
+    procedure SendMsgPipeCommon(Mode: Integer);
+    procedure ReceiveMsgPipeCommon(Mode: Integer);
+    // Pools
+    procedure hCreateVpl;
+    procedure hDeleteVpl;
+    procedure hAllocateVpl;
+    procedure hAllocateVplCB;
+    procedure hTryAllocateVpl;
+    procedure hFreeVpl;
+    procedure hCancelVpl;
+    procedure hReferVplStatus;
+    function PoolPartition(PartId: Integer): TPSPPartition;
+    function TlsplOf(Id: Cardinal): TPSPKernelObject;
+    function TlsTake(Obj: TPSPKernelObject; out Addr: Cardinal): Boolean;
+    procedure ReleaseTlsOf(T: TPSPThread);
+    procedure AllocateVplCommon(Mode: Integer);
+    procedure hCreateFpl;
+    procedure hDeleteFpl;
+    procedure hAllocateFpl;
+    procedure hAllocateFplCB;
+    procedure hTryAllocateFpl;
+    procedure hFreeFpl;
+    procedure hCancelFpl;
+    procedure hReferFplStatus;
+    procedure AllocateFplCommon(Mode: Integer);
+    procedure hCreateTlspl;
+    procedure hDeleteTlspl;
+    procedure hGetTlsAddr;
+    procedure hAllocateTlspl;
+    procedure hFreeTlspl;
+    procedure hReferTlsplStatus;
+    // Alarms, virtual timers, thread event handlers
+    procedure hSetAlarm;
+    procedure hSetSysClockAlarm;
+    procedure hCancelAlarm;
+    procedure hReferAlarmStatus;
+    procedure SetAlarmCommon(Us: UInt64);
+    procedure ArmAlarm(Obj: TPSPKernelObject; FireAt: Int64);
+    procedure ArmVTimer(Obj: TPSPKernelObject; FromCall: Boolean = True);
+    function VTimerOf(Id: Cardinal): TPSPKernelObject;
+    procedure SetVTimerTimeTo(Obj: TPSPKernelObject; Value: UInt64);
+    procedure SetVTimerHandlerCommon(Schedule: UInt64; Handler, Common: Cardinal);
+    procedure hCreateVTimer;
+    procedure hDeleteVTimer;
+    procedure hGetVTimerBase;
+    procedure hGetVTimerBaseWide;
+    procedure hGetVTimerTime;
+    procedure hGetVTimerTimeWide;
+    procedure hSetVTimerTime;
+    procedure hSetVTimerTimeWide;
+    procedure hStartVTimer;
+    procedure hStopVTimer;
+    procedure hSetVTimerHandler;
+    procedure hSetVTimerHandlerWide;
+    procedure hCancelVTimerHandler;
+    procedure hReferVTimerStatus;
+    procedure hRegisterThreadEventHandler;
+    procedure hReleaseThreadEventHandler;
+    procedure hReferThreadEventHandlerStatus;
+    // Time
     procedure hGetSystemTime;
     procedure hGetSystemTimeWide;
     procedure hGetSystemTimeLow;
@@ -323,6 +494,7 @@ type
     procedure hUSec2SysClockWide;
     procedure hSysClock2USec;
     procedure hSysClock2USecWide;
+    // Interrupts
     procedure hCpuSuspendIntr;
     procedure hCpuResumeIntr;
     procedure hIsCpuIntrEnable;
@@ -335,32 +507,56 @@ type
     procedure hResumeSubIntr;
     procedure hIsSubInterruptOccurred;
     procedure hRegisterUserSpaceIntrStack;
+    procedure hQueryIntrHandlerInfo;
+    function IntrHandlerCheck(I: Integer): Cardinal;
+    procedure hEnableIntr;
+    procedure hDisableIntr;
+    procedure hRegisterIntrHandler;
+    procedure hReleaseIntrHandler;
+    // System memory
     procedure hAllocPartitionMemory;
     procedure hFreePartitionMemory;
     procedure hGetBlockHeadAddr;
     procedure hMaxFreeMemSize;
     procedure hTotalFreeMemSize;
+    procedure hTotalMemSize;
+    procedure hPartitionTotalFreeMemSize;
+    procedure hQueryMemoryInfo;
+    procedure hAllocMemoryBlock;
+    procedure hFreeMemoryBlock;
+    procedure hGetMemoryBlockPtr;
     procedure hDevkitVersion;
     procedure hSetCompiledSdkVersion;
     procedure hGetCompiledSdkVersion;
     procedure hSetCompilerVersion;
     procedure hPrintf;
+    procedure hCreateHeap;
+    procedure hDeleteHeap;
+    procedure hAllocHeapMemory;
+    procedure hAllocHeapMemoryWithOption;
+    procedure hFreeHeapMemory;
     procedure hExitGame;
     procedure hRegisterExitCallback;
     procedure hVolatileMemLock;
     procedure hVolatileMemTryLock;
     procedure hVolatileMemUnlock;
     procedure hReturnZero;
-    procedure WaitCurrentKind(Kind: Integer; Obj: TPSPKernelObject; Id, TimeoutPtr: Cardinal; AllowCB: Boolean; Retry: TPSPWaitRetry);
+    procedure hMemcpy;
+    procedure hMemset;
+    function VolatileRetry(T: TPSPThread): Boolean;
     function SleepRetry(T: TPSPThread): Boolean;
     function DelayRetry(T: TPSPThread): Boolean;
     function ThreadEndRetry(T: TPSPThread): Boolean;
-    function NoRetry(T: TPSPThread): Boolean;
     procedure DelayCurrent(Microseconds: Int64; AllowCB: Boolean);
     function SemaRetry(T: TPSPThread): Boolean;
     function EventFlagRetry(T: TPSPThread): Boolean;
-    function CheckCallbacksNow: Boolean;
+    procedure EventFlagAbort(T: TPSPThread);
+    function CheckCallbacksNow(KeepResult: Boolean = True): Boolean;
+    function AllocPartitionBlock(PartId: Integer; const Name: string; Kind: Integer; Size, Addr: Cardinal; out Err: Cardinal): Cardinal;
   public
+    // The kernel's own interrupt code holds the CPU until this time: no guest
+    // thread runs (guest interrupt handlers still do).
+    BusyUntil: Int64;
     constructor Create(CPU: TPSPCPU; Memory: TPSPMemory; HLE: TPSPHLE; Scheduler: TPSPScheduler);
     destructor Destroy; override;
     procedure Reset;
@@ -379,14 +575,24 @@ type
     // Waits. BeginWait blocks the current thread; the result is set at EndWait.
     procedure BeginWait(Kind: Integer; Obj: TPSPKernelObject; Id, TimeoutPtr: Cardinal; AllowCB: Boolean;
       Retry: TPSPWaitRetry; Abort: TPSPWaitAbort = nil; const Tag: string = '');
+    // The same with wait data set before callbacks can run. Returns False when
+    // the wait timed out at once (the result is set then).
+    function BeginWaitData(Kind: Integer; Obj: TPSPKernelObject; Id, TimeoutPtr: Cardinal; AllowCB: Boolean;
+      Retry: TPSPWaitRetry; const Data: array of Cardinal; Abort: TPSPWaitAbort = nil; const Tag: string = ''): Boolean;
     procedure EndWait(T: TPSPThread; Result: Cardinal);
     procedure WakeThread(T: TPSPThread);
     // A wait with an absolute deadline in ns (PSPNever for none).
     procedure SetWaitDeadline(T: TPSPThread; Deadline: Int64);
+    // Sets a wait's data on the thread, or on the wait its callback frame keeps.
+    procedure SetWaitData(T: TPSPThread; Index: Integer; Value: Cardinal);
     procedure Reschedule;
     procedure RequestReschedule; inline;
     procedure AfterSyscall;
     function CanWait: Boolean;
+    // Sets the error and returns True when the current context may not block.
+    function RefuseWait: Boolean;
+    // Guest time the kernel spends in a call (ns), on the current CPU clock.
+    procedure Spend(Ns: Int64);
     // Timers in guest ns. Returns a handle (sequence number) for CancelTimer.
     function AddTimer(At: Int64; Owner: TObject; const Event: TPSPTimerEvent): Int64;
     procedure CancelTimer(Handle: Int64);
@@ -394,8 +600,12 @@ type
     procedure OnTimerEvent;
     // Guest calls
     procedure CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal = 0);
-    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil);
+    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil;
+      EntryNs: Int64 = 0; OwnerUID: Cardinal = 0);
     procedure TriggerInterrupt(IntNo: Integer; SubNo: Integer = -1; Arg2: Cardinal = 0);
+    // Queues the enabled sub-interrupt handlers of IntNo; Done runs after the
+    // last one returns. Returns how many were queued (Done is not called for 0).
+    function QueueSubInterrupts(IntNo: Integer; Arg2: Cardinal; const Done: TProc): Integer;
     procedure ProcessInterrupts;
     procedure Trap(Code: Cardinal);
     procedure NotifyCallback(CB: TPSPCallback; Arg: Cardinal);
@@ -437,6 +647,10 @@ implementation
 {$I PSP.Kernel.Core.inc}
 {$I PSP.Kernel.Threads.inc}
 {$I PSP.Kernel.Sync.inc}
+{$I PSP.Kernel.Mutex.inc}
+{$I PSP.Kernel.Messages.inc}
+{$I PSP.Kernel.Pools.inc}
+{$I PSP.Kernel.Timers.inc}
 {$I PSP.Kernel.Misc.inc}
 
 end.

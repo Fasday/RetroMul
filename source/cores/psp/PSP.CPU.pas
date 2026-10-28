@@ -6,7 +6,7 @@ unit PSP.CPU;
 // calls the same routines, so it cannot disagree with the interpreter.
 // Delay slots: PC is the next instruction, NPC the one after; a taken branch
 // replaces NPC.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
 
@@ -42,8 +42,9 @@ type
     LLBit: Cardinal;
     V: array[0..127] of Cardinal;
     VC: array[0..15] of Cardinal;
-    // Prefix state the VFPU keeps decoded between a prefix and its consumer.
-    VPrefix: array[0..3] of Cardinal;
+    // The last value the VFPU's S prefix stage produced in each lane, which an
+    // out-of-range swizzle replays for the integer unpack instructions.
+    VLatch: array[0..3] of Cardinal;
   end;
   PPSPContext = ^TPSPContext;
 
@@ -55,17 +56,34 @@ type
   TPSPDecodedPage = array[0..(PSPPageSize div 4) - 1] of TPSPDecoded;
   PPSPDecodedPage = ^TPSPDecodedPage;
 
+  // A recompiler (PSP.CPU.JIT) that Run hands its budget to, told when
+  // decoded code is rewritten or dropped.
+  TPSPRunner = class abstract
+  public
+    procedure Run(C: TPSPCPU); virtual; abstract;
+    procedure CodeWritten(Address, Size: Cardinal); virtual; abstract;
+    procedure Flushed; virtual; abstract;
+  end;
+
   TPSPCPU = class
   private
     FDecoded: array of PPSPDecodedPage;
     FPages: TArray<PPSPDecodedPage>;
     FOnSyscall: TPSPSyscallEvent;
     FOnBreak: TPSPSyscallEvent;
-    FRunLength, FRemaining, FAccounted: Integer;
+    // The last FPU compare and the condition before it, for the branch behind it.
+    FCmpPC, FCmpOld: Cardinal;
     function DecodePage(PC: Cardinal): PPSPDecodedPage;
     procedure CodeWrite(Address, Size: Cardinal);
   public
+    // The run's budget (Run, TakeCycles, AddCycles), for a runner.
+    FRunLength, FRemaining, FAccounted: Integer;
+    Runner: TPSPRunner;
     Ctx: TPSPContext;
+    // System control coprocessor registers, as kernel-mode code reads and writes them.
+    COP0: array[0..31] of Cardinal;
+    // VFPU condition hazards: where the last mtvc to CC and the last vcmp were, and the CC before each.
+    VccWritePC, VccWriteOld, VcmpPC, VcmpOld: Cardinal;
     Memory: TPSPMemory;
     CurPC: Cardinal;
     Stopping: Boolean;
@@ -75,6 +93,8 @@ type
     destructor Destroy; override;
     procedure Reset;
     procedure FlushDecoded;
+    // The entry the interpreter runs at PC (its page decoded first).
+    function Decoded(PC: Cardinal): PPSPDecoded; inline;
     // Executes until MaxCycles have been used or Stop is called; returns the cycles used.
     function Run(MaxCycles: Integer): Integer;
     // Cycles used in the current run since the last call (HLE time sync).
@@ -142,16 +162,18 @@ begin
   Result := Op and $FFFF;
 end;
 
+// Targets count from the branch's own address: a branch in the delay slot of
+// a taken one (compilers emit runs of bvt to one label) still reaches its label.
 procedure Branch(C: TPSPCPU; Op: Cardinal; Taken: Boolean); inline;
 begin
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2);
+    C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2);
 end;
 
 procedure BranchLikely(C: TPSPCPU; Op: Cardinal; Taken: Boolean); inline;
 begin
   if Taken then
-    C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2)
+    C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2)
   else
   begin
     // Not taken: the delay slot is nullified.
@@ -225,14 +247,15 @@ begin
   C.Ctx.GPR[RD(Op)] := Sar32(C.Ctx.GPR[RT(Op)], C.Ctx.GPR[RS(Op)] and 31);
 end;
 
+// The low two bits of a register jump target are ignored.
 procedure OpJR(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := C.Ctx.GPR[RS(Op)];
+  C.Ctx.NPC := C.Ctx.GPR[RS(Op)] and $FFFFFFFC;
 end;
 
 procedure OpJALR(C: TPSPCPU; Op: Cardinal);
 begin
-  var Target := C.Ctx.GPR[RS(Op)];
+  var Target := C.Ctx.GPR[RS(Op)] and $FFFFFFFC;
   var D := RD(Op);
   if D <> 0 then
     C.Ctx.GPR[D] := C.Ctx.NPC;
@@ -253,6 +276,8 @@ end;
 
 procedure OpSYSCALL(C: TPSPCPU; Op: Cardinal);
 begin
+  // The exception return breaks a pending ll/sc.
+  C.Ctx.LLBit := 0;
   if Assigned(C.FOnSyscall) then
     C.FOnSyscall(C, (Op shr 6) and $FFFFF)
   else
@@ -509,13 +534,13 @@ end;
 
 procedure OpJ(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := (C.Ctx.PC and $F0000000) or ((Op and $03FFFFFF) shl 2);
+  C.Ctx.NPC := ((C.CurPC + 4) and $F0000000) or ((Op and $03FFFFFF) shl 2);
 end;
 
 procedure OpJAL(C: TPSPCPU; Op: Cardinal);
 begin
   C.Ctx.GPR[31] := C.Ctx.NPC;
-  C.Ctx.NPC := (C.Ctx.PC and $F0000000) or ((Op and $03FFFFFF) shl 2);
+  C.Ctx.NPC := ((C.CurPC + 4) and $F0000000) or ((Op and $03FFFFFF) shl 2);
 end;
 
 procedure OpBEQ(C: TPSPCPU; Op: Cardinal);
@@ -525,7 +550,7 @@ end;
 
 procedure OpB(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.NPC := C.Ctx.PC + (SImm(Op) shl 2);
+  C.Ctx.NPC := C.CurPC + 4 + (SImm(Op) shl 2);
 end;
 
 procedure OpBNE(C: TPSPCPU; Op: Cardinal);
@@ -680,6 +705,7 @@ begin
   C.Ctx.LLBit := 1;
 end;
 
+// A successful sc leaves the link set: only an exception clears it.
 procedure OpSC(C: TPSPCPU; Op: Cardinal);
 begin
   var T := RT(Op);
@@ -687,7 +713,6 @@ begin
     C.Memory.Write32(C.Ctx.GPR[RS(Op)] + SImm(Op), C.Ctx.GPR[T]);
   if T <> 0 then
     C.Ctx.GPR[T] := C.Ctx.LLBit;
-  C.Ctx.LLBit := 0;
 end;
 
 procedure OpLWC1(C: TPSPCPU; Op: Cardinal);
@@ -771,7 +796,8 @@ end;
 
 procedure OpMTIC(C: TPSPCPU; Op: Cardinal);
 begin
-  C.InterruptsEnabled := C.Ctx.GPR[RT(Op)] <> 0;
+  // Only bit 0 is the enable flag.
+  C.InterruptsEnabled := (C.Ctx.GPR[RT(Op)] and 1) <> 0;
 end;
 
 procedure OpHALT(C: TPSPCPU; Op: Cardinal);
@@ -781,214 +807,42 @@ end;
 
 { COP0 }
 
+const
+  COP0_STATUS = 12;
+  COP0_EPC = 14;
+  COP0_ERROREPC = 30;
+
 procedure OpMFC0(C: TPSPCPU; Op: Cardinal);
 begin
-  C.Ctx.GPR[RT(Op)] := 0;
+  C.Ctx.GPR[RT(Op)] := C.COP0[RD(Op)];
 end;
 
-{ COP1 }
-
-function FS(Op: Cardinal): Cardinal; inline;
+procedure OpMTC0(C: TPSPCPU; Op: Cardinal);
 begin
-  Result := (Op shr 11) and 31;
+  C.COP0[RD(Op)] := C.Ctx.GPR[RT(Op)];
 end;
 
-function FT(Op: Cardinal): Cardinal; inline;
+// eret has no delay slot: ERL returns to ErrorEPC, otherwise EXL to EPC.
+procedure OpERET(C: TPSPCPU; Op: Cardinal);
 begin
-  Result := (Op shr 16) and 31;
-end;
-
-function FD(Op: Cardinal): Cardinal; inline;
-begin
-  Result := (Op shr 6) and 31;
-end;
-
-function F(C: TPSPCPU; Index: Cardinal): Single; inline;
-begin
-  Result := PSingle(@C.Ctx.FPR[Index])^;
-end;
-
-procedure SetF(C: TPSPCPU; Index: Cardinal; Value: Single); inline;
-begin
-  PSingle(@C.Ctx.FPR[Index])^ := Value;
-end;
-
-procedure OpMFC1(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.GPR[RT(Op)] := C.Ctx.FPR[FS(Op)];
-end;
-
-procedure OpCFC1(C: TPSPCPU; Op: Cardinal);
-begin
-  case FS(Op) of
-    0: C.Ctx.GPR[RT(Op)] := $00003351;
-    31: C.Ctx.GPR[RT(Op)] := C.Ctx.FCR31;
-  else
-    C.Ctx.GPR[RT(Op)] := 0;
-  end;
-end;
-
-procedure OpMTC1(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FS(Op)] := C.Ctx.GPR[RT(Op)];
-end;
-
-procedure OpCTC1(C: TPSPCPU; Op: Cardinal);
-begin
-  if FS(Op) = 31 then
-    C.Ctx.FCR31 := C.Ctx.GPR[RT(Op)] and $0183FFFF;
-end;
-
-procedure OpBC1F(C: TPSPCPU; Op: Cardinal);
-begin
-  Branch(C, Op, (C.Ctx.FCR31 and FCR31_C) = 0);
-end;
-
-procedure OpBC1T(C: TPSPCPU; Op: Cardinal);
-begin
-  Branch(C, Op, (C.Ctx.FCR31 and FCR31_C) <> 0);
-end;
-
-procedure OpBC1FL(C: TPSPCPU; Op: Cardinal);
-begin
-  BranchLikely(C, Op, (C.Ctx.FCR31 and FCR31_C) = 0);
-end;
-
-procedure OpBC1TL(C: TPSPCPU; Op: Cardinal);
-begin
-  BranchLikely(C, Op, (C.Ctx.FCR31 and FCR31_C) <> 0);
-end;
-
-procedure OpADDS(C: TPSPCPU; Op: Cardinal);
-begin
-  SetF(C, FD(Op), F(C, FS(Op)) + F(C, FT(Op)));
-end;
-
-procedure OpSUBS(C: TPSPCPU; Op: Cardinal);
-begin
-  SetF(C, FD(Op), F(C, FS(Op)) - F(C, FT(Op)));
-end;
-
-procedure OpMULS(C: TPSPCPU; Op: Cardinal);
-begin
-  SetF(C, FD(Op), F(C, FS(Op)) * F(C, FT(Op)));
-end;
-
-procedure OpDIVS(C: TPSPCPU; Op: Cardinal);
-begin
-  SetF(C, FD(Op), F(C, FS(Op)) / F(C, FT(Op)));
-end;
-
-procedure OpSQRTS(C: TPSPCPU; Op: Cardinal);
-begin
-  var X := F(C, FS(Op));
-  var R: Single;
-  if X < 0 then
+  var S := C.COP0[COP0_STATUS];
+  var Target: Cardinal;
+  if (S and 4) <> 0 then
   begin
-    var Bits: Cardinal := $7FC00000;
-    R := PSingle(@Bits)^;
+    Target := C.COP0[COP0_ERROREPC];
+    C.COP0[COP0_STATUS] := S and not Cardinal(4);
   end
   else
-    R := Sqrt(X);
-  SetF(C, FD(Op), R);
-end;
-
-procedure OpABSS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := C.Ctx.FPR[FS(Op)] and $7FFFFFFF;
-end;
-
-procedure OpMOVS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := C.Ctx.FPR[FS(Op)];
-end;
-
-procedure OpNEGS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := C.Ctx.FPR[FS(Op)] xor $80000000;
-end;
-
-// Float to word with the given rounding: 0 nearest even, 1 toward zero,
-// 2 toward +inf, 3 toward -inf. Out of range and NaN give $7FFFFFFF (or
-// $80000000 for large negative values).
-function FloatToWord(X: Single; Mode: Cardinal): Cardinal;
-begin
-  var Bits := PCardinal(@X)^;
-  if (Bits and $7F800000) = $7F800000 then
   begin
-    if (Bits and $007FFFFF) <> 0 then
-      Exit($7FFFFFFF);
-    if (Bits and $80000000) <> 0 then
-      Exit($80000000)
-    else
-      Exit($7FFFFFFF);
+    Target := C.COP0[COP0_EPC];
+    C.COP0[COP0_STATUS] := S and not Cardinal(2);
   end;
-  var D: Double := X;
-  case Mode of
-    0:
-      begin
-        var T := Floor(D);
-        var Fraction := D - T;
-        if (Fraction > 0.5) or ((Fraction = 0.5) and (System.Frac(T / 2) <> 0)) then
-          T := T + 1;
-        D := T;
-      end;
-    1: D := Int(D);
-    2: D := Ceil(D);
-    3: D := Floor(D);
-  end;
-  if D >= 2147483648.0 then
-    Exit($7FFFFFFF);
-  if D < -2147483648.0 then
-    Exit($80000000);
-  Result := Cardinal(Integer(Trunc(D)));
+  C.Ctx.LLBit := 0;
+  C.Ctx.PC := Target;
+  C.Ctx.NPC := Target + 4;
 end;
 
-procedure OpROUNDWS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := FloatToWord(F(C, FS(Op)), 0);
-end;
-
-procedure OpTRUNCWS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := FloatToWord(F(C, FS(Op)), 1);
-end;
-
-procedure OpCEILWS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := FloatToWord(F(C, FS(Op)), 2);
-end;
-
-procedure OpFLOORWS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := FloatToWord(F(C, FS(Op)), 3);
-end;
-
-procedure OpCVTWS(C: TPSPCPU; Op: Cardinal);
-begin
-  C.Ctx.FPR[FD(Op)] := FloatToWord(F(C, FS(Op)), C.Ctx.FCR31 and 3);
-end;
-
-procedure OpCVTSW(C: TPSPCPU; Op: Cardinal);
-begin
-  SetF(C, FD(Op), Integer(C.Ctx.FPR[FS(Op)]));
-end;
-
-procedure OpCCOND(C: TPSPCPU; Op: Cardinal);
-begin
-  var A := F(C, FS(Op));
-  var B := F(C, FT(Op));
-  var Cond := Op and 15;
-  var R: Boolean;
-  if IsNan(A) or IsNan(B) then
-    R := (Cond and 1) <> 0
-  else
-    R := (((Cond and 2) <> 0) and (A = B)) or (((Cond and 4) <> 0) and (A < B));
-  if R then
-    C.Ctx.FCR31 := C.Ctx.FCR31 or FCR31_C
-  else
-    C.Ctx.FCR31 := C.Ctx.FCR31 and not FCR31_C;
-end;
+{$I PSP.CPU.FPU.inc}
 
 procedure OpCACHE(C: TPSPCPU; Op: Cardinal);
 begin
@@ -1174,6 +1028,8 @@ begin
     $10:
       case RS(Op) of
         $00: if T = 0 then Result := OpNop else Result := OpMFC0;
+        $04: Result := OpMTC0;
+        $10: if (Op and $3F) = $18 then Result := OpERET else Result := OpNop;
       else
         Result := OpNop;
       end;
@@ -1252,12 +1108,26 @@ begin
     FillChar(FDecoded[0], Length(FDecoded) * SizeOf(Pointer), 0);
   if Memory <> nil then
     Memory.ClearCodeMarks;
+  if Runner <> nil then
+    Runner.Flushed;
+end;
+
+function TPSPCPU.Decoded(PC: Cardinal): PPSPDecoded;
+begin
+  var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
+  if Page = nil then
+    Page := DecodePage(PC);
+  Result := @Page[(PC and PSPPageMask) shr 2];
 end;
 
 procedure TPSPCPU.Reset;
 begin
   FlushDecoded;
   Ctx := Default(TPSPContext);
+  FillChar(COP0, SizeOf(COP0), 0);
+  FCmpPC := 0;
+  VccWritePC := 0;
+  VcmpPC := 0;
   Ctx.VC[VFPU_PFXS] := $E4;
   Ctx.VC[VFPU_PFXT] := $E4;
   Ctx.VC[VFPU_CC] := $3F;
@@ -1307,6 +1177,8 @@ begin
       Break;
     Inc(A, 4);
   end;
+  if Runner <> nil then
+    Runner.CodeWritten(Address, Size);
 end;
 
 function TPSPCPU.Run(MaxCycles: Integer): Integer;
@@ -1316,20 +1188,33 @@ begin
   FRunLength := MaxCycles;
   FRemaining := MaxCycles;
   FAccounted := 0;
-  while FRemaining > 0 do
-  begin
-    var PC := Ctx.PC;
-    var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
-    if Page = nil then
-      Page := DecodePage(PC);
-    var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
-    CurPC := PC;
-    Ctx.PC := Ctx.NPC;
-    Ctx.NPC := Ctx.NPC + 4;
-    Dec(FRemaining);
-    Entry.Handler(Self, Entry.Op);
-    if Stopping then
-      Break;
+  // Guest float code needs IEEE defaults: no traps, round to nearest.
+  var SavedMask := GetExceptionMask;
+  var SavedRound := GetRoundMode;
+  SetExceptionMask(exAllArithmeticExceptions);
+  SetRoundMode(rmNearest);
+  try
+    if Runner <> nil then
+      Runner.Run(Self)
+    else
+    while FRemaining > 0 do
+    begin
+      var PC := Ctx.PC;
+      var Page := FDecoded[(PC and $1FFFFFFF) shr PSPPageShift];
+      if Page = nil then
+        Page := DecodePage(PC);
+      var Entry: PPSPDecoded := @Page[(PC and PSPPageMask) shr 2];
+      CurPC := PC;
+      Ctx.PC := Ctx.NPC;
+      Ctx.NPC := Ctx.NPC + 4;
+      Dec(FRemaining);
+      Entry.Handler(Self, Entry.Op);
+      if Stopping then
+        Break;
+    end;
+  finally
+    SetExceptionMask(SavedMask);
+    SetRoundMode(SavedRound);
   end;
   Result := TakeCycles;
   FRunLength := 0;
@@ -1340,7 +1225,7 @@ end;
 
 function TPSPCPU.TakeCycles: Integer;
 begin
-  var Done := (FRunLength - FRemaining) + ExtraCycles;
+  var Done := FRunLength - FRemaining;
   Result := Done - FAccounted;
   FAccounted := Done;
 end;
@@ -1357,7 +1242,8 @@ end;
 
 procedure TPSPCPU.AddCycles(Cycles: Integer);
 begin
-  Inc(ExtraCycles, Cycles);
+  // Extra cost of the current instruction (HLE calls): it uses the run's budget.
+  Dec(FRemaining, Cycles);
 end;
 
 procedure TPSPCPU.SetPC(Address: Cardinal);

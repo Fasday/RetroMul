@@ -180,7 +180,7 @@ def elf_imports(data):
     mi_off = None
     if etype == 0xFFA0 and phs:
         p0 = phs[0]
-        mi_off = p0[1] + (p0[3] & 0x7FFFFFFF)
+        mi_off = p0[3] & 0x7FFFFFFF
     else:
         # look for section .rodata.sceModuleInfo
         if shoff and shnum and shstrndx < shnum:
@@ -192,7 +192,10 @@ def elf_imports(data):
                     mi_off = s[4]
         if mi_off is None and phs:
             p0 = phs[0]
-            mi_off = v2o(p0[3]) if p0[3] else None
+            if p0[3] >= p0[2]:
+                mi_off = v2o(p0[3])
+            else:
+                mi_off = p0[3]
     if mi_off is None:
         return {'kind': 'elf-nomodinfo'}
     attr = struct.unpack_from('<H', data, mi_off)[0]

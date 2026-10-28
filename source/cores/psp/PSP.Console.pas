@@ -9,7 +9,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Generics.Collections, Core.Emulation.Types, Core.Storage,
   PSP.Types, PSP.Memory, PSP.Scheduler, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media, PSP.IO, PSP.Loader,
-  PSP.Display, PSP.Service, PSP.Audio;
+  PSP.Display, PSP.Service, PSP.Audio, PSP.CPU.JIT;
 
 type
   TPSPConsole = class
@@ -17,6 +17,7 @@ type
     FMemory: TPSPMemory;
     FScheduler: TPSPScheduler;
     FCPU: TPSPCPU;
+    FRecompiler: TPSPRecompiler;
     FHLE: TPSPHLE;
     FKernel: TPSPKernel;
     FIO: TPSPIO;
@@ -39,7 +40,10 @@ type
     FPendingExec: string;
     FPendingExecArgs: TBytes;
     FBooted: Boolean;
+    FStopAtFrame: Boolean;
+    FExecuted: Int64;
     procedure ResetServices;
+    procedure ResetMachine(KeepClock: Boolean);
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
     procedure Break_(C: TPSPCPU; Code: Cardinal);
     procedure SyncTime;
@@ -62,6 +66,9 @@ type
     property Input: TEmulatorInput read FInput write FInput;
     property Memory: TPSPMemory read FMemory;
     property CPU: TPSPCPU read FCPU;
+    // The CPU's recompiler (PSPJIT; nil: the interpreter only); Enabled
+    // switches between them.
+    property Recompiler: TPSPRecompiler read FRecompiler;
     property Kernel: TPSPKernel read FKernel;
     property HLE: TPSPHLE read FHLE;
     property IO: TPSPIO read FIO;
@@ -71,6 +78,8 @@ type
     property Scheduler: TPSPScheduler read FScheduler;
     property AudioSamples: TArray<SmallInt> read FAudioSamples;
     property FrameNumber: UInt64 read FFrameNumber;
+    // CPU cycles run (instructions plus HLE costs), for speed measurements.
+    property Executed: Int64 read FExecuted;
     property OnLog: TPSPLogEvent read FOnLog write FOnLog;
   end;
 
@@ -78,7 +87,7 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
-  PSP.Utility, PSP.Font, PSP.Misc;
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings, PSP.SFO;
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin
@@ -102,6 +111,7 @@ begin
   FCPU := TPSPCPU.Create(FMemory);
   FCPU.OnSyscall := Syscall;
   FCPU.OnBreak := Break_;
+  FRecompiler := CreatePSPRecompiler(FCPU);
   FHLE := TPSPHLE.Create(FCPU, FMemory);
   FHLE.OnLog := HandleLog;
   FKernel := TPSPKernel.Create(FCPU, FMemory, FHLE, FScheduler);
@@ -138,6 +148,7 @@ begin
   FIO.Free;
   FKernel.Free;
   FHLE.Free;
+  FRecompiler.Free;
   FCPU.Free;
   FScheduler.Free;
   FMemory.Free;
@@ -202,11 +213,12 @@ begin
   end;
 end;
 
-procedure TPSPConsole.Reset;
+procedure TPSPConsole.ResetMachine(KeepClock: Boolean);
 begin
   FMemory.Reset;
   FCPU.Reset;
-  FScheduler.Reset;
+  if not KeepClock then
+    FScheduler.Reset;
   FKernel.Reset;
   FIO.Reset;
   FIO.Disc := FDisc;
@@ -219,9 +231,14 @@ begin
   FDisplay.Reset;
   FDisplay.Register;
   ResetServices;
-  FFrameNumber := 0;
   FPendingExec := '';
   FBooted := False;
+end;
+
+procedure TPSPConsole.Reset;
+begin
+  ResetMachine(False);
+  FFrameNumber := 0;
   var Path := FProgram.BootPath;
   if Path = '' then
   begin
@@ -269,7 +286,9 @@ begin
   else if not FHLE.Call(Code) then
     raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
   FKernel.AfterSyscall;
-  // HLE costs are not in the CPU's budget: a loop of calls must still stop at the deadline.
+  // Call costs count toward the slice too: a loop of calls must not run past
+  // an event.
+  SyncTime;
   if (FScheduler.NextDue < FRunDeadline) or (FScheduler.Now >= FRunDeadline) then
     C.Stop;
 end;
@@ -287,6 +306,8 @@ end;
 
 procedure TPSPConsole.DispatchEvent(E: TPSPEvent);
 begin
+  // Every event is an interrupt on hardware, whose return breaks a pending ll/sc.
+  FCPU.Ctx.LLBit := 0;
   case E of
     TPSPEvent.VBlank: FDisplay.OnEvent;
     TPSPEvent.Kernel: FKernel.OnTimerEvent;
@@ -299,12 +320,13 @@ end;
 
 procedure TPSPConsole.RunUntil(At: Int64);
 begin
-  while FScheduler.Now < At do
+  while True do
   begin
+    // Events that fell due during the last run are handled before returning.
     var E: TPSPEvent;
     while FScheduler.TakeDue(E) do
       DispatchEvent(E);
-    if FKernel.Exited then
+    if FKernel.Exited or (FScheduler.Now >= At) or (FStopAtFrame and FDisplay.FrameDone) then
       Break;
     if FPendingExec <> '' then
     begin
@@ -313,16 +335,8 @@ begin
       var Data: TBytes;
       if FIO.ReadAll(Path, Data) = 0 then
       begin
-        FKernel.Reset;
-        FMemory.Reset;
-        FCPU.Reset;
-        FIO.Reset;
-        FIO.Disc := FDisc;
-        FIO.Register;
-        FLoader.Reset;
-        FLoader.Register;
-        FDisplay.Register;
-        ResetServices;
+        // The new program starts on a freshly reset machine; time goes on.
+        ResetMachine(True);
         Boot(Data, Path);
       end
       else
@@ -331,7 +345,9 @@ begin
     end;
     FKernel.ProcessInterrupts;
     var Deadline := Min(FScheduler.NextDue, At);
-    if FKernel.HasRunnable then
+    if not FKernel.InInterrupt and (FScheduler.Now < FKernel.BusyUntil) then
+      FScheduler.AdvanceTo(Min(Deadline, FKernel.BusyUntil))
+    else if FKernel.HasRunnable then
     begin
       var Budget := FScheduler.CyclesUntil(Deadline);
       if Budget > 4000000 then
@@ -340,6 +356,7 @@ begin
         Budget := 1;
       FRunDeadline := Deadline;
       var Used := FCPU.Run(Budget);
+      Inc(FExecuted, Used);
       FScheduler.AddCycles(Used);
       if FKernel.Current <> nil then
         Inc(FKernel.Current.RunClocks, Used);
@@ -348,19 +365,18 @@ begin
     else
       FScheduler.AdvanceTo(Deadline);
   end;
-  // HLE costs can carry time past At inside a run: what fell due by then still fires.
-  var Due: TPSPEvent;
-  while not FKernel.Exited and FScheduler.TakeDue(Due) do
-    DispatchEvent(Due);
 end;
 
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
 begin
   FDisplay.SetInput(FInput);
   FDisplay.FrameDone := False;
-  var Limit := FScheduler.Now + Int64(PSPFrameNs) * 2;
-  while not FDisplay.FrameDone and not FKernel.Exited and (FScheduler.Now < Limit) do
-    RunUntil(Min(Limit, FScheduler.Due(TPSPEvent.VBlank) + 1));
+  FStopAtFrame := True;
+  try
+    RunUntil(FScheduler.Now + Int64(PSPFrameNs) * 2);
+  finally
+    FStopAtFrame := False;
+  end;
   Inc(FFrameNumber);
   Frame := Default(TEmulatorFrame);
   FDisplay.Render(Frame);
