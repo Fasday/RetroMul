@@ -69,6 +69,7 @@ const
     $D0100000, $D0110000, $D0120000, $D0130000, $D0460000, $D0470000,
     $F0000000, $F0800000, $F1000000, $F1800000, $F2000000, $F2800000,
     $F3800000, $F3830000, $F3A00000);
+  IntegerOps: array[0..2] of Cardinal = ($01004816, $01004817, $7C084D20);
 begin
   Hash := $CBF29CE484222325;
   Seed := $12345678;
@@ -126,6 +127,21 @@ begin
     end;
     Writeln('fpu', Func, ' ', IntToHex(Hash, 16));
   end;
+  for var Op in IntegerOps do
+  begin
+    Hash := $CBF29CE484222325;
+    var H := DecodeOp(Op);
+    for var I := 1 to 200000 do
+    begin
+      C.Ctx.GPR[8] := Next shr (Next and 31);
+      H(C, Op);
+      Mix(C.Ctx.GPR[9], 4);
+      C.Ctx.GPR[8] := not C.Ctx.GPR[8];
+      H(C, Op);
+      Mix(C.Ctx.GPR[9], 4);
+    end;
+    Writeln(IntToHex(Op, 8), ' ', IntToHex(Hash, 16));
+  end;
 end;
 
 procedure Bench(const Name: string; Op: Cardinal; Count: Integer);
@@ -136,6 +152,8 @@ begin
   for var I := 0 to 31 do
     C.Ctx.FPR[I] := $3E800001 + Cardinal(I) * 33041;
   C.Ctx.FCR31 := 0;
+  for var I := 1 to 31 do
+    C.Ctx.GPR[I] := Cardinal(I) * 993 + 1;
   var H := DecodeOp(Op);
   var T := TStopwatch.StartNew;
   for var I := 1 to Count do
@@ -186,6 +204,9 @@ begin
       Bench('add.s', $46020800, 10000000);
       Bench('mul.s', $46020802, 10000000);
       Bench('div.s', $46020803, 10000000);
+      Bench('clz', $01004816, 10000000);
+      Bench('clo', $01004817, 10000000);
+      Bench('bitrev', $7C084D20, 10000000);
       Interpreter;
     end;
   finally
