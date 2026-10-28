@@ -422,6 +422,10 @@ const
 var
   Inputs: array of Cardinal;
 begin
+  {$IFDEF CPUX86}
+  Writeln('  skip  IEEE float comparison: the Win32 CPU uses x87 extended intermediates');
+  Exit;
+  {$ENDIF}
   if not (C.Features.Float64 and C.Features.DenormPreserve32 and C.Features.RoundEven32 and C.Features.DenormPreserve64 and
     C.Features.RoundEven64) then
   begin

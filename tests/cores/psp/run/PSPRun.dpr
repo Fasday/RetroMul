@@ -249,6 +249,7 @@ begin
     var DumpLen := 0;
     var ShotFile := '';
     var GPUMode := 0;
+    var VRAMFile := '';
     var WavFile := '';
     var CallsOn := False;
     var CallsFilter := '';
@@ -272,6 +273,7 @@ begin
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-gpu' then GPUMode := 1
       else if A = '-gpu-check' then GPUMode := 2
+      else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
       else if A = '-press' then
@@ -464,6 +466,10 @@ begin
         if Console.Kernel.Exited then
           Break;
       end;
+      if GPU <> nil then
+        GPU.Sync;
+      if VRAMFile <> '' then
+        TFile.WriteAllBytes(VRAMFile, Console.Memory.VRAM);
       LastHash := FrameHash(Frame);
       var Text := Console.TakeOutput;
       if Text <> '' then
@@ -544,7 +550,7 @@ begin
       if GPU <> nil then
       begin
         var St := GPU.Stats;
-        if not Quiet or (St.BadBatches > 0) then
+        if GPUMode > 0 then
           Writeln(ErrOutput, Format('gpu: %d batches, %d passes, %d prims, %d on the CPU, %d pages uploaded, ' +
             '%.2fs waiting (gpu: %.3fs upload, %.3fs drawing, %.3fs readback)', [St.Batches, St.Passes, St.Prims,
             St.Fallbacks, St.UploadedPages, St.WaitSeconds, St.UploadSeconds, St.DrawSeconds, St.ReadbackSeconds]));

@@ -239,7 +239,7 @@ begin
   ApplicationInfo.sType := VK_STRUCTURE_TYPE_APPLICATION_INFO;
   ApplicationInfo.pApplicationName := 'RetroMul compute';
   ApplicationInfo.pEngineName := 'RetroMul';
-  ApplicationInfo.apiVersion := VK_API_VERSION_1_3;
+  ApplicationInfo.apiVersion := VK_API_VERSION_1_2;
   InstanceInfo := Default(VkInstanceCreateInfo);
   InstanceInfo.sType := VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   InstanceInfo.pApplicationInfo := @ApplicationInfo;

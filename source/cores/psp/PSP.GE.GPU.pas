@@ -320,8 +320,14 @@ function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGE
   const DeviceName: string): Boolean;
 var
   Compute: TVulkanCompute;
+  Taken: Boolean;
 begin
   Backend := nil;
+  Taken := False;
+  {$IFDEF CPUX86}
+  Error := 'The Win32/x87 raster reference is not qualified for GPU rendering; use Win64.';
+  Exit(False);
+  {$ENDIF}
   if not TryCreateVulkanCompute(Compute, Error, DeviceName) then
     Exit(False);
   var F := Compute.Features;
@@ -340,12 +346,14 @@ begin
       Compute.Free;
       Exit(False);
     end;
+    Taken := True;
     Backend := TGEGPUBackend.Create(Memory, Compute, Check);
   except
     on E: Exception do
     begin
       Error := E.Message;
-      Compute.Free;
+      if not Taken then
+        Compute.Free;
       Exit(False);
     end;
   end;
@@ -1440,8 +1448,10 @@ begin
         Run := -1;
       end;
     end;
-    Cmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-      VK_ACCESS_HOST_READ_BIT);
+    // A later submission must not overwrite VRAM while this readback reads it.
+    Cmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT or VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_PIPELINE_STAGE_HOST_BIT or VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_ACCESS_HOST_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_WRITE_BIT);
     Cmd.Timestamp(3);
     Cmd.Submit;
     Inc(FSubmitted);
@@ -1505,6 +1515,11 @@ begin
     for var I := 0 to High(FSlots) do
       Complete((First + I) mod Length(FSlots));
     FMemory.ReleaseVRAM;
+    FStateCount := 0;
+    FDataSize := 0;
+    FLastState := -1;
+    FLastClutData := -1;
+    FSnapshots.Clear;
   finally
     FSyncing := False;
   end;
