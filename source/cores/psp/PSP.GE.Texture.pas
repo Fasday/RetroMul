@@ -237,6 +237,16 @@ begin
   end;
 end;
 
+// Floor() also calls Frac(). For ordinary texture coordinates a truncation
+// and signed comparison are equivalent; retain its exceptional/range rules.
+function TexFloor(X: Single): Integer; inline;
+begin
+  if (PCardinal(@X)^ and $7F800000) >= $4F000000 then
+    Exit(Floor(X));
+  Result := Trunc(X);
+  if X < Result then Dec(Result);
+end;
+
 function WrapCoord(V, Size: Integer; Clamp: Boolean): Integer; inline;
 begin
   if Clamp then
@@ -259,14 +269,32 @@ begin
   var L := T.Levels[Level];
   if not Linear then
   begin
-    var X := WrapCoord(Floor(S), L.Width, T.ClampU);
-    var Y := WrapCoord(Floor(TT), L.Height, T.ClampV);
+    var X := WrapCoord(TexFloor(S), L.Width, T.ClampU);
+    var Y := WrapCoord(TexFloor(TT), L.Height, T.ClampV);
+    if not T.Swizzle and (L.Ptr <> nil) then
+    begin
+      var Pixel := Cardinal(Y * L.BufWidth + X);
+      case T.Format of
+        3: if UInt64(Pixel) * 4 + 4 <= L.Size then Exit(PCardinal(L.Ptr + Pixel * 4)^);
+        5: if Pixel < L.Size then Exit(ClutLookup(T, L.Ptr[Pixel]));
+        4:
+          begin
+            var Off := Cardinal(Y * (L.BufWidth div 2) + X div 2);
+            if Off < L.Size then
+            begin
+              var B := L.Ptr[Off];
+              if X and 1 <> 0 then B := B shr 4;
+              Exit(ClutLookup(T, B and $F));
+            end;
+          end;
+      end;
+    end;
     Exit(GEFetchTexel(T, Level, X, Y));
   end;
   var FS := S - 0.5;
   var FT := TT - 0.5;
-  var X0 := Floor(FS);
-  var Y0 := Floor(FT);
+  var X0 := TexFloor(FS);
+  var Y0 := TexFloor(FT);
   var FracX := Trunc((FS - X0) * 16);
   var FracY := Trunc((FT - Y0) * 16);
   var XA := WrapCoord(X0, L.Width, T.ClampU);

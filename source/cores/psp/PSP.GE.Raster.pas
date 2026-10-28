@@ -110,6 +110,20 @@ begin
   end;
 end;
 
+// Raster interpolants are bounded to signed 32 bits. Use the SSE conversion
+// directly, with the same rounding mode as Round(), without its Int64 helper.
+function GERound(X: Double): Integer; {$IFDEF CPUX64}assembler;{$ELSE}inline;{$ENDIF}
+{$IFDEF CPUX64}
+asm
+  .NOFRAME
+  CVTSD2SI EAX, XMM0
+end;
+{$ELSE}
+begin
+  Result := Round(X);
+end;
+{$ENDIF}
+
 function Clamp255(V: Integer): Integer; inline;
 begin
   if V < 0 then
@@ -894,13 +908,13 @@ begin
         F.SR := 0; F.SG := 0; F.SB := 0;
         if Secondary then
         begin
-          F.SR := Round(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
-          F.SG := Round(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
-          F.SB := Round(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
+          F.SR := GERound(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
+          F.SG := GERound(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
+          F.SB := GERound(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
         end;
       end;
       if ConstantZ then F.Z := A0.Z
-      else F.Z := Round(A0.Z * W0 + A1.Z * W1 + A2.Z * W2);
+      else F.Z := GERound(A0.Z * W0 + A1.Z * W1 + A2.Z * W2);
       if S.Textured then
       begin
         // S, T and Q go through the perspective (1/w) and then S and T are
@@ -1053,23 +1067,23 @@ begin
     begin
       T := (C - X0) / D;
       PX := P;
-      PY := (Y0 + Round(DY * T) + $100000) div 16 - $10000;
+      PY := (Y0 + GERound(DY * T) + $100000) div 16 - $10000;
     end
     else
     begin
       T := (C - Y0) / D;
       PY := P;
-      PX := (X0 + Round(DX * T) + $100000) div 16 - $10000;
+      PX := (X0 + GERound(DX * T) + $100000) div 16 - $10000;
     end;
     SetupFragment(F, V1);
     if not S.Flat and S.Gouraud then
     begin
-      F.R := Round(V0.R + (V1.R - V0.R) * T);
-      F.G := Round(V0.G + (V1.G - V0.G) * T);
-      F.B := Round(V0.B + (V1.B - V0.B) * T);
-      F.A := Round(V0.A + (V1.A - V0.A) * T);
+      F.R := GERound(V0.R + (V1.R - V0.R) * T);
+      F.G := GERound(V0.G + (V1.G - V0.G) * T);
+      F.B := GERound(V0.B + (V1.B - V0.B) * T);
+      F.A := GERound(V0.A + (V1.A - V0.A) * T);
     end;
-    F.Z := Round(V0.Z + (V1.Z - V0.Z) * T);
+    F.Z := GERound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;
     var Q := V0.Q + (V1.Q - V0.Q) * T;
