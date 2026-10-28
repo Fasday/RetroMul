@@ -10,9 +10,10 @@ unit PSP.GE;
 // signal or finish, calls the guest callbacks and moves the queue along.
 //
 // The hardware runs on its own clock (FGETime, guest ns) and may run a little
-// ahead of the CPU (GERunAhead), so short lists are over before the call that
-// started them returns, like on a PSP where the kernel call itself is slower
-// than the GE.
+// ahead of the CPU (GERunAhead). Its interrupt is taken when the CPU's clock
+// reaches it, or at the end of the kernel call (or interrupt handler) it came
+// in, so short lists are over before the call that started them returns; a
+// sync still waits until the CPU's clock has reached the GE's.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
@@ -29,6 +30,8 @@ const
 type
   TGEListState = (glsFree, glsQueued, glsRunning, glsCompleted, glsPaused);
   TGEIntKind = (gikNone, gikSignal, gikFinish, gikEnd);
+  // Where the driver runs: a kernel call, its interrupt handler, the clock.
+  TGEContext = (gcSyscall, gcISR, gcEvent);
 
   TGECallStackEntry = record
     PC, Offset: Cardinal;
@@ -54,6 +57,8 @@ type
     Stack: array[0..1] of TGECallStackEntry;
     SigDepth: Integer;
     SigStack: array[0..GESignalStackDepth - 1] of TGESignalFrame;
+    // GE time of the END that completed it.
+    DoneAt: Int64;
   end;
   PGEList = ^TGEList;
 
@@ -82,9 +87,13 @@ type
     FHWDepth: Integer;
     FHWStack: array[0..1] of TGECallStackEntry;
     FGETime: Int64;
+    // GE time of the last list completion.
+    FDoneAt: Int64;
     FEdramTranslation: Cardinal;
     FInHW: Boolean;
+    FContext: TGEContext;
     function Now: Int64; inline;
+    function IntWindow: Int64;
     function NewSdk: Boolean;
     function ListID(Slot: Integer): Cardinal; inline;
     function SlotOf(ID: Cardinal): Integer;
@@ -108,6 +117,9 @@ type
     procedure CallSignal(Slot: Integer; Value: Cardinal; const Done: TProc);
     procedure CallFinish(Slot: Integer; Value: Cardinal; const Done: TProc);
     procedure WakeWaiters(Slot: Integer);
+    procedure EndWaitAt(T: TPSPThread; At: Int64);
+    procedure WaitUntil(At: Int64);
+    function ClockRetry(T: TPSPThread): Boolean;
     function SyncRetry(T: TPSPThread): Boolean;
     procedure SyncAbort(T: TPSPThread);
     procedure FreeCompleted;
@@ -150,6 +162,8 @@ const
   SCE_ERROR_PRIV_REQUIRED = Cardinal($80000023);
   // How far the GE may run ahead of the CPU before it waits for the clock.
   GERunAhead = 2000;
+  // CPU cycles of the driver's interrupt handler.
+  GEISRCycles = 500;
 
 constructor TPSPGE.Create(System: TPSPSystem);
 begin
@@ -228,6 +242,7 @@ begin
   FHWStall := 0;
   FHWIntQueued := False;
   FGETime := 0;
+  FDoneAt := 0;
   FEdramTranslation := $400;
   FInHW := False;
 end;
@@ -425,7 +440,7 @@ begin
     end;
     if FHWHalted and (FHWInt <> gikNone) and not FHWIntQueued then
     begin
-      if FHWIntAt <= Limit then
+      if FHWIntAt <= Now + IntWindow then
         RaiseInterrupt
       else
         FSystem.Scheduler.Schedule(TPSPEvent.GE, FHWIntAt);
@@ -440,7 +455,29 @@ procedure TPSPGE.OnEvent(Event: TPSPEvent);
 begin
   if Event <> TPSPEvent.GE then
     Exit;
-  Kick;
+  var Saved := FContext;
+  FContext := gcEvent;
+  try
+    Kick;
+  finally
+    FContext := Saved;
+  end;
+end;
+
+// How much later than now an interrupt may be raised already: one that comes
+// during a kernel call or the driver's interrupt handler is taken when that
+// returns, as one from the clock is taken then.
+function TPSPGE.IntWindow: Int64;
+begin
+  var MHz := Int64(FSystem.Scheduler.MHz);
+  if MHz <= 0 then
+    MHz := 222;
+  case FContext of
+    gcEvent: Result := 0;
+    gcISR: Result := GEISRCycles * 1000 div MHz;
+  else
+    Result := Int64(FHLE.CycleCost) * 1000 div MHz;
+  end;
 end;
 
 procedure TPSPGE.ResumeHW;
@@ -455,14 +492,21 @@ end;
 procedure TPSPGE.Interrupt;
 begin
   if FKernel.Trace then
-    FHLE.Log('ge interrupt %d list %d pc %.8x', [Ord(FHWInt), FHWList, FHWPC]);
+    FHLE.Log('ge interrupt %d list %d pc %.8x now %d intat %d', [Ord(FHWInt), FHWList, FHWPC, Now, FHWIntAt]);
   var Kind := FHWInt;
   if (Kind = gikNone) or not FHWHalted or (FHWList < 0) then
     Exit;
   FHWInt := gikNone;
-  case Kind of
-    gikSignal: HandleSignal(FHWList);
-    gikFinish: HandleFinish(FHWList);
+  FSystem.CPU.AddCycles(GEISRCycles);
+  var Saved := FContext;
+  FContext := gcISR;
+  try
+    case Kind of
+      gikSignal: HandleSignal(FHWList);
+      gikFinish: HandleFinish(FHWList);
+    end;
+  finally
+    FContext := Saved;
   end;
 end;
 
@@ -645,6 +689,9 @@ begin
     Exit;
   end;
   L.State := glsCompleted;
+  L.DoneAt := FHWIntAt;
+  if FHWIntAt > FDoneAt then
+    FDoneAt := FHWIntAt;
   var Gen := L.Gen;
   CallFinish(Slot, Value,
     procedure
@@ -717,14 +764,44 @@ begin
       begin
         FWaiters.Delete(I);
         FreeCompleted;
-        FKernel.EndWait(T, 0);
+        EndWaitAt(T, FDoneAt);
       end
       else if (Pass = 1) and (T.Wait.Data[0] = 1) and (Integer(T.Wait.Data[1]) = Slot) then
       begin
         FWaiters.Delete(I);
-        FKernel.EndWait(T, 0);
+        EndWaitAt(T, FLists[Slot].DoneAt);
       end;
     end;
+end;
+
+// The driver may learn of a finish before the CPU's clock reaches the GE's
+// time for it (GERunAhead); a sync returns no earlier than that time.
+procedure TPSPGE.EndWaitAt(T: TPSPThread; At: Int64);
+begin
+  if At <= Now then
+  begin
+    FKernel.EndWait(T, 0);
+    Exit;
+  end;
+  FKernel.AddTimer(At, Self,
+    procedure
+    begin
+      if T.IsWaiting and (T.Wait.HLETag = 'ge') then
+        FKernel.EndWait(T, 0);
+    end);
+end;
+
+function TPSPGE.ClockRetry(T: TPSPThread): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TPSPGE.WaitUntil(At: Int64);
+begin
+  var T := FKernel.Current;
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, ClockRetry, nil, 'ge');
+  T.Wait.Data[0] := 2;
+  EndWaitAt(T, At);
 end;
 
 function TPSPGE.CheckWaitContext: Cardinal;
@@ -891,7 +968,11 @@ begin
     begin FHLE.Result(E); Exit; end;
   FHLE.Result(0);
   if FLists[Slot].State = glsCompleted then
+  begin
+    if FLists[Slot].DoneAt > Now then
+      WaitUntil(FLists[Slot].DoneAt);
     Exit;
+  end;
   FWaiters.Add(FKernel.Current);
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, SyncRetry, SyncAbort, 'ge');
   FKernel.Current.Wait.Data[0] := 1;
@@ -921,6 +1002,8 @@ begin
   if Head < 0 then
   begin
     FreeCompleted;
+    if FDoneAt > Now then
+      WaitUntil(FDoneAt);
     Exit;
   end;
   FWaiters.Add(FKernel.Current);
