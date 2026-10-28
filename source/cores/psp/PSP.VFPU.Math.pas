@@ -166,37 +166,56 @@ begin
   end;
 end;
 
+function TopBit32(X: Cardinal): Integer;
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+asm
+  BSR EAX, ECX
+end;
+{$ELSEIF Defined(CPUX86)}
+asm
+  BSR EAX, EAX
+end;
+{$ELSE}
+begin
+  Result := 0;
+  if X >= $10000 then begin X := X shr 16; Inc(Result, 16); end;
+  if X >= $100 then begin X := X shr 8; Inc(Result, 8); end;
+  if X >= $10 then begin X := X shr 4; Inc(Result, 4); end;
+  if X >= 4 then begin X := X shr 2; Inc(Result, 2); end;
+  if X >= 2 then Inc(Result);
+end;
+{$ENDIF}
+
 // The dot product unit adds the products in lane order. Each step aligns the
 // running sum and the next product to the larger of their exponents (for the
 // product, the sum of its operands' exponents), keeps 25 bits below that,
 // truncating, and truncates the sum back to 24 bits.
 function VSum4(const A, B: array of Cardinal; Count: Integer; Skip: Cardinal): Cardinal;
 begin
-  var HasNaN := False;
-  var PosInf := False;
-  var NegInf := False;
+  var InfSigns: Cardinal := 0;
   var AccNeg := False;
-  var AccM: UInt64 := 0;
+  var AccM: Cardinal := 0;
   var AccE: Integer := 0;
   for var I := 0 to Count - 1 do
   begin
     if (Skip shr I) and 1 <> 0 then
       Continue;
-    var X := VFlush(A[I]);
-    var Y := VFlush(B[I]);
+    var X := A[I];
+    var Y := B[I];
     var Neg := ((X xor Y) and $80000000) <> 0;
     var EX := Integer((X shr 23) and $FF);
     var EY := Integer((Y shr 23) and $FF);
     if (EX = $FF) or (EY = $FF) then
     begin
-      if ((EX = $FF) and ((X and $7FFFFF) <> 0)) or ((EY = $FF) and ((Y and $7FFFFF) <> 0)) then
-        HasNaN := True
-      else if ((X and $7FFFFFFF) = 0) or ((Y and $7FFFFFFF) = 0) then
-        HasNaN := True
-      else if Neg then
-        NegInf := True
+      if ((EX = $FF) and ((X and $7FFFFF) <> 0)) or ((EY = $FF) and ((Y and $7FFFFF) <> 0)) or
+        (EX = 0) or (EY = 0) then
+        Exit(VF_NAN);
+      if Neg then
+        InfSigns := InfSigns or 2
       else
-        PosInf := True;
+        InfSigns := InfSigns or 1;
+      if InfSigns = 3 then
+        Exit(VF_NAN);
       Continue;
     end;
     if (EX = 0) or (EY = 0) then
@@ -208,17 +227,18 @@ begin
     if (AccM <> 0) and (AccE > R) then
       R := AccE;
     var PSh := 21 + R - RP;
-    var PQ: Int64 := 0;
-    if PSh < 64 then
-      PQ := Int64(M shr PSh);
-    var AQ: Int64 := 0;
+    // Both aligned terms fit in 27 bits; only the exact product needs UInt64.
+    var PQ: Integer := 0;
+    if PSh < 48 then
+      PQ := Integer(M shr PSh);
+    var AQ: Integer := 0;
     if AccM <> 0 then
     begin
       var D := R - AccE;
       if D <= 2 then
-        AQ := Int64(AccM shl (2 - D))
-      else if D < 64 then
-        AQ := Int64(AccM shr (D - 2));
+        AQ := Integer(AccM shl (2 - D))
+      else if D < 26 then
+        AQ := Integer(AccM shr (D - 2));
     end;
     if AccNeg then
       AQ := -AQ;
@@ -232,10 +252,8 @@ begin
       Continue;
     end;
     AccNeg := S < 0;
-    var U: UInt64 := UInt64(Abs(S));
-    var Top := 63;
-    while (U and (UInt64(1) shl Top)) = 0 do
-      Dec(Top);
+    var U := Cardinal(Abs(S));
+    var Top := TopBit32(U);
     // Leading bit Top in units of 2^(R - 25): exponent R - 25 + Top.
     AccE := R - 25 + Top;
     if Top > 23 then
@@ -243,11 +261,9 @@ begin
     else
       AccM := U shl (23 - Top);
   end;
-  if HasNaN or (PosInf and NegInf) then
-    Exit(VF_NAN);
-  if PosInf then
+  if InfSigns = 1 then
     Exit($7F800000);
-  if NegInf then
+  if InfSigns = 2 then
     Exit($FF800000);
   if AccM = 0 then
     Exit(0);
