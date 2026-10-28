@@ -252,7 +252,7 @@ var
   EndHandler: array[0..2] of Pointer;
   PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
-  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode,
+  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffCOP0, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode,
     OffSlotPC, OffSlotBlock: Integer;
 
 function HandlerOf(Op: Cardinal): Pointer;
@@ -278,6 +278,7 @@ begin
   OffPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.PC));
   OffNPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.NPC));
   OffCurPC := Integer(NativeUInt(@TPSPCPU(nil).CurPC));
+  OffCOP0 := Integer(NativeUInt(@TPSPCPU(nil).COP0[0]));
   OffStopping := Integer(NativeUInt(@TPSPCPU(nil).Stopping));
   OffRemaining := Integer(NativeUInt(@TPSPCPU(nil).FRemaining));
   OffHit := Integer(NativeUInt(@TPSPRecompiler(nil).FHit));
@@ -436,7 +437,9 @@ begin
   // registers and memory alone.
   if not State then
   begin
-    // (A handler of registers and memory: where it stored into a block.)
+    // (A handler of registers and memory, CurPC as every handler sees it:
+    // where it stored into a block.)
+    FJ.Move(jw32, JMem(jrSelf, OffCurPC), JImm(At.Addr));
     FJ.Call(Handler, [JSelf, JImm(Op)]);
     if MayStore(Op) then
       FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), HitExit(At));
@@ -779,7 +782,7 @@ begin
     jkLUI:
       J.Move(jw32, G(FieldRT(Op)), JImm(Cardinal(Op shl 16)));
     jkMFC0:
-      J.Move(jw32, G(FieldRT(Op)), JImm(0));
+      Copy(G(FieldRT(Op)), JMem(jrSelf, OffCOP0 + Integer(FieldRD(Op)) * 4));
     jkEXT:
       begin
         var Pos := FieldSA(Op);
@@ -1288,7 +1291,9 @@ var
         EmitDelay(Slot, DOp, DK, DH, False, Taken);
       jkJR, jkJALR:
         begin
+          // (The target's low two bits ignored.)
           J.Move(jw32, JTarget, G(FieldRS(Op)));
+          J.Alu(jaAnd, jw32, JTarget, JImm(-4));
           if (K = jkJALR) and (FieldRD(Op) <> 0) then
             J.Move(jw32, G(FieldRD(Op)), JImm(Fall));
           EmitDelay(Slot, DOp, DK, DH, True, 0);
