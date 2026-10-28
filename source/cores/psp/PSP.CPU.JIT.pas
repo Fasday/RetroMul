@@ -217,13 +217,13 @@ const
     $50000000, $54000000, $58000000, $5C000000, $04020000, $04030000, $04120000, $04130000);
   // SYSCALL, BREAK, HALT.
   EndSample: array[0..2] of Cardinal = ($0000000C, $0000000D, $70000000);
-  // Handlers that read no PC and raise nothing (called without writing PC,
-  // NPC and CurPC first): SLLV, SRLV, ROTRV, SRAV, CLZ, CLO, MULT, MULTU,
-  // DIV, DIVU, MADD, MADDU, MSUB, MSUBU, BITREV, LWL, LWR, SWL, SWR, LL, SC,
-  // MFIC, MTIC.
-  PureSample: array[0..22] of Cardinal = ($00000804, $00000806, $00000846, $00000807, $00000816, $00000817,
+  // Handlers of registers and memory alone (called as they are: no PC, NPC,
+  // CurPC or budget for them, no stop, no kernel): SLLV, SRLV, ROTRV, SRAV,
+  // CLZ, CLO, MULT, MULTU, DIV, DIVU, MADD, MADDU, MSUB, MSUBU, BITREV, LWL,
+  // LWR, SWL, SWR, LL, SC.
+  PureSample: array[0..20] of Cardinal = ($00000804, $00000806, $00000846, $00000807, $00000816, $00000817,
     $00000018, $00000019, $0000001A, $0000001B, $0000001C, $0000001D, $0000002E, $0000002F, $7C000D20,
-    $88010000, $98010000, $A8000000, $B8000000, $C0010000, $E0010000, $70010024, $70000026);
+    $88010000, $98010000, $A8000000, $B8000000, $C0010000, $E0010000);
 
   JitBufferSize = 64 * 1024 * 1024;
   MaxDead = 65536;
@@ -432,49 +432,43 @@ end;
 
 procedure TPSPRecompiler.EmitCall(const At: TPSPJitAt; Op: Cardinal; Handler: Pointer; State: Boolean);
 begin
-  // The handler (PC, NPC and CurPC first where it may read them); after it
-  // the code leaves where it stopped the run or rewrote a block.
+  // The handler: as the interpreter runs it (State) or a handler of
+  // registers and memory alone.
+  if not State then
+  begin
+    // (A handler of registers and memory: where it stored into a block.)
+    FJ.Call(Handler, [JSelf, JImm(Op)]);
+    if MayStore(Op) then
+      FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), HitExit(At));
+    Exit;
+  end;
   // The budget as the interpreter has it while it runs (the block's later
   // instructions not taken yet).
-  if State then
-    WriteState(At);
+  WriteState(At);
   var Rest := At.Refund;
   var Remaining := JMem(jrSelf, OffRemaining);
   if Rest <> 0 then
     FJ.Alu(jaAdd, jw32, Remaining, JImm(Rest));
   FJ.Call(Handler, [JSelf, JImm(Op)]);
   // Where it stopped the run, used up the cycles left, rewrote a block or
-  // (with PC and NPC written) moved them as a kernel call would: back to
-  // Run, from where the handler left them.
-  if State then
+  // moved PC or NPC as a kernel call would: back to Run, from where the
+  // handler left them.
+  FJ.BranchTo(jcNe, jw8, JMem(jrSelf, OffStopping), JImm(0), FExit);
+  if At.Dynamic then
   begin
-    FJ.BranchTo(jcNe, jw8, JMem(jrSelf, OffStopping), JImm(0), FExit);
-    if At.Dynamic then
-    begin
-      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffPC), JTarget, FExit);
-      FJ.Move(jw32, JT0, JTarget);
-      FJ.Alu(jaAdd, jw32, JT0, JImm(4));
-      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffNPC), JT0, FExit);
-    end
-    else
-    begin
-      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffPC), JImm(At.Next), FExit);
-      FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffNPC), JImm(Cardinal(At.Next + 4)), FExit);
-    end;
-    FJ.BranchTo(jcLt, jw32, Remaining, JImm(Rest), FExit);
-    if MayStore(Op) then
-      FJ.BranchTo(jcNe, jw8, JMem(jrCtx, OffHit), JImm(0), FExit);
+    FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffPC), JTarget, FExit);
+    FJ.Move(jw32, JT0, JTarget);
+    FJ.Alu(jaAdd, jw32, JT0, JImm(4));
+    FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffNPC), JT0, FExit);
   end
   else
   begin
-    var After := At;
-    After.Refund := 0;
-    var Leave := HitExit(After);
-    FJ.BranchTest(jcNe, jw8, JMem(jrSelf, OffStopping), JImm($FF), Leave);
-    FJ.Branch(jcLt, jw32, Remaining, JImm(Rest), Leave);
-    if MayStore(Op) then
-      FJ.BranchTest(jcNe, jw8, JMem(jrCtx, OffHit), JImm($FF), Leave);
+    FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffPC), JImm(At.Next), FExit);
+    FJ.BranchTo(jcNe, jw32, JMem(jrSelf, OffNPC), JImm(Cardinal(At.Next + 4)), FExit);
   end;
+  FJ.BranchTo(jcLt, jw32, Remaining, JImm(Rest), FExit);
+  if MayStore(Op) then
+    FJ.BranchTo(jcNe, jw8, JMem(jrCtx, OffHit), JImm(0), FExit);
   if Rest <> 0 then
     FJ.Alu(jaSub, jw32, Remaining, JImm(Rest));
 end;

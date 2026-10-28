@@ -791,7 +791,7 @@ begin
           M.Memory.WriteBytes(Func, FuncCode[0], Length(FuncCode) * 4);
         end;
         M.CPU.SetPC(Start);
-        var Total: Int64 := 0;
+        var Total: Int64;
         var Target: Int64 := 100000000;
         case Kind of
           1: Target := 1000000000;
