@@ -431,7 +431,7 @@ begin
     Exit(ERROR_AVCODEC_INVALID_DATA);
   end;
   W32(Ctx, OffErr, 0);
-  W32(Ctx, OffRead, Cardinal(Size + Header));
+  W32(Ctx, OffRead, Cardinal(Size) + Cardinal(Header));
   Inc(S.Frames);
   // The first frame decoded only primes the overlap: nothing comes out.
   if S.Frames = 1 then
