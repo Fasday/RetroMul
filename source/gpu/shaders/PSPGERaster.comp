@@ -163,9 +163,9 @@ uint texelOffset(bool swizzle, int bufWidth, int x, int y, int bits)
 
 void splitDXT(uint c, out int r, out int g, out int b)
 {
-  r = int((c >> 11) & 0x1Fu); r = (r << 3) | (r >> 2);
-  g = int((c >> 5) & 0x3Fu); g = (g << 2) | (g >> 4);
-  b = int(c & 0x1Fu); b = (b << 3) | (b >> 2);
+  r = int((c >> 11) & 0x1Fu) << 3;
+  g = int((c >> 5) & 0x3Fu) << 2;
+  b = int(c & 0x1Fu) << 3;
 }
 
 uint dxtColor(uint c0, uint c1, uint index, bool alpha1)
@@ -179,11 +179,11 @@ uint dxtColor(uint c0, uint c1, uint index, bool alpha1)
     return uint(r1) | (uint(g1) << 8) | (uint(b1) << 16) | 0xFF000000u;
   if (index == 2u)
   {
-    if (c0 > c1 || !alpha1)
+    if (c0 > c1)
       return uint((2 * r0 + r1) / 3) | (uint((2 * g0 + g1) / 3) << 8) | (uint((2 * b0 + b1) / 3) << 16) | 0xFF000000u;
     return uint((r0 + r1) / 2) | (uint((g0 + g1) / 2) << 8) | (uint((b0 + b1) / 2) << 16) | 0xFF000000u;
   }
-  if (c0 > c1 || !alpha1)
+  if (c0 > c1)
     return uint((r0 + 2 * r1) / 3) | (uint((g0 + 2 * g1) / 3) << 8) | (uint((b0 + 2 * b1) / 3) << 16) | 0xFF000000u;
   return 0u;
 }
@@ -218,7 +218,7 @@ uint fetchTexel(uint s, int level, int x, int y)
     int blockBytes = format == 8 ? 8 : 16;
     int blocksPerRow = bufWidth / 4;
     uint block = addr + uint(((y >> 2) * blocksPerRow + (x >> 2)) * blockBytes);
-    uint colorBlock = format != 8 ? block + 8u : block;
+    uint colorBlock = block;
     uint bits = texRead32(colorBlock);
     uint c0 = texRead16(colorBlock + 4u);
     uint c1 = texRead16(colorBlock + 6u);
@@ -226,15 +226,15 @@ uint fetchTexel(uint s, int level, int x, int y)
     uint result = dxtColor(c0, c1, index, format == 8);
     if (format == 9)
     {
-      uint aw = texRead16(block + uint((y & 3) * 2));
+      uint aw = texRead16(block + 8u + uint((y & 3) * 2));
       uint a = (aw >> uint((x & 3) * 4)) & 0xFu;
-      result = (result & 0xFFFFFFu) | ((a * 17u) << 24);
+      result = (result & 0xFFFFFFu) | ((a << 4) << 24);
     }
     else if (format == 10)
     {
-      uint a0 = texRead8(block + 6u);
-      uint a1 = texRead8(block + 7u);
-      uint64_t aBits = uint64_t(texRead32(block)) | (uint64_t(texRead16(block + 4u)) << 32);
+      uint a0 = texRead8(block + 14u);
+      uint a1 = texRead8(block + 15u);
+      uint64_t aBits = uint64_t(texRead32(block + 8u)) | (uint64_t(texRead16(block + 12u)) << 32);
       uint ai = uint((aBits >> uint(((y & 3) * 4 + (x & 3)) * 3)) & 7ul);
       uint a;
       if (a0 > a1)
@@ -473,13 +473,7 @@ uint stencilBits(uint format, int v)
 
 uint pixelKeepMask(uint s)
 {
-  uint m = stUint(s, ST_MASKRGB);
-  uint a = uint(stInt(s, ST_MASKA));
-  uint format = stUint(s, ST_FBFORMAT);
-  if (format == 0u) return ((m >> 3) & 0x1Fu) | (((m >> 10) & 0x3Fu) << 5) | (((m >> 19) & 0x1Fu) << 11);
-  if (format == 1u) return ((m >> 3) & 0x1Fu) | (((m >> 11) & 0x1Fu) << 5) | (((m >> 19) & 0x1Fu) << 10) | ((a >> 7) << 15);
-  if (format == 2u) return ((m >> 4) & 0xFu) | (((m >> 12) & 0xFu) << 4) | (((m >> 20) & 0xFu) << 8) | ((a >> 4) << 12);
-  return (m & 0xFFFFFFu) | (a << 24);
+  return states[s + 104u];
 }
 
 int texLerp(int a, int b, int t, int dbl)
@@ -610,8 +604,11 @@ void plotPixel(uint s, int x, int y, Fragment f)
   }
 
   if (!stFlag(s, SF_THROUGH))
-    if (f.z < stInt(s, ST_MINZ) || f.z > stInt(s, ST_MAXZ))
+  {
+    int rangeZ = stFlag(s, 1u << 19) ? z : f.z;
+    if (rangeZ < stInt(s, ST_MINZ) || rangeZ > stInt(s, ST_MAXZ))
       return;
+  }
 
   if (stFlag(s, SF_TEXTURED))
     applyTexture(s, f);
@@ -776,6 +773,20 @@ void setupFragment(uint p, uint v, out Fragment f)
   f.fog = vFloat(p, v, 13u);
 }
 
+int64_t primInt64(uint o)
+{
+  return int64_t(packUint2x32(uvec2(prims[o], prims[o + 1u])));
+}
+
+int planeAt(uint o, int64_t dx, int64_t dy)
+{
+  int64_t v = primInt64(o) + (primInt64(o + 2u) * dx + primInt64(o + 4u) * dy) / 16l;
+  if (v < 0l)
+    return 0;
+  int result = int(uint64_t(v) >> 14);
+  return result > 255 ? 255 : result;
+}
+
 bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
 {
   int64_t x0 = vInt(p, V0, 0u), y0 = vInt(p, V0, 1u);
@@ -802,10 +813,12 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
   }
   else
   {
-    int c[4];
-    for (uint i = 0u; i < 4u; i++)
-      c[i] = int((int64_t(vInt(p, V0, 4u + i)) * e0 + int64_t(vInt(p, V1, 4u + i)) * e1 + int64_t(vInt(p, V2, 4u + i)) * e2) / area);
-    f.r = c[0]; f.g = c[1]; f.b = c[2]; f.a = c[3];
+    int64_t dx = sx - int64_t(int(prims[p + 64u]));
+    int64_t dy = sy - int64_t(int(prims[p + 65u]));
+    f.r = planeAt(p + 66u, dx, dy);
+    f.g = planeAt(p + 72u, dx, dy);
+    f.b = planeAt(p + 78u, dx, dy);
+    f.a = planeAt(p + 84u, dx, dy);
     precise double sr = double(vInt(p, V0, 8u)) * w0 + double(vInt(p, V1, 8u)) * w1 + double(vInt(p, V2, 8u)) * w2;
     precise double sg = double(vInt(p, V0, 9u)) * w0 + double(vInt(p, V1, 9u)) * w1 + double(vInt(p, V2, 9u)) * w2;
     precise double sb = double(vInt(p, V0, 10u)) * w0 + double(vInt(p, V1, 10u)) * w1 + double(vInt(p, V2, 10u)) * w2;
@@ -820,8 +833,12 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
   if (stFlag(s, SF_TEXTURED))
   {
     float aw0 = vFloat(p, V0, 3u), aw1 = vFloat(p, V1, 3u), aw2 = vFloat(p, V2, 3u);
-    precise double q = double(aw0) * w0 + double(aw1) * w1 + double(aw2) * w2;
-    if (q != 0.0lf)
+    precise float aq0 = uintBitsToFloat(prims[p + 60u]) * aw0;
+    precise float aq1 = uintBitsToFloat(prims[p + 61u]) * aw1;
+    precise float aq2 = uintBitsToFloat(prims[p + 62u]) * aw2;
+    precise double q = double(aq0) * w0 + double(aq1) * w1 + double(aq2) * w2;
+    precise double iw = double(aw0) * w0 + double(aw1) * w1 + double(aw2) * w2;
+    if (q != 0.0lf && ((q > 0.0lf) == (iw > 0.0lf)))
     {
       float st[2];
       for (uint i = 0u; i < 2u; i++)
@@ -837,8 +854,8 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
     }
     else
     {
-      f.s = vFloat(p, V0, 11u);
-      f.t = vFloat(p, V0, 12u);
+      f.s = float(double(stLevelWidth(s, 0)) - 0.5lf);
+      f.t = float(double(stLevelHeight(s, 0)) - 0.5lf);
     }
   }
   precise double fog = double(vFloat(p, V0, 13u)) * w0 + double(vFloat(p, V1, 13u)) * w1 + double(vFloat(p, V2, 13u)) * w2;
@@ -851,17 +868,25 @@ void spriteFragment(uint p, uint s, int px, int py, out Fragment f)
   setupFragment(p, V1, f);
   if (stFlag(s, SF_TEXTURED))
   {
-    float ds = uintBitsToFloat(prims[p + 34u]);
-    float dt = uintBitsToFloat(prims[p + 35u]);
     int x0 = vInt(p, V0, 0u), y0 = vInt(p, V0, 1u);
     precise double u = double(px * 16 + 8 - x0) * 0.0625lf;
     precise double v = double(py * 16 + 8 - y0) * 0.0625lf;
-    precise double su = double(ds) * u;
-    precise double tv = double(dt) * v;
-    precise double ss = double(vFloat(p, V0, 11u)) + su;
-    precise double tt = double(vFloat(p, V0, 12u)) + tv;
+    precise double ss = double(vFloat(p, V0, 11u)) + double(uintBitsToFloat(prims[p + 34u])) * u +
+      double(uintBitsToFloat(prims[p + 35u])) * v;
+    precise double tt = double(vFloat(p, V0, 12u)) + double(uintBitsToFloat(prims[p + 36u])) * u +
+      double(uintBitsToFloat(prims[p + 37u])) * v;
     f.s = float(ss);
     f.t = float(tt);
+    if (prims[p + 41u] != 0u)
+    {
+      precise double q = double(uintBitsToFloat(prims[p + 40u])) + double(uintBitsToFloat(prims[p + 38u])) * u +
+        double(uintBitsToFloat(prims[p + 39u])) * v;
+      if (q != 0.0lf)
+      {
+        f.s = float(divD(double(f.s), q));
+        f.t = float(divD(double(f.t), q));
+      }
+    }
   }
 }
 
@@ -897,7 +922,7 @@ void main()
     return;
   for (uint i = 0u; i < count; i++)
   {
-    uint p = bins[first + i] * 64u;
+    uint p = bins[first + i] * 128u;
     if (px < int(prims[p + 2u]) || py < int(prims[p + 3u]) || px > int(prims[p + 4u]) || py > int(prims[p + 5u]))
       continue;
     uint s = prims[p + 1u] * 128u;

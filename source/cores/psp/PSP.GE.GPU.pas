@@ -150,7 +150,7 @@ implementation
 {$I PSPGESelfTest.spv.inc}
 
 const
-  PrimWords = 64;
+  PrimWords = 128;
   StateWords = 128;
   FragWords = 16;
   PageSize = 4096;
@@ -656,8 +656,16 @@ end;
 function TGEGPUBackend.PackState(const S: TGERaster; out Tex: TGEGPUSpan; out TexInVRAM, Ok: Boolean): Integer;
 begin
   Ok := True;
+  if S.Textured and S.Tex.NeedLod then
+  begin
+    Tex := Default(TGEGPUSpan);
+    TexInVRAM := False;
+    FWhy := 'LOD-dependent texture sampling';
+    Ok := False;
+    Exit(-1);
+  end;
   var UsesClut := S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7);
-  if (FLastState >= 0) and CompareMem(@S, @FLastRaster, SizeOf(TGERaster)) and
+  if (FLastState >= 0) and (not S.Textured or FLastTexInVRAM) and CompareMem(@S, @FLastRaster, SizeOf(TGERaster)) and
     (not UsesClut or CompareMem(S.Tex.Clut, @FLastClut[0], SizeOf(FLastClut))) then
   begin
     Tex := FLastTex;
@@ -756,6 +764,8 @@ begin
   if S.Blend then Flags := Flags or (1 shl 16);
   if S.Dither then Flags := Flags or (1 shl 17);
   if S.LogicOp then Flags := Flags or (1 shl 18);
+  if S.DepthClamp then Flags := Flags or (1 shl 19);
+  W[104] := S.KeepMask;
   W[ST_FLAGS] := Flags;
   W[12] := Cardinal(S.TexFunc);
   W[13] := Cardinal(S.EnvR);
@@ -975,6 +985,18 @@ begin
   P[13] := PCardinal(@V.Fog)^;
 end;
 
+procedure PutPlane(P: PCardinal; C0, C1, C2: Integer; DX0, DY0, DX1, DY1, DX2, DY2, Area: Int64; Anchor: Integer);
+begin
+  var NX := -(C0 * DY0 + C1 * DY1 + C2 * DY2) * 16;
+  var NY := (C0 * DX0 + C1 * DX1 + C2 * DX2) * 16;
+  var C := C0;
+  if Anchor = 1 then C := C1;
+  if Anchor = 2 then C := C2;
+  PInt64(P)^ := Int64(C) shl 14;
+  PInt64(P + 2)^ := (NX shl 14) div Area;
+  PInt64(P + 4)^ := (NY shl 14) div Area;
+end;
+
 procedure TGEGPUBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 var
   Tex: TGEGPUSpan;
@@ -1048,6 +1070,28 @@ begin
   P[57] := Cardinal(PUInt64(@FArea)^);
   P[58] := Cardinal(PUInt64(@FArea)^ shr 32);
   P[59] := Bias;
+  P[60] := PCardinal(@A0.Q)^;
+  P[61] := PCardinal(@A1.Q)^;
+  P[62] := PCardinal(@A2.Q)^;
+  var AI := 0;
+  var AX := X0; var AY := Y0;
+  if (Y1 > AY) or ((Y1 = AY) and (X1 > AX)) then
+  begin
+    AI := 1; AX := X1; AY := Y1;
+  end;
+  if (Y2 > AY) or ((Y2 = AY) and (X2 > AX)) then
+  begin
+    AI := 2; AX := X2; AY := Y2;
+  end;
+  P[64] := Cardinal(AX);
+  P[65] := Cardinal(AY);
+  if S.Gouraud and not S.Flat then
+  begin
+    PutPlane(P + 66, A0.R, A1.R, A2.R, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PutPlane(P + 72, A0.G, A1.G, A2.G, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PutPlane(P + 78, A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PutPlane(P + 84, A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+  end;
   Record_(KindTriangle, S, V0, V1, V2);
 end;
 
@@ -1072,9 +1116,29 @@ begin
   PY2 := Min(PY2, Min(S.ScissorY2, S.BandY2));
   if (PX1 > PX2) or (PY1 > PY2) then
     Exit;
-  var DS: Single := 0; var DT: Single := 0;
-  if V1.X <> V0.X then DS := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
-  if V1.Y <> V0.Y then DT := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+  var Turned := (V0.X > V1.X) <> (V0.Y > V1.Y);
+  var SX: Single := 0; var SY: Single := 0; var TX: Single := 0; var TY: Single := 0;
+  var QX: Single := 0; var QY: Single := 0;
+  if V1.X <> V0.X then
+  begin
+    if Turned then
+      TX := (V1.T - V0.T) / ((V1.X - V0.X) / 16)
+    else
+    begin
+      SX := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
+      QX := (V1.Q - V0.Q) / ((V1.X - V0.X) / 16);
+    end;
+  end;
+  if V1.Y <> V0.Y then
+  begin
+    if Turned then
+    begin
+      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16);
+      QY := (V1.Q - V0.Q) / ((V1.Y - V0.Y) / 16);
+    end
+    else
+      TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+  end;
 
   var State := PackState(S, Tex, InVRAM, Ok);
   if not Ok or not Place(S, State, Tex, InVRAM, PX1, PY1, PX2, PY2) then
@@ -1092,8 +1156,14 @@ begin
   P[5] := Cardinal(PY2);
   PutVertex(@P[6], V0);
   PutVertex(@P[20], V1);
-  P[34] := PCardinal(@DS)^;
-  P[35] := PCardinal(@DT)^;
+  P[34] := PCardinal(@SX)^;
+  P[35] := PCardinal(@SY)^;
+  P[36] := PCardinal(@TX)^;
+  P[37] := PCardinal(@TY)^;
+  P[38] := PCardinal(@QX)^;
+  P[39] := PCardinal(@QY)^;
+  P[40] := PCardinal(@V0.Q)^;
+  P[41] := Ord((V0.Q <> 1) or (V1.Q <> 1));
   Record_(KindSprite, S, V0, V1, V1);
 end;
 
@@ -1160,6 +1230,12 @@ begin
     F.Z := Round(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;
+    var Q := V0.Q + (V1.Q - V0.Q) * T;
+    if (Q <> 1) and (Q <> 0) then
+    begin
+      F.S := F.S / Q;
+      F.T := F.T / Q;
+    end;
     F.Fog := V0.Fog + (V1.Fog - V0.Fog) * T;
     Frags[P - P1] := F;
     Pos[P - P1] := TPoint.Create(PX, PY);
@@ -1244,8 +1320,15 @@ begin
   Q[7] := Cardinal(V.SG);
   Q[8] := Cardinal(V.SB);
   Q[9] := Cardinal(V.Z);
-  Q[10] := PCardinal(@V.S)^;
-  Q[11] := PCardinal(@V.T)^;
+  var FS: Single := V.S;
+  var FT: Single := V.T;
+  if (V.Q <> 1) and (V.Q <> 0) then
+  begin
+    FS := V.S / V.Q;
+    FT := V.T / V.Q;
+  end;
+  Q[10] := PCardinal(@FS)^;
+  Q[11] := PCardinal(@FT)^;
   Q[12] := PCardinal(@V.Fog)^;
   var P := NewPrim;
   P[0] := KindFragments;

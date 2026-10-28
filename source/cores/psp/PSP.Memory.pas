@@ -53,6 +53,9 @@ type
     // Host pointer for Size bytes starting at Address, or nil when the range
     // leaves its region.
     function Ptr(Address: Cardinal; Size: Cardinal = 1): PByte;
+    // As Ptr, without bringing back held VRAM pages: for readers that only
+    // look after the device gave them back (the GE's CPU rasterizer).
+    function HostPtr(Address: Cardinal; Size: Cardinal = 1): PByte;
     function Valid(Address: Cardinal; Size: Cardinal = 1): Boolean;
     function PageBase(Address: Cardinal): PByte; inline;
     procedure ReadBytes(Address: Cardinal; var Buffer; Size: Cardinal);
@@ -315,6 +318,21 @@ begin
   if (Q = nil) or (NativeUInt(Q) - NativeUInt(P) <> NativeUInt((Last shr PSPPageShift) - (Physical shr PSPPageShift)) * PSPPageSize) then
     Exit(nil);
   Result := P + (Physical and PSPPageMask);
+end;
+
+function TPSPMemory.HostPtr(Address: Cardinal; Size: Cardinal): PByte;
+begin
+  var Physical := Address and $1FFFFFFF;
+  if (FHeldCount > 0) and (Physical >= PSPVRAMBase) and (Physical < PSPVRAMBase + 4 * PSPVRAMSize) then
+  begin
+    if Size = 0 then
+      Size := 1;
+    var Offset := (Physical - PSPVRAMBase) and (PSPVRAMSize - 1);
+    if Offset + Size > PSPVRAMSize then
+      Exit(nil);
+    Exit(@FVRAM[Offset]);
+  end;
+  Result := Ptr(Address, Size);
 end;
 
 function TPSPMemory.Valid(Address, Size: Cardinal): Boolean;

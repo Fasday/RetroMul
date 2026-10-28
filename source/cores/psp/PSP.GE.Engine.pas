@@ -12,7 +12,7 @@ unit PSP.GE.Engine;
 interface
 
 uses
-  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster;
+  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend;
 
 type
   TGEVec3 = record
@@ -81,7 +81,11 @@ type
     Regs: TPSPGERegs;
     // Set by BBOX: the box is (possibly) visible.
     BoxVisible: Boolean;
+    // Draws the primitives instead of PSP.GE.Raster when set (not owned).
+    Backend: TGERasterBackend;
     constructor Create(Memory: TPSPMemory);
+    // The GE stops running for now: the backend makes what it drew visible.
+    procedure ReleaseBackend; inline;
     procedure Reset;
     // Address of a 24-bit pointer parameter with the BASE upper bits and OFFSET.
     function Address(Param: Cardinal): Cardinal; inline;
@@ -106,6 +110,12 @@ begin
   inherited Create;
   FMemory := Memory;
   Reset;
+end;
+
+procedure TPSPGEEngine.ReleaseBackend;
+begin
+  if Backend <> nil then
+    Backend.Release;
 end;
 
 procedure TPSPGEEngine.Reset;
@@ -999,7 +1009,7 @@ begin
       T.Levels[L].Size := Cardinal(T.Levels[L].BufWidth * T.Levels[L].Height * TexBits[T.Format]) div 8;
       T.Levels[L].Ptr := nil;
       if (L < T.LevelCount) and (T.Levels[L].Size > 0) then
-        T.Levels[L].Ptr := FMemory.Ptr(T.Levels[L].Addr, T.Levels[L].Size);
+        T.Levels[L].Ptr := FMemory.HostPtr(T.Levels[L].Addr, T.Levels[L].Size);
     end;
     T.Level := 0;
     T.ClampU := (C[GE_TEXWRAP] and 1) <> 0;
@@ -1100,7 +1110,7 @@ begin
     if CW <> FCullCW then
       Exit;
   end;
-  GEDrawTriangle(FRaster, A, B, C);
+  if Backend <> nil then Backend.DrawTriangle(FRaster, A, B, C) else GEDrawTriangle(FRaster, A, B, C);
   Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
     ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
@@ -1219,7 +1229,7 @@ begin
       CopyColors(Q.V, B.V);
   end;
   if ((P.Code or Q.Code) and GEOutScreen) = 0 then
-    GEDrawLine(FRaster, P.V, Q.V);
+    if Backend <> nil then Backend.DrawLine(FRaster, P.V, Q.V) else GEDrawLine(FRaster, P.V, Q.V);
 end;
 
 procedure TPSPGEEngine.EmitSprite(const A, B: TGEAsmVertex);
@@ -1229,7 +1239,7 @@ begin
     Exit;
   if ((Codes and GEOutFar) <> 0) and not FDepthClamp then
     Exit;
-  GEDrawSprite(FRaster, A.V, B.V);
+  if Backend <> nil then Backend.DrawSprite(FRaster, A.V, B.V) else GEDrawSprite(FRaster, A.V, B.V);
   Inc(FPrimCost, 100 + ScissoredArea(Min(A.V.X, B.V.X), Min(A.V.Y, B.V.Y), Max(A.V.X, B.V.X), Max(A.V.Y, B.V.Y)) * 3);
 end;
 
@@ -1240,7 +1250,7 @@ begin
   case FAsmType of
     0:
       if (A.Code and (GEOutNone or GEOutPlanes or GEOutScreen)) = 0 then
-        GEDrawPoint(FRaster, A.V);
+        if Backend <> nil then Backend.DrawPoint(FRaster, A.V) else GEDrawPoint(FRaster, A.V);
     1:
       begin
         FAsm[N and 1] := A;
