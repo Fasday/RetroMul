@@ -710,6 +710,81 @@ begin
   end;
 end;
 
+function RunBranchCases(const Machines: TArray<TMachine>; Report: TStrings): Boolean;
+const
+  Start = $08800000;
+  Forms: array[0..9] of Cardinal = ($10200000, $14200000, $50200000, $54200000, $04200000, $04210000,
+    $49000000, $49010000, $49020000, $49030000);
+  Values: array[0..3] of Cardinal = (0, 1, $FFFFFFFF, $80000000);
+  Budgets: array[0..6] of Integer = (64, 1, 2, 3, 4, 5, 9);
+begin
+  Result := True;
+  var SavedDecoder: TPSPVFPUDecoder := PSPVFPUDecoder;
+  var SavedHot := PSPJitHot;
+  PSPVFPUDecoder := PSP.VFPU.DecodeVFPU;
+  PSPJitHot := 1;
+  try
+    var Code: TArray<Cardinal>;
+    SetLength(Code, CodeWords);
+    var Data: TBytes;
+    SetLength(Data, $8000);
+    var Regs: array[0..31] of Cardinal;
+    FillChar(Regs, SizeOf(Regs), 0);
+    var Pool: array[0..3] of Cardinal;
+    FillChar(Pool, SizeOf(Pool), 0);
+    var Cases := 0;
+    for var A in Forms do
+      for var B in Forms do
+        for var Value in Values do
+        begin
+          FillChar(Code[0], Length(Code) * 4, 0);
+          Code[0] := $24420001;
+          Code[1] := $24630001;
+          Code[2] := A or 9; // both branches target Start + 48, from CurPC + 4
+          Code[3] := B or 8;
+          for var I := 4 to 11 do
+            Code[I] := $24840001;
+          Code[12] := $24A50001;
+          Code[13] := $0000008C; // syscall 2: stop
+          Regs[1] := Value;
+          for var M in Machines do
+          begin
+            SetUp(M, Code, Start, Pool, Regs, Data, Start);
+            M.CPU.Ctx.VC[VFPU_CC] := Value and $3F;
+            if M.Jit <> nil then
+              M.Jit.Enabled := True;
+          end;
+          for var Budget in Budgets do
+          begin
+            for var M in Machines do
+              M.CPU.SetPC(Start);
+            var Used := Machines[0].CPU.Run(Budget);
+            for var K := 1 to High(Machines) do
+            begin
+              var Before := Machines[K].Jit.Interpreted;
+              var OtherUsed := Machines[K].CPU.Run(Budget);
+              var D := Unlike(Machines[0], Machines[K]);
+              if (D = '') and (OtherUsed <> Used) then
+                D := 'cycles';
+              if (D = '') and (Budget = 64) and (Before = Machines[K].Jit.Interpreted) then
+                D := 'the delay-slot branch did not use the interpreter fallback';
+              if D <> '' then
+              begin
+                Report.Add(Format('branch pair %.8x %.8x value %.8x budget %d mode %d: %s',
+                  [A, B, Value, Budget, K, D]));
+                Exit(False);
+              end;
+            end;
+          end;
+          Inc(Cases);
+        end;
+    Report.Add(Format('%d directed branch pairs: no difference (taken, not taken, likely, BVC, fallback and budgets)', [Cases]));
+  finally
+    PSPVFPUDecoder := SavedDecoder;
+    PSPJitHot := SavedHot;
+  end;
+end;
+
 function RunPSPJitTest(Programs: Integer; Report: TStrings): Boolean;
 const
   Budgets: array[0..15] of Cardinal = (1, 1, 2, 3, 5, 7, 10, 16, 33, 64, 100, 257, 1000, 4000, 20000, 9);
@@ -890,6 +965,8 @@ begin
         M.Error := '';
     end;
     if Result then
+      Result := RunBranchCases(Machines, Report);
+    if Result then
       Result := RunVectorCases(Machines, Report);
     Report.Add(Format('%d programs ended by a guest fault', [Faulted]));
     var Line := Format('%d programs, %d instructions on each', [Programs, Ran]);
@@ -973,19 +1050,37 @@ begin
     EncR($0B, 4, 3, 2),                     // movn $2, $4, $3
     EncR(8, 31, 0, 0),                      // jr $31
     EncI($C, 2, 2, $FFFF)];                 // andi $2, $2, 0xFFFF
-  for var Work := 0 to 1 do
+  var Vector: TArray<Cardinal> := [
+    EncI($F, 0, 8, $0890),
+    EncI(9, 0, 9, 256),
+    $D9000000,                              // L: lv.q C000, 0($8)
+    $486A0000,                              // mfv $10, S000
+    $48EA001F,                              // mtv $10, S731
+    $F9001000,                              // sv.q C000, 4096($8)
+    $C900000E,                              // lv.s S002, 12($8)
+    $486B0040,                              // mfv $11, S002
+    $E900081F,                              // sv.s S733, 2076($8)
+    EncI(9, 8, 8, 16),
+    EncI(9, 9, 9, -1),
+    EncI(5, 9, 0, -10),
+    EncR($26, 10, 11, 12),
+    EncJ(2, Start),
+    0];
+  for var Work := 0 to 2 do
     for var Kind := 0 to 2 do
     begin
       if (Kind = 1) and not JitSupported then
         Continue;
       var M := TMachine.Create(Kind);
       try
-        if Work = 0 then
-          M.Memory.WriteBytes(Start, Loop[0], Length(Loop) * 4)
-        else
-        begin
-          M.Memory.WriteBytes(Start, Calls[0], Length(Calls) * 4);
-          M.Memory.WriteBytes(Func, FuncCode[0], Length(FuncCode) * 4);
+        case Work of
+          0: M.Memory.WriteBytes(Start, Loop[0], Length(Loop) * 4);
+          1:
+            begin
+              M.Memory.WriteBytes(Start, Calls[0], Length(Calls) * 4);
+              M.Memory.WriteBytes(Func, FuncCode[0], Length(FuncCode) * 4);
+            end;
+          2: M.Memory.WriteBytes(Start, Vector[0], Length(Vector) * 4);
         end;
         M.CPU.SetPC(Start);
         var Total: Int64;
@@ -1007,7 +1102,9 @@ begin
         end;
         var WorkName := 'loop';
         if Work = 1 then
-          WorkName := 'calls';
+          WorkName := 'calls'
+        else if Work = 2 then
+          WorkName := 'vector';
         Report.Add(Format('%-6s %-12s %7.1f M instructions/s (%d in %.2f s)', [WorkName, KindNames[Kind],
           Total / S / 1E6, Total, S]));
       finally
