@@ -6,9 +6,13 @@ Vulkan implicitly. `PSPRun -gpu` attaches `TGEGPUBackend` to the GE engine;
 the CPU result. If Vulkan initialization, required features or the startup
 arithmetic self-test fail, the runner prints the reason and uses the CPU.
 
-This branch includes `pr/psp-core` and the GE reference through `aa709ab`
-(Gouraud colour planes). The CPU rasterizer and texture sampler were **not
-changed to make the GPU agree**. No other emulator's sources were consulted.
+The current branch integrates `pr/psp-core` 9938cbf and the GE worker through
+`fc49936`, including threaded CPU rasterization and permuted EDRAM. See
+**`tests/gpu/vulkan/ROUND2.md`** for the current integration and qualification.
+The initial qualification figures below record the earlier `aa709ab` reference
+(Gouraud colour planes), not the newer threaded baseline. CPU numerical
+expressions were **not changed to make the GPU agree**. No other emulator's
+sources were consulted.
 
 ## Build and run (from the repository root)
 

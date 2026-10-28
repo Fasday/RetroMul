@@ -35,6 +35,7 @@ type
     VRAM: PByte;
     FBAddr, FBStride, FBFormat: Cardinal;
     ZAddr, ZStride: Cardinal;
+    ZPermutation: Integer;
     ScissorX1, ScissorY1, ScissorX2, ScissorY2: Integer;
     // Rows this pass may touch (a band for a render thread).
     BandY1, BandY2: Integer;
@@ -108,6 +109,20 @@ begin
     Result := S.Tex.LodBias;
   end;
 end;
+
+// Raster interpolants are bounded to signed 32 bits. Use the SSE conversion
+// directly, with the same rounding mode as Round(), without its Int64 helper.
+function GERound(X: Double): Integer; {$IF Defined(CPUX64) and Defined(MSWINDOWS)}assembler;{$ELSE}inline;{$ENDIF}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+asm
+  .NOFRAME
+  CVTSD2SI EAX, XMM0
+end;
+{$ELSE}
+begin
+  Result := Round(X);
+end;
+{$ENDIF}
 
 function Clamp255(V: Integer): Integer; inline;
 begin
@@ -394,7 +409,7 @@ begin
   if S.FBFormat = 3 then
     Bpp := 4;
   var PAddr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * Bpp) and (PSPVRAMSize - 1);
-  var ZAddr := (S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var ZAddr := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
   var Old: Cardinal;
   if Bpp = 4 then
     Old := PCardinal(S.VRAM + PAddr)^
@@ -592,6 +607,9 @@ begin
     PWord(S.VRAM + PAddr)^ := Word(NewP);
 end;
 
+// Pixel pipelines specialised on target format, texture, blend and depth.
+{$I PSP.GE.PixelProcs.inc}
+
 // A clear-mode sprite without dither: the same bits into every pixel, as
 // PlotPixel's clear path writes them.
 procedure ClearRect(const S: TGERaster; X1, Y1, X2, Y2: Integer; const V: TGEVertex);
@@ -644,7 +662,7 @@ begin
       var A := S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X1)) * 2;
       for var X := X1 to X2 do
       begin
-        PWord(S.VRAM + (A and (PSPVRAMSize - 1)))^ := Word(Z);
+        PWord(S.VRAM + PSPDepthOffset(A, S.ZPermutation))^ := Word(Z);
         Inc(A, 2);
       end;
     end;
@@ -712,6 +730,35 @@ begin
   Result := V shr GEPlaneBits;
   if Result > 255 then
     Result := 255;
+end;
+
+// Intersect a row's x interval with E + Step * (x - Origin) >= 0.
+procedure EdgeSpan(E, Step: Int64; Origin: Integer; var Lo, Hi: Integer); inline;
+begin
+  if Step > 0 then
+  begin
+    var N := -E;
+    var Q := N div Step;
+    if (N > 0) and (N mod Step <> 0) then Inc(Q);
+    if Origin + Q > Lo then Lo := Origin + Q;
+  end
+  else if Step < 0 then
+  begin
+    var D := -Step;
+    var Q := E div D;
+    if (E < 0) and (E mod D <> 0) then Dec(Q);
+    if Origin + Q < Hi then Hi := Origin + Q;
+  end
+  else if E < 0 then
+    Hi := Lo - 1;
+end;
+
+function PlaneNumerator(C0, N: Int64): Integer; inline;
+begin
+  var V := C0 + N div 16;
+  if V < 0 then Exit(0);
+  Result := V shr GEPlaneBits;
+  if Result > 255 then Result := 255;
 end;
 
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
@@ -799,37 +846,77 @@ begin
     DQX := A0.Q * A0.W * BX0 + A1.Q * A1.W * BX1 + A2.Q * A2.W * BX2;
     DQY := A0.Q * A0.W * BY0 + A1.Q * A1.W * BY1 + A2.Q * A2.W * BY2;
   end;
+  var Step0 := -16 * DY0; var Step1 := -16 * DY1; var Step2 := -16 * DY2;
+  var OriginX := Int64(PX1) * 16 + 8;
+  var OriginY := Int64(PY1) * 16 + 8;
+  var Row0 := (OriginY - Y1) * DX0 - (OriginX - X1) * DY0;
+  var Row1 := (OriginY - Y2) * DX1 - (OriginX - X2) * DY1;
+  var Row2 := (OriginY - Y0) * DX2 - (OriginX - X0) * DY2;
+  var Gouraud := S.Gouraud and not S.Flat and
+    ((A0.R <> A1.R) or (A0.R <> A2.R) or (A0.G <> A1.G) or (A0.G <> A2.G) or
+     (A0.B <> A1.B) or (A0.B <> A2.B) or (A0.A <> A1.A) or (A0.A <> A2.A) or
+     (A0.SR <> A1.SR) or (A0.SR <> A2.SR) or (A0.SG <> A1.SG) or (A0.SG <> A2.SG) or
+     (A0.SB <> A1.SB) or (A0.SB <> A2.SB));
+  var Secondary := (A0.SR or A0.SG or A0.SB or A1.SR or A1.SG or A1.SB or A2.SR or A2.SG or A2.SB) <> 0;
+  var ConstantZ := (A0.Z = A1.Z) and (A0.Z = A2.Z);
+  var NeedWeights := S.Textured or S.FogEnabled or Secondary or not ConstantZ;
+  var Plot := SelectPixel(S, Secondary);
   for var PY := PY1 to PY2 do
   begin
     var SY := Int64(PY) * 16 + 8;
-    for var PX := PX1 to PX2 do
+    var Lo := PX1; var Hi := PX2;
+    EdgeSpan(Row0 + Bias0, Step0, PX1, Lo, Hi);
+    EdgeSpan(Row1 + Bias1, Step1, PX1, Lo, Hi);
+    EdgeSpan(Row2 + Bias2, Step2, PX1, Lo, Hi);
+    var E0 := Row0 + Step0 * (Lo - PX1);
+    var E1 := Row1 + Step1 * (Lo - PX1);
+    var E2 := Row2 + Step2 * (Lo - PX1);
+    var NR, NG, NB, NA: Int64;
+    NR := 0; NG := 0; NB := 0; NA := 0;
+    if Gouraud then
     begin
-      var SX := Int64(PX) * 16 + 8;
-      var E0 := (SX - X1) * DY0 - (SY - Y1) * DX0;
-      var E1 := (SX - X2) * DY1 - (SY - Y2) * DX1;
-      var E2 := (SX - X0) * DY2 - (SY - Y0) * DX2;
-      E0 := -E0; E1 := -E1; E2 := -E2;
-      if (E0 + Bias0 < 0) or (E1 + Bias1 < 0) or (E2 + Bias2 < 0) then
-        Continue;
-      var W0 := E0 * FArea;
-      var W1 := E1 * FArea;
-      var W2 := E2 * FArea;
-      if S.Flat or not S.Gouraud then
+      var DX := Int64(Lo) * 16 + 8 - AX;
+      var DY := SY - AY;
+      NR := PR.GX * DX + PR.GY * DY;
+      NG := PG.GX * DX + PG.GY * DY;
+      NB := PB.GX * DX + PB.GY * DY;
+      NA := PA.GX * DX + PA.GY * DY;
+    end;
+    for var PX := Lo to Hi do
+    begin
+      var W0, W1, W2: Double;
+      W0 := 0; W1 := 0; W2 := 0;
+      if NeedWeights then
+      begin
+        W0 := E0 * FArea;
+        W1 := E1 * FArea;
+        W2 := E2 * FArea;
+      end;
+      if not Gouraud then
       begin
         F.R := V2.R; F.G := V2.G; F.B := V2.B; F.A := V2.A;
         F.SR := V2.SR; F.SG := V2.SG; F.SB := V2.SB;
       end
       else
       begin
-        F.R := PlaneAt(PR, SX - AX, SY - AY);
-        F.G := PlaneAt(PG, SX - AX, SY - AY);
-        F.B := PlaneAt(PB, SX - AX, SY - AY);
-        F.A := PlaneAt(PA, SX - AX, SY - AY);
-        F.SR := Round(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
-        F.SG := Round(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
-        F.SB := Round(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
+        F.R := PlaneNumerator(PR.C0, NR);
+        Inc(NR, PR.GX * 16);
+        F.G := PlaneNumerator(PG.C0, NG);
+        Inc(NG, PG.GX * 16);
+        F.B := PlaneNumerator(PB.C0, NB);
+        Inc(NB, PB.GX * 16);
+        F.A := PlaneNumerator(PA.C0, NA);
+        Inc(NA, PA.GX * 16);
+        F.SR := 0; F.SG := 0; F.SB := 0;
+        if Secondary then
+        begin
+          F.SR := GERound(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
+          F.SG := GERound(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
+          F.SB := GERound(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
+        end;
       end;
-      F.Z := Round(A0.Z * W0 + A1.Z * W1 + A2.Z * W2);
+      if ConstantZ then F.Z := A0.Z
+      else F.Z := GERound(A0.Z * W0 + A1.Z * W1 + A2.Z * W2);
       if S.Textured then
       begin
         // S, T and Q go through the perspective (1/w) and then S and T are
@@ -856,9 +943,12 @@ begin
           F.T := S.Tex.Levels[0].Height - 0.5;
         end;
       end;
-      F.Fog := A0.Fog * W0 + A1.Fog * W1 + A2.Fog * W2;
-      PlotPixel(S, PX, PY, F);
+      if S.FogEnabled then
+        F.Fog := A0.Fog * W0 + A1.Fog * W1 + A2.Fog * W2;
+      Plot(S, PX, PY, F);
+      Inc(E0, Step0); Inc(E1, Step1); Inc(E2, Step2);
     end;
+    Inc(Row0, 16 * DX0); Inc(Row1, 16 * DX1); Inc(Row2, 16 * DX2);
   end;
 end;
 
@@ -886,6 +976,7 @@ begin
     ClearRect(S, PX1, PY1, PX2, PY2, V1);
     Exit;
   end;
+  var Plot := SelectPixel(S, (V1.SR or V1.SG or V1.SB) <> 0);
   SetupFragment(F, V1);
   // S runs along x and T along y, except when the corners are flipped in
   // one axis only: then the texture is turned, S along y and T along x.
@@ -943,7 +1034,7 @@ begin
           end;
         end;
       end;
-      PlotPixel(S, PX, PY, F);
+      Plot(S, PX, PY, F);
     end;
 end;
 
@@ -978,23 +1069,23 @@ begin
     begin
       T := (C - X0) / D;
       PX := P;
-      PY := (Y0 + Round(DY * T) + $100000) div 16 - $10000;
+      PY := (Y0 + GERound(DY * T) + $100000) div 16 - $10000;
     end
     else
     begin
       T := (C - Y0) / D;
       PY := P;
-      PX := (X0 + Round(DX * T) + $100000) div 16 - $10000;
+      PX := (X0 + GERound(DX * T) + $100000) div 16 - $10000;
     end;
     SetupFragment(F, V1);
     if not S.Flat and S.Gouraud then
     begin
-      F.R := Round(V0.R + (V1.R - V0.R) * T);
-      F.G := Round(V0.G + (V1.G - V0.G) * T);
-      F.B := Round(V0.B + (V1.B - V0.B) * T);
-      F.A := Round(V0.A + (V1.A - V0.A) * T);
+      F.R := GERound(V0.R + (V1.R - V0.R) * T);
+      F.G := GERound(V0.G + (V1.G - V0.G) * T);
+      F.B := GERound(V0.B + (V1.B - V0.B) * T);
+      F.A := GERound(V0.A + (V1.A - V0.A) * T);
     end;
-    F.Z := Round(V0.Z + (V1.Z - V0.Z) * T);
+    F.Z := GERound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;
     var Q := V0.Q + (V1.Q - V0.Q) * T;

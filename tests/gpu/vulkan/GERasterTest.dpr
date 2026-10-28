@@ -7,6 +7,10 @@ uses
   System.SysUtils, System.Math, System.Diagnostics, PSP.Types, PSP.Memory,
   PSP.GE.Raster, PSP.GE.GPU;
 
+const
+  Permutations: array[0..4] of Integer = (0, 9, 10, 11, 12);
+  LargeTexCoords: array[0..5] of Single = (8388608, 16777216, -16777216, 2147483648, -2147483648, 0.5);
+
 var
   Seed: Cardinal = $FEED1357;
   CPU, DeviceMemory: TPSPMemory;
@@ -64,6 +68,7 @@ begin
   Result := Default(TGERaster);
   Result.VRAM := @CPU.VRAM[0];
   Result.FBAddr := $20000; Result.ZAddr := $100000;
+  Result.ZPermutation := Permutations[Draws mod Length(Permutations)];
   Result.FBStride := 512; Result.ZStride := 512;
   Result.FBFormat := Rand mod 4;
   Result.ScissorX1 := 0; Result.ScissorY1 := 0;
@@ -91,7 +96,7 @@ begin
     Result.Tex.Levels[L].Width := 16; Result.Tex.Levels[L].Height := 16;
     Result.Tex.Levels[L].BufWidth := 32;
   end;
-  if Flag then Result.Tex.Levels[0].Addr := PSPVRAMBase + $60000;
+  if Flag then Result.Tex.Levels[0].Addr := PSPVRAMBase + Cardinal(Draws mod 4) * PSPVRAMSize + $60000;
   Result.TexFunc := Rand mod 8;
   Result.TexAlpha := Flag; Result.ColorDouble := Flag;
   Result.EnvR := Rand and 255; Result.EnvG := Rand and 255; Result.EnvB := Rand and 255;
@@ -182,6 +187,16 @@ begin
         Draw(1, S, A, B, B);
       end;
       Compare;
+      // Bilinear floor narrows its argument to Single in the current reference.
+      S.Tex.Format := 3;
+      S.Tex.Linear := True;
+      for var Coord in LargeTexCoords do
+      begin
+        A.S := Coord; B.S := Coord;
+        A.T := Coord; B.T := Coord;
+        Draw(1, S, A, B, B);
+        Compare;
+      end;
       // Enough independent work to submit while the CPU continues and to reuse slots.
       S.Textured := False;
       for var Pass := 1 to 4 do

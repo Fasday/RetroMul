@@ -12,7 +12,8 @@ unit PSP.GE.Engine;
 interface
 
 uses
-  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend;
+  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster,
+  PSP.GE.Backend, PSP.GE.Workers;
 
 type
   TGEVec3 = record
@@ -40,6 +41,7 @@ type
   TPSPGEEngine = class
   private
     FMemory: TPSPMemory;
+    FWorkers: TGEWorkers;
     FClut: array[0..1023] of Byte;
     FRaster: TGERaster;
     FVSize: Integer;
@@ -84,6 +86,7 @@ type
     // Draws the primitives instead of PSP.GE.Raster when set (not owned).
     Backend: TGERasterBackend;
     constructor Create(Memory: TPSPMemory);
+    destructor Destroy; override;
     // The GE stops running for now: the backend makes what it drew visible.
     procedure ReleaseBackend; inline;
     procedure Reset;
@@ -109,7 +112,14 @@ constructor TPSPGEEngine.Create(Memory: TPSPMemory);
 begin
   inherited Create;
   FMemory := Memory;
+  FWorkers := TGEWorkers.Create;
   Reset;
+end;
+
+destructor TPSPGEEngine.Destroy;
+begin
+  FWorkers.Free;
+  inherited;
 end;
 
 procedure TPSPGEEngine.ReleaseBackend;
@@ -1017,6 +1027,7 @@ begin
   S.FBFormat := C[GE_FRAMEBUFPIXFORMAT] and 3;
   S.ZAddr := C[GE_ZBUFPTR] and $1FFFF0;
   S.ZStride := C[GE_ZBUFWIDTH] and $7FC;
+  S.ZPermutation := FMemory.VRAMShift;
   S.ScissorX1 := C[GE_SCISSOR1] and $3FF;
   S.ScissorY1 := (C[GE_SCISSOR1] shr 10) and $3FF;
   S.ScissorX2 := C[GE_SCISSOR2] and $3FF;
@@ -1148,7 +1159,7 @@ begin
     if CW <> FCullCW then
       Exit;
   end;
-  if Backend <> nil then Backend.DrawTriangle(FRaster, A, B, C) else GEDrawTriangle(FRaster, A, B, C);
+  if Backend <> nil then Backend.DrawTriangle(FRaster, A, B, C) else FWorkers.Triangle(FRaster, A, B, C);
   Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
     ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
@@ -1277,7 +1288,7 @@ begin
     Exit;
   if ((Codes and GEOutFar) <> 0) and not FDepthClamp then
     Exit;
-  if Backend <> nil then Backend.DrawSprite(FRaster, A.V, B.V) else GEDrawSprite(FRaster, A.V, B.V);
+  if Backend <> nil then Backend.DrawSprite(FRaster, A.V, B.V) else FWorkers.Sprite(FRaster, A.V, B.V);
   Inc(FPrimCost, 100 + ScissoredArea(Min(A.V.X, B.V.X), Min(A.V.Y, B.V.Y), Max(A.V.X, B.V.X), Max(A.V.Y, B.V.Y)) * 3);
 end;
 

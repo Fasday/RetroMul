@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Out -eq '') { $Out = Join-Path $PSScriptRoot 'bin' }
 $root = Resolve-Path "$PSScriptRoot\..\..\.."
-$dirs = @("$root\source\gpu\vulkan", "$root\source\gpu\shaders", "$root\source\cores\psp", "$PSScriptRoot\shaders", $PSScriptRoot)
+$dirs = @("$root\source\gpu\vulkan", "$root\source\gpu\shaders", "$root\source\cores\psp", "$root\source\hardware\jit", "$PSScriptRoot\shaders", $PSScriptRoot)
 $paths = $dirs -join ';'
 $name = [IO.Path]::GetFileNameWithoutExtension($Project)
 $exe = "$name`_$Platform"

@@ -60,6 +60,14 @@ int64_t roundD(double x)
   return int64_t(roundEven(x));
 }
 
+int roundRasterD(double x)
+{
+  precise double r = roundEven(x);
+  if (!(r >= -2147483648.0lf && r < 2147483648.0lf))
+    return int(0x80000000u);
+  return int(r);
+}
+
 int floorD(double x)
 {
   int r = int(truncD(x));
@@ -86,27 +94,63 @@ int shr(int v, uint n)
 // ---- Guest memory as the texture unit reads it ----------------------------
 
 uint g_texSource, g_texBase, g_texData, g_clutData;
+int g_vramShift;
 
-uint texByte(uint address)
+// PSP.Memory.PSPDepthOffset: logical depth mirror to physical EDRAM bytes.
+uint depthOffset(uint i, int shift)
 {
-  if (g_texSource == 0u)
-    return uint(vram8[address & VramMask]);
-  return uint(data8[g_texData + (address - g_texBase)]);
+  if (shift == 0)
+  {
+    uint bank = i & 0x600u;
+    if (bank == 0u || bank == 0x600u)
+      i ^= 0x600u;
+  }
+  else
+  {
+    uint mask = (1u << uint(shift)) - 0x20u;
+    uint bits = ((i & (mask >> 1) & ~0x3Fu) << 1) | (((~i) & 0x20u) << 1) |
+      ((i >> uint(shift - 6)) & 0x20u);
+    i = ((i ^ (1u << uint(shift + 3))) & ~mask) | bits;
+  }
+  return i & VramMask;
+}
+
+uint texAddress(uint address)
+{
+  if (g_texSource != 0u)
+    return g_texData + (address - g_texBase);
+  uint i = address & VramMask;
+  if ((address & 0x1FA00000u) == 0x04200000u)
+  {
+    if ((address & 0x400000u) != 0u)
+      i = depthOffset(i, g_vramShift);
+    else
+      i ^= g_vramShift == 0 ? 0x600u : ((1u << uint(g_vramShift + 3)) | 0x40u);
+  }
+  return i;
 }
 
 uint texRead8(uint address)
 {
-  return texByte(address);
+  uint p = texAddress(address);
+  return g_texSource == 0u ? uint(vram8[p]) : uint(data8[p]);
 }
 
+// The CPU maps the starting address, then reads a contiguous halfword/word.
 uint texRead16(uint address)
 {
-  return texByte(address) | (texByte(address + 1u) << 8);
+  uint p = texAddress(address);
+  if (g_texSource == 0u)
+    return uint(vram8[p]) | (uint(vram8[p + 1u]) << 8);
+  return uint(data8[p]) | (uint(data8[p + 1u]) << 8);
 }
 
 uint texRead32(uint address)
 {
-  return texByte(address) | (texByte(address + 1u) << 8) | (texByte(address + 2u) << 16) | (texByte(address + 3u) << 24);
+  uint p = texAddress(address);
+  if (g_texSource == 0u)
+    return uint(vram8[p]) | (uint(vram8[p + 1u]) << 8) | (uint(vram8[p + 2u]) << 16) | (uint(vram8[p + 3u]) << 24);
+  return uint(data8[p]) | (uint(data8[p + 1u]) << 8) | (uint(data8[p + 2u]) << 16) | (uint(data8[p + 3u]) << 24);
 }
 
 uint clutByte(uint offset)
@@ -292,8 +336,8 @@ uint sampleTexture(uint s, float fs, float ft)
   {
     precise double ds = double(fs) - 0.5lf;
     precise double dt = double(ft) - 0.5lf;
-    int x0 = floorD(ds);
-    int y0 = floorD(dt);
+    int x0 = floorF(float(ds));
+    int y0 = floorF(float(dt));
     precise double fx = (ds - double(x0)) * 16.0lf;
     precise double fy = (dt - double(y0)) * 16.0lf;
     fracX = truncD(fx);
@@ -568,7 +612,8 @@ void plotPixel(uint s, int x, int y, Fragment f)
   bool wide = format == 3u;
   uint bpp = wide ? 4u : 2u;
   uint pAddr = (stUint(s, ST_FBADDR) + (uint(y) * stUint(s, ST_FBSTRIDE) + uint(x)) * bpp) & VramMask;
-  uint zAddr = (stUint(s, ST_ZADDR) + (uint(y) * stUint(s, ST_ZSTRIDE) + uint(x)) * 2u) & VramMask;
+  uint zAddr = depthOffset(stUint(s, ST_ZADDR) + (uint(y) * stUint(s, ST_ZSTRIDE) + uint(x)) * 2u,
+    stInt(s, ST_ZPERMUTATION));
   uint old = readPixel(pAddr, wide);
   int z = f.z;
   if (z < 0) z = 0;
@@ -822,12 +867,12 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
     precise double sr = double(vInt(p, V0, 8u)) * w0 + double(vInt(p, V1, 8u)) * w1 + double(vInt(p, V2, 8u)) * w2;
     precise double sg = double(vInt(p, V0, 9u)) * w0 + double(vInt(p, V1, 9u)) * w1 + double(vInt(p, V2, 9u)) * w2;
     precise double sb = double(vInt(p, V0, 10u)) * w0 + double(vInt(p, V1, 10u)) * w1 + double(vInt(p, V2, 10u)) * w2;
-    f.sr = int(roundD(sr));
-    f.sg = int(roundD(sg));
-    f.sb = int(roundD(sb));
+    f.sr = roundRasterD(sr);
+    f.sg = roundRasterD(sg);
+    f.sb = roundRasterD(sb);
   }
   precise double zz = double(vInt(p, V0, 2u)) * w0 + double(vInt(p, V1, 2u)) * w1 + double(vInt(p, V2, 2u)) * w2;
-  f.z = int(roundD(zz));
+  f.z = roundRasterD(zz);
   f.s = 0.0;
   f.t = 0.0;
   if (stFlag(s, SF_TEXTURED))
@@ -930,6 +975,7 @@ void main()
     g_texBase = stUint(s, ST_TEXBASE);
     g_texData = stUint(s, ST_TEXDATA);
     g_clutData = stUint(s, ST_CLUTDATA);
+    g_vramShift = stInt(s, ST_VRAMSHIFT);
     uint kind = prims[p];
     Fragment f;
     bool covered = true;
