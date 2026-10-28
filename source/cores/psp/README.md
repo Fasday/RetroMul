@@ -18,6 +18,12 @@ compute tiles and synchronizes held VRAM pages before CPU access. Unsupported
 primitives use the software path. CPU/GPU equality is verified separately from
 agreement with hardware-recorded pspautotests.
 
+On Windows, large CPU-rendered primitives use a fixed row-band pool (six total
+drawing threads by default, `PSP_GE_THREADS=1` for serial). Every dispatch joins
+before returning; feedback/aliasing cases remain serial. Other hosts use the
+serial renderer. See the combined-build results in
+[`INTEGRATION.md`](../../../tests/cores/psp/run/INTEGRATION.md).
+
 Frontend `psp.ini` settings:
 
 ```ini

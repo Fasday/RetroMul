@@ -449,6 +449,12 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.Math.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Net.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Videocodec.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Backend.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.GPU.pas"/>
+        <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Bindings.pas"/>
+        <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Loader.pas"/>
+        <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Compute.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Workers.pas"/>
         <DCCReference Include="..\..\source\media\Core.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.CABAC.pas"/>

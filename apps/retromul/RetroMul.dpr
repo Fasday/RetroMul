@@ -597,6 +597,7 @@ uses
   Core.PSP.Playback in '..\..\source\adapters\Core.PSP.Playback.pas',
   Core.PSP.Renderer in '..\..\source\adapters\Core.PSP.Renderer.pas',
   PSP.GE.Backend in '..\..\source\cores\psp\PSP.GE.Backend.pas',
+  PSP.GE.Workers in '..\..\source\cores\psp\PSP.GE.Workers.pas',
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
   PSP.GE.GPU in '..\..\source\cores\psp\PSP.GE.GPU.pas',
   RM.Vulkan.Bindings in '..\..\source\gpu\vulkan\RM.Vulkan.Bindings.pas',
@@ -634,4 +635,3 @@ begin
     Application.CreateForm(TFormMain, FormMain);
   Application.Run;
 end.
-

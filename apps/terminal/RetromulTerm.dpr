@@ -94,6 +94,14 @@ uses
   PSP.VFPU.Math in '..\..\source\cores\psp\PSP.VFPU.Math.pas',
   PSP.Net in '..\..\source\cores\psp\PSP.Net.pas',
   PSP.Videocodec in '..\..\source\cores\psp\PSP.Videocodec.pas',
+  PSP.GE.Backend in '..\..\source\cores\psp\PSP.GE.Backend.pas',
+  PSP.GE.Workers in '..\..\source\cores\psp\PSP.GE.Workers.pas',
+  {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
+  PSP.GE.GPU in '..\..\source\cores\psp\PSP.GE.GPU.pas',
+  RM.Vulkan.Bindings in '..\..\source\gpu\vulkan\RM.Vulkan.Bindings.pas',
+  RM.Vulkan.Loader in '..\..\source\gpu\vulkan\RM.Vulkan.Loader.pas',
+  RM.Vulkan.Compute in '..\..\source\gpu\vulkan\RM.Vulkan.Compute.pas',
+  {$ENDIF}
   Core.PSP.Archive in '..\..\source\adapters\Core.PSP.Archive.pas',
   Core.Adapter.PSP in '..\..\source\adapters\Core.Adapter.PSP.pas',
   System.SysUtils,
@@ -247,4 +255,3 @@ begin
     TRetromulTerminal.Finalize;
   end;
 end.
-
