@@ -661,6 +661,59 @@ begin
   F.Lod := 0;
 end;
 
+type
+  // A colour channel as a plane from the anchor vertex: its value and its
+  // steps per pixel in x and y, fixed point with GEPlaneBits fraction bits.
+  TGEPlane = record
+    C0, GX, GY: Int64;
+  end;
+
+const
+  GEPlaneBits = 14;
+
+// The colour planes start from the lowest vertex on screen (the rightmost
+// of a lowest pair): A0, A1 or A2.
+function PlaneAnchor(X0, Y0, X1, Y1, X2, Y2: Int64): Integer;
+begin
+  Result := 0;
+  var BX := X0;
+  var BY := Y0;
+  if (Y1 > BY) or ((Y1 = BY) and (X1 > BX)) then
+  begin
+    Result := 1;
+    BX := X1;
+    BY := Y1;
+  end;
+  if (Y2 > BY) or ((Y2 = BY) and (X2 > BX)) then
+    Result := 2;
+end;
+
+function MakePlane(C0, C1, C2: Integer; DX0, DY0, DX1, DY1, DX2, DY2, Area: Int64; Anchor: Integer): TGEPlane;
+begin
+  // dE_i/dx = -DY_i and dE_i/dy = DX_i per 1/16 pixel; per pixel times 16.
+  var NX := -(C0 * DY0 + C1 * DY1 + C2 * DY2) * 16;
+  var NY := (C0 * DX0 + C1 * DX1 + C2 * DX2) * 16;
+  case Anchor of
+    1: Result.C0 := Int64(C1) shl GEPlaneBits;
+    2: Result.C0 := Int64(C2) shl GEPlaneBits;
+  else
+    Result.C0 := Int64(C0) shl GEPlaneBits;
+  end;
+  Result.GX := (NX shl GEPlaneBits) div Area;
+  Result.GY := (NY shl GEPlaneBits) div Area;
+end;
+
+// The channel at (DX, DY) 1/16 pixels from the anchor.
+function PlaneAt(const P: TGEPlane; DX, DY: Int64): Integer; inline;
+begin
+  var V := P.C0 + (P.GX * DX + P.GY * DY) div 16;
+  if V < 0 then
+    Exit(0);
+  Result := V shr GEPlaneBits;
+  if Result > 255 then
+    Result := 255;
+end;
+
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 var
   F: TGEFragment;
@@ -708,6 +761,26 @@ begin
   if not ((DY1 < 0) or ((DY1 = 0) and (DX1 > 0))) then Bias1 := -1;
   if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then Bias2 := -1;
   var FArea := 1.0 / Area;
+  var PR, PG, PB, PA: TGEPlane;
+  var AI := PlaneAnchor(X0, Y0, X1, Y1, X2, Y2);
+  var AX := X0; var AY := Y0;
+  if AI = 1 then
+  begin
+    AX := X1;
+    AY := Y1;
+  end
+  else if AI = 2 then
+  begin
+    AX := X2;
+    AY := Y2;
+  end;
+  if S.Gouraud and not S.Flat then
+  begin
+    PR := MakePlane(A0.R, A1.R, A2.R, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PG := MakePlane(A0.G, A1.G, A2.G, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PB := MakePlane(A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PA := MakePlane(A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+  end;
   // For the level of detail: per pixel, how S and T (perspective correct)
   // change along x and y, from the steps of the weights.
   var NeedLod := S.Textured and S.Tex.NeedLod;
@@ -748,10 +821,10 @@ begin
       end
       else
       begin
-        F.R := (A0.R * E0 + A1.R * E1 + A2.R * E2) div Area;
-        F.G := (A0.G * E0 + A1.G * E1 + A2.G * E2) div Area;
-        F.B := (A0.B * E0 + A1.B * E1 + A2.B * E2) div Area;
-        F.A := (A0.A * E0 + A1.A * E1 + A2.A * E2) div Area;
+        F.R := PlaneAt(PR, SX - AX, SY - AY);
+        F.G := PlaneAt(PG, SX - AX, SY - AY);
+        F.B := PlaneAt(PB, SX - AX, SY - AY);
+        F.A := PlaneAt(PA, SX - AX, SY - AY);
         F.SR := Round(A0.SR * W0 + A1.SR * W1 + A2.SR * W2);
         F.SG := Round(A0.SG * W0 + A1.SG * W1 + A2.SG * W2);
         F.SB := Round(A0.SB * W0 + A1.SB * W1 + A2.SB * W2);
