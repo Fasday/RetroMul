@@ -220,7 +220,7 @@ begin
     Result := dkEmulator
   else if Device.StartsWith('tty') then
     Result := dkTTY
-  else if Device.StartsWith('msstor') then
+  else if Device.StartsWith('msstor') or Device.StartsWith('mscmhc') then
     Result := dkMsStor
   else
     Result := dkNone;
@@ -1136,6 +1136,11 @@ begin
       end;
     dkMsStor:
       case Cmd of
+        $02025806:
+          if (OutPtr <> 0) and (OutLen >= 4) then
+            FMemory.Write32(OutPtr, 1)
+          else
+            FHLE.Result($80220183);
         $02125802:
           if (OutPtr <> 0) and (OutLen >= 4) then
             FMemory.Write32(OutPtr, $40)
