@@ -503,7 +503,8 @@ begin
   begin
     var Row: PByte := nil;
     if FCurrentAddr <> 0 then
-      Row := FMemory.Ptr(FCurrentAddr + Cardinal(Y) * FWidth * Bpp, PSPFrameWidth * Bpp);
+      // Read only: drawn pages are brought back, watched ones need not be.
+      Row := FMemory.ReadPtr(FCurrentAddr + Cardinal(Y) * FWidth * Bpp, PSPFrameWidth * Bpp);
     var Dest := PCardinal(@Frame.Pixels[Y * PSPFrameWidth]);
     if Row = nil then
     begin
