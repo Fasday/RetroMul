@@ -1,4 +1,4 @@
-﻿unit Video.AVC.H264;
+unit Video.AVC.H264;
 
 // Software H.264 CAVLC implementation, adapted from FFmpeg n7.1 algorithms.
 // LGPL-2.1-or-later; Copyright (c) 2003 Michael Niedermayer.
@@ -135,6 +135,27 @@ uses System.Math, System.Classes, System.Threading, Video.AVC.H264.Tables
   , System.Diagnostics
 {$ENDIF}
   ;
+
+type
+  THalfRaw = array[0..MaxInt div 4] of SmallInt;
+  PHalfRaw = ^THalfRaw;
+
+const
+  // Offsets that keep the six-tap sums of 8-bit samples (and of the
+  // horizontal sums) non-negative, so a logical shift is the floor.
+  HalfBias5 = 16 + 80 * 32;
+  HalfBias10 = 512 + 256 * 1024;
+
+var
+  HalfClip5: array[0..511] of Byte;
+  HalfClip10: array[0..1023] of Byte;
+
+procedure BuildHalfClips;
+var I: Integer;
+begin
+  for I := 0 to High(HalfClip5) do HalfClip5[I] := ClipByte(I - 80);
+  for I := 0 to High(HalfClip10) do HalfClip10[I] := ClipByte(I - 256);
+end;
 
 const
   BlockX: array[0..15] of Integer = (0,1,0,1,2,3,2,3,0,1,0,1,2,3,2,3);
@@ -766,50 +787,59 @@ begin
   for I:=0 to 2 do SetLength(Picture.Half[I],Stride*Rows);
   Jobs:=1;
   if (W*H>=262144) and (TThread.ProcessorCount>2) then Jobs:=Min(4,TThread.ProcessorCount-1);
+  // Pointers into the planes; the six-tap sums are clipped through tables
+  // (HalfClip5 = ClipByte(ASR(V+16,5)), HalfClip10 = ClipByte(ASR(V+512,10))).
   Horizontal:=procedure(First,Last:Integer)
-  var X,Y,SX,Row,Index,V:Integer;
+  var X,Y,V,LW,LH,LS:Integer; S,O:PByte; R:PHalfRaw;
   function Clamp(Value,Maximum:Integer):Integer; inline;
   begin if Value<0 then Result:=0 else if Value>Maximum then Result:=Maximum else Result:=Value end;
+  function Edge(S:PByte; SX,LW:Integer):Integer; inline;
   begin
+    Result:=S[Clamp(SX-2,LW-1)]-5*S[Clamp(SX-1,LW-1)]+20*S[Clamp(SX,LW-1)]+20*S[Clamp(SX+1,LW-1)]-
+      5*S[Clamp(SX+2,LW-1)]+S[Clamp(SX+3,LW-1)];
+  end;
+  begin
+    LW:=W; LH:=H; LS:=Stride;
     for Y:=First to Last do
     begin
-      Row:=Clamp(Y-3,H-1)*W; Index:=Y*Stride;
-      for X:=0 to Stride-1 do
+      S:=@Picture.Pixels[0][Clamp(Y-3,LH-1)*LW];
+      R:=@Raw[Y*LS]; O:=@Picture.Half[0][Y*LS];
+      // Columns 5..W-1 have all six taps inside the row.
+      for X:=0 to LS-1 do
       begin
-        SX:=X-3;
-        if (SX>=2) and (SX<W-3) then
-          V:=Picture.Pixels[0][Row+SX-2]-5*Picture.Pixels[0][Row+SX-1]+
-            20*Picture.Pixels[0][Row+SX]+20*Picture.Pixels[0][Row+SX+1]-
-            5*Picture.Pixels[0][Row+SX+2]+Picture.Pixels[0][Row+SX+3]
+        if (X>=5) and (X<LW) then
+          V:=S[X-5]-5*S[X-4]+20*S[X-3]+20*S[X-2]-5*S[X-1]+S[X]
         else
-          V:=Picture.Pixels[0][Row+Clamp(SX-2,W-1)]-5*Picture.Pixels[0][Row+Clamp(SX-1,W-1)]+
-            20*Picture.Pixels[0][Row+Clamp(SX,W-1)]+20*Picture.Pixels[0][Row+Clamp(SX+1,W-1)]-
-            5*Picture.Pixels[0][Row+Clamp(SX+2,W-1)]+Picture.Pixels[0][Row+Clamp(SX+3,W-1)];
-        Raw[Index+X]:=V; // Six-tap sum fits signed 16 bits for 8-bit input.
-        Picture.Half[0][Index+X]:=ClipByte(ASR(V+16,5));
+          V:=Edge(S,X-3,LW);
+        R[X]:=V; // Six-tap sum fits signed 16 bits for 8-bit input.
+        O[X]:=HalfClip5[(V+HalfBias5) shr 5];
       end;
     end;
   end;
   Vertical:=procedure(First,Last:Integer)
-  var X,Y,SY,CX,Index,V,R0,R1,R2,R3,R4,R5,T0,T1,T2,T3,T4,T5:Integer;
+  var X,Y,SY,V,LW,LH,LS,LR:Integer; P0,P1,P2,P3,P4,P5,O1,O2:PByte; T0,T1,T2,T3,T4,T5:PHalfRaw;
   function Clamp(Value,Maximum:Integer):Integer; inline;
   begin if Value<0 then Result:=0 else if Value>Maximum then Result:=Maximum else Result:=Value end;
   begin
+    LW:=W; LH:=H; LS:=Stride; LR:=Rows;
     for Y:=First to Last do
     begin
-      SY:=Y-3; Index:=Y*Stride;
-      R0:=Clamp(SY-2,H-1)*W; R1:=Clamp(SY-1,H-1)*W; R2:=Clamp(SY,H-1)*W;
-      R3:=Clamp(SY+1,H-1)*W; R4:=Clamp(SY+2,H-1)*W; R5:=Clamp(SY+3,H-1)*W;
-      T0:=Clamp(Y-2,Rows-1)*Stride; T1:=Clamp(Y-1,Rows-1)*Stride; T2:=Index;
-      T3:=Clamp(Y+1,Rows-1)*Stride; T4:=Clamp(Y+2,Rows-1)*Stride; T5:=Clamp(Y+3,Rows-1)*Stride;
-      for X:=0 to Stride-1 do
+      SY:=Y-3;
+      P0:=@Picture.Pixels[0][Clamp(SY-2,LH-1)*LW]; P1:=@Picture.Pixels[0][Clamp(SY-1,LH-1)*LW];
+      P2:=@Picture.Pixels[0][Clamp(SY,LH-1)*LW]; P3:=@Picture.Pixels[0][Clamp(SY+1,LH-1)*LW];
+      P4:=@Picture.Pixels[0][Clamp(SY+2,LH-1)*LW]; P5:=@Picture.Pixels[0][Clamp(SY+3,LH-1)*LW];
+      T0:=@Raw[Clamp(Y-2,LR-1)*LS]; T1:=@Raw[Clamp(Y-1,LR-1)*LS]; T2:=@Raw[Y*LS];
+      T3:=@Raw[Clamp(Y+1,LR-1)*LS]; T4:=@Raw[Clamp(Y+2,LR-1)*LS]; T5:=@Raw[Clamp(Y+3,LR-1)*LS];
+      O1:=@Picture.Half[1][Y*LS]; O2:=@Picture.Half[2][Y*LS];
+      // Columns 3..W+2 read column X-3; the borders repeat the edge columns.
+      for X:=0 to LS-1 do
       begin
-        CX:=Clamp(X-3,W-1);
-        V:=Picture.Pixels[0][R0+CX]-5*Picture.Pixels[0][R1+CX]+20*Picture.Pixels[0][R2+CX]+
-          20*Picture.Pixels[0][R3+CX]-5*Picture.Pixels[0][R4+CX]+Picture.Pixels[0][R5+CX];
-        Picture.Half[1][Index+X]:=ClipByte(ASR(V+16,5));
-        V:=Raw[T0+X]-5*Raw[T1+X]+20*Raw[T2+X]+20*Raw[T3+X]-5*Raw[T4+X]+Raw[T5+X];
-        Picture.Half[2][Index+X]:=ClipByte(ASR(V+512,10));
+        if X<3 then V:=P0[0]-5*P1[0]+20*P2[0]+20*P3[0]-5*P4[0]+P5[0]
+        else if X<LW+3 then V:=P0[X-3]-5*P1[X-3]+20*P2[X-3]+20*P3[X-3]-5*P4[X-3]+P5[X-3]
+        else V:=P0[LW-1]-5*P1[LW-1]+20*P2[LW-1]+20*P3[LW-1]-5*P4[LW-1]+P5[LW-1];
+        O1[X]:=HalfClip5[(V+HalfBias5) shr 5];
+        V:=T0[X]-5*T1[X]+20*T2[X]+20*T3[X]-5*T4[X]+T5[X];
+        O2[X]:=HalfClip10[(V+HalfBias10) shr 10];
       end;
     end;
   end;  try
@@ -1965,5 +1995,8 @@ begin
   Inc(H264DeblockTicks,TStopwatch.GetTimeStamp-ProfileStart);
 {$ENDIF}
 end;
+
+initialization
+  BuildHalfClips;
 
 end.

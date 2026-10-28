@@ -187,26 +187,59 @@ begin
     Result := 2;
 end;
 
+const
+  // Sums stay above -CscBias, so (sum + CscBias) shr 8 is the floor of
+  // sum / 256 offset by 512.
+  CscBias = 512 * 256;
+
+var
+  // PSPYCbCrToRGB in tables: the luma term, the chroma terms and the clamp.
+  CscY: array[0..255] of Integer;
+  CscRV, CscGU, CscGV, CscBU: array[0..255] of Integer;
+  CscClip: array[0..1279] of Byte;
+
+procedure InitCscTables;
+begin
+  for var I := 0 to 255 do
+  begin
+    CscY[I] := 298 * (I - 16) + 128;
+    CscRV[I] := 409 * (I - 128);
+    CscGU[I] := -100 * (I - 128);
+    CscGV[I] := -208 * (I - 128);
+    CscBU[I] := 516 * (I - 128);
+  end;
+  for var I := Low(CscClip) to High(CscClip) do
+    CscClip[I] := Clamp255(I - 512);
+end;
+
 procedure PSPWritePicture(const Pic: TPSPPicture; Dest: PByte; Stride, Format: Integer; MaxRows: Integer);
 begin
   var Rows := Pic.Height;
   if (MaxRows >= 0) and (MaxRows < Rows) then
     Rows := MaxRows;
+  var W := Pic.Width;
+  if (Rows <= 0) or (W <= 0) then
+    Exit;
   var Bpp := PSPPixelBytes(Format);
-  var CW := (Pic.Width + 1) div 2;
+  var CW := (W + 1) div 2;
   for var Y := 0 to Rows - 1 do
   begin
     var Line := Dest + NativeInt(Y) * Stride * Bpp;
-    for var X := 0 to Pic.Width - 1 do
+    var Ys := PByte(@Pic.Y[Y * W]);
+    var Cbs := PByte(@Pic.Cb[(Y shr 1) * CW]);
+    var Crs := PByte(@Pic.Cr[(Y shr 1) * CW]);
+    for var X := 0 to W - 1 do
     begin
-      var R, G, B: Integer;
-      var C := (Y div 2) * CW + (X div 2);
-      PSPYCbCrToRGB(Pic.Y[Y * Pic.Width + X], Pic.Cb[C], Pic.Cr[C], R, G, B);
-      var P := PSPPackPixel(R, G, B, Format);
-      if Bpp = 4 then
-        PCardinal(Line + X * 4)^ := P
+      var Cb := Cbs[X shr 1];
+      var Cr := Crs[X shr 1];
+      var L := CscY[Ys[X]];
+      var R: Integer := CscClip[(L + CscRV[Cr] + CscBias) shr 8];
+      var G: Integer := CscClip[(L + CscGU[Cb] + CscGV[Cr] + CscBias) shr 8];
+      var B: Integer := CscClip[(L + CscBU[Cb] + CscBias) shr 8];
+      if Format = PSPPixel8888 then
+        PCardinal(Line + X * 4)^ := Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16)
       else
-        PWord(Line + X * 2)^ := Word(P);
+        PWord(Line + X * 2)^ := Word(PSPPackPixel(R, G, B, Format));
     end;
   end;
 end;
@@ -262,9 +295,12 @@ begin
   begin
     var X := X0 + I;
     var Mb := X shr 4;
-    var R, G, B: Integer;
-    PSPYCbCrToRGB(Planes[Field * 2 + (Mb and 1)][((Mb shr 1) * FieldRows + Row) * 16 + (X and 15)],
-      Cb[X shr 1], Cr[X shr 1], R, G, B);
+    var U := Cb[X shr 1];
+    var V := Cr[X shr 1];
+    var L := CscY[Planes[Field * 2 + (Mb and 1)][((Mb shr 1) * FieldRows + Row) * 16 + (X and 15)]];
+    var R: Integer := CscClip[(L + CscRV[V] + CscBias) shr 8];
+    var G: Integer := CscClip[(L + CscGU[U] + CscGV[V] + CscBias) shr 8];
+    var B: Integer := CscClip[(L + CscBU[U] + CscBias) shr 8];
     var P := PSPPackPixel(R, G, B, Format);
     if Bpp = 4 then
       PCardinal(Dest + I * 4)^ := P
@@ -885,5 +921,8 @@ begin
   end;
   Result := Length(Pictures);
 end;
+
+initialization
+  InitCscTables;
 
 end.
