@@ -148,6 +148,113 @@ begin
   Compare;
 end;
 
+// A JIT store of one word, without the comparison that synchronizes.
+procedure NativeStore(Dest, Value: Cardinal);
+begin
+  CPU.Write32(Dest, Value);
+  DeviceMemory.Write32(RAMSource + $100, Value);
+  DeviceMemory.Write32(CodeStart, $C9000100);     // lv.s S000, 256($8)
+  DeviceMemory.Write32(CodeStart + 4, $E9200000); // sv.s S000, 0($9)
+  DeviceMemory.Write32(CodeStart + 8, 0);
+  DeviceMemory.Write32(CodeStart + 12, 0);
+  CPU.Write32(RAMSource + $100, Value);
+  Core.Ctx.GPR[8] := RAMSource;
+  Core.Ctx.GPR[9] := Dest;
+  Core.SetPC(CodeStart);
+  Core.Run(2);
+  Require(Core.Ctx.PC = CodeStart + 8, 'native store block did not execute exactly two instructions');
+  Inc(NativeCopies);
+end;
+
+function TexState(Addr: Cardinal): TGERaster;
+begin
+  Result := BaseState;
+  Result.FBAddr := $120000;
+  Result.Textured := True; Result.TexFunc := 3; Result.TexAlpha := True;
+  Result.Tex.Memory := CPU; Result.Tex.Format := 3; Result.Tex.LevelCount := 1;
+  Result.Tex.Levels[0].Addr := Addr;
+  Result.Tex.Levels[0].Width := 16; Result.Tex.Levels[0].Height := 16; Result.Tex.Levels[0].BufWidth := 16;
+end;
+
+// Batches outlive Release and are read back only when needed; texture pages
+// are watched (reads go on, writes first draw), not held.
+procedure Deferred;
+const
+  RAMTex = PSPRAMBase + $10000;
+begin
+  for var W := 0 to High(Widths) do
+  begin
+    CPU.SetVRAMTranslation(Widths[W]);
+    DeviceMemory.SetVRAMTranslation(Widths[W]);
+    Label_ := Format('deferred width %d', [Widths[W]]);
+    // Several submissions in one epoch, then one read back of all of them.
+    QueuePixel($30000, True);
+    QueuePixel($50000, True);
+    QueuePixel($70000);
+    Require(DeviceMemory.HeldVRAMPages >= 3, 'Release gave drawn pages back');
+    Require(DeviceMemory.Read32(PSPVRAMBase + $50000) = CPU.Read32(PSPVRAMBase + $50000), 'submitted page read');
+    Require(DeviceMemory.HeldVRAMPages = 0, 'a held page read did not synchronize');
+    Compare;
+    // Textures drawn by an earlier submission of the same epoch.
+    QueuePixel($30000, True);
+    for var M := 0 to 3 do
+      Draw(TexState(PSPVRAMBase + Cardinal(M) * PSPVRAMSize + $30000));
+    Compare;
+    // Textures in VRAM, through every mirror, then written in different ways.
+    for var M := 0 to 3 do
+      for var How := 0 to 4 do
+      begin
+        Label_ := Format('watched VRAM texture width %d mirror %d write %d', [Widths[W], M, How]);
+        var TexAddr := PSPVRAMBase + Cardinal(M) * PSPVRAMSize + $60000;
+        var S := TexState(TexAddr);
+        Draw(S);
+        var Read: Cardinal;
+        DeviceMemory.ReadBytes(TexAddr, Read, 4);
+        Require(Read = CPU.Read32(TexAddr), 'watched texture read');
+        Require(DeviceMemory.Read32(TexAddr or $40000000) = CPU.Read32(TexAddr), 'watched texture word read');
+        Require((DeviceMemory.HeldVRAMPages > 0) and (DeviceMemory.WatchedPages > 0), 'a texture read drew the batch');
+        var V := $C0DE0000 + Cardinal(W * 64 + M * 8 + How);
+        case How of
+          0: begin CPU.Write32(TexAddr, V); DeviceMemory.Write32(TexAddr, V); end;
+          1: begin CPU.WriteBytes(TexAddr, V, 4); DeviceMemory.WriteBytes(TexAddr, V, 4); end;
+          2:
+            begin
+              // The same physical bytes through the linear mirror 2.
+              var Linear := PSPVRAMBase + 2 * PSPVRAMSize + Physical(TexAddr, Shifts[W]);
+              CPU.Write32(Linear, V); DeviceMemory.Write32(Linear, V);
+            end;
+          3: NativeStore(TexAddr, V);
+          4: Require(DeviceMemory.Ptr(TexAddr and not $200000, 4) <> nil, 'linear texture pointer');
+        end;
+        Require((DeviceMemory.HeldVRAMPages = 0) and (DeviceMemory.WatchedPages = 0),
+          'a texture write did not draw the batch first');
+        Draw(S);
+        Compare;
+      end;
+    // Textures in main memory: the batch's copy stays valid while watched.
+    for var How := 0 to 2 do
+    begin
+      Label_ := Format('watched RAM texture width %d write %d', [Widths[W], How]);
+      var S := TexState(RAMTex);
+      Draw(S);
+      Require(DeviceMemory.Read32(RAMTex) = CPU.Read32(RAMTex), 'watched RAM texture read');
+      Require((DeviceMemory.HeldVRAMPages > 0) and (DeviceMemory.WatchedPages > 0), 'a RAM texture read drew the batch');
+      var V := $BEEF0000 + Cardinal(W * 8 + How);
+      case How of
+        0: begin CPU.Write32(RAMTex, V); DeviceMemory.Write32(RAMTex, V); end;
+        1: begin CPU.WriteBytes(RAMTex, V, 4); DeviceMemory.WriteBytes(RAMTex, V, 4); end;
+        2: NativeStore(RAMTex, V);
+      end;
+      Require((DeviceMemory.HeldVRAMPages = 0) and (DeviceMemory.WatchedPages = 0),
+        'a RAM texture write did not draw the batch first');
+      // The same texture again: a new copy, not the batch's old one.
+      Draw(S);
+      Draw(S);
+      Compare;
+    end;
+  end;
+end;
+
 procedure Exercise;
 begin
   for var W := 0 to High(Widths) do
@@ -316,6 +423,7 @@ begin
           DeviceMemory.Write32(RAMSource + Cardinal(I) * 4, $11223300 + Cardinal(I));
         end;
         Exercise;
+        Deferred;
       finally
         Jit.Free;
         Core.Free;

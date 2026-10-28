@@ -470,8 +470,11 @@ begin
         if Console.Kernel.Exited then
           Break;
       end;
+      // Everything queued is drawn before VRAM is saved.
       if GPU <> nil then
-        GPU.Sync;
+        GPU.Sync
+      else
+        TPSPGE(Console.System.Find(TPSPGE)).Engine.Workers.Sync;
       if VRAMFile <> '' then
         TFile.WriteAllBytes(VRAMFile, Console.Memory.VRAM);
       LastHash := FrameHash(Frame);
@@ -560,6 +563,9 @@ begin
         if not Quiet then
         begin
           Writeln(ErrOutput, Format('gpu: %d tiles, %d tile primitives', [St.Tiles, St.Binned]));
+          Writeln(ErrOutput, Format('gpu: %d syncs (%d by access, %d before CPU-drawn primitives), ' +
+            '%d pages compared, %d read back', [St.Syncs, St.AccessSyncs, St.FallbackSyncs, St.ComparedPages,
+            St.ReadbackPages]));
           Write(ErrOutput, GPU.Report);
         end;
         if GPUMode = 2 then
