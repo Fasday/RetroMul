@@ -159,6 +159,7 @@ type
     procedure EmitHost(Kind: Integer; Store: Boolean; const Reg: TJitOp);
     procedure EmitTable(const S: TPSPJitSlow);
     procedure EmitAccess(var S: TPSPJitSlow; Op: Cardinal);
+    procedure EmitQuad(const At: TPSPJitAt; Op: Cardinal; Store: Boolean; Handler: Pointer);
     procedure EmitLoad(Op: Cardinal; Kind: Integer; const Reg: TJitOp);
     procedure EmitStore(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; const Reg: TJitOp);
     function EmitInstr(const At: TPSPJitAt; Op: Cardinal; Kind: Integer; Handler: Pointer): Boolean;
@@ -190,10 +191,11 @@ function CreatePSPRecompiler(CPU: TPSPCPU): TPSPRecompiler;
 implementation
 
 uses
-  System.Math;
+  System.Math, PSP.VFPU;
 
 type
   TJitKind = (jkNop, jkHandler, jkPure, jkEnd, jkHBranch,
+    jkLVS, jkSVS, jkLVQ, jkSVQ, jkMFV, jkMTV,
     jkSLL, jkSRL, jkSRA, jkROTR, jkMOVZ, jkMOVN, jkMFHI, jkMTHI, jkMFLO, jkMTLO,
     jkADDU, jkSUBU, jkAND, jkOR, jkXOR, jkNOR, jkSLT, jkSLTU, jkMAX, jkMIN,
     jkADDIU, jkSLTI, jkSLTIU, jkANDI, jkORI, jkXORI, jkLUI, jkMFC0,
@@ -253,7 +255,7 @@ var
   PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
   OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffCOP0, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode,
-    OffSlotPC, OffSlotBlock: Integer;
+    OffSlotPC, OffSlotBlock, OffV: Integer;
 
 function HandlerOf(Op: Cardinal): Pointer;
 begin
@@ -278,6 +280,7 @@ begin
   OffPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.PC));
   OffNPC := Integer(NativeUInt(@TPSPCPU(nil).Ctx.NPC));
   OffCurPC := Integer(NativeUInt(@TPSPCPU(nil).CurPC));
+  OffV := Integer(NativeUInt(@TPSPCPU(nil).Ctx.V[0]));
   OffCOP0 := Integer(NativeUInt(@TPSPCPU(nil).COP0[0]));
   OffStopping := Integer(NativeUInt(@TPSPCPU(nil).Stopping));
   OffRemaining := Integer(NativeUInt(@TPSPCPU(nil).FRemaining));
@@ -309,6 +312,22 @@ begin
   for var I := 0 to High(PureHandler) do
     if Handler = PureHandler[I] then
       Exit(jkPure);
+  // Only the installed VFPU decoder: tests and other users may install
+  // handlers of their own, which must remain calls.
+  var Decoder: TPSPVFPUDecoder := PSPVFPUDecoder;
+  if @Decoder = @PSP.VFPU.DecodeVFPU then
+    case Op shr 26 of
+      $32: Exit(jkLVS);
+      $3A: Exit(jkSVS);
+      $36: Exit(jkLVQ);
+      $3E: Exit(jkSVQ);
+      $12:
+        if (Op and $80) = 0 then
+          case (Op shr 21) and 31 of
+            3: Exit(jkMFV);
+            7: Exit(jkMTV);
+          end;
+    end;
   Result := jkHandler;
 end;
 
@@ -376,6 +395,23 @@ end;
 function F(R: Cardinal): TJitOp; inline;
 begin
   Result := JMem(jrSelf, OffFPR + Integer(R) * 4);
+end;
+
+function ScalarV(R: Cardinal): TJitOp;
+begin
+  Result := JMem(jrSelf, OffV + Integer(((R shr 2) and 7) * 16 + (R and 3) * 4 + ((R shr 5) and 3)) * 4);
+end;
+
+function QuadV(Op, Lane: Cardinal): TJitOp;
+begin
+  var Matrix := (Op shr 18) and 7;
+  var A := (Op shr 16) and 3;
+  var Index := Matrix * 16;
+  if (Op and 1) = 0 then
+    Inc(Index, A * 4 + Lane)
+  else
+    Inc(Index, Lane * 4 + A);
+  Result := JMem(jrSelf, OffV + Integer(Index) * 4);
 end;
 
 function FieldRS(Op: Cardinal): Cardinal; inline;
@@ -566,6 +602,67 @@ begin
   J.Bind(S.Back);
 end;
 
+procedure TPSPRecompiler.EmitQuad(const At: TPSPJitAt; Op: Cardinal; Store: Boolean; Handler: Pointer);
+begin
+  // One page lookup for all four lanes; crossing a page or writing code
+  // calls the whole handler, so even a self-rewriting SV.Q finishes its
+  // four stores before any next instruction runs.
+  var J := FJ;
+  var Slow := J.NewLabel;
+  var Mapped := J.NewLabel;
+  var Host := J.NewLabel;
+  var Done := J.NewLabel;
+  J.Move(jw32, JT0, G(FieldRS(Op)));
+  var Offset := FieldSImm(Op and not Cardinal(3));
+  if Offset <> 0 then
+    J.Alu(jaAdd, jw32, JT0, JImm(Offset));
+  J.Move(jw32, JT2, JT0);
+  J.Alu(jaAnd, jw32, JT2, JImm(PSPPageMask));
+  J.Branch(jcAbove, jw32, JT2, JImm(PSPPageSize - 16), Slow);
+  if Store then
+  begin
+    J.Move(jw32, JT1, JT0);
+    J.Alu(jaAnd, jw32, JT1, JImm($1FFFF000));
+    J.Shift(jsShr, jw32, jrT1, PSPPageShift);
+    J.Alu(jaAdd, jw64, JT1, JMarks);
+    J.Move(jw8, JT1, JMem(jrT1, 0));
+    J.BranchTest(jcNe, jw32, JT1, JT1, Slow);
+  end;
+  if FRamDirect then
+  begin
+    J.Move(jw32, JT1, JT0);
+    J.Alu(jaAnd, jw32, JT1, JImm($1FFFFFFF));
+    J.Alu(jaSub, jw32, JT1, JImm(PSPRAMBase));
+    J.Branch(jcAboveEq, jw32, JT1, JImm(PSPRAMSize), Mapped);
+    J.Alu(jaAdd, jw64, JT1, JRAM);
+    J.Jump(Host);
+  end;
+  J.Bind(Mapped);
+  J.Move(jw32, JT1, JT0);
+  J.Alu(jaAnd, jw32, JT1, JImm($1FFFF000));
+  J.Shift(jsShr, jw32, jrT1, PSPPageShift - PtrShift);
+  J.Alu(jaAdd, jw64, JT1, JPages);
+  J.Move(JPtr, JT1, JMem(jrT1, 0));
+  J.BranchTest(jcEq, JPtr, JT1, JT1, Slow);
+  J.Alu(jaAdd, jw64, JT1, JT2);
+  J.Bind(Host);
+  for var I := 0 to 3 do
+    if Store then
+    begin
+      J.Move(jw32, JT0, QuadV(Op, I));
+      J.Move(jw32, JMem(jrT1, I * 4), JT0);
+    end
+    else
+    begin
+      J.Move(jw32, JT0, JMem(jrT1, I * 4));
+      J.Move(jw32, QuadV(Op, I), JT0);
+    end;
+  J.Jump(Done);
+  J.Bind(Slow);
+  EmitCall(At, Op, Handler, False);
+  J.Bind(Done);
+end;
+
 procedure TPSPRecompiler.EmitLoad(Op: Cardinal; Kind: Integer; const Reg: TJitOp);
 begin
   // As TPSPMemory.ReadN: the page's host memory at the address's offset
@@ -742,6 +839,19 @@ begin
       Copy(G(FieldRD(Op)), JMem(jrSelf, OffLO));
     jkMTLO:
       Copy(JMem(jrSelf, OffLO), G(FieldRS(Op)));
+    jkMFV:
+      if FieldRT(Op) <> 0 then
+        Copy(G(FieldRT(Op)), ScalarV(Op and $7F));
+    jkMTV:
+      Copy(ScalarV(Op and $7F), G(FieldRT(Op)));
+    jkLVS:
+      EmitLoad(Op and not Cardinal(3), Ord(jkLW), ScalarV(FieldRT(Op) or ((Op and 3) shl 5)));
+    jkSVS:
+      EmitStore(At, Op and not Cardinal(3), Ord(jkSW), ScalarV(FieldRT(Op) or ((Op and 3) shl 5)));
+    jkLVQ:
+      EmitQuad(At, Op, False, Handler);
+    jkSVQ:
+      EmitQuad(At, Op, True, Handler);
     jkADDU:
       Three(jaAdd);
     jkSUBU:

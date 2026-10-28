@@ -33,6 +33,7 @@ uses
 
 var
   Rng: Cardinal;
+  RealVFPU: Boolean;
 
 function Next(Range: Cardinal): Cardinal;
 begin
@@ -399,6 +400,26 @@ begin
           Op := (Cardinal($30) shl 26) or (28 shl 21) or (Next(2) shl 16) or (Next(64) * 4);               // LL (maybe $0)
         end;
       92..95:
+        if RealVFPU then
+        begin
+          case Next(8) of
+            0..3:
+              begin
+                var Base := Pick([28, 29, 30, 26, 27]);
+                var Offset4 := Integer(Next(512)) * 4;
+                if Base = 27 then
+                  Offset4 := (I + 1 + Integer(Next(8))) * 4;
+                Op := (Pick([$32, $36, $3A, $3E]) shl 26) or (Base shl 21) or (Next(32) shl 16) or
+                  Cardinal(Offset4) or Next(4);
+              end;
+            4: Op := ($12 shl 26) or (3 shl 21) or (Dest shl 16) or Next(256); // MFV/MFVC
+            5: Op := ($12 shl 26) or (7 shl 21) or (Src shl 16) or Next(256);  // MTV/MTVC
+            6: Op := ($12 shl 26) or (8 shl 21) or (Next(32) shl 16) or Rel; // BVC
+          else
+            Op := Cardinal($DC000000) or Next($100000); // prefix (loads and stores must not consume it)
+          end;
+        end
+        else
         // The test's own "VFPU" (TestDecoder).
         case Next(5) of
           0: Op := (Cardinal($18) shl 26) or (Dest shl 16) or Next($10000);
@@ -510,6 +531,8 @@ begin
     M.CPU.Ctx.GPR[R] := Regs[R];
   for var R := 0 to 31 do
     M.CPU.Ctx.FPR[R] := Regs[(R * 7) mod 32] xor $3F000000;
+  for var R := 0 to 127 do
+    M.CPU.Ctx.V[R] := PCardinal(@Data[R * 4])^;
   M.CPU.SetPC(Start);
   // (ERET's targets in the code.)
   M.CPU.COP0[12] := Regs[5] and 6;
@@ -543,6 +566,11 @@ begin
     Exit('Stopping');
   if A.CPU.InterruptsEnabled <> B.CPU.InterruptsEnabled then
     Exit('InterruptsEnabled');
+  if not CompareMem(@A.CPU.COP0, @B.CPU.COP0, SizeOf(A.CPU.COP0)) then
+    Exit('COP0');
+  if (A.CPU.VccWritePC <> B.CPU.VccWritePC) or (A.CPU.VccWriteOld <> B.CPU.VccWriteOld) or
+    (A.CPU.VcmpPC <> B.CPU.VcmpPC) or (A.CPU.VcmpOld <> B.CPU.VcmpOld) then
+    Exit('VFPU condition hazard');
   if (A.Memory.Faults <> B.Memory.Faults) or (A.Memory.FaultAddress <> B.Memory.FaultAddress) then
     Exit(Format('faults %d at %.8x against %d at %.8x', [A.Memory.Faults, A.Memory.FaultAddress, B.Memory.Faults,
       B.Memory.FaultAddress]));
@@ -569,6 +597,117 @@ begin
       for var I := 0 to High(Pairs[K]) do
         if Pairs[K][I] <> Others[K][I] then
           Exit(Format('%s %.6x: %.2x against %.2x', [RegionNames[K], I, Pairs[K][I], Others[K][I]]));
+end;
+
+function RunVectorCases(const Machines: TArray<TMachine>; Report: TStrings): Boolean;
+const
+  Start = $08800000;
+begin
+  Result := True;
+  var SavedDecoder: TPSPVFPUDecoder := PSPVFPUDecoder;
+  var SavedHot := PSPJitHot;
+  PSPVFPUDecoder := PSP.VFPU.DecodeVFPU;
+  PSPJitHot := 1;
+  try
+    var Code: TArray<Cardinal>;
+    SetLength(Code, CodeWords);
+    var Data: TBytes;
+    SetLength(Data, $8000);
+    for var I := 0 to High(Data) do
+      Data[I] := Byte(I * 37 + I div 11);
+    var Regs: array[0..31] of Cardinal;
+    FillChar(Regs, SizeOf(Regs), 0);
+    Regs[4] := $01234567;
+    Regs[27] := Start;
+    Regs[28] := DataBase;
+    Regs[29] := PSPVRAMBase;
+    Regs[30] := PSPScratchBase;
+    var Pool: array[0..3] of Cardinal;
+    for var I := 0 to 3 do
+      Pool[I] := $24210001; // addiu $1, $1, 1
+    var Cases := 0;
+    for var Test := 0 to 255 do
+    begin
+      FillChar(Code[0], Length(Code) * 4, 0);
+      var Reg := Cardinal(Test and 63);
+      var QuadBits := ((Reg and 31) shl 16) or (Reg shr 5);
+      if Test < 128 then
+      begin
+        // Every scalar index and register zero, plus prefixes untouched by
+        // moves and loads. Each result is stored where memory comparison
+        // observes it.
+        for var R := 0 to 127 do
+        begin
+          Code[R * 4] := $48E40000 or Cardinal(R);      // mtv $4, S...
+          Code[R * 4 + 1] := $48650000 or Cardinal(R);  // mfv $5, S...
+          Code[R * 4 + 2] := $AC000000 or (28 shl 21) or (5 shl 16) or Cardinal(R * 4);
+          Code[R * 4 + 3] := $DC0000E4; // vpfxs (unconsumed by the moves)
+        end;
+        // Four-word accesses near every page boundary in RAM, VRAM and
+        // scratchpad, and unmapped memory (the fallback records faults).
+        var Base := Cardinal(28 + (Test mod 3));
+        if Test mod 7 = 0 then
+          Base := 26;
+        var Offset := (4096 - 20 + (Test mod 8) * 4) and $FFFC;
+        Code[512] := (Cardinal($36) shl 26) or (Base shl 21) or QuadBits or Cardinal(Offset);
+        Code[513] := (Cardinal($3E) shl 26) or (Base shl 21) or QuadBits or Cardinal(Offset + 32);
+        Code[514] := $03E00008; // jr $31 (target set below)
+        Code[515] := 0;
+      end
+      else
+      begin
+        // SV.Q changes its next four instructions. Even when its first
+        // store invalidates this block, its other three must finish.
+        Code[0] := (Cardinal($36) shl 26) or (30 shl 21) or QuadBits;
+        Code[1] := (Cardinal($3E) shl 26) or (27 shl 21) or QuadBits or 8;
+        Code[8] := $0000008C; // syscall 2: stop
+      end;
+      Regs[31] := Start + 516 * 4;
+      for var M in Machines do
+      begin
+        SetUp(M, Code, Start, Pool, Regs, Data, Start);
+        M.Memory.WriteBytes(PSPScratchBase, Pool[0], SizeOf(Pool));
+      end;
+      // A whole block first (so it is generated), then a reset of PC and
+      // small budgets ending on every boundary.
+      for var Round := 0 to 16 do
+      begin
+        if Round = 1 then
+          for var M in Machines do
+            M.CPU.SetPC(Start);
+        var Budget := 600;
+        if Round > 0 then
+          Budget := Round;
+        var Used := Machines[0].CPU.Run(Budget);
+        for var K := 1 to High(Machines) do
+        begin
+          var OtherUsed := Machines[K].CPU.Run(Budget);
+          var D := Unlike(Machines[0], Machines[K]);
+          if (D = '') and (OtherUsed <> Used) then
+            D := 'cycles';
+          if D <> '' then
+          begin
+            Report.Add(Format('vector case %d round %d mode %d: %s', [Test, Round, K, D]));
+            Exit(False);
+          end;
+        end;
+      end;
+      for var K := 1 to High(Machines) do
+      begin
+        var D := UnlikeMemory(Machines[0], Machines[K]);
+        if D <> '' then
+        begin
+          Report.Add(Format('vector case %d mode %d: %s', [Test, K, D]));
+          Exit(False);
+        end;
+      end;
+      Inc(Cases);
+    end;
+    Report.Add(Format('%d directed VFPU cases: no difference (moves, prefixes, quads across pages, self-writing SV.Q)', [Cases]));
+  finally
+    PSPVFPUDecoder := SavedDecoder;
+    PSPJitHot := SavedHot;
+  end;
 end;
 
 function RunPSPJitTest(Programs: Integer; Report: TStrings): Boolean;
@@ -601,6 +740,11 @@ begin
     for var P := 0 to Programs - 1 do
     begin
       Rng := Cardinal((UInt64(P) * 2654435761 + 12345) and $FFFFFFFF);
+      RealVFPU := P mod 3 = 0;
+      if RealVFPU then
+        PSPVFPUDecoder := PSP.VFPU.DecodeVFPU
+      else
+        PSPVFPUDecoder := TestDecoder;
       var Start: Cardinal := $08800000;
       case Next(8) of
         0, 1: Start := $88800000;
@@ -745,6 +889,8 @@ begin
       for var M in Machines do
         M.Error := '';
     end;
+    if Result then
+      Result := RunVectorCases(Machines, Report);
     Report.Add(Format('%d programs ended by a guest fault', [Faulted]));
     var Line := Format('%d programs, %d instructions on each', [Programs, Ran]);
     for var K := 1 to High(Machines) do
