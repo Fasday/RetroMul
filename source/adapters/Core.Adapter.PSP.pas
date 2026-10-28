@@ -12,6 +12,7 @@ type
   private
     FKeys: TPSPKeyMap;
     FRecompiler: Boolean;
+    FVulkanRenderer: Boolean;
     FLanguage, FButtonSwap: Integer;
     FNickname: string;
   protected
@@ -22,6 +23,8 @@ type
     property Keys: TPSPKeyMap read FKeys;
     // The CPU through its recompiler (Emulation/Execution jit), else interpreted.
     property Recompiler: Boolean read FRecompiler write FRecompiler;
+    // Applied by Start, not by live Configure or a guest Reset/LoadExec.
+    property VulkanRenderer: Boolean read FVulkanRenderer write FVulkanRenderer;
     property Language: Integer read FLanguage;
     property ButtonSwap: Integer read FButtonSwap;
     property Nickname: string read FNickname;
@@ -40,10 +43,12 @@ type
     FRecompiler: Boolean;
     FFrame: TEmulatorFrame;
     FError: string;
+    FVulkanRenderer: Boolean;
+    FRendererStatus: string;
   protected
     procedure Execute; override;
   public
-    constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage);
+    constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage; VulkanRenderer: Boolean = False);
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1;
       Recompiler: Boolean = True);
@@ -51,6 +56,7 @@ type
     procedure Join;
     function TryGetFrame(out Frame: TEmulatorFrame): Boolean;
     function TakeError: string;
+    function RendererStatus: string;
   end;
 
   TPSPCoreAdapter = class(TInterfacedObject, IEmulationCore)
@@ -63,6 +69,7 @@ type
     FKeyboard, FGamepad: TEmulatorInput;
     FPaused: Boolean;
     FError: string;
+    FRendererStatus: string;
     procedure Configure;
   public
     constructor Create(Stream: TStream; const Storage: IStorage; const RomName: string);
@@ -89,12 +96,13 @@ type
     function TakeError: string;
     function GetConfig: IEmulatorConfig;
     function IsPaused: Boolean;
+    function RendererStatus: string;
   end;
 
 implementation
 
 uses {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF} System.UITypes, System.Diagnostics, System.Math, Core.PSP.Archive,
-  PSP.Settings;
+  PSP.Settings, Core.PSP.Renderer;
 
 const
   KeyNames: array[TEmulatorButton] of string =
@@ -107,6 +115,7 @@ begin
   inherited Create(FileName, Storage);
   FKeys := DefaultKeys;
   FRecompiler := True;
+  FVulkanRenderer := False;
   FLanguage := 1;
   FButtonSwap := 1;
   FNickname := 'RetroMul';
@@ -117,6 +126,7 @@ begin
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
     FKeys[Button] := ReadEmulatorKey(Ini,'Keys',KeyNames[Button],FKeys[Button]);
   FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
+  FVulkanRenderer := SameText(Ini.ReadString('Video', 'Renderer', 'cpu'), 'vulkan');
   FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
   FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
   FNickname := Ini.ReadString('System', 'Nickname', FNickname);
@@ -130,15 +140,20 @@ begin
     Ini.WriteString('Emulation', 'Execution', 'jit')
   else
     Ini.WriteString('Emulation', 'Execution', 'interpreter');
+  if FVulkanRenderer then
+    Ini.WriteString('Video', 'Renderer', 'vulkan')
+  else
+    Ini.WriteString('Video', 'Renderer', 'cpu');
   Ini.WriteInteger('System', 'Language', FLanguage);
   Ini.WriteInteger('System', 'ButtonSwap', FButtonSwap);
   Ini.WriteString('System', 'Nickname', FNickname);
 end;
 
-constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage);
+constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage; VulkanRenderer: Boolean);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
+  FVulkanRenderer := VulkanRenderer;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil,False,False,'');
   FConsole := TPSPConsole.Create(ProgramData,Storage);
@@ -192,106 +207,120 @@ end;
 
 procedure TPSPWorker.Execute;
 begin
+  if Terminated then
+    Exit;
   {$IFDEF MSWINDOWS}
   var TimerSet := timeBeginPeriod(1) = TIMERR_NOERROR;
   {$ENDIF}
   try
     try
-      var AudioFailed := False;
-      var WasEnabled := False;
-      // Without sound, guest time follows the host clock from this point.
-      var ClockHost := TStopwatch.GetTimeStamp;
-      var ClockGuest := FConsole.Scheduler.Now;
-      while not Terminated do
-      begin
-        var Paused, Reset: Boolean;
-        var AudioEnabled: Boolean;
-        var Volume: Single;
-        var Input: TEmulatorInput;
-        var Recompiler: Boolean;
+      var Renderer := TPSPRendererSession.Create(FConsole,FVulkanRenderer);
+      try
         FLock.Acquire;
         try
-          Recompiler := FRecompiler;
-          Paused := FPaused;
-          Reset := FReset;
-          FReset := False;
-          Input := FInput;
-          AudioEnabled := FAudioEnabled;
-          Volume := FVolume;
+          FRendererStatus := Renderer.Status;
         finally
           FLock.Release;
         end;
-        var Restart := Reset or Paused or (AudioEnabled <> WasEnabled);
-        if Reset then
-          FConsole.Reset;
-        if Restart and (FAudio <> nil) and not AudioFailed then
-        try
-          FAudio.Clear;
-        except
-          AudioFailed := True;
-        end;
-        WasEnabled := AudioEnabled;
-        if Restart then
+        var AudioFailed := False;
+        var WasEnabled := False;
+        // Without sound, guest time follows the host clock from this point.
+        var ClockHost := TStopwatch.GetTimeStamp;
+        var ClockGuest := FConsole.Scheduler.Now;
+        while not Terminated do
         begin
-          ClockHost := TStopwatch.GetTimeStamp;
-          ClockGuest := FConsole.Scheduler.Now;
-        end;
-        if Paused then
-        begin
-          FWake.WaitFor(20);
-          Continue;
-        end;
-        // The sound queue is the real-time clock: a frame runs only when the
-        // device has room for its samples.
-        if AudioEnabled and not AudioFailed and (FAudio <> nil) then
-        try
-          if not FAudio.CanAdvance then
+          var Paused, Reset: Boolean;
+          var AudioEnabled: Boolean;
+          var Volume: Single;
+          var Input: TEmulatorInput;
+          var Recompiler: Boolean;
+          FLock.Acquire;
+          try
+            Recompiler := FRecompiler;
+            Paused := FPaused;
+            Reset := FReset;
+            FReset := False;
+            Input := FInput;
+            AudioEnabled := FAudioEnabled;
+            Volume := FVolume;
+          finally
+            FLock.Release;
+          end;
+          var Restart := Reset or Paused or (AudioEnabled <> WasEnabled);
+          if Reset then
+            FConsole.Reset;
+          if Restart and (FAudio <> nil) and not AudioFailed then
+          try
+            FAudio.Clear;
+          except
+            AudioFailed := True;
+          end;
+          WasEnabled := AudioEnabled;
+          if Restart then
           begin
-            FWake.WaitFor(1);
+            ClockHost := TStopwatch.GetTimeStamp;
+            ClockGuest := FConsole.Scheduler.Now;
+          end;
+          if Paused then
+          begin
+            FWake.WaitFor(20);
             Continue;
           end;
-        except
-          AudioFailed := True;
-        end;
-        if FConsole.Recompiler <> nil then
-          FConsole.Recompiler.Enabled := Recompiler;
-        FConsole.Input := Input;
-        var Frame: TEmulatorFrame;
-        FConsole.RunFrame(Frame);
-        if AudioEnabled and not AudioFailed then
-        try
-          if FAudio = nil then
-            FAudio := TPSPAudioPlayback.Create;
-          FAudio.Enqueue(FConsole.AudioSamples, Volume);
-        except
-          AudioFailed := True;
-        end;
-        FLock.Acquire;
-        try
-          FFrame := Frame;
-          FAvailable := True;
-        finally
-          FLock.Release;
-        end;
-        if not AudioEnabled or AudioFailed then
-        begin
-          var Target := ClockHost + (FConsole.Scheduler.Now - ClockGuest) * TStopwatch.Frequency div 1000000000;
-          // Input updates can wake the worker but must not accelerate guest time.
-          while not Terminated do
-          begin
-            var Remaining := (Target - TStopwatch.GetTimeStamp) * 1000 div TStopwatch.Frequency;
-            if Remaining <= 0 then
+          // The sound queue is the real-time clock: a frame runs only when the
+          // device has room for its samples.
+          if AudioEnabled and not AudioFailed and (FAudio <> nil) then
+          try
+            if not FAudio.CanAdvance then
             begin
-              if Remaining < -250 then
-              begin
-                ClockHost := TStopwatch.GetTimeStamp;
-                ClockGuest := FConsole.Scheduler.Now;
-              end;
-              Break;
+              FWake.WaitFor(1);
+              Continue;
             end;
-            FWake.WaitFor(Cardinal(Min(Int64(20), Remaining)));
+          except
+            AudioFailed := True;
+          end;
+          if FConsole.Recompiler <> nil then
+            FConsole.Recompiler.Enabled := Recompiler;
+          FConsole.Input := Input;
+          var Frame: TEmulatorFrame;
+          FConsole.RunFrame(Frame);
+          if AudioEnabled and not AudioFailed then
+          try
+            if FAudio = nil then
+              FAudio := TPSPAudioPlayback.Create;
+            FAudio.Enqueue(FConsole.AudioSamples, Volume);
+          except
+            AudioFailed := True;
+          end;
+          FLock.Acquire;
+          try
+            FFrame := Frame;
+            FAvailable := True;
+            FRendererStatus := Renderer.Status;
+          finally
+            FLock.Release;
+          end;
+          if not AudioEnabled or AudioFailed then
+          begin
+            var Target := ClockHost + (FConsole.Scheduler.Now - ClockGuest) * TStopwatch.Frequency div 1000000000;
+            // Input updates can wake the worker but must not accelerate guest time.
+            while not Terminated do
+            begin
+              var Remaining := (Target - TStopwatch.GetTimeStamp) * 1000 div TStopwatch.Frequency;
+              if Remaining <= 0 then
+              begin
+                if Remaining < -250 then
+                begin
+                  ClockHost := TStopwatch.GetTimeStamp;
+                  ClockGuest := FConsole.Scheduler.Now;
+                end;
+                Break;
+              end;
+              FWake.WaitFor(Cardinal(Min(Int64(20), Remaining)));
+            end;
           end;
         end;
+      finally
+        Renderer.Free;
       end;
     except
       on E: Exception do
@@ -383,15 +412,21 @@ begin
   PSPSettings.Language := FConfigObject.Language;
   PSPSettings.ButtonSwap := FConfigObject.ButtonSwap;
   PSPSettings.Nickname := FConfigObject.Nickname;
-  FWorker := TPSPWorker.Create(FProgram,FStorage);
-  Configure;
-  FWorker.Start;
+  FWorker := TPSPWorker.Create(FProgram,FStorage,FConfigObject.VulkanRenderer);
+  try
+    Configure;
+    FWorker.Start;
+  except
+    FreeAndNil(FWorker);
+    raise;
+  end;
 end;
 
 procedure TPSPCoreAdapter.Stop;
 begin
   if FWorker = nil then Exit;
   FWorker.Join;
+  FRendererStatus := FWorker.RendererStatus;
   var Error := FWorker.TakeError;
   if Error <> '' then FError := Error;
   FreeAndNil(FWorker);
@@ -459,6 +494,24 @@ begin
   Result := FError;
   FError := '';
   if (Result = '') and (FWorker <> nil) then Result := FWorker.TakeError;
+end;
+
+function TPSPWorker.RendererStatus: string;
+begin
+  FLock.Acquire;
+  try
+    Result := FRendererStatus;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TPSPCoreAdapter.RendererStatus: string;
+begin
+  if FWorker <> nil then
+    Result := FWorker.RendererStatus
+  else
+    Result := FRendererStatus;
 end;
 
 function TPSPCoreAdapter.GetName: string;

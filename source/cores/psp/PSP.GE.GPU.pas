@@ -146,8 +146,8 @@ function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGE
 
 implementation
 
-{$I PSPGERaster.spv.inc}
-{$I PSPGESelfTest.spv.inc}
+{$I ..\..\gpu\shaders\PSPGERaster.spv.inc}
+{$I ..\..\gpu\shaders\PSPGESelfTest.spv.inc}
 
 const
   PrimWords = 128;
@@ -242,13 +242,17 @@ begin
       1: Inputs[I * 4 + 3] := Inputs[I * 4 + 1] and $800FFFFF;
     end;
   end;
-  var Src := Compute.CreateBuffer(N * 16, vbkUpload);
-  var Dst := Compute.CreateBuffer(N * Stride * 4, vbkReadback);
-  var K := Compute.CreateKernel(PSPGESelfTestSPV, 2, 4);
-  var Cmd := Compute.CreateCommands;
+  var Src: TVulkanBuffer := nil;
+  var Dst: TVulkanBuffer := nil;
+  var K: TVulkanKernel := nil;
+  var Cmd: TVulkanCommands := nil;
   var Mask := GetExceptionMask;
   SetExceptionMask(exAllArithmeticExceptions);
   try
+    Src := Compute.CreateBuffer(N * 16, vbkUpload);
+    Dst := Compute.CreateBuffer(N * Stride * 4, vbkReadback);
+    K := Compute.CreateKernel(PSPGESelfTestSPV, 2, 4);
+    Cmd := Compute.CreateCommands;
     Src.Write(0, Inputs[0], N * 16);
     K.Bind(0, Src);
     K.Bind(1, Dst);
@@ -477,28 +481,31 @@ end;
 
 destructor TGEGPUBackend.Destroy;
 begin
-  if FMemory.HeldVRAMPages > 0 then
-    Sync;
-  FMemory.ReleaseVRAM;
-  FMemory.OnVRAMFault := nil;
-  for var I := 0 to High(FSlots) do
-  begin
-    var S: PGEGPUSlot := @FSlots[I];
-    S.Cmd.Free;
-    S.BinBuf.Free;
-    S.DataBuf.Free;
-    S.StateBuf.Free;
-    S.PrimBuf.Free;
-    S.Readback.Free;
-    S.Upload.Free;
+  try
+    if FMemory.HeldVRAMPages > 0 then
+      Sync;
+  finally
+    FMemory.ReleaseVRAM;
+    FMemory.OnVRAMFault := nil;
+    for var I := 0 to High(FSlots) do
+    begin
+      var S: PGEGPUSlot := @FSlots[I];
+      S.Cmd.Free;
+      S.BinBuf.Free;
+      S.DataBuf.Free;
+      S.StateBuf.Free;
+      S.PrimBuf.Free;
+      S.Readback.Free;
+      S.Upload.Free;
+    end;
+    FKernel.Free;
+    FVRAM.Free;
+    FSnapshots.Free;
+    FReasons.Free;
+    FCheckPrims.Free;
+    FCompute.Free;
+    inherited;
   end;
-  FKernel.Free;
-  FVRAM.Free;
-  FSnapshots.Free;
-  FReasons.Free;
-  FCheckPrims.Free;
-  FCompute.Free;
-  inherited;
 end;
 
 procedure TGEGPUBackend.Message(const Text: string);

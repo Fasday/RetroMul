@@ -1067,6 +1067,12 @@
         <DCCReference Include="..\..\source\adapters\Core.Adapter.SNES.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.PS1.Playback.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.PSP.Playback.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.PSP.Renderer.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Backend.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.GPU.pas"/>
+        <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Bindings.pas"/>
+        <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Loader.pas"/>
+        <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Compute.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.Adapter.PS1.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.BlockImage.pas"/>
         <DCCReference Include="..\..\source\cores\zx\ZX.DivStorage.pas"/>
