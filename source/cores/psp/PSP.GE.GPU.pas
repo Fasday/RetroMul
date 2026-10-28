@@ -503,8 +503,11 @@ begin
   for var Page := First to Last do
   begin
     var P := Integer(Page mod VRAMPages);
-    FPages[P] := True;
-    FMemory.HoldVRAM(P);
+    if not FPages[P] then
+    begin
+      FPages[P] := True;
+      FMemory.HoldVRAM(P);
+    end;
   end;
 end;
 
@@ -512,7 +515,10 @@ end;
 procedure TGEGPUBackend.BeginPrim;
 begin
   if (FPrimCount >= 65536) or (FDataSize >= 64 shl 20) then
-    Submit;
+    if FCheck then
+      Sync
+    else
+      Submit;
 end;
 
 procedure TGEGPUBackend.VRAMFault;
