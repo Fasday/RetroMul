@@ -152,8 +152,12 @@ type
     // FCPUBudget pixels in all: a GPU primitive between two CPU ones would
     // cost a sync. The queue holds and watches pages as the GPU does, so it
     // is drained before the GPU uses memory again.
+    // The budget starts small and grows while CPU-drawn primitives come
+    // back within a few GPU ones after a run (FGPUSinceRun), up to
+    // FCPURunPixels.
     FCPURun: Boolean;
-    FCPUBudget, FCPURunPixels: Int64;
+    FCPUBudget, FCPURunPixels, FRunBudget: Int64;
+    FGPUSinceRun: Integer;
     FQueue: TGEWorkers;
     FQueued: Boolean;
     FQueueClut: array[0..1023] of Byte;
@@ -245,10 +249,13 @@ const
   // A batch this large starts drawing when the GE stops (PSP_GPU_RELEASE
   // for measurements).
   ReleasePrims = 256;
-  // Pixels drawn on the CPU after a CPU-drawn primitive, about two screens:
-  // runs of interleaved CPU-drawn primitives stay on the CPU, at its speed
-  // (PSP_GPU_CPURUN for measurements, 0 for none).
-  CPURunPixels = 262144;
+  // Pixels drawn on the CPU after a CPU-drawn primitive: at first about an
+  // eighth of a screen, at most two screens when CPU-drawn primitives keep
+  // coming back within RunReturn GPU ones (PSP_GPU_CPURUN sets the most,
+  // 0 for no runs).
+  MinRunPixels = 16384;
+  DefaultCPURunPixels = 262144;
+  RunReturn = 64;
 
 type
   TGEGPUPush = record
@@ -840,8 +847,9 @@ begin
   FLastState := -1;
   FLastClutData := -1;
   FReleasePrims := StrToIntDef(GetEnvironmentVariable('PSP_GPU_RELEASE'), ReleasePrims);
-  FCPURunPixels := StrToInt64Def(GetEnvironmentVariable('PSP_GPU_CPURUN'), CPURunPixels);
+  FCPURunPixels := StrToInt64Def(GetEnvironmentVariable('PSP_GPU_CPURUN'), DefaultCPURunPixels);
   FQueue := TGEWorkers.Create(FMemory);
+  FGPUSinceRun := RunReturn;
   FMemory.OnVRAMFault := VRAMFault;
 end;
 
@@ -1145,6 +1153,8 @@ begin
   Result := @FPrims[FPrimCount * PrimWords];
   FillChar(Result^, PrimWords * 4, 0);
   Inc(FPrimCount);
+  if FGPUSinceRun < RunReturn then
+    Inc(FGPUSinceRun);
 end;
 
 function TGEGPUBackend.PackState(const S: TGERaster; out Tex: TGEGPUReads; out Ok: Boolean): Integer;
@@ -1659,7 +1669,12 @@ begin
   end;
   // Check mode compares every batch with the CPU: no runs there.
   FCPURun := not FCheck and (FCPURunPixels > 0);
-  FCPUBudget := FCPURunPixels;
+  if FGPUSinceRun < RunReturn then
+    FRunBudget := Min(Max(FRunBudget, MinRunPixels div 4) * 4, FCPURunPixels)
+  else
+    FRunBudget := Min(MinRunPixels, FCPURunPixels);
+  FCPUBudget := FRunBudget;
+  FGPUSinceRun := 0;
   Inc(FStats.Fallbacks);
   var N := 0;
   FReasons.TryGetValue(FWhy, N);
