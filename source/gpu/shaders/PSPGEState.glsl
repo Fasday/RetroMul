@@ -61,6 +61,8 @@ const uint ST_TEXDATA = 70u;
 const uint ST_CLUTDATA = 71u;
 const uint ST_LEVELS = 72u; // 8 x (address, width, height, buffer width)
 const uint ST_KEEPMASK = 104u;
+const uint ST_ZPERMUTATION = 105u;
+const uint ST_VRAMSHIFT = 106u;
 
 const uint SF_THROUGH = 1u << 0;
 const uint SF_CLEARMODE = 1u << 1;

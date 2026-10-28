@@ -840,6 +840,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
   FHLE.Result(FEdramTranslation);
   FEdramTranslation := W;
+  FMemory.SetVRAMTranslation(W);
 end;
 
 procedure TPSPGE.EnQueue(Head: Boolean);

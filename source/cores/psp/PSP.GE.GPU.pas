@@ -47,6 +47,7 @@ type
     First, Count: Integer;
     X1, Y1, X2, Y2: Integer;
     FBAddr, FBStride, FBFormat, ZAddr, ZStride: Cardinal;
+    ZPermutation: Integer;
     UsesZ: Boolean;
     Reads: TArray<TGEGPUSpan>;
   end;
@@ -93,6 +94,7 @@ type
     FLastRaster: TGERaster;
     FLastClut: array[0..1023] of Byte;
     FLastState: Integer;
+    FLastTranslation: Integer;
     FLastTex: TGEGPUSpan;
     FLastTexInVRAM: Boolean;
     FCheck: Boolean;
@@ -398,6 +400,17 @@ begin
   Result := Span(Int64(Addr) + First * Bpp, (Last - First + 1) * Bpp);
 end;
 
+// All supported EDRAM permutations stay inside a 64 KB bank. Enclose a
+// logical span conservatively for physical hazards and held-page tracking.
+function BankSpan(const S: TGEGPUSpan): TGEGPUSpan;
+begin
+  if S.Len <= 0 then
+    Exit(S);
+  var First := S.Lo and not Int64($FFFF);
+  var Last := (S.Lo + S.Len + $FFFF) and not Int64($FFFF);
+  Result := Span(First, Last - First);
+end;
+
 // The guest bytes the texture unit can read for the current level.
 function TextureBytes(const T: TGETexture; out Addr, Size: Cardinal): Boolean;
 begin
@@ -685,7 +698,8 @@ begin
     Exit(-1);
   end;
   var UsesClut := S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7);
-  if (FLastState >= 0) and (not S.Textured or FLastTexInVRAM) and CompareMem(@S, @FLastRaster, SizeOf(TGERaster)) and
+  if (FLastState >= 0) and (FLastTranslation = FMemory.VRAMShift) and
+    (not S.Textured or FLastTexInVRAM) and CompareMem(@S, @FLastRaster, SizeOf(TGERaster)) and
     (not UsesClut or CompareMem(S.Tex.Clut, @FLastClut[0], SizeOf(FLastClut))) then
   begin
     Tex := FLastTex;
@@ -714,6 +728,28 @@ begin
       begin
         TexInVRAM := True;
         Tex := Span(Addr, Size);
+        var FirstMirror := (Phys - PSPVRAMBase) div PSPVRAMSize;
+        var LastMirror := (Phys + Size - 1 - PSPVRAMBase) div PSPVRAMSize;
+        if (FirstMirror and 1 <> 0) or (FirstMirror <> LastMirror) then
+        begin
+          Tex := BankSpan(Tex);
+          var Alignment := 1;
+          case S.Tex.Format of
+            0, 1, 2, 6: Alignment := 2;
+            3, 7, 8, 9, 10: Alignment := 4;
+          end;
+          // An unaligned native read can cross the mapped bank's upper edge.
+          if Addr and Cardinal(Alignment - 1) <> 0 then
+          begin
+            if Tex.Lo + Tex.Len + $10000 > PSPVRAMSize then
+            begin
+              FWhy := 'unaligned texture near the physical VRAM boundary';
+              Ok := False;
+              Exit(-1);
+            end;
+            Tex := Span(Tex.Lo, Tex.Len + $10000);
+          end;
+        end;
       end
       else
       begin
@@ -786,6 +822,8 @@ begin
   if S.LogicOp then Flags := Flags or (1 shl 18);
   if S.DepthClamp then Flags := Flags or (1 shl 19);
   W[104] := S.KeepMask;
+  W[105] := Cardinal(S.ZPermutation);
+  W[106] := Cardinal(FMemory.VRAMShift);
   W[ST_FLAGS] := Flags;
   W[12] := Cardinal(S.TexFunc);
   W[13] := Cardinal(S.EnvR);
@@ -847,6 +885,7 @@ begin
   if UsesClut then
     Move(S.Tex.Clut^, FLastClut[0], SizeOf(FLastClut));
   FLastState := Result;
+  FLastTranslation := FMemory.VRAMShift;
   FLastTex := Tex;
   FLastTexInVRAM := TexInVRAM;
 end;
@@ -869,7 +908,7 @@ begin
   begin
     if (X2 >= Integer(S.ZStride)) or ((Int64(Y2 - Y1) * S.ZStride + X2 - X1 + 1) * 2 > PSPVRAMSize) then
     begin FWhy := 'pixels share depth memory'; Exit(False); end;
-    Z := TargetSpan(S.ZAddr, S.ZStride, 2, X1, Y1, X2, Y2);
+    Z := BankSpan(TargetSpan(S.ZAddr, S.ZStride, 2, X1, Y1, X2, Y2));
     if Overlap(FB, Z) then
     begin FWhy := 'colour and depth share memory'; Exit(False); end;
   end;
@@ -883,7 +922,8 @@ begin
     var P: PGEGPUPass := @FPasses[FPassCount - 1];
     // Primitives without depth go with any depth buffer.
     if (P.FBAddr <> S.FBAddr) or (P.FBStride <> S.FBStride) or (P.FBFormat <> S.FBFormat) or
-      (UsesZ and P.UsesZ and ((P.ZAddr <> S.ZAddr) or (P.ZStride <> S.ZStride))) then
+      (UsesZ and P.UsesZ and ((P.ZAddr <> S.ZAddr) or (P.ZStride <> S.ZStride) or
+        (P.ZPermutation <> S.ZPermutation))) then
     begin
       NewPass := True;
       Split('render target');
@@ -903,7 +943,7 @@ begin
       var PFB := TargetSpan(S.FBAddr, S.FBStride, Bpp, UX1, UY1, UX2, UY2);
       var PZ := Default(TGEGPUSpan);
       if PassZ then
-        PZ := TargetSpan(ZAddr, ZStride, 2, UX1, UY1, UX2, UY2);
+        PZ := BankSpan(TargetSpan(ZAddr, ZStride, 2, UX1, UY1, UX2, UY2));
       if ((Int64(UY2 - UY1) * S.FBStride + UX2 - UX1 + 1) * Bpp > PSPVRAMSize) or (PassZ and ((UX2 >= Integer(ZStride)) or
         ((Int64(UY2 - UY1) * ZStride + UX2 - UX1 + 1) * 2 > PSPVRAMSize) or Overlap(PFB, PZ))) then
       begin
@@ -944,6 +984,7 @@ begin
     P.UsesZ := True;
     P.ZAddr := S.ZAddr;
     P.ZStride := S.ZStride;
+    P.ZPermutation := S.ZPermutation;
   end;
   Inc(P.Count);
   P.X1 := Min(P.X1, X1); P.Y1 := Min(P.Y1, Y1);
@@ -1187,6 +1228,18 @@ begin
   Record_(KindSprite, S, V0, V1, V1);
 end;
 
+function RasterRound(X: Double): Integer; {$IF Defined(CPUX64) and Defined(MSWINDOWS)}assembler;{$ELSE}inline;{$ENDIF}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+asm
+  .NOFRAME
+  CVTSD2SI EAX, XMM0
+end;
+{$ELSE}
+begin
+  Result := Round(X);
+end;
+{$ENDIF}
+
 procedure TGEGPUBackend.DrawLine(const S: TGERaster; const V0, V1: TGEVertex);
 var
   F: TGEGPUFragment;
@@ -1227,13 +1280,13 @@ begin
     begin
       T := (C - X0) / D;
       PX := P;
-      PY := (Y0 + Round(DY * T) + $100000) div 16 - $10000;
+      PY := (Y0 + RasterRound(DY * T) + $100000) div 16 - $10000;
     end
     else
     begin
       T := (C - Y0) / D;
       PY := P;
-      PX := (X0 + Round(DX * T) + $100000) div 16 - $10000;
+      PX := (X0 + RasterRound(DX * T) + $100000) div 16 - $10000;
     end;
     F.R := V1.R; F.G := V1.G; F.B := V1.B; F.A := V1.A;
     F.SR := V1.SR; F.SG := V1.SG; F.SB := V1.SB;
@@ -1242,12 +1295,12 @@ begin
     F.Fog := V1.Fog;
     if not S.Flat and S.Gouraud then
     begin
-      F.R := Round(V0.R + (V1.R - V0.R) * T);
-      F.G := Round(V0.G + (V1.G - V0.G) * T);
-      F.B := Round(V0.B + (V1.B - V0.B) * T);
-      F.A := Round(V0.A + (V1.A - V0.A) * T);
+      F.R := RasterRound(V0.R + (V1.R - V0.R) * T);
+      F.G := RasterRound(V0.G + (V1.G - V0.G) * T);
+      F.B := RasterRound(V0.B + (V1.B - V0.B) * T);
+      F.A := RasterRound(V0.A + (V1.A - V0.A) * T);
     end;
-    F.Z := Round(V0.Z + (V1.Z - V0.Z) * T);
+    F.Z := RasterRound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;
     var Q := V0.Q + (V1.Q - V0.Q) * T;
