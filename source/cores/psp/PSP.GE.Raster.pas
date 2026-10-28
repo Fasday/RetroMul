@@ -837,9 +837,12 @@ begin
   var Row0 := (OriginY - Y1) * DX0 - (OriginX - X1) * DY0;
   var Row1 := (OriginY - Y2) * DX1 - (OriginX - X2) * DY1;
   var Row2 := (OriginY - Y0) * DX2 - (OriginX - X0) * DY2;
-  var Gouraud := S.Gouraud and not S.Flat;
+  var Gouraud := S.Gouraud and not S.Flat and
+    ((A0.R <> A1.R) or (A0.R <> A2.R) or (A0.G <> A1.G) or (A0.G <> A2.G) or
+     (A0.B <> A1.B) or (A0.B <> A2.B) or (A0.A <> A1.A) or (A0.A <> A2.A));
   var Secondary := (A0.SR or A0.SG or A0.SB or A1.SR or A1.SG or A1.SB or A2.SR or A2.SG or A2.SB) <> 0;
   var ConstantZ := (A0.Z = A1.Z) and (A0.Z = A2.Z);
+  var NeedWeights := S.Textured or S.FogEnabled or Secondary or not ConstantZ;
   var Plot := SelectPixel(S, Secondary);
   for var PY := PY1 to PY2 do
   begin
@@ -864,9 +867,14 @@ begin
     end;
     for var PX := Lo to Hi do
     begin
-      var W0 := E0 * FArea;
-      var W1 := E1 * FArea;
-      var W2 := E2 * FArea;
+      var W0, W1, W2: Double;
+      W0 := 0; W1 := 0; W2 := 0;
+      if NeedWeights then
+      begin
+        W0 := E0 * FArea;
+        W1 := E1 * FArea;
+        W2 := E2 * FArea;
+      end;
       if not Gouraud then
       begin
         F.R := V2.R; F.G := V2.G; F.B := V2.B; F.A := V2.A;

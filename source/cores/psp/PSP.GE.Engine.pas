@@ -12,7 +12,7 @@ unit PSP.GE.Engine;
 interface
 
 uses
-  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster;
+  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Workers;
 
 type
   TGEVec3 = record
@@ -40,6 +40,7 @@ type
   TPSPGEEngine = class
   private
     FMemory: TPSPMemory;
+    FWorkers: TGEWorkers;
     FClut: array[0..1023] of Byte;
     FRaster: TGERaster;
     FVSize: Integer;
@@ -82,6 +83,7 @@ type
     // Set by BBOX: the box is (possibly) visible.
     BoxVisible: Boolean;
     constructor Create(Memory: TPSPMemory);
+    destructor Destroy; override;
     procedure Reset;
     // Address of a 24-bit pointer parameter with the BASE upper bits and OFFSET.
     function Address(Param: Cardinal): Cardinal; inline;
@@ -105,7 +107,14 @@ constructor TPSPGEEngine.Create(Memory: TPSPMemory);
 begin
   inherited Create;
   FMemory := Memory;
+  FWorkers := TGEWorkers.Create;
   Reset;
+end;
+
+destructor TPSPGEEngine.Destroy;
+begin
+  FWorkers.Free;
+  inherited;
 end;
 
 procedure TPSPGEEngine.Reset;
@@ -1100,7 +1109,7 @@ begin
     if CW <> FCullCW then
       Exit;
   end;
-  GEDrawTriangle(FRaster, A, B, C);
+  FWorkers.Triangle(FRaster, A, B, C);
   Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
     ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
@@ -1229,7 +1238,7 @@ begin
     Exit;
   if ((Codes and GEOutFar) <> 0) and not FDepthClamp then
     Exit;
-  GEDrawSprite(FRaster, A.V, B.V);
+  FWorkers.Sprite(FRaster, A.V, B.V);
   Inc(FPrimCost, 100 + ScissoredArea(Min(A.V.X, B.V.X), Min(A.V.Y, B.V.Y), Max(A.V.X, B.V.X), Max(A.V.Y, B.V.Y)) * 3);
 end;
 
