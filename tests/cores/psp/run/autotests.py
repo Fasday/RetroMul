@@ -2,6 +2,7 @@
 (.expected) and drew (.expected.bmp, the 512x272 BGRA framebuffer).
 
   autotests.py [filter...] [--exe PATH] [--frames N] [--jobs N] [--out FILE] [--show] [--keep DIR]
+               [--backend cpu|vulkan|check]
 Results: PASS / FAIL / CRASH / TIMEOUT. Writes a summary file (default autotests.txt).
 Environment: PSP_AUTOTESTS overrides the test folder.
 """
@@ -67,11 +68,13 @@ def compare_bmp(expected, actual):
     return diff, diff_rgb, first
 
 
-def run(rel, exe, frames, timeout, keep, hw=False):
+def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu'):
     base = os.path.join(TESTS, rel)
     has_bmp = os.path.exists(base + '.expected.bmp')
     shot = None
     args = [exe, base + '.prx', '-test', '-quiet', '-frames', str(frames)]
+    if backend != 'cpu':
+        args += ['-gpu-check' if backend == 'check' else '-gpu']
     if hw:
         args.append('-hw')
     if has_bmp:
@@ -108,7 +111,10 @@ def run(rel, exe, frames, timeout, keep, hw=False):
                 os.unlink(shot)
             except OSError:
                 pass
-    if code == 0 and text_ok and bmp_ok:
+    backend_ok = backend == 'cpu' or ('gpu: unavailable' not in err and 'gpu: ' in err)
+    if backend == 'check':
+        backend_ok = backend_ok and 'gpu check: 0 of ' in err
+    if code == 0 and text_ok and bmp_ok and backend_ok:
         return rel, 'PASS', '', err
     status = 'FAIL'
     if code == -1:
@@ -127,6 +133,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('filters', nargs='*')
     ap.add_argument('--exe', default=EXE)
+    ap.add_argument('--backend', choices=('cpu', 'vulkan', 'check'), default='cpu')
     ap.add_argument('--frames', type=int, default=1200)
     ap.add_argument('--jobs', type=int, default=8)
     ap.add_argument('--timeout', type=int, default=60)
@@ -141,7 +148,7 @@ def main():
     tests = collect(args.filters)
     results = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
-        futs = [ex.submit(run, t, args.exe, args.frames, args.timeout, args.keep, args.hw) for t in tests]
+        futs = [ex.submit(run, t, args.exe, args.frames, args.timeout, args.keep, args.hw, args.backend) for t in tests]
         for f in concurrent.futures.as_completed(futs):
             results.append(f.result())
     results.sort()

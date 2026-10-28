@@ -1481,6 +1481,442 @@ type
 
   PFN_vkGetAndroidHardwareBufferPropertiesANDROID = function(device: VkDevice; buffer: Pointer; pProperties: PVkAndroidHardwareBufferPropertiesANDROID): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
 
+// Compute: buffers, descriptors, compute pipelines, timeline semaphores, timestamps.
+const
+  VK_NOT_READY = 1;
+  VK_INCOMPLETE = 5;
+  VK_ERROR_OUT_OF_HOST_MEMORY = -1;
+  VK_ERROR_OUT_OF_DEVICE_MEMORY = -2;
+  VK_ERROR_INITIALIZATION_FAILED = -3;
+  VK_ERROR_DEVICE_LOST = -4;
+  VK_ERROR_LAYER_NOT_PRESENT = -6;
+  VK_ERROR_EXTENSION_NOT_PRESENT = -7;
+  VK_ERROR_FEATURE_NOT_PRESENT = -8;
+  VK_API_VERSION_1_2 = (1 shl 22) or (2 shl 12);
+  VK_API_VERSION_1_3 = (1 shl 22) or (3 shl 12);
+  VK_WHOLE_SIZE = UInt64($FFFFFFFFFFFFFFFF);
+  VK_PHYSICAL_DEVICE_TYPE_OTHER = 0;
+  VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU = 1;
+  VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU = 2;
+  VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU = 3;
+  VK_PHYSICAL_DEVICE_TYPE_CPU = 4;
+  VK_QUEUE_COMPUTE_BIT = $00000002;
+  VK_QUEUE_TRANSFER_BIT = $00000004;
+  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT = $00000002;
+  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT = $00000004;
+  VK_MEMORY_PROPERTY_HOST_CACHED_BIT = $00000008;
+  VK_BUFFER_USAGE_TRANSFER_SRC_BIT = $00000001;
+  VK_BUFFER_USAGE_TRANSFER_DST_BIT = $00000002;
+  VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT = $00000010;
+  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT = $00000020;
+  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT = $00000100;
+  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER = 6;
+  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER = 7;
+  VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT = $00000001;
+  VK_SHADER_STAGE_COMPUTE_BIT = $00000020;
+  VK_PIPELINE_BIND_POINT_COMPUTE = 1;
+  VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT = $00000002;
+  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT = $00000800;
+  VK_PIPELINE_STAGE_TRANSFER_BIT = $00001000;
+  VK_PIPELINE_STAGE_HOST_BIT = $00004000;
+  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT = $00010000;
+  VK_ACCESS_INDIRECT_COMMAND_READ_BIT = $00000001;
+  VK_ACCESS_UNIFORM_READ_BIT = $00000008;
+  VK_ACCESS_SHADER_READ_BIT = $00000020;
+  VK_ACCESS_SHADER_WRITE_BIT = $00000040;
+  VK_ACCESS_TRANSFER_READ_BIT = $00000800;
+  VK_ACCESS_TRANSFER_WRITE_BIT = $00001000;
+  VK_ACCESS_HOST_READ_BIT = $00002000;
+  VK_ACCESS_HOST_WRITE_BIT = $00004000;
+  VK_ACCESS_MEMORY_READ_BIT = $00008000;
+  VK_ACCESS_MEMORY_WRITE_BIT = $00010000;
+  VK_FENCE_CREATE_SIGNALED_BIT = $00000001;
+  VK_COMMAND_POOL_CREATE_TRANSIENT_BIT = $00000001;
+  VK_SEMAPHORE_TYPE_BINARY = 0;
+  VK_SEMAPHORE_TYPE_TIMELINE = 1;
+  VK_QUERY_TYPE_TIMESTAMP = 2;
+  VK_QUERY_RESULT_64_BIT = $00000001;
+  VK_QUERY_RESULT_WAIT_BIT = $00000002;
+  VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE = 6;
+  VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO = 11;
+  VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO = 12;
+  VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO = 29;
+  VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO = 32;
+  VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO = 33;
+  VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO = 34;
+  VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET = 35;
+  VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER = 44;
+  VK_STRUCTURE_TYPE_MEMORY_BARRIER = 46;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 = 1000059000;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES = 1000082000;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES = 1000083000;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES = 1000177000;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES = 1000197000;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES = 1000207000;
+  VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO = 1000207002;
+  VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO = 1000207003;
+  VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO = 1000207004;
+  VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO = 1000207005;
+
+type
+  PVkBuffer = ^VkBuffer;
+
+  PVkBufferCopy = ^VkBufferCopy;
+
+  PVkBufferCreateInfo = ^VkBufferCreateInfo;
+
+  PVkComputePipelineCreateInfo = ^VkComputePipelineCreateInfo;
+
+  PVkDescriptorBufferInfo = ^VkDescriptorBufferInfo;
+
+  PVkDescriptorPool = ^VkDescriptorPool;
+
+  PVkDescriptorPoolCreateInfo = ^VkDescriptorPoolCreateInfo;
+
+  PVkDescriptorPoolSize = ^VkDescriptorPoolSize;
+
+  PVkDescriptorSet = ^VkDescriptorSet;
+
+  PVkDescriptorSetAllocateInfo = ^VkDescriptorSetAllocateInfo;
+
+  PVkDescriptorSetLayoutBinding = ^VkDescriptorSetLayoutBinding;
+
+  PVkDescriptorSetLayoutCreateInfo = ^VkDescriptorSetLayoutCreateInfo;
+
+  PVkMappedMemoryRange = ^VkMappedMemoryRange;
+
+  PVkPhysicalDeviceFeatures2 = ^VkPhysicalDeviceFeatures2;
+
+  PVkPhysicalDeviceProperties = ^VkPhysicalDeviceProperties;
+
+  PVkQueryPool = ^VkQueryPool;
+
+  PVkQueryPoolCreateInfo = ^VkQueryPoolCreateInfo;
+
+  PVkSemaphoreSignalInfo = ^VkSemaphoreSignalInfo;
+
+  PVkSemaphoreWaitInfo = ^VkSemaphoreWaitInfo;
+
+  PVkSpecializationInfo = ^VkSpecializationInfo;
+
+  PVkSpecializationMapEntry = ^VkSpecializationMapEntry;
+
+  PVkWriteDescriptorSet = ^VkWriteDescriptorSet;
+
+  VkBufferCreateFlags = VkFlags;
+
+  VkBufferUsageFlags = VkFlags;
+
+  VkBufferCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkBufferCreateFlags;
+    size: VkDeviceSize;
+    usage: VkBufferUsageFlags;
+    sharingMode: VkSharingMode;
+    queueFamilyIndexCount: Cardinal;
+    pQueueFamilyIndices: PCardinal;
+  end;
+
+  VkBufferCopy = record
+    srcOffset: VkDeviceSize;
+    dstOffset: VkDeviceSize;
+    size: VkDeviceSize;
+  end;
+
+  VkMemoryMapFlags = VkFlags;
+
+  VkMappedMemoryRange = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    memory: VkDeviceMemory;
+    offset: VkDeviceSize;
+    size: VkDeviceSize;
+  end;
+
+  VkDescriptorType = Integer;
+
+  VkDescriptorSetLayoutCreateFlags = VkFlags;
+
+  VkDescriptorSetLayoutBinding = record
+    binding: Cardinal;
+    descriptorType: VkDescriptorType;
+    descriptorCount: Cardinal;
+    stageFlags: VkShaderStageFlags;
+    pImmutableSamplers: Pointer;
+  end;
+
+  VkDescriptorSetLayoutCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkDescriptorSetLayoutCreateFlags;
+    bindingCount: Cardinal;
+    pBindings: PVkDescriptorSetLayoutBinding;
+  end;
+
+  VkDescriptorPool = UInt64;
+
+  VkDescriptorSet = UInt64;
+
+  VkDescriptorPoolCreateFlags = VkFlags;
+
+  VkDescriptorPoolResetFlags = VkFlags;
+
+  VkDescriptorPoolSize = record
+    &type: VkDescriptorType;
+    descriptorCount: Cardinal;
+  end;
+
+  VkDescriptorPoolCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkDescriptorPoolCreateFlags;
+    maxSets: Cardinal;
+    poolSizeCount: Cardinal;
+    pPoolSizes: PVkDescriptorPoolSize;
+  end;
+
+  VkDescriptorSetAllocateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    descriptorPool: VkDescriptorPool;
+    descriptorSetCount: Cardinal;
+    pSetLayouts: PVkDescriptorSetLayout;
+  end;
+
+  VkDescriptorBufferInfo = record
+    buffer: VkBuffer;
+    offset: VkDeviceSize;
+    range: VkDeviceSize;
+  end;
+
+  VkWriteDescriptorSet = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    dstSet: VkDescriptorSet;
+    dstBinding: Cardinal;
+    dstArrayElement: Cardinal;
+    descriptorCount: Cardinal;
+    descriptorType: VkDescriptorType;
+    pImageInfo: Pointer;
+    pBufferInfo: PVkDescriptorBufferInfo;
+    pTexelBufferView: Pointer;
+  end;
+
+  VkSpecializationMapEntry = record
+    constantID: Cardinal;
+    offset: Cardinal;
+    size: NativeUInt;
+  end;
+
+  VkSpecializationInfo = record
+    mapEntryCount: Cardinal;
+    pMapEntries: PVkSpecializationMapEntry;
+    dataSize: NativeUInt;
+    pData: Pointer;
+  end;
+
+  VkComputePipelineCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkPipelineCreateFlags;
+    stage: VkPipelineShaderStageCreateInfo;
+    layout: VkPipelineLayout;
+    basePipelineHandle: VkPipeline;
+    basePipelineIndex: Integer;
+  end;
+
+  VkPhysicalDeviceFeatures2 = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    features: VkPhysicalDeviceFeatures;
+  end;
+
+  VkPhysicalDevice16BitStorageFeatures = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    storageBuffer16BitAccess: VkBool32;
+    uniformAndStorageBuffer16BitAccess: VkBool32;
+    storagePushConstant16: VkBool32;
+    storageInputOutput16: VkBool32;
+  end;
+
+  VkPhysicalDevice8BitStorageFeatures = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    storageBuffer8BitAccess: VkBool32;
+    uniformAndStorageBuffer8BitAccess: VkBool32;
+    storagePushConstant8: VkBool32;
+  end;
+
+  VkPhysicalDeviceShaderFloat16Int8Features = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    shaderFloat16: VkBool32;
+    shaderInt8: VkBool32;
+  end;
+
+  VkPhysicalDeviceTimelineSemaphoreFeatures = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    timelineSemaphore: VkBool32;
+  end;
+
+  VkShaderFloatControlsIndependence = Integer;
+
+  VkPhysicalDeviceFloatControlsProperties = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    denormBehaviorIndependence: VkShaderFloatControlsIndependence;
+    roundingModeIndependence: VkShaderFloatControlsIndependence;
+    shaderSignedZeroInfNanPreserveFloat16: VkBool32;
+    shaderSignedZeroInfNanPreserveFloat32: VkBool32;
+    shaderSignedZeroInfNanPreserveFloat64: VkBool32;
+    shaderDenormPreserveFloat16: VkBool32;
+    shaderDenormPreserveFloat32: VkBool32;
+    shaderDenormPreserveFloat64: VkBool32;
+    shaderDenormFlushToZeroFloat16: VkBool32;
+    shaderDenormFlushToZeroFloat32: VkBool32;
+    shaderDenormFlushToZeroFloat64: VkBool32;
+    shaderRoundingModeRTEFloat16: VkBool32;
+    shaderRoundingModeRTEFloat32: VkBool32;
+    shaderRoundingModeRTEFloat64: VkBool32;
+    shaderRoundingModeRTZFloat16: VkBool32;
+    shaderRoundingModeRTZFloat32: VkBool32;
+    shaderRoundingModeRTZFloat64: VkBool32;
+  end;
+
+  VkSemaphoreType = Integer;
+
+  VkSemaphoreTypeCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    semaphoreType: VkSemaphoreType;
+    initialValue: UInt64;
+  end;
+
+  VkTimelineSemaphoreSubmitInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    waitSemaphoreValueCount: Cardinal;
+    pWaitSemaphoreValues: PUInt64;
+    signalSemaphoreValueCount: Cardinal;
+    pSignalSemaphoreValues: PUInt64;
+  end;
+
+  VkSemaphoreWaitFlags = VkFlags;
+
+  VkSemaphoreWaitInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkSemaphoreWaitFlags;
+    semaphoreCount: Cardinal;
+    pSemaphores: PVkSemaphore;
+    pValues: PUInt64;
+  end;
+
+  VkSemaphoreSignalInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    semaphore: VkSemaphore;
+    value: UInt64;
+  end;
+
+  VkQueryPool = UInt64;
+
+  VkQueryPoolCreateFlags = VkFlags;
+
+  VkQueryType = Integer;
+
+  VkQueryResultFlags = VkFlags;
+
+  VkQueryPoolCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkQueryPoolCreateFlags;
+    queryType: VkQueryType;
+    queryCount: Cardinal;
+    pipelineStatistics: VkQueryPipelineStatisticFlags;
+  end;
+
+  VkCommandPoolResetFlags = VkFlags;
+
+  PFN_vkEnumerateInstanceVersion = function(pApiVersion: PCardinal): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkGetPhysicalDeviceProperties = procedure(physicalDevice: VkPhysicalDevice; pProperties: PVkPhysicalDeviceProperties); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkGetPhysicalDeviceFeatures2 = procedure(physicalDevice: VkPhysicalDevice; pFeatures: PVkPhysicalDeviceFeatures2); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCreateBuffer = function(device: VkDevice; pCreateInfo: PVkBufferCreateInfo; pAllocator: Pointer; pBuffer: PVkBuffer): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkDestroyBuffer = procedure(device: VkDevice; buffer: VkBuffer; pAllocator: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkGetBufferMemoryRequirements = procedure(device: VkDevice; buffer: VkBuffer; pMemoryRequirements: PVkMemoryRequirements); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkBindBufferMemory = function(device: VkDevice; buffer: VkBuffer; memory: VkDeviceMemory; memoryOffset: VkDeviceSize): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkMapMemory = function(device: VkDevice; memory: VkDeviceMemory; offset: VkDeviceSize; size: VkDeviceSize; flags: VkMemoryMapFlags; ppData: PPointer): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkUnmapMemory = procedure(device: VkDevice; memory: VkDeviceMemory); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkFlushMappedMemoryRanges = function(device: VkDevice; memoryRangeCount: Cardinal; pMemoryRanges: PVkMappedMemoryRange): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkInvalidateMappedMemoryRanges = function(device: VkDevice; memoryRangeCount: Cardinal; pMemoryRanges: PVkMappedMemoryRange): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCreateDescriptorSetLayout = function(device: VkDevice; pCreateInfo: PVkDescriptorSetLayoutCreateInfo; pAllocator: Pointer; pSetLayout: PVkDescriptorSetLayout): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkDestroyDescriptorSetLayout = procedure(device: VkDevice; descriptorSetLayout: VkDescriptorSetLayout; pAllocator: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCreateDescriptorPool = function(device: VkDevice; pCreateInfo: PVkDescriptorPoolCreateInfo; pAllocator: Pointer; pDescriptorPool: PVkDescriptorPool): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkDestroyDescriptorPool = procedure(device: VkDevice; descriptorPool: VkDescriptorPool; pAllocator: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkResetDescriptorPool = function(device: VkDevice; descriptorPool: VkDescriptorPool; flags: VkDescriptorPoolResetFlags): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkAllocateDescriptorSets = function(device: VkDevice; pAllocateInfo: PVkDescriptorSetAllocateInfo; pDescriptorSets: PVkDescriptorSet): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkFreeDescriptorSets = function(device: VkDevice; descriptorPool: VkDescriptorPool; descriptorSetCount: Cardinal; pDescriptorSets: PVkDescriptorSet): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkUpdateDescriptorSets = procedure(device: VkDevice; descriptorWriteCount: Cardinal; pDescriptorWrites: PVkWriteDescriptorSet; descriptorCopyCount: Cardinal; pDescriptorCopies: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCreateComputePipelines = function(device: VkDevice; pipelineCache: VkPipelineCache; createInfoCount: Cardinal; pCreateInfos: PVkComputePipelineCreateInfo; pAllocator: Pointer; pPipelines: PVkPipeline): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdBindDescriptorSets = procedure(commandBuffer: VkCommandBuffer; pipelineBindPoint: VkPipelineBindPoint; layout: VkPipelineLayout; firstSet: Cardinal; descriptorSetCount: Cardinal; pDescriptorSets: PVkDescriptorSet; dynamicOffsetCount: Cardinal; pDynamicOffsets: PCardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdDispatch = procedure(commandBuffer: VkCommandBuffer; groupCountX: Cardinal; groupCountY: Cardinal; groupCountZ: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdDispatchIndirect = procedure(commandBuffer: VkCommandBuffer; buffer: VkBuffer; offset: VkDeviceSize); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdCopyBuffer = procedure(commandBuffer: VkCommandBuffer; srcBuffer: VkBuffer; dstBuffer: VkBuffer; regionCount: Cardinal; pRegions: PVkBufferCopy); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdFillBuffer = procedure(commandBuffer: VkCommandBuffer; dstBuffer: VkBuffer; dstOffset: VkDeviceSize; size: VkDeviceSize; data: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdUpdateBuffer = procedure(commandBuffer: VkCommandBuffer; dstBuffer: VkBuffer; dstOffset: VkDeviceSize; dataSize: VkDeviceSize; pData: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkFreeCommandBuffers = procedure(device: VkDevice; commandPool: VkCommandPool; commandBufferCount: Cardinal; pCommandBuffers: PVkCommandBuffer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkResetCommandPool = function(device: VkDevice; commandPool: VkCommandPool; flags: VkCommandPoolResetFlags): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkGetFenceStatus = function(device: VkDevice; fence: VkFence): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkQueueWaitIdle = function(queue: VkQueue): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkWaitSemaphores = function(device: VkDevice; pWaitInfo: PVkSemaphoreWaitInfo; timeout: UInt64): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkSignalSemaphore = function(device: VkDevice; pSignalInfo: PVkSemaphoreSignalInfo): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkGetSemaphoreCounterValue = function(device: VkDevice; semaphore: VkSemaphore; pValue: PUInt64): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCreateQueryPool = function(device: VkDevice; pCreateInfo: PVkQueryPoolCreateInfo; pAllocator: Pointer; pQueryPool: PVkQueryPool): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkDestroyQueryPool = procedure(device: VkDevice; queryPool: VkQueryPool; pAllocator: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdResetQueryPool = procedure(commandBuffer: VkCommandBuffer; queryPool: VkQueryPool; firstQuery: Cardinal; queryCount: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkCmdWriteTimestamp = procedure(commandBuffer: VkCommandBuffer; pipelineStage: VkPipelineStageFlags; queryPool: VkQueryPool; query: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
+  PFN_vkGetQueryPoolResults = function(device: VkDevice; queryPool: VkQueryPool; firstQuery: Cardinal; queryCount: Cardinal; dataSize: NativeUInt; pData: Pointer; stride: VkDeviceSize; flags: VkQueryResultFlags): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
 implementation
 
 end.

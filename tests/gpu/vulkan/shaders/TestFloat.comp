@@ -1,0 +1,63 @@
+#version 450
+// Which float operations the device does exactly as IEEE-754 (as the CPU's
+// Single and Double arithmetic) under the float controls.
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float64 : require
+#include "FloatControls.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Inputs { uvec4 inputs[]; };
+layout(std430, binding = 1) writeonly buffer Outputs { uint outputs[]; };
+
+layout(push_constant) uniform Push { uint count; } pc;
+
+const uint Stride = 24;
+
+void put64(uint o, double v)
+{
+  uvec2 w = unpackDouble2x32(v);
+  outputs[o] = w.x;
+  outputs[o + 1] = w.y;
+}
+
+void main()
+{
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= pc.count)
+    return;
+  uvec4 v = inputs[i];
+  precise float fa = uintBitsToFloat(v.x);
+  precise float fb = uintBitsToFloat(v.y);
+  precise double da = packDouble2x32(v.xy);
+  precise double db = packDouble2x32(v.zw);
+  uint o = i * Stride;
+  precise float sum = fa + fb;
+  precise float diff = fa - fb;
+  precise float prod = fa * fb;
+  precise float quot = fa / fb;
+  outputs[o + 0] = floatBitsToUint(sum);
+  outputs[o + 1] = floatBitsToUint(diff);
+  outputs[o + 2] = floatBitsToUint(prod);
+  outputs[o + 3] = floatBitsToUint(quot);
+  outputs[o + 4] = floatBitsToUint(float(int(v.z)));
+  outputs[o + 5] = abs(fa) < 2147483648.0 ? uint(int(fa)) : 0u;
+  outputs[o + 6] = floatBitsToUint(roundEven(fa));
+  outputs[o + 7] = floatBitsToUint(floor(fa));
+  precise float mul = float(int(v.z)) * fb;
+  precise float madd = mul + fa;
+  outputs[o + 8] = floatBitsToUint(madd);
+  outputs[o + 9] = floatBitsToUint(float(double(fa) * double(fb)));
+  precise double dsum = da + db;
+  precise double dprod = da * db;
+  precise double dquot = da / db;
+  precise double dwide = double(fa) * double(fb);
+  put64(o + 10, dsum);
+  put64(o + 12, dprod);
+  put64(o + 14, dquot);
+  put64(o + 16, dwide);
+  outputs[o + 18] = floatBitsToUint(float(da));
+  put64(o + 19, double(int64_t(packUint2x32(v.zw))));
+  put64(o + 21, roundEven(da));
+  outputs[o + 23] = abs(da) < 2147483648.0lf ? uint(int(da)) : 0u;
+}

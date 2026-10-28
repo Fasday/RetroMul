@@ -19,6 +19,7 @@ const
 
 type
   TPSPCodeWrite = procedure(Address, Size: Cardinal) of object;
+  TPSPVRAMFault = procedure of object;
 
   TPSPMemory = class
   private
@@ -30,9 +31,14 @@ type
     FOnCodeWrite: TPSPCodeWrite;
     FFaultAddress: Cardinal;
     FFaults: Integer;
+    FHeld: array[0..PSPVRAMSize div PSPPageSize - 1] of Boolean;
+    FHeldCount: Integer;
+    FOnVRAMFault: TPSPVRAMFault;
     procedure MapRange(Physical, Size: Cardinal; Base: PByte);
     function Unmapped(Address: Cardinal; Write: Boolean): Cardinal;
     procedure CodeWrite(Address, Size: Cardinal);
+    function Fault(Address: Cardinal): PByte;
+    procedure FaultRange(Address, Size: Cardinal);
   public
     constructor Create;
     procedure Reset;
@@ -47,6 +53,9 @@ type
     // Host pointer for Size bytes starting at Address, or nil when the range
     // leaves its region.
     function Ptr(Address: Cardinal; Size: Cardinal = 1): PByte;
+    // As Ptr, without bringing back held VRAM pages: for readers that only
+    // look after the device gave them back (the GE's CPU rasterizer).
+    function HostPtr(Address: Cardinal; Size: Cardinal = 1): PByte;
     function Valid(Address: Cardinal; Size: Cardinal = 1): Boolean;
     function PageBase(Address: Cardinal): PByte; inline;
     procedure ReadBytes(Address: Cardinal; var Buffer; Size: Cardinal);
@@ -62,11 +71,19 @@ type
     procedure MarkCode(Address: Cardinal); inline;
     procedure ClearCodeMarks;
     function IsCode(Address: Cardinal): Boolean; inline;
+    // VRAM pages a device (the GE's GPU renderer) has newer data for: any
+    // access to a held page, in any mirror, first calls OnVRAMFault, which
+    // must bring the data back and release every page.
+    procedure HoldVRAM(Page: Integer);
+    procedure ReleaseVRAM;
+    function VRAMHeld(Page: Integer): Boolean; inline;
+    property HeldVRAMPages: Integer read FHeldCount;
     // The page table and the code marks themselves, for generated code that
     // reads them (PSP.CPU.JIT).
     function PageTable: PPointer; inline;
     function CodeMarks: PByte; inline;
     property OnCodeWrite: TPSPCodeWrite read FOnCodeWrite write FOnCodeWrite;
+    property OnVRAMFault: TPSPVRAMFault read FOnVRAMFault write FOnVRAMFault;
     property RAM: TBytes read FRAM;
     property VRAM: TBytes read FVRAM;
     property Scratch: TBytes read FScratch;
@@ -98,6 +115,8 @@ end;
 
 procedure TPSPMemory.Reset;
 begin
+  if FHeldCount > 0 then
+    FOnVRAMFault();
   FillChar(FRAM[0], Length(FRAM), 0);
   FillChar(FVRAM[0], Length(FVRAM), 0);
   FillChar(FScratch[0], Length(FScratch), 0);
@@ -122,11 +141,81 @@ end;
 function TPSPMemory.PageBase(Address: Cardinal): PByte;
 begin
   Result := FPages[(Address and $1FFFFFFF) shr PSPPageShift];
+  if Result = nil then
+    Result := Fault(Address);
+end;
+
+// The page of a held VRAM address once the device has given it back; nil for
+// an unmapped address.
+function TPSPMemory.Fault(Address: Cardinal): PByte;
+begin
+  var Physical := Address and $1FFFFFFF;
+  if (FHeldCount = 0) or (Physical < PSPVRAMBase) or (Physical >= PSPVRAMBase + 4 * PSPVRAMSize) or
+    not FHeld[(Physical and (PSPVRAMSize - 1)) shr PSPPageShift] then
+    Exit(nil);
+  FOnVRAMFault();
+  Result := FPages[Physical shr PSPPageShift];
+end;
+
+procedure TPSPMemory.FaultRange(Address, Size: Cardinal);
+begin
+  var Lo := Int64(Address and $1FFFFFFF);
+  var Hi := Lo + Size;
+  if Size = 0 then
+    Hi := Lo + 1;
+  if Lo < PSPVRAMBase then
+    Lo := PSPVRAMBase;
+  if Hi > PSPVRAMBase + 4 * PSPVRAMSize then
+    Hi := PSPVRAMBase + 4 * PSPVRAMSize;
+  if Hi - Lo > PSPVRAMSize then
+    Hi := Lo + PSPVRAMSize;
+  var Page := Lo shr PSPPageShift;
+  while Page < (Hi + PSPPageMask) shr PSPPageShift do
+  begin
+    if FHeld[Page and (PSPVRAMSize div PSPPageSize - 1)] then
+    begin
+      FOnVRAMFault();
+      Exit;
+    end;
+    Inc(Page);
+  end;
+end;
+
+procedure TPSPMemory.HoldVRAM(Page: Integer);
+begin
+  if FHeld[Page] then
+    Exit;
+  FHeld[Page] := True;
+  Inc(FHeldCount);
+  for var M := 0 to 3 do
+    FPages[(PSPVRAMBase + Cardinal(M) * PSPVRAMSize) shr PSPPageShift + Cardinal(Page)] := nil;
+end;
+
+procedure TPSPMemory.ReleaseVRAM;
+begin
+  if FHeldCount = 0 then
+    Exit;
+  for var Page := 0 to High(FHeld) do
+    if FHeld[Page] then
+    begin
+      FHeld[Page] := False;
+      for var M := 0 to 3 do
+        FPages[(PSPVRAMBase + Cardinal(M) * PSPVRAMSize) shr PSPPageShift + Cardinal(Page)] :=
+          @FVRAM[Page * PSPPageSize];
+    end;
+  FHeldCount := 0;
+end;
+
+function TPSPMemory.VRAMHeld(Page: Integer): Boolean;
+begin
+  Result := FHeld[Page];
 end;
 
 function TPSPMemory.Read8(Address: Cardinal): Cardinal;
 begin
   var P := FPages[(Address and $1FFFFFFF) shr PSPPageShift];
+  if P = nil then
+    P := Fault(Address);
   if P <> nil then
     Result := P[Address and PSPPageMask]
   else
@@ -136,6 +225,8 @@ end;
 function TPSPMemory.Read16(Address: Cardinal): Cardinal;
 begin
   var P := FPages[(Address and $1FFFFFFF) shr PSPPageShift];
+  if P = nil then
+    P := Fault(Address);
   if P <> nil then
     Result := PWord(P + (Address and PSPPageMask))^
   else
@@ -145,6 +236,8 @@ end;
 function TPSPMemory.Read32(Address: Cardinal): Cardinal;
 begin
   var P := FPages[(Address and $1FFFFFFF) shr PSPPageShift];
+  if P = nil then
+    P := Fault(Address);
   if P <> nil then
     Result := PCardinal(P + (Address and PSPPageMask))^
   else
@@ -155,6 +248,8 @@ procedure TPSPMemory.Write8(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
   var P := FPages[Page];
+  if P = nil then
+    P := Fault(Address);
   if P <> nil then
   begin
     P[Address and PSPPageMask] := Byte(Value);
@@ -169,6 +264,8 @@ procedure TPSPMemory.Write16(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
   var P := FPages[Page];
+  if P = nil then
+    P := Fault(Address);
   if P <> nil then
   begin
     PWord(P + (Address and PSPPageMask))^ := Word(Value);
@@ -183,6 +280,8 @@ procedure TPSPMemory.Write32(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
   var P := FPages[Page];
+  if P = nil then
+    P := Fault(Address);
   if P <> nil then
   begin
     PCardinal(P + (Address and PSPPageMask))^ := Value;
@@ -206,6 +305,8 @@ end;
 
 function TPSPMemory.Ptr(Address: Cardinal; Size: Cardinal): PByte;
 begin
+  if FHeldCount > 0 then
+    FaultRange(Address, Size);
   var Physical := Address and $1FFFFFFF;
   if Size = 0 then
     Size := 1;
@@ -221,6 +322,21 @@ begin
   if (Q = nil) or (NativeUInt(Q) - NativeUInt(P) <> NativeUInt((Last shr PSPPageShift) - (Physical shr PSPPageShift)) * PSPPageSize) then
     Exit(nil);
   Result := P + (Physical and PSPPageMask);
+end;
+
+function TPSPMemory.HostPtr(Address: Cardinal; Size: Cardinal): PByte;
+begin
+  var Physical := Address and $1FFFFFFF;
+  if (FHeldCount > 0) and (Physical >= PSPVRAMBase) and (Physical < PSPVRAMBase + 4 * PSPVRAMSize) then
+  begin
+    if Size = 0 then
+      Size := 1;
+    var Offset := (Physical - PSPVRAMBase) and (PSPVRAMSize - 1);
+    if Offset + Size > PSPVRAMSize then
+      Exit(nil);
+    Exit(@FVRAM[Offset]);
+  end;
+  Result := Ptr(Address, Size);
 end;
 
 function TPSPMemory.Valid(Address, Size: Cardinal): Boolean;

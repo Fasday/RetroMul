@@ -4,6 +4,7 @@ program PSPRun;
 
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
+// -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
 // -test: isolated pspautotests host0: tree, no display, stops at exit.
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
@@ -11,7 +12,7 @@ program PSPRun;
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
-  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
+  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.GPU;
 
 type
   TPress = record
@@ -247,6 +248,8 @@ begin
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
+    var GPUMode := 0;
+    var VRAMFile := '';
     var WavFile := '';
     var CallsOn := False;
     var CallsFilter := '';
@@ -268,6 +271,9 @@ begin
       else if A = '-history' then begin Inc(I); HistoryLen := StrToInt(ParamStr(I)); end
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
+      else if A = '-gpu' then GPUMode := 1
+      else if A = '-gpu-check' then GPUMode := 2
+      else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
       else if A = '-press' then
@@ -358,7 +364,25 @@ begin
     var History: THistoryRunner := nil;
     var OriginalRunner := Console.CPU.Runner;
     var Wav := TList<SmallInt>.Create;
+    var GPU: TGEGPUBackend := nil;
     try
+      if GPUMode > 0 then
+      begin
+        var Error: string;
+        if CreateGEGPUBackend(Console.Memory, GPUMode = 2, GPU, Error) then
+        begin
+          GPU.OnMessage :=
+            procedure(const Text: string)
+            begin
+              Writeln(ErrOutput, Text);
+            end;
+          TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := GPU;
+          if not Quiet then
+            Writeln(ErrOutput, 'gpu: ' + GPU.Compute.Name + ', ' + GPU.Describe);
+        end
+        else
+          Writeln(ErrOutput, 'gpu: unavailable (' + Error + '), the GE draws on the CPU');
+      end;
       Console.OnLog := Sink.Log;
       Sink.Console := Console;
       Sink.ShotFile := ShotFile;
@@ -444,6 +468,10 @@ begin
         if Console.Kernel.Exited then
           Break;
       end;
+      if GPU <> nil then
+        GPU.Sync;
+      if VRAMFile <> '' then
+        TFile.WriteAllBytes(VRAMFile, Console.Memory.VRAM);
       LastHash := FrameHash(Frame);
       var Text := Console.TakeOutput;
       if Text <> '' then
@@ -520,6 +548,22 @@ begin
       end;
       if Failed <> '' then
         ExitCode := 1;
+      if GPU <> nil then
+      begin
+        var St := GPU.Stats;
+        if GPUMode > 0 then
+          Writeln(ErrOutput, Format('gpu: %d batches, %d passes, %d prims, %d on the CPU, %d pages uploaded, ' +
+            '%.2fs waiting (gpu: %.3fs upload, %.3fs drawing, %.3fs readback)', [St.Batches, St.Passes, St.Prims,
+            St.Fallbacks, St.UploadedPages, St.WaitSeconds, St.UploadSeconds, St.DrawSeconds, St.ReadbackSeconds]));
+        if not Quiet then
+        begin
+          Writeln(ErrOutput, Format('gpu: %d tiles, %d tile primitives', [St.Tiles, St.Binned]));
+          Write(ErrOutput, GPU.Report);
+        end;
+        if GPUMode = 2 then
+          Writeln(ErrOutput, Format('gpu check: %d of %d batches differ (%d bytes)', [St.BadBatches, St.CheckedBatches,
+            St.BadBytes]));
+      end;
     finally
       if Watcher <> nil then
       begin
@@ -530,6 +574,11 @@ begin
       Console.CPU.Runner := OriginalRunner;
       History.Free;
       Wav.Free;
+      if GPU <> nil then
+      begin
+        TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := nil;
+        GPU.Free;
+      end;
       Console.Free;
       Sink.Free;
       Presses.Free;
