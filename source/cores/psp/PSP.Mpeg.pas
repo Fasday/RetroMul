@@ -1739,11 +1739,21 @@ begin
   var Flags := FHLE.Arg(2);
   var MbW, MbH: Integer;
   var Bufs, Sizes: TArray<Cardinal>;
-  if (Dst = 0) or (Src = 0) or not ReadYCbCrDesc(FMemory, Src, MbW, MbH, Bufs, Sizes) then
+  MbH := Integer(FMemory.Read32(Src));
+  MbW := Integer(FMemory.Read32(Src + 4));
+  // Unlike the destination and CSC descriptors, the copy source's dimensions
+  // are pixels (the guest libmpeg constructs it from the codec's picture info).
+  if (Dst = 0) or (Src = 0) or (MbW <= 0) or (MbH <= 0) or (MbW > 1024) or (MbH > 1024) then
   begin
     FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
     Exit;
   end;
+  MbW := (MbW + 15) div 16;
+  MbH := (MbH + 15) div 16;
+  SetLength(Bufs, 8);
+  for var I := 0 to 7 do
+    Bufs[I] := FMemory.Read32(Src + 16 + Cardinal(I) * 4);
+  PSPMePlaneSizes(MbW, MbH, Sizes);
   for var I := 0 to 7 do
   begin
     var Field := (I shr 1) and 1;
