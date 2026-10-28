@@ -1,7 +1,9 @@
 program PSPJitTest;
 
 // The Allegrex recompiler against the interpreter (PSP.JitTest):
-// PSPJitTest [programs] [bench]. Exit code 1 when they differ.
+// PSPJitTest [programs] [bench] [-v] [-mix] (-v: the guest faults that ended
+// programs; -mix: the instructions the interpreter runs, by opcode, instead).
+// Exit code 1 when they differ.
 
 {$APPTYPE CONSOLE}
 

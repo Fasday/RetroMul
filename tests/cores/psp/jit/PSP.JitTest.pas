@@ -5,12 +5,18 @@ unit PSP.JitTest;
 // are branches too, jumps, JR/JALR), loads and stores of every size aligned
 // or not (LWL/LWR/SWL/SWR, LL/SC) in RAM, VRAM, the scratchpad and unmapped
 // space, stores into the program's own code (by its instructions and by the
-// kernel), syscalls that add cycles, stop the run, rewrite code or switch
-// the context, some COP1: each runs from the same state on the interpreter,
-// the recompiler's code (this target's backend) and the code run by HW.JIT's
-// model, in the same budgets. After each Run the contexts, CurPC, the cycles
-// it returns, Stopping, the faults and the kernel's log must match; at the
-// end the memories, byte for byte.
+// kernel), syscalls (also in JR's delay slot, as kernel stubs are) that add
+// cycles, stop the run, rewrite code, switch the context, move the PC or
+// drop the decoded code, some COP1, and handlers of the test's own in the
+// VFPU's place (they read PC, NPC, CurPC and the budget, stop the run, add
+// cycles, store into code, move the PC, branch): each runs from the same
+// state on the interpreter, the recompiler's code (this target's backend)
+// and the code run by HW.JIT's model, in the same budgets, through both
+// segments, with the recompiler now and then switched off. After each Run
+// the contexts, CurPC, the cycles it returns, Stopping, the faults and the
+// kernel's log (with the registers' hash at each syscall) must match; at the
+// end the memories, byte for byte. Also a benchmark (bench): instructions
+// per second of hot loops.
 
 interface
 
