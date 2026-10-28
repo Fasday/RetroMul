@@ -350,13 +350,11 @@ begin
   var Frame: TBytes;
   SetLength(Frame, Bytes);
   FMemory.ReadBytes(R32(Ctx, OffInBuf), Frame[0], Bytes);
-  // Each channel's sound unit starts with its id; joint stereo puts the second
-  // part at the end, reversed, behind F8 markers.
+  // Each channel's sound unit starts with its id (joint stereo's second one
+  // is stored reversed at the end of the frame; the decoder checks it).
   var Err: Cardinal := 0;
   if (Frame[0] and $FC) <> $A0 then
     Err := $182
-  else if Joint and (Frame[Bytes - 1] <> $F8) then
-    Err := $183
   else if (Channels = 2) and not Joint and ((Frame[Bytes div 2] and $FC) <> $A0) then
     Err := $182;
   var PCM: TArray<SmallInt>;
@@ -364,7 +362,11 @@ begin
     try
       PCM := S.At3.Decode(Frame);
     except
-      Err := $182;
+      // Past the first unit's id, a joint stereo frame fails on its second unit.
+      if Joint then
+        Err := $183
+      else
+        Err := $182;
       S.At3.Reset;
     end;
   if Err <> 0 then

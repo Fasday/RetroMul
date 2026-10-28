@@ -265,20 +265,21 @@ begin
   end;
   if FAt3 = nil then
     Exit($186);
-  // Each channel's sound unit starts with its id; joint stereo puts the
-  // second part at the end, reversed, behind F8 markers.
+  // Each channel's sound unit starts with its id (joint stereo's second one
+  // is stored reversed at the end of the frame; the decoder checks it).
   var Bytes := Length(Frame);
   if (Frame[0] and $FC) <> $A0 then
     Exit($182);
-  if FJoint and (Frame[Bytes - 1] <> $F8) then
-    Exit($183);
   if (FChannels = 2) and not FJoint and ((Frame[Bytes div 2] and $FC) <> $A0) then
     Exit($182);
   try
     PCM := FAt3.Decode(Frame);
     Result := 0;
   except
-    Result := $182;
+    if FJoint then
+      Result := $183
+    else
+      Result := $182;
     Reset;
   end;
 end;
