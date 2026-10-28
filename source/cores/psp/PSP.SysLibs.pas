@@ -264,21 +264,23 @@ end;
 
 procedure TPSPSysLibs.hDcacheWritebackRange;
 begin
-  if FHLE.ArgInt(1) < 0 then
-    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE)
+  // (address, size): only a negative size is refused.
+  if Integer(FHLE.Arg(1)) < 0 then
+    FHLE.Result($80000104)
   else
     FHLE.Result(0);
 end;
 
 procedure TPSPSysLibs.hDcacheInvalidateRange;
 begin
+  // (address, size): the range must stay in user space and cover whole
+  // 64-byte lines.
   var P := FHLE.Arg(0);
   var Size := FHLE.Arg(1);
-  // Invalidating a range that is not whole cache lines would lose neighbouring data.
-  if Integer(P or Size or (P + Size)) < 0 then
-    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR)
-  else if Size = 0 then
+  if Size = 0 then
     FHLE.Result(0)
+  else if (Integer(Size) < 0) or (P >= $80000000) or (UInt64(P) + Size > $80000000) then
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR)
   else if ((P or Size) and 63) <> 0 then
     FHLE.Result($8002044C)
   else

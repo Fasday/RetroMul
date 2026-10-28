@@ -283,8 +283,17 @@ begin
   SyncTime;
   if Code < PSPTrapCount then
     FKernel.Trap(Code)
-  else if not FHLE.Call(Code) then
-    raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
+  else
+  begin
+    var Caller := FKernel.Current;
+    var Back := C.Ctx.PC;
+    if not FHLE.Call(Code) then
+      raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
+    // A call that returns straight to its caller hands back the caller-saved
+    // registers scrambled, as the kernel does.
+    if (Caller <> nil) and (FKernel.Current = Caller) and (C.Ctx.PC = Back) then
+      FKernel.ScrambleCallerSaved;
+  end;
   FKernel.AfterSyscall;
   // Call costs count toward the slice too: a loop of calls must not run past
   // an event.

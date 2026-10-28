@@ -46,6 +46,14 @@ begin
   // A new thread's VFPU registers read as NaN.
   for var I := 0 to High(C.V) do
     C.V[I] := $7F800001;
+  // What the kernel leaves in a new thread's registers.
+  for var I := 1 to 31 do
+    C.GPR[I] := $DEADBEEF;
+  C.GPR[27] := 0;
+  C.HI := $DEADBEEF;
+  C.LO := $DEADBEEF;
+  for var I := 0 to 31 do
+    C.FPR[I] := $7F800001;
   C.FCR31 := $00000E00;
   C.VC := FCPU.Ctx.VC;
   C.VC[VFPU_PFXS] := $E4;
@@ -302,7 +310,8 @@ begin
   var Ptr := FHLE.Arg(2);
   if Ptr <> 0 then
   begin
-    if (Integer(Size) < 0) or (not ValidUserAddress(Ptr) and not ((FCurrent <> nil) and FCurrent.IsKernel)) then
+    // Nothing is copied from an address with no size.
+    if (Integer(Size) < 0) or ((Size > 0) and not ValidUserAddress(Ptr) and not ((FCurrent <> nil) and FCurrent.IsKernel)) then
       begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
   end
   else
