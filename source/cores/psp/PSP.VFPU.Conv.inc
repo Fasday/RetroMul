@@ -474,10 +474,21 @@ begin
   J := J xor (J shr 17);
   J := J xor (J shl 5);
   W[1] := J;
-  var S := UInt64(W[2]) + UInt64(W[3] shl 1) + UInt64(Carry);
+  // The carry kept for the next step isn't this sum's: it is the overflow of
+  // 2*prev + x + c past 2^32, less one, where x above prev adds up to c more.
+  var T := UInt64(W[2]) * 2 + W[3] + Carry;
+  if W[3] > W[2] then
+    if W[3] - W[2] < Carry then
+      Inc(T, W[3] - W[2])
+    else
+      Inc(T, Carry);
+  var S := Cardinal(UInt64(W[3]) * 2 + W[2] + Carry);
   W[2] := W[3];
-  W[3] := Cardinal(S);
-  RndPack(C, W, Cardinal(S shr 32));
+  W[3] := S;
+  Carry := Cardinal(T shr 32);
+  if Carry > 0 then
+    Dec(Carry);
+  RndPack(C, W, Carry);
   Result := W[0] + W[1] + W[3];
 end;
 

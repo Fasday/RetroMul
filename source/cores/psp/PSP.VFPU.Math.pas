@@ -266,6 +266,20 @@ end;
 
 function Trunc22(D: Double): Cardinal;
 begin
+  var Q := PUInt64(@D)^;
+  var Sign := Cardinal(Q shr 32) and $80000000;
+  var E := Integer((Q shr 52) and $7FF) - 1023 + 127;
+  if E <= 0 then
+    Exit(Sign);
+  if E >= 255 then
+    Exit(Sign or $7F800000);
+  Result := Sign or (Cardinal(E) shl 23) or (Cardinal(Q shr 29) and $7FFFFC);
+end;
+
+// Rounded to single first: closer to what the reciprocal, reciprocal square
+// root and logarithm units give than the plain truncation.
+function Round22(D: Double): Cardinal;
+begin
   var S: Single := D;
   Result := SingleToBits(S);
   if (Result and $7F800000) = 0 then
@@ -287,7 +301,7 @@ begin
     Exit((X and $80000000) or $7F800000);
   if (X and $7FFFFFFF) = $7F800000 then
     Exit(X and $80000000);
-  Result := Trunc22(1.0 / Double(BitsToSingle(X)));
+  Result := Round22(1.0 / Double(BitsToSingle(X)));
 end;
 
 function VNRcp(X: Cardinal): Cardinal;
@@ -306,7 +320,7 @@ begin
     Exit($FF800001);
   if X = $7F800000 then
     Exit(0);
-  Result := Trunc22(1.0 / Sqrt(Double(BitsToSingle(X))));
+  Result := Round22(1.0 / Sqrt(Double(BitsToSingle(X))));
 end;
 
 function VSqrt(X: Cardinal): Cardinal;
@@ -323,40 +337,43 @@ begin
   Result := Trunc22(Sqrt(Double(BitsToSingle(X))));
 end;
 
-// Angles are in quarter turns. The reduction works on the magnitude, and its
-// shifter only sees the exponent's low five bits.
-function QuarterMod4(X: Cardinal): Double;
+var
+  SinNodes: array[0..256] of Double;
+
+// Angles are in quarter turns, taken as a magnitude in fixed point with 23
+// fraction bits (truncated) modulo four turns. The shifter only sees the
+// exponent's low five bits, and past 2^31 only while bit 5 is set.
+function FixedAngle(X: Cardinal): Cardinal;
 begin
   var E := Integer((X shr 23) and $FF) - 127;
   if E = -127 then
     Exit(0);
   if E >= 32 then
-    E := E and 31;
-  var M := UInt64((X and $7FFFFF) or $800000);
-  if E >= 23 then
-    Result := (M shl (E - 23)) and 3
-  else
   begin
-    var D: Double := M;
-    D := D * Power(2.0, E - 23);
-    Result := D - 4.0 * Int(D / 4.0);
+    if (E and 32) = 0 then
+      Exit(0);
+    E := E and 31;
   end;
+  var M := (X and $7FFFFF) or $800000;
+  if E >= 0 then
+    Result := Cardinal(UInt64(M) shl E) and $1FFFFFF
+  else if E > -24 then
+    Result := M shr (-E)
+  else
+    Result := 0;
 end;
 
-function SinOfQuarter(R: Double; Neg: Boolean): Cardinal;
+// Sine of a first-quadrant angle in (0, 1): a quadratic through the ends and
+// middle of each of 128 segments, floored to 28 fraction bits.
+function SinFrac(Fr: Cardinal): Cardinal;
 begin
-  if R = 0 then
-    Result := 0
-  else if R = 2 then
-    Result := $80000000
-  else if R = 1 then
-    Result := VF_ONE
-  else if R = 3 then
-    Result := $BF800000
-  else
-    Result := Trunc22(Sin(R * (Pi / 2)));
-  if Neg then
-    Result := Result xor $80000000;
+  var K := (Fr shr 16) * 2;
+  var U: Double := (Fr and $FFFF) / 32768.0;
+  var YA := SinNodes[K];
+  var YM := SinNodes[K + 1];
+  var YB := SinNodes[K + 2];
+  var V := YA + (YM - YA) * U + (YB - 2 * YM + YA) * 0.5 * U * (U - 1);
+  Result := Trunc22(Floor(V * 268435456.0) / 268435456.0);
 end;
 
 function SinQuarter(X: Cardinal; Cosine: Boolean): Cardinal;
@@ -368,16 +385,31 @@ begin
       Exit(VF_NAN);
     Exit(NaNOf(X));
   end;
-  var R := QuarterMod4(X);
+  var A := FixedAngle(X);
   if Cosine then
+    A := (A + $800000) and $1FFFFFF;
+  var Q := A shr 23;
+  var Fr := A and $7FFFFF;
+  if Fr = 0 then
   begin
-    R := R + 1;
-    if R >= 4 then
-      R := R - 4;
-    Result := SinOfQuarter(R, False);
+    case Q of
+      0: Result := 0;
+      1: Result := VF_ONE;
+      2: Result := $80000000;
+    else
+      Result := $BF800000;
+    end;
   end
   else
-    Result := SinOfQuarter(R, (X and $80000000) <> 0);
+  begin
+    if (Q and 1) <> 0 then
+      Fr := $800000 - Fr;
+    Result := SinFrac(Fr);
+    if Q >= 2 then
+      Result := Result or $80000000;
+  end;
+  if not Cosine and ((X and $80000000) <> 0) then
+    Result := Result xor $80000000;
 end;
 
 function VSin(X: Cardinal): Cardinal;
@@ -404,7 +436,11 @@ begin
     Exit(NaNOf(X));
   if (X and $7FFFFFFF) = 0 then
     Exit(X);
-  Result := Trunc22(ArcSin(Double(BitsToSingle(X))) / (Pi / 2));
+  // The input is taken in fixed point with 23 fraction bits, the result
+  // floored to 29.
+  var A: Double := Int(Abs(Double(BitsToSingle(X))) * 8388608.0) / 8388608.0;
+  Result := Trunc22(Floor(ArcSin(A) / (Pi / 2) * 536870912.0) / 536870912.0) or
+    (X and $80000000);
 end;
 
 function VExp2(X: Cardinal): Cardinal;
@@ -421,6 +457,8 @@ begin
     Exit($7F800000);
   if D < -126 then
     Exit(0);
+  // The exponent is taken in fixed point with 23 fraction bits.
+  D := Floor(D * 8388608.0) / 8388608.0;
   Result := Trunc22(Power(2.0, D));
 end;
 
@@ -440,7 +478,16 @@ begin
     Exit(VF_NAN);
   if X = $7F800000 then
     Exit($7F800000);
-  Result := Trunc22(Log2(Double(BitsToSingle(X))));
+  Result := Round22(Log2(Double(BitsToSingle(X))));
 end;
+
+procedure InitSinNodes;
+begin
+  for var K := 0 to 256 do
+    SinNodes[K] := Sin(K * (Pi / 512));
+end;
+
+initialization
+  InitSinNodes;
 
 end.
