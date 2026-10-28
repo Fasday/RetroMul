@@ -88,7 +88,21 @@ type
     Z: Integer;
     S, T: Single;
     Fog: Single;
+    // Level of detail in 1/16 levels when the texture needs it.
+    Lod: Integer;
   end;
+
+// The level of detail: TEXLEVEL's mode picks the texels per pixel (Scale,
+// in level 0 texels), TEXLODSLOPE times w, or only the bias.
+function TexLod(const S: TGERaster; Scale, W: Single): Integer;
+begin
+  case S.Tex.LevelMode of
+    0: Result := GELog16(Scale) + S.Tex.LodBias;
+    2: Result := GELog16(S.Tex.Slope * W) + 16 + S.Tex.LodBias;
+  else
+    Result := S.Tex.LodBias;
+  end;
+end;
 
 function Clamp255(V: Integer): Integer; inline;
 begin
@@ -296,7 +310,11 @@ procedure ApplyTexture(const S: TGERaster; var F: TGEFragment);
 var
   TR, TG, TB, TA: Integer;
 begin
-  var C := GESampleTexture(S.Tex, F.S, F.T);
+  var C: Cardinal;
+  if S.Tex.NeedLod then
+    C := GESampleTextureLod(S.Tex, F.S, F.T, F.Lod)
+  else
+    C := GESampleTexture(S.Tex, F.S, F.T);
   TR := C and $FF;
   TG := (C shr 8) and $FF;
   TB := (C shr 16) and $FF;
@@ -571,6 +589,7 @@ begin
   F.Z := V.Z;
   F.S := V.S; F.T := V.T;
   F.Fog := V.Fog;
+  F.Lod := 0;
 end;
 
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
@@ -620,6 +639,24 @@ begin
   if not ((DY1 < 0) or ((DY1 = 0) and (DX1 > 0))) then Bias1 := -1;
   if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then Bias2 := -1;
   var FArea := 1.0 / Area;
+  // For the level of detail: per pixel, how S and T (perspective correct)
+  // change along x and y, from the steps of the weights.
+  var NeedLod := S.Textured and S.Tex.NeedLod;
+  var NSX, NSY, NTX, NTY, DQX, DQY: Single;
+  NSX := 0; NSY := 0; NTX := 0; NTY := 0; DQX := 0; DQY := 0;
+  F.Lod := 0;
+  if NeedLod then
+  begin
+    var BX0 := -16 * DY0 * FArea; var BY0 := 16 * DX0 * FArea;
+    var BX1 := -16 * DY1 * FArea; var BY1 := 16 * DX1 * FArea;
+    var BX2 := -16 * DY2 * FArea; var BY2 := 16 * DX2 * FArea;
+    NSX := A0.S * A0.W * BX0 + A1.S * A1.W * BX1 + A2.S * A2.W * BX2;
+    NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
+    NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
+    NTY := A0.T * A0.W * BY0 + A1.T * A1.W * BY1 + A2.T * A2.W * BY2;
+    DQX := A0.W * BX0 + A1.W * BX1 + A2.W * BX2;
+    DQY := A0.W * BY0 + A1.W * BY1 + A2.W * BY2;
+  end;
   for var PY := PY1 to PY2 do
   begin
     var SY := Int64(PY) * 16 + 8;
@@ -658,6 +695,12 @@ begin
         begin
           F.S := (A0.S * A0.W * W0 + A1.S * A1.W * W1 + A2.S * A2.W * W2) / Q;
           F.T := (A0.T * A0.W * W0 + A1.T * A1.W * W1 + A2.T * A2.W * W2) / Q;
+          if NeedLod then
+          begin
+            var Scale := Max(Max(Abs(NSX - F.S * DQX), Abs(NSY - F.S * DQY)),
+              Max(Abs(NTX - F.T * DQX), Abs(NTY - F.T * DQY))) / Abs(Q);
+            F.Lod := TexLod(S, Scale, 1 / Q);
+          end;
         end
         else
         begin
@@ -709,10 +752,19 @@ begin
     else
       TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
   end;
+  var Lod := 0;
+  if S.Textured and S.Tex.NeedLod then
+  begin
+    var W: Single := 1;
+    if V1.W > 0 then
+      W := 1 / V1.W;
+    Lod := TexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), W);
+  end;
   for var PY := PY1 to PY2 do
     for var PX := PX1 to PX2 do
     begin
       SetupFragment(F, V1);
+      F.Lod := Lod;
       if S.Textured then
       begin
         var FX := (PX * 16 + 8 - V0.X) / 16;

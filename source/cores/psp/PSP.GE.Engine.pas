@@ -990,6 +990,12 @@ begin
     T.ClampU := (C[GE_TEXWRAP] and 1) <> 0;
     T.ClampV := (C[GE_TEXWRAP] and $100) <> 0;
     T.Linear := (C[GE_TEXFILTER] and $100) <> 0;
+    T.MinFilter := C[GE_TEXFILTER] and 7;
+    T.MaxLevel := T.LevelCount - 1;
+    T.LevelMode := C[GE_TEXLEVEL] and 3;
+    T.LodBias := ShortInt((C[GE_TEXLEVEL] shr 16) and $FF);
+    T.Slope := GEFloat(C[GE_TEXLODSLOPE]);
+    T.NeedLod := ((T.MinFilter >= 4) and (T.MaxLevel > 0)) or (((T.MinFilter and 1) <> 0) <> T.Linear);
     T.Clut := @FClut[0];
     var CF := C[GE_CLUTFORMAT];
     T.ClutFormat := CF and 3;

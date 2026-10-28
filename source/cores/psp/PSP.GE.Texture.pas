@@ -26,13 +26,24 @@ type
     LevelCount: Integer;
     Level: Integer;
     ClampU, ClampV: Boolean;
+    // The magnification filter (and the only one when NeedLod is off).
     Linear: Boolean;
+    // Level of detail: the minification filter (TEXFILTER's 0-7), the
+    // highest level, TEXLEVEL's mode and bias (1/16 levels), TEXLODSLOPE.
+    // NeedLod: the level or the filter depends on it.
+    MinFilter, MaxLevel, LevelMode, LodBias: Integer;
+    Slope: Single;
+    NeedLod: Boolean;
     // CLUT cache as loaded, and the index transform.
     Clut: PByte;
     ClutFormat, ClutShift, ClutMask, ClutOffset: Integer;
   end;
 
 function GESampleTexture(const T: TGETexture; S, TT: Single): Cardinal;
+// With the level of detail Lod (1/16 levels, bias included).
+function GESampleTextureLod(const T: TGETexture; S, TT: Single; Lod: Integer): Cardinal;
+// log2 as the GE takes it: the exponent and 4 bits of mantissa, in 1/16.
+function GELog16(V: Single): Integer;
 function GEFetchTexel(const T: TGETexture; Level, X, Y: Integer): Cardinal;
 function GEDecode16(Format: Integer; P: Cardinal): Cardinal;
 
@@ -211,14 +222,16 @@ begin
     Result := V and (Size - 1);
 end;
 
-function GESampleTexture(const T: TGETexture; S, TT: Single): Cardinal;
+// A texel of one level, nearest or bilinear (4-bit weights); S and TT are
+// in texels of that level.
+function SampleLevel(const T: TGETexture; Level: Integer; S, TT: Single; Linear: Boolean): Cardinal;
 begin
-  var L := T.Levels[T.Level];
-  if not T.Linear then
+  var L := T.Levels[Level];
+  if not Linear then
   begin
     var X := WrapCoord(Floor(S), L.Width, T.ClampU);
     var Y := WrapCoord(Floor(TT), L.Height, T.ClampV);
-    Exit(GEFetchTexel(T, T.Level, X, Y));
+    Exit(GEFetchTexel(T, Level, X, Y));
   end;
   var FS := S - 0.5;
   var FT := TT - 0.5;
@@ -230,10 +243,10 @@ begin
   var XB := WrapCoord(X0 + 1, L.Width, T.ClampU);
   var YA := WrapCoord(Y0, L.Height, T.ClampV);
   var YB := WrapCoord(Y0 + 1, L.Height, T.ClampV);
-  var C00 := GEFetchTexel(T, T.Level, XA, YA);
-  var C10 := GEFetchTexel(T, T.Level, XB, YA);
-  var C01 := GEFetchTexel(T, T.Level, XA, YB);
-  var C11 := GEFetchTexel(T, T.Level, XB, YB);
+  var C00 := GEFetchTexel(T, Level, XA, YA);
+  var C10 := GEFetchTexel(T, Level, XB, YA);
+  var C01 := GEFetchTexel(T, Level, XA, YB);
+  var C11 := GEFetchTexel(T, Level, XB, YB);
   Result := 0;
   for var Sh := 0 to 3 do
   begin
@@ -245,6 +258,65 @@ begin
     var Top := A * (16 - FracX) + B * FracX;
     var Bottom := C * (16 - FracX) + D * FracX;
     var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
+    Result := Result or (Cardinal(V) shl Shift);
+  end;
+end;
+
+function GESampleTexture(const T: TGETexture; S, TT: Single): Cardinal;
+begin
+  Result := SampleLevel(T, T.Level, S, TT, T.Linear);
+end;
+
+function GELog16(V: Single): Integer;
+begin
+  if not (V > 0) then
+    Exit(-$10000);
+  var Bits := PCardinal(@V)^;
+  Result := (Integer((Bits shr 23) and $FF) - 127) * 16 + Integer((Bits shr 19) and $F);
+end;
+
+// Texture coordinates in level 0 texels to those of a level.
+function LevelSample(const T: TGETexture; Level: Integer; S, TT: Single; Linear: Boolean): Cardinal;
+begin
+  if Level > 0 then
+  begin
+    S := S * T.Levels[Level].Width / T.Levels[0].Width;
+    TT := TT * T.Levels[Level].Height / T.Levels[0].Height;
+  end;
+  Result := SampleLevel(T, Level, S, TT, Linear);
+end;
+
+// Up to level 0 the magnification filter; past it the minification one,
+// from the nearest level or, for the mipmap-linear filters, two levels
+// mixed by the level's 4-bit fraction.
+function GESampleTextureLod(const T: TGETexture; S, TT: Single; Lod: Integer): Cardinal;
+begin
+  if Lod <= 0 then
+    Exit(SampleLevel(T, 0, S, TT, T.Linear));
+  var Linear := (T.MinFilter and 1) <> 0;
+  if (T.MinFilter < 4) or (T.MaxLevel = 0) then
+    Exit(SampleLevel(T, 0, S, TT, Linear));
+  if Lod > T.MaxLevel * 16 then
+    Lod := T.MaxLevel * 16;
+  var Level := Lod shr 4;
+  var Frac := Lod and 15;
+  if T.MinFilter < 6 then
+  begin
+    if Frac >= 8 then
+      Inc(Level);
+    if Level > T.MaxLevel then
+      Level := T.MaxLevel;
+    Exit(LevelSample(T, Level, S, TT, Linear));
+  end;
+  var C0 := LevelSample(T, Level, S, TT, Linear);
+  if (Frac = 0) or (Level >= T.MaxLevel) then
+    Exit(C0);
+  var C1 := LevelSample(T, Level + 1, S, TT, Linear);
+  Result := 0;
+  for var Sh := 0 to 3 do
+  begin
+    var Shift := Sh * 8;
+    var V := (Integer((C0 shr Shift) and $FF) * (16 - Frac) + Integer((C1 shr Shift) and $FF) * Frac) shr 4;
     Result := Result or (Cardinal(V) shl Shift);
   end;
 end;
