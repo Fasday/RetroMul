@@ -341,6 +341,7 @@
         <DCCReference Include="..\..\source\cores\ps1\PS1.Firmware.pas"/>
         <DCCReference Include="..\..\source\cores\ps1\PS1.Console.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.PS1.Playback.pas"/>
+        <DCCReference Include="..\..\source\adapters\Core.PSP.Playback.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.Adapter.PS1.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Types.pas"/>
         <DCCReference Include="..\..\source\cores\dc\DC.Scheduler.pas"/>
@@ -435,6 +436,17 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.SysMem.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Types.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.CPU.JIT.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Engine.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Raster.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Texture.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.Types.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Jpeg.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Mp4.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.MpegDemux.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.MpegVideo.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.SFO.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.Settings.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.Math.pas"/>
         <DCCReference Include="..\..\source\media\Core.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.Bitstream.pas"/>
         <DCCReference Include="..\..\source\hardware\video\avc\Video.AVC.H264.CABAC.pas"/>

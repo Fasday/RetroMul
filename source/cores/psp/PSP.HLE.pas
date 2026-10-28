@@ -48,8 +48,10 @@ type
     FCycleCost: Integer;
     class function Key(const Lib: string; NID: Cardinal): string; static; inline;
     function GetCount: Integer;
+    procedure Clobber;
   public
     TraceCalls: Boolean;
+    NoClobber: Boolean;
     constructor Create(CPU: TPSPCPU; Memory: TPSPMemory);
     destructor Destroy; override;
     procedure Clear;
@@ -232,8 +234,15 @@ begin
   FCPU.AddCycles(FCycleCost);
   if TraceCalls then
     Log('call %s(%x, %x, %x, %x) ra=%.8x', [F.Name, FCPU.Ctx.GPR[4], FCPU.Ctx.GPR[5], FCPU.Ctx.GPR[6], FCPU.Ctx.GPR[7], FCPU.Ctx.GPR[31]]);
+  var ReturnPC := FCPU.Ctx.PC;
   if Assigned(F.Handler) then
-    F.Handler()
+  begin
+    F.Handler();
+    // The kernel leaves the caller-saved registers clobbered (unless the call
+    // went on into guest code, a callback or a thread switch).
+    if (FCPU.Ctx.PC = ReturnPC) and not NoClobber then
+      Clobber;
+  end
   else
   begin
     if not FUnknownLogged.ContainsKey(Index) then
@@ -247,6 +256,18 @@ begin
     FCPU.Ctx.GPR[2] := 0;
   end;
   Result := True;
+end;
+
+procedure TPSPHLE.Clobber;
+begin
+  var C: PPSPContext := @FCPU.Ctx;
+  C.GPR[1] := $DEADBEEF;
+  for var R := 4 to 15 do
+    C.GPR[R] := $DEADBEEF;
+  C.GPR[24] := $DEADBEEF;
+  C.GPR[25] := $DEADBEEF;
+  C.HI := $DEADBEEF;
+  C.LO := $DEADBEEF;
 end;
 
 procedure TPSPHLE.Log(const Text: string);

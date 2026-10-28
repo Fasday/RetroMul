@@ -43,6 +43,7 @@ type
     FStopAtFrame: Boolean;
     FExecuted: Int64;
     procedure ResetServices;
+    procedure ResetMachine(KeepClock: Boolean);
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
     procedure Break_(C: TPSPCPU; Code: Cardinal);
     procedure SyncTime;
@@ -86,7 +87,7 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
-  PSP.Utility, PSP.Font, PSP.Misc;
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings, PSP.SFO;
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin
@@ -212,11 +213,12 @@ begin
   end;
 end;
 
-procedure TPSPConsole.Reset;
+procedure TPSPConsole.ResetMachine(KeepClock: Boolean);
 begin
   FMemory.Reset;
   FCPU.Reset;
-  FScheduler.Reset;
+  if not KeepClock then
+    FScheduler.Reset;
   FKernel.Reset;
   FIO.Reset;
   FIO.Disc := FDisc;
@@ -229,9 +231,14 @@ begin
   FDisplay.Reset;
   FDisplay.Register;
   ResetServices;
-  FFrameNumber := 0;
   FPendingExec := '';
   FBooted := False;
+end;
+
+procedure TPSPConsole.Reset;
+begin
+  ResetMachine(False);
+  FFrameNumber := 0;
   var Path := FProgram.BootPath;
   if Path = '' then
   begin
@@ -279,7 +286,10 @@ begin
   else if not FHLE.Call(Code) then
     raise EPSPGuestFault.CreateFmt('PSP: unknown syscall %x at %.8x', [Code, C.CurPC]);
   FKernel.AfterSyscall;
-  if FScheduler.NextDue < FRunDeadline then
+  // Call costs count toward the slice too: a loop of calls must not run past
+  // an event.
+  SyncTime;
+  if (FScheduler.NextDue < FRunDeadline) or (FScheduler.Now >= FRunDeadline) then
     C.Stop;
 end;
 
@@ -296,6 +306,8 @@ end;
 
 procedure TPSPConsole.DispatchEvent(E: TPSPEvent);
 begin
+  // Every event is an interrupt on hardware, whose return breaks a pending ll/sc.
+  FCPU.Ctx.LLBit := 0;
   case E of
     TPSPEvent.VBlank: FDisplay.OnEvent;
     TPSPEvent.Kernel: FKernel.OnTimerEvent;
@@ -323,16 +335,8 @@ begin
       var Data: TBytes;
       if FIO.ReadAll(Path, Data) = 0 then
       begin
-        FKernel.Reset;
-        FMemory.Reset;
-        FCPU.Reset;
-        FIO.Reset;
-        FIO.Disc := FDisc;
-        FIO.Register;
-        FLoader.Reset;
-        FLoader.Register;
-        FDisplay.Register;
-        ResetServices;
+        // The new program starts on a freshly reset machine; time goes on.
+        ResetMachine(True);
         Boot(Data, Path);
       end
       else

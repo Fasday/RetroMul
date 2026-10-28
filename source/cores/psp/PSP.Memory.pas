@@ -4,7 +4,7 @@ unit PSP.Memory;
 // KSEG0, KSEG1) folds to one physical map through `and $1FFFFFFF`; the map is a
 // table of 4 KB pages pointing into host buffers. Stores into pages that hold
 // decoded code notify the CPU.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
+{$IFDEF PSP_CHECKED}{$Q-}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
