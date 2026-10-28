@@ -436,7 +436,11 @@ begin
     Exit(NaNOf(X));
   if (X and $7FFFFFFF) = 0 then
     Exit(X);
-  Result := Trunc22(ArcSin(Double(BitsToSingle(X))) / (Pi / 2));
+  // The input is taken in fixed point with 23 fraction bits, the result
+  // floored to 29.
+  var A: Double := Int(Abs(Double(BitsToSingle(X))) * 8388608.0) / 8388608.0;
+  Result := Trunc22(Floor(ArcSin(A) / (Pi / 2) * 536870912.0) / 536870912.0) or
+    (X and $80000000);
 end;
 
 function VExp2(X: Cardinal): Cardinal;
@@ -453,6 +457,8 @@ begin
     Exit($7F800000);
   if D < -126 then
     Exit(0);
+  // The exponent is taken in fixed point with 23 fraction bits.
+  D := Floor(D * 8388608.0) / 8388608.0;
   Result := Trunc22(Power(2.0, D));
 end;
 
