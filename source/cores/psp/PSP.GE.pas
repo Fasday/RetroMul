@@ -431,6 +431,7 @@ begin
         FSystem.Scheduler.Schedule(TPSPEvent.GE, FHWIntAt);
     end;
   finally
+    FEngine.SyncBackend;
     FInHW := False;
   end;
 end;

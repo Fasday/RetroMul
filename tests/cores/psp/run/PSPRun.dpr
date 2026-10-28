@@ -4,11 +4,14 @@ program PSPRun;
 
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
+//   [-gpu | -gpu-check]
 // -test: pspautotests mode (host0: = the file's folder, no display, stops at exit).
+// -gpu: the GE draws with the Vulkan compute renderer; -gpu-check also draws every
+// batch on the CPU, keeps the CPU's result and reports where the two differ.
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
-  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader;
+  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.GPU;
 
 type
   TPress = record
@@ -146,6 +149,7 @@ begin
     var DumpAt: Cardinal := 0;
     var DumpLen := 0;
     var ShotFile := '';
+    var GPUMode := 0;
     var I := 2;
     while I <= ParamCount do
     begin
@@ -161,6 +165,8 @@ begin
       else if A = '-watch' then WatchOn := True
       else if A = '-dump' then begin Inc(I); DumpAt := StrToInt('$' + ParamStr(I)); Inc(I); DumpLen := StrToInt(ParamStr(I)); end
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
+      else if A = '-gpu' then GPUMode := 1
+      else if A = '-gpu-check' then GPUMode := 2
       else if A = '-press' then
       begin
         Inc(I);
@@ -226,7 +232,25 @@ begin
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick);
+    var GPU: TGEGPUBackend := nil;
     try
+      if GPUMode > 0 then
+      begin
+        var Error: string;
+        if CreateGEGPUBackend(Console.Memory, GPUMode = 2, GPU, Error) then
+        begin
+          GPU.OnMessage :=
+            procedure(const Text: string)
+            begin
+              Writeln(ErrOutput, Text);
+            end;
+          TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := GPU;
+          if not Quiet then
+            Writeln(ErrOutput, 'gpu: ' + GPU.Compute.Name);
+        end
+        else
+          Writeln(ErrOutput, 'gpu: unavailable (' + Error + '), the GE draws on the CPU');
+      end;
       Console.OnLog := Sink.Log;
       Sink.Console := Console;
       Sink.ShotFile := ShotFile;
@@ -309,7 +333,23 @@ begin
       end;
       if Failed <> '' then
         ExitCode := 1;
+      if GPU <> nil then
+      begin
+        var St := GPU.Stats;
+        if not Quiet or (St.BadBatches > 0) then
+          Writeln(ErrOutput, Format('gpu: %d batches, %d passes, %d prims, %d on the CPU, %d pages uploaded, ' +
+            '%.2fs waiting (gpu: %.3fs upload, %.3fs drawing, %.3fs readback)', [St.Batches, St.Passes, St.Prims,
+            St.Fallbacks, St.UploadedPages, St.WaitSeconds, St.UploadSeconds, St.DrawSeconds, St.ReadbackSeconds]));
+        if GPUMode = 2 then
+          Writeln(ErrOutput, Format('gpu check: %d of %d batches differ (%d bytes)', [St.BadBatches, St.CheckedBatches,
+            St.BadBytes]));
+      end;
     finally
+      if GPU <> nil then
+      begin
+        TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := nil;
+        GPU.Free;
+      end;
       Console.Free;
       Sink.Free;
       Presses.Free;

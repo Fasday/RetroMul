@@ -8,7 +8,7 @@ unit RM.Vulkan.Compute;
 interface
 
 uses
-  System.SysUtils, RM.Vulkan.Bindings, RM.Vulkan.Loader;
+  System.SysUtils, System.Diagnostics, RM.Vulkan.Bindings, RM.Vulkan.Loader;
 
 type
   TVulkanComputeFeatures = record
@@ -87,6 +87,7 @@ type
     FQueryCount: Cardinal;
     FRecording, FPending: Boolean;
     FBound: TVulkanKernel;
+    FSpin: Int64;
   public
     constructor Create(Owner: TVulkanCompute; Timestamps: Cardinal = 0);
     destructor Destroy; override;
@@ -113,6 +114,8 @@ type
     property Handle: VkCommandBuffer read FHandle;
     property Recording: Boolean read FRecording;
     property Pending: Boolean read FPending;
+    // Wait polls the fence this long before it blocks.
+    property SpinMicroseconds: Int64 read FSpin write FSpin;
   end;
 
   TVulkanCompute = class
@@ -931,6 +934,14 @@ procedure TVulkanCommands.Wait;
 begin
   if not FPending then
     Exit;
+  // A blocking wait can take milliseconds to wake up; short batches finish sooner.
+  if FSpin > 0 then
+  begin
+    var Watch := TStopwatch.StartNew;
+    while (FOwner.API.vkGetFenceStatus(FOwner.Device, FFence) = VK_NOT_READY) and
+      (Watch.ElapsedTicks < FSpin * TStopwatch.Frequency div 1000000) do
+      ;
+  end;
   CheckVulkan(FOwner.API.vkWaitForFences(FOwner.Device, 1, @FFence, 1, UInt64($FFFFFFFFFFFFFFFF)), 'vkWaitForFences');
   CheckVulkan(FOwner.API.vkResetFences(FOwner.Device, 1, @FFence), 'vkResetFences');
   FPending := False;

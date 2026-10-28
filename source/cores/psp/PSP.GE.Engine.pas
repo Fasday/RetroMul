@@ -12,7 +12,7 @@ unit PSP.GE.Engine;
 interface
 
 uses
-  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster;
+  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend;
 
 type
   TGEVec3 = record
@@ -63,7 +63,11 @@ type
     Regs: TPSPGERegs;
     // Set by BBOX: the box is (possibly) visible.
     BoxVisible: Boolean;
+    // Draws the primitives instead of PSP.GE.Raster when set (not owned).
+    Backend: TGERasterBackend;
     constructor Create(Memory: TPSPMemory);
+    // Guest memory holds everything drawn: the GE stops here.
+    procedure SyncBackend; inline;
     procedure Reset;
     // Address of a 24-bit pointer parameter with the BASE upper bits and OFFSET.
     function Address(Param: Cardinal): Cardinal; inline;
@@ -88,6 +92,12 @@ begin
   inherited Create;
   FMemory := Memory;
   Reset;
+end;
+
+procedure TPSPGEEngine.SyncBackend;
+begin
+  if Backend <> nil then
+    Backend.Sync;
 end;
 
 procedure TPSPGEEngine.Reset;
@@ -1027,7 +1037,7 @@ begin
     if CW <> FCullCW then
       Exit;
   end;
-  GEDrawTriangle(FRaster, A, B, C);
+  if Backend <> nil then Backend.DrawTriangle(FRaster, A, B, C) else GEDrawTriangle(FRaster, A, B, C);
   Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
     ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
 end;
@@ -1039,18 +1049,18 @@ begin
   case FAsmType of
     0:
       if not Clip then
-        GEDrawPoint(FRaster, V);
+        if Backend <> nil then Backend.DrawPoint(FRaster, V) else GEDrawPoint(FRaster, V);
     1:
       begin
         FAsmBuf[N and 1] := V; FAsmClip[N and 1] := Clip;
         if (N and 1) = 1 then
           if not FAsmClip[0] and not FAsmClip[1] then
-            GEDrawLine(FRaster, FAsmBuf[0], FAsmBuf[1]);
+            if Backend <> nil then Backend.DrawLine(FRaster, FAsmBuf[0], FAsmBuf[1]) else GEDrawLine(FRaster, FAsmBuf[0], FAsmBuf[1]);
       end;
     2:
       begin
         if (N > 0) and not Clip and not FAsmClip[0] then
-          GEDrawLine(FRaster, FAsmBuf[0], V);
+          if Backend <> nil then Backend.DrawLine(FRaster, FAsmBuf[0], V) else GEDrawLine(FRaster, FAsmBuf[0], V);
         FAsmBuf[0] := V; FAsmClip[0] := Clip;
       end;
     3:
@@ -1090,7 +1100,7 @@ begin
         FAsmBuf[N and 1] := V; FAsmClip[N and 1] := Clip;
         if ((N and 1) = 1) and not FAsmClip[0] and not FAsmClip[1] then
         begin
-          GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
+          if Backend <> nil then Backend.DrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]) else GEDrawSprite(FRaster, FAsmBuf[0], FAsmBuf[1]);
           Inc(FPrimCost, 100 + ScissoredArea(Min(FAsmBuf[0].X, FAsmBuf[1].X), Min(FAsmBuf[0].Y, FAsmBuf[1].Y),
             Max(FAsmBuf[0].X, FAsmBuf[1].X), Max(FAsmBuf[0].Y, FAsmBuf[1].Y)) * 3);
         end;
@@ -1120,6 +1130,16 @@ begin
   BuildRaster;
   FCullOn := ((Regs.Cmd[GE_CULLENABLE] and 1) <> 0) and not FRaster.ClearMode;
   FCullCW := (Regs.Cmd[GE_CULL] and 1) <> 0;
+  if Backend <> nil then
+  begin
+    if IdxKind <> 0 then
+    begin
+      Backend.Access(Regs.IAddr, Cardinal(Count) * 4, False);
+      Backend.Access(Regs.VAddr, Cardinal($10000 * FVSize * Morphs), False);
+    end
+    else
+      Backend.Access(Regs.VAddr, Cardinal(Count * FVSize * Morphs), False);
+  end;
   for var I := 0 to Count - 1 do
   begin
     var Index := I;
@@ -1202,7 +1222,11 @@ begin
   if Bytes > Length(FClut) then
     Bytes := Length(FClut);
   if Bytes > 0 then
+  begin
+    if Backend <> nil then
+      Backend.Access(Addr, Bytes, False);
     FMemory.ReadBytes(Addr, FClut[0], Bytes);
+  end;
 end;
 
 procedure TPSPGEEngine.BlockTransfer(Op: Cardinal);
@@ -1221,6 +1245,11 @@ begin
   var Bpp := 2;
   if (Op and 1) <> 0 then
     Bpp := 4;
+  if Backend <> nil then
+  begin
+    Backend.Access(Src, Cardinal(((SY + H) * SrcW + SX + W) * Bpp), False);
+    Backend.Access(Dst, Cardinal(((DY + H) * DstW + DX + W) * Bpp), True);
+  end;
   for var Y := 0 to H - 1 do
   begin
     var SA := Src + Cardinal(((SY + Y) * SrcW + SX) * Bpp);
