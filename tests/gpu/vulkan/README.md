@@ -8,7 +8,9 @@ arithmetic self-test fail, the runner prints the reason and uses the CPU.
 
 The current branch integrates `pr/psp-core` 9938cbf and the GE worker through
 `fc49936`, including threaded CPU rasterization and permuted EDRAM. See
-**`tests/gpu/vulkan/ROUND2.md`** for the current integration and qualification.
+**`tests/gpu/vulkan/ROUND2.md`** for the current integration and qualification,
+and **`tests/gpu/vulkan/SPEED.md`** for the speed round (batches across GE runs,
+watched textures, row/texel hazard tracking) and its measurements.
 The initial qualification figures below record the earlier `aa709ab` reference
 (Gouraud colour planes), not the newer threaded baseline. CPU numerical
 expressions were **not changed to make the GPU agree**. No other emulator's

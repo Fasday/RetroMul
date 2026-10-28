@@ -5,15 +5,18 @@ unit PSP.GE.GPU;
 //
 // Primitives are set up here exactly as PSP.GE.Raster sets them up and go
 // with their packed raster state into a batch of passes: runs of primitives
-// with one render target, split wherever a texture reads memory the pass
-// draws. The VRAM pages a batch draws into or textures from are held
-// (TPSPMemory.HoldVRAM), so the batch may grow while the CPU runs: the first
-// access to a held page runs it (Sync) on the GPU's copy of VRAM and copies
-// those pages back into guest memory. The GPU copy learns of every other
-// write to VRAM by comparing guest VRAM page by page with what it last
-// handed back; textures in main memory are copied when they are used. What
-// the kernel cannot draw the same way (pixels sharing memory, a primitive
-// texturing from the pixels it draws) is drawn by PSP.GE.Raster after a Sync.
+// with one render target, split wherever a texture reads bytes the pass
+// draws (render targets and unswizzled textures by their rows, a primitive's
+// texture by the texels its coordinates can reach). Batches outlive the GE's
+// runs and go to the GPU when the GE stops; until the next Sync (an epoch)
+// the VRAM pages they draw into are held (TPSPMemory.HoldVRAM) and the pages
+// their textures come from are watched (TPSPMemory.WatchPage): any access to
+// a held page, or a write to a watched one, first draws everything (Sync)
+// and copies the drawn pages back into guest memory. The GPU's copy of a page
+// is compared with guest memory when a batch first uses it in an epoch;
+// textures in main memory are copied into the batch. What the kernel cannot
+// draw the same way (pixels sharing memory, a primitive texturing from the
+// pixels it draws) is drawn by PSP.GE.Raster after a Sync.
 //
 // In check mode every batch, run whenever the GE stops, is also drawn by
 // PSP.GE.Raster into guest memory, which keeps the CPU's result, and the two
@@ -405,6 +408,29 @@ begin
         Compute.Free;
       Exit(False);
     end;
+  end;
+  Result := True;
+end;
+
+// CompareMem, 32 bytes at a time (raster states, CLUTs and pages).
+function SameBytes(A, B: PByte; Size: NativeInt): Boolean;
+begin
+  while Size >= 32 do
+  begin
+    if ((PUInt64(A)^ xor PUInt64(B)^) or (PUInt64(A + 8)^ xor PUInt64(B + 8)^) or
+      (PUInt64(A + 16)^ xor PUInt64(B + 16)^) or (PUInt64(A + 24)^ xor PUInt64(B + 24)^)) <> 0 then
+      Exit(False);
+    Inc(A, 32);
+    Inc(B, 32);
+    Dec(Size, 32);
+  end;
+  while Size > 0 do
+  begin
+    if A^ <> B^ then
+      Exit(False);
+    Inc(A);
+    Inc(B);
+    Dec(Size);
   end;
   Result := True;
 end;
@@ -814,7 +840,7 @@ begin
   Inc(FVerifiedCount);
   Inc(FStats.ComparedPages);
   var Guest := @FMemory.VRAM[Page * PageSize];
-  if not CompareMem(Guest, @FShadow[Page * PageSize], PageSize) then
+  if not SameBytes(Guest, @FShadow[Page * PageSize], PageSize) then
   begin
     Move(Guest^, FShadow[Page * PageSize], PageSize);
     FUpload[Page] := True;
@@ -1069,8 +1095,8 @@ begin
   end;
   var UsesClut := S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7);
   // A texture's copy in the batch stays valid: its pages are watched.
-  if (FLastState >= 0) and (FLastTranslation = FMemory.VRAMShift) and CompareMem(@S, @FLastRaster, SizeOf(TGERaster)) and
-    (not UsesClut or CompareMem(S.Tex.Clut, @FLastClut[0], SizeOf(FLastClut))) then
+  if (FLastState >= 0) and (FLastTranslation = FMemory.VRAMShift) and SameBytes(@S, @FLastRaster, SizeOf(TGERaster)) and
+    (not UsesClut or SameBytes(S.Tex.Clut, @FLastClut[0], SizeOf(FLastClut))) then
   begin
     Tex := FLastTex;
     TexInVRAM := FLastTexInVRAM;
@@ -1149,7 +1175,7 @@ begin
     end;
     if UsesClut then
     begin
-      if (FLastClutData >= 0) and CompareMem(@FData[FLastClutData], S.Tex.Clut, 1024) then
+      if (FLastClutData >= 0) and SameBytes(@FData[FLastClutData], S.Tex.Clut, 1024) then
         ClutOfs := FLastClutData
       else
       begin
