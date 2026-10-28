@@ -431,6 +431,9 @@ begin
       end;
     dkHost:
       begin
+        // The FAT driver refuses a wildcard in a name.
+        if Pos('?', Rest) > 0 then
+          Exit(SCE_ERROR_ERRNO_EINVAL);
         var Name := HostPath(Dev, Rest);
         if Name = '' then
           Exit(SCE_KERNEL_ERROR_NODEV);
@@ -916,8 +919,12 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   FKernel.CancelTimersOf(F);
   FFiles.Remove(F.Id);
+  var Host := F.Kind = dkHost;
   F.Free;
-  FHLE.Result(0);
+  if Host then
+    DeviceYield(0, 20000)
+  else
+    FHLE.Result(0);
 end;
 
 procedure TPSPIO.hCloseAsync;
