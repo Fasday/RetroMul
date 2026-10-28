@@ -89,6 +89,9 @@ begin
   H.Register(P, $23C31FFE, 'scePowerVolatileMemLock', hPowerVolatileLock);
   H.Register(P, $FA97A599, 'scePowerVolatileMemTryLock', hPowerVolatileTryLock);
   H.Register(P, $B3EDD801, 'scePowerVolatileMemUnlock', hPowerVolatileUnlock);
+  H.Register(S, $3E0271D3, 'sceKernelVolatileMemLock', hVolatileMemLock);
+  H.Register(S, $A14F40B2, 'sceKernelVolatileMemTryLock', hVolatileMemTryLock);
+  H.Register(S, $A569E425, 'sceKernelVolatileMemUnlock', hVolatileMemUnlock);
   H.Register(S, $EADB1BD7, 'sceKernelPowerLock', hKernelPowerLock);
   H.Register(S, $3AEE7261, 'sceKernelPowerUnlock', hKernelPowerLock);
   H.Register(S, $090CCB3F, 'sceKernelPowerTick', hKernelPowerTick);
