@@ -248,6 +248,8 @@ type
     FObjects: TDictionary<Cardinal, TPSPKernelObject>;
     FNextUID: Cardinal;
     FReady: array[0..127] of TList<TPSPThread>;
+    // Bit P is set while FReady[P] has threads.
+    FReadyMask: array[0..3] of Cardinal;
     FCurrent: TPSPThread;
     FThreads: TList<TPSPThread>;
     FTimers: TList<TPSPTimer>;
@@ -305,6 +307,7 @@ type
     procedure DropWaitTimer(T: TPSPThread);
     procedure RegisterAll;
     procedure RegisterKernelAliases;
+    function InternalWait(T: TPSPThread): Boolean;
     procedure hKernelBusy;
     // Spends the time as kernel work the scheduler may interrupt.
     procedure SpendPreemptible(Ns: Int64);

@@ -115,8 +115,10 @@ end;
 function TPSPVpl.FreeBlock(Addr: Cardinal): Boolean;
 begin
   var M := Kernel.Memory;
+  if (Addr < Block + 32) or (Addr >= Block + Size) or ((Addr and 7) <> 0) then
+    Exit(False);
   var Bp := Addr - 8;
-  if (Addr < Block + 32) or (Addr >= Block + Size) or ((Addr and 7) <> 0) or (M.Read32(Bp) <> Block + 8) then
+  if M.Read32(Bp) <> Block + 8 then
     Exit(False);
   var BpSize := M.Read32(Bp + 4);
   var Units := BpSize;
