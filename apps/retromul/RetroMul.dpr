@@ -595,6 +595,14 @@ uses
   Core.Adapter.SNES in '..\..\source\adapters\Core.Adapter.SNES.pas',
   Core.PS1.Playback in '..\..\source\adapters\Core.PS1.Playback.pas',
   Core.PSP.Playback in '..\..\source\adapters\Core.PSP.Playback.pas',
+  Core.PSP.Renderer in '..\..\source\adapters\Core.PSP.Renderer.pas',
+  PSP.GE.Backend in '..\..\source\cores\psp\PSP.GE.Backend.pas',
+  {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
+  PSP.GE.GPU in '..\..\source\cores\psp\PSP.GE.GPU.pas',
+  RM.Vulkan.Bindings in '..\..\source\gpu\vulkan\RM.Vulkan.Bindings.pas',
+  RM.Vulkan.Loader in '..\..\source\gpu\vulkan\RM.Vulkan.Loader.pas',
+  RM.Vulkan.Compute in '..\..\source\gpu\vulkan\RM.Vulkan.Compute.pas',
+  {$ENDIF}
   Core.Adapter.PS1 in '..\..\source\adapters\Core.Adapter.PS1.pas',
   ZX.BlockImage in '..\..\source\cores\zx\ZX.BlockImage.pas',
   ZX.DivStorage in '..\..\source\cores\zx\ZX.DivStorage.pas',

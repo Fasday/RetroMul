@@ -104,10 +104,11 @@ reads. Fallback drawing synchronizes before using such texture pointers.
 
 The caller owns `TGEGPUBackend`; detach `Engine.Backend` and destroy it while its
 `TPSPMemory` is still alive. It owns its `TVulkanCompute`. One backend may hold a
-memory instance's pages. There is no frontend setting yet; the runner and the
-backend API are the integration points. A device loss during submitted work is
-reported as a host error; automatic recovery/replay after device loss is not
-implemented.
+memory instance's pages. The PSP frontend now has an optional, restart-applied
+`[Video] Renderer=cpu|vulkan` choice (CPU default); see
+`tests/cores/psp/run/frontend_renderer.md` for its lifecycle and smoke tests.
+A device loss during submitted work is reported as a host error; automatic
+recovery/replay after device loss is not implemented.
 
 ## Verified results (AMD Radeon RX 9070 XT, Vulkan 1.4.349)
 
@@ -156,9 +157,10 @@ benchmarks. Both modes can still have missing guest functionality.
 God of War executes 7,690,142 GPU primitives and 167,257 CPU fallbacks in that
 run (mostly self-texturing); measured GPU drawing is 5.58 s and host waiting is
 2.78 s. The rest includes CPU emulation, setup, snapshots, binning and I/O.
-Windows/Win64 on this AMD device is the qualified GE target. Linux/Android use
-platform-independent compute code but were not built or run here. No claim of
-universal device/driver bit-exactness is made by a finite test suite.
+Windows/Win64 on this AMD device is the qualified GE target. Linux64/Android64
+frontend and compute units now cross-compile (see the frontend report), but were
+not run on devices here. No claim of universal device/driver bit-exactness is
+made by a finite test suite.
 
 ## Existing shared files changed by this worker
 
