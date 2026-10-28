@@ -113,6 +113,7 @@ function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGE
 implementation
 
 {$I PSPGERaster.spv.inc}
+{$I PSPGESelfTest.spv.inc}
 
 const
   PrimWords = 64;
@@ -148,6 +149,138 @@ type
     Fog: Single;
   end;
 
+function SameBits(A, B: UInt64; Double: Boolean): Boolean;
+begin
+  if A = B then
+    Exit(True);
+  // NaN payloads are not compared: the kernel only ever converts NaNs to integers.
+  if Double then
+    Result := ((A and $7FF0000000000000) = $7FF0000000000000) and ((A and $FFFFFFFFFFFFF) <> 0) and
+      ((B and $7FF0000000000000) = $7FF0000000000000) and ((B and $FFFFFFFFFFFFF) <> 0)
+  else
+    Result := ((A and $7F800000) = $7F800000) and ((A and $7FFFFF) <> 0) and
+      ((B and $7F800000) = $7F800000) and ((B and $7FFFFF) <> 0);
+end;
+
+// The device's float arithmetic against the CPU's on operands of all kinds.
+function SelfTest(Compute: TVulkanCompute): string;
+const
+  N = 16384;
+  Stride = 16;
+  Special: array[0..15] of Cardinal = ($00000000, $80000000, $3F800000, $BF800000, $7F800000, $FF800000, $7FC00000,
+    $00000001, $807FFFFF, $00800000, $7F7FFFFF, $3F000000, $4B000000, $CB7FFFFF, $3EFFFFFF, $00000002);
+var
+  Inputs: array of Cardinal;
+  Seed: Cardinal;
+
+  function Rand: Cardinal;
+  begin
+    Seed := Seed xor (Seed shl 13);
+    Seed := Seed xor (Seed shr 17);
+    Seed := Seed xor (Seed shl 5);
+    Result := Seed;
+  end;
+
+  function Operand: Cardinal;
+  begin
+    case Rand mod 6 of
+      0: Result := Special[Rand mod 16];
+      1: Result := Rand and $807FFFFF;
+      2: Result := (Rand and $80FFFFFF) or (Cardinal(110 + Rand mod 40) shl 23);
+    else
+      Result := Rand;
+    end;
+  end;
+
+begin
+  Result := '';
+  Seed := $9E3779B9;
+  SetLength(Inputs, N * 4);
+  for var I := 0 to N - 1 do
+  begin
+    Inputs[I * 4] := Operand;
+    Inputs[I * 4 + 1] := Operand;
+    Inputs[I * 4 + 2] := Operand;
+    Inputs[I * 4 + 3] := Operand;
+    case Rand mod 4 of
+      0: Inputs[I * 4 + 3] := (Inputs[I * 4 + 1] and $800FFFFF) or (Cardinal(1000 + Rand mod 47) shl 20);
+      1: Inputs[I * 4 + 3] := Inputs[I * 4 + 1] and $800FFFFF;
+    end;
+  end;
+  var Src := Compute.CreateBuffer(N * 16, vbkUpload);
+  var Dst := Compute.CreateBuffer(N * Stride * 4, vbkReadback);
+  var K := Compute.CreateKernel(PSPGESelfTestSPV, 2, 4);
+  var Cmd := Compute.CreateCommands;
+  var Mask := GetExceptionMask;
+  SetExceptionMask(exAllArithmeticExceptions);
+  try
+    Src.Write(0, Inputs[0], N * 16);
+    K.Bind(0, Src);
+    K.Bind(1, Dst);
+    var Count: Cardinal := N;
+    Cmd.Start;
+    Cmd.Dispatch(K, N div 64, 1, 1, Count, 4);
+    Cmd.FullBarrier;
+    Cmd.Run;
+    Dst.Invalidate;
+    var Names: array[0..7] of string;
+    Names[0] := 'single multiply'; Names[1] := 'double add'; Names[2] := 'double multiply';
+    Names[3] := 'double conversion'; Names[4] := 'single conversion'; Names[5] := 'integer conversion';
+    Names[6] := 'roundEven'; Names[7] := 'division';
+    var Bad: array[0..7] of Integer;
+    FillChar(Bad, SizeOf(Bad), 0);
+    for var I := 0 to N - 1 do
+    begin
+      var R := PCardinal(Dst.Data + I * Stride * 4);
+      var A := Inputs[I * 4];
+      var B := Inputs[I * 4 + 1];
+      var FA := PSingle(@A)^;
+      var FB := PSingle(@B)^;
+      var DAb := UInt64(A) or (UInt64(B) shl 32);
+      var DBb := UInt64(Inputs[I * 4 + 2]) or (UInt64(Inputs[I * 4 + 3]) shl 32);
+      var DA := PDouble(@DAb)^;
+      var DB := PDouble(@DBb)^;
+      var S: Single := FA * FB;
+      if not SameBits(R[0], PCardinal(@S)^, False) then Inc(Bad[0]);
+      var D: Double := DA + DB;
+      if not SameBits(PUInt64(@R[1])^, PUInt64(@D)^, True) then Inc(Bad[1]);
+      D := DA * DB;
+      if not SameBits(PUInt64(@R[3])^, PUInt64(@D)^, True) then Inc(Bad[2]);
+      var DFA: Double := FA;
+      D := DFA * DB;
+      if not SameBits(PUInt64(@R[5])^, PUInt64(@D)^, True) then Inc(Bad[3]);
+      S := DA;
+      if not SameBits(R[7], PCardinal(@S)^, False) then Inc(Bad[4]);
+      D := Int64(DBb);
+      if not SameBits(PUInt64(@R[8])^, PUInt64(@D)^, True) then Inc(Bad[5]);
+      D := DA;
+      if not (IsNan(DA) or IsInfinite(DA) or (Abs(DA) >= 4503599627370496.0)) then
+      begin
+        D := Round(DA);
+        // roundEven keeps the sign of zero.
+        if (D = 0) and (DAb shr 63 <> 0) then
+          PUInt64(@D)^ := UInt64($8000000000000000);
+      end;
+      if not SameBits(PUInt64(@R[10])^, PUInt64(@D)^, True) then Inc(Bad[6]);
+      D := DA / DB;
+      if not SameBits(PUInt64(@R[12])^, PUInt64(@D)^, True) then Inc(Bad[7]);
+      var T: Cardinal := 0;
+      if Abs(DA) < 2147483648.0 then
+        T := Cardinal(Trunc(DA));
+      if R[14] <> T then Inc(Bad[5]);
+    end;
+    for var J := 0 to 7 do
+      if Bad[J] > 0 then
+        Result := Result + Format('%s differs from the CPU in %d of %d; ', [Names[J], Bad[J], N]);
+  finally
+    SetExceptionMask(Mask);
+    Cmd.Free;
+    K.Free;
+    Dst.Free;
+    Src.Free;
+  end;
+end;
+
 function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEGPUBackend; out Error: string;
   const DeviceName: string): Boolean;
 var
@@ -165,6 +298,13 @@ begin
     Exit(False);
   end;
   try
+    Error := SelfTest(Compute);
+    if Error <> '' then
+    begin
+      Error := Compute.Name + ': ' + Error;
+      Compute.Free;
+      Exit(False);
+    end;
     Backend := TGEGPUBackend.Create(Memory, Compute, Check);
   except
     on E: Exception do

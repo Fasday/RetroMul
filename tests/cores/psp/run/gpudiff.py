@@ -7,7 +7,8 @@ twice, on the CPU and with -gpu; output and screenshot must be identical.
 --check: runs once with -gpu-check, where every batch is drawn by both and
 compared in VRAM (the run follows the CPU's result).
 --games: the filters are disc images; runs each for --frames frames with
--every 60 and compares the frame hashes of the two runs.
+-every 60 and compares the frame hashes of the two runs (with --check: one
+-gpu-check run).
 """
 import argparse
 import concurrent.futures
@@ -106,7 +107,14 @@ def run_test(rel, exe, frames, timeout, check):
     return rel, status, '\n'.join(notes)
 
 
-def run_game(image, exe, frames, timeout):
+def run_game(image, exe, frames, timeout, check):
+    if check:
+        code, out, err = execute([exe, image, '-frames', str(frames), '-gpu-check', '-quiet'], timeout)
+        m = re.search(r'gpu check: (\d+) of (\d+) batches differ', err)
+        notes = gpu_lines(err)[:12]
+        if not m:
+            return image, 'NOGPU' if code != -1 else 'TIMEOUT', '\n'.join(notes or err.splitlines()[-4:])
+        return image, 'SAME' if m.group(1) == '0' else 'DIFF', '\n'.join(notes)
     hashes = []
     errs = []
     for mode in ('', '-gpu'):
@@ -143,7 +151,7 @@ def main():
     args = ap.parse_args()
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
         if args.games:
-            futs = [ex.submit(run_game, g, args.exe, args.frames, args.timeout * 20) for g in args.filters]
+            futs = [ex.submit(run_game, g, args.exe, args.frames, args.timeout * 20, args.check) for g in args.filters]
         else:
             tests = collect(args.filters or ['gpu/'])
             futs = [ex.submit(run_test, t, args.exe, args.frames, args.timeout, args.check) for t in tests]
