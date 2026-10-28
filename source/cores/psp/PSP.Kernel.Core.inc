@@ -312,6 +312,7 @@ begin
   FBlocks.Clear;
   for var I := 0 to 127 do
     FReady[I].Clear;
+  FillChar(FReadyMask, SizeOf(FReadyMask), 0);
   FThreads.Clear;
   FTimers.Clear;
   FIntFrames.Clear;
@@ -517,24 +518,40 @@ end;
 
 procedure TPSPKernel.PushReady(T: TPSPThread; Front: Boolean);
 begin
-  var Q := FReady[T.Priority and 127];
+  var P := T.Priority and 127;
+  var Q := FReady[P];
   Q.Remove(T);
   if Front then
     Q.Insert(0, T)
   else
     Q.Add(T);
+  FReadyMask[P shr 5] := FReadyMask[P shr 5] or (Cardinal(1) shl (P and 31));
 end;
 
 procedure TPSPKernel.RemoveReady(T: TPSPThread);
 begin
-  FReady[T.Priority and 127].Remove(T);
+  var P := T.Priority and 127;
+  var Q := FReady[P];
+  Q.Remove(T);
+  if Q.Count = 0 then
+    FReadyMask[P shr 5] := FReadyMask[P shr 5] and not (Cardinal(1) shl (P and 31));
 end;
+
+{$Q-}
+function LowestBit(X: Cardinal): Integer;
+const
+  DeBruijn: array[0..31] of Byte = (0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21,
+    19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9);
+begin
+  Result := DeBruijn[((X and (not X + 1)) * $077CB531) shr 27];
+end;
+{$IFDEF PSP_CHECKED}{$Q+}{$ENDIF}
 
 function TPSPKernel.BestReady: TPSPThread;
 begin
-  for var P := 0 to 127 do
-    if FReady[P].Count > 0 then
-      Exit(FReady[P][0]);
+  for var W := 0 to 3 do
+    if FReadyMask[W] <> 0 then
+      Exit(FReady[W * 32 + LowestBit(FReadyMask[W])][0]);
   Result := nil;
 end;
 

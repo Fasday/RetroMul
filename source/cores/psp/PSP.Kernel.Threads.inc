@@ -818,6 +818,15 @@ begin
   DelayCurrent(Us, True);
 end;
 
+// The time a call spends in a codec, a driver or the module manager, modelled
+// as a wait.
+function TPSPKernel.InternalWait(T: TPSPThread): Boolean;
+begin
+  var Tag := T.Wait.HLETag;
+  Result := (Tag <> '') and ((T.Wait.Kind = PSPWaitDelay) or (Tag = 'iodev') or (Tag = 'loadmodule') or
+    (Tag = 'unloadmodule') or (Tag = 'module') or (Tag = 'font'));
+end;
+
 procedure TPSPKernel.hReleaseWaitThread;
 begin
   var Id := FHLE.Arg(0);
@@ -826,7 +835,9 @@ begin
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
-  if not T.IsWaiting then
+  // A thread inside a driver or a module load waits on the kernel's own
+  // terms; user code cannot cut that short.
+  if not T.IsWaiting or InternalWait(T) then
     begin FHLE.Result(SCE_KERNEL_ERROR_NOT_WAIT); Exit; end;
   Inc(T.ReleaseCount);
   Spend(PSPSyncCallNs);
