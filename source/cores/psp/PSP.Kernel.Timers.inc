@@ -37,6 +37,19 @@ const
   PSPAlarmLatencyNs = 41000;
   PSPSetAlarmNs = 42000;
 
+// Guest clock values wrap like the 64-bit counters they are.
+{$Q-}
+function WrapAdd(A, B: UInt64): UInt64;
+begin
+  Result := A + B;
+end;
+
+function WrapSub(A, B: UInt64): UInt64;
+begin
+  Result := A - B;
+end;
+{$IFDEF PSP_CHECKED}{$Q+}{$ENDIF}
+
 class function TPSPAlarm.IdType: Integer;
 begin
   Result := 10;
@@ -51,7 +64,7 @@ function TPSPVTimer.Current(NowUs: UInt64): UInt64;
 begin
   Result := Accumulated;
   if Active then
-    Inc(Result, NowUs - StartedAt);
+    Result := WrapAdd(Result, WrapSub(NowUs, StartedAt));
 end;
 
 class function TPSPThreadEventHandler.IdType: Integer;
@@ -82,10 +95,11 @@ begin
           begin
             // Counted from the schedule, unless that has already gone by.
             var NowUs := UInt64(K.FScheduler.Now div 1000);
-            Inc(A.Schedule, Ret);
+            A.Schedule := WrapAdd(A.Schedule, Ret);
             if A.Schedule <= NowUs then
               A.Schedule := NowUs + Ret;
-            K.ArmAlarm(A, Int64(A.Schedule) * 1000);
+            if A.Schedule < UInt64(High(Int64) div 4000) then
+              K.ArmAlarm(A, Int64(A.Schedule) * 1000);
           end;
         end, PSPAlarmLatencyNs, A.UID);
     end);
@@ -102,7 +116,7 @@ begin
   A.Handler := Handler;
   A.Common := FHLE.Arg(2);
   A.GP := FCPU.Ctx.GPR[28];
-  A.Schedule := UInt64(Start div 1000) + Us;
+  A.Schedule := WrapAdd(UInt64(Start div 1000), Us);
   AddObject(A);
   var Wait := Us;
   if Wait < PSPAlarmMinUs then
@@ -201,7 +215,7 @@ begin
             V.Handler := 0
           else
           begin
-            Inc(V.Schedule, Ret);
+            V.Schedule := WrapAdd(V.Schedule, Ret);
             K.ArmVTimer(V, False);
           end;
         end, 0, V.UID);
