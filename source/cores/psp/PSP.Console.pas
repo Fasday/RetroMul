@@ -87,7 +87,7 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
-  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings, PSP.SFO, PSP.Net;
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings, PSP.SFO, PSP.Net, PSP.Crypto;
 
 constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
 begin

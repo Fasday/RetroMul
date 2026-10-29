@@ -9,6 +9,8 @@ program PSPRun;
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
 // -calls [a,b,...]: at the end, how often each HLE function was called (names containing a, b, ...).
+// -memstick dir: explicit persistent test memory stick (never deleted by the runner).
+// -stick x,y@frame:length: signed analogue axes (-32768..32767), input only.
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
@@ -18,6 +20,8 @@ type
   TPress = record
     Button: TEmulatorButton;
     Frame, Length: Integer;
+    Analog: Boolean;
+    X, Y: SmallInt;
   end;
 
   TLogSink = class
@@ -235,6 +239,7 @@ begin
     var Frames := 600;
     var OutDir := '';
     var Every := 0;
+    var MemstickOverride := '';
     var Presses := TList<TPress>.Create;
     var EchoLog := False;
     var TestMode := False;
@@ -259,6 +264,7 @@ begin
       var A := ParamStr(I);
       if A = '-frames' then begin Inc(I); Frames := StrToInt(ParamStr(I)); end
       else if A = '-out' then begin Inc(I); OutDir := ParamStr(I); end
+      else if A = '-memstick' then begin Inc(I); MemstickOverride := ExpandFileName(ParamStr(I)); end
       else if A = '-every' then begin Inc(I); Every := StrToInt(ParamStr(I)); end
       else if A = '-log' then EchoLog := True
       else if A = '-test' then TestMode := True
@@ -296,6 +302,25 @@ begin
         end;
         Presses.Add(P);
       end;
+      if A = '-stick' then
+      begin
+        Inc(I);
+        var Spec := ParamStr(I);
+        var Comma := Spec.IndexOf(',');
+        var At := Spec.IndexOf('@');
+        var Colon := Spec.IndexOf(':');
+        if (Comma <= 0) or (At <= Comma) or (Colon <= At) then
+          raise EArgumentException.Create('Expected -stick x,y@frame:length');
+        var X := StrToInt(Spec.Substring(0, Comma));
+        var Y := StrToInt(Spec.Substring(Comma + 1, At - Comma - 1));
+        if (X < -32768) or (X > 32767) or (Y < -32768) or (Y > 32767) then
+          raise EArgumentOutOfRangeException.Create('Stick axes must be -32768..32767');
+        var P := Default(TPress);
+        P.Analog := True; P.X := X; P.Y := Y;
+        P.Frame := StrToInt(Spec.Substring(At + 1, Colon - At - 1));
+        P.Length := StrToInt(Spec.Substring(Colon + 1));
+        Presses.Add(P);
+      end;
       Inc(I);
     end;
     if OutDir <> '' then
@@ -315,6 +340,7 @@ begin
     var Scratch := TPath.Combine(TPath.GetTempPath, Format('psprun-%d', [GetCurrentProcessId]));
     var HostRoot := ExtractFileDir(FileName);
     var Memstick := TPath.Combine(Scratch, 'ms0');
+    if MemstickOverride <> '' then Memstick := MemstickOverride;
     if TestMode then
     begin
       // host0:/ is the test suite's root on hardware (usbhostfs): the test's
@@ -422,7 +448,14 @@ begin
         var Input := Default(TEmulatorInput);
         for var P in Presses do
           if (F >= P.Frame) and (F < P.Frame + P.Length) then
-            Include(Input.Buttons, P.Button);
+            if P.Analog then
+            begin
+              Input.Analog[0].Valid := True;
+              Input.Analog[0].X := P.X;
+              Input.Analog[0].Y := P.Y;
+            end
+            else
+              Include(Input.Buttons, P.Button);
         Console.Input := Input;
         try
           Console.RunFrame(Frame);

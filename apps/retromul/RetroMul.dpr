@@ -600,6 +600,10 @@ uses
   PSP.GE.Workers in '..\..\source\cores\psp\PSP.GE.Workers.pas',
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
   PSP.GE.GPU in '..\..\source\cores\psp\PSP.GE.GPU.pas',
+  PSP.Crypto in '..\..\source\cores\psp\PSP.Crypto.pas',
+  PSP.Crypto.ECDSA in '..\..\source\cores\psp\PSP.Crypto.ECDSA.pas',
+  PSP.Crypto.Keys in '..\..\source\cores\psp\PSP.Crypto.Keys.pas',
+  PSP.Crypto.Kirk in '..\..\source\cores\psp\PSP.Crypto.Kirk.pas',
   RM.Vulkan.Bindings in '..\..\source\gpu\vulkan\RM.Vulkan.Bindings.pas',
   RM.Vulkan.Loader in '..\..\source\gpu\vulkan\RM.Vulkan.Loader.pas',
   RM.Vulkan.Compute in '..\..\source\gpu\vulkan\RM.Vulkan.Compute.pas',

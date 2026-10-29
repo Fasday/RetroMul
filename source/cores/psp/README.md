@@ -86,7 +86,11 @@ reported separately. Frame hashes alone do not verify all CPU state.
   tests require the appropriate user-supplied PGF data.
 - Networking pair tests require peers and are not covered by single-console runs.
 
-The new CPU, kernel, GE and HLE implementations were developed without consulting
-PPSSPP/JPCSP code. Retained crypto units predate the rewrite and have different
-provenance: see [PSP.PRX-LICENSE.md](PSP.PRX-LICENSE.md) and their source headers.
-This distinction matters: the complete core is not claimed to be clean-room.
+The former PRX/AES implementation has now also been replaced. The current
+decoder implements AES/CBC/CMAC, PRX reconstruction and KIRK ECDSA verification,
+using the user's saved documentation and published key data; it also implements
+the Pauth service used by Monster Hunter Portable 3rd. See
+[PSP.Crypto.md](PSP.Crypto.md) for sources, validation, supported formats and
+limitations, and [PSP.PRX-LICENSE.md](PSP.PRX-LICENSE.md) for reference notices.
+This is independently authored code based on published reverse engineering,
+not a claim of a formally separated legal clean-room process.

@@ -274,11 +274,14 @@ end;
 
 function TSavedataRunner.Dir(const Name: string): string;
 begin
+  // The SDK's <> save-name marker names the game directory without a suffix.
+  var Suffix := Name;
+  if Suffix = '<>' then Suffix := '';
   // A name the memory stick cannot hold names no save.
-  for var C in GameName + Name do
+  for var C in GameName + Suffix do
     if CharInSet(C, ['<', '>', ':', '"', '|', '?', '*', '\', '/']) or (C < ' ') then
       raise ESaveName.Create(Name);
-  Result := TPath.Combine(Root, GameName + Name);
+  Result := TPath.Combine(Root, GameName + Suffix);
 end;
 
 function TSavedataRunner.ModeByte(V: Integer): Byte;
@@ -436,7 +439,7 @@ begin
       Sfo.SetString('CATEGORY', 'MS', 4);
       Sfo.SetInt('PARENTAL_LEVEL', M.Read8(P + SdParental));
       Sfo.SetString('SAVEDATA_DETAIL', UTF8ToString(M.ReadAnsi(P + SdDetail, $400)), $400);
-      Sfo.SetString('SAVEDATA_DIRECTORY', GameName + Name, $40);
+      Sfo.SetString('SAVEDATA_DIRECTORY', ExtractFileName(D), $40);
       Sfo.SetString('SAVEDATA_TITLE', UTF8ToString(M.ReadAnsi(P + SdSavedataTitle, $80)), $80);
       Sfo.SetString('TITLE', UTF8ToString(M.ReadAnsi(P + SdTitle, $80)), $80);
       var Params := Sfo.GetBytes('SAVEDATA_PARAMS');
