@@ -602,6 +602,79 @@ begin
   finally C.Free; end;
 end;
 
+procedure MemstickCases(const P: TPSPProgram; const Root: string);
+  procedure Callbacks(C: TPSPConsole);
+  begin
+    Call(C, 'sceKernelCheckCallback', []);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 1000000);
+  end;
+begin
+  var Host := TPath.Combine(Root, 'card-host');
+  TDirectory.CreateDirectory(Host);
+  var C := CreateConsole(P, Host);
+  var D: TPSPConsole := nil;
+  try
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    var Source := TPath.Combine(Host, 'ms' + PathDelim + 'kept.bin');
+    TFile.WriteAllText(Source, 'card', TEncoding.ASCII);
+    Emit(C, Code + $700, [OpI($23, 6, 8, 52), OpI(9, 8, 8, 1), OpI($2B, 6, 8, 52),
+      OpI($2B, 6, 5, 56), OpR(0, 0, 2, $21), $03E00008, 0]);
+    C.Memory.Write32(Globals + 52, 0);
+    C.Memory.WriteString(Params, 'card state', 128);
+    var CB := Call(C, 'sceKernelCreateCallback', [Params, Code + $700, Globals]);
+    C.Memory.WriteString(Params, 'fatms0:', 32); C.Memory.Write32(Params + $40, CB);
+    Require(Call(C, 'sceIoDevctl', [Params, $02415821, Params + $40, 4, 0, 0]) = 0,
+      'Card callback registration failed');
+    Callbacks(C);
+    Require((C.Memory.Read32(Globals + 52) = 1) and (C.Memory.Read32(Globals + 56) = 1),
+      'Initial inserted-card callback was not delivered');
+    C.IO.MemstickInserted := False;
+    C.Memory.WriteString(Params, 'ms0:/kept.bin', 128);
+    Require(Call(C, 'sceIoGetstat', [Params, Pixels]) = $80020321, 'Ejected card getstat touched host storage');
+    Require(Call(C, 'sceIoDopen', [Params]) = $80020321, 'Ejected card directory access was allowed');
+    var Data: TBytes;
+    Require(C.IO.ReadAll('ms0:/kept.bin', Data) = $80020321, 'Ejected native IO helper read the card');
+    var Path := TPath.Combine(Root, 'card.snapshot');
+    C.SaveSnapshot(Path);
+    D := C.RestoreSnapshot(Path);
+    Require(not D.IO.MemstickInserted, 'Direct restore reinserted an ejected card');
+    Callbacks(D);
+    Require((D.Memory.Read32(Globals + 52) = 2) and (D.Memory.Read32(Globals + 56) = 0),
+      'Restored card callback was lost or duplicated');
+    D.IO.MemstickInserted := True;
+    Callbacks(D);
+    Require((D.Memory.Read32(Globals + 52) = 3) and (D.Memory.Read32(Globals + 56) = 1),
+      'Reinserted-card callback was not delivered');
+    Require((D.IO.ReadAll('ms0:/kept.bin', Data) = 0) and
+      (TEncoding.ASCII.GetString(Data) = 'card'), 'Card data did not survive ejection/restore/reinsertion');
+    Require(TFile.ReadAllText(Source, TEncoding.ASCII) = 'card', 'Media state change modified live card data');
+
+    D.Memory.WriteString(Params, 'ms0:/kept.bin', 128);
+    var Fd := Call(D, 'sceIoOpenAsync', [Params, 1, 0]);
+    Call(D, 'sceIoWaitAsync', [Fd, ErrWord]); D.Kernel.AfterSyscall;
+    D.RunUntil(D.Scheduler.Now + 1000000);
+    D.Memory.Fill(Pixels, $CC, 4);
+    Require(Call(D, 'sceIoReadAsync', [Fd, Pixels, 4]) = 0, 'Card async read submission failed');
+    D.IO.MemstickInserted := False;
+    Call(D, 'sceIoWaitAsync', [Fd, ErrWord]); D.Kernel.AfterSyscall;
+    D.RunUntil(D.Scheduler.Now + 1000000);
+    Require((D.Memory.Read32(ErrWord) = $80020321) and (D.Memory.Read32(Pixels) = $CCCCCCCC),
+      'Pending transfer read an ejected card');
+    Call(D, 'sceIoCloseAsync', [Fd]); Call(D, 'sceIoWaitAsync', [Fd, ErrWord]);
+    D.Kernel.AfterSyscall; D.RunUntil(D.Scheduler.Now + 1000000);
+    Require(D.Memory.Read32(ErrWord) = 0, 'Ejected descriptor could not be closed');
+    Callbacks(D);
+    var Notifications := D.Memory.Read32(Globals + 52);
+    D.Memory.WriteString(Params, 'fatms0:', 32); D.Memory.Write32(Params + $40, CB);
+    Call(D, 'sceIoDevctl', [Params, $02415822, Params + $40, 4, 0, 0]);
+    D.IO.MemstickInserted := True;
+    Callbacks(D);
+    Require(D.Memory.Read32(Globals + 52) = Notifications, 'Unregistered card callback still fired');
+    Writeln('PASS card ejection/callback state, data-preserving restore/reinsertion and pending IO rejection');
+  finally D.Free; C.Free; end;
+end;
+
 begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
@@ -615,6 +688,7 @@ begin
       SRCContextCases(P, Root);
       ScanClockCases(P, Root);
       SyncWriteCases(P, Root);
+      MemstickCases(P, Root);
     finally TDirectory.Delete(Root, True); end;
   except
     on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;

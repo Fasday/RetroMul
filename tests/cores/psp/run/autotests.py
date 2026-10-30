@@ -68,7 +68,7 @@ def compare_bmp(expected, actual):
     return diff, diff_rgb, first
 
 
-def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu'):
+def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu', no_memstick=False):
     base = os.path.join(TESTS, rel)
     has_bmp = os.path.exists(base + '.expected.bmp')
     shot = None
@@ -77,6 +77,8 @@ def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu'):
         args += ['-gpu-check' if backend == 'check' else '-gpu']
     if hw:
         args.append('-hw')
+    if no_memstick:
+        args.append('-no-memstick')
     if has_bmp:
         if keep:
             shot = os.path.join(keep, rel.replace('/', '_') + '.bmp')
@@ -143,13 +145,15 @@ def main():
     ap.add_argument('--show', action='store_true')
     ap.add_argument('--hw', action='store_true',
                     help='no emulator: device: programs write output and screenshots to host0: as when recorded')
+    ap.add_argument('--no-memstick', action='store_true',
+                    help='explicit ejected-card profile; do not combine these results with the default profile')
     args = ap.parse_args()
     if args.keep:
         os.makedirs(args.keep, exist_ok=True)
     tests = collect(args.filters)
     results = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
-        futs = [ex.submit(run, t, args.exe, args.frames, args.timeout, args.keep, args.hw, args.backend) for t in tests]
+        futs = [ex.submit(run, t, args.exe, args.frames, args.timeout, args.keep, args.hw, args.backend, args.no_memstick) for t in tests]
         for f in concurrent.futures.as_completed(futs):
             results.append(f.result())
     results.sort()

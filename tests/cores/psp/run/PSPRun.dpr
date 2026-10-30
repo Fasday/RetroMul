@@ -10,6 +10,7 @@ program PSPRun;
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
 // -calls [a,b,...]: at the end, how often each HLE function was called (names containing a, b, ...).
 // -memstick dir: explicit persistent test memory stick (never deleted by the runner).
+// -no-memstick: the configured removable card is ejected (its files are not deleted).
 // -stick x,y@frame:length: signed analogue axes (-32768..32767), input only.
 
 uses
@@ -286,7 +287,7 @@ begin
   try
     if ParamCount < 1 then
     begin
-      Writeln('PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]');
+      Writeln('PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-no-memstick] [-quiet] [-strict]');
       Halt(2);
     end;
     var FileName := ExpandFileName(ParamStr(1));
@@ -294,6 +295,7 @@ begin
     var OutDir := '';
     var Every := 0;
     var MemstickOverride := '';
+    var NoMemstick := False;
     var FontDirectory := '';
     var Presses := TList<TPress>.Create;
     var EchoLog := False;
@@ -320,6 +322,7 @@ begin
       if A = '-frames' then begin Inc(I); Frames := StrToInt(ParamStr(I)); end
       else if A = '-out' then begin Inc(I); OutDir := ParamStr(I); end
       else if A = '-memstick' then begin Inc(I); MemstickOverride := ExpandFileName(ParamStr(I)); end
+      else if A = '-no-memstick' then NoMemstick := True
       else if A = '-fontdir' then begin Inc(I); FontDirectory := ParamStr(I); end
       else if A = '-every' then begin Inc(I); Every := StrToInt(ParamStr(I)); end
       else if A = '-log' then EchoLog := True
@@ -448,6 +451,7 @@ begin
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick, FontDirectory);
+    Console.IO.MemstickInserted := not NoMemstick;
     var Watcher: TWatch := nil;
     var History: THistoryRunner := nil;
     var OriginalRunner := Console.CPU.Runner;

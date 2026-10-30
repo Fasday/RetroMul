@@ -68,7 +68,7 @@ begin
     Result.AddPublicTypes(['PSP.', 'Audio.ATRAC3', 'Audio.MP3', 'Audio.MPEG', 'Video.AVC']);
     RegisterPSPKernelStateTypes(Result);
     Result.Optional(TPSPStateAction, ['Failure', 'Arrays', 'Buffers', 'Texts', 'Results', 'Owned']);
-    Result.Optional(TPSPIO, ['FFatNames', 'FAsyncStub', 'FAsyncPriority']);
+    Result.Optional(TPSPIO, ['FFatNames', 'FAsyncStub', 'FAsyncPriority', 'FMemstickInserted', 'FMemstickCallbacks']);
     Result.Optional(TPSPOpenFile, ['AsyncWorker', 'AsyncPriority', 'AsyncLatency', 'AsyncTask']);
     Result.Optional(TPSPAudio, ['FO2WaitFailed']);
     Result.Optional(TPSPThread, ['BusyYieldEqual']);

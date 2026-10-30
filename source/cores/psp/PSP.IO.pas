@@ -68,6 +68,8 @@ type
     FFatNames: TDictionary<string, TPSPFatName>;
     FAsyncStub: Cardinal;
     FAsyncPriority: Integer;
+    FMemstickInserted: Boolean;
+    FMemstickCallbacks: TList<Cardinal>;
     FMemstickRoot, FFlashRoot, FHostRoot: string;
     FCwd: string;
     FOnOutput: TPSPOutputEvent;
@@ -79,6 +81,9 @@ type
     function HostRoot(const Device: string): string;
     function Resolve(const Path: string): string;
     function HostPath(const Device, Rest: string): string;
+    function MissingMemstick(const Path: string): Boolean;
+    function RejectMissingMemstick(const Path: string): Boolean;
+    procedure SetMemstickInserted(Value: Boolean);
     function FatName(const Rest, Name: string): string;
     procedure SeedFatDirectory(const Host, Rest: string);
     procedure ForgetFatPath(const Host: string; const Destination: string = '');
@@ -175,6 +180,7 @@ type
     function StateStreamMode(Stream: TStream): Word;
     property Disc: TPSPDisc read FDisc write FDisc;
     property MemstickRoot: string read FMemstickRoot write FMemstickRoot;
+    property MemstickInserted: Boolean read FMemstickInserted write SetMemstickInserted;
     property FlashRoot: string read FFlashRoot write FFlashRoot;
     property HostDirectory: string read FHostRoot write FHostRoot;
     property Cwd: string read FCwd write FCwd;
@@ -226,6 +232,8 @@ begin
   FFiles := TDictionary<Integer, TPSPOpenFile>.Create;
   FDrivers := TDictionary<string, TPSPIoDriver>.Create;
   FFatNames := TDictionary<string, TPSPFatName>.Create;
+  FMemstickInserted := True;
+  FMemstickCallbacks := TList<Cardinal>.Create;
   FHasDisplay := True;
 end;
 
@@ -236,6 +244,7 @@ begin
   FFiles.Free;
   FDrivers.Free;
   FFatNames.Free;
+  FMemstickCallbacks.Free;
   inherited;
 end;
 
@@ -246,6 +255,7 @@ begin
   FFiles.Clear;
   FDrivers.Clear;
   FFatNames.Clear;
+  FMemstickCallbacks.Clear;
   FAsyncStub := 0;
   FAsyncPriority := 0;
   FCwd := '';
@@ -287,6 +297,35 @@ begin
     Result := FHostRoot
   else
     Result := FMemstickRoot;
+end;
+
+function IsMemstick(const Device: string): Boolean;
+begin
+  Result := (Device = 'ms0') or (Device = 'ms') or (Device = 'fatms0') or (Device = 'fatms');
+end;
+
+function TPSPIO.MissingMemstick(const Path: string): Boolean;
+begin
+  if FMemstickInserted then Exit(False);
+  var Dev, Rest: string;
+  Result := Split(Resolve(Path), Dev, Rest) and IsMemstick(Dev);
+end;
+
+function TPSPIO.RejectMissingMemstick(const Path: string): Boolean;
+begin
+  Result := MissingMemstick(Path);
+  if Result then FHLE.Result(SCE_KERNEL_ERROR_NODEV);
+end;
+
+procedure TPSPIO.SetMemstickInserted(Value: Boolean);
+begin
+  if FMemstickInserted = Value then Exit;
+  FMemstickInserted := Value;
+  for var Id in FMemstickCallbacks.ToArray do
+  begin
+    var CB := TPSPCallback(FKernel.GetObject(Id, TPSPCallback));
+    if CB <> nil then FKernel.NotifyCallback(CB, Ord(Value)) else FMemstickCallbacks.Remove(Id);
+  end;
 end;
 
 function NormalizeRest(const Rest: string): string;
@@ -483,6 +522,7 @@ end;
 
 function TPSPIO.HostFileName(const Path: string): string;
 begin
+  if MissingMemstick(Path) then Exit('');
   var Dev, Rest: string;
   if not Split(Resolve(Path), Dev, Rest) or (DeviceKind(Dev) <> dkHost) then
     Exit('');
@@ -550,6 +590,7 @@ begin
   var Canonical := Resolve(Path);
   if not Split(Canonical, Dev, Rest) then
     Exit(SCE_ERROR_ERRNO_ENOENT);
+  if not FMemstickInserted and IsMemstick(Dev) then Exit(SCE_KERNEL_ERROR_NODEV);
   case DeviceKind(Dev) of
     dkUMD:
       begin
@@ -672,6 +713,7 @@ begin
   var F := GetFile(Fd);
   if (F = nil) or F.IsDirectory then
     Exit(SCE_KERNEL_ERROR_BADF);
+  if MissingMemstick(F.Path) then Exit(SCE_KERNEL_ERROR_NODEV);
   Path := F.Path;
   case F.Kind of
     dkUMD:
@@ -708,6 +750,7 @@ end;
 
 function TPSPIO.DoRead(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
 begin
+  if MissingMemstick(F.Path) then Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
   if (F.Flags and PSP_O_RDONLY) = 0 then
     Exit(Int64(Integer(SCE_KERNEL_ERROR_BADF)));
   case F.Kind of
@@ -759,6 +802,7 @@ end;
 
 function TPSPIO.DoWrite(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
 begin
+  if MissingMemstick(F.Path) then Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
   case F.Kind of
     dkHost:
       begin
@@ -796,6 +840,7 @@ end;
 
 function TPSPIO.DoSeek(F: TPSPOpenFile; Offset: Int64; Whence: Integer): Int64;
 begin
+  if MissingMemstick(F.Path) then Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
   case F.Kind of
     dkUMD:
       begin
@@ -1633,7 +1678,7 @@ begin
       case Cmd of
         $02025806:
           if (OutPtr <> 0) and (OutLen >= 4) then
-            FMemory.Write32(OutPtr, 1)
+            if FMemstickInserted then FMemory.Write32(OutPtr, 1) else FMemory.Write32(OutPtr, 2)
           else
             FHLE.Result($80220183);
         $02125802:
@@ -1668,18 +1713,22 @@ begin
             FMemory.Write32(OutPtr, 1);
         $02415821, $02415823:
           begin
-            // Register a memory stick insertion callback: it fires once, inserted.
+            // Register the current medium state and subsequent insertion changes.
             if (InPtr <> 0) and (InLen >= 4) then
             begin
               var CB := TPSPCallback(FKernel.GetObject(FMemory.Read32(InPtr), TPSPCallback));
               if CB <> nil then
-                FKernel.NotifyCallback(CB, 1);
+              begin
+                if not FMemstickCallbacks.Contains(CB.UID) then FMemstickCallbacks.Add(CB.UID);
+                FKernel.NotifyCallback(CB, Ord(FMemstickInserted));
+              end;
             end;
           end;
         $02415822:
-          ;
+          if (InPtr <> 0) and (InLen >= 4) then FMemstickCallbacks.Remove(FMemory.Read32(InPtr));
         $02425818:
-          if InPtr <> 0 then
+          if not FMemstickInserted then FHLE.Result(SCE_KERNEL_ERROR_NODEV)
+          else if InPtr <> 0 then
           begin
             // Free space: 1 GB in 32 KB clusters.
             var P := FMemory.Read32(InPtr);
@@ -1692,7 +1741,7 @@ begin
         // FAT on the stick ready: 1 (0 without a stick, utility/savedata/nomemstick).
         $02425823:
           if OutPtr <> 0 then
-            FMemory.Write32(OutPtr, 1);
+            FMemory.Write32(OutPtr, Ord(FMemstickInserted));
         $02425824:
           if OutPtr <> 0 then
             FMemory.Write32(OutPtr, 0);
@@ -1705,6 +1754,7 @@ end;
 procedure TPSPIO.hGetstat;
 begin
   var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
+  if RejectMissingMemstick(Path) then Exit;
   var StatPtr := FHLE.Arg(1);
   var Dev, Rest: string;
   if not Split(Path, Dev, Rest) then
@@ -1756,7 +1806,9 @@ end;
 
 procedure TPSPIO.hChstat;
 begin
-  var Name := HostFileName(FMemory.ReadString(FHLE.Arg(0), 1024));
+  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  if RejectMissingMemstick(Path) then Exit;
+  var Name := HostFileName(Path);
   var StatPtr := FHLE.Arg(1);
   var Bits := FHLE.Arg(2);
   if Name = '' then
@@ -1782,6 +1834,7 @@ end;
 procedure TPSPIO.hDopen;
 begin
   var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
+  if RejectMissingMemstick(Path) then Exit;
   if FKernel.Trace then
     FHLE.Log('dopen %s', [Path]);
   var Dev, Rest: string;
@@ -1871,6 +1924,7 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if (F = nil) or not F.IsDirectory then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if RejectMissingMemstick(F.Path) then Exit;
   var P := FHLE.Arg(1);
   if F.EntryIndex >= Length(F.Entries) then
     begin FHLE.Result(0); Exit; end;
@@ -1919,7 +1973,9 @@ end;
 
 procedure TPSPIO.hMkdir;
 begin
-  var Name := HostFileName(FMemory.ReadString(FHLE.Arg(0), 1024));
+  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  if RejectMissingMemstick(Path) then Exit;
+  var Name := HostFileName(Path);
   if Name = '' then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if DirectoryExists(Name) or FileExists(Name) then
@@ -1932,7 +1988,9 @@ end;
 
 procedure TPSPIO.hRmdir;
 begin
-  var Name := HostFileName(FMemory.ReadString(FHLE.Arg(0), 1024));
+  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  if RejectMissingMemstick(Path) then Exit;
+  var Name := HostFileName(Path);
   if Name = '' then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not DirectoryExists(Name) then
@@ -1943,7 +2001,9 @@ end;
 
 procedure TPSPIO.hRemove;
 begin
-  var Name := HostFileName(FMemory.ReadString(FHLE.Arg(0), 1024));
+  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  if RejectMissingMemstick(Path) then Exit;
+  var Name := HostFileName(Path);
   if Name = '' then
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not FileExists(Name) then
@@ -1957,6 +2017,7 @@ begin
   // The FAT driver renames in place: only the new name's last part counts.
   var SrcPath := FMemory.ReadString(FHLE.Arg(0), 1024);
   var DstPath := FMemory.ReadString(FHLE.Arg(1), 1024);
+  if RejectMissingMemstick(SrcPath) or RejectMissingMemstick(DstPath) then Exit;
   if (SrcPath.IndexOfAny(['*', '?']) >= 0) or (DstPath.IndexOfAny(['*', '?']) >= 0) then
   begin
     DeviceYield(SCE_ERROR_ERRNO_EINVAL, 20000);
@@ -2019,6 +2080,7 @@ end;
 procedure TPSPIO.hChdir;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
+  if RejectMissingMemstick(Path) then Exit;
   FCwd := Resolve(Path);
   FHLE.Result(0);
 end;

@@ -1318,6 +1318,7 @@ end;
 
 function TSavedataRunner.Dir(const Name: string): string;
 begin
+  if Root = '' then raise ESaveName.Create('No memory stick');
   // The SDK's <> save-name marker names the game directory without a suffix.
   var Suffix := Name;
   if Suffix = '<>' then Suffix := '';
@@ -1952,7 +1953,7 @@ begin
     if R.HasVersion then
       R.SecureVersion := Integer(FMemory.Read32(P + SdSecureVersion));
     R.Root := '';
-    if FSystem.IO.MemstickRoot <> '' then
+    if FSystem.IO.MemstickInserted and (FSystem.IO.MemstickRoot <> '') then
     begin
       R.Root := TPath.Combine(FSystem.IO.MemstickRoot, 'PSP' + PathDelim + 'SAVEDATA');
       ForceDirectories(R.Root);

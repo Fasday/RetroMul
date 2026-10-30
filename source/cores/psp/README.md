@@ -83,6 +83,7 @@ reported separately. Frame hashes alone do not verify all CPU state.
 The current verified suite passes 540/638 hardware-reference tests, with identical
 JIT/pool and interpreter/serial reports. See
 [the synchronous-write report](../../../tests/cores/psp/run/SYNC-WRITES.md),
+[the explicit removable-card condition](../../../tests/cores/psp/run/MEMSTICK.md),
 [the timing/handoff report](../../../tests/cores/psp/run/TIMING-HANDOFF.md),
 [the async IO report](../../../tests/cores/psp/run/ASYNC-IO.md) and
 [profile distinctions](../../../tests/cores/psp/run/ACCURACY-FOLLOWUP.md).
