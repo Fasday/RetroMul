@@ -251,10 +251,12 @@ begin
   D.Cache := nil;
   D.CacheKey := -1;
   var Lib := Slot.Lib;
+  var CacheSize := G.DataSize;
+  if G.CacheDataSize > 0 then CacheSize := G.CacheDataSize;
   FreeBlocks(Lib, Old,
     procedure
     begin
-      AllocBlocks(Lib, [Cardinal(G.DataSize), Cardinal(G.W * G.H)],
+      AllocBlocks(Lib, [Cardinal(CacheSize), Cardinal(G.W * G.H)],
         procedure(const Addrs: TArray<Cardinal>; Ok: Boolean)
         begin
           if not Ok then

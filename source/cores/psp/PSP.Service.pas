@@ -29,6 +29,8 @@ type
     Services: TObjectList<TPSPService>;
     // Folder with firmware data the user supplied (fonts), may be empty.
     FlashRoot: string;
+    // Optional user-supplied PGF files; accessed read-only by sceFont.
+    FontDirectory: string;
     function Find(Cls: TPSPServiceClass): TPSPService;
   end;
 

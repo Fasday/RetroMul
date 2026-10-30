@@ -46,6 +46,7 @@ type
 
   TPSPOutputEvent = procedure(const Text: RawByteString) of object;
   TPSPScreenshotEvent = procedure of object;
+  TPSPHostChangeEvent = procedure(const Name: string; Created, Tree: Boolean) of object;
 
   TPSPIO = class
   private
@@ -60,6 +61,7 @@ type
     FOnOutput: TPSPOutputEvent;
     FOnScreenshot: TPSPScreenshotEvent;
     FHasDisplay: Boolean;
+    FOnHostChange: TPSPHostChangeEvent;
     function Split(const Path: string; out Device, Rest: string): Boolean;
     function DeviceKind(const Device: string): TPSPDeviceKind;
     function HostRoot(const Device: string): string;
@@ -142,6 +144,7 @@ type
     function ReadOpen(Fd: Cardinal; out Data: TBytes; out Path: string): Cardinal;
     function Exists(const Path: string): Boolean;
     function HostFileName(const Path: string): string;
+    procedure HostChanged(const Name: string; Created: Boolean = False; Tree: Boolean = False);
     property Disc: TPSPDisc read FDisc write FDisc;
     property MemstickRoot: string read FMemstickRoot write FMemstickRoot;
     property FlashRoot: string read FFlashRoot write FFlashRoot;
@@ -150,6 +153,7 @@ type
     property HasDisplay: Boolean read FHasDisplay write FHasDisplay;
     property OnOutput: TPSPOutputEvent read FOnOutput write FOnOutput;
     property OnScreenshot: TPSPScreenshotEvent read FOnScreenshot write FOnScreenshot;
+    property OnHostChange: TPSPHostChangeEvent read FOnHostChange write FOnHostChange;
   end;
 
 const
@@ -353,6 +357,11 @@ begin
   Result := HostPath(Dev, Rest);
 end;
 
+procedure TPSPIO.HostChanged(const Name: string; Created, Tree: Boolean);
+begin
+  if Assigned(FOnHostChange) then FOnHostChange(Name, Created, Tree);
+end;
+
 function TPSPIO.AllocTTYFd: Integer;
 begin
   // Descriptors 0..2 are stdio; the first free one after the ttys' own.
@@ -406,7 +415,8 @@ function TPSPIO.OpenPath(const Path: string; Flags, Mode: Cardinal; out F: TPSPO
 begin
   F := nil;
   var Dev, Rest: string;
-  if not Split(Resolve(Path), Dev, Rest) then
+  var Canonical := Resolve(Path);
+  if not Split(Canonical, Dev, Rest) then
     Exit(SCE_ERROR_ERRNO_ENOENT);
   case DeviceKind(Dev) of
     dkUMD:
@@ -417,7 +427,7 @@ begin
           Exit(SCE_ERROR_ERRNO_EACCES);
         F := TPSPOpenFile.Create;
         F.Kind := dkUMD;
-        F.Path := Path;
+        F.Path := Canonical;
         var LBA, Size: Cardinal;
         if (Rest = '') or (Rest = '/') then
         begin
@@ -475,8 +485,10 @@ begin
         end;
         F := TPSPOpenFile.Create;
         F.Kind := dkHost;
-        F.Path := Path;
+        F.Path := Canonical;
         F.Stream := S;
+        if ((Flags and PSP_O_WRONLY) <> 0) and (not Exists or ((Flags and PSP_O_TRUNC) <> 0)) then
+          HostChanged(Name, not Exists);
         if (Flags and PSP_O_APPEND) <> 0 then
           S.Position := S.Size;
       end;
@@ -484,7 +496,7 @@ begin
       begin
         F := TPSPOpenFile.Create;
         F.Kind := DeviceKind(Dev);
-        F.Path := Path;
+        F.Path := Canonical;
       end;
   else
     Exit(SCE_KERNEL_ERROR_NODEV);
@@ -627,6 +639,7 @@ begin
         if (F.Flags and PSP_O_APPEND) <> 0 then
           F.Stream.Position := F.Stream.Size;
         Result := F.Stream.Write(Buf[0], Size);
+        HostChanged(HostFileName(F.Path));
       end;
     dkEmulator, dkTTY:
       begin
@@ -1306,6 +1319,7 @@ begin
   if (Bits and 2) <> 0 then
     ReadOnly := (FMemory.Read32(StatPtr + 4) and 1) <> 0;
   HostSetReadOnly(Name, ReadOnly);
+  HostChanged(Name);
   DeviceYield(0, 20000);
 end;
 
@@ -1427,7 +1441,8 @@ begin
     begin DeviceYield(SCE_ERROR_ERRNO_EEXIST, 20000); Exit; end;
   if not DirectoryExists(ExtractFileDir(Name)) then
     begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if CreateDir(Name) then DeviceYield(0, 30000) else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
+  if CreateDir(Name) then begin HostChanged(Name, True); DeviceYield(0, 30000); end
+  else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hRmdir;
@@ -1437,7 +1452,8 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not DirectoryExists(Name) then
     begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if RemoveDir(Name) then DeviceYield(0, 30000) else DeviceYield(SCE_ERROR_ERRNO_ENOTEMPTY, 30000);
+  if RemoveDir(Name) then begin HostChanged(Name); DeviceYield(0, 30000); end
+  else DeviceYield(SCE_ERROR_ERRNO_ENOTEMPTY, 30000);
 end;
 
 procedure TPSPIO.hRemove;
@@ -1447,7 +1463,8 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not FileExists(Name) then
     begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if DeleteFile(Name) then DeviceYield(0, 30000) else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
+  if DeleteFile(Name) then begin HostChanged(Name); DeviceYield(0, 30000); end
+  else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hRename;
@@ -1495,7 +1512,20 @@ begin
     Exit;
   end;
   if RenameFile(Src, Dst) then
+  begin
+    var GuestDst := Resolve(SrcPath);
+    GuestDst := GuestDst.Substring(0, GuestDst.LastIndexOf('/') + 1) + NewName;
+    for var F in FFiles.Values do
+      if F.Kind = dkHost then
+      begin
+        var OpenName := HostFileName(F.Path);
+        if SameText(OpenName, Src) or OpenName.StartsWith(IncludeTrailingPathDelimiter(Src), True) then
+          F.Path := GuestDst + OpenName.Substring(Src.Length).Replace(PathDelim, '/');
+      end;
+    HostChanged(Src);
+    HostChanged(Dst, False, True);
     DeviceYield(0, 30000)
+  end
   else
     DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;

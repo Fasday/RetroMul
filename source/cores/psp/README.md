@@ -76,14 +76,21 @@ report its results separately. Never change expected images to match a renderer.
 compares stdout, all screenshots and final VRAM; tests without GPU draws are
 reported separately. Frame hashes alone do not verify all CPU state.
 
+The state/font/DMA verification run passes 534/638 hardware tests, with identical
+JIT/pool and interpreter/serial reports. See
+[the detailed report](../../../tests/cores/psp/run/STATES-FONTS-ACCURACY.md).
+
 ## Known gaps and provenance
 
-- Save states are not implemented; pending callbacks and host closures are not
-  serialized. In-game memory-stick saves are a separate feature.
+- Save states reconstruct a separately validated console from initial data and
+  input history. Loading is cancellable but grows slower with session length;
+  initial host data has a 48 MiB limit. Host closures are never serialized.
+  In-game memory-stick saves remain a separate feature.
 - PGD-protected files and unsupported PRX tags can prevent game loading.
 - Some VFPU functions and GE precision/timing still differ from hardware.
-- Built-in font fallbacks have limited character coverage; real Japanese font
-  tests require the appropriate user-supplied PGF data.
+- Built-in fonts cover Latin-1 and fullwidth Latin, not complete Japanese or
+  Cyrillic typefaces. Optional read-only PGFs can be selected in PSP settings
+  (`System/FontDirectory`) or with `PSPRun -fontdir`.
 - Networking pair tests require peers and are not covered by single-console runs.
 
 The former PRX/AES implementation has now also been replaced. The current

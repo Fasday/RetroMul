@@ -42,6 +42,7 @@ type
     // PLL = 1332 / FPllN MHz, CPU = PLL * FCpuK / 511.
     FPllN: Integer;
     FCpuK: Integer;
+    FDmacUntil: Int64;
     function EpochTicks: UInt64;
     function NowTicks: UInt64;
     function LocalOffsetTicks: Int64;
@@ -168,6 +169,8 @@ type
     procedure hImposeGetHomePopup;
     procedure hHprmZero;
     procedure hDmacMemcpy;
+    procedure hDmacTryMemcpy;
+    procedure DmacCopy(TryOnly: Boolean);
     procedure hGetPSID;
     procedure hZero;
   public
@@ -244,6 +247,7 @@ end;
 
 procedure TPSPSysLibs.Reset;
 begin
+  FDmacUntil := 0;
   FUmdCallback := 0;
   // A game booted from its disc finds the drive activated by the system
   // (Metal Gear Acid 2 waits for READY without activating it).
@@ -393,6 +397,16 @@ end;
 
 procedure TPSPSysLibs.hDmacMemcpy;
 begin
+  DmacCopy(False);
+end;
+
+procedure TPSPSysLibs.hDmacTryMemcpy;
+begin
+  DmacCopy(True);
+end;
+
+procedure TPSPSysLibs.DmacCopy(TryOnly: Boolean);
+begin
   var Dst := FHLE.Arg(0);
   var Src := FHLE.Arg(1);
   var Size := FHLE.Arg(2);
@@ -400,8 +414,29 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE); Exit; end;
   if (Dst = 0) or (Src = 0) then
     begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER); Exit; end;
-  FMemory.Copy(Dst, Src, Size);
+  var Now := FKernel.Scheduler.Now;
+  if TryOnly and (FDmacUntil > Now) then
+    begin FHLE.Result($80000021); Exit; end;
+  if ((Size < 272) and (FDmacUntil <= Now)) or not FKernel.CanWait then
+  begin
+    FMemory.Copy(Dst, Src, Size);
+    FHLE.Result(0);
+    Exit;
+  end;
+  // The short path is polled; longer transfers release the calling thread.
+  FDmacUntil := Max(Now, FDmacUntil) + 8000 + Int64(Size) * 10;
   FHLE.Result(0);
+  var T := FKernel.Current;
+  var K := FKernel;
+  var M := FMemory;
+  FKernel.BeginWait(PSPWaitSema, nil, 0, 0, False, nil, nil, 'dmac');
+  FKernel.AddTimer(FDmacUntil, T,
+    procedure
+    begin
+      M.Copy(Dst, Src, Size);
+      if T.IsWaiting and (T.Wait.HLETag = 'dmac') then
+        K.EndWait(T, 0);
+    end);
 end;
 
 procedure TPSPSysLibs.hGetPSID;

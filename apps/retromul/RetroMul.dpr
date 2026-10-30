@@ -88,6 +88,7 @@ uses
   PSP.MpegVideo in '..\..\source\cores\psp\PSP.MpegVideo.pas',
   PSP.SFO in '..\..\source\cores\psp\PSP.SFO.pas',
   PSP.Settings in '..\..\source\cores\psp\PSP.Settings.pas',
+  PSP.State in '..\..\source\cores\psp\PSP.State.pas',
   PSP.VFPU.Math in '..\..\source\cores\psp\PSP.VFPU.Math.pas',
   PSP.Net in '..\..\source\cores\psp\PSP.Net.pas',
   PSP.Videocodec in '..\..\source\cores\psp\PSP.Videocodec.pas',

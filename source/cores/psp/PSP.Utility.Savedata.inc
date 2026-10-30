@@ -73,6 +73,7 @@ type
     HasKey, HasVersion, Selected: Boolean;
     SecureVersion: Integer;
     Root: string;
+    IO: TPSPIO;
     function Run: Cardinal;
     function RunMode: Cardinal;
     function Dir(const Name: string): string;
@@ -362,6 +363,7 @@ begin
   except
     on E: EInOutError do;
   end;
+  IO.HostChanged(Path);
 end;
 
 procedure TSavedataRunner.ReadGuest(Address, Size: Cardinal; out Data: TBytes);
@@ -479,8 +481,12 @@ begin
   if not TDirectory.Exists(D) then
     Exit(False);
   for var F in TDirectory.GetFiles(D) do
+  begin
     TFile.Delete(F);
+    IO.HostChanged(F);
+  end;
   TDirectory.Delete(D, True);
+  IO.HostChanged(D);
   Result := True;
 end;
 
@@ -609,8 +615,12 @@ begin
     if not TFile.Exists(FilePath) then
       Exit(SD_RW_NO_FILE);
     TFile.Delete(FilePath);
+    IO.HostChanged(FilePath);
     if SdSetSecure(Sfo, FileName, nil, False) then
+    begin
       TFile.WriteAllBytes(TPath.Combine(D, 'PARAM.SFO'), Sfo.Save);
+      Stamp(TPath.Combine(D, 'PARAM.SFO'));
+    end;
     Result := 0;
   finally
     Sfo.Free;
@@ -882,6 +892,7 @@ begin
     var P := D.Params;
     R.M := FMemory;
     R.Kernel := FKernel;
+    R.IO := FSystem.IO;
     R.P := P;
     R.Size := D.Size;
     R.Mode := Integer(FMemory.Read32(P + SdMode));

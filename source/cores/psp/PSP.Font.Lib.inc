@@ -486,7 +486,19 @@ begin
   var E := InternalFonts[Index];
   Result := nil;
   var Data: TBytes;
-  if (FSystem.FlashRoot <> '') and (FSystem.IO.ReadAll('flash0:/font/' + E.FileName, Data) = 0) then
+  if FSystem.FontDirectory <> '' then
+  begin
+    var Path := TPath.Combine(FSystem.FontDirectory, E.FileName);
+    if TFile.Exists(Path) and (TFile.GetSize(Path) <= 16 * 1024 * 1024) then
+    try
+      Data := TFile.ReadAllBytes(Path);
+      Result := TPGFFile.Parse(Data);
+    except
+      on X: Exception do FHLE.Log('font: cannot read %s (%s)', [E.FileName, X.Message]);
+    end;
+  end;
+  if (Result = nil) and (FSystem.FlashRoot <> '') and
+    (FSystem.IO.ReadAll('flash0:/font/' + E.FileName, Data) = 0) then
     Result := TPGFFile.Parse(Data);
   if Result = nil then
   begin

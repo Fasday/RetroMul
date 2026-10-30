@@ -46,6 +46,7 @@ type
     function Microseconds: Int64; inline;
     property NextDue: Int64 read FNextDue;
     property MHz: Cardinal read FMHz write SetMHz;
+    property Remainder: Int64 read FRemainder;
   end;
 
 implementation

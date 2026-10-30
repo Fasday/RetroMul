@@ -172,6 +172,6 @@ begin
   H.Register('sceHprm', $C7154136, 'sceHprmRegisterCallback', hZero);
   H.Register('sceHprm', $444ED0B7, 'sceHprmUnregisterCallback', hZero);
   H.Register('sceDmac', $617F3FE6, 'sceDmacMemcpy', hDmacMemcpy);
-  H.Register('sceDmac', $D97F94D8, 'sceDmacTryMemcpy', hDmacMemcpy);
+  H.Register('sceDmac', $D97F94D8, 'sceDmacTryMemcpy', hDmacTryMemcpy);
   H.Register('sceOpenPSID', $C69BEBCE, 'sceOpenPSIDGetOpenPSID', hGetPSID);
 end;

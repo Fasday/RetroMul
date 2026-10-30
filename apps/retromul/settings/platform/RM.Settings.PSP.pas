@@ -29,6 +29,7 @@ begin
   Context.AddChoice('RowPSPLanguage', 'System language', 'The language games read from the system settings. Applies when the game starts.', 'System', 'Language', SettingChoices([Translate('Japanese'), Translate('English'), Translate('French'), Translate('Spanish'), Translate('German'), Translate('Italian'), Translate('Dutch'), Translate('Portuguese'), Translate('Russian'), Translate('Korean'), Translate('Chinese (traditional)'), Translate('Chinese (simplified)')], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11']), '1', True);
   Context.AddChoice('RowPSPConfirm', 'Confirm button', 'Which button confirms in system dialogs and in games that follow the system setting.', 'System', 'ButtonSwap', SettingChoices([Translate('Cross'), Translate('Circle')], ['1', '0']), '1', True);
   Context.AddText('RowPSPNickname', 'Nickname', 'The user name games show and store in saves.', 'System', 'Nickname', 'RetroMul', True);
+  Context.AddPath('RowPSPFonts', 'PSP font directory', 'Optional folder containing your PSP .pgf fonts (jpn0.pgf, ltn*.pgf). Read-only; fonts are not bundled. Reopen the game to apply.', 'System', 'FontDirectory', '', True, True).ApplyMode := TSettingsApplyMode.OnNextLoad;
 end;
 
 initialization

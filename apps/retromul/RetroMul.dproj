@@ -521,6 +521,7 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.MpegVideo.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.SFO.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Settings.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.State.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.Math.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Net.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Videocodec.pas"/>

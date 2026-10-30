@@ -274,6 +274,7 @@ begin
     Exit;
   var G := Result;
   G.DataSize := Integer(Bits(P, 14));
+  G.CacheDataSize := Max(0, G.DataSize - 8);
   G.W := Integer(Bits(P + 14, 7));
   G.H := Integer(Bits(P + 21, 7));
   G.Left := SBits(P + 28, 7);
@@ -330,6 +331,7 @@ begin
     Exit;
   var S := Result;
   S.DataSize := Integer(Bits(P, 14));
+  S.CacheDataSize := Max(0, S.DataSize - 6);
   S.W := Integer(Bits(P + 14, 7));
   S.H := Integer(Bits(P + 21, 7));
   S.Left := SBits(P + 28, 7);

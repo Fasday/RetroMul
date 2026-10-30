@@ -240,6 +240,7 @@ begin
     var OutDir := '';
     var Every := 0;
     var MemstickOverride := '';
+    var FontDirectory := '';
     var Presses := TList<TPress>.Create;
     var EchoLog := False;
     var TestMode := False;
@@ -265,6 +266,7 @@ begin
       if A = '-frames' then begin Inc(I); Frames := StrToInt(ParamStr(I)); end
       else if A = '-out' then begin Inc(I); OutDir := ParamStr(I); end
       else if A = '-memstick' then begin Inc(I); MemstickOverride := ExpandFileName(ParamStr(I)); end
+      else if A = '-fontdir' then begin Inc(I); FontDirectory := ParamStr(I); end
       else if A = '-every' then begin Inc(I); Every := StrToInt(ParamStr(I)); end
       else if A = '-log' then EchoLog := True
       else if A = '-test' then TestMode := True
@@ -385,7 +387,7 @@ begin
     end;
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
-    var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick);
+    var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick, FontDirectory);
     var Watcher: TWatch := nil;
     var History: THistoryRunner := nil;
     var OriginalRunner := Console.CPU.Runner;

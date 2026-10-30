@@ -9,7 +9,7 @@ interface
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Generics.Collections, Core.Emulation.Types, Core.Storage,
   PSP.Types, PSP.Memory, PSP.Scheduler, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media, PSP.IO, PSP.Loader,
-  PSP.Display, PSP.Service, PSP.Audio, PSP.CPU.JIT;
+  PSP.Display, PSP.Service, PSP.Audio, PSP.CPU.JIT, PSP.State, PSP.Settings;
 
 type
   TPSPConsole = class
@@ -42,6 +42,14 @@ type
     FBooted: Boolean;
     FStopAtFrame: Boolean;
     FExecuted: Int64;
+    FState: TPSPReplayState;
+    FReplaying: Boolean;
+    FMediaDigest: TBytes;
+    FSettings: TPSPSettings;
+    function StateRoots: TPSPStateRoots;
+    function StateDigest: TBytes;
+    function MediaDigest(const Progress: TPSPStateProgress = nil): TBytes;
+    procedure HostChanged(const Name: string; Created, Tree: Boolean);
     procedure ResetServices;
     procedure ResetMachine(KeepClock: Boolean);
     procedure Syscall(C: TPSPCPU; Code: Cardinal);
@@ -55,12 +63,16 @@ type
     procedure Boot(const Executable: TBytes; const Path: string);
   public
     constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage = nil; const HostRoot: string = '';
-      const MemstickRoot: string = '');
+      const MemstickRoot: string = ''; const FontDirectory: string = ''; TrackSnapshots: Boolean = False;
+      Seed: TPSPReplayState = nil);
     destructor Destroy; override;
     procedure Reset;
     procedure RunFrame(out Frame: TEmulatorFrame);
     // Runs until the guest time reaches At (ns) or the program exits.
     procedure RunUntil(At: Int64);
+    procedure SaveSnapshot(const Path: string; const Progress: TPSPStateProgress = nil);
+    // Returns a fully checked replacement; Self remains usable on failure/cancel.
+    function RestoreSnapshot(const Path: string; const Progress: TPSPStateProgress = nil): TPSPConsole;
     function TakeOutput: string;
     function TakeLog: string;
     property Input: TEmulatorInput read FInput write FInput;
@@ -87,18 +99,25 @@ implementation
 
 uses
   System.Math, PSP.VFPU, PSP.GE, PSP.SysLibs, PSP.SAS, PSP.Atrac, PSP.MP3, PSP.AudioCodec, PSP.Mpeg, PSP.Psmf,
-  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.Settings, PSP.SFO, PSP.Net, PSP.Crypto;
+  PSP.Utility, PSP.Font, PSP.Misc, PSP.Jpeg, PSP.SFO, PSP.Net, PSP.Crypto,
+  Core.Snapshots, System.Hash;
 
-constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage; const HostRoot, MemstickRoot: string);
+constructor TPSPConsole.Create(const ProgramData: TPSPProgram; const Storage: IStorage;
+  const HostRoot, MemstickRoot, FontDirectory: string; TrackSnapshots: Boolean; Seed: TPSPReplayState);
 begin
   inherited Create;
+  FState := Seed;
+  FReplaying := Seed <> nil;
+  FSettings := PSPSettings;
+  if TrackSnapshots and (FState = nil) then FState := TPSPReplayState.Create;
   FProgram := ProgramData;
   FStorage := Storage;
   FHostRoot := HostRoot;
   FLog := TStringList.Create;
   FOutput := TStringBuilder.Create;
   FMemstickRoot := MemstickRoot;
-  if (FMemstickRoot = '') and (Storage <> nil) then
+  if Seed <> nil then FMemstickRoot := Seed.Roots[0];
+  if (Seed = nil) and (FMemstickRoot = '') and (Storage <> nil) then
     FMemstickRoot := TPath.Combine(Storage.SaveRoot, 'psp-memstick');
   if FMemstickRoot <> '' then
   begin
@@ -131,6 +150,15 @@ begin
   FSystem.Loader := FLoader;
   FSystem.Display := FDisplay;
   FSystem.FlashRoot := FFlashRoot;
+  FSystem.FontDirectory := FontDirectory;
+  if Seed <> nil then
+  begin
+    FFlashRoot := Seed.Roots[1];
+    FHostRoot := Seed.Roots[2];
+    FSystem.FlashRoot := FFlashRoot;
+    FSystem.FontDirectory := Seed.Roots[3];
+  end;
+  if FState <> nil then FIO.OnHostChange := HostChanged;
   FSystem.Services := TObjectList<TPSPService>.Create;
   for var Cls in PSPServiceClasses do
     FSystem.Services.Add(Cls.Create(FSystem));
@@ -141,7 +169,7 @@ end;
 
 destructor TPSPConsole.Destroy;
 begin
-  FSystem.Services.Free;
+  if FSystem <> nil then FSystem.Services.Free;
   FSystem.Free;
   FDisplay.Free;
   FLoader.Free;
@@ -156,6 +184,7 @@ begin
   FDiscStream.Free;
   FOutput.Free;
   FLog.Free;
+  FState.Free;
   inherited;
 end;
 
@@ -237,7 +266,9 @@ end;
 
 procedure TPSPConsole.Reset;
 begin
+  PSPSettings := FSettings;
   ResetMachine(False);
+  if (FState <> nil) and not FReplaying then FState.Capture(StateRoots);
   FFrameNumber := 0;
   var Path := FProgram.BootPath;
   if Path = '' then
@@ -329,6 +360,8 @@ end;
 
 procedure TPSPConsole.RunUntil(At: Int64);
 begin
+  if (FState <> nil) and not FStopAtFrame and not FReplaying then
+    FState.CaptureError := 'PSP snapshots require recorded RunFrame execution, not direct RunUntil calls';
   while True do
   begin
     // Events that fell due during the last run are handled before returning.
@@ -378,6 +411,17 @@ end;
 
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
 begin
+  PSPSettings := FSettings;
+  if (FState <> nil) and not FReplaying then
+  begin
+    if FState.Frames = 0 then
+    begin
+      FState.HasDisplay := FIO.HasDisplay;
+      FState.NoEmulatorDevice := FIO.NoEmulatorDevice;
+      FState.NoClobber := FHLE.NoClobber;
+    end;
+    FState.RecordInput(FInput);
+  end;
   FDisplay.SetInput(FInput);
   FDisplay.FrameDone := False;
   FStopAtFrame := True;
@@ -392,6 +436,156 @@ begin
   Frame.FrameNumber := FFrameNumber;
   Frame.FramesPerSecond := PSPFrameRate;
   FAudioSamples := FAudio.TakeSamples;
+  FSettings := PSPSettings;
+end;
+
+function TPSPConsole.StateRoots: TPSPStateRoots;
+begin
+  Result[0] := FMemstickRoot;
+  Result[1] := FFlashRoot;
+  Result[2] := FHostRoot;
+  Result[3] := FSystem.FontDirectory;
+end;
+
+procedure TPSPConsole.HostChanged(const Name: string; Created, Tree: Boolean);
+begin
+  var Time := EncodeDate(2026, 1, 1) + FScheduler.Now / 86400e9 +
+    (PSPSettings.Timezone + 60 * PSPSettings.DaylightSaving) / 1440;
+  FState.HostChanged(Name, Time, Created, Tree);
+end;
+
+function TPSPConsole.StateDigest: TBytes;
+begin
+  TPSPGE(FSystem.Find(TPSPGE)).Engine.Synchronize;
+  var Hash := THashSHA2.Create;
+  Hash.Update(FMemory.RAM);
+  Hash.Update(FMemory.VRAM);
+  Hash.Update(FMemory.Scratch);
+  Hash.Update(FCPU.Ctx, SizeOf(FCPU.Ctx));
+  Hash.Update(FScheduler.Now, SizeOf(FScheduler.Now));
+  var N := FScheduler.Remainder;
+  Hash.Update(N, SizeOf(N));
+  N := FScheduler.MHz;
+  Hash.Update(N, SizeOf(N));
+  for var E := Low(TPSPEvent) to High(TPSPEvent) do
+  begin
+    N := FScheduler.Due(E);
+    Hash.Update(N, SizeOf(N));
+  end;
+  Result := Hash.HashAsBytes;
+end;
+
+function TPSPConsole.MediaDigest(const Progress: TPSPStateProgress): TBytes;
+begin
+  if Length(FMediaDigest) = 0 then
+  begin
+    if FDiscStream = nil then
+    begin
+      var Hash := THashSHA2.Create;
+      Hash.Update(FProgram.Executable);
+      FMediaDigest := Hash.HashAsBytes;
+    end
+    else
+    begin
+      var Position := FDiscStream.Position;
+      try
+        FDiscStream.Position := 0;
+        var Hash := THashSHA2.Create;
+        var Buffer: array[0..65535] of Byte;
+        while True do
+        begin
+          if Assigned(Progress) and not Progress(0, 0) then raise EAbort.Create('PSP snapshot operation cancelled');
+          var N := FDiscStream.Read(Buffer, SizeOf(Buffer));
+          if N = 0 then Break;
+          Hash.Update(Buffer, N);
+        end;
+        FMediaDigest := Hash.HashAsBytes;
+      finally
+        FDiscStream.Position := Position;
+      end;
+    end;
+  end;
+  Result := FMediaDigest;
+end;
+
+procedure TPSPConsole.SaveSnapshot(const Path: string; const Progress: TPSPStateProgress);
+begin
+  if FState = nil then raise EInvalidOpException.Create('PSP snapshot tracking was not enabled at boot');
+  if FState.CaptureError <> '' then raise EInvalidOpException.Create(FState.CaptureError);
+  if FState.Frames <> FFrameNumber then raise EInvalidOpException.Create('PSP state is not at a recorded frame boundary');
+  if FState.Frames = 0 then
+  begin
+    FState.HasDisplay := FIO.HasDisplay;
+    FState.NoEmulatorDevice := FIO.NoEmulatorDevice;
+    FState.NoClobber := FHLE.NoClobber;
+  end;
+  FState.Digest := StateDigest;
+  FState.MediaDigest := MediaDigest(Progress);
+  if Assigned(Progress) and not Progress(0, 0) then raise EAbort.Create('PSP snapshot saving cancelled');
+  SaveCoreSnapshot(Path, 'PSP', FProgram.Executable,
+    procedure(State: TStateArchive)
+    begin
+      FState.Transfer(State);
+    end, FStorage);
+end;
+
+function TPSPConsole.RestoreSnapshot(const Path: string; const Progress: TPSPStateProgress): TPSPConsole;
+begin
+  Result := nil;
+  var Seed := TPSPReplayState.Create;
+  var Candidate: TPSPConsole := nil;
+  var Settings := PSPSettings;
+  try
+    LoadCoreSnapshot(Path, 'PSP', FProgram.Executable,
+      procedure(State: TStateArchive)
+      begin
+        Seed.Transfer(State);
+      end, FStorage);
+    var Media := MediaDigest(Progress);
+    if Assigned(Progress) and not Progress(0, 0) then raise EAbort.Create('PSP snapshot loading cancelled');
+    if (Length(Seed.MediaDigest) <> 32) or not CompareMem(@Media[0], @Seed.MediaDigest[0], 32) then
+      raise EReadError.Create('PSP snapshot belongs to a different game image');
+    var LiveRoots := StateRoots;
+    if FState <> nil then LiveRoots := FState.LiveRoots;
+    Seed.Materialize(LiveRoots);
+    PSPSettings := Seed.Settings;
+    var OwnedSeed := Seed;
+    Seed := nil;
+    Candidate := TPSPConsole.Create(FProgram, FStorage, '', '', '', False, OwnedSeed);
+    Candidate.FMediaDigest := Media;
+    var Replay := Candidate.FState;
+    Candidate.FIO.HasDisplay := Replay.HasDisplay;
+    Candidate.FIO.NoEmulatorDevice := Replay.NoEmulatorDevice;
+    Candidate.FHLE.NoClobber := Replay.NoClobber;
+    if Candidate.Recompiler <> nil then Candidate.Recompiler.Enabled := FRecompiler <> nil;
+    var Frame: TEmulatorFrame;
+    var Done: UInt64 := 0;
+    for var R in Replay.Inputs do
+    begin
+      Candidate.Input := R.Expand;
+      for var I := 1 to R.Count do
+      begin
+        if Assigned(Progress) and not Progress(Done, Replay.Frames) then
+          raise EAbort.Create('PSP snapshot loading cancelled');
+        Candidate.RunFrame(Frame);
+        Inc(Done);
+        Candidate.TakeOutput;
+        Candidate.TakeLog;
+      end;
+    end;
+    var Digest := Candidate.StateDigest;
+    if (Length(Replay.Digest) <> 32) or not CompareMem(@Replay.Digest[0], @Digest[0], 32) then
+      raise EReadError.Create('PSP snapshot reconstruction differs from the saved machine; current game was not changed');
+    if Assigned(Progress) and not Progress(Done, Replay.Frames) then raise EAbort.Create('PSP snapshot loading cancelled');
+    Replay.Publishing := True;
+    Candidate.FReplaying := False;
+    Result := Candidate;
+    Candidate := nil;
+  finally
+    if Result <> nil then PSPSettings := Result.FSettings else PSPSettings := Settings;
+    Candidate.Free;
+    Seed.Free;
+  end;
 end;
 
 end.

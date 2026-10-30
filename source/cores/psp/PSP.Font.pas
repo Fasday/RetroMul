@@ -6,7 +6,7 @@ unit PSP.Font;
 // firmware library makes. Fonts come from flash0:/font (when the user
 // supplied it), the program's files and memory images; a flash0 font that is
 // missing is replaced by a built-in one of the same size and weight drawn
-// from the Hershey strokes, with the Latin-1 characters only.
+// from the Hershey strokes, with Latin-1 and fullwidth Latin characters.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
@@ -38,6 +38,8 @@ type
     ShadowFlags, ShadowId: Integer;
     // Bytes of the glyph in the file.
     DataSize: Integer;
+    // The streamed cache excludes the record's fixed header, not its metrics.
+    CacheDataSize: Integer;
     Pixels: TBytes;
     function Pixel(X, Y: Integer): Integer; inline;
   end;
@@ -242,7 +244,7 @@ type
 implementation
 
 uses
-  PSP.IO;
+  PSP.IO, System.IOUtils;
 
 const
   SCE_FONT_ERROR_NOMEMORY = Cardinal($80460001);

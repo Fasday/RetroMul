@@ -1,4 +1,4 @@
-// The built-in stand-ins for flash0's fonts: ASCII and Latin-1 drawn from
+// The built-in stand-ins for flash0's fonts: ASCII, Latin-1 and fullwidth Latin drawn from
 // the Hershey strokes at the size and weight of the font they replace,
 // antialiased to the 4-bit levels PGF glyphs have.
 
@@ -122,6 +122,8 @@ begin
   case Code of
     $20..$7E: Result := Code - $20;
     $A0..$FF: Result := 95 + Code - $A0;
+    $FF01..$FF5E: Result := 191 + Code - $FF01;
+    $3000: Result := 285;
   else
     Result := PGFMissing;
   end;
@@ -150,20 +152,29 @@ begin
   HRes := 128 * 64;
   VRes := HRes;
   FirstCode := $20;
-  LastCode := $FF;
-  GlyphCount := 95 + 96;
+  LastCode := $FF5E;
+  GlyphCount := 286;
   MaxAdvanceV := Round(EmPx * 64);
   MinCenterX := 0;
   MaxDescender := 0;
   for var Index := 0 to GlyphCount - 1 do
   begin
     var Code := Index + $20;
-    if Index >= 95 then
+    if Index >= 285 then
+      Code := $20
+    else if Index >= 191 then
+      Code := $21 + Index - 191
+    else if Index >= 95 then
       Code := Index - 95 + $A0;
     var Width: Integer;
     var Segments := HCharacter(Code, Width);
     var G := BuiltinRasterize(Segments, Scale, XScale, Radius, Shear);
     G.Advance.X := Round(Width * Scale * XScale * 64);
+    if Index >= 191 then
+    begin
+      G.Left := G.Left + Round((EmPx - Width * Scale * XScale) / 2);
+      G.Advance.X := MaxAdvanceV;
+    end;
     G.Advance.Y := MaxAdvanceV;
     G.Dim.X := G.W * 64;
     G.Dim.Y := G.H * 64;
