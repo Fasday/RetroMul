@@ -44,6 +44,10 @@ type
     AsyncTimer: Int64;
     AsyncCallback: Cardinal;
     AsyncArg: Cardinal;
+    AsyncWorker: Cardinal;
+    AsyncPriority: Integer;
+    AsyncLatency: Int64;
+    AsyncTask: IPSPStateAction;
     Waiters: TList<TPSPThread>;
     constructor Create;
     destructor Destroy; override;
@@ -62,6 +66,8 @@ type
     FFiles: TDictionary<Integer, TPSPOpenFile>;
     FDrivers: TDictionary<string, TPSPIoDriver>;
     FFatNames: TDictionary<string, TPSPFatName>;
+    FAsyncStub: Cardinal;
+    FAsyncPriority: Integer;
     FMemstickRoot, FFlashRoot, FHostRoot: string;
     FCwd: string;
     FOnOutput: TPSPOutputEvent;
@@ -84,7 +90,12 @@ type
     function DoWrite(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
     function DoSeek(F: TPSPOpenFile; Offset: Int64; Whence: Integer): Int64;
     function OpenPath(const Path: string; Flags, Mode: Cardinal; out F: TPSPOpenFile): Cardinal;
-    procedure StartAsync(F: TPSPOpenFile; Result: Int64; Latency: Int64);
+    function StartAsync(F: TPSPOpenFile; const Task: IPSPStateAction; Latency: Int64): Boolean;
+    function EnsureAsyncWorker(F: TPSPOpenFile): Boolean;
+    procedure StopAsyncWorker(F: TPSPOpenFile);
+    procedure CollectAsync(F: TPSPOpenFile; ResultPtr: Cardinal);
+    procedure hAsyncWorker;
+    procedure StatePerformAsync(Action: TPSPStateAction; Value: Cardinal);
     procedure FinishAsync(F: TPSPOpenFile);
     procedure StateAsyncDone(Action: TPSPStateAction; Value: Cardinal);
     procedure StateDriverDeleted(Action: TPSPStateAction; Value: Cardinal);
@@ -99,6 +110,8 @@ type
     function OnHostDevice(const Path: string): Boolean;
     function DeviceYieldRetry(T: TPSPThread): Boolean;
     function ReadLatency(F: TPSPOpenFile; Size: Int64): Int64;
+    function TransferLatency(F: TPSPOpenFile; Address, Size: Cardinal; Writing: Boolean): Int64;
+    function RefuseFileWait(F: TPSPOpenFile): Boolean;
     procedure hAddDrv;
     procedure hDelDrv;
     function OpenGuestDriver(const Path: string; Flags, Mode: Cardinal): Boolean;
@@ -219,7 +232,7 @@ end;
 destructor TPSPIO.Destroy;
 begin
   for var F in FFiles.Values do
-    F.Free;
+  begin StopAsyncWorker(F); F.Free; end;
   FFiles.Free;
   FDrivers.Free;
   FFatNames.Free;
@@ -229,10 +242,12 @@ end;
 procedure TPSPIO.Reset;
 begin
   for var F in FFiles.Values do
-    F.Free;
+  begin StopAsyncWorker(F); F.Free; end;
   FFiles.Clear;
   FDrivers.Clear;
   FFatNames.Clear;
+  FAsyncStub := 0;
+  FAsyncPriority := 0;
   FCwd := '';
 end;
 
@@ -751,6 +766,8 @@ begin
           Exit(Int64(Integer(SCE_KERNEL_ERROR_BADF)));
         if Size = 0 then
           Exit(0);
+        if not FMemory.Valid(Address, Size) then
+          Exit(Int64(Integer(SCE_KERNEL_ERROR_ILLEGAL_ADDR)));
         var Buf: TBytes;
         SetLength(Buf, Size);
         FMemory.ReadBytes(Address, Buf[0], Size);
@@ -833,17 +850,152 @@ begin
     Result := 50000 + Size * 1000000000 div (8 * 1024 * 1024);
 end;
 
-procedure TPSPIO.StartAsync(F: TPSPOpenFile; Result: Int64; Latency: Int64);
+function TPSPIO.TransferLatency(F: TPSPOpenFile; Address, Size: Cardinal; Writing: Boolean): Int64;
 begin
+  var Bytes := Int64(Size);
+  if not Writing and (F.Kind = dkUMD) then
+  begin
+    var Position := F.Position;
+    if F.RawSectors then begin Bytes := Bytes * 2048; Position := Position * 2048; end;
+    Bytes := Max(Int64(0), Min(Bytes, F.DiscSize - Position));
+    if (Bytes > High(Cardinal)) or not FMemory.Valid(Address, Cardinal(Bytes)) then Bytes := 0;
+  end
+  else if not FMemory.Valid(Address, Size) then Bytes := 0
+  else if not Writing and (F.Stream <> nil) then
+    Bytes := Max(Int64(0), Min(Bytes, F.Stream.Size - F.Stream.Position));
+  if (Writing and ((F.Flags and PSP_O_WRONLY) = 0)) or
+    (not Writing and ((F.Flags and PSP_O_RDONLY) = 0)) then Bytes := 0;
+  Result := ReadLatency(F, Bytes);
+end;
+
+function TPSPIO.RefuseFileWait(F: TPSPOpenFile): Boolean;
+begin
+  Result := (F.Kind in [dkHost, dkUMD]) and FKernel.RefuseWait;
+  if Result and not FKernel.InInterrupt then
+  begin
+    var Dev, Rest: string;
+    // USB host-file calls report the host bridge's failure, whereas the FAT
+    // and UMD drivers retain the kernel's cannot-wait error.
+    if Split(F.Path, Dev, Rest) and ((Dev = 'host0') or (Dev = 'host')) then FHLE.Result($FFFFFFFF);
+  end;
+end;
+
+function TPSPIO.EnsureAsyncWorker(F: TPSPOpenFile): Boolean;
+begin
+  Result := False;
+  if F.AsyncWorker <> 0 then
+  begin
+    var Existing := FKernel.ThreadById(F.AsyncWorker);
+    if (Existing <> nil) and not Existing.IsDormant then Exit(True);
+    if Existing <> nil then FKernel.DeleteThread(Existing);
+    F.AsyncWorker := 0;
+  end;
+  if FKernel.Current = nil then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FAsyncStub = 0 then
+  begin
+    FAsyncStub := FKernel.AllocKernel(16, 'async IO stub');
+    if FAsyncStub = 0 then begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+    FHLE.Register('PSPInternalIO', 1, 'async IO worker', hAsyncWorker);
+    var Index := FHLE.Find('PSPInternalIO', 1);
+    FMemory.Write32(FAsyncStub, (Cardinal(Index) shl 6) or $0C);
+    FMemory.Write32(FAsyncStub + 4, (2 shl 26) or ((FAsyncStub shr 2) and $03FFFFFF));
+    FMemory.Write32(FAsyncStub + 8, 0);
+  end;
+  var Priority := F.AsyncPriority;
+  if Priority = 0 then Priority := FAsyncPriority;
+  if Priority = 0 then Priority := FKernel.Current.Priority;
+  var T := FKernel.CreateThread('SceIoAsync', FAsyncStub, Priority, $1000, 0, 0);
+  if T = nil then begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  F.AsyncWorker := T.UID;
+  FKernel.StartThread(T, 0, 0);
+  // Like creating a thread through ThreadMan, creating the asynchronous worker
+  // re-enables dispatch, but does not turn CPU interrupts back on.
+  FKernel.EnableDispatch;
+  Result := True;
+end;
+
+procedure TPSPIO.StopAsyncWorker(F: TPSPOpenFile);
+begin
+  if F.AsyncWorker = 0 then Exit;
+  var T := FKernel.ThreadById(F.AsyncWorker);
+  F.AsyncWorker := 0;
+  FKernel.CancelTimersOf(F);
+  if T <> nil then
+  begin
+    FKernel.TerminateThread(T, 0);
+    FKernel.DeleteThread(T);
+  end;
+end;
+
+function TPSPIO.StartAsync(F: TPSPOpenFile; const Task: IPSPStateAction; Latency: Int64): Boolean;
+begin
+  Result := EnsureAsyncWorker(F);
+  if not Result then Exit;
   F.AsyncPending := True;
-  F.AsyncResult := Result;
-  F.AsyncDone := FKernel.Scheduler.Now + Latency;
-  F.AsyncTimer := FKernel.AddStateTimer(F.AsyncDone, F, TPSPStateAction.Create(StateAsyncDone, [F], []));
+  F.AsyncTask := Task;
+  F.AsyncDone := 0;
+  F.AsyncLatency := Latency;
+  F.AsyncTimer := 0;
+  var T := FKernel.ThreadById(F.AsyncWorker);
+  if T.IsWaiting and (T.Wait.HLETag = 'ioasync') then FKernel.EndWait(T, 0);
+end;
+
+procedure TPSPIO.hAsyncWorker;
+begin
+  var T := FKernel.Current;
+  var F: TPSPOpenFile := nil;
+  for var Entry in FFiles.Values do if Entry.AsyncWorker = T.UID then begin F := Entry; Break; end;
+  if F = nil then
+  begin FKernel.ExitCurrent(0); FKernel.DeleteThread(T); Exit; end;
+  if F.AsyncPending and (F.AsyncDone = 0) then
+  begin
+    F.AsyncDone := FKernel.Scheduler.Now + F.AsyncLatency;
+    FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, nil, 'ioasyncdelay');
+    F.AsyncTimer := FKernel.AddStateTimer(F.AsyncDone, F, TPSPStateAction.Create(StateAsyncDone, [F], []));
+    Exit;
+  end;
+  var Task := F.AsyncTask;
+  F.AsyncTask := nil;
+  if F.AsyncPending and (Task <> nil) then Task.Run;
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, nil, 'ioasync');
+  if F.AsyncPending then FinishAsync(F);
+end;
+
+procedure TPSPIO.StatePerformAsync(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var F := TPSPOpenFile(Action.Obj(0));
+  case Action.Arg(0) of
+    0:
+      begin
+        var Opened: TPSPOpenFile;
+        var Err := OpenPath(Action.Text, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)), Opened);
+        F.AsyncResult := Integer(Err);
+        if Err = 0 then
+        try
+          F.Kind := Opened.Kind; F.Path := Opened.Path; F.Flags := Opened.Flags;
+          F.DiscStart := Opened.DiscStart; F.DiscSize := Opened.DiscSize;
+          F.Position := Opened.Position; F.RawSectors := Opened.RawSectors;
+          F.Stream := Opened.Stream; Opened.Stream := nil;
+          F.AsyncResult := F.Id;
+        finally Opened.Free; end;
+      end;
+    1: begin FreeAndNil(F.Stream); F.Kind := dkNone; F.Flags := 0; F.AsyncResult := 0; end;
+    2: F.AsyncResult := DoRead(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
+    3: F.AsyncResult := DoWrite(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
+    4: F.AsyncResult := DoSeek(F, Action.Arg(1), Integer(Action.Arg(2)));
+    5: F.AsyncResult := Integer(IoctlCommon(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)),
+      Cardinal(Action.Arg(3)), Cardinal(Action.Arg(4)), Cardinal(Action.Arg(5))));
+  else raise EReadError.Create('Invalid asynchronous IO operation');
+  end;
 end;
 
 procedure TPSPIO.StateAsyncDone(Action: TPSPStateAction; Value: Cardinal);
 begin
-  FinishAsync(TPSPOpenFile(Action.Obj(0)));
+  var F := TPSPOpenFile(Action.Obj(0));
+  if F.AsyncWorker = 0 then begin FinishAsync(F); Exit; end; // Earlier direct states.
+  F.AsyncTimer := 0;
+  var T := FKernel.ThreadById(F.AsyncWorker);
+  if (T <> nil) and T.IsWaiting and (T.Wait.HLETag = 'ioasyncdelay') then FKernel.EndWait(T, 0);
 end;
 
 function TPSPIO.StateStreamMode(Stream: TStream): Word;
@@ -859,6 +1011,7 @@ end;
 procedure TPSPIO.FinishAsync(F: TPSPOpenFile);
 begin
   F.AsyncPending := False;
+  var Collected := False;
   while F.Waiters.Count > 0 do
   begin
     var T := F.Waiters[0];
@@ -871,14 +1024,34 @@ begin
         FMemory.Write32(T.Wait.Data[1] + 4, Cardinal(UInt64(F.AsyncResult) shr 32));
       end;
       FKernel.EndWait(T, 0);
+      Collected := True;
     end;
   end;
+  if Collected then F.AsyncDone := 0;
   if F.AsyncCallback <> 0 then
   begin
     var CB := TPSPCallback(FKernel.GetObject(F.AsyncCallback, TPSPCallback));
     if CB <> nil then
       FKernel.NotifyCallback(CB, F.AsyncArg);
   end;
+  if Collected and (F.Kind = dkNone) and (F.Flags = 0) then
+  begin
+    FFiles.Remove(F.Id);
+    StopAsyncWorker(F);
+    F.Free;
+  end;
+end;
+
+procedure TPSPIO.CollectAsync(F: TPSPOpenFile; ResultPtr: Cardinal);
+begin
+  if ResultPtr <> 0 then
+  begin
+    FMemory.Write32(ResultPtr, Cardinal(F.AsyncResult));
+    FMemory.Write32(ResultPtr + 4, Cardinal(UInt64(F.AsyncResult) shr 32));
+  end;
+  F.AsyncDone := 0;
+  if (F.Kind = dkNone) and (F.Flags = 0) then
+  begin FFiles.Remove(F.Id); StopAsyncWorker(F); F.Free; end;
 end;
 
 function TPSPIO.AsyncRetry(T: TPSPThread): Boolean;
@@ -887,15 +1060,10 @@ begin
   Result := (F = nil) or not F.AsyncPending;
   if Result then
   begin
-    if (F <> nil) and (T.Wait.Data[1] <> 0) then
-    begin
-      FMemory.Write32(T.Wait.Data[1], Cardinal(F.AsyncResult));
-      FMemory.Write32(T.Wait.Data[1] + 4, Cardinal(UInt64(F.AsyncResult) shr 32));
-    end;
     if F = nil then
       T.SetResult(SCE_KERNEL_ERROR_BADF)
     else
-      T.SetResult(0);
+    begin CollectAsync(F, T.Wait.Data[1]); T.SetResult(0); end;
   end
   else if not F.Waiters.Contains(T) then
     F.Waiters.Add(T);
@@ -921,12 +1089,7 @@ begin
   FHLE.Result(0);
   if not F.AsyncPending then
   begin
-    if ResPtr <> 0 then
-    begin
-      FMemory.Write32(ResPtr, Cardinal(F.AsyncResult));
-      FMemory.Write32(ResPtr + 4, Cardinal(UInt64(F.AsyncResult) shr 32));
-    end;
-    F.AsyncDone := 0;
+    CollectAsync(F, ResPtr);
     if AllowCB then
       FKernel.CheckCallbacks;
     Exit;
@@ -1205,23 +1368,15 @@ end;
 
 procedure TPSPIO.hOpenAsync;
 begin
-  var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  var F: TPSPOpenFile;
-  var Err := OpenPath(Path, FHLE.Arg(1), FHLE.Arg(2), F);
-  if Err <> 0 then
-  begin
-    // The descriptor still exists; its async result is the error.
-    F := TPSPOpenFile.Create;
-    F.Kind := dkNone;
-    F.Path := Path;
-    F.Id := AllocFd;
-    FFiles.Add(F.Id, F);
-    StartAsync(F, Integer(Err), 100000);
-    begin FHLE.Result(Cardinal(F.Id)); Exit; end;
-  end;
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
+  var F := TPSPOpenFile.Create;
+  F.Path := Path;
   F.Id := AllocFd;
   FFiles.Add(F.Id, F);
-  StartAsync(F, F.Id, 100000);
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
+    [0, FHLE.Arg(1), FHLE.Arg(2)], Path), 100000) then
+  begin FFiles.Remove(F.Id); F.Free; Exit; end;
   FHLE.Result(Cardinal(F.Id));
 end;
 
@@ -1235,6 +1390,7 @@ begin
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   FKernel.CancelTimersOf(F);
+  StopAsyncWorker(F);
   FFiles.Remove(F.Id);
   var Host := F.Kind = dkHost;
   F.Free;
@@ -1246,16 +1402,14 @@ end;
 
 procedure TPSPIO.hCloseAsync;
 begin
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  FreeAndNil(F.Stream);
-  F.Kind := dkNone;
   // The descriptor closes when its async result is collected.
-  F.Flags := 0;
-  StartAsync(F, 0, 20000);
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [1]), 20000) then Exit;
   FHLE.Result(0);
 end;
 
@@ -1268,7 +1422,7 @@ begin
     Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if (F.Kind in [dkHost, dkUMD]) and FKernel.RefuseWait then Exit;
+  if RefuseFileWait(F) then Exit;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
   // The caller waits for the drive, the UMD's as the memory stick's (GTA
   // Liberty City Stories streams the city only when its reads take time).
@@ -1280,13 +1434,14 @@ end;
 
 procedure TPSPIO.hReadAsync;
 begin
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
-  StartAsync(F, R, ReadLatency(F, Max(R, 0)));
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [2, FHLE.Arg(1), FHLE.Arg(2)]),
+    TransferLatency(F, FHLE.Arg(1), FHLE.Arg(2), False)) then Exit;
   FHLE.Result(0);
 end;
 
@@ -1306,20 +1461,21 @@ begin
     Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if (F.Kind in [dkHost, dkUMD]) and FKernel.RefuseWait then Exit;
+  if RefuseFileWait(F) then Exit;
   FHLE.Result(Cardinal(DoWrite(F, FHLE.Arg(1), FHLE.Arg(2))));
 end;
 
 procedure TPSPIO.hWriteAsync;
 begin
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Fd := FHLE.Arg(0);
   var F := GetFile(Fd);
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  var R := DoWrite(F, FHLE.Arg(1), FHLE.Arg(2));
-  StartAsync(F, R, ReadLatency(F, Max(R, 0)));
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [3, FHLE.Arg(1), FHLE.Arg(2)]),
+    TransferLatency(F, FHLE.Arg(1), FHLE.Arg(2), True)) then Exit;
   FHLE.Result(0);
 end;
 
@@ -1340,12 +1496,14 @@ end;
 
 procedure TPSPIO.hLseekAsync;
 begin
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  StartAsync(F, DoSeek(F, Int64(FHLE.Arg64(2)), FHLE.ArgInt(4)), 20000);
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
+    [4, Int64(FHLE.Arg64(2)), FHLE.ArgInt(4)]), 20000) then Exit;
   FHLE.Result(0);
 end;
 
@@ -1365,12 +1523,14 @@ end;
 
 procedure TPSPIO.hLseek32Async;
 begin
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  StartAsync(F, DoSeek(F, FHLE.ArgInt(1), FHLE.ArgInt(2)), 20000);
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
+    [4, FHLE.ArgInt(1), FHLE.ArgInt(2)]), 20000) then Exit;
   FHLE.Result(0);
 end;
 
@@ -1425,12 +1585,14 @@ end;
 
 procedure TPSPIO.hIoctlAsync;
 begin
+  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  StartAsync(F, Integer(IoctlCommon(F, FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3), FHLE.Arg(4), FHLE.Arg(5))), 20000);
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
+    [5, FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3), FHLE.Arg(4), FHLE.Arg(5)]), 20000) then Exit;
   FHLE.Result(0);
 end;
 
@@ -1903,17 +2065,7 @@ begin
     begin FHLE.Result(1); Exit; end;
   if F.AsyncDone = 0 then
     begin FHLE.Result(SCE_KERNEL_ERROR_NOASYNC); Exit; end;
-  if ResPtr <> 0 then
-  begin
-    FMemory.Write32(ResPtr, Cardinal(F.AsyncResult));
-    FMemory.Write32(ResPtr + 4, Cardinal(UInt64(F.AsyncResult) shr 32));
-  end;
-  F.AsyncDone := 0;
-  if (F.Kind = dkNone) and (F.Flags = 0) then
-  begin
-    FFiles.Remove(F.Id);
-    F.Free;
-  end;
+  CollectAsync(F, ResPtr);
   FHLE.Result(0);
 end;
 
@@ -1938,6 +2090,22 @@ end;
 
 procedure TPSPIO.hChangeAsyncPriority;
 begin
+  var Priority := FHLE.ArgInt(1);
+  if (Priority < -1) or (Priority = 0) or (Priority > 127) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  if Integer(FHLE.Arg(0)) = -1 then
+  begin FAsyncPriority := Max(0, Priority); FHLE.Result(0); Exit; end;
+  var F := GetFile(FHLE.Arg(0));
+  if F = nil then begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if (Priority = -1) and (FKernel.Current = nil) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  F.AsyncPriority := Max(0, Priority);
+  var T := FKernel.ThreadById(F.AsyncWorker);
+  if (F.AsyncWorker <> 0) and (T <> nil) then
+  begin
+    if Priority = -1 then Priority := FKernel.Current.Priority;
+    FKernel.ChangePriority(T, Priority);
+  end;
   FHLE.Result(0);
 end;
 

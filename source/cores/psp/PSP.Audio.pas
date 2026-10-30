@@ -80,6 +80,7 @@ type
     FO2Waiter: TPSPThread;
     FO2WaitNull: Boolean;
     FO2WaitRelease: Boolean;
+    FO2WaitFailed: Boolean;
     FVaudioBusy: Boolean;
     // Microphone input (none attached: captures silence).
     FInputInit: Boolean;
@@ -237,6 +238,7 @@ begin
   FO2Waiter := nil;
   FO2WaitNull := False;
   FO2WaitRelease := False;
+  FO2WaitFailed := False;
   FVaudioBusy := False;
   FInputInit := False;
   FInputBusy := False;
@@ -464,6 +466,7 @@ end;
 
 procedure TPSPAudio.RetireDescriptor;
 begin
+  FO2WaitFailed := False;
   var Done := FO2Desc[0];
   FO2Desc[0] := FO2Desc[1];
   Dec(FO2Armed);
@@ -481,6 +484,7 @@ end;
 procedure TPSPAudio.StopOutput2;
 begin
   FO2Running := False;
+  FO2WaitFailed := False;
   if (FO2Waiter <> nil) and FO2WaitNull then
     WakeOutput2(0);
 end;
@@ -981,7 +985,7 @@ end;
 
 procedure TPSPAudio.Output2Output(Volume: Integer; Buffer: Cardinal);
 begin
-  if FO2Waiter <> nil then
+  if (FO2Waiter <> nil) or FO2WaitFailed then
   begin
     Cost(50);
     FHLE.Result(SCE_AUDIO_ERROR_OUTPUT_BUSY);
@@ -1068,7 +1072,7 @@ begin
     FHLE.Result(SCE_AUDIO_ERROR_NOT_RESERVED);
     Exit;
   end;
-  if (FO2Armed > 0) or (FO2Waiter <> nil) then
+  if (FO2Armed > 0) or (FO2Waiter <> nil) or FO2WaitFailed then
   begin
     FHLE.Result(SCE_AUDIO_ERROR_SRC_BUSY);
     Exit;
@@ -1157,7 +1161,22 @@ begin
     FHLE.Result(SCE_AUDIO_ERROR_INVALID_VOLUME);
     Exit;
   end;
-  Output2Output(Vol, FHLE.Arg(1));
+  if FKernel.InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if (FO2Armed >= Length(FO2Desc)) or (FO2Waiter <> nil) then
+    begin FHLE.Result(SCE_AUDIO_ERROR_OUTPUT_BUSY); Exit; end;
+  var Buffer := FHLE.Arg(1);
+  if (Buffer <> 0) and not FKernel.CanWait then
+  begin
+    // SRC submits the descriptor before its kernel wait. A refused wait does
+    // not undo DMA ownership: two such submissions fill the descriptor queue.
+    // Keep the failed-wait lock separately, not as a pointer to a running thread.
+    ArmDescriptor(Buffer, Vol);
+    FO2WaitFailed := True;
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
+  Output2Output(Vol, Buffer);
 end;
 
 procedure TPSPAudio.hSetFrequency;

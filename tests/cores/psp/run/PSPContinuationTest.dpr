@@ -339,6 +339,161 @@ begin
   finally D.Free; C.Free; end;
 end;
 
+procedure AsyncIOCases(const P: TPSPProgram; const Root: string);
+  function ReadShared(const Name: string): string;
+  begin
+    var S := TFileStream.Create(Name, fmOpenRead or fmShareDenyNone);
+    try
+      var Bytes: TBytes;
+      SetLength(Bytes, S.Size);
+      if Length(Bytes) <> 0 then S.ReadBuffer(Bytes[0], Length(Bytes));
+      Result := TEncoding.ASCII.GetString(Bytes);
+    finally S.Free; end;
+  end;
+  procedure Await(C: TPSPConsole; Fd: Cardinal);
+  begin
+    Call(C, 'sceIoWaitAsync', [Fd, ErrWord]);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 1000000);
+    Require(C.CPU.Ctx.GPR[2] = 0, 'Asynchronous IO wait failed');
+  end;
+  function WorkerCount(C: TPSPConsole): Integer;
+  begin
+    Result := 0;
+    for var T in C.Kernel.Threads do if T.Name = 'SceIoAsync' then Inc(Result);
+  end;
+begin
+  var Host := TPath.Combine(Root, 'async-host');
+  TDirectory.CreateDirectory(Host);
+  var Source := TPath.Combine(Host, 'data.bin');
+  TFile.WriteAllText(Source, 'DATA', TEncoding.ASCII);
+  var C := CreateConsole(P, Host);
+  try
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    C.Memory.WriteString(Params, 'host0:/data.bin', 128);
+    var Fd := Call(C, 'sceIoOpenAsync', [Params, 3, 0]);
+    Require((Fd < $80000000) and (WorkerCount(C) = 1), 'Asynchronous file worker was not created');
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = 1, 'Queued open completed without its worker');
+    Checkpoint(C, Root, 'queued asynchronous file open', 0);
+    Await(C, Fd);
+    Require(C.Memory.Read32(ErrWord) = Fd, 'Async open did not return its descriptor');
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $8002032A, 'A waited result was not consumed');
+
+    Require(Call(C, 'sceIoChangeAsyncPriority', [Fd, $10]) = 0, 'Async priority change failed');
+    C.Memory.Fill(Pixels, $CC, 16);
+    Require(Call(C, 'sceIoReadAsync', [Fd, Pixels, 4]) = 0, 'Async read submission failed');
+    Require(C.Memory.Read32(Pixels) = $CCCCCCCC, 'Read data changed before its worker ran');
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 10000);
+    Require(C.Memory.Read32(Pixels) = $CCCCCCCC, 'Read data changed before transfer completion');
+    Checkpoint(C, Root, 'asynchronous read worker in transfer wait');
+    Require(C.Memory.Read32(Pixels) = $41544144, 'Async read did not transfer the requested bytes');
+    Checkpoint(C, Root, 'completed asynchronous result before collection', 0);
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = 0, 'Ready async read result could not be collected');
+    Require(C.Memory.Read32(ErrWord) = 4, 'Async read returned the wrong count');
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $8002032A, 'Polled async result was not consumed');
+
+    Require(Call(C, 'sceIoLseek32Async', [Fd, 1, 0]) = 0, 'Async seek submission failed');
+    Await(C, Fd);
+    Require(C.Memory.Read32(ErrWord) = 1, 'Async seek returned the wrong offset');
+    C.Memory.WriteString(Pixels, 'XY', 3);
+    Require(Call(C, 'sceIoWriteAsync', [Fd, Pixels, 2]) = 0, 'Async write submission failed');
+    Checkpoint(C, Root, 'queued asynchronous write and cancellation', 0);
+    Require(ReadShared(Source) = 'DATA', 'Queued/restored write touched live data');
+    Await(C, Fd);
+    Require((C.Memory.Read32(ErrWord) = 2) and
+      (ReadShared(Source) = 'DXYA'), 'Deferred async write failed');
+    Require(Call(C, 'sceIoWriteAsync', [Fd, Pixels, $FFFFFFFF]) = 0, 'Bad-buffer async submission failed');
+    Await(C, Fd);
+    Require((C.Memory.Read32(ErrWord) = $800200D3) and
+      (ReadShared(Source) = 'DXYA'), 'Invalid async buffer allocated or wrote host data');
+
+    Require(Call(C, 'sceIoLseek32Async', [Fd, 0, 0]) = 0, 'Callback-case seek failed');
+    Await(C, Fd);
+    var DelayIndex := C.HLE.Find('ThreadManForUser', $CEADEB47);
+    Require(DelayIndex >= 0, 'Missing callback delay syscall');
+    Emit(C, Code + $400, [OpI(9, 0, 4, 500), (Cardinal(DelayIndex) shl 6) or $0C,
+      OpI($0F, 0, 8, Globals shr 16), OpI($0D, 8, 8, Globals and $FFFF),
+      OpI(9, 0, 9, 1), OpI($2B, 8, 9, 32), OpR(0, 0, 2, $21), $03E00008, 0]);
+    C.Memory.Write32(Globals + 32, 0);
+    C.Memory.WriteString(Params, 'async result callback', 128);
+    var CB := Call(C, 'sceKernelCreateCallback', [Params, Code + $400, Globals]);
+    Require(CB < $80000000, 'IO callback creation failed');
+    Require(Call(C, 'sceIoReadAsync', [Fd, Pixels, 4]) = 0, 'Callback-case read failed');
+    Call(C, 'sceKernelNotifyCallback', [CB, 0]);
+    var Caller := C.Kernel.Current.UID;
+    Call(C, 'sceIoWaitAsyncCB', [Fd, ErrWord]);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 20000);
+    Require(C.Kernel.ThreadById(Caller).Frames.Count > 0, 'IO callback wait frame was not retained');
+    Checkpoint(C, Root, 'async result completing while its caller waits inside a callback');
+    Require((C.Memory.Read32(Globals + 32) = 1) and (C.Memory.Read32(ErrWord) = 4),
+      'Callback return did not collect the completed IO result');
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $8002032A,
+      'Callback completion did not consume its result');
+    Call(C, 'sceKernelDeleteCallback', [CB]);
+
+    Require(Call(C, 'sceIoCloseAsync', [Fd]) = 0, 'Async close submission failed');
+    Checkpoint(C, Root, 'pending asynchronous close', 0);
+    Await(C, Fd);
+    Require((C.Memory.Read32(ErrWord) = 0) and (WorkerCount(C) = 0), 'Async close leaked its worker');
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $80020323, 'Collected close retained its descriptor');
+
+    C.Memory.WriteString(Params, 'host0:/data.bin', 128);
+    Fd := Call(C, 'sceIoOpenAsync', [Params, 3, 0]);
+    Await(C, Fd);
+    Call(C, 'sceIoChangeAsyncPriority', [Fd, $10]);
+    C.Memory.WriteString(Params, 'async close callback', 128);
+    CB := Call(C, 'sceKernelCreateCallback', [Params, Code + $400, Globals]);
+    C.Memory.Write32(Globals + 32, 0);
+    Require(Call(C, 'sceIoCloseAsync', [Fd]) = 0, 'Callback-case close failed');
+    Call(C, 'sceKernelNotifyCallback', [CB, 0]);
+    Call(C, 'sceIoWaitAsyncCB', [Fd, ErrWord]);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 20000);
+    Checkpoint(C, Root, 'closed descriptor collected on callback return');
+    Require((C.Memory.Read32(Globals + 32) = 1) and (C.Memory.Read32(ErrWord) = 0) and
+      (WorkerCount(C) = 0), 'Callback return leaked its closed IO worker/descriptor');
+    Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $80020323, 'Callback close retained its descriptor');
+    Call(C, 'sceKernelDeleteCallback', [CB]);
+
+    C.Memory.WriteString(Params, 'host0:/missing.bin', 128);
+    Fd := Call(C, 'sceIoOpenAsync', [Params, 1, 0]);
+    Checkpoint(C, Root, 'asynchronous open failure before completion', 0);
+    Await(C, Fd);
+    Require((C.Memory.Read32(ErrWord) = $80010002) and
+      (C.Memory.Read32(ErrWord + 4) = $FFFFFFFF) and (WorkerCount(C) = 0),
+      'Async open failure did not preserve its signed result/cleanup');
+    Writeln('PASS async worker priority, deferred transfers, result consumption and failure/close cleanup');
+  finally C.Free; end;
+end;
+
+procedure SRCContextCases(const P: TPSPProgram; const Root: string);
+begin
+  var Host := TPath.Combine(Root, 'src-host');
+  TDirectory.CreateDirectory(Host);
+  var C := CreateConsole(P, Host);
+  try
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    C.Memory.Fill(Pixels, 0, 512);
+    Require(Call(C, 'sceAudioSRCChReserve', [64, 44100, 2]) = 0, 'SRC reserve failed');
+    C.CPU.InterruptsEnabled := False;
+    Require(Call(C, 'sceAudioSRCOutputBlocking', [0, Pixels]) = $800201A7,
+      'SRC did not reject its first disabled-interrupt wait');
+    Checkpoint(C, Root, 'SRC descriptor retained after refused wait', 0);
+    Require(Call(C, 'sceAudioSRCOutputBlocking', [0, Pixels]) = $800201A7,
+      'SRC did not retain its second submitted descriptor');
+    Checkpoint(C, Root, 'SRC full descriptor queue after refused waits', 0);
+    C.CPU.InterruptsEnabled := True;
+    Require(Call(C, 'sceAudioSRCOutputBlocking', [0, 0]) = $80260002,
+      'SRC failed-wait lock did not protect the active DMA');
+    Require(Call(C, 'sceAudioSRCChRelease', []) = $80268002, 'SRC released active DMA ownership');
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    Require(Call(C, 'sceAudioSRCChRelease', []) = 0, 'Drained SRC retained failed-wait state');
+    Writeln('PASS SRC refused waits preserve DMA ownership without retaining a thread pointer');
+  finally C.Free; end;
+end;
+
 begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
@@ -348,6 +503,8 @@ begin
       FontCases(P, Root); MediaCases(P, Root);
       LoaderAndDriverCases(P, Root); NetworkAndUtilityCases(P, Root);
       FatCases(P, Root);
+      AsyncIOCases(P, Root);
+      SRCContextCases(P, Root);
     finally TDirectory.Delete(Root, True); end;
   except
     on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;

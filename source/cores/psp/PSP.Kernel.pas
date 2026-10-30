@@ -602,6 +602,7 @@ type
     procedure Reschedule;
     procedure RequestReschedule; inline;
     procedure AfterSyscall;
+    procedure EnableDispatch;
     function CanWait: Boolean;
     // Sets the error and returns True when the current context may not block.
     function RefuseWait: Boolean;
@@ -1348,6 +1349,12 @@ begin
   if FRescheduleNeeded and not ((FPendingInts.Count > 0) and (FIntFrames.Count = 0) and (FIntrSuspendLevel = 0) and
     FCPU.InterruptsEnabled) then
     Reschedule;
+end;
+
+procedure TPSPKernel.EnableDispatch;
+begin
+  FDispatchSuspended := False;
+  RequestReschedule;
 end;
 
 { Waits }
