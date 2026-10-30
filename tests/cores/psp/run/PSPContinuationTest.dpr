@@ -4,7 +4,7 @@ program PSPContinuationTest;
 
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Hash,
-  Core.Emulation.Types, PSP.Console, PSP.Media, PSP.GE, PSP.Kernel;
+  Core.Emulation.Types, PSP.Console, PSP.Media, PSP.GE, PSP.Kernel, PSP.Scheduler, PSP.Types;
 
 const
   Entry = $08804000;
@@ -221,6 +221,26 @@ begin
     Call(C, 'sceKernelStartModule', [Id, 0, 0, ErrWord, 0]);
     Checkpoint(C, Root, 'module start/exit/delete/wake chain');
     Require(C.Memory.Read32(ErrWord) = 0, 'Fixture module returned an error');
+    Call(C, 'sceKernelStopModule', [Id, 0, 0, ErrWord, 0]);
+    for var I := 0 to 1 do
+      Emit(C, Code + $500 + Cardinal(I * $40), [OpI($0F, 0, 8, Globals shr 16),
+        OpI($0D, 8, 8, Globals and $FFFF), OpI(9, 0, 9, 1), OpI($2B, 8, 9, 36 + I * 4),
+        OpR(0, 0, 2, $21), $03E00008, 0]);
+    C.Memory.Write32(Globals + 36, 0); C.Memory.Write32(Globals + 40, 0);
+    var Lower := C.Kernel.CreateThread('unload lower', Code + $500,
+      C.Kernel.Current.Priority + 1, $1000, $80000000, 0);
+    var Equal := C.Kernel.CreateThread('unload equal', Code + $540,
+      C.Kernel.Current.Priority, $1000, $80000000, 0);
+    Require((Lower <> nil) and (Equal <> nil), 'Unload probe thread allocation failed');
+    Equal.DeleteOnExit := True;
+    C.Kernel.StartThread(Lower, 0, 0); C.Kernel.StartThread(Equal, 0, 0);
+    Call(C, 'sceKernelUnloadModule', [Id]);
+    Require((C.Kernel.Current.BusyNs > 0) and not C.Kernel.Current.IsWaiting,
+      'Module unload was modeled as a wait instead of preemptible CPU work');
+    Checkpoint(C, Root, 'preemptible module-unload CPU tail');
+    Require((C.Memory.Read32(Globals + 36) = 0) and (C.Memory.Read32(Globals + 40) = 1),
+      'Unload completion lost its equal-priority handoff or donated time to a lower thread');
+    C.Kernel.TerminateThread(Lower, 0); C.Kernel.DeleteThread(Lower);
     C.Memory.Fill(Params, 0, $80);
     C.Memory.WriteString(Params + $80, 'state', 16);
     C.Memory.Write32(Params, Params + $80); C.Memory.Write32(Params + 16, Params + $20);
@@ -303,6 +323,8 @@ begin
     C.RunUntil(C.Scheduler.Now + 10000000);
     OpenClose(C, 'ms0:/LongFileName.txt', $602);
     OpenClose(C, 'ms0:/LongFileName2.txt', $602);
+    TDirectory.SetLastWriteTime(Root, EncodeDate(2009, 1, 1));
+    TDirectory.SetLastWriteTime(TPath.Combine(Root, 'ms'), EncodeDate(2011, 2, 3));
     C.Memory.WriteString(Params, 'ms0:/', 256);
     var Fd := FileCall(C, 'sceIoDopen', [Params]);
     C.Memory.Fill(Pixels, 0, $1000);
@@ -310,6 +332,7 @@ begin
     C.Memory.Write32(Pixels + $400, 1044);
     Require(FileCall(C, 'sceIoDread', [Fd, Pixels]) = 1, 'FAT directory read failed');
     Require(C.Memory.ReadString(Pixels + $400, 13) = '.', 'Old FAT private layout failed');
+    Require(C.Memory.Read16(Pixels + 16) = 2011, 'Dot directory timestamp was not populated');
     var Path := TPath.Combine(Root, 'fat.snapshot');
     C.SaveSnapshot(Path);
     D := C.RestoreSnapshot(Path);
@@ -323,6 +346,7 @@ begin
     Require((D.Memory.Read32(Pixels + $400) = 1044) and
       (D.Memory.ReadString(Pixels + $404, 16) = '..') and
       (D.Memory.ReadString(Pixels + $414, 1024) = '..'), 'Modern FAT private layout failed');
+    Require(D.Memory.Read16(Pixels + 16) = 2011, 'Parent timestamp escaped the mounted root');
     FileCall(D, 'sceIoDclose', [Fd]);
     D.Memory.WriteString(Params, 'ms0:/LONGFI~1.TXT', 256);
     Require(FileCall(D, 'sceIoRemove', [Params]) = 0, 'FAT alias deletion failed');
@@ -360,7 +384,7 @@ procedure AsyncIOCases(const P: TPSPProgram; const Root: string);
   function WorkerCount(C: TPSPConsole): Integer;
   begin
     Result := 0;
-    for var T in C.Kernel.Threads do if T.Name = 'SceIoAsync' then Inc(Result);
+    for var T in C.Kernel.Threads do if T.Name = 'SceIofileAsync' then Inc(Result);
   end;
 begin
   var Host := TPath.Combine(Root, 'async-host');
@@ -378,6 +402,23 @@ begin
     Await(C, Fd);
     Require(C.Memory.Read32(ErrWord) = Fd, 'Async open did not return its descriptor');
     Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $8002032A, 'A waited result was not consumed');
+
+    for var Priority in [0, 7, 120, 126, 127] do
+      Require(Call(C, 'sceIoChangeAsyncPriority', [Fd, Cardinal(Priority)]) = $80020193,
+        'User async priority boundary was accepted');
+    for var Priority in [8, 119] do
+      Require(Call(C, 'sceIoChangeAsyncPriority', [Fd, Cardinal(Priority)]) = 0,
+        'Valid user async priority was rejected');
+    var CallerThread := C.Kernel.Current;
+    var Attr := CallerThread.Attr;
+    CallerThread.Attr := 0;
+    try
+      for var Priority in [1, 126] do
+        Require(Call(C, 'sceIoChangeAsyncPriority', [Fd, Cardinal(Priority)]) = 0,
+          'Valid kernel async priority was rejected');
+      Require(Call(C, 'sceIoChangeAsyncPriority', [Fd, 127]) = $80020193,
+        'Kernel async priority 127 was accepted');
+    finally CallerThread.Attr := Attr; end;
 
     Require(Call(C, 'sceIoChangeAsyncPriority', [Fd, $10]) = 0, 'Async priority change failed');
     C.Memory.Fill(Pixels, $CC, 16);
@@ -494,6 +535,35 @@ begin
   finally C.Free; end;
 end;
 
+procedure ScanClockCases(const P: TPSPProgram; const Root: string);
+const
+  Late: array[0..3] of Int64 = (10000, 100000, 1000000, 2000000);
+begin
+  var Host := TPath.Combine(Root, 'clock-host');
+  TDirectory.CreateDirectory(Host);
+  var C := CreateConsole(P, Host);
+  try
+    var FirstEdge := C.Scheduler.Due(TPSPEvent.VBlank);
+    for var I := 0 to High(Late) do
+    begin
+      var Edge := FirstEdge + Int64(I) * PSPFrameNs;
+      // Simulate an atomic CPU section which notices a hardware edge late.
+      C.Scheduler.AdvanceTo(Edge + Late[I]);
+      C.RunUntil(C.Scheduler.Now);
+      Require(Call(C, 'sceDisplayGetVcount', []) = Cardinal(I + 1), 'Late scan edge was not delivered');
+      var H := Call(C, 'sceDisplayGetCurrentHcount', []);
+      var Expected := Cardinal((C.Scheduler.Now - Edge) * PSPLinesPerFrame div PSPFrameNs);
+      Require(H = Expected, 'Hcount restarted at interrupt delivery instead of the physical edge');
+      if I = 0 then Checkpoint(C, Root, 'late display edge before interrupt tail', 0);
+      C.RunUntil(C.Scheduler.Now + 1000000);
+      Require(C.Scheduler.Due(TPSPEvent.VBlank) = Edge + PSPFrameNs,
+        'Late interrupt delivery permanently shifted the display scan clock');
+    end;
+    Checkpoint(C, Root, 'display scan clock after differing interrupt delivery delays');
+    Writeln('PASS display scan clock retains its hardware phase across late interrupt delivery');
+  finally C.Free; end;
+end;
+
 begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
@@ -505,6 +575,7 @@ begin
       FatCases(P, Root);
       AsyncIOCases(P, Root);
       SRCContextCases(P, Root);
+      ScanClockCases(P, Root);
     finally TDirectory.Delete(Root, True); end;
   except
     on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;

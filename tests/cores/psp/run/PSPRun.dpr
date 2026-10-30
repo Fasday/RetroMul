@@ -51,6 +51,60 @@ begin
   TFile.WriteAllBytes(Name, Data);
 end;
 
+function IsTestOutput(const Name: string): Boolean;
+begin
+  var FileName := ExtractFileName(Name).ToLower;
+  Result := (FileName = '__testoutput.txt') or (FileName = '__testerror.txt') or
+    (FileName = '__testfinish.txt') or (FileName = '__screenshot.bmp');
+end;
+
+procedure StageReferencedTestInputs(const Image: TBytes; const SourceDir, SuiteDir, Overlay: string);
+var
+  Suite, Parent: string;
+  procedure CopyInput(const Source: string);
+  begin
+    if IsTestOutput(Source) then Exit;
+    var Target := TPath.Combine(Overlay, Source.Substring(Parent.Length));
+    if FileExists(Target) then Exit;
+    ForceDirectories(ExtractFileDir(Target));
+    TFile.Copy(Source, Target, True);
+  end;
+  procedure Reference(const S: string);
+  begin
+    if not S.Contains('/') and not S.Contains('\') then Exit;
+    var Name := S.Replace('\', '/');
+    var Base := SourceDir;
+    if Name.StartsWith('host0:', True) then begin Name := Name.Substring(6); Base := Parent; end
+    else if Name.StartsWith('host:', True) then begin Name := Name.Substring(5); Base := Parent; end
+    else if Name.Contains(':') then Exit;
+    if Name.StartsWith('/') then begin Name := Name.Substring(1); Base := Parent; end;
+    try Name := TPath.GetFullPath(TPath.Combine(Base, Name.Replace('/', PathDelim)));
+    except on E: EArgumentException do Exit; end;
+    // Only existing suite inputs may be copied. Never invent a missing file or
+    // resolve a binary string outside this read-only fixture tree.
+    if not Name.StartsWith(Suite, True) and not SameText(Name, ExcludeTrailingPathDelimiter(Suite)) then Exit;
+    if FileExists(Name) then CopyInput(Name)
+    else if DirectoryExists(Name) then
+      for var FileName in TDirectory.GetFiles(Name, '*', TSearchOption.soAllDirectories) do CopyInput(FileName);
+  end;
+begin
+  Suite := IncludeTrailingPathDelimiter(TPath.GetFullPath(SuiteDir));
+  Parent := IncludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(Suite)));
+  // Null-terminated path literals in the actual ELF declare cross-group data
+  // such as ../../modules/*.prx or ../../audio/atrac/*.at3. Stage the unchanged
+  // inputs alongside the usual group data, without copying 124 MiB per run.
+  var I := 0;
+  while I < Length(Image) do
+  begin
+    var Start := I;
+    while (I < Length(Image)) and (Image[I] >= 32) and (Image[I] < 127) do Inc(I);
+    var N := I - Start;
+    if (I < Length(Image)) and (Image[I] = 0) and (N >= 3) and (N <= 1024) then
+      Reference(TEncoding.ASCII.GetString(Image, Start, N));
+    Inc(I);
+  end;
+end;
+
 type
   TWatch = class(TThread)
     Console: TPSPConsole;
@@ -339,7 +393,7 @@ begin
       Prog.MediaPath := FileName;
     // Every run gets its own memory stick, and tests a copy of their folder as host0:,
     // so runs in parallel do not see each other's files.
-    var Scratch := TPath.Combine(TPath.GetTempPath, Format('psprun-%d', [GetCurrentProcessId]));
+    var Scratch := TPath.Combine(TPath.GetTempPath, Format('psprun-%d-%s', [GetCurrentProcessId, TGUID.NewGuid.ToString]));
     var HostRoot := ExtractFileDir(FileName);
     var Memstick := TPath.Combine(Scratch, 'ms0');
     if MemstickOverride <> '' then Memstick := MemstickOverride;
@@ -365,6 +419,7 @@ begin
         var GroupDir := TPath.Combine(HostRoot.Substring(0, At + 1), Parts[0] + '\' + Parts[1]);
         for var F in TDirectory.GetFiles(GroupDir, '*', TSearchOption.soAllDirectories) do
         begin
+          if IsTestOutput(F) then Continue;
           var X := ExtractFileExt(F).ToLower;
           if (X = '.c') or (X = '.cpp') or (X = '.h') or (X = '.expected') or (X = '.bmp') or
             (X = '.mak') or (X = '.s') or (X = '.exp') or SameText(ExtractFileName(F), 'Makefile') then
@@ -377,10 +432,13 @@ begin
       ForceDirectories(Dest);
       for var F in TDirectory.GetFiles(HostRoot, '*', TSearchOption.soAllDirectories) do
       begin
+        if IsTestOutput(F) then Continue;
         var Target := TPath.Combine(Dest, F.Substring(HostRoot.Length + 1));
         ForceDirectories(ExtractFileDir(Target));
         TFile.Copy(F, Target, True);
       end;
+      if At >= 0 then
+        StageReferencedTestInputs(Prog.Executable, HostRoot, TPath.Combine(HostRoot.Substring(0, At + 1), 'tests'), Host);
       HostRoot := Host;
       if Rel <> '' then
         Prog.BootPath := 'host0:/' + Rel.Replace('\', '/') + '/' + ExtractFileName(FileName)

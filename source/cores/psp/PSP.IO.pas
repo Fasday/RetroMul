@@ -904,7 +904,11 @@ begin
   var Priority := F.AsyncPriority;
   if Priority = 0 then Priority := FAsyncPriority;
   if Priority = 0 then Priority := FKernel.Current.Priority;
-  var T := FKernel.CreateThread('SceIoAsync', FAsyncStub, Priority, $1000, 0, 0);
+  // Firmware thread metadata (not its implementation): a 2-KiB system worker
+  // retains whether the creating thread originated in user mode.
+  var Attr: Cardinal := $00100000;
+  if not FKernel.Current.IsKernel then Attr := $08100000;
+  var T := FKernel.CreateThread('SceIofileAsync', FAsyncStub, Priority, $800, Attr, 0);
   if T = nil then begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
   F.AsyncWorker := T.UID;
   FKernel.StartThread(T, 0, 0);
@@ -1815,8 +1819,14 @@ begin
         var Dot := Default(TPSPDiscEntry);
         Dot.Name := '.';
         Dot.Directory := True;
+        Dot.Modified := TDirectory.GetLastWriteTime(Name);
         var DotDot := Dot;
         DotDot.Name := '..';
+        var Mount := ExcludeTrailingPathDelimiter(TPath.GetFullPath(HostRoot(Dev)));
+        var Parent := ExtractFileDir(ExcludeTrailingPathDelimiter(TPath.GetFullPath(Name)));
+        if not SameText(Parent, Mount) and not Parent.StartsWith(IncludeTrailingPathDelimiter(Mount), True) then
+          Parent := Mount;
+        DotDot.Modified := TDirectory.GetLastWriteTime(Parent);
         F.Entries := [Dot, DotDot];
         for var D in TDirectory.GetDirectories(Name) do
         begin
@@ -2091,7 +2101,9 @@ end;
 procedure TPSPIO.hChangeAsyncPriority;
 begin
   var Priority := FHLE.ArgInt(1);
-  if (Priority < -1) or (Priority = 0) or (Priority > 127) then
+  var KernelCaller := (FKernel.Current <> nil) and FKernel.Current.IsKernel;
+  if (Priority <> -1) and (((Priority < 1) or (Priority > 126)) or
+    (not KernelCaller and ((Priority < 8) or (Priority > 119)))) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
   if Integer(FHLE.Arg(0)) = -1 then
   begin FAsyncPriority := Max(0, Priority); FHLE.Result(0); Exit; end;

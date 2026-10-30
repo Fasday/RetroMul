@@ -80,8 +80,9 @@ report its results separately. Never change expected images to match a renderer.
 compares stdout, all screenshots and final VRAM; tests without GPU draws are
 reported separately. Frame hashes alone do not verify all CPU state.
 
-The current async-IO follow-up passes 540/638 hardware-reference tests, with identical
+The current verified suite passes 540/638 hardware-reference tests, with identical
 JIT/pool and interpreter/serial reports. See
+[the timing/handoff report](../../../tests/cores/psp/run/TIMING-HANDOFF.md),
 [the async IO report](../../../tests/cores/psp/run/ASYNC-IO.md) and
 [profile distinctions](../../../tests/cores/psp/run/ACCURACY-FOLLOWUP.md).
 

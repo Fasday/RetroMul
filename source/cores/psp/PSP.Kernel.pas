@@ -148,6 +148,7 @@ type
     // Kernel work a call left to do on the thread's time, where better
     // threads may preempt it, and where the thread goes on afterwards.
     BusyNs, BusyAt: Int64;
+    BusyYieldEqual: Boolean;
     BusyPC, BusyNPC: Cardinal;
     constructor Create;
     destructor Destroy; override;
@@ -321,7 +322,6 @@ type
     procedure StateVTimerFire(Action: TPSPStateAction; Value: Cardinal);
     procedure StateVTimerReturn(Action: TPSPStateAction; Value: Cardinal);
     // Spends the time as kernel work the scheduler may interrupt.
-    procedure SpendPreemptible(Ns: Int64);
     procedure hCheckExitCallback;
     procedure hIoForKernel;
     function WaitDeadline(TimeoutPtr: Cardinal; out TimeoutEnd: Int64): Int64;
@@ -610,6 +610,10 @@ type
     procedure ScrambleCallerSaved;
     // Guest time the kernel spends in a call (ns), on the current CPU clock.
     procedure Spend(Ns: Int64);
+    // CPU work can be interrupted by a better thread, but does not yield to a
+    // worse one. Its ordinary continuation is stored on the guest thread.
+    procedure SpendPreemptible(Ns: Int64; YieldEqual: Boolean = False);
+    class function MemoryFillTime(Bytes: Cardinal): Int64; static;
     // Timers in guest ns. Returns a handle (sequence number) for CancelTimer.
     function AddTimer(At: Int64; Owner: TObject; const Event: TPSPTimerEvent): Int64;
     function AddStateTimer(At: Int64; Owner: TObject; const Action: IPSPStateAction): Int64;
@@ -1057,21 +1061,28 @@ begin
   C.LO := $DEADBEEF;
 end;
 
-procedure TPSPKernel.SpendPreemptible(Ns: Int64);
+procedure TPSPKernel.SpendPreemptible(Ns: Int64; YieldEqual: Boolean);
 begin
   var T := FCurrent;
   if (T = nil) or InInterrupt or (Ns <= PSPBusyChunkNs) then
   begin
     Spend(Ns);
+    if YieldEqual then YieldCurrent;
     Exit;
   end;
   // The call returns through a stub that spends the time a slice at a time.
   T.BusyNs := Ns;
+  T.BusyYieldEqual := YieldEqual;
   T.BusyAt := FScheduler.Now;
   T.BusyPC := FCPU.Ctx.PC;
   T.BusyNPC := FCPU.Ctx.NPC;
   FCPU.Ctx.PC := FBusyStub;
   FCPU.Ctx.NPC := FBusyStub + 4;
+end;
+
+class function TPSPKernel.MemoryFillTime(Bytes: Cardinal): Int64;
+begin
+  Result := ((Int64(Bytes) + 255) and not Int64(255)) * 42 div 10;
 end;
 
 procedure TPSPKernel.hKernelBusy;
@@ -1098,6 +1109,9 @@ begin
   begin
     FCPU.Ctx.PC := T.BusyPC;
     FCPU.Ctx.NPC := T.BusyNPC;
+    var Handoff := T.BusyYieldEqual;
+    T.BusyYieldEqual := False;
+    if Handoff then YieldCurrent;
   end;
 end;
 
@@ -2190,6 +2204,7 @@ begin
   T.Wait := Default(TPSPWait);
   T.Frames.Clear;
   T.BusyNs := 0;
+  T.BusyYieldEqual := False;
   T.Fresh := True;
   T.Status := PSPThreadReady;
   Inc(FThreadSeq);
@@ -2388,7 +2403,7 @@ begin
   if T = nil then
     begin Spend(PSPCreateThreadNs); FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
   // Filling the stack is most of it, and other threads may run meanwhile.
-  SpendPreemptible(PSPCreateThreadNs + Int64(AlignUp(StackSize, 256)) * 42 div 10);
+  SpendPreemptible(PSPCreateThreadNs + MemoryFillTime(StackSize));
   FHLE.Result(T.UID);
   // Creating a thread leaves dispatching enabled again.
   FDispatchSuspended := False;

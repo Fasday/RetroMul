@@ -269,7 +269,9 @@ end;
 
 procedure TPSPDisplay.Interrupt;
 begin
-  FFieldStart := FScheduler.Now;
+  // The scan clock does not restart when the CPU notices the interrupt late.
+  // Anchor the next field to the previous hardware edge, not syscall latency.
+  Inc(FFieldStart, PSPFrameNs);
   Inc(FVCount);
   if FKernel.Trace then
     FHLE.Log('%d vblank interrupt %d', [FScheduler.Now div 1000, FVCount]);

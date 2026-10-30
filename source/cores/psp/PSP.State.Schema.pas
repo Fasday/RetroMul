@@ -71,6 +71,7 @@ begin
     Result.Optional(TPSPIO, ['FFatNames', 'FAsyncStub', 'FAsyncPriority']);
     Result.Optional(TPSPOpenFile, ['AsyncWorker', 'AsyncPriority', 'AsyncLatency', 'AsyncTask']);
     Result.Optional(TPSPAudio, ['FO2WaitFailed']);
+    Result.Optional(TPSPThread, ['BusyYieldEqual']);
     Result.AddClass(TMemoryStream, []);
     Result.AddClass(TFileStream, []);
     Result.AddClass(TStringBuilder, []);

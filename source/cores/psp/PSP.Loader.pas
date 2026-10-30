@@ -1130,6 +1130,7 @@ begin
     Exit;
   end;
   var Id := M.UID;
+  var FillTime := TPSPKernel.MemoryFillTime(M.Size);
   if not M.Fake then
   begin
     // What is left behind: text as break 1, data and bss as $FFFFFFFF.
@@ -1150,12 +1151,11 @@ begin
       FStubs.Delete(I);
   FKernel.DeleteObject(M);
   FHLE.Result(Id);
-  if FKernel.CanWait then
-  begin
-    var Caller := FKernel.Current;
-    FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, NoRetry, nil, 'unloadmodule');
-    FKernel.AddWakeTimer(FKernel.Scheduler.Now + 300000, Caller, 'unloadmodule', Id);
-  end;
+  // Clearing module memory and bookkeeping are CPU work, not a drive wait.
+  // Higher-priority threads can preempt it. The manager's completion handoff
+  // lets an equal-priority ready thread run, without donating CPU time to a
+  // lower-priority spinner while the manager works.
+  FKernel.SpendPreemptible(300000 + FillTime, True);
 end;
 
 procedure TPSPLoader.hStopUnloadSelfModule;
