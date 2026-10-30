@@ -1,0 +1,291 @@
+program PSPContinuationTest;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils, System.Classes, System.IOUtils, System.Hash,
+  Core.Emulation.Types, PSP.Console, PSP.Media, PSP.GE, PSP.Kernel;
+
+const
+  Entry = $08804000;
+  Code = $09F00000;
+  Globals = $09F10000;
+  Params = $09F10100;
+  ErrWord = $09F10200;
+  Image = $09F10300;
+  Pixels = $09F11000;
+  Heap = $09000000;
+  FileData = $09400000;
+
+procedure Require(OK: Boolean; const Text: string);
+begin if not OK then raise Exception.Create(Text); end;
+
+function OpI(Op, RS, RT: Cardinal; Imm: Integer): Cardinal;
+begin Result := (Op shl 26) or (RS shl 21) or (RT shl 16) or (Cardinal(Imm) and $FFFF); end;
+
+function OpR(RS, RT, RD, Func: Cardinal): Cardinal;
+begin Result := (RS shl 21) or (RT shl 16) or (RD shl 11) or Func; end;
+
+function ProgramData: TPSPProgram;
+  procedure W16(P: Integer; V: Word);
+  begin Move(V, Result.Executable[P], 2); end;
+  procedure W32(P: Integer; V: Cardinal);
+  begin Move(V, Result.Executable[P], 4); end;
+begin
+  Result := Default(TPSPProgram);
+  SetLength(Result.Executable, $110);
+  W32(0, $464C457F); Result.Executable[4] := 1; Result.Executable[5] := 1; Result.Executable[6] := 1;
+  W16(16, 2); W16(18, 8); W32(20, 1); W32(24, Entry); W32(28, 52);
+  W16(40, 52); W16(42, 32); W16(44, 1);
+  W32(52, 1); W32(56, $100); W32(60, Entry); W32(68, 16); W32(72, 16); W32(76, 5); W32(80, $1000);
+  W32($100, (2 shl 26) or ((Entry shr 2) and $03FFFFFF));
+end;
+
+procedure Emit(C: TPSPConsole; Address: Cardinal; const Words: array of Cardinal);
+begin
+  for var I := 0 to High(Words) do C.Memory.Write32(Address + Cardinal(I * 4), Words[I]);
+end;
+
+procedure CopyRoutine(C: TPSPConsole; Address: Cardinal; FontRead: Boolean);
+begin
+  var W: TArray<Cardinal> := nil;
+  if FontRead then
+    W := [OpR(7, 8, 0, $19), OpR(0, 0, 11, $12), OpR(8, 0, 2, $21), OpR(6, 0, 13, $21), OpI($2B, 9, 0, 0)]
+  else W := [OpR(6, 0, 11, $21), OpR(6, 0, 2, $21), OpR(5, 0, 13, $21)];
+  W := W + [OpI($23, 4, 10, 4), OpI($23, 4, 12, 8), OpR(12, 10, 12, $21),
+    OpR(10, 11, 10, $21), OpI($2B, 4, 10, 4)];
+  var Loop := Length(W);
+  W := W + [OpI(4, 11, 0, 8), 0, OpI($24, 12, 14, 0), OpI($28, 13, 14, 0),
+    OpI(9, 12, 12, 1), OpI(9, 13, 13, 1), OpI(9, 11, 11, -1)];
+  W := W + [OpI(4, 0, 0, Loop - (Length(W) + 1)), 0, $03E00008, 0];
+  Emit(C, Address, W);
+end;
+
+function CreateConsole(const P: TPSPProgram; const Root: string): TPSPConsole;
+begin
+  Result := TPSPConsole.Create(P, nil, Root, TPath.Combine(Root, 'ms'));
+  Result.Memory.Write32(Globals, Heap);
+  Emit(Result, Code, [OpI($23, 4, 2, 0), OpI(9, 5, 8, 15), OpI(9, 0, 9, -16),
+    OpR(8, 9, 8, $24), OpR(2, 8, 8, $21), OpI($2B, 4, 8, 0), $03E00008, 0]);
+  Emit(Result, Code + $40, [OpI($23, 4, 8, 28), OpI(9, 8, 8, 1), OpI($2B, 4, 8, 28),
+    OpR(0, 0, 2, $21), $03E00008, 0]);
+  Emit(Result, Code + $80, [OpI($2B, 6, 0, 0), OpI($2B, 4, 0, 4), OpI(9, 0, 2, 1), $03E00008, 0]);
+  Emit(Result, Code + $C0, [OpI($2B, 4, 6, 4), OpR(0, 0, 2, $21), $03E00008, 0]);
+  CopyRoutine(Result, Code + $100, True);
+  Emit(Result, Code + $180, [OpR(5, 0, 2, $21), $03E00008, 0]);
+  // MP4 seek(0, END) reads the size; seek(0, SET) resets the cursor.
+  Emit(Result, Code + $1C0, [OpI(4, 8, 0, 4), 0, OpI($23, 4, 2, 12), $03E00008, 0,
+    OpI($2B, 4, 0, 4), OpR(0, 0, 2, $21), $03E00008, 0]);
+  CopyRoutine(Result, Code + $200, False);
+  // A one-shot allocator fault on the second request, for rollback coverage.
+  Emit(Result, Code + $300, [OpI($23, 4, 8, 24), OpI(9, 8, 8, 1), OpI($2B, 4, 8, 24),
+    OpI(9, 0, 9, 2), OpI(4, 8, 9, 3), 0, (2 shl 26) or ((Code shr 2) and $03FFFFFF), 0,
+    OpR(0, 0, 2, $21), $03E00008, 0]);
+end;
+
+function Call(C: TPSPConsole; const Name: string; const Args: array of Cardinal): Cardinal;
+begin
+  for var I := 0 to High(Args) do C.CPU.Ctx.GPR[4 + I] := Args[I];
+  var Found := False;
+  for var I := 0 to C.HLE.Count - 1 do
+    if C.HLE.FunctionInfo(I).Name = Name then
+    begin C.HLE.FunctionInfo(I).Handler(); Found := True; Break; end;
+  Require(Found, 'Missing HLE ' + Name);
+  Result := C.CPU.Ctx.GPR[2];
+end;
+
+function Digest(C: TPSPConsole): string;
+begin
+  TPSPGE(C.System.Find(TPSPGE)).Engine.Synchronize;
+  var H := THashSHA2.Create;
+  H.Update(C.Memory.RAM); H.Update(C.Memory.VRAM); H.Update(C.Memory.Scratch);
+  H.Update(C.CPU.Ctx, SizeOf(C.CPU.Ctx)); H.Update(C.Scheduler.Now, SizeOf(C.Scheduler.Now));
+  var Samples := C.AudioSamples;
+  if Length(Samples) > 0 then H.Update(Samples[0], Length(Samples) * 2);
+  Result := H.HashAsString;
+end;
+
+procedure Checkpoint(C: TPSPConsole; const Root, Name: string; Frames: Integer = 4);
+begin
+  var Before := Digest(C);
+  var Path := TPath.Combine(Root, 'callback.snapshot');
+  C.SaveSnapshot(Path);
+  Require(C.LastSnapshotFormat = 'direct', 'Not a direct callback state');
+  var Cancelled := False;
+  try
+    var Aborted := C.RestoreSnapshot(Path,
+      function(Done, Total: UInt64): Boolean begin Result := Done < 3; end);
+    Aborted.Free;
+  except on EAbort do Cancelled := True; end;
+  Require(Cancelled and (Digest(C) = Before), 'Cancellation changed active callback: ' + Name);
+  var D := C.RestoreSnapshot(Path);
+  try
+    Require(Digest(D) = Before, 'Callback state differs before continuation: ' + Name);
+    var F: TEmulatorFrame;
+    for var I := 1 to Frames do
+    begin
+      C.RunFrame(F); D.RunFrame(F);
+      Require(Digest(C) = Digest(D), 'Callback continuation differs: ' + Name);
+    end;
+  finally D.Free; end;
+  Writeln('PASS active ', Name);
+end;
+
+procedure AdvanceTo(C: TPSPConsole; PC: Cardinal);
+begin
+  for var I := 0 to 200000 do
+  begin
+    if C.CPU.Ctx.PC = PC then Exit;
+    C.RunUntil(C.Scheduler.Now + 1);
+  end;
+  raise Exception.CreateFmt('Callback PC %.8x was not reached', [PC]);
+end;
+
+procedure FontCases(const P: TPSPProgram; const Root: string);
+begin
+  var C := CreateConsole(P, Root);
+  try
+    C.Memory.Fill(Params, 0, $2C);
+    C.Memory.Write32(Params, Globals); C.Memory.Write32(Params + 4, 4);
+    C.Memory.Write32(Params + $0C, Code); C.Memory.Write32(Params + $10, Code + $40);
+    C.Memory.Write32(Params + $14, Code + $80); C.Memory.Write32(Params + $18, Code + $40);
+    C.Memory.Write32(Params + $1C, Code + $100); C.Memory.Write32(Params + $20, Code + $C0);
+    Call(C, 'sceFontNewLib', [Params, ErrWord]);
+    Require(C.Kernel.Current.Frames.Count > 0, 'Allocator callback is not active');
+    Checkpoint(C, Root, 'font library allocator');
+    var Lib := C.CPU.Ctx.GPR[2]; Require(Lib = Heap, 'Wrong library address');
+    Call(C, 'sceFontOpen', [Lib, 0, 0, ErrWord]);
+    Checkpoint(C, Root, 'font table allocations');
+    var Font := C.CPU.Ctx.GPR[2];
+    C.Memory.Fill(Image, 0, 24); C.Memory.Write32(Image, 2);
+    C.Memory.Write16(Image + 12, 64); C.Memory.Write16(Image + 14, 64);
+    C.Memory.Write16(Image + 16, 64); C.Memory.Write32(Image + 20, Pixels);
+    Call(C, 'sceFontGetCharGlyphImage', [Font, Ord('H'), Image]);
+    Checkpoint(C, Root, 'font glyph cache allocation');
+    Call(C, 'sceFontGetCharGlyphImage', [Font, Ord('W'), Image]);
+    Checkpoint(C, Root, 'font glyph cache free/reallocation');
+    Call(C, 'sceFontClose', [Font]); Checkpoint(C, Root, 'font close free callback');
+    C.Memory.Write32(Lib + $0C, Code + $300); C.Memory.Write32(Globals + 24, 0);
+    var Freed := C.Memory.Read32(Globals + 28);
+    Call(C, 'sceFontOpen', [Lib, 1, 0, ErrWord]);
+    Checkpoint(C, Root, 'font allocation failure rollback');
+    Require((C.Memory.Read32(ErrWord) <> 0) and (C.Memory.Read32(Globals + 28) > Freed),
+      'Partial font allocations were not freed');
+    C.Memory.Write32(Lib + $0C, Code);
+    if ParamCount > 0 then
+    begin
+      var Data := TFile.ReadAllBytes(ParamStr(1));
+      TFile.WriteAllBytes(TPath.Combine(Root, 'font.pgf'), Data);
+      C.Memory.WriteBytes(FileData, Data[0], Length(Data));
+      C.Memory.Write32(Globals + 8, FileData); C.Memory.Write32(Globals + 12, Length(Data));
+      C.Memory.WriteString(Params + $80, 'host0:/font.pgf', 128);
+      Call(C, 'sceFontOpenUserFile', [Lib, Params + $80, 0, ErrWord]);
+      Checkpoint(C, Root, 'font streamed open callback', 0);
+      AdvanceTo(C, Code + $100); Checkpoint(C, Root, 'font prefix read callback', 0);
+      C.RunUntil(C.Scheduler.Now + 1);
+      AdvanceTo(C, Code + $100); Checkpoint(C, Root, 'font header body read callback', 0);
+      C.RunUntil(C.Scheduler.Now + 1);
+      AdvanceTo(C, Code + $100);
+      Checkpoint(C, Root, 'font allocated table read/close chain', 12);
+      Require(C.Memory.Read32(ErrWord) = 0, 'Streamed PGF open failed');
+      Call(C, 'sceFontOpenUserMemory', [Lib, FileData, Cardinal(Length(Data)), ErrWord]);
+      Checkpoint(C, Root, 'owned PGF pending allocation');
+      Require(C.Memory.Read32(ErrWord) = 0, 'Memory PGF open failed');
+      C.Memory.WriteBytes(FileData + $200000, Data[0], Length(Data));
+      C.Memory.Write32(Lib + $0C, Code + $40);
+      Call(C, 'sceFontOpenUserMemory', [Lib, FileData + $200000, Cardinal(Length(Data)), ErrWord]);
+      Checkpoint(C, Root, 'owned PGF allocation failure/cancel cleanup');
+      Require(C.Memory.Read32(ErrWord) <> 0, 'Faulting allocator did not reject memory font');
+      C.Memory.Write32(Lib + $0C, Code);
+    end;
+    Call(C, 'sceFontDoneLib', [Lib]); Checkpoint(C, Root, 'font library cleanup');
+  finally C.Free; end;
+end;
+
+procedure LoaderAndDriverCases(const P: TPSPProgram; const Root: string);
+begin
+  var C := CreateConsole(P, Root);
+  try
+    // A local second ELF with a returning entry, never a patched game image.
+    var Module := Copy(P.Executable);
+    PCardinal(@Module[24])^ := Entry + $10000;
+    PCardinal(@Module[60])^ := Entry + $10000;
+    PCardinal(@Module[$100])^ := $03E00008;
+    PCardinal(@Module[$104])^ := OpR(0, 0, 2, $21);
+    TFile.WriteAllBytes(TPath.Combine(Root, 'module.elf'), Module);
+    C.Memory.WriteString(Params, 'host0:/module.elf', 128);
+    Call(C, 'sceKernelLoadModule', [Params, 0, 0]);
+    Checkpoint(C, Root, 'delayed module loader');
+    var Id := C.CPU.Ctx.GPR[2];
+    Require(Id < $80000000, 'Fixture module did not load');
+    Call(C, 'sceKernelStartModule', [Id, 0, 0, ErrWord, 0]);
+    Checkpoint(C, Root, 'module start/exit/delete/wake chain');
+    Require(C.Memory.Read32(ErrWord) = 0, 'Fixture module returned an error');
+    C.Memory.Fill(Params, 0, $80);
+    C.Memory.WriteString(Params + $80, 'state', 16);
+    C.Memory.Write32(Params, Params + $80); C.Memory.Write32(Params + 16, Params + $20);
+    C.Memory.Write32(Params + $24, Code + $40); // exit
+    C.Memory.Write32(Params + $28, Code + $40); // open
+    C.Memory.Write32(Params + $2C, Code + $40); // close
+    Call(C, 'sceIoAddDrv', [Params]);
+    C.Memory.WriteString(Params + $A0, 'state0:/data', 32);
+    Call(C, 'sceIoOpen', [Params + $A0, 1, 0]);
+    Checkpoint(C, Root, 'guest IO driver open');
+    var Fd := C.CPU.Ctx.GPR[2];
+    Call(C, 'sceIoClose', [Fd]); Checkpoint(C, Root, 'guest IO driver close');
+    Call(C, 'sceIoDelDrv', [Params + $80]); Checkpoint(C, Root, 'guest IO driver exit');
+  finally C.Free; end;
+end;
+
+procedure NetworkAndUtilityCases(const P: TPSPProgram; const Root: string);
+begin
+  var C := CreateConsole(P, Root);
+  try
+    Call(C, 'sceNetInetInit', []);
+    var Fd := Call(C, 'sceNetInetSocket', [2, 2, 0]);
+    C.Memory.Write32(Params, 100000);
+    Call(C, 'sceNetInetSetsockopt', [Fd, $FFFF, $1006, Params, 4]);
+    Call(C, 'sceNetInetRecv', [Fd, Pixels, 16, 0]);
+    Require(C.Kernel.Current.IsWaiting, 'Socket waiter is not active');
+    Checkpoint(C, Root, 'socket receive attempt/timeout', 12);
+    Call(C, 'sceNetApctlInit', [$1000, 20]);
+    Call(C, 'sceNetApctlScanUser', []);
+    Checkpoint(C, Root, 'network library queued job and scan timer');
+    C.Memory.Fill(Params, 0, $300); C.Memory.Write32(Params, $244);
+    Call(C, 'sceUtilityMsgDialogInitStart', [Params]);
+    Checkpoint(C, Root, 'utility initialization timer');
+  finally C.Free; end;
+end;
+
+procedure MediaCases(const P: TPSPProgram; const Root: string);
+begin
+  var C := CreateConsole(P, Root);
+  try
+    Call(C, 'sceMpegRingbufferConstruct', [Params, 4, FileData, $10000, Code + $180, 0]);
+    C.Memory.Write32(Params + 8, 3);
+    Call(C, 'sceMpegRingbufferPut', [Params, 2, 4]);
+    Checkpoint(C, Root, 'MPEG ringbuffer wrap callbacks');
+    Require(C.Memory.Read32(Params + 8) = 1, 'Ringbuffer wrap failed');
+    C.Memory.Write32(FileData, $10000000); C.Memory.Write32(FileData + 4, $65657266);
+    C.Memory.Write32(Globals + 8, FileData); C.Memory.Write32(Globals + 12, 16);
+    C.Memory.Write32(Params + $80, Globals); C.Memory.Write32(Params + $88, Code + $1C0);
+    C.Memory.Write32(Params + $8C, Code + $200);
+    Call(C, 'sceMp4Create', [Params + $40, Params + $80, Pixels, 7]);
+    Checkpoint(C, Root, 'MP4 seek/end/start and chunk reads');
+    Require(C.Memory.Read32(Globals + 4) = 16, 'MP4 did not finish chunked reading');
+  finally C.Free; end;
+end;
+
+begin
+  try
+    var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
+    TDirectory.CreateDirectory(Root);
+    try
+      var P := ProgramData;
+      FontCases(P, Root); MediaCases(P, Root);
+      LoaderAndDriverCases(P, Root); NetworkAndUtilityCases(P, Root);
+    finally TDirectory.Delete(Root, True); end;
+  except
+    on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;
+  end;
+end.

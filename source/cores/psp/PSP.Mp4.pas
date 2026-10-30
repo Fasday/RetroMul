@@ -10,7 +10,7 @@ interface
 
 uses
   System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service;
+  PSP.Scheduler, PSP.Service, PSP.State.Action;
 
 type
   TPSPMp4Sample = record
@@ -57,6 +57,9 @@ type
     function FileAt(Address: Cardinal): TPSPMp4File;
     function RegAt(Address: Cardinal): TPSPMp4Reg;
     procedure ReadStep(F: TPSPMp4File; Param, ReadFn, Buf, BufSize: Cardinal; Total, Done: Int64; GP: Cardinal);
+    procedure StateRead(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateSeekEnd(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateSeekStart(Action: TPSPStateAction; Value: Cardinal);
     procedure hInit;
     procedure hFinish;
     procedure hCreate;
@@ -448,22 +451,24 @@ begin
     Exit;
   end;
   var Chunk := Min(Int64(BufSize), Total - Done);
-  FKernel.CallGuest(ReadFn, [Param, Buf, Cardinal(Chunk)],
-    procedure(Ret: Cardinal)
-    begin
-      var N := Integer(Ret);
-      if N <= 0 then
-      begin
-        SetLength(F.Data, Done);
-        F.Parse;
-        FHLE.CPU.Ctx.GPR[2] := 0;
-        Exit;
-      end;
-      if N > Chunk then
-        N := Chunk;
-      FMemory.ReadBytes(Buf, F.Data[Done], N);
-      ReadStep(F, Param, ReadFn, Buf, BufSize, Total, Done + N, GP);
-    end, GP);
+  FKernel.CallGuest(ReadFn, [Param, Buf, Cardinal(Chunk)], nil, GP,
+    TPSPStateAction.Create(StateRead, [F], [Param, ReadFn, Buf, BufSize, Total, Done, GP, Chunk]));
+end;
+
+procedure TPSPMp4.StateRead(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var F := TPSPMp4File(Action.Obj(0));
+  var Done := Action.Arg(5);
+  var N := Integer(Value);
+  if N <= 0 then
+  begin
+    SetLength(F.Data, Done); F.Parse; FHLE.CPU.Ctx.GPR[2] := 0;
+    Exit;
+  end;
+  if N > Action.Arg(7) then N := Integer(Action.Arg(7));
+  FMemory.ReadBytes(Cardinal(Action.Arg(2)), F.Data[Done], N);
+  ReadStep(F, Cardinal(Action.Arg(0)), Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)),
+    Cardinal(Action.Arg(3)), Action.Arg(4), Done + N, Cardinal(Action.Arg(6)));
 end;
 
 procedure TPSPMp4.hCreate;
@@ -490,23 +495,27 @@ begin
   var GP := FHLE.CPU.Ctx.GPR[28];
   FHLE.Result(0);
   // The file's size from seek(0, SEEK_END), then everything from the start.
-  FKernel.CallGuest(SeekFn, [Param, 0, 0, 0, 2],
-    procedure(Ret: Cardinal)
-    begin
-      // Only v0 survives the return; movies are well below 4 GB.
-      var Total := Int64(Ret);
-      if (Total <= 0) or (Total > 256 * 1024 * 1024) then
-      begin
-        FHLE.CPU.Ctx.GPR[2] := ERROR_MP4_INVALID_VALUE;
-        Exit;
-      end;
-      SetLength(F.Data, Total);
-      FKernel.CallGuest(SeekFn, [Param, 0, 0, 0, 0],
-        procedure(Ret2: Cardinal)
-        begin
-          ReadStep(F, Param, ReadFn, Buf, BufSize, Total, 0, GP);
-        end, GP);
-    end, GP);
+  FKernel.CallGuest(SeekFn, [Param, 0, 0, 0, 2], nil, GP,
+    TPSPStateAction.Create(StateSeekEnd, [F], [Param, SeekFn, ReadFn, Buf, BufSize, GP]));
+end;
+
+procedure TPSPMp4.StateSeekEnd(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var Total := Int64(Value);
+  if (Total <= 0) or (Total > 256 * 1024 * 1024) then
+    begin FHLE.CPU.Ctx.GPR[2] := ERROR_MP4_INVALID_VALUE; Exit; end;
+  var F := TPSPMp4File(Action.Obj(0));
+  SetLength(F.Data, Total);
+  Action.Values := Action.Values + [Total];
+  Action.Handler := StateSeekStart;
+  FKernel.CallGuest(Cardinal(Action.Arg(1)), [Cardinal(Action.Arg(0)), 0, 0, 0, 0], nil,
+    Cardinal(Action.Arg(5)), Action);
+end;
+
+procedure TPSPMp4.StateSeekStart(Action: TPSPStateAction; Value: Cardinal);
+begin
+  ReadStep(TPSPMp4File(Action.Obj(0)), Cardinal(Action.Arg(0)), Cardinal(Action.Arg(2)),
+    Cardinal(Action.Arg(3)), Cardinal(Action.Arg(4)), Action.Arg(6), 0, Cardinal(Action.Arg(5)));
 end;
 
 procedure TPSPMp4.hDelete;

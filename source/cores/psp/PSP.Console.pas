@@ -49,11 +49,9 @@ type
     FReplaying: Boolean;
     FMediaDigest: TBytes;
     FSettings: TPSPSettings;
-    FHistoryAvailable: Boolean;
     FLastSnapshotFormat: string;
     function DirectGraph(Schema: TPSPGraphSchema): TPSPGraph;
     procedure TransferDirectMemory(State: TStateArchive);
-    procedure SaveReplaySnapshot(const Path: string; const Progress: TPSPStateProgress);
     function RestoreDirectSnapshot(Data: TPSPStateFile; const Progress: TPSPStateProgress): TPSPConsole;
     function StateRoots: TPSPStateRoots;
     function StateDigest: TBytes;
@@ -119,9 +117,8 @@ begin
   inherited Create;
   FState := Seed;
   FReplaying := Seed <> nil;
-  FHistoryAvailable := TrackSnapshots or (Seed <> nil);
   FSettings := PSPSettings;
-  if TrackSnapshots and (FState = nil) then FState := TPSPReplayState.Create;
+  if FState = nil then FState := TPSPReplayState.Create;
   FProgram := ProgramData;
   FStorage := Storage;
   FHostRoot := HostRoot;
@@ -170,7 +167,7 @@ begin
     FSystem.FlashRoot := FFlashRoot;
     FSystem.FontDirectory := Seed.Roots[3];
   end;
-  if FState <> nil then FIO.OnHostChange := HostChanged;
+  if TrackSnapshots or (Seed <> nil) then FIO.OnHostChange := HostChanged;
   FSystem.Services := TObjectList<TPSPService>.Create;
   for var Cls in PSPServiceClasses do
     FSystem.Services.Add(Cls.Create(FSystem));
@@ -280,11 +277,7 @@ procedure TPSPConsole.Reset;
 begin
   PSPSettings := FSettings;
   ResetMachine(False);
-  if (FState <> nil) and not FReplaying then
-  begin
-    FState.Capture(StateRoots);
-    FHistoryAvailable := FState.CaptureError = '';
-  end;
+  if not FReplaying then FState.TrackRoots(StateRoots);
   FFrameNumber := 0;
   var Path := FProgram.BootPath;
   if Path = '' then
@@ -376,8 +369,6 @@ end;
 
 procedure TPSPConsole.RunUntil(At: Int64);
 begin
-  if (FState <> nil) and not FStopAtFrame and not FReplaying then
-    FState.CaptureError := 'PSP snapshots require recorded RunFrame execution, not direct RunUntil calls';
   while True do
   begin
     // Events that fell due during the last run are handled before returning.
@@ -428,16 +419,6 @@ end;
 procedure TPSPConsole.RunFrame(out Frame: TEmulatorFrame);
 begin
   PSPSettings := FSettings;
-  if (FState <> nil) and FHistoryAvailable and not FReplaying then
-  begin
-    if FState.Frames = 0 then
-    begin
-      FState.HasDisplay := FIO.HasDisplay;
-      FState.NoEmulatorDevice := FIO.NoEmulatorDevice;
-      FState.NoClobber := FHLE.NoClobber;
-    end;
-    FState.RecordInput(FInput);
-  end;
   FDisplay.SetInput(FInput);
   FDisplay.FrameDone := False;
   FStopAtFrame := True;
@@ -526,39 +507,7 @@ end;
 
 procedure TPSPConsole.SaveSnapshot(const Path: string; const Progress: TPSPStateProgress);
 begin
-  try
-    SaveDirectSnapshot(Path, Progress);
-    FLastSnapshotFormat := 'direct';
-  except
-    on E: EPSPStateOpaque do
-    begin
-      if not FHistoryAvailable then raise;
-      FHLE.Log('snapshot: direct state is not ready (%s); saving compatibility reconstruction', [E.Message]);
-      SaveReplaySnapshot(Path, Progress);
-      FLastSnapshotFormat := 'replay';
-    end;
-  end;
-end;
-
-procedure TPSPConsole.SaveReplaySnapshot(const Path: string; const Progress: TPSPStateProgress);
-begin
-  if FState = nil then raise EInvalidOpException.Create('PSP snapshot tracking was not enabled at boot');
-  if FState.CaptureError <> '' then raise EInvalidOpException.Create(FState.CaptureError);
-  if FState.Frames <> FFrameNumber then raise EInvalidOpException.Create('PSP state is not at a recorded frame boundary');
-  if FState.Frames = 0 then
-  begin
-    FState.HasDisplay := FIO.HasDisplay;
-    FState.NoEmulatorDevice := FIO.NoEmulatorDevice;
-    FState.NoClobber := FHLE.NoClobber;
-  end;
-  FState.Digest := StateDigest;
-  FState.MediaDigest := MediaDigest(Progress);
-  if Assigned(Progress) and not Progress(0, 0) then raise EAbort.Create('PSP snapshot saving cancelled');
-  SaveCoreSnapshot(Path, 'PSP', FProgram.Executable,
-    procedure(State: TStateArchive)
-    begin
-      FState.Transfer(State);
-    end, FStorage);
+  SaveDirectSnapshot(Path, Progress);
 end;
 
 function TPSPConsole.RestoreSnapshot(const Path: string; const Progress: TPSPStateProgress): TPSPConsole;
@@ -706,8 +655,8 @@ begin
     Current.Capture(StateRoots);
     if Current.CaptureError <> '' then raise EWriteError.Create(Current.CaptureError);
     Data.CurrentFiles := Current.InitialFiles;
-    Data.HasHistory := FHistoryAvailable and (FState <> nil) and (FState.Frames = FFrameNumber);
-    if Data.HasHistory then Data.Seed.CopyDataFrom(FState) else Data.Seed.Settings := FSettings;
+    Data.HasHistory := False;
+    Data.Seed.Settings := FSettings;
     Data.Seed.HasDisplay := FIO.HasDisplay;
     Data.Seed.NoEmulatorDevice := FIO.NoEmulatorDevice;
     Data.Seed.NoClobber := FHLE.NoClobber;
@@ -722,15 +671,6 @@ begin
       PSPStateBytes(State, GraphBytes, 128 * 1024 * 1024);
     finally State.Free; end;
     Data.Core := PSPPackState(Raw);
-    if Int64(Length(Data.CurrentFiles)) + Length(Data.Core) + Length(Data.Seed.InitialFiles) +
-      Int64(Data.Seed.Inputs.Count) * 15 > 63 * 1024 * 1024 then
-    begin
-      Data.HasHistory := False;
-      Data.Seed.InitialFiles := nil;
-      Data.Seed.Inputs.Clear;
-      Data.Seed.Frames := 0;
-      Data.Seed.Settings := FSettings;
-    end;
     if Int64(Length(Data.CurrentFiles)) + Length(Data.Core) > 63 * 1024 * 1024 then
       raise EWriteError.Create('PSP direct snapshot exceeds the 64 MiB payload limit');
     if Assigned(Progress) and not Progress(1, 1) then raise EAbort.Create('PSP snapshot saving cancelled');
@@ -762,7 +702,6 @@ begin
   var Candidate := TPSPConsole.Create(FProgram, FStorage, '', '', '', False, Seed, False);
   try
     Candidate.FMediaDigest := Media;
-    Candidate.FHistoryAvailable := Data.HasHistory;
     var Raw := PSPUnpackState(Data.Core);
     var Schema := NewPSPStateSchema;
     try

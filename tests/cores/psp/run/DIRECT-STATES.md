@@ -1,5 +1,10 @@
 # PSP direct state format and include removal
 
+Follow-up: [CONTINUATIONS.md](CONTINUATIONS.md) removes the automatic fallback and
+new input-history recording, converts the remaining HLE operations, and verifies
+direct states during active callbacks and a commercial game's movie. The behavior
+described below is the historical first direct-state implementation.
+
 ## Direct state path
 
 `PSP.Console.SaveSnapshot` now first writes a direct state. The new payload

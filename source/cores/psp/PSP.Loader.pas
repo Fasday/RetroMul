@@ -13,7 +13,7 @@ interface
 {$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.IO, PSP.SysMem;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.IO, PSP.SysMem, PSP.State.Action;
 
 const
   NID_MODULE_START = $D632ACDB;
@@ -79,6 +79,10 @@ type
     procedure WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal; Linger: Int64);
     function ThreadOptions(OptPtr: Cardinal; var Prio: Integer; var Stack, Attr: Cardinal): Cardinal;
     function NoRetry(T: TPSPThread): Boolean;
+    procedure ScheduleThreadDelete(Id: Cardinal);
+    procedure StateThreadDelete(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateThreadExited(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateLoad(Action: TPSPStateAction; Value: Cardinal);
     procedure LoadForCaller(const Data: TBytes; const Path: string);
     procedure hKprintf;
     procedure hIcacheClearAll;
@@ -843,16 +847,15 @@ begin
 end;
 
 // The module manager deletes its start and stop threads once they end.
-procedure ScheduleThreadDelete(K: TPSPKernel; T: TPSPThread);
+procedure TPSPLoader.ScheduleThreadDelete(Id: Cardinal);
 begin
-  var Id := T.UID;
-  K.AddTimer(K.Scheduler.Now, nil,
-    procedure
-    begin
-      var X := K.GetObject(Id, TPSPThread);
-      if (X <> nil) and ((TPSPThread(X).Status and PSPThreadDormant) <> 0) then
-        K.DeleteThread(TPSPThread(X));
-    end);
+  FKernel.AddStateTimer(FKernel.Scheduler.Now, nil, TPSPStateAction.Create(StateThreadDelete, [], [Id]));
+end;
+
+procedure TPSPLoader.StateThreadDelete(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var X := FKernel.ThreadById(Cardinal(Action.Arg(0)));
+  if (X <> nil) and ((X.Status and PSPThreadDormant) <> 0) then FKernel.DeleteThread(X);
 end;
 
 // A SceKernelSMOption's stack size, priority and attributes for a module's
@@ -921,43 +924,35 @@ begin
     WaitForModuleThread(T, M.UID, StatusPtr, 0)
   else
   begin
-    var K := FKernel;
-    T.OnExit := procedure(X: TPSPThread)
-      begin
-        ScheduleThreadDelete(K, X);
-      end;
+    T.ExitState := TPSPStateAction.Create(StateThreadExited, [], [T.UID, 0, 0, 0, 0]);
   end;
 end;
 
 procedure TPSPLoader.WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal; Linger: Int64);
 begin
   var Caller := FKernel.Current;
-  var K := FKernel;
-  var Mem := FMemory;
-  T.OnExit := procedure(X: TPSPThread)
-    begin
-      if StatusPtr <> 0 then
-        Mem.Write32(StatusPtr, X.ExitStatus);
-      ScheduleThreadDelete(K, X);
-      if Caller.IsWaiting and (Caller.Wait.HLETag = 'module') and (Caller.Wait.Id = X.UID) then
-      begin
-        // The module manager deletes the thread and tidies up before it returns.
-        if Linger > 0 then
-          K.AddTimer(K.Scheduler.Now + Linger, Caller,
-            procedure
-            begin
-              if Caller.IsWaiting and (Caller.Wait.HLETag = 'module') then
-                K.EndWait(Caller, Id);
-            end)
-        else
-          K.EndWait(Caller, Id);
-      end;
-    end;
+  T.ExitState := TPSPStateAction.Create(StateThreadExited, [], [T.UID, Caller.UID, Id, StatusPtr, Linger]);
   FKernel.BeginWait(PSPWaitThreadEnd, nil, T.UID, 0, False, StartRetry, nil, 'module');
   if Caller.Wait.HLETag = 'module' then
   begin
     Caller.Wait.Data[0] := StatusPtr;
     Caller.Wait.Data[1] := Id;
+  end;
+end;
+
+procedure TPSPLoader.StateThreadExited(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var StatusPtr := Cardinal(Action.Arg(3));
+  if StatusPtr <> 0 then FMemory.Write32(StatusPtr, Value);
+  var ThreadID := Cardinal(Action.Arg(0));
+  ScheduleThreadDelete(ThreadID);
+  var Caller := FKernel.ThreadById(Cardinal(Action.Arg(1)));
+  if (Caller <> nil) and Caller.IsWaiting and (Caller.Wait.HLETag = 'module') and
+    (Caller.Wait.Id = ThreadID) then
+  begin
+    if Action.Arg(4) > 0 then
+      FKernel.AddWakeTimer(FKernel.Scheduler.Now + Action.Arg(4), Caller, 'module', Cardinal(Action.Arg(2)))
+    else FKernel.EndWait(Caller, Cardinal(Action.Arg(2)));
   end;
 end;
 
@@ -978,25 +973,27 @@ begin
   var Latency := Int64(2000000) + Int64(Length(Data)) * 1000000000 div (8 * 1024 * 1024);
   FHLE.Result(0);
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, NoRetry, nil, 'loadmodule');
-  var L := Self;
-  FKernel.AddTimer(FKernel.Scheduler.Now + Latency, Caller,
-    procedure
-    begin
-      if not (Caller.IsWaiting and (Caller.Wait.HLETag = 'loadmodule')) then
-        Exit;
-      var M: TPSPModule;
-      var E := L.Load(Data, Path, M);
-      if E <> 0 then
-      begin
-        L.FHLE.Log('sceKernelLoadModule %s failed %.8x', [Path, E]);
-        L.FKernel.EndWait(Caller, E);
-      end
-      else
-      begin
-        L.FHLE.Log('sceKernelLoadModule %s -> %s %x', [Path, M.Name, M.UID]);
-        L.FKernel.EndWait(Caller, M.UID);
-      end;
-    end);
+  var A := TPSPStateAction.Create(StateLoad, [], [Caller.UID]);
+  A.Data := Data; A.Text := Path;
+  FKernel.AddStateTimer(FKernel.Scheduler.Now + Latency, Caller, A);
+end;
+
+procedure TPSPLoader.StateLoad(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var Caller := FKernel.ThreadById(Cardinal(Action.Arg(0)));
+  if (Caller = nil) or not Caller.IsWaiting or (Caller.Wait.HLETag <> 'loadmodule') then Exit;
+  var M: TPSPModule;
+  var E := Load(Action.Data, Action.Text, M);
+  if E <> 0 then
+  begin
+    FHLE.Log('sceKernelLoadModule %s failed %.8x', [Action.Text, E]);
+    FKernel.EndWait(Caller, E);
+  end
+  else
+  begin
+    FHLE.Log('sceKernelLoadModule %s -> %s %x', [Action.Text, M.Name, M.UID]);
+    FKernel.EndWait(Caller, M.UID);
+  end;
 end;
 
 procedure TPSPLoader.hLoadModule;
@@ -1154,14 +1151,8 @@ begin
   if FKernel.CanWait then
   begin
     var Caller := FKernel.Current;
-    var K := FKernel;
     FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, NoRetry, nil, 'unloadmodule');
-    FKernel.AddTimer(FKernel.Scheduler.Now + 300000, Caller,
-      procedure
-      begin
-        if Caller.IsWaiting and (Caller.Wait.HLETag = 'unloadmodule') then
-          K.EndWait(Caller, Id);
-      end);
+    FKernel.AddWakeTimer(FKernel.Scheduler.Now + 300000, Caller, 'unloadmodule', Id);
   end;
 end;
 

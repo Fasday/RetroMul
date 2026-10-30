@@ -6,6 +6,24 @@ uses
   System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, Core.Emulation.Types,
   PSP.Console, PSP.Media, PSP.GE, PSP.IO, Core.PSP.Renderer;
 
+function FrameInput(Frame: Integer): TEmulatorInput;
+  procedure Press(Button: TEmulatorButton; At: Integer);
+  begin
+    if (Frame >= At) and (Frame < At + 6) then Include(Result.Buttons, Button);
+  end;
+begin
+  Result := Default(TEmulatorInput);
+  Press(TEmulatorButton.Start, 650); Press(TEmulatorButton.B, 850);
+  if GetEnvironmentVariable('PSP_MH_SCENARIO') = '' then Exit;
+  for var F in [1150, 1450, 1750, 2750, 3050, 3450, 3850, 4250, 4650, 5050, 5450,
+    7500, 8000, 8500] do Press(TEmulatorButton.B, F);
+  for var F in [1820, 1860, 1900, 1940, 1980, 2020] do Press(TEmulatorButton.A, F);
+  Press(TEmulatorButton.Start, 2100); Press(TEmulatorButton.Start, 7000);
+  for var F in [2220, 2270, 2320, 2370, 2420, 2470, 2520] do Press(TEmulatorButton.Down, F);
+  Press(TEmulatorButton.Left, 2900); Press(TEmulatorButton.Left, 4450);
+  for var F := 0 to 19 do Press(TEmulatorButton.B, 14200 + F * 300);
+end;
+
 procedure GuestWrite(C: TPSPConsole; const Path, Text: RawByteString);
 const
   Buffer = $0BFF0000;
@@ -57,10 +75,7 @@ begin
       var Frame: TEmulatorFrame;
       for var I := 1 to StrToIntDef(ParamStr(4), 3) do
       begin
-        var Input := Default(TEmulatorInput);
-        if (I >= 650) and (I < 656) then Include(Input.Buttons, TEmulatorButton.Start);
-        if (I >= 850) and (I < 856) then Include(Input.Buttons, TEmulatorButton.B);
-        C.Input := Input;
+        C.Input := FrameInput(I);
         C.RunFrame(Frame);
       end;
       C.SaveDirectSnapshot(ParamStr(3));
@@ -103,10 +118,7 @@ begin
       var N := StrToInt(ParamStr(2));
       for var I := 1 to N do
       begin
-        var Input := Default(TEmulatorInput);
-        if (I >= 650) and (I < 656) then Include(Input.Buttons, TEmulatorButton.Start);
-        if (I >= 850) and (I < 856) then Include(Input.Buttons, TEmulatorButton.B);
-        C.Input := Input;
+        C.Input := FrameInput(I);
         C.RunFrame(Frame);
       end;
       var Path := TPath.Combine(Root, 'state.snapshot');

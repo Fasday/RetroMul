@@ -16,6 +16,12 @@ for scope in SCOPES:
             text = path.read_text(encoding='utf-8-sig')
             if re.search(r'\{\$(?:I|INCLUDE)\s+[^}]+\.(?:inc|pas)\s*\}', text, re.I):
                 bad.append(str(path.relative_to(ROOT)))
+for path in (ROOT / 'source/cores/psp').glob('*.pas'):
+    if path.name.startswith('PSP.State.') or path.name == 'PSP.Kernel.pas':
+        continue
+    text = path.read_text(encoding='utf-8-sig')
+    if re.search(r'\b(?:FKernel|K)\.AddTimer\s*\(|\.OnExit\s*:=\s*procedure', text):
+        bad.append(str(path.relative_to(ROOT)) + ' (opaque persistent callback)')
 if bad:
     raise SystemExit('Forbidden PSP includes: ' + ', '.join(bad))
-print('PASS PSP sources: no .inc files or disguised Pascal includes')
+print('PASS PSP sources: no .inc/disguised includes or opaque service timers/exit hooks')

@@ -26,9 +26,11 @@ type
     FClasses: TDictionary<string, TClass>;
     FNames: TDictionary<TClass, string>;
     FSkipped: TDictionary<TClass, TArray<string>>;
+    FOptional: TDictionary<TClass, TArray<string>>;
     FAliases: TDictionary<string, PTypeInfo>;
     FPlain: TDictionary<PTypeInfo, Boolean>;
     FNative: TDictionary<TClass, TPSPGraphNative>;
+    FFactories: TDictionary<TClass, TPSPGraphFactory>;
     FVisited: TDictionary<PTypeInfo, Boolean>;
     FContext: TRttiContext;
     function AliasKey(Owner: TRttiType; const Name: string): string;
@@ -37,10 +39,15 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure AddClass(C: TClass; const Skip: array of string);
+    procedure Optional(C: TClass; const Names: array of string);
+    function IsOptional(C: TClass; const Name: string): Boolean;
     procedure AddPublicTypes(const Prefixes: array of string);
     procedure Alias(Owner: PTypeInfo; const Field: string; Info: PTypeInfo);
     procedure Plain(Info: PTypeInfo);
     procedure Native(C: TClass; const Factory: TPSPGraphFactory; const Transfer: TPSPGraphTransfer);
+    procedure Factory(C: TClass; const CreateInstance: TPSPGraphFactory);
+    function HasFactory(C: TClass): Boolean;
+    function CreateData(C: TClass): TObject;
     function IsNative(C: TClass): Boolean;
     function NewNative(C: TClass): TObject;
     procedure TransferNative(Instance: TObject; State: TStateArchive);
@@ -68,6 +75,7 @@ type
       Kind: Byte;
       Ownership: Byte;
       Created: Boolean;
+      Constructed: Boolean;
       constructor Create;
       destructor Destroy; override;
     end;
@@ -163,15 +171,17 @@ begin
   FClasses := TDictionary<string, TClass>.Create;
   FNames := TDictionary<TClass, string>.Create;
   FSkipped := TDictionary<TClass, TArray<string>>.Create;
+  FOptional := TDictionary<TClass, TArray<string>>.Create;
   FAliases := TDictionary<string, PTypeInfo>.Create;
   FPlain := TDictionary<PTypeInfo, Boolean>.Create;
   FNative := TDictionary<TClass, TPSPGraphNative>.Create;
+  FFactories := TDictionary<TClass, TPSPGraphFactory>.Create;
   FVisited := TDictionary<PTypeInfo, Boolean>.Create;
 end;
 
 destructor TPSPGraphSchema.Destroy;
 begin
-  FVisited.Free; FNative.Free; FPlain.Free; FAliases.Free; FSkipped.Free; FNames.Free; FClasses.Free;
+  FVisited.Free; FFactories.Free; FNative.Free; FPlain.Free; FAliases.Free; FOptional.Free; FSkipped.Free; FNames.Free; FClasses.Free;
   FContext.Free;
   inherited;
 end;
@@ -197,7 +207,13 @@ begin
   if T is TRttiInstanceType then
   begin
     var C := TRttiInstanceType(T).MetaclassType;
-    if not FNames.ContainsKey(C) and not CollectionClass(C) then Exit;
+    if not FNames.ContainsKey(C) and not CollectionClass(C) then
+    begin
+      // Reference-picture classes are private nested codec data types. Admit
+      // them only when reached through an already admitted AVC field schema.
+      if C.UnitName.StartsWith('Video.AVC.') then AddClass(C, []) else Exit;
+      Exit;
+    end;
     FVisited.Add(Info, True);
     if CollectionClass(C) and not FNames.ContainsKey(C) then AddClass(C, []);
     for var F in T.GetFields do if F.FieldType <> nil then AdmitContainers(F.FieldType.Handle);
@@ -210,6 +226,25 @@ begin
     else if T.TypeKind in [tkRecord, tkMRecord] then
       for var F in T.GetFields do if F.FieldType <> nil then AdmitContainers(F.FieldType.Handle);
   end;
+end;
+
+procedure TPSPGraphSchema.Optional(C: TClass; const Names: array of string);
+begin
+  var Values: TArray<string> := nil;
+  for var N in Names do Values := Values + [N];
+  FOptional.AddOrSetValue(C, Values);
+end;
+
+function TPSPGraphSchema.IsOptional(C: TClass; const Name: string): Boolean;
+begin
+  while C <> nil do
+  begin
+    var Names: TArray<string>;
+    if FOptional.TryGetValue(C, Names) then
+      for var N in Names do if N = Name then Exit(True);
+    C := C.ClassParent;
+  end;
+  Result := False;
 end;
 
 procedure TPSPGraphSchema.AddPublicTypes(const Prefixes: array of string);
@@ -250,6 +285,15 @@ begin
   Spec.Factory := Factory; Spec.Transfer := Transfer;
   FNative.AddOrSetValue(C, Spec);
 end;
+
+procedure TPSPGraphSchema.Factory(C: TClass; const CreateInstance: TPSPGraphFactory);
+begin FFactories.AddOrSetValue(C, CreateInstance); end;
+
+function TPSPGraphSchema.HasFactory(C: TClass): Boolean;
+begin Result := FFactories.ContainsKey(C); end;
+
+function TPSPGraphSchema.CreateData(C: TClass): TObject;
+begin Result := FFactories[C](); end;
 
 function TPSPGraphSchema.IsNative(C: TClass): Boolean;
 begin Result := FNative.ContainsKey(C); end;
@@ -411,6 +455,8 @@ end;
 function TPSPGraph.ObjectID(O: TObject): Cardinal;
 begin
   if O = nil then Exit(0);
+  if (NativeUInt(O) < $10000) or (NativeUInt(O) > NativeUInt(High(NativeInt))) then
+    raise EPSPStateOpaque.Create('Invalid transient object reference at ' + FPath);
   if FIDs.TryGetValue(O, Result) then Exit;
   if FNodes.Count >= MaxNodes then raise EReadError.Create('Too many direct-state objects');
   var Node := TNode.Create;
@@ -733,14 +779,24 @@ begin
         var Fs := Fields(Node);
         var N := Cardinal(Length(Fs));
         U32(N);
-        if N <> Cardinal(Length(Fs)) then raise EReadError.Create('Incompatible direct-state object fields: ' + Node.Name);
+        if N > Cardinal(Length(Fs)) then raise EReadError.Create('Incompatible direct-state object fields: ' + Node.Name);
         if FLoading then Node.Fields.Capacity := N;
-        for var F in Fs do
+        var Seen := TDictionary<TRttiField, Boolean>.Create;
+        try
+        for var I := 0 to Integer(N) - 1 do
         begin
+          var F := Fs[I];
           var Name := F.Parent.Name + '.' + F.Name;
           var Stored := Name;
           Text(Stored);
-          if Stored <> Name then raise EReadError.Create('Incompatible direct-state field: ' + Stored);
+          if FLoading then
+          begin
+            F := nil;
+            for var Candidate in Fs do
+              if Candidate.Parent.Name + '.' + Candidate.Name = Stored then begin F := Candidate; Break; end;
+            if (F = nil) or Seen.ContainsKey(F) then raise EReadError.Create('Incompatible direct-state field: ' + Stored);
+          end;
+          Seen.Add(F, True);
           var Info := FSchema.FieldInfo(F);
           FPath := Node.Name + '.' + F.Name;
           if FLoading then
@@ -753,6 +809,10 @@ begin
           end
           else TransferValue(Info, PByte(Node.Instance) + F.Offset);
         end;
+        if FLoading then for var F in Fs do
+          if not Seen.ContainsKey(F) and not FSchema.IsOptional(Node.Instance.ClassType, F.Name) then
+            raise EReadError.Create('Missing direct-state field: ' + F.Name);
+        finally Seen.Free; end;
       end;
     nkCollection:
       begin
@@ -1053,6 +1113,7 @@ begin
   if (Count < BindingCount) or (Count > MaxNodes) then raise EReadError.Create('Invalid direct-state object count');
   var Created := TList<TObject>.Create;
   var Old := TList<TObject>.Create;
+  var OldConstructed := TList<TObject>.Create;
   var Seen := TDictionary<TObject, Boolean>.Create;
   var Applying := False;
   var Committed := False;
@@ -1085,8 +1146,13 @@ begin
           nkNative: Node.Instance := FSchema.NewNative(C);
         else
           begin
-            Node.Instance := C.NewInstance;
-            if Node.Instance is TInterfacedObject then Node.Instance.AfterConstruction;
+            Node.Constructed := FSchema.HasFactory(C);
+            if Node.Constructed then Node.Instance := FSchema.CreateData(C)
+            else
+            begin
+              Node.Instance := C.NewInstance;
+              if Node.Instance is TInterfacedObject then Node.Instance.AfterConstruction;
+            end;
           end;
         end;
         if Node.Instance <> nil then Created.Add(Node.Instance);
@@ -1104,12 +1170,16 @@ begin
         TValue.Make(PByte(FNodes[I].Instance) + Cell.Field.Offset, Cell.Info, Backup.Value);
         FNodes[I].Backup.Add(Backup);
       end;
-    for var I := 0 to Integer(BindingCount) - 1 do
-      for var F in Fields(FNodes[I]) do
+    for var Node in FNodes do
+      if Node.Binding <> '' then
+      for var Cell in Node.Fields do
       begin
-        var Info := FSchema.FieldInfo(F);
-        CollectOldValue(Info, PByte(FNodes[I].Instance) + F.Offset, Seen, Old);
+        CollectOldValue(Cell.Info, PByte(Node.Instance) + Cell.Field.Offset, Seen, Old);
       end;
+    for var Node in FNodes do
+      if Node.Constructed then
+        for var Cell in Node.Fields do
+          CollectOldValue(Cell.Info, PByte(Node.Instance) + Cell.Field.Offset, Seen, OldConstructed);
     Applying := True;
     for var Node in FNodes do
       for var Cell in Node.Fields do
@@ -1118,8 +1188,11 @@ begin
       end;
     for var Node in FNodes do if Node.Kind = nkCollection then FillCollection(Node);
     Committed := True;
-    for var I := 0 to Integer(BindingCount) - 1 do FNodes[I].Backup.Clear;
+    // A bound interface may be the old graph's last owner. Keep the backups
+    // alive until ReleaseObjects has leased its continuations and cleared links.
     ReleaseObjects(Old);
+    ReleaseObjects(OldConstructed);
+    for var I := 0 to Integer(BindingCount) - 1 do FNodes[I].Backup.Clear;
   finally
     if not Committed then
     begin
@@ -1128,8 +1201,9 @@ begin
           for var Backup in FNodes[I].Backup do Assign(Backup, FNodes[I].Instance);
       // Staged interface values retain continuations until their links clear.
       ReleaseObjects(Created, Applying);
+      if Applying then ReleaseObjects(OldConstructed);
     end;
-    Seen.Free; Old.Free; Created.Free;
+    Seen.Free; OldConstructed.Free; Old.Free; Created.Free;
   end;
 end;
 

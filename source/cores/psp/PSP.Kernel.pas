@@ -1552,6 +1552,8 @@ end;
 
 function TPSPKernel.AddTimer(At: Int64; Owner: TObject; const Event: TPSPTimerEvent): Int64;
 begin
+  if Assigned(Event) then
+    raise EInvalidOpException.Create('PSP timers require an explicit state action');
   var E := Default(TPSPTimer);
   E.At := At;
   Inc(FTimerSeq);
@@ -1670,6 +1672,8 @@ end;
 procedure TPSPKernel.CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal;
   const ReturnState: IPSPStateAction);
 begin
+  if Assigned(OnReturn) then
+    raise EInvalidOpException.Create('PSP guest returns require an explicit state action');
   if InInterrupt then
   begin
     // Nested call inside an interrupt handler.
@@ -1938,6 +1942,8 @@ end;
 procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn;
   EntryNs: Int64; OwnerUID: Cardinal; const ReturnState: IPSPStateAction);
 begin
+  if Assigned(OnReturn) then
+    raise EInvalidOpException.Create('PSP interrupt returns require an explicit state action');
   var P := Default(TPSPPendingInterrupt);
   P.Func := Func;
   if Length(Args) > 0 then P.A0 := Args[0];
@@ -1970,6 +1976,8 @@ end;
 function TPSPKernel.QueueSubInterrupts(IntNo: Integer; Arg2: Cardinal; const Done: TProc;
   const StateDone: IPSPStateAction): Integer;
 begin
+  if Assigned(Done) then
+    raise EInvalidOpException.Create('PSP sub-interrupt completion requires an explicit state action');
   Result := 0;
   if (IntNo < 0) or (IntNo > High(FSubIntr)) then
     Exit;
@@ -1985,15 +1993,7 @@ begin
     Inc(Result);
     if S = Last then
     begin
-      if StateDone <> nil then
-        QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP, nil, 0, 0, StateDone)
-      else
-      QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP,
-        procedure(Value: Cardinal)
-        begin
-          if Assigned(Done) then
-            Done();
-        end);
+      QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP, nil, 0, 0, StateDone);
     end
     else
       QueueInterrupt(H.Handler, [Cardinal(S), H.Arg, Arg2], H.GP);

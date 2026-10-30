@@ -12,7 +12,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE,
-  PSP.Kernel, PSP.Scheduler, PSP.Service;
+  PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.State.Action;
 
 const
   PSPDialogNone = 0;
@@ -74,7 +74,8 @@ type
     function Dialog(Kind: TPSPDialogType): TPSPDialog; inline;
     function Busy: Boolean;
     procedure Yield(Us: Cardinal);
-    procedure At(Delay: Int64; D: TPSPDialog; const Event: TPSPTimerEvent);
+    procedure At(Delay: Int64; D: TPSPDialog; Phase: Integer);
+    procedure StateDialog(Action: TPSPStateAction; Value: Cardinal);
     procedure EnterRunning(D: TPSPDialog);
     procedure Finish(D: TPSPDialog);
     procedure InitStart(Kind: TPSPDialogType; const Sizes: array of Cardinal);
@@ -846,12 +847,7 @@ begin
   D.Size := Size;
   D.Updates := 0;
   FHLE.Result(0);
-  At(SavedataInitNs, D,
-    procedure
-    begin
-      if D.Status = PSPDialogInit then
-        D.Status := PSPDialogRunning;
-    end);
+  At(SavedataInitNs, D, 3);
 end;
 
 procedure TPSPUtility.hHtmlGetStatus;
@@ -885,17 +881,7 @@ begin
     begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
   FHLE.Result(0);
   D.Status := PSPDialogShutdown;
-  At(DialogShutdownNs, D,
-    procedure
-    begin
-      if D.Status = PSPDialogShutdown then
-      begin
-        D.Status := PSPDialogNone;
-        if FHtmlMemory <> 0 then
-          FKernel.UserPartition.FreeBlock(FHtmlMemory);
-        FHtmlMemory := 0;
-      end;
-    end);
+  At(DialogShutdownNs, D, 4);
 end;
 
 { System parameters }
@@ -2168,9 +2154,27 @@ begin
   FKernel.BeginWait(PSPWaitDelay, nil, 0, FDelayWord, False, nil, nil, 'utility');
 end;
 
-procedure TPSPUtility.At(Delay: Int64; D: TPSPDialog; const Event: TPSPTimerEvent);
+procedure TPSPUtility.At(Delay: Int64; D: TPSPDialog; Phase: Integer);
 begin
-  FKernel.AddTimer(FKernel.Scheduler.Now + Delay, D, Event);
+  FKernel.AddStateTimer(FKernel.Scheduler.Now + Delay, D, TPSPStateAction.Create(StateDialog, [D], [Phase]));
+end;
+
+procedure TPSPUtility.StateDialog(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var D := TPSPDialog(Action.Obj(0));
+  case Action.Arg(0) of
+    0: EnterRunning(D);
+    1: if D.Pumped then EnterRunning(D);
+    2: if D.Status = PSPDialogShutdown then D.Status := PSPDialogNone;
+    3: if D.Status = PSPDialogInit then D.Status := PSPDialogRunning;
+    4: if D.Status = PSPDialogShutdown then
+      begin
+        D.Status := PSPDialogNone;
+        if FHtmlMemory <> 0 then FKernel.UserPartition.FreeBlock(FHtmlMemory);
+        FHtmlMemory := 0;
+      end;
+  else raise EReadError.Create('Invalid utility state phase');
+  end;
 end;
 
 procedure TPSPUtility.EnterRunning(D: TPSPDialog);
@@ -2228,24 +2232,11 @@ begin
     dtMsg:
       begin
         CheckMsgParams(D);
-        At(MsgPumpedInitNs, D,
-          procedure
-          begin
-            if D.Pumped then
-              EnterRunning(D);
-          end);
-        At(MsgInitNs, D,
-          procedure
-          begin
-            EnterRunning(D);
-          end);
+        At(MsgPumpedInitNs, D, 1);
+        At(MsgInitNs, D, 0);
       end;
   else
-    At(SavedataInitNs, D,
-      procedure
-      begin
-        EnterRunning(D);
-      end);
+    At(SavedataInitNs, D, 0);
   end;
 end;
 
@@ -2296,12 +2287,7 @@ begin
   else
     // Its threads spend part of the shutdown computing.
     Work(D, DialogShutdownWorkNs);
-  At(Delay, D,
-    procedure
-    begin
-      if D.Status = PSPDialogShutdown then
-        D.Status := PSPDialogNone;
-    end);
+  At(Delay, D, 2);
 end;
 
 procedure TPSPUtility.Step(D: TPSPDialog);

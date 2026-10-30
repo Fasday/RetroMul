@@ -18,7 +18,8 @@ uses
   PSP.CPU, PSP.Memory, PSP.Kernel, PSP.Scheduler, PSP.HLE, PSP.IO, PSP.Loader,
   PSP.Display, PSP.Service, PSP.Audio, PSP.Font, PSP.GE, PSP.GE.Types, PSP.GE.Engine,
   PSP.SAS, PSP.SysLibs, PSP.Misc, PSP.MP3, PSP.Mpeg, PSP.MpegDemux, PSP.MpegVideo,
-  PSP.Jpeg, PSP.Net, PSP.Utility, PSP.Videocodec, Audio.MP3.Layer3, Core.Snapshots;
+  PSP.Jpeg, PSP.Net, PSP.Utility, PSP.Videocodec, Audio.MP3.Layer3, Core.Snapshots, PSP.State.Action,
+  Video.AVC.H264, Video.AVC.H264.Syntax, Video.AVC.Types, FMXAudio.Transform;
 
 type
   TU32x2 = array[0..1] of Cardinal;
@@ -28,6 +29,7 @@ type
   TU32x16 = array[0..15] of Cardinal;
   TU32x32 = array[0..31] of Cardinal;
   TI32x4 = array[0..3] of Integer;
+  TI32x3 = array[0..2] of Integer;
   TI16x28 = array[0..27] of SmallInt;
   TByte2 = array[0..1] of Byte;
   TByte4 = array[0..3] of Byte;
@@ -65,9 +67,11 @@ begin
   try
     Result.AddPublicTypes(['PSP.', 'Audio.ATRAC3', 'Audio.MP3', 'Audio.MPEG', 'Video.AVC']);
     RegisterPSPKernelStateTypes(Result);
+    Result.Optional(TPSPStateAction, ['Failure', 'Arrays', 'Buffers', 'Texts', 'Results', 'Owned']);
     Result.AddClass(TMemoryStream, []);
     Result.AddClass(TFileStream, []);
     Result.AddClass(TStringBuilder, []);
+    Result.AddClass(TInverseMDCT, []);
     Result.AddClass(TObjectDictionary<string, TDictionary<Cardinal, Cardinal>>, []);
     Result.Native(TMP3Layer3Decoder,
       function: TObject begin Result := TMP3Layer3Decoder.Create; end,
@@ -81,6 +85,13 @@ begin
     Result.AddClass(TPSPLoader, ['FOnLoadExec']);
     Result.AddClass(TPSPSystem, ['FlashRoot', 'FontDirectory', 'Services']);
     Result.AddClass(TPSPUtility, ['FView', 'FSoftwareView']);
+    // Slice-local readers and reference-list workspaces can retain sentinels
+    // or removed pictures. The next access unit builds them from the DPB.
+    Result.AddClass(TH264Decoder, ['FBits', 'FCABAC', 'FRemoveRefs', 'FPromoteRefs',
+      'FPromoteIndexes', 'FRefList', 'FRefList1']);
+    Result.Factory(TH264Decoder, function: TObject begin Result := TH264Decoder.Create; end);
+    Result.Plain(TypeInfo(TH264SPS));
+    Result.Plain(TypeInfo(TH264PPS));
 
     Result.Plain(TypeInfo(TPSPContext));
     Result.Plain(TypeInfo(TEmulatorInput));
@@ -120,6 +131,8 @@ begin
     Result.Alias(TypeInfo(TPSPSasVoice), 'VagSamples', TypeInfo(TI16x28));
     Result.Alias(TPSPUtility.ClassInfo, 'FDialogs', TypeInfo(TDialogs));
     Result.Alias(TypeInfo(TPSPJpegImage), 'Planes', TypeInfo(TJpegPlanes));
+    Result.Alias(TypeInfo(TVideoFrame), 'Planes', TypeInfo(TJpegPlanes));
+    Result.Alias(TypeInfo(TVideoFrame), 'Strides', TypeInfo(TI32x3));
     Result.Alias(TPSPMp3FrameDecoder.ClassInfo, 'FLastHeader', TypeInfo(TByte4));
     Result.Alias(TPSPMp3.ClassInfo, 'FHandles', TypeInfo(TMp3Handles));
     Result.Alias(TPSPMpegInstance.ClassInfo, 'EsBufs', TypeInfo(TMpegEsBuffers));

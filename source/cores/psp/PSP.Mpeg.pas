@@ -11,7 +11,7 @@ interface
 
 uses
   System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, PSP.MpegDemux, PSP.MpegVideo, Audio.ATRAC3Plus;
+  PSP.Scheduler, PSP.Service, PSP.MpegDemux, PSP.MpegVideo, Audio.ATRAC3Plus, PSP.State.Action;
 
 const
   ERROR_MPEG_NO_DATA = Cardinal($80618001);
@@ -82,6 +82,7 @@ type
     function FillQueue(Inst: TPSPMpegInstance; Q: TPSPEsQueue): Boolean;
     procedure WriteAu(Address: Cardinal; const Au: TPSPAccessUnit; EsBuffer: Cardinal; WriteEs: Boolean);
     procedure PutStep(Rb, Remaining, Done: Cardinal);
+    procedure StateRingRead(Action: TPSPStateAction; Value: Cardinal);
     function DecodeAu(Inst: TPSPMpegInstance; AuPtr: Cardinal; out Pictures: TArray<TPSPPicture>): Cardinal;
     procedure InitYCbCr(Buf: Cardinal; W, H: Integer);
     procedure WriteYCbCr(const Pic: TPSPPicture; Buf: Cardinal);
@@ -509,27 +510,22 @@ begin
   var Data := Cardinal(Int64(FMemory.Read32(Rb + $14)) + Int64(Write) * PSMFPacketSize);
   var Arg := FMemory.Read32(Rb + $1C);
   var GP := FMemory.Read32(Rb + $2C);
-  FKernel.CallGuest(Callback, [Data, Cardinal(Chunk), Arg],
-    procedure(Ret: Cardinal)
-    begin
-      var R := Integer(Ret);
-      if R < 0 then
-      begin
-        FHLE.CPU.Ctx.GPR[2] := Ret;
-        Exit;
-      end;
-      if R = 0 then
-      begin
-        FHLE.CPU.Ctx.GPR[2] := Done;
-        Exit;
-      end;
-      if R > Chunk then
-        R := Chunk;
-      var W := (Write + R) mod Total;
-      FMemory.Write32(Rb + 8, Cardinal(W));
-      FMemory.Write32(Rb + $0C, Cardinal(Int64(FMemory.Read32(Rb + $0C)) + R));
-      PutStep(Rb, Remaining - Cardinal(R), Done + Cardinal(R));
-    end, GP);
+  FKernel.CallGuest(Callback, [Data, Cardinal(Chunk), Arg], nil, GP,
+    TPSPStateAction.Create(StateRingRead, [], [Rb, Remaining, Done, Write, Total, Chunk]));
+end;
+
+procedure TPSPMpeg.StateRingRead(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var R := Integer(Value);
+  if R < 0 then begin FHLE.CPU.Ctx.GPR[2] := Value; Exit; end;
+  var Done := Cardinal(Action.Arg(2));
+  if R = 0 then begin FHLE.CPU.Ctx.GPR[2] := Done; Exit; end;
+  R := Min(R, Integer(Action.Arg(5)));
+  var Rb := Cardinal(Action.Arg(0));
+  var W := (Integer(Action.Arg(3)) + R) mod Integer(Action.Arg(4));
+  FMemory.Write32(Rb + 8, Cardinal(W));
+  FMemory.Write32(Rb + $0C, Cardinal(Int64(FMemory.Read32(Rb + $0C)) + R));
+  PutStep(Rb, Cardinal(Action.Arg(1)) - Cardinal(R), Done + Cardinal(R));
 end;
 
 procedure TPSPMpeg.hRingbufferPut;

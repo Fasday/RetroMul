@@ -79,6 +79,9 @@ type
     procedure StartAsync(F: TPSPOpenFile; Result: Int64; Latency: Int64);
     procedure FinishAsync(F: TPSPOpenFile);
     procedure StateAsyncDone(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateDriverDeleted(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateDriverOpened(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateDriverReturned(Action: TPSPStateAction; Value: Cardinal);
     function AsyncRetry(T: TPSPThread): Boolean;
     procedure AsyncAbort(T: TPSPThread);
     procedure WaitAsync(AllowCB: Boolean);
@@ -944,13 +947,15 @@ begin
   var ExitFunc := FMemory.Read32(D.Funcs + 4);
   FHLE.Result(0);
   if ExitFunc <> 0 then
-    K.CallGuest(ExitFunc, [D.Arg],
-      procedure(Ret: Cardinal)
-      begin
-        K.KernelPartition.FreeBlock(D.Arg);
-      end, D.GP)
+    K.CallGuest(ExitFunc, [D.Arg], nil, D.GP,
+      TPSPStateAction.Create(StateDriverDeleted, [], [D.Arg]))
   else
     K.KernelPartition.FreeBlock(D.Arg);
+end;
+
+procedure TPSPIO.StateDriverDeleted(Action: TPSPStateAction; Value: Cardinal);
+begin
+  FKernel.KernelPartition.FreeBlock(Cardinal(Action.Arg(0)));
 end;
 
 function TPSPIO.OpenGuestDriver(const Path: string; Flags, Mode: Cardinal): Boolean;
@@ -997,24 +1002,26 @@ begin
   F.GuestFuncs := D.Funcs;
   F.GuestGP := D.GP;
   FFiles.Add(F.Id, F);
-  var IO := Self;
   // IoOpen sees the access mask, with create granting read/write access.
   var Access := Flags and 3;
   if (Flags and PSP_O_CREAT) <> 0 then
     Access := Access or 5;
-  FKernel.CallGuest(OpenFunc, [Arg, Arg + $20, Access, Mode],
-    procedure(Ret: Cardinal)
-    begin
-      if Integer(Ret) < 0 then
-      begin
-        IO.FFiles.Remove(F.Id);
-        IO.FKernel.KernelPartition.FreeBlock(Arg);
-        F.Free;
-        IO.FHLE.Result(Ret);
-      end
-      else
-        IO.FHLE.Result(Cardinal(F.Id));
-    end, D.GP);
+  FKernel.CallGuest(OpenFunc, [Arg, Arg + $20, Access, Mode], nil, D.GP,
+    TPSPStateAction.Create(StateDriverOpened, [], [F.Id, Arg]));
+end;
+
+procedure TPSPIO.StateDriverOpened(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var F := GetFile(Cardinal(Action.Arg(0)));
+  if F = nil then begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if Integer(Value) < 0 then
+  begin
+    FFiles.Remove(F.Id);
+    FKernel.KernelPartition.FreeBlock(Cardinal(Action.Arg(1)));
+    F.Free;
+    FHLE.Result(Value);
+  end
+  else FHLE.Result(Cardinal(F.Id));
 end;
 
 function TPSPIO.CallFileDriver(F: TPSPOpenFile; Slot: Integer; const Args: array of Cardinal): Boolean;
@@ -1032,18 +1039,20 @@ begin
   Data[0] := F.GuestArg;
   for var I := 0 to High(Args) do
     Data[I + 1] := Args[I];
-  var IO := Self;
-  FKernel.CallGuest(Func, Data,
-    procedure(Ret: Cardinal)
-    begin
-      IO.FHLE.Result(Ret);
-      if (Slot = 3) and (Ret = 0) then
-      begin
-        IO.FFiles.Remove(F.Id);
-        IO.FKernel.KernelPartition.FreeBlock(F.GuestArg);
-        F.Free;
-      end;
-    end, F.GuestGP);
+  FKernel.CallGuest(Func, Data, nil, F.GuestGP,
+    TPSPStateAction.Create(StateDriverReturned, [], [F.Id, Slot]));
+end;
+
+procedure TPSPIO.StateDriverReturned(Action: TPSPStateAction; Value: Cardinal);
+begin
+  FHLE.Result(Value);
+  var F := GetFile(Cardinal(Action.Arg(0)));
+  if (F <> nil) and (Action.Arg(1) = 3) and (Value = 0) then
+  begin
+    FFiles.Remove(F.Id);
+    FKernel.KernelPartition.FreeBlock(F.GuestArg);
+    F.Free;
+  end;
 end;
 
 

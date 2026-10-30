@@ -80,18 +80,18 @@ report its results separately. Never change expected images to match a renderer.
 compares stdout, all screenshots and final VRAM; tests without GPU draws are
 reported separately. Frame hashes alone do not verify all CPU state.
 
-The current direct-state/IO verification run passes 535/638 hardware tests, with identical
+The current direct-only continuation run passes 535/638 hardware tests, with identical
 JIT/pool and interpreter/serial reports. See
-[the direct-state report](../../../tests/cores/psp/run/DIRECT-STATES.md).
+[the continuation report](../../../tests/cores/psp/run/CONTINUATIONS.md).
 
 ## Known gaps and provenance
 
-- Save states first use a separately validated direct memory/object-graph format,
-  without executing guest history. Still-opaque operations can use the older
-  compatibility reconstruction format when a history exists. Loading remains
-  cancellable; current filesystem capture is bounded to 48 MiB. Host pointers
-  and closures are never dumped. See
-  [direct-state verification and limitations](../../../tests/cores/psp/run/DIRECT-STATES.md).
+- New save states use only the separately validated direct memory/object-graph
+  format. Persistent HLE callbacks are explicit actions; controller history is
+  not recorded or replayed. Older reconstruction states remain importable.
+  Loading remains cancellable; filesystem capture is still bounded to 48 MiB.
+  Host pointers and closures are never dumped. See
+  [continuation verification and limitations](../../../tests/cores/psp/run/CONTINUATIONS.md).
   In-game memory-stick saves remain a separate feature.
 - PGD-protected files and unsupported PRX tags can prevent game loading.
 - Some VFPU functions and GE precision/timing still differ from hardware.

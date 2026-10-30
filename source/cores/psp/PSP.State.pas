@@ -38,6 +38,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Capture(const Roots: TPSPStateRoots);
+    procedure TrackRoots(const Roots: TPSPStateRoots);
     procedure Materialize(const OriginalRoots: TPSPStateRoots);
     procedure HostChanged(const Name: string; Time: TDateTime; Created: Boolean = False; Tree: Boolean = False);
     procedure RecordInput(const Input: TEmulatorInput);
@@ -217,6 +218,13 @@ begin
     Archive.Free;
     Raw.Free;
   end;
+end;
+
+procedure TPSPReplayState.TrackRoots(const Roots: TPSPStateRoots);
+begin
+  FRoots := Roots;
+  Settings := PSPSettings;
+  CaptureError := '';
 end;
 
 procedure TPSPReplayState.Materialize(const OriginalRoots: TPSPStateRoots);
