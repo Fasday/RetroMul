@@ -2494,7 +2494,9 @@ end;
 
 procedure TPSPKernel.hTerminateThread;
 begin
-  if InInterrupt then
+  // Interrupt handlers of programs built before 3.x may still terminate a
+  // thread (recorded up to 2.08); starting one is refused regardless.
+  if InInterrupt and (FCompiledSdkVersion >= $03000000) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then

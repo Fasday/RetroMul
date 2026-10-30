@@ -357,13 +357,11 @@ begin
   var Base := FCwd;
   if Base = '' then
     Base := 'disc0:/';
-  if Path.StartsWith('/') then
-  begin
-    var Dev, Rest: string;
-    Split(Base, Dev, Rest);
-    Result := Dev + ':' + Path;
-  end
-  else if Base.EndsWith('/') then
+  // A path without a device always continues the current directory, even
+  // one starting with a slash; only a doubled slash is merged.
+  if Base.EndsWith('/') and Path.StartsWith('/') then
+    Result := Base + Path.Substring(1)
+  else if Base.EndsWith('/') or Base.EndsWith(':') or Path.StartsWith('/') then
     Result := Base + Path
   else
     Result := Base + '/' + Path;
@@ -1866,7 +1864,9 @@ begin
     dkHost:
       begin
         var Name := HostPath(Dev, Rest);
-        if not DirectoryExists(Name) then
+        var Exists := DirectoryExists(Name);
+        // A mounted device's root is there even when no host files back it.
+        if not Exists and ((Name = '') or (NormalizeRest(Rest) <> '/')) then
         begin
           F.Free;
           begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
@@ -1875,6 +1875,16 @@ begin
         var Dot := Default(TPSPDiscEntry);
         Dot.Name := '.';
         Dot.Directory := True;
+        if not Exists then
+        begin
+          F.Entries := [Dot];
+          Dot.Name := '..';
+          F.Entries := F.Entries + [Dot];
+          F.Id := AllocFd;
+          FFiles.Add(F.Id, F);
+          FHLE.Result(Cardinal(F.Id));
+          Exit;
+        end;
         Dot.Modified := TDirectory.GetLastWriteTime(Name);
         var DotDot := Dot;
         DotDot.Name := '..';

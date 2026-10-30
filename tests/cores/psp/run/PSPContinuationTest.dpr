@@ -675,6 +675,46 @@ begin
   finally D.Free; C.Free; end;
 end;
 
+procedure CwdCases(const P: TPSPProgram; const Root: string);
+  function Finish(C: TPSPConsole; R: Cardinal): Cardinal;
+  begin
+    Result := R;
+    if not C.Kernel.Current.IsWaiting then Exit;
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 1000000);
+    Result := C.CPU.Ctx.GPR[2];
+  end;
+  function Path(C: TPSPConsole; const Name, Fn: string; Extra: Cardinal = 0): Cardinal;
+  begin
+    C.Memory.WriteString(Params, RawByteString(Name), 128);
+    Result := Finish(C, Call(C, Fn, [Params, Extra]));
+  end;
+begin
+  var Host := TPath.Combine(Root, 'cwd-host');
+  TDirectory.CreateDirectory(Host);
+  var C := CreateConsole(P, Host);
+  try
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    Require(Path(C, 'ms0:/PSP/', 'sceIoChdir') = 0, 'Card directory change failed');
+    Require(Path(C, '/SAVEDATA', 'sceIoGetstat', Pixels) = 0,
+      'A slash-led path without a device did not continue the current directory');
+    Require(Path(C, '/PSP', 'sceIoChdir') = 0, 'A directory change checked the directory before use');
+    Require(Path(C, '.', 'sceIoDopen') = $80010002, 'The continued missing directory was opened');
+    Require(Path(C, '/', 'sceIoChdir') = 0, 'A root-only continuation was refused');
+    Require(Path(C, '.', 'sceIoDopen') = $80010002, 'A trailing slash returned to the card root');
+    Require(Path(C, 'flash0:/', 'sceIoChdir') = 0, 'Flash directory change failed');
+    var Fd := Path(C, '.', 'sceIoDopen');
+    Require(Fd < $80000000, 'The mounted flash root was missing without host files');
+    Require((Call(C, 'sceIoDread', [Fd, Pixels]) = 1) and (C.Memory.ReadString(Pixels + $58, 8) = '.'),
+      'The flash root did not list its current-directory entry');
+    Require((Call(C, 'sceIoDread', [Fd, Pixels]) = 1) and (C.Memory.ReadString(Pixels + $58, 8) = '..') and
+      (Call(C, 'sceIoDread', [Fd, Pixels]) = 0), 'The empty flash root listed host data');
+    Call(C, 'sceIoDclose', [Fd]);
+    Require(Path(C, 'flash0:/missing', 'sceIoDopen') = $80010002, 'A missing flash directory was invented');
+    Writeln('PASS device-less paths continue the current directory; mounted flash root exists');
+  finally C.Free; end;
+end;
+
 begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
@@ -689,6 +729,7 @@ begin
       ScanClockCases(P, Root);
       SyncWriteCases(P, Root);
       MemstickCases(P, Root);
+      CwdCases(P, Root);
     finally TDirectory.Delete(Root, True); end;
   except
     on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;
