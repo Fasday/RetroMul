@@ -536,12 +536,7 @@ begin
   if T.Wait.HLETag <> 'jpeg' then
     Exit;
   T.Wait.Data[0] := Value;
-  FKernel.AddTimer(FKernel.Scheduler.Now + Us * 1000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'jpeg') then
-        FKernel.EndWait(T, T.Wait.Data[0]);
-    end);
+  FKernel.AddWakeTimer(FKernel.Scheduler.Now + Us * 1000, T, 'jpeg', Value, 0);
 end;
 
 procedure TPSPJpeg.hInitMJpeg;

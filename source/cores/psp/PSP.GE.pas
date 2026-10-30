@@ -20,7 +20,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, PSP.GE.Types, PSP.GE.Engine;
+  PSP.Scheduler, PSP.Service, PSP.GE.Types, PSP.GE.Engine, PSP.State.Action;
 
 const
   GEListCount = 64;
@@ -114,8 +114,11 @@ type
     procedure HandleFinish(Slot: Integer);
     procedure ResumeHW;
     procedure CompleteList(Slot: Integer; Gen: Cardinal);
-    procedure CallSignal(Slot: Integer; Value: Cardinal; const Done: TProc);
-    procedure CallFinish(Slot: Integer; Value: Cardinal; const Done: TProc);
+    procedure CallSignal(Slot: Integer; Value: Cardinal; const Done: IPSPStateAction);
+    procedure CallFinish(Slot: Integer; Value: Cardinal; const Done: IPSPStateAction);
+    procedure StateInterrupt(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateSignalReturned(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateFinishReturned(Action: TPSPStateAction; Value: Cardinal);
     procedure WakeWaiters(Slot: Integer);
     procedure EndWaitAt(T: TPSPThread; At: Int64);
     procedure WaitUntil(At: Int64);
@@ -363,12 +366,14 @@ begin
   if FHWIntQueued then
     Exit;
   FHWIntQueued := True;
-  FKernel.QueueInterrupt(FKernel.TrapReturnAddress, [], 0,
-    procedure(Value: Cardinal)
-    begin
-      FHWIntQueued := False;
-      Interrupt;
-    end);
+  FKernel.QueueInterrupt(FKernel.TrapReturnAddress, [], 0, nil, 0, 0,
+    TPSPStateAction.Create(StateInterrupt, [], []));
+end;
+
+procedure TPSPGE.StateInterrupt(Action: TPSPStateAction; Value: Cardinal);
+begin
+  FHWIntQueued := False;
+  Interrupt;
 end;
 
 procedure TPSPGE.RunHW(Limit: Int64);
@@ -516,46 +521,34 @@ begin
   end;
 end;
 
-procedure TPSPGE.CallSignal(Slot: Integer; Value: Cardinal; const Done: TProc);
+procedure TPSPGE.CallSignal(Slot: Integer; Value: Cardinal; const Done: IPSPStateAction);
 begin
   var CB := FLists[Slot].CBID;
   if (CB < 0) or (CB >= GECallbackCount) or not FCallbacks[CB].Used or (FCallbacks[CB].SignalFunc = 0) then
   begin
-    if Assigned(Done) then
-      Done();
+    if Done <> nil then Done.Run;
     Exit;
   end;
   var PC: Cardinal := 0;
   if NewSdk then
     PC := FHWPC;
   var C := FCallbacks[CB];
-  FKernel.QueueInterrupt(C.SignalFunc, [Value, C.SignalArg, PC], C.GP,
-    procedure(R: Cardinal)
-    begin
-      if Assigned(Done) then
-        Done();
-    end);
+  FKernel.QueueInterrupt(C.SignalFunc, [Value, C.SignalArg, PC], C.GP, nil, 0, 0, Done);
 end;
 
-procedure TPSPGE.CallFinish(Slot: Integer; Value: Cardinal; const Done: TProc);
+procedure TPSPGE.CallFinish(Slot: Integer; Value: Cardinal; const Done: IPSPStateAction);
 begin
   var CB := FLists[Slot].CBID;
   if (CB < 0) or (CB >= GECallbackCount) or not FCallbacks[CB].Used or (FCallbacks[CB].FinishFunc = 0) then
   begin
-    if Assigned(Done) then
-      Done();
+    if Done <> nil then Done.Run;
     Exit;
   end;
   var PC: Cardinal := 0;
   if NewSdk then
     PC := FHWPC;
   var C := FCallbacks[CB];
-  FKernel.QueueInterrupt(C.FinishFunc, [Value, C.FinishArg, PC], C.GP,
-    procedure(R: Cardinal)
-    begin
-      if Assigned(Done) then
-        Done();
-    end);
+  FKernel.QueueInterrupt(C.FinishFunc, [Value, C.FinishArg, PC], C.GP, nil, 0, 0, Done);
 end;
 
 procedure TPSPGE.HandleSignal(Slot: Integer);
@@ -573,21 +566,7 @@ begin
           L.State := glsPaused;
           L.SuspendPaused := True;
         end;
-        CallSignal(Slot, Value,
-          procedure
-          begin
-            var LL: PGEList := @FLists[Slot];
-            if LL.Gen <> Gen then
-              Exit;
-            if LL.SuspendPaused then
-            begin
-              LL.SuspendPaused := False;
-              if LL.State = glsPaused then
-                LL.State := glsRunning;
-            end;
-            if (FHWList = Slot) and FHWHalted then
-              ResumeHW;
-          end);
+        CallSignal(Slot, Value, TPSPStateAction.Create(StateSignalReturned, [], [Slot, Gen]));
       end;
     GE_SIG_CONTINUE:
       begin
@@ -699,11 +678,28 @@ begin
   if FHWIntAt > FDoneAt then
     FDoneAt := FHWIntAt;
   var Gen := L.Gen;
-  CallFinish(Slot, Value,
-    procedure
-    begin
-      CompleteList(Slot, Gen);
-    end);
+  CallFinish(Slot, Value, TPSPStateAction.Create(StateFinishReturned, [], [Slot, Gen]));
+end;
+
+procedure TPSPGE.StateSignalReturned(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var Slot := Integer(Action.Arg(0));
+  if (Slot < 0) or (Slot >= GEListCount) then raise EReadError.Create('Invalid GE state list');
+  var L: PGEList := @FLists[Slot];
+  if L.Gen <> Cardinal(Action.Arg(1)) then Exit;
+  if L.SuspendPaused then
+  begin
+    L.SuspendPaused := False;
+    if L.State = glsPaused then L.State := glsRunning;
+  end;
+  if (FHWList = Slot) and FHWHalted then ResumeHW;
+end;
+
+procedure TPSPGE.StateFinishReturned(Action: TPSPStateAction; Value: Cardinal);
+begin
+  var Slot := Integer(Action.Arg(0));
+  if (Slot < 0) or (Slot >= GEListCount) then raise EReadError.Create('Invalid GE state list');
+  CompleteList(Slot, Cardinal(Action.Arg(1)));
 end;
 
 procedure TPSPGE.CompleteList(Slot: Integer; Gen: Cardinal);
@@ -789,12 +785,7 @@ begin
     FKernel.EndWait(T, 0);
     Exit;
   end;
-  FKernel.AddTimer(At, Self,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'ge') then
-        FKernel.EndWait(T, 0);
-    end);
+  FKernel.AddWakeTimer(At, T, 'ge', 0, -1, Self);
 end;
 
 function TPSPGE.ClockRetry(T: TPSPThread): Boolean;

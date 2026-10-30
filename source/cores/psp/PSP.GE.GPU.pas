@@ -221,8 +221,7 @@ function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGE
 
 implementation
 
-{$I ..\..\gpu\shaders\PSPGERaster.spv.inc}
-{$I ..\..\gpu\shaders\PSPGESelfTest.spv.inc}
+uses SPV.PSPGERaster, SPV.PSPGESelfTest;
 
 const
   PrimWords = 128;

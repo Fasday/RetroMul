@@ -587,13 +587,7 @@ begin
     Exit;
   var T := FKernel.Current;
   FKernel.BeginWait(PSPWaitDelay, nil, 0, 0, False, nil, nil, 'audiodelay');
-  var K := FKernel;
-  FKernel.AddTimer(FScheduler.Now + Int64(Us) * 1000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'audiodelay') then
-        K.EndWait(T, Result);
-    end);
+  FKernel.AddWakeTimer(FScheduler.Now + Int64(Us) * 1000, T, 'audiodelay', Result);
 end;
 
 { Channels }

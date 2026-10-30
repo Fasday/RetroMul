@@ -10,12 +10,8 @@ program ComputeTest;
 // ComputeTest [-device name] [-validation]
 
 uses
-  System.SysUtils, System.StrUtils, System.Types, System.Math, System.Diagnostics, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
-
-{$I TestArith.spv.inc}
-{$I TestBytes.spv.inc}
-{$I TestFloat.spv.inc}
-{$I TestTriangles.spv.inc}
+  System.SysUtils, System.StrUtils, System.Types, System.Math, System.Diagnostics, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute,
+  SPV.TestArith, SPV.TestBytes, SPV.TestFloat, SPV.TestTriangles;
 
 var
   Failures: Integer;

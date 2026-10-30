@@ -299,12 +299,7 @@ begin
   if T.Wait.HLETag <> 'mpeg' then
     Exit;
   T.Wait.Data[0] := Value;
-  FKernel.AddTimer(FKernel.Scheduler.Now + Us * 1000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'mpeg') then
-        FKernel.EndWait(T, T.Wait.Data[0]);
-    end);
+  FKernel.AddWakeTimer(FKernel.Scheduler.Now + Us * 1000, T, 'mpeg', Value, 0);
 end;
 
 procedure TPSPMpeg.WriteHeader(Inst: TPSPMpegInstance);

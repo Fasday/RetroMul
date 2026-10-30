@@ -3,7 +3,7 @@ program PSPStateTest;
 {$APPTYPE CONSOLE}
 
 uses
-  System.SysUtils, System.Classes, System.IOUtils, System.Hash, Core.Emulation.Types,
+  System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, Core.Emulation.Types,
   PSP.Console, PSP.Media, PSP.GE, PSP.IO, Core.PSP.Renderer;
 
 procedure GuestWrite(C: TPSPConsole; const Path, Text: RawByteString);
@@ -48,7 +48,8 @@ begin
   try P := TPSPProgram.Read(S); finally S.Free; end;
   if P.BootPath <> '' then P.MediaPath := ParamStr(1);
   var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-file-state-test-' + TGUID.NewGuid.ToString);
-  var C := TPSPConsole.Create(P, nil, '', TPath.Combine(Root, 'ms'), ParamStr(5), True);
+  // A file-only test has no input history to replay, even accidentally.
+  var C := TPSPConsole.Create(P, nil, '', TPath.Combine(Root, 'ms'), ParamStr(5), False);
   var D: TPSPConsole := nil;
   try
     if SameText(ParamStr(2), '--save') then
@@ -62,7 +63,7 @@ begin
         C.Input := Input;
         C.RunFrame(Frame);
       end;
-      C.SaveSnapshot(ParamStr(3));
+      C.SaveDirectSnapshot(ParamStr(3));
       Writeln('STATE ', C.FrameNumber, ' ', Digest(C));
     end
     else
@@ -110,6 +111,9 @@ begin
       end;
       var Path := TPath.Combine(Root, 'state.snapshot');
       C.SaveSnapshot(Path);
+      Writeln('Format: ', C.LastSnapshotFormat);
+      if (GetEnvironmentVariable('PSP_REQUIRE_DIRECT') <> '') and (C.LastSnapshotFormat <> 'direct') then
+        raise Exception.Create('Direct state required: ' + C.TakeLog);
       TFile.WriteAllText(SavePath, 'newer-save-on-disk', TEncoding.ASCII);
       Writeln('Saved ', N, ' frames, ', TFile.GetSize(Path), ' bytes');
       var Expected := Digest(C);
@@ -117,7 +121,10 @@ begin
       try
         D := C.RestoreSnapshot(Path,
           function(Done, Total: UInt64): Boolean
-          begin Result := (N > 0) and (Done < UInt64(N div 2 + 1)); end);
+          begin
+            if Total = 4 then Result := Done < 2
+            else Result := (N > 0) and (Done < UInt64(N div 2 + 1));
+          end);
       except
         on EAbort do Cancelled := True;
       end;
@@ -147,7 +154,9 @@ begin
         raise Exception.Create('Replay touched live savedata or lost initial file data');
       var SecondPath := TPath.Combine(Root, 'second.snapshot');
       D.SaveSnapshot(SecondPath);
+      var LoadClock := TStopwatch.StartNew;
       var Next := D.RestoreSnapshot(SecondPath);
+      Writeln('Second-generation load: ', LoadClock.ElapsedMilliseconds, ' ms');
       D.Free;
       D := Next;
       Writeln('PASS no live writes during restore and second-generation state');

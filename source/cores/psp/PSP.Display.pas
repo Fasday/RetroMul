@@ -12,9 +12,11 @@ unit PSP.Display;
 
 interface
 
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+
 uses
   System.SysUtils, System.Generics.Collections, System.UITypes, Core.Emulation.Types,
-  PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler;
+  PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.State.Action;
 
 const
   PSPLineNs = PSPFrameNs div PSPLinesPerFrame;
@@ -81,6 +83,8 @@ type
     procedure WaitFields(Count: Integer; AllowCB: Boolean);
     procedure SampleController;
     procedure StartCycleTimer;
+    procedure StateCycle(Action: TPSPStateAction; Value: Cardinal);
+    procedure StateInterruptDone(Action: TPSPStateAction; Value: Cardinal);
     function CtrlRetry(T: TPSPThread): Boolean;
     procedure CtrlAbort(T: TPSPThread);
     procedure ReadSamples(Address: Cardinal; Count: Integer; Negative: Boolean; FromIndex: Int64);
@@ -246,13 +250,8 @@ begin
     dpInterrupt: Interrupt;
     dpHandlers:
       begin
-        var D := Self;
-        var N := FKernel.QueueSubInterrupts(PSPInterruptVBlank, 0,
-          procedure
-          begin
-            D.FHandlersRan := True;
-            D.InterruptDone;
-          end);
+        var N := FKernel.QueueSubInterrupts(PSPInterruptVBlank, 0, nil,
+          TPSPStateAction.Create(StateInterruptDone, [], []));
         if N = 0 then
           InterruptDone;
       end;
@@ -302,6 +301,12 @@ begin
   end;
   FWakeAt := FKernel.BusyUntil + PSPWakeLatencyNs;
   SchedulePhase(dpWake, FWakeAt);
+end;
+
+procedure TPSPDisplay.StateInterruptDone(Action: TPSPStateAction; Value: Cardinal);
+begin
+  FHandlersRan := True;
+  InterruptDone;
 end;
 
 procedure TPSPDisplay.ReleaseNext;
@@ -442,14 +447,15 @@ begin
   end;
   if FSamplingCycle = 0 then
     Exit;
-  var D := Self;
-  FCycleTimer := FKernel.AddTimer(FScheduler.Now + Int64(FSamplingCycle) * 1000, Self,
-    procedure
-    begin
-      D.FCycleTimer := 0;
-      D.SampleController;
-      D.StartCycleTimer;
-    end);
+  FCycleTimer := FKernel.AddStateTimer(FScheduler.Now + Int64(FSamplingCycle) * 1000, Self,
+    TPSPStateAction.Create(StateCycle, [], []));
+end;
+
+procedure TPSPDisplay.StateCycle(Action: TPSPStateAction; Value: Cardinal);
+begin
+  FCycleTimer := 0;
+  SampleController;
+  StartCycleTimer;
 end;
 
 procedure TPSPDisplay.ReadSamples(Address: Cardinal; Count: Integer; Negative: Boolean; FromIndex: Int64);

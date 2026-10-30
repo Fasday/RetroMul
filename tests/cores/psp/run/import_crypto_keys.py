@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import struct
 import sys
+from pascal_data import write_block
 
 from bs4 import BeautifulSoup
 
@@ -40,8 +41,8 @@ def main():
     lines += ['  PrxSeeds: array[0..%d] of TPRXSeedData = (' % (len(keys) - 1)]
     for i, (name, value) in enumerate(sorted(keys.items())):
         lines.append("    (Name: '%s'; Hex: '%s')%s" % (name, value, ',' if i < len(keys) - 1 else ');'))
-    out = Path(__file__).resolve().parents[4] / 'source/cores/psp/PSP.Crypto.Keys.inc'
-    out.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    out = Path(__file__).resolve().parents[4] / 'source/cores/psp/PSP.Crypto.Keys.pas'
+    write_block(out, 'PSP_CRYPTO_KEY_DATA', '\n'.join(lines))
     print('Imported 128 KIRK slots and', len(keys), 'PRX seeds to', out)
 
 

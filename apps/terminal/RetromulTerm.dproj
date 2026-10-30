@@ -447,6 +447,12 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.SFO.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Settings.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.State.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.State.Action.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.State.Direct.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.State.Graph.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.State.Schema.pas"/>
+        <DCCReference Include="..\..\source\gpu\shaders\SPV.PSPGERaster.pas"/>
+        <DCCReference Include="..\..\source\gpu\shaders\SPV.PSPGESelfTest.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.Math.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Net.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Videocodec.pas"/>

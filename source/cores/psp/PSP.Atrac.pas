@@ -439,14 +439,8 @@ begin
   if not FKernel.CanWait then
     Exit;
   var T := FKernel.Current;
-  var K := FKernel;
   FKernel.BeginWait(PSPWaitDelay, nil, 0, 0, False, nil, nil, 'atrac');
-  FKernel.AddTimer(FScheduler.Now + Int64(Us) * 1000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'atrac') then
-        K.EndWait(T, Result);
-    end);
+  FKernel.AddWakeTimer(FScheduler.Now + Int64(Us) * 1000, T, 'atrac', Result);
 end;
 
 function TPSPAtrac.Slot(ID: Integer; out S: TPSPAtracSlot): Boolean;

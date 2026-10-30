@@ -7,6 +7,8 @@ unit PSP.Service;
 
 interface
 
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+
 uses
   System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
   PSP.Scheduler, PSP.IO, PSP.Loader, PSP.Display;

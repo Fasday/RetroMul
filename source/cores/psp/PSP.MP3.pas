@@ -354,14 +354,8 @@ begin
   if not FKernel.CanWait then
     Exit;
   var T := FKernel.Current;
-  var K := FKernel;
   FKernel.BeginWait(PSPWaitDelay, nil, 0, 0, False, nil, nil, 'mp3');
-  FKernel.AddTimer(FScheduler.Now + Int64(Us) * 1000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'mp3') then
-        K.EndWait(T, Result);
-    end);
+  FKernel.AddWakeTimer(FScheduler.Now + Int64(Us) * 1000, T, 'mp3', Result);
 end;
 
 // Ready: the error for a handle that was not reserved with stream arguments.

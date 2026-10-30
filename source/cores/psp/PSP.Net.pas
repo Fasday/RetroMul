@@ -281,9 +281,153 @@ type
     procedure hUsbGetState;
     procedure hUsbWaitState;
     // sceNetInet
-    {$I PSP.Net.InetDecl.inc}
+        procedure InetReset;
+    procedure InetRegister;
+    procedure InetAbortThread(T: TPSPThread);
+    procedure SetErrnoOf(T: TPSPThread; Err: Integer);
+    procedure InetFail(Err: Integer);
+    procedure InetOk(Value: Integer);
+    function SockOf(Fd: Integer): TInetSocket;
+    function NewFd: Integer;
+    function NewSock(Kind: Integer): TInetSocket;
+    procedure DropPcb(S: TInetSocket);
+    function EphemeralPort(Kind: Integer): Integer;
+    function PortInUse(Kind: Integer; IP: Cardinal; Port: Integer; Self_: TInetSocket): Boolean;
+    function ReadAddr(Addr: Cardinal; out IP: Cardinal; out Port: Integer): Boolean;
+    procedure WriteAddr(Addr, LenPtr: Cardinal; IP: Cardinal; Port: Integer);
+    procedure Later(const Event: TProc);
+    procedure InetWake;
+    procedure FinishWaiter(W: TInetWaiter; Final: Boolean);
+    procedure InetWaitAbort(T: TPSPThread);
+    procedure Run(S: TInetSocket; TimeoutNs: Int64; NonBlocking: Boolean; const Attempt: TInetAttempt);
+    procedure ScheduleTransfer(S: TInetSocket);
+    procedure Transfer(S: TInetSocket);
+    procedure PeerReset(S: TInetSocket);
+    procedure Handshake(C: TInetSocket);
+    function FindListener(IP: Cardinal; Port: Integer): TInetSocket;
+    function QueueRoom(L: TInetSocket): Boolean;
+    procedure Establish(L, C: TInetSocket);
+    procedure CloseSocket(S: TInetSocket; Reset: Boolean);
+    function Readable(S: TInetSocket): Boolean;
+    function Writable(S: TInetSocket): Boolean;
+    procedure SendCall(Fd: Integer; const Data: TBytes; Flags: Integer; HasTo: Boolean; ToIP: Cardinal; ToPort: Integer);
+    procedure RecvCall(Fd: Integer; const Segs: TArray<TPair<Cardinal, Integer>>; Flags: Integer;
+      FromPtr, FromLenPtr, MsgFlagsPtr: Cardinal);
+    procedure DeliverDatagram(S: TInetSocket; const Data: TBytes; ToIP: Cardinal; ToPort: Integer);
+    procedure CbStat(Stream: Boolean);
+    procedure hInetInit;
+    procedure hInetTerm;
+    procedure hInetSocket;
+    procedure hInetBind;
+    procedure hInetListen;
+    procedure hInetAccept;
+    procedure hInetConnect;
+    procedure hInetSend;
+    procedure hInetSendto;
+    procedure hInetSendmsg;
+    procedure hInetRecv;
+    procedure hInetRecvfrom;
+    procedure hInetRecvmsg;
+    procedure hInetClose;
+    procedure hInetCloseWithRST;
+    procedure hInetShutdown;
+    procedure hInetGetsockname;
+    procedure hInetGetpeername;
+    procedure hInetSetsockopt;
+    procedure hInetGetsockopt;
+    procedure hInetSelect;
+    procedure hInetPoll;
+    procedure hInetGetErrno;
+    procedure hInetGetPspError;
+    procedure hInetSocketAbort;
+    procedure hInetGetUdpcbstat;
+    procedure hInetGetTcpcbstat;
+    procedure hInetInetAddr;
+    procedure hInetInetAton;
+    procedure hInetInetPton;
+    procedure hInetInetNtop;
+
     // Ad hoc
-    {$I PSP.Net.AdhocDecl.inc}
+        procedure AdhocReset;
+    procedure AdhocRegister;
+    procedure AdhocctlEvent(Event: Integer; Error: Cardinal; DelayNs: Int64; const Change: TProc);
+    function AdhocctlReady: Boolean;
+    function ValidGroupName(Ptr: Cardinal; out Name: RawByteString): Boolean;
+    function ReadMac(Addr: Cardinal): TAdhocMac;
+    function IsLocalMac(const M: TAdhocMac): Boolean;
+    function MacKind(const M: TAdhocMac): Integer;
+    function AdhocObj(Id: Integer): TAdhocSocket;
+    function AdhocNewId: Integer;
+    function AdhocCount: Integer;
+    function AdhocPortUsed(Ptp: Boolean; Port: Integer): Boolean;
+    procedure AdhocWait(TimeoutUs: Cardinal; NonBlocking: Boolean; const Attempt: TInetAttempt);
+    procedure AdhocDrop(S: TAdhocSocket);
+    function PtpListenerFor(Port: Integer): TAdhocSocket;
+    procedure hAdhocctlInit;
+    procedure hAdhocctlTerm;
+    procedure hAdhocctlAddHandler;
+    procedure hAdhocctlDelHandler;
+    procedure hAdhocctlGetState;
+    procedure hAdhocctlCreate;
+    procedure hAdhocctlConnect;
+    procedure hAdhocctlJoin;
+    procedure hAdhocctlScan;
+    procedure hAdhocctlDisconnect;
+    procedure hAdhocctlGetParameter;
+    procedure hAdhocctlGetPeerList;
+    procedure hAdhocctlGetPeerInfo;
+    procedure hAdhocctlGetScanInfo;
+    procedure hAdhocctlGetAdhocId;
+    procedure hAdhocctlGetNameByAddr;
+    procedure hAdhocctlGetAddrByName;
+    procedure GameModeEnter(Group: Cardinal; TimeoutUs: Cardinal; const Members: TAdhocMac; HasMembers: Boolean);
+    procedure hAdhocctlCreateEnterGameMode;
+    procedure hAdhocctlCreateEnterGameModeMin;
+    procedure hAdhocctlJoinEnterGameMode;
+    procedure hAdhocctlExitGameMode;
+    procedure hAdhocctlGetGameModeInfo;
+    procedure hGameModeNotInMode;
+    procedure hGameModeDeleteNotInMode;
+    procedure hDiscoverInitStart;
+    procedure hDiscoverUpdate;
+    procedure hDiscoverGetStatus;
+    procedure hDiscoverStop;
+    procedure hDiscoverTerm;
+    procedure hDiscoverRequestSuspend;
+    procedure hAdhocInit;
+    procedure hAdhocTerm;
+    procedure hPdpCreate;
+    procedure hPdpSend;
+    procedure hPdpRecv;
+    procedure hPdpDelete;
+    procedure hGetPdpStat;
+    procedure hPtpOpen;
+    procedure hPtpListen;
+    procedure hPtpConnect;
+    procedure hPtpAccept;
+    procedure hPtpSend;
+    procedure hPtpRecv;
+    procedure hPtpFlush;
+    procedure hPtpClose;
+    procedure hGetPtpStat;
+    procedure hSetSocketAlert;
+    procedure hGetSocketAlert;
+    procedure hPollSocket;
+    procedure hMatchingInit;
+    procedure hMatchingTerm;
+    procedure hMatchingCreate;
+    procedure MatchingStart(Id, StackA, StackB: Integer; PartA, PartB: Integer; OptLen: Integer; Opt: Cardinal);
+    procedure hMatchingStart;
+    procedure hMatchingStart2;
+    procedure hMatchingStop;
+    procedure hMatchingDelete;
+    procedure hMatchingRunning;
+    procedure hMatchingSetHelloOpt;
+    procedure hMatchingGetHelloOpt;
+    procedure hMatchingGetMembers;
+    procedure hMatchingGetPoolMaxAlloc;
+    procedure hMatchingGetPoolStat;
+
   public
     constructor Create(System: TPSPSystem); override;
     destructor Destroy; override;
@@ -341,11 +485,4158 @@ const
   NetPoolPeak = $3A00;
   NetPoolUsed = $2E40;
 
-{$I PSP.Net.Uri.inc}
-{$I PSP.Net.Inet.inc}
-{$I PSP.Net.InetCalls.inc}
-{$I PSP.Net.Adhoc.inc}
-{$I PSP.Net.AdhocSock.inc}
+// sceParseUri. sceUriParse splits a URI into scheme, user, password, host,
+// path, query and fragment, copied one after the other (each NUL-ended)
+// into the caller's work area. The scheme is what comes before the first
+// ':' when it is made of scheme characters; "//" after it marks an
+// authority, but the part after a scheme is read as user@host:port either
+// way, as long as it starts with a host character (letters, digits, '-',
+// '.'). With no scheme the whole string is that part. Ports take at most
+// five digits and up to 65536, which wraps to 0; none given means the
+// scheme's.
+
+const
+  SCE_HTTP_ERROR_INVALID_VALUE = Cardinal($80433060);
+  SCE_HTTP_ERROR_OUT_OF_SIZE = Cardinal($80433022);
+  SCE_HTTP_ERROR_INVALID_ARGS = Cardinal($804331FE);
+
+type
+  TParsedUri = record
+    NoSlash: Boolean;
+    Parts: array[0..6] of RawByteString;
+    Port: Cardinal;
+  end;
+
+function UriSchemeChar(C: AnsiChar): Boolean;
+begin
+  Result := CharInSet(C, ['A'..'Z', 'a'..'z', '0'..'9', '+', '-', '.']);
+end;
+
+function UriHostChar(C: AnsiChar): Boolean;
+begin
+  Result := CharInSet(C, ['A'..'Z', 'a'..'z', '0'..'9', '-', '.']);
+end;
+
+function UriDefaultPort(const Scheme: RawByteString): Cardinal;
+begin
+  var S := LowerCase(string(Scheme));
+  if S = 'http' then
+    Result := 80
+  else if S = 'https' then
+    Result := 443
+  else
+    Result := 0;
+end;
+
+function ParseUriText(const S: RawByteString; out U: TParsedUri): Boolean;
+begin
+  Result := False;
+  U := Default(TParsedUri);
+  var N := Length(S);
+  var P := 1;
+  var I := 1;
+  while (I <= N) and UriSchemeChar(S[I]) do
+    Inc(I);
+  if (I <= N) and (S[I] = ':') then
+  begin
+    U.Parts[0] := Copy(S, 1, I - 1);
+    P := I + 1;
+  end;
+  U.NoSlash := True;
+  if (U.Parts[0] <> '') and (P + 1 <= N) and (S[P] = '/') and (S[P + 1] = '/') then
+  begin
+    U.NoSlash := False;
+    Inc(P, 2);
+  end;
+  // User information runs to an '@' before the path.
+  var J := P;
+  while (J <= N) and not CharInSet(S[J], ['/', '?', '#', '@']) do
+    Inc(J);
+  if (J <= N) and (S[J] = '@') then
+  begin
+    var Info := Copy(S, P, J - P);
+    var Colon := Pos(AnsiChar(':'), Info);
+    if Colon > 0 then
+    begin
+      U.Parts[1] := Copy(Info, 1, Colon - 1);
+      U.Parts[2] := Copy(Info, Colon + 1, MaxInt);
+    end
+    else
+      U.Parts[1] := Info;
+    P := J + 1;
+  end;
+  U.Port := UriDefaultPort(U.Parts[0]);
+  if (P <= N) and UriHostChar(S[P]) then
+  begin
+    var H := P;
+    while (P <= N) and UriHostChar(S[P]) do
+      Inc(P);
+    U.Parts[3] := Copy(S, H, P - H);
+    if (P <= N) and (S[P] = ':') then
+    begin
+      Inc(P);
+      var D := P;
+      while (P <= N) and CharInSet(S[P], ['0'..'9']) do
+        Inc(P);
+      var Digits := P - D;
+      if Digits = 0 then
+      begin
+        if (P <= N) and not CharInSet(S[P], ['/', '?', '#']) then
+          Exit;
+      end
+      else
+      begin
+        if Digits > 5 then
+          Exit;
+        var V := StrToInt(string(Copy(S, D, Digits)));
+        if V > 65536 then
+          Exit;
+        U.Port := Cardinal(V) and $FFFF;
+      end;
+    end;
+  end;
+  var Q := P;
+  while (Q <= N) and not CharInSet(S[Q], ['?', '#']) do
+    Inc(Q);
+  U.Parts[4] := Copy(S, P, Q - P);
+  P := Q;
+  if (P <= N) and (S[P] = '?') then
+  begin
+    while (Q <= N) and (S[Q] <> '#') do
+      Inc(Q);
+    U.Parts[5] := Copy(S, P, Q - P);
+    P := Q;
+  end;
+  if P <= N then
+    U.Parts[6] := Copy(S, P, MaxInt);
+  Result := True;
+end;
+
+procedure TPSPNet.hUriParse;
+begin
+  var Parsed := FHLE.Arg(0);
+  var UriPtr := FHLE.Arg(1);
+  var Work := FHLE.Arg(2);
+  var SizePtr := FHLE.Arg(3);
+  var WorkLen := FHLE.ArgInt(4);
+  if UriPtr = 0 then
+  begin
+    FHLE.Result(SCE_HTTP_ERROR_INVALID_VALUE);
+    Exit;
+  end;
+  var U: TParsedUri;
+  if not ParseUriText(FMemory.ReadAnsi(UriPtr, 4096), U) then
+  begin
+    FHLE.Result(SCE_HTTP_ERROR_INVALID_VALUE);
+    Exit;
+  end;
+  var Need := 0;
+  for var K := 0 to 6 do
+    Inc(Need, Length(U.Parts[K]) + 1);
+  if (Parsed = 0) or (Work = 0) then
+  begin
+    // The size query.
+    if SizePtr = 0 then
+      FHLE.Result(SCE_HTTP_ERROR_INVALID_ARGS)
+    else
+    begin
+      FMemory.Write32(SizePtr, Cardinal(Need));
+      FHLE.Result(0);
+    end;
+    Exit;
+  end;
+  if Need > WorkLen then
+  begin
+    FHLE.Result(SCE_HTTP_ERROR_OUT_OF_SIZE);
+    Exit;
+  end;
+  FMemory.Fill(Parsed, 0, 44);
+  FMemory.Write32(Parsed, Ord(U.NoSlash));
+  var At := Work;
+  for var K := 0 to 6 do
+  begin
+    FMemory.WriteString(At, U.Parts[K], Length(U.Parts[K]) + 1);
+    FMemory.Write32(Parsed + 4 + Cardinal(K * 4), At);
+    Inc(At, Length(U.Parts[K]) + 1);
+  end;
+  FMemory.Write16(Parsed + 32, U.Port);
+  if SizePtr <> 0 then
+    FMemory.Write32(SizePtr, Cardinal(Need));
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hUriBuild;
+const
+  WithScheme = $01;
+  WithHost = $02;
+  WithPort = $04;
+  WithPath = $08;
+  WithUser = $10;
+  WithPassword = $20;
+  WithQuery = $40;
+  WithFragment = $80;
+begin
+  var Out_ := FHLE.Arg(0);
+  var SizePtr := FHLE.Arg(1);
+  var OutLen := FHLE.ArgInt(2);
+  var Parsed := FHLE.Arg(3);
+  var Flags := FHLE.Arg(4);
+  if Parsed = 0 then
+  begin
+    FHLE.Result(SCE_HTTP_ERROR_INVALID_ARGS);
+    Exit;
+  end;
+  var Part: array[0..6] of RawByteString;
+  for var K := 0 to 6 do
+    Part[K] := FMemory.ReadAnsi(FMemory.Read32(Parsed + 4 + Cardinal(K * 4)), 4096);
+  var NoSlash := FMemory.Read32(Parsed) <> 0;
+  var Port := FMemory.Read16(Parsed + 32);
+  var S: RawByteString := '';
+  if (Flags and WithScheme) <> 0 then
+  begin
+    S := Part[0] + ':';
+    if not NoSlash then
+      S := S + '//';
+  end;
+  if ((Flags and WithUser) <> 0) and (Part[1] <> '') then
+  begin
+    S := S + Part[1];
+    if ((Flags and WithPassword) <> 0) and (Part[2] <> '') then
+      S := S + ':' + Part[2];
+    S := S + '@';
+  end;
+  if (Flags and WithHost) <> 0 then
+    S := S + Part[3];
+  if ((Flags and WithPort) <> 0) and (Port <> UriDefaultPort(Part[0])) then
+    S := S + ':' + RawByteString(IntToStr(Port));
+  if (Flags and WithPath) <> 0 then
+    S := S + Part[4];
+  if (Flags and WithQuery) <> 0 then
+    S := S + Part[5];
+  if (Flags and WithFragment) <> 0 then
+    S := S + Part[6];
+  var Need := Length(S) + 1;
+  if Out_ <> 0 then
+  begin
+    if Need > OutLen then
+    begin
+      FHLE.Result(SCE_HTTP_ERROR_OUT_OF_SIZE);
+      Exit;
+    end;
+    FMemory.WriteString(Out_, S, Need);
+  end;
+  if SizePtr <> 0 then
+    FMemory.Write32(SizePtr, Cardinal(Need));
+  FHLE.Result(0);
+end;
+
+// Characters left alone: letters, digits and - _ . *; the rest become %XX.
+function UriSafe(C: Byte): Boolean;
+begin
+  Result := CharInSet(AnsiChar(C), ['A'..'Z', 'a'..'z', '0'..'9', '-', '_', '.', '*']);
+end;
+
+procedure TPSPNet.hUriEscape;
+const
+  Hex: array[0..15] of AnsiChar = '0123456789ABCDEF';
+begin
+  var Out_ := FHLE.Arg(0);
+  var LenPtr := FHLE.Arg(1);
+  var OutLen := FHLE.ArgInt(2);
+  var Src := FMemory.ReadAnsi(FHLE.Arg(3), 65536);
+  var S: RawByteString := '';
+  for var I := 1 to Length(Src) do
+  begin
+    var C := Ord(Src[I]);
+    if UriSafe(C) then
+      S := S + Src[I]
+    else
+      S := S + '%' + Hex[C shr 4] + Hex[C and 15];
+  end;
+  if Out_ <> 0 then
+  begin
+    // Written as far as it fits.
+    for var I := 1 to Length(S) do
+    begin
+      if I > OutLen then
+      begin
+        FHLE.Result(SCE_HTTP_ERROR_OUT_OF_SIZE);
+        Exit;
+      end;
+      FMemory.Write8(Out_ + Cardinal(I - 1), Ord(S[I]));
+    end;
+    if Length(S) >= OutLen then
+    begin
+      FHLE.Result(SCE_HTTP_ERROR_OUT_OF_SIZE);
+      Exit;
+    end;
+    FMemory.Write8(Out_ + Cardinal(Length(S)), 0);
+  end;
+  FMemory.Write32(LenPtr, Cardinal(Length(S) + 1));
+  FHLE.Result(0);
+end;
+
+function HexValue(C: AnsiChar): Integer;
+begin
+  case C of
+    '0'..'9': Result := Ord(C) - Ord('0');
+    'A'..'F': Result := Ord(C) - Ord('A') + 10;
+    'a'..'f': Result := Ord(C) - Ord('a') + 10;
+  else
+    Result := -1;
+  end;
+end;
+
+procedure TPSPNet.hUriUnescape;
+begin
+  // Returns the source length plus two for each escape.
+  var Out_ := FHLE.Arg(0);
+  var LenPtr := FHLE.Arg(1);
+  var OutLen := FHLE.ArgInt(2);
+  var Src := FMemory.ReadAnsi(FHLE.Arg(3), 65536);
+  var Count := 0;
+  var Escapes := 0;
+  var I := 1;
+  while I <= Length(Src) do
+  begin
+    var C := Ord(Src[I]);
+    if Src[I] = '%' then
+    begin
+      if (I + 2 > Length(Src)) or (HexValue(Src[I + 1]) < 0) or (HexValue(Src[I + 2]) < 0) then
+      begin
+        FHLE.Result(SCE_HTTP_ERROR_INVALID_VALUE);
+        Exit;
+      end;
+      C := HexValue(Src[I + 1]) * 16 + HexValue(Src[I + 2]);
+      Inc(I, 3);
+      Inc(Escapes);
+    end
+    else
+      Inc(I);
+    if Out_ <> 0 then
+    begin
+      if Count >= OutLen then
+      begin
+        FHLE.Result(SCE_HTTP_ERROR_OUT_OF_SIZE);
+        Exit;
+      end;
+      FMemory.Write8(Out_ + Cardinal(Count), C);
+    end;
+    Inc(Count);
+  end;
+  if Out_ <> 0 then
+  begin
+    if Count >= OutLen then
+    begin
+      FHLE.Result(SCE_HTTP_ERROR_OUT_OF_SIZE);
+      Exit;
+    end;
+    FMemory.Write8(Out_ + Cardinal(Count), 0);
+  end;
+  FMemory.Write32(LenPtr, Cardinal(Count + 1));
+  FHLE.Result(Cardinal(Length(Src) + 2 * Escapes));
+end;
+
+// sceNetInet: a BSD stack with only its loopback interface up. Segments and
+// datagrams take a moment to cross it, and a TCP send buffer drains into
+// the peer's receive buffer as that has room. errno is per thread and
+// cleared by every call that succeeds.
+
+const
+  EINTR = 4;
+  EBADF = 9;
+  EAGAIN = 11;
+  EINVAL = 22;
+  EMFILE = 24;
+  ENOSPC = 28;
+  EPIPE = 32;
+  EOPNOTSUPP = 95;
+  ECONNRESET = 104;
+  ENOBUFS = 105;
+  EAFNOSUPPORT = 106;
+  ENOPROTOOPT = 109;
+  ECONNREFUSED = 111;
+  EADDRINUSE = 112;
+  EHOSTUNREACH = 118;
+  EINPROGRESS = 119;
+  EALREADY = 120;
+  EDESTADDRREQ = 121;
+  EMSGSIZE = 122;
+  EPROTONOSUPPORT = 123;
+  EADDRNOTAVAIL = 125;
+  EISCONN = 127;
+  ENOTCONN = 128;
+
+  INET_AF_INET = 2;
+  INET_LOOPBACK = $7F000001;
+  INET_MSG_PEEK = $2;
+  INET_MSG_TRUNC = $10;
+  INET_MSG_WAITALL = $40;
+  INET_MSG_DONTWAIT = $80;
+  SO_LINGER = $80;
+  // The stack's descriptors run 1..255.
+  InetMaxFd = 255;
+  // Loopback delivery.
+  InetLatencyNs = 100000;
+  InetTickNs = 10000000;
+  // The largest buffer the stack reserves.
+  InetMaxBuffer = 262144 * 2048 div 2176;
+
+{ TInetSocket }
+
+constructor TInetSocket.Create(AKind: Integer);
+begin
+  inherited Create;
+  Kind := AKind;
+  Datagrams := TQueue<TInetDatagram>.Create;
+  AcceptQueue := TList<TInetSocket>.Create;
+  SynQueue := TList<TInetSocket>.Create;
+  if Kind = 1 then
+  begin
+    SndBuf := $4000;
+    RcvBuf := $4000;
+  end
+  else
+  begin
+    SndBuf := $2400;
+    RcvBuf := $A280;
+  end;
+  SndLowat := $800;
+  RcvLowat := 1;
+  TTL := 64;
+end;
+
+destructor TInetSocket.Destroy;
+begin
+  Datagrams.Free;
+  AcceptQueue.Free;
+  SynQueue.Free;
+  inherited;
+end;
+
+{ State }
+
+procedure TPSPNet.InetReset;
+begin
+  FWaiters.Clear;
+  FSockets.Clear;
+  for var S in FPcbs do
+    if not FDeadPcbs.Contains(S) then
+      FDeadPcbs.Add(S);
+  FPcbs.Clear;
+  FDeadPcbs.Clear;
+  FErrno.Clear;
+  FInetInited := False;
+  FNextFd := 1;
+  FNextEphemeral := 1024;
+end;
+
+procedure TPSPNet.SetErrnoOf(T: TPSPThread; Err: Integer);
+begin
+  if T <> nil then
+    FErrno.AddOrSetValue(T.UID, Err);
+end;
+
+procedure TPSPNet.InetFail(Err: Integer);
+begin
+  SetErrnoOf(FKernel.Current, Err);
+  FHLE.Result(Cardinal(-1));
+end;
+
+procedure TPSPNet.InetOk(Value: Integer);
+begin
+  SetErrnoOf(FKernel.Current, 0);
+  FHLE.Result(Cardinal(Value));
+end;
+
+function TPSPNet.SockOf(Fd: Integer): TInetSocket;
+begin
+  if not FSockets.TryGetValue(Fd, Result) then
+    Result := nil;
+end;
+
+function TPSPNet.NewFd: Integer;
+begin
+  // Handed out round, after the last one given.
+  for var K := 0 to InetMaxFd - 1 do
+  begin
+    var Fd := (FNextFd - 1 + K) mod InetMaxFd + 1;
+    if not FSockets.ContainsKey(Fd) then
+    begin
+      FNextFd := Fd mod InetMaxFd + 1;
+      Exit(Fd);
+    end;
+  end;
+  Result := -1;
+end;
+
+function TPSPNet.NewSock(Kind: Integer): TInetSocket;
+begin
+  Result := TInetSocket.Create(Kind);
+  // The stack keeps its control blocks newest first.
+  FPcbs.Insert(0, Result);
+end;
+
+procedure TPSPNet.DropPcb(S: TInetSocket);
+begin
+  if S.Fd > 0 then
+    FSockets.Remove(S.Fd);
+  for var W in FWaiters.ToArray do
+    if W.Sock = S then
+      W.Sock := nil;
+  if FPcbs.Remove(S) >= 0 then
+    FDeadPcbs.Add(S);
+end;
+
+function TPSPNet.EphemeralPort(Kind: Integer): Integer;
+begin
+  repeat
+    Inc(FNextEphemeral);
+    if FNextEphemeral > 5000 then
+      FNextEphemeral := 1025;
+  until not PortInUse(Kind, 0, FNextEphemeral, nil);
+  Result := FNextEphemeral;
+end;
+
+function TPSPNet.PortInUse(Kind: Integer; IP: Cardinal; Port: Integer; Self_: TInetSocket): Boolean;
+begin
+  for var S in FPcbs do
+    if (S <> Self_) and (S.Kind = Kind) and S.Bound and (S.LocalPort = Port) and
+      ((S.LocalIP = 0) or (IP = 0) or (S.LocalIP = IP)) and not (S.Closed and (S.State = isClosed)) then
+      Exit(True);
+  Result := False;
+end;
+
+function TPSPNet.ReadAddr(Addr: Cardinal; out IP: Cardinal; out Port: Integer): Boolean;
+begin
+  Result := FMemory.Read8(Addr + 1) = INET_AF_INET;
+  Port := Integer((FMemory.Read8(Addr + 2) shl 8) or FMemory.Read8(Addr + 3));
+  IP := (FMemory.Read8(Addr + 4) shl 24) or (FMemory.Read8(Addr + 5) shl 16) or (FMemory.Read8(Addr + 6) shl 8) or
+    FMemory.Read8(Addr + 7);
+end;
+
+procedure TPSPNet.WriteAddr(Addr, LenPtr: Cardinal; IP: Cardinal; Port: Integer);
+begin
+  // As much of the address as the length allows.
+  if (Addr = 0) or (LenPtr = 0) then
+    Exit;
+  var Bytes: array[0..15] of Byte;
+  FillChar(Bytes, SizeOf(Bytes), 0);
+  Bytes[0] := 16;
+  Bytes[1] := INET_AF_INET;
+  Bytes[2] := Port shr 8;
+  Bytes[3] := Port and $FF;
+  Bytes[4] := IP shr 24;
+  Bytes[5] := (IP shr 16) and $FF;
+  Bytes[6] := (IP shr 8) and $FF;
+  Bytes[7] := IP and $FF;
+  var N := Integer(FMemory.Read32(LenPtr));
+  if N < 0 then
+    N := 0;
+  if N > 16 then
+    N := 16;
+  if N > 0 then
+    FMemory.WriteBytes(Addr, Bytes[0], N);
+  FMemory.Write32(LenPtr, Cardinal(N));
+end;
+
+procedure TPSPNet.Later(const Event: TProc);
+begin
+  FKernel.AddTimer(FKernel.Scheduler.Now + InetLatencyNs, Self,
+    procedure
+    begin
+      Event();
+      InetWake;
+    end);
+end;
+
+{ Blocking }
+
+procedure TPSPNet.FinishWaiter(W: TInetWaiter; Final: Boolean);
+begin
+  var Ret, Err: Integer;
+  if not W.Attempt(Final, Ret, Err) then
+    Exit;
+  var T := W.Thread;
+  if W.Timer <> 0 then
+    FKernel.CancelTimer(W.Timer);
+  FWaiters.Remove(W);
+  SetErrnoOf(T, Err);
+  if T.IsWaiting and (T.Wait.HLETag = 'inet') then
+    FKernel.EndWait(T, Cardinal(Ret));
+end;
+
+procedure TPSPNet.InetWake;
+begin
+  for var W in FWaiters.ToArray do
+    if FWaiters.Contains(W) then
+      FinishWaiter(W, False);
+end;
+
+procedure TPSPNet.InetWaitAbort(T: TPSPThread);
+begin
+  for var W in FWaiters.ToArray do
+    if W.Thread = T then
+    begin
+      if W.Timer <> 0 then
+        FKernel.CancelTimer(W.Timer);
+      FWaiters.Remove(W);
+    end;
+end;
+
+procedure TPSPNet.InetAbortThread(T: TPSPThread);
+begin
+  for var W in FWaiters.ToArray do
+    if W.Thread = T then
+    begin
+      W.Attempt :=
+        function(Final: Boolean; out Ret, Err: Integer): Boolean
+        begin
+          Ret := -1;
+          Err := EINTR;
+          Result := True;
+        end;
+      FinishWaiter(W, True);
+    end;
+end;
+
+procedure TPSPNet.Run(S: TInetSocket; TimeoutNs: Int64; NonBlocking: Boolean; const Attempt: TInetAttempt);
+begin
+  // Done at once if it can be; otherwise EAGAIN for a non-blocking call, or
+  // the thread waits for the stack (until the timeout, when there is one).
+  var Ret, Err: Integer;
+  if Attempt(NonBlocking or not FKernel.CanWait, Ret, Err) then
+  begin
+    SetErrnoOf(FKernel.Current, Err);
+    FHLE.Result(Cardinal(Ret));
+    Exit;
+  end;
+  var W := TInetWaiter.Create;
+  W.Thread := FKernel.Current;
+  W.Sock := S;
+  W.Attempt := Attempt;
+  FWaiters.Add(W);
+  FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, InetWaitAbort, 'inet');
+  if TimeoutNs > 0 then
+    W.Timer := FKernel.AddTimer(FKernel.Scheduler.Now + TimeoutNs, W.Thread,
+      procedure
+      begin
+        W.Timer := 0;
+        if FWaiters.Contains(W) then
+          FinishWaiter(W, True);
+      end);
+end;
+
+{ Streams }
+
+procedure TPSPNet.ScheduleTransfer(S: TInetSocket);
+begin
+  if S.TransferScheduled then
+    Exit;
+  S.TransferScheduled := True;
+  Later(
+    procedure
+    begin
+      S.TransferScheduled := False;
+      Transfer(S);
+    end);
+end;
+
+procedure TPSPNet.PeerReset(S: TInetSocket);
+begin
+  // An RST: after the peer's FIN it reads as a broken pipe.
+  if S.FinReceived then
+    S.SoError := EPIPE
+  else
+    S.SoError := ECONNRESET;
+  S.State := isClosed;
+  S.CantRecvMore := True;
+  S.CantSendMore := True;
+  S.RecvLen := 0;
+  S.SendLen := 0;
+  S.FinPending := False;
+  S.Peer := nil;
+  if S.Closed then
+    DropPcb(S);
+end;
+
+procedure TPSPNet.Transfer(S: TInetSocket);
+begin
+  var P := S.Peer;
+  if (S.State <> isEstablished) or (P = nil) then
+    Exit;
+  if P.Closed and (S.SendLen > 0) then
+  begin
+    // Data for a socket that is gone: it answers with an RST.
+    S.SendLen := 0;
+    Later(
+      procedure
+      begin
+        PeerReset(S);
+      end);
+    P.Peer := nil;
+    DropPcb(P);
+    Exit;
+  end;
+  if S.SendLen > 0 then
+  begin
+    var N := S.SendLen;
+    if not P.ReadShut then
+      N := Min(N, P.RcvBuf - P.RecvLen);
+    if N > 0 then
+    begin
+      if not P.ReadShut then
+      begin
+        if Length(P.RecvData) < P.RecvLen + N then
+          SetLength(P.RecvData, P.RecvLen + N);
+        Move(S.SendData[0], P.RecvData[P.RecvLen], N);
+        Inc(P.RecvLen, N);
+      end;
+      Move(S.SendData[N], S.SendData[0], S.SendLen - N);
+      Dec(S.SendLen, N);
+    end;
+  end;
+  if (S.SendLen = 0) and S.FinPending then
+  begin
+    S.FinPending := False;
+    P.FinReceived := True;
+    P.CantRecvMore := True;
+    if P.Closed and S.Closed then
+    begin
+      DropPcb(P);
+      DropPcb(S);
+    end;
+  end;
+end;
+
+function TPSPNet.FindListener(IP: Cardinal; Port: Integer): TInetSocket;
+begin
+  for var S in FPcbs do
+    if (S.Kind = 1) and (S.State = isListening) and not S.Closed and (S.LocalPort = Port) and
+      ((S.LocalIP = 0) or (S.LocalIP = IP)) then
+      Exit(S);
+  Result := nil;
+end;
+
+function TPSPNet.QueueRoom(L: TInetSocket): Boolean;
+begin
+  Result := L.AcceptQueue.Count < (3 * Max(L.Backlog, 0)) div 2 + 1;
+end;
+
+procedure TPSPNet.Establish(L, C: TInetSocket);
+begin
+  var N := NewSock(1);
+  N.Bound := True;
+  N.LocalIP := C.PeerIP;
+  N.LocalPort := C.PeerPort;
+  N.PeerIP := C.LocalIP;
+  N.PeerPort := C.LocalPort;
+  N.HasPeer := True;
+  N.Options := L.Options and not Cardinal($2);
+  N.SndBuf := L.SndBuf;
+  N.RcvBuf := L.RcvBuf;
+  N.NBIO := L.NBIO;
+  N.NoDelay := L.NoDelay;
+  N.State := isEstablished;
+  N.Peer := C;
+  C.Peer := N;
+  C.State := isEstablished;
+  L.AcceptQueue.Add(N);
+end;
+
+procedure TPSPNet.Handshake(C: TInetSocket);
+begin
+  if C.State <> isConnecting then
+    Exit;
+  var L := FindListener(C.PeerIP, C.PeerPort);
+  if L = nil then
+  begin
+    C.State := isClosed;
+    C.ConnectFailed := True;
+    C.SoError := ECONNREFUSED;
+    if C.Closed then
+      DropPcb(C);
+  end
+  else if QueueRoom(L) then
+    Establish(L, C)
+  else if not L.SynQueue.Contains(C) then
+    // Dropped for now; the retransmission gets in when there is room.
+    L.SynQueue.Add(C);
+end;
+
+procedure TPSPNet.CloseSocket(S: TInetSocket; Reset: Boolean);
+begin
+  S.Closed := True;
+  FSockets.Remove(S.Fd);
+  S.Fd := 0;
+  // Threads blocked on it give up.
+  for var W in FWaiters.ToArray do
+    if W.Sock = S then
+    begin
+      W.Attempt :=
+        function(Final: Boolean; out Ret, Err: Integer): Boolean
+        begin
+          Ret := -1;
+          Err := EBADF;
+          Result := True;
+        end;
+      FinishWaiter(W, True);
+    end;
+  if S.Kind <> 1 then
+  begin
+    DropPcb(S);
+    Exit;
+  end;
+  case S.State of
+    isListening:
+      begin
+        for var N in S.AcceptQueue.ToArray do
+        begin
+          var C := N.Peer;
+          N.Closed := True;
+          DropPcb(N);
+          if C <> nil then
+            Later(
+              procedure
+              begin
+                PeerReset(C);
+              end);
+        end;
+        for var C in S.SynQueue.ToArray do
+          Later(
+            procedure
+            begin
+              Handshake(C);
+            end);
+        S.AcceptQueue.Clear;
+        S.SynQueue.Clear;
+        S.State := isClosed;
+        DropPcb(S);
+      end;
+    isEstablished:
+      begin
+        var P := S.Peer;
+        if Reset or (((S.Options and SO_LINGER) <> 0) and (S.LingerTime = 0)) then
+        begin
+          S.Peer := nil;
+          DropPcb(S);
+          if P <> nil then
+          begin
+            P.Peer := nil;
+            Later(
+              procedure
+              begin
+                PeerReset(P);
+              end);
+          end;
+        end
+        else
+        begin
+          S.FinPending := True;
+          S.CantRecvMore := True;
+          S.CantSendMore := True;
+          ScheduleTransfer(S);
+        end;
+      end;
+  else
+    begin
+      for var L in FPcbs do
+        L.SynQueue.Remove(S);
+      DropPcb(S);
+    end;
+  end;
+end;
+
+function TPSPNet.Readable(S: TInetSocket): Boolean;
+begin
+  if S.SoError <> 0 then
+    Exit(True);
+  if S.Kind = 1 then
+    case S.State of
+      isListening: Result := S.AcceptQueue.Count > 0;
+      isEstablished: Result := (S.RecvLen >= S.RcvLowat) or S.CantRecvMore;
+    else
+      Result := S.CantRecvMore;
+    end
+  else
+    Result := (S.Datagrams.Count > 0) or S.ReadShut;
+end;
+
+function TPSPNet.Writable(S: TInetSocket): Boolean;
+begin
+  if S.SoError <> 0 then
+    Exit(True);
+  if S.Kind = 1 then
+    case S.State of
+      isEstablished: Result := S.CantSendMore or (S.SndBuf - S.SendLen >= S.SndLowat);
+      isConnecting, isListening: Result := False;
+    else
+      Result := S.ConnectFailed or S.CantSendMore;
+    end
+  else
+    Result := True;
+end;
+
+{ Sending and receiving }
+
+procedure TPSPNet.DeliverDatagram(S: TInetSocket; const Data: TBytes; ToIP: Cardinal; ToPort: Integer);
+begin
+  var FromIP := S.LocalIP;
+  if FromIP = 0 then
+    FromIP := INET_LOOPBACK;
+  var FromPort := S.LocalPort;
+  var Connected := S.HasPeer;
+  Later(
+    procedure
+    begin
+      var R: TInetSocket := nil;
+      for var X in FPcbs do
+        if (X.Kind = 2) and not X.Closed and X.Bound and (X.LocalPort = ToPort) and
+          ((X.LocalIP = 0) or (X.LocalIP = ToIP) or (ToIP = 0)) then
+        begin
+          if X.HasPeer and ((X.PeerIP <> FromIP) or (X.PeerPort <> FromPort)) then
+            Continue;
+          R := X;
+          Break;
+        end;
+      if R = nil then
+      begin
+        // Port unreachable: only a connected socket hears of it.
+        if Connected and FPcbs.Contains(S) then
+          S.SoError := ECONNREFUSED;
+        Exit;
+      end;
+      if R.ReadShut or (R.QueuedBytes + Length(Data) > R.RcvBuf) then
+        Exit;
+      var D: TInetDatagram;
+      D.Data := Data;
+      D.FromIP := FromIP;
+      D.FromPort := FromPort;
+      R.Datagrams.Enqueue(D);
+      Inc(R.QueuedBytes, Length(Data));
+    end);
+end;
+
+procedure TPSPNet.SendCall(Fd: Integer; const Data: TBytes; Flags: Integer; HasTo: Boolean; ToIP: Cardinal;
+  ToPort: Integer);
+begin
+  var S := SockOf(Fd);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var Len := Length(Data);
+  if S.Kind <> 1 then
+  begin
+    if S.WriteShut then
+    begin
+      InetFail(EPIPE);
+      Exit;
+    end;
+    if S.SoError <> 0 then
+    begin
+      var E := S.SoError;
+      S.SoError := 0;
+      InetFail(E);
+      Exit;
+    end;
+    if HasTo and S.HasPeer then
+    begin
+      InetFail(EISCONN);
+      Exit;
+    end;
+    if not HasTo then
+    begin
+      if not S.HasPeer then
+      begin
+        InetFail(EDESTADDRREQ);
+        Exit;
+      end;
+      ToIP := S.PeerIP;
+      ToPort := S.PeerPort;
+    end;
+    if Len > S.SndBuf then
+    begin
+      InetFail(EMSGSIZE);
+      Exit;
+    end;
+    if (ToIP <> 0) and (ToIP shr 24 <> 127) then
+    begin
+      InetFail(EHOSTUNREACH);
+      Exit;
+    end;
+    if not S.Bound then
+    begin
+      S.Bound := True;
+      S.LocalIP := 0;
+      S.LocalPort := EphemeralPort(S.Kind);
+    end;
+    if ToIP shr 24 = 127 then
+      ToIP := INET_LOOPBACK;
+    DeliverDatagram(S, Data, ToIP, ToPort);
+    InetOk(Len);
+    Exit;
+  end;
+  // A stream.
+  var NonBlocking := S.NBIO or ((Flags and INET_MSG_DONTWAIT) <> 0);
+  var Sent := 0;
+  Run(S, Int64(S.SndTimeo) * InetTickNs, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Ret := -1;
+      if S.CantSendMore or S.WriteShut then
+      begin
+        Err := EPIPE;
+        if S.SoError <> 0 then
+        begin
+          Err := S.SoError;
+          S.SoError := 0;
+        end;
+        Exit;
+      end;
+      if S.SoError <> 0 then
+      begin
+        Err := S.SoError;
+        S.SoError := 0;
+        Exit;
+      end;
+      if S.State <> isEstablished then
+      begin
+        Err := ENOTCONN;
+        Exit;
+      end;
+      var Room := S.SndBuf - S.SendLen;
+      var N := Min(Room, Len - Sent);
+      if N > 0 then
+      begin
+        if Length(S.SendData) < S.SendLen + N then
+          SetLength(S.SendData, S.SendLen + N);
+        Move(Data[Sent], S.SendData[S.SendLen], N);
+        Inc(S.SendLen, N);
+        Inc(Sent, N);
+        ScheduleTransfer(S);
+      end;
+      if (Sent = Len) or (Final and (Sent > 0)) then
+      begin
+        Ret := Sent;
+        Err := 0;
+      end
+      else if Final then
+        Err := EAGAIN
+      else
+        Result := False;
+    end);
+end;
+
+procedure TPSPNet.RecvCall(Fd: Integer; const Segs: TArray<TPair<Cardinal, Integer>>; Flags: Integer;
+  FromPtr, FromLenPtr, MsgFlagsPtr: Cardinal);
+begin
+  var S := SockOf(Fd);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var Len := 0;
+  for var P in Segs do
+    Inc(Len, P.Value);
+  var Peek := (Flags and INET_MSG_PEEK) <> 0;
+  var NonBlocking := S.NBIO or ((Flags and INET_MSG_DONTWAIT) <> 0);
+  var Scatter: TProc<TBytes, Integer> :=
+    procedure(Src: TBytes; Count: Integer)
+    begin
+      var Done := 0;
+      for var P in Segs do
+      begin
+        if Done >= Count then
+          Break;
+        var N := Min(P.Value, Count - Done);
+        if N > 0 then
+          FMemory.WriteBytes(P.Key, Src[Done], N);
+        Inc(Done, N);
+      end;
+    end;
+  if S.Kind <> 1 then
+  begin
+    Run(S, Int64(S.RcvTimeo) * InetTickNs, NonBlocking,
+      function(Final: Boolean; out Ret, Err: Integer): Boolean
+      begin
+        Result := True;
+        Ret := -1;
+        if S.SoError <> 0 then
+        begin
+          Err := S.SoError;
+          S.SoError := 0;
+          Exit;
+        end;
+        if S.Datagrams.Count > 0 then
+        begin
+          var D := S.Datagrams.Peek;
+          if not Peek then
+          begin
+            S.Datagrams.Dequeue;
+            Dec(S.QueuedBytes, Length(D.Data));
+          end;
+          var N := Min(Len, Length(D.Data));
+          Scatter(D.Data, N);
+          WriteAddr(FromPtr, FromLenPtr, D.FromIP, D.FromPort);
+          if MsgFlagsPtr <> 0 then
+            if N < Length(D.Data) then
+              FMemory.Write32(MsgFlagsPtr, INET_MSG_TRUNC)
+            else
+              FMemory.Write32(MsgFlagsPtr, 0);
+          Ret := N;
+          Err := 0;
+          Exit;
+        end;
+        if S.ReadShut then
+        begin
+          Ret := 0;
+          Err := 0;
+          Exit;
+        end;
+        if Final then
+          Err := EAGAIN
+        else
+          Result := False;
+      end);
+    Exit;
+  end;
+  var WaitAll := (Flags and INET_MSG_WAITALL) <> 0;
+  Run(S, Int64(S.RcvTimeo) * InetTickNs, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Ret := -1;
+      if S.SoError <> 0 then
+      begin
+        Err := S.SoError;
+        S.SoError := 0;
+        Exit;
+      end;
+      if (S.State in [isClosed, isListening, isConnecting]) and not S.CantRecvMore then
+      begin
+        Err := ENOTCONN;
+        Exit;
+      end;
+      if S.ReadShut then
+      begin
+        Ret := 0;
+        Err := 0;
+        Exit;
+      end;
+      if (S.RecvLen > 0) and ((Len = 0) or not WaitAll or (S.RecvLen >= Len) or S.CantRecvMore) then
+      begin
+        var N := Min(Len, S.RecvLen);
+        Scatter(S.RecvData, N);
+        if not Peek and (N > 0) then
+        begin
+          Move(S.RecvData[N], S.RecvData[0], S.RecvLen - N);
+          Dec(S.RecvLen, N);
+          // The window opens again for the peer.
+          var P := S.Peer;
+          if (P <> nil) and (P.SendLen > 0) then
+            ScheduleTransfer(P);
+        end;
+        if MsgFlagsPtr <> 0 then
+          FMemory.Write32(MsgFlagsPtr, 0);
+        Ret := N;
+        Err := 0;
+        Exit;
+      end;
+      if S.CantRecvMore or (Len = 0) then
+      begin
+        Ret := 0;
+        Err := 0;
+        Exit;
+      end;
+      if Final then
+        Err := EAGAIN
+      else
+        Result := False;
+    end);
+end;
+
+// The sceNetInet calls.
+
+const
+  // A connection the listener had no room for gets in on its SYN's retransmission.
+  InetSynRetryNs = 3000000000;
+  POLLIN = $1;
+  POLLOUT = $4;
+  POLLERR = $8;
+  POLLHUP = $10;
+  POLLNVAL = $20;
+  POLLRDNORM = $40;
+
+procedure TPSPNet.hInetInit;
+begin
+  FInetInited := True;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hInetTerm;
+begin
+  for var S in FSockets.Values.ToArray do
+    CloseSocket(S, False);
+  FInetInited := False;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hInetSocket;
+begin
+  var Domain := FHLE.ArgInt(0);
+  var Kind := FHLE.ArgInt(1);
+  var Protocol := FHLE.ArgInt(2);
+  var Ok := Domain = INET_AF_INET;
+  case Kind of
+    1: Ok := Ok and (Protocol in [0, 6]);
+    2: Ok := Ok and (Protocol in [0, 17]);
+    3: ;
+  else
+    Ok := False;
+  end;
+  if not Ok then
+  begin
+    InetFail(EPROTONOSUPPORT);
+    Exit;
+  end;
+  var Fd := NewFd;
+  if Fd < 0 then
+  begin
+    InetFail(EMFILE);
+    Exit;
+  end;
+  var S := NewSock(Kind);
+  S.Fd := Fd;
+  FSockets.Add(Fd, S);
+  InetOk(Fd);
+end;
+
+procedure TPSPNet.hInetBind;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  var Addr := FHLE.Arg(1);
+  var Len := FHLE.ArgInt(2);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  if S.Bound or (Addr = 0) or (Len < 16) then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  var IP: Cardinal;
+  var Port: Integer;
+  // The family is not looked at: an address of another kind is not the console's.
+  if not ReadAddr(Addr, IP, Port) or ((IP <> 0) and (IP <> INET_LOOPBACK)) then
+  begin
+    InetFail(EADDRNOTAVAIL);
+    Exit;
+  end;
+  if Port = 0 then
+    Port := EphemeralPort(S.Kind)
+  else if ((S.Options and $204) = 0) and PortInUse(S.Kind, IP, Port, S) then
+  begin
+    InetFail(EADDRINUSE);
+    Exit;
+  end;
+  S.Bound := True;
+  S.LocalIP := IP;
+  S.LocalPort := Port;
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetListen;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  if S.Kind <> 1 then
+  begin
+    InetFail(EOPNOTSUPP);
+    Exit;
+  end;
+  if not S.Bound then
+  begin
+    S.ListenFailed := True;
+    InetFail(EINVAL);
+    Exit;
+  end;
+  if S.State in [isConnecting, isEstablished] then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  S.State := isListening;
+  S.Backlog := FHLE.ArgInt(1);
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetAccept;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  var Addr := FHLE.Arg(1);
+  var LenPtr := FHLE.Arg(2);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  if S.Kind <> 1 then
+  begin
+    InetFail(EOPNOTSUPP);
+    Exit;
+  end;
+  if S.State <> isListening then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  Run(S, 0, S.NBIO,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Ret := -1;
+      if S.State <> isListening then
+      begin
+        Err := EINVAL;
+        Exit;
+      end;
+      if S.AcceptQueue.Count = 0 then
+      begin
+        if Final then
+          Err := EAGAIN
+        else
+          Result := False;
+        Exit;
+      end;
+      var Fd := NewFd;
+      if Fd < 0 then
+      begin
+        Err := EMFILE;
+        Exit;
+      end;
+      var N := S.AcceptQueue[0];
+      S.AcceptQueue.Delete(0);
+      N.Fd := Fd;
+      FSockets.Add(Fd, N);
+      WriteAddr(Addr, LenPtr, N.PeerIP, N.PeerPort);
+      if S.SynQueue.Count > 0 then
+      begin
+        var C := S.SynQueue[0];
+        S.SynQueue.Delete(0);
+        FKernel.AddTimer(FKernel.Scheduler.Now + InetSynRetryNs, Self,
+          procedure
+          begin
+            if FPcbs.Contains(C) then
+              Handshake(C);
+            InetWake;
+          end);
+      end;
+      Ret := Fd;
+      Err := 0;
+    end);
+end;
+
+procedure TPSPNet.hInetConnect;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  var Addr := FHLE.Arg(1);
+  var Len := FHLE.ArgInt(2);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  if (Addr = 0) or (Len < 16) then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  var IP: Cardinal;
+  var Port: Integer;
+  if not ReadAddr(Addr, IP, Port) then
+  begin
+    InetFail(EAFNOSUPPORT);
+    Exit;
+  end;
+  if S.Kind = 1 then
+  begin
+    if (S.State = isListening) or S.ListenFailed or S.ConnectFailed then
+    begin
+      InetFail(EINVAL);
+      Exit;
+    end;
+    if S.State = isEstablished then
+    begin
+      InetFail(EISCONN);
+      Exit;
+    end;
+    if S.State = isConnecting then
+    begin
+      InetFail(EALREADY);
+      Exit;
+    end;
+  end;
+  if (IP <> 0) and (IP shr 24 <> 127) then
+  begin
+    InetFail(EHOSTUNREACH);
+    Exit;
+  end;
+  if not S.Bound then
+  begin
+    S.Bound := True;
+    S.LocalPort := EphemeralPort(S.Kind);
+  end;
+  if S.LocalIP = 0 then
+    S.LocalIP := INET_LOOPBACK;
+  S.PeerIP := INET_LOOPBACK;
+  S.PeerPort := Port;
+  S.HasPeer := True;
+  if S.Kind <> 1 then
+  begin
+    InetOk(0);
+    Exit;
+  end;
+  S.State := isConnecting;
+  Later(
+    procedure
+    begin
+      Handshake(S);
+    end);
+  if S.NBIO then
+  begin
+    InetFail(EINPROGRESS);
+    Exit;
+  end;
+  Run(S, 0, False,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Ret := -1;
+      if S.State = isEstablished then
+      begin
+        Ret := 0;
+        Err := 0;
+      end
+      else if S.State = isConnecting then
+      begin
+        Err := EAGAIN;
+        Result := Final;
+      end
+      else
+      begin
+        Err := S.SoError;
+        S.SoError := 0;
+        if Err = 0 then
+          Err := ECONNREFUSED;
+      end;
+    end);
+end;
+
+function GuestBytesOf(M: TPSPMemory; Addr: Cardinal; Len: Integer): TBytes;
+begin
+  SetLength(Result, Max(Len, 0));
+  if Len > 0 then
+    M.ReadBytes(Addr, Result[0], Len);
+end;
+
+procedure TPSPNet.hInetSend;
+begin
+  if FHLE.ArgInt(2) < 0 then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  SendCall(FHLE.ArgInt(0), GuestBytesOf(FMemory, FHLE.Arg(1), FHLE.ArgInt(2)), FHLE.ArgInt(3), False, 0, 0);
+end;
+
+procedure TPSPNet.hInetSendto;
+begin
+  var Fd := FHLE.ArgInt(0);
+  var Len := FHLE.ArgInt(2);
+  var ToAddr := FHLE.Arg(4);
+  if Len < 0 then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  var IP: Cardinal := 0;
+  var Port := 0;
+  var S := SockOf(Fd);
+  var HasTo := (ToAddr <> 0) and (S <> nil) and (S.Kind <> 1);
+  if HasTo then
+  begin
+    if FHLE.ArgInt(5) < 16 then
+    begin
+      InetFail(EINVAL);
+      Exit;
+    end;
+    if not ReadAddr(ToAddr, IP, Port) then
+    begin
+      InetFail(EAFNOSUPPORT);
+      Exit;
+    end;
+  end;
+  SendCall(Fd, GuestBytesOf(FMemory, FHLE.Arg(1), Len), FHLE.ArgInt(3), HasTo, IP, Port);
+end;
+
+procedure TPSPNet.hInetSendmsg;
+begin
+  var Fd := FHLE.ArgInt(0);
+  var Msg := FHLE.Arg(1);
+  var S := SockOf(Fd);
+  if (S = nil) or (Msg = 0) then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var Name := FMemory.Read32(Msg);
+  var Iov := FMemory.Read32(Msg + 8);
+  var IovLen := Integer(FMemory.Read32(Msg + 12));
+  var Data: TBytes := nil;
+  for var I := 0 to IovLen - 1 do
+    Data := Data + GuestBytesOf(FMemory, FMemory.Read32(Iov + Cardinal(I * 8)),
+      Integer(FMemory.Read32(Iov + Cardinal(I * 8) + 4)));
+  var IP: Cardinal := 0;
+  var Port := 0;
+  var HasTo := (Name <> 0) and (S.Kind <> 1);
+  if HasTo and not ReadAddr(Name, IP, Port) then
+  begin
+    InetFail(EAFNOSUPPORT);
+    Exit;
+  end;
+  SendCall(Fd, Data, FHLE.ArgInt(2), HasTo, IP, Port);
+end;
+
+procedure TPSPNet.hInetRecv;
+begin
+  RecvCall(FHLE.ArgInt(0), [TPair<Cardinal, Integer>.Create(FHLE.Arg(1), Max(FHLE.ArgInt(2), 0))], FHLE.ArgInt(3),
+    0, 0, 0);
+end;
+
+procedure TPSPNet.hInetRecvfrom;
+begin
+  RecvCall(FHLE.ArgInt(0), [TPair<Cardinal, Integer>.Create(FHLE.Arg(1), Max(FHLE.ArgInt(2), 0))], FHLE.ArgInt(3),
+    FHLE.Arg(4), FHLE.Arg(5), 0);
+end;
+
+procedure TPSPNet.hInetRecvmsg;
+begin
+  var Msg := FHLE.Arg(1);
+  if (SockOf(FHLE.ArgInt(0)) = nil) or (Msg = 0) then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var Iov := FMemory.Read32(Msg + 8);
+  var IovLen := Integer(FMemory.Read32(Msg + 12));
+  var Segs: TArray<TPair<Cardinal, Integer>> := nil;
+  for var I := 0 to IovLen - 1 do
+    Segs := Segs + [TPair<Cardinal, Integer>.Create(FMemory.Read32(Iov + Cardinal(I * 8)),
+      Integer(FMemory.Read32(Iov + Cardinal(I * 8) + 4)))];
+  var Name := FMemory.Read32(Msg);
+  var NameLenPtr: Cardinal := 0;
+  if Name <> 0 then
+    NameLenPtr := Msg + 4;
+  RecvCall(FHLE.ArgInt(0), Segs, FHLE.ArgInt(2), Name, NameLenPtr, Msg + 24);
+end;
+
+procedure TPSPNet.hInetClose;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  CloseSocket(S, False);
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetCloseWithRST;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  CloseSocket(S, True);
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetShutdown;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  var How := FHLE.ArgInt(1);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  if (How < 0) or (How > 2) then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  if How <> 1 then
+  begin
+    S.ReadShut := True;
+    S.CantRecvMore := True;
+    S.RecvLen := 0;
+    S.Datagrams.Clear;
+    S.QueuedBytes := 0;
+  end;
+  if How <> 0 then
+  begin
+    S.WriteShut := True;
+    if (S.Kind = 1) and (S.State = isEstablished) and not S.CantSendMore then
+    begin
+      S.CantSendMore := True;
+      S.FinPending := True;
+      ScheduleTransfer(S);
+    end;
+  end;
+  InetOk(0);
+  InetWake;
+end;
+
+procedure TPSPNet.hInetGetsockname;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  WriteAddr(FHLE.Arg(1), FHLE.Arg(2), S.LocalIP, S.LocalPort);
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetGetpeername;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var Connected := S.HasPeer;
+  if S.Kind = 1 then
+    Connected := Connected and (S.State in [isConnecting, isEstablished]);
+  if not Connected then
+  begin
+    InetFail(ENOTCONN);
+    Exit;
+  end;
+  WriteAddr(FHLE.Arg(1), FHLE.Arg(2), S.PeerIP, S.PeerPort);
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetSetsockopt;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  var Level := FHLE.ArgInt(1);
+  var Name := FHLE.ArgInt(2);
+  var Val := FHLE.Arg(3);
+  var Len := FHLE.ArgInt(4);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var V := 0;
+  if Len >= 4 then
+    V := Integer(FMemory.Read32(Val));
+  case Level of
+    $FFFF:
+      case Name of
+        $1, $4, $8, $10, $20, $100, $200, $80, $1001..$1006, $1009:
+          begin
+            if (Len < 4) or ((Name = $80) and (Len < 8)) then
+            begin
+              InetFail(EINVAL);
+              Exit;
+            end;
+            case Name of
+              $80:
+                begin
+                  if V <> 0 then
+                    S.Options := S.Options or SO_LINGER
+                  else
+                    S.Options := S.Options and not Cardinal(SO_LINGER);
+                  S.LingerTime := Integer(FMemory.Read32(Val + 4));
+                end;
+              $1001, $1002:
+                begin
+                  if V <= 0 then
+                  begin
+                    InetFail(EINVAL);
+                    Exit;
+                  end;
+                  if V > InetMaxBuffer then
+                  begin
+                    InetFail(ENOBUFS);
+                    Exit;
+                  end;
+                  if Name = $1001 then
+                    S.SndBuf := V
+                  else
+                    S.RcvBuf := V;
+                end;
+              $1003: S.SndLowat := Max(1, Min(V, S.SndBuf));
+              $1004: S.RcvLowat := Max(1, Min(V, S.RcvBuf));
+              // A count of microseconds, kept in ticks.
+              $1005: S.SndTimeo := Integer(Cardinal(V) div 10000);
+              $1006: S.RcvTimeo := Integer(Cardinal(V) div 10000);
+              $1009: S.NBIO := V <> 0;
+            else
+              if V <> 0 then
+                S.Options := S.Options or Cardinal(Name)
+              else
+                S.Options := S.Options and not Cardinal(Name);
+            end;
+          end;
+      else
+        InetFail(ENOPROTOOPT);
+        Exit;
+      end;
+    0:
+      if Name = 4 then
+      begin
+        if Len < 4 then
+        begin
+          InetFail(EINVAL);
+          Exit;
+        end;
+        S.TTL := V;
+      end
+      else
+      begin
+        InetFail(ENOPROTOOPT);
+        Exit;
+      end;
+    6:
+      begin
+        if S.Kind <> 1 then
+        begin
+          InetFail(EINVAL);
+          Exit;
+        end;
+        if Name <> 1 then
+        begin
+          InetFail(ENOPROTOOPT);
+          Exit;
+        end;
+        if Len < 4 then
+        begin
+          InetFail(EINVAL);
+          Exit;
+        end;
+        S.NoDelay := V <> 0;
+      end;
+  else
+    InetFail(EINVAL);
+    Exit;
+  end;
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetGetsockopt;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  var Level := FHLE.ArgInt(1);
+  var Name := FHLE.ArgInt(2);
+  var Val := FHLE.Arg(3);
+  var LenPtr := FHLE.Arg(4);
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  var Words: TArray<Cardinal>;
+  case Level of
+    $FFFF:
+      case Name of
+        $1, $4, $8, $10, $20, $100, $200: Words := [S.Options and Cardinal(Name)];
+        $80: Words := [S.Options and SO_LINGER, Cardinal(S.LingerTime)];
+        $1001: Words := [Cardinal(S.SndBuf)];
+        $1002: Words := [Cardinal(S.RcvBuf)];
+        $1003: Words := [Cardinal(S.SndLowat)];
+        $1004: Words := [Cardinal(S.RcvLowat)];
+        $1005: Words := [Cardinal(S.SndTimeo)];
+        $1006: Words := [Cardinal(S.RcvTimeo)];
+        $1007:
+          begin
+            // A pending error reads as the stack's error code for it.
+            if S.SoError <> 0 then
+              Words := [$80010000 or Cardinal(S.SoError)]
+            else
+              Words := [0];
+            S.SoError := 0;
+          end;
+        $1008: Words := [Cardinal(S.Kind)];
+        $1009: Words := [Cardinal(Ord(S.NBIO) * $80)];
+      else
+        InetFail(ENOPROTOOPT);
+        Exit;
+      end;
+    0:
+      if Name = 4 then
+        Words := [Cardinal(S.TTL)]
+      else
+      begin
+        InetFail(ENOPROTOOPT);
+        Exit;
+      end;
+    6:
+      begin
+        if S.Kind <> 1 then
+        begin
+          InetFail(EINVAL);
+          Exit;
+        end;
+        if Name <> 1 then
+        begin
+          InetFail(ENOPROTOOPT);
+          Exit;
+        end;
+        Words := [Cardinal(Ord(S.NoDelay) * 4)];
+      end;
+  else
+    InetFail(EINVAL);
+    Exit;
+  end;
+  var Bytes: TBytes;
+  SetLength(Bytes, Length(Words) * 4);
+  for var I := 0 to High(Words) do
+    PCardinal(@Bytes[I * 4])^ := Words[I];
+  var N := 0;
+  if LenPtr <> 0 then
+    N := EnsureRange(Integer(FMemory.Read32(LenPtr)), 0, Length(Bytes));
+  if N > 0 then
+    FMemory.WriteBytes(Val, Bytes[0], N);
+  if LenPtr <> 0 then
+    FMemory.Write32(LenPtr, Cardinal(N));
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetSelect;
+begin
+  var NFds := EnsureRange(FHLE.ArgInt(0), 0, 256);
+  var Sets: TArray<Cardinal> := [FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3)];
+  var Tv := FHLE.Arg(4);
+  var TimeoutNs: Int64 := 0;
+  var Poll := False;
+  if Tv <> 0 then
+  begin
+    var Sec := Integer(FMemory.Read32(Tv));
+    var USec := Integer(FMemory.Read32(Tv + 4));
+    if (Sec < 0) or (USec < 0) or (USec >= 1000000) then
+    begin
+      InetFail(EINVAL);
+      Exit;
+    end;
+    TimeoutNs := Int64(Sec) * 1000000000 + Int64(USec) * 1000;
+    Poll := TimeoutNs = 0;
+  end;
+  var Want: array[0..2] of array[0..7] of Cardinal;
+  for var K := 0 to 2 do
+    for var I := 0 to 7 do
+      if Sets[K] <> 0 then
+        Want[K][I] := FMemory.Read32(Sets[K] + Cardinal(I * 4))
+      else
+        Want[K][I] := 0;
+  for var Fd := 0 to NFds - 1 do
+    for var K := 0 to 2 do
+      if ((Want[K][Fd shr 5] shr (Fd and 31)) and 1 <> 0) and (SockOf(Fd) = nil) then
+      begin
+        InetFail(EBADF);
+        Exit;
+      end;
+  Run(nil, TimeoutNs, Poll,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      var Got: array[0..2] of array[0..7] of Cardinal;
+      FillChar(Got, SizeOf(Got), 0);
+      var Count := 0;
+      for var Fd := 0 to NFds - 1 do
+        for var K := 0 to 1 do
+          if (Want[K][Fd shr 5] shr (Fd and 31)) and 1 <> 0 then
+          begin
+            var S := SockOf(Fd);
+            if (S <> nil) and (((K = 0) and Readable(S)) or ((K = 1) and Writable(S))) then
+            begin
+              Got[K][Fd shr 5] := Got[K][Fd shr 5] or (Cardinal(1) shl (Fd and 31));
+              Inc(Count);
+            end;
+          end;
+      Result := (Count > 0) or Final;
+      if not Result then
+        Exit;
+      for var K := 0 to 2 do
+        if Sets[K] <> 0 then
+          for var I := 0 to 7 do
+            FMemory.Write32(Sets[K] + Cardinal(I * 4), Got[K][I]);
+      Ret := Count;
+      Err := 0;
+    end);
+end;
+
+procedure TPSPNet.hInetPoll;
+begin
+  var Fds := FHLE.Arg(0);
+  var N := Max(FHLE.ArgInt(1), 0);
+  var TimeoutMs := FHLE.ArgInt(2);
+  var TimeoutNs: Int64 := 0;
+  if TimeoutMs > 0 then
+    TimeoutNs := Int64(TimeoutMs) * 1000000;
+  Run(nil, TimeoutNs, TimeoutMs = 0,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      var R: TArray<Cardinal>;
+      SetLength(R, N);
+      var Count := 0;
+      for var I := 0 to N - 1 do
+      begin
+        var E := FMemory.Read16(Fds + Cardinal(I * 8) + 4);
+        var S := SockOf(Integer(FMemory.Read32(Fds + Cardinal(I * 8))));
+        if S = nil then
+          R[I] := POLLNVAL
+        else
+        begin
+          if ((E and (POLLIN or POLLRDNORM)) <> 0) and Readable(S) then
+            R[I] := R[I] or (E and (POLLIN or POLLRDNORM));
+          if ((E and POLLOUT) <> 0) and Writable(S) then
+            R[I] := R[I] or POLLOUT;
+          if S.SoError <> 0 then
+            R[I] := R[I] or POLLERR;
+          if S.CantRecvMore and S.CantSendMore and (S.Kind = 1) and (S.State = isClosed) then
+            R[I] := R[I] or POLLHUP;
+        end;
+        if R[I] <> 0 then
+          Inc(Count);
+      end;
+      Result := (Count > 0) or Final;
+      if not Result then
+        Exit;
+      for var I := 0 to N - 1 do
+        FMemory.Write16(Fds + Cardinal(I * 8) + 6, R[I]);
+      Ret := Count;
+      Err := 0;
+    end);
+end;
+
+procedure TPSPNet.hInetGetErrno;
+begin
+  var E := 0;
+  if FKernel.Current <> nil then
+    FErrno.TryGetValue(FKernel.Current.UID, E);
+  FHLE.Result(Cardinal(E));
+end;
+
+procedure TPSPNet.hInetGetPspError;
+begin
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hInetSocketAbort;
+begin
+  var S := SockOf(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    InetFail(EBADF);
+    Exit;
+  end;
+  for var W in FWaiters.ToArray do
+    if W.Sock = S then
+      InetAbortThread(W.Thread);
+  InetOk(0);
+end;
+
+procedure TPSPNet.CbStat(Stream: Boolean);
+begin
+  // Newest first, each entry's first word pointing at the next.
+  var SizePtr := FHLE.Arg(0);
+  var Buf := FHLE.Arg(1);
+  if SizePtr = 0 then
+  begin
+    InetFail(EINVAL);
+    Exit;
+  end;
+  var Entry := 24;
+  var Kind := 2;
+  if Stream then
+  begin
+    Entry := 28;
+    Kind := 1;
+  end;
+  var List: TArray<TInetSocket> := nil;
+  for var S in FPcbs do
+    if S.Kind = Kind then
+      List := List + [S];
+  var Need := Length(List) * Entry;
+  if Buf <> 0 then
+  begin
+    var Fit := Min(Length(List), Integer(FMemory.Read32(SizePtr)) div Entry);
+    for var I := 0 to Fit - 1 do
+    begin
+      var S := List[I];
+      var P := Buf + Cardinal(I * Entry);
+      FMemory.Fill(P, 0, Entry);
+      if I < Fit - 1 then
+        FMemory.Write32(P, P + Cardinal(Entry));
+      if Stream then
+      begin
+        FMemory.Write32(P + 4, Cardinal(S.RecvLen));
+        FMemory.Write32(P + 8, Cardinal(S.SendLen));
+        FMemory.Write32(P + 24, Cardinal(Ord(S.State)));
+      end
+      else
+        FMemory.Write32(P + 4, Cardinal(S.QueuedBytes));
+      for var K := 0 to 3 do
+      begin
+        FMemory.Write8(P + 12 + Cardinal(K), (S.LocalIP shr (24 - 8 * K)) and $FF);
+        FMemory.Write8(P + 16 + Cardinal(K), (S.PeerIP shr (24 - 8 * K)) and $FF);
+      end;
+      FMemory.Write8(P + 20, S.LocalPort shr 8);
+      FMemory.Write8(P + 21, S.LocalPort and $FF);
+      FMemory.Write8(P + 22, S.PeerPort shr 8);
+      FMemory.Write8(P + 23, S.PeerPort and $FF);
+    end;
+  end;
+  FMemory.Write32(SizePtr, Cardinal(Need));
+  InetOk(0);
+end;
+
+procedure TPSPNet.hInetGetUdpcbstat;
+begin
+  CbStat(False);
+end;
+
+procedure TPSPNet.hInetGetTcpcbstat;
+begin
+  CbStat(True);
+end;
+
+{ Addresses }
+
+// inet_aton: one to four parts, each decimal, octal or hex.
+function InetAtonText(const S: RawByteString; out Addr: Cardinal): Boolean;
+begin
+  Result := False;
+  var Parts: array[0..2] of Cardinal;
+  var NParts := 0;
+  var I := 1;
+  var N := Length(S);
+  var Val: Cardinal := 0;
+  while True do
+  begin
+    if (I > N) or not CharInSet(S[I], ['0'..'9']) then
+      Exit;
+    Val := 0;
+    var Base := 10;
+    if S[I] = '0' then
+    begin
+      Inc(I);
+      if (I <= N) and CharInSet(S[I], ['x', 'X']) then
+      begin
+        Base := 16;
+        Inc(I);
+      end
+      else
+        Base := 8;
+    end;
+    while I <= N do
+    begin
+      var C := S[I];
+      if CharInSet(C, ['0'..'9']) then
+        Val := Val * Cardinal(Base) + Cardinal(Ord(C) - Ord('0'))
+      else if (Base = 16) and CharInSet(C, ['a'..'f']) then
+        Val := (Val shl 4) or Cardinal(Ord(C) - Ord('a') + 10)
+      else if (Base = 16) and CharInSet(C, ['A'..'F']) then
+        Val := (Val shl 4) or Cardinal(Ord(C) - Ord('A') + 10)
+      else
+        Break;
+      Inc(I);
+    end;
+    if (I <= N) and (S[I] = '.') then
+    begin
+      if NParts >= 3 then
+        Exit;
+      Parts[NParts] := Val;
+      Inc(NParts);
+      Inc(I);
+    end
+    else
+      Break;
+  end;
+  if (I <= N) and not CharInSet(S[I], [#9, #10, #11, #12, #13, ' ']) then
+    Exit;
+  case NParts of
+    1:
+      begin
+        if (Val > $FFFFFF) or (Parts[0] > $FF) then
+          Exit;
+        Val := Val or (Parts[0] shl 24);
+      end;
+    2:
+      begin
+        if (Val > $FFFF) or (Parts[0] > $FF) or (Parts[1] > $FF) then
+          Exit;
+        Val := Val or (Parts[0] shl 24) or (Parts[1] shl 16);
+      end;
+    3:
+      begin
+        if (Val > $FF) or (Parts[0] > $FF) or (Parts[1] > $FF) or (Parts[2] > $FF) then
+          Exit;
+        Val := Val or (Parts[0] shl 24) or (Parts[1] shl 16) or (Parts[2] shl 8);
+      end;
+  end;
+  Addr := Val;
+  Result := True;
+end;
+
+// inet_pton: four decimal parts without leading zeros.
+function InetPtonText(const S: RawByteString; out Addr: Cardinal): Boolean;
+begin
+  Result := False;
+  var I := 1;
+  var N := Length(S);
+  Addr := 0;
+  for var Part := 0 to 3 do
+  begin
+    if Part > 0 then
+    begin
+      if (I > N) or (S[I] <> '.') then
+        Exit;
+      Inc(I);
+    end;
+    var Start := I;
+    var V := 0;
+    while (I <= N) and CharInSet(S[I], ['0'..'9']) do
+    begin
+      V := V * 10 + Ord(S[I]) - Ord('0');
+      if V > 255 then
+        Exit;
+      Inc(I);
+    end;
+    if (I = Start) or ((I - Start > 1) and (S[Start] = '0')) then
+      Exit;
+    Addr := (Addr shl 8) or Cardinal(V);
+  end;
+  if (I <= N) and not CharInSet(S[I], [#9, #10, #11, #12, #13, ' ']) then
+    Exit;
+  Result := True;
+end;
+
+function NetOrder(Addr: Cardinal): Cardinal;
+begin
+  Result := (Addr shr 24) or ((Addr shr 8) and $FF00) or ((Addr shl 8) and $FF0000) or (Addr shl 24);
+end;
+
+procedure TPSPNet.hInetInetAddr;
+begin
+  var A: Cardinal;
+  if InetAtonText(FMemory.ReadAnsi(FHLE.Arg(0), 256), A) then
+    FHLE.Result(NetOrder(A))
+  else
+    FHLE.Result($FFFFFFFF);
+end;
+
+procedure TPSPNet.hInetInetAton;
+begin
+  var A: Cardinal;
+  if InetAtonText(FMemory.ReadAnsi(FHLE.Arg(0), 256), A) then
+  begin
+    if FHLE.Arg(1) <> 0 then
+      FMemory.Write32(FHLE.Arg(1), NetOrder(A));
+    FHLE.Result(1);
+  end
+  else
+    FHLE.Result(0);
+end;
+
+procedure TPSPNet.hInetInetPton;
+begin
+  if FHLE.ArgInt(0) <> INET_AF_INET then
+  begin
+    InetFail(EAFNOSUPPORT);
+    Exit;
+  end;
+  var A: Cardinal;
+  if InetPtonText(FMemory.ReadAnsi(FHLE.Arg(1), 256), A) then
+  begin
+    FMemory.Write32(FHLE.Arg(2), NetOrder(A));
+    InetOk(1);
+  end
+  else
+    InetOk(0);
+end;
+
+procedure TPSPNet.hInetInetNtop;
+begin
+  var Src := FHLE.Arg(1);
+  var Dst := FHLE.Arg(2);
+  var Size := FHLE.ArgInt(3);
+  if FHLE.ArgInt(0) <> INET_AF_INET then
+  begin
+    InetFail(EAFNOSUPPORT);
+    FHLE.Result(0);
+    Exit;
+  end;
+  var S := RawByteString(Format('%d.%d.%d.%d', [FMemory.Read8(Src), FMemory.Read8(Src + 1), FMemory.Read8(Src + 2),
+    FMemory.Read8(Src + 3)]));
+  if Length(S) + 1 > Size then
+  begin
+    InetFail(ENOSPC);
+    FHLE.Result(0);
+    Exit;
+  end;
+  FMemory.WriteString(Dst, S, Length(S) + 1);
+  InetOk(Integer(Dst));
+end;
+
+procedure TPSPNet.InetRegister;
+const
+  I = 'sceNetInet';
+begin
+  var X := FHLE;
+  X.Register(I, $17943399, 'sceNetInetInit', hInetInit);
+  X.Register(I, $A9ED66B9, 'sceNetInetTerm', hInetTerm);
+  X.Register(I, $8B7B220F, 'sceNetInetSocket', hInetSocket);
+  X.Register(I, $1A33F9AE, 'sceNetInetBind', hInetBind);
+  X.Register(I, $D10A1A7A, 'sceNetInetListen', hInetListen);
+  X.Register(I, $DB094E1B, 'sceNetInetAccept', hInetAccept);
+  X.Register(I, $410B34AA, 'sceNetInetConnect', hInetConnect);
+  X.Register(I, $7AA671BC, 'sceNetInetSend', hInetSend);
+  X.Register(I, $05038FC7, 'sceNetInetSendto', hInetSendto);
+  X.Register(I, $774E36F4, 'sceNetInetSendmsg', hInetSendmsg);
+  X.Register(I, $CDA85C99, 'sceNetInetRecv', hInetRecv);
+  X.Register(I, $C91142E4, 'sceNetInetRecvfrom', hInetRecvfrom);
+  X.Register(I, $EECE61D2, 'sceNetInetRecvmsg', hInetRecvmsg);
+  X.Register(I, $8D7284EA, 'sceNetInetClose', hInetClose);
+  X.Register(I, $805502DD, 'sceNetInetCloseWithRST', hInetCloseWithRST);
+  X.Register(I, $4CFE4E56, 'sceNetInetShutdown', hInetShutdown);
+  X.Register(I, $162E6FD5, 'sceNetInetGetsockname', hInetGetsockname);
+  X.Register(I, $E247B6D6, 'sceNetInetGetpeername', hInetGetpeername);
+  X.Register(I, $2FE71FE7, 'sceNetInetSetsockopt', hInetSetsockopt);
+  X.Register(I, $4A114C7C, 'sceNetInetGetsockopt', hInetGetsockopt);
+  X.Register(I, $5BE8D595, 'sceNetInetSelect', hInetSelect);
+  X.Register(I, $FAABB1DD, 'sceNetInetPoll', hInetPoll);
+  X.Register(I, $FBABE411, 'sceNetInetGetErrno', hInetGetErrno);
+  X.Register(I, $8CA3A97E, 'sceNetInetGetPspError', hInetGetPspError);
+  X.Register(I, $80A21ABD, 'sceNetInetSocketAbort', hInetSocketAbort);
+  X.Register(I, $39B0C7D3, 'sceNetInetGetUdpcbstat', hInetGetUdpcbstat);
+  X.Register(I, $B3888AD4, 'sceNetInetGetTcpcbstat', hInetGetTcpcbstat);
+  X.Register(I, $B75D5B0A, 'sceNetInetInetAddr', hInetInetAddr);
+  X.Register(I, $1BDF5D13, 'sceNetInetInetAton', hInetInetAton);
+  X.Register(I, $E30B8C19, 'sceNetInetInetPton', hInetInetPton);
+  X.Register(I, $D0792666, 'sceNetInetInetNtop', hInetInetNtop);
+  X.Register(I, $2D5868C0, 'sceNetInetDelArp', hZero);
+  X.Register(I, $CCC18C45, 'sceNetInetAddArp', hZero);
+end;
+
+// Ad hoc on a console alone: adhocctl can create and join groups (nobody
+// else is ever in them), scan (and find nobody), discover and wait for game
+// mode members who never come. Its handlers run on adhocctl's own thread.
+
+const
+  SCE_NET_ADHOCCTL_ERROR_BUSY = Cardinal($80410B02);
+  SCE_NET_ADHOCCTL_ERROR_INVALID_ARG = Cardinal($80410B04);
+  SCE_NET_ADHOCCTL_ERROR_TIMEOUT = Cardinal($80410B05);
+  SCE_NET_ADHOCCTL_ERROR_INVALID_ID = Cardinal($80410B06);
+  SCE_NET_ADHOCCTL_ERROR_ALREADY_INITIALIZED = Cardinal($80410B07);
+  SCE_NET_ADHOCCTL_ERROR_NOT_INITIALIZED = Cardinal($80410B08);
+  SCE_NET_ADHOCCTL_ERROR_NOT_CONNECTED = Cardinal($80410B09);
+  SCE_NET_ADHOCCTL_ERROR_NOT_IN_GAMEMODE = Cardinal($80410B0B);
+  SCE_NET_ADHOCCTL_ERROR_NOT_ENTER_GAMEMODE = Cardinal($80410B0C);
+  SCE_NET_ADHOCCTL_ERROR_HANDLER_MAX = Cardinal($80410B12);
+  SCE_NET_ADHOCCTL_ERROR_STACKSIZE_TOO_SHORT = Cardinal($80410B13);
+  SCE_NET_ADHOCCTL_ERROR_WLAN_FAILED = Cardinal($80410601);
+  SCE_KERNEL_ERROR_ILLEGAL_PRIORITY = Cardinal($80020193);
+  SCE_NET_ERROR_NO_ETHER = Cardinal($80410180);
+  SCE_NET_ADHOC_ERROR_NO_PEER_LIST = Cardinal($80410682);
+  SCE_NET_ADHOC_ERROR_NO_ENTRY = Cardinal($80410716);
+  SCE_NET_ADHOC_ERROR_INVALID_MAC = Cardinal($80410702);
+  SCE_NET_ADHOC_ERROR_NOT_IN_GAMEMODE = Cardinal($8041071B);
+  SCE_NET_ADHOC_ERROR_NOT_CREATED = Cardinal($8041071C);
+  SCE_NET_ADHOC_DISCOVER_ERROR_ALREADY_STARTED = Cardinal($80411301);
+  SCE_NET_ADHOC_DISCOVER_ERROR_NOT_SUPPORTED = Cardinal($80411303);
+
+  AdhocctlDisconnected = 0;
+  AdhocctlConnected = 1;
+  AdhocctlDiscovering = 4;
+  AdhocEventError = 0;
+  AdhocEventConnect = 1;
+  AdhocEventDisconnect = 2;
+  AdhocEventScan = 3;
+  // How long the radio takes for each operation, as hardware measures them.
+  AdhocCreateNs = 1115000000;
+  AdhocDisconnectNs = 105900000;
+  AdhocScanNs = 991800000;
+  AdhocQuickNs = 5000000;
+  // GetParameter asks the WLAN driver and waits for it.
+  AdhocParameterNs = 13700000;
+
+procedure TPSPNet.AdhocReset;
+begin
+  FAdhocctlInited := False;
+  FAdhocctlBroken := False;
+  FAdhocctlState := AdhocctlDisconnected;
+  FAdhocctlWorker := nil;
+  FillChar(FAdhocctlHandlers, SizeOf(FAdhocctlHandlers), 0);
+  FAdhocId := nil;
+  FAdhocGroup := '';
+  FAdhocDeviceUp := False;
+  FGameModePending := False;
+  FDiscoverStatus := 0;
+  FDiscoverPhase := 0;
+  FAdhocInited := False;
+  for var S in FAdhocObjs do
+    if not FAdhocDead.Contains(S) then
+      FAdhocDead.Add(S);
+  FAdhocObjs.Clear;
+  FAdhocDead.Clear;
+  FNextAdhocId := 0;
+  FNextAdhocPort := $1000;
+  FMatchingInited := False;
+  FMatching.Clear;
+  FLastMatchingId := 0;
+end;
+
+procedure TPSPNet.AdhocctlEvent(Event: Integer; Error: Cardinal; DelayNs: Int64; const Change: TProc);
+begin
+  // The radio does its part, then the handlers hear of it on adhocctl's thread.
+  var W := FAdhocctlWorker;
+  FKernel.AddTimer(FKernel.Scheduler.Now + DelayNs, Self,
+    procedure
+    begin
+      if (W = nil) or (W <> FAdhocctlWorker) then
+        Exit;
+      if Assigned(Change) then
+        Change();
+      if Event >= 0 then
+        Post(W,
+          function: TArray<TNetCall>
+          begin
+            Result := Calls(FAdhocctlHandlers, [Cardinal(Event), Error]);
+          end);
+    end);
+end;
+
+function TPSPNet.AdhocctlReady: Boolean;
+begin
+  if FAdhocctlInited then
+    Result := True
+  else
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_NOT_INITIALIZED);
+    Result := False;
+  end;
+end;
+
+function TPSPNet.ValidGroupName(Ptr: Cardinal; out Name: RawByteString): Boolean;
+begin
+  // Up to eight letters and digits.
+  Name := '';
+  if Ptr = 0 then
+    Exit(True);
+  for var I := 0 to 7 do
+  begin
+    var C := AnsiChar(FMemory.Read8(Ptr + Cardinal(I)));
+    if C = #0 then
+      Break;
+    if not CharInSet(C, ['A'..'Z', 'a'..'z', '0'..'9']) then
+      Exit(False);
+    Name := Name + C;
+  end;
+  Result := True;
+end;
+
+function TPSPNet.ReadMac(Addr: Cardinal): TAdhocMac;
+begin
+  for var I := 0 to 5 do
+    Result[I] := FMemory.Read8(Addr + Cardinal(I));
+end;
+
+function TPSPNet.IsLocalMac(const M: TAdhocMac): Boolean;
+begin
+  Result := CompareMem(@M[0], @PSPEtherAddr[0], 6);
+end;
+
+// 0 zero, 1 broadcast, 2 multicast, 3 unicast.
+function TPSPNet.MacKind(const M: TAdhocMac): Integer;
+begin
+  var Zero := True;
+  var Ones := True;
+  for var B in M do
+  begin
+    Zero := Zero and (B = 0);
+    Ones := Ones and (B = $FF);
+  end;
+  if Zero then
+    Result := 0
+  else if Ones then
+    Result := 1
+  else if (M[0] and 1) <> 0 then
+    Result := 2
+  else
+    Result := 3;
+end;
+
+{ sceNetAdhocctl }
+
+procedure TPSPNet.hAdhocctlInit;
+begin
+  var Stack := FHLE.Arg(0);
+  var Prio := FHLE.ArgInt(1);
+  var Id := FHLE.Arg(2);
+  if FAdhocctlBroken then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_WLAN_FAILED);
+    Exit;
+  end;
+  if FAdhocctlInited then
+  begin
+    // A second Init takes the library down with it.
+    StopWorker(FAdhocctlWorker);
+    FAdhocctlInited := False;
+    FAdhocctlBroken := True;
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_ALREADY_INITIALIZED);
+    Exit;
+  end;
+  if Stack < $C00 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_STACKSIZE_TOO_SHORT);
+    Exit;
+  end;
+  if (Prio < 1) or (Prio > $7F) then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Exit;
+  end;
+  if (Id = 0) or (FMemory.Read32(Id) > 2) then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  SetLength(FAdhocId, 16);
+  FMemory.ReadBytes(Id, FAdhocId[0], 16);
+  FAdhocctlWorker := StartWorker('SceNetAdhocctl', Prio, Stack);
+  FAdhocctlInited := True;
+  FAdhocctlState := AdhocctlDisconnected;
+  FAdhocDeviceUp := False;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hAdhocctlTerm;
+begin
+  if FAdhocctlInited then
+  begin
+    if FGameModePending then
+      FKernel.CancelTimer(FGameModeTimer);
+    StopWorker(FAdhocctlWorker);
+  end;
+  FAdhocctlInited := False;
+  FAdhocctlBroken := False;
+  FAdhocctlState := AdhocctlDisconnected;
+  FGameModePending := False;
+  FillChar(FAdhocctlHandlers, SizeOf(FAdhocctlHandlers), 0);
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hAdhocctlAddHandler;
+begin
+  if not AdhocctlReady then
+    Exit;
+  if FHLE.Arg(0) = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  for var I := 0 to High(FAdhocctlHandlers) do
+    if not FAdhocctlHandlers[I].Used then
+    begin
+      FAdhocctlHandlers[I].Used := True;
+      FAdhocctlHandlers[I].Func := FHLE.Arg(0);
+      FAdhocctlHandlers[I].Arg := FHLE.Arg(1);
+      FHLE.Result(Cardinal(I));
+      Exit;
+    end;
+  FHLE.Result(SCE_NET_ADHOCCTL_ERROR_HANDLER_MAX);
+end;
+
+procedure TPSPNet.hAdhocctlDelHandler;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var Id := FHLE.ArgInt(0);
+  if (Id < 0) or (Id > High(FAdhocctlHandlers)) or not FAdhocctlHandlers[Id].Used then
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ID)
+  else
+  begin
+    FAdhocctlHandlers[Id].Used := False;
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hAdhocctlGetState;
+begin
+  if not AdhocctlReady then
+    Exit;
+  if FHLE.Arg(0) = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FMemory.Write32(FHLE.Arg(0), Cardinal(FAdhocctlState));
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hAdhocctlCreate;
+begin
+  // Nobody has the group, so joining it creates it too.
+  if not AdhocctlReady then
+    Exit;
+  var Name: RawByteString;
+  if not ValidGroupName(FHLE.Arg(0), Name) then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FHLE.Result(0);
+  if FAdhocctlState <> AdhocctlDisconnected then
+  begin
+    AdhocctlEvent(AdhocEventError, SCE_NET_ADHOCCTL_ERROR_BUSY, AdhocQuickNs, nil);
+    Exit;
+  end;
+  FAdhocDeviceUp := True;
+  AdhocctlEvent(AdhocEventConnect, 0, AdhocCreateNs,
+    procedure
+    begin
+      FAdhocctlState := AdhocctlConnected;
+      FAdhocGroup := Name;
+    end);
+end;
+
+procedure TPSPNet.hAdhocctlConnect;
+begin
+  hAdhocctlCreate;
+end;
+
+procedure TPSPNet.hAdhocctlJoin;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var Info := FHLE.Arg(0);
+  if Info = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  var Name: RawByteString;
+  ValidGroupName(Info + 8, Name);
+  FHLE.Result(0);
+  if FAdhocctlState <> AdhocctlDisconnected then
+  begin
+    AdhocctlEvent(AdhocEventError, SCE_NET_ADHOCCTL_ERROR_BUSY, AdhocQuickNs, nil);
+    Exit;
+  end;
+  FAdhocDeviceUp := True;
+  AdhocctlEvent(AdhocEventConnect, 0, AdhocCreateNs,
+    procedure
+    begin
+      FAdhocctlState := AdhocctlConnected;
+      FAdhocGroup := Name;
+    end);
+end;
+
+procedure TPSPNet.hAdhocctlScan;
+begin
+  if not AdhocctlReady then
+    Exit;
+  FHLE.Result(0);
+  if FAdhocctlState <> AdhocctlDisconnected then
+  begin
+    AdhocctlEvent(AdhocEventError, SCE_NET_ADHOCCTL_ERROR_BUSY, AdhocQuickNs, nil);
+    Exit;
+  end;
+  FAdhocDeviceUp := True;
+  AdhocctlEvent(AdhocEventScan, 0, AdhocScanNs, nil);
+end;
+
+procedure TPSPNet.hAdhocctlDisconnect;
+begin
+  // Once the radio is up, leaving reports itself even with nothing to leave.
+  if not AdhocctlReady then
+    Exit;
+  FHLE.Result(0);
+  if FGameModePending then
+  begin
+    FKernel.CancelTimer(FGameModeTimer);
+    FGameModePending := False;
+  end;
+  if (FAdhocctlState <> AdhocctlDisconnected) or FAdhocDeviceUp then
+    AdhocctlEvent(AdhocEventDisconnect, 0, AdhocDisconnectNs,
+      procedure
+      begin
+        FAdhocctlState := AdhocctlDisconnected;
+        FAdhocGroup := '';
+      end);
+end;
+
+procedure TPSPNet.hAdhocctlGetParameter;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var P := FHLE.Arg(0);
+  if FAdhocctlState <> AdhocctlConnected then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_NOT_CONNECTED);
+    Exit;
+  end;
+  if P = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FMemory.Fill(P, 0, 148);
+  FMemory.Write32(P, 1);
+  for var I := 1 to Length(FAdhocGroup) do
+    FMemory.Write8(P + 3 + Cardinal(I), Ord(FAdhocGroup[I]));
+  FMemory.WriteString(P + 12, UTF8Encode(PSPSettings.Nickname), 128);
+  // The group's BSSID: a locally administered address the host makes up.
+  var Bssid := PSPEtherAddr;
+  Bssid[0] := (Bssid[0] or 2) and not 1;
+  Bssid[5] := Bssid[5] xor $5A;
+  FMemory.WriteBytes(P + 140, Bssid[0], 6);
+  Run(nil, AdhocParameterNs, False,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Ret := 0;
+      Err := 0;
+      Result := Final;
+    end);
+end;
+
+procedure TPSPNet.hAdhocctlGetPeerList;
+begin
+  // Nobody else is ever in the group.
+  if not AdhocctlReady then
+    Exit;
+  var SizePtr := FHLE.Arg(0);
+  if SizePtr = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FMemory.Write32(SizePtr, 0);
+  if FAdhocctlState <> AdhocctlConnected then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NO_PEER_LIST)
+  else
+    FHLE.Result(0);
+end;
+
+procedure TPSPNet.hAdhocctlGetPeerInfo;
+begin
+  if not AdhocctlReady then
+    Exit;
+  FHLE.Result(SCE_NET_ADHOC_ERROR_NO_ENTRY);
+end;
+
+procedure TPSPNet.hAdhocctlGetScanInfo;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var SizePtr := FHLE.Arg(0);
+  if SizePtr = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FMemory.Write32(SizePtr, 0);
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hAdhocctlGetAdhocId;
+begin
+  if not AdhocctlReady then
+    Exit;
+  if FHLE.Arg(0) = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FMemory.WriteBytes(FHLE.Arg(0), FAdhocId[0], Length(FAdhocId));
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hAdhocctlGetNameByAddr;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var Mac := FHLE.Arg(0);
+  var Nick := FHLE.Arg(1);
+  if (Mac = 0) or (Nick = 0) then
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG)
+  else if IsLocalMac(ReadMac(Mac)) then
+  begin
+    FMemory.WriteString(Nick, UTF8Encode(PSPSettings.Nickname), 128);
+    FHLE.Result(0);
+  end
+  else
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NO_ENTRY);
+end;
+
+procedure TPSPNet.hAdhocctlGetAddrByName;
+begin
+  if not AdhocctlReady then
+    Exit;
+  if FHLE.Arg(1) = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  FMemory.Write32(FHLE.Arg(1), 0);
+  FHLE.Result(0);
+end;
+
+{ Game mode }
+
+procedure TPSPNet.GameModeEnter(Group: Cardinal; TimeoutUs: Cardinal; const Members: TAdhocMac; HasMembers: Boolean);
+begin
+  FHLE.Result(0);
+  if FAdhocctlState <> AdhocctlDisconnected then
+  begin
+    AdhocctlEvent(AdhocEventError, SCE_NET_ADHOCCTL_ERROR_BUSY, AdhocQuickNs, nil);
+    Exit;
+  end;
+  FAdhocDeviceUp := True;
+  // A master stays in its game mode group until it exits it; a member that
+  // found no master has nothing to leave.
+  FGameModePending := HasMembers;
+  if HasMembers and not IsLocalMac(Members) then
+  begin
+    AdhocctlEvent(AdhocEventError, SCE_NET_ADHOC_ERROR_INVALID_MAC, AdhocQuickNs, nil);
+    Exit;
+  end;
+  // The other members never answer.
+  var W := FAdhocctlWorker;
+  FGameModeTimer := FKernel.AddTimer(FKernel.Scheduler.Now + Int64(TimeoutUs) * 1000, Self,
+    procedure
+    begin
+      if (W = nil) or (W <> FAdhocctlWorker) then
+        Exit;
+      Post(W,
+        function: TArray<TNetCall>
+        begin
+          Result := Calls(FAdhocctlHandlers, [AdhocEventError, SCE_NET_ADHOCCTL_ERROR_TIMEOUT]);
+        end);
+    end);
+end;
+
+function GameModeMaxMembers(Kind: Integer): Integer;
+begin
+  case Kind of
+    1: Result := 4;
+    2: Result := 8;
+  else
+    Result := 16;
+  end;
+end;
+
+procedure TPSPNet.hAdhocctlCreateEnterGameMode;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var Name: RawByteString;
+  var Kind := FHLE.ArgInt(1);
+  var Num := FHLE.ArgInt(2);
+  var Macs := FHLE.Arg(3);
+  if (FHLE.Arg(0) = 0) or not ValidGroupName(FHLE.Arg(0), Name) or (Macs = 0) or (Kind < 1) or (Kind > 3) or
+    (Num < 2) or (Num > GameModeMaxMembers(Kind)) then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  GameModeEnter(FHLE.Arg(0), FHLE.Arg(4), ReadMac(Macs), True);
+end;
+
+procedure TPSPNet.hAdhocctlCreateEnterGameModeMin;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var Name: RawByteString;
+  var Kind := FHLE.ArgInt(1);
+  var MinNum := FHLE.ArgInt(2);
+  var Num := FHLE.ArgInt(3);
+  var Macs := FHLE.Arg(4);
+  if (FHLE.Arg(0) = 0) or not ValidGroupName(FHLE.Arg(0), Name) or (Macs = 0) or (Kind < 1) or (Kind > 3) or
+    (MinNum < 2) or (MinNum > Num) or (Num > GameModeMaxMembers(Kind)) then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  GameModeEnter(FHLE.Arg(0), FHLE.Arg(5), ReadMac(Macs), True);
+end;
+
+procedure TPSPNet.hAdhocctlJoinEnterGameMode;
+begin
+  if not AdhocctlReady then
+    Exit;
+  var Name: RawByteString;
+  if (FHLE.Arg(0) = 0) or not ValidGroupName(FHLE.Arg(0), Name) or (FHLE.Arg(1) = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  GameModeEnter(FHLE.Arg(0), FHLE.Arg(2), PSPEtherAddr, False);
+end;
+
+procedure TPSPNet.hAdhocctlExitGameMode;
+begin
+  if not AdhocctlReady then
+    Exit;
+  if FAdhocctlState = AdhocctlConnected then
+  begin
+    FHLE.Result(SCE_NET_ADHOCCTL_ERROR_NOT_IN_GAMEMODE);
+    Exit;
+  end;
+  FHLE.Result(0);
+  if FGameModePending then
+  begin
+    FKernel.CancelTimer(FGameModeTimer);
+    FGameModePending := False;
+    AdhocctlEvent(AdhocEventDisconnect, 0, AdhocQuickNs, nil);
+  end;
+end;
+
+procedure TPSPNet.hAdhocctlGetGameModeInfo;
+begin
+  FHLE.Result(SCE_NET_ADHOCCTL_ERROR_NOT_ENTER_GAMEMODE);
+end;
+
+procedure TPSPNet.hGameModeNotInMode;
+begin
+  FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_IN_GAMEMODE);
+end;
+
+procedure TPSPNet.hGameModeDeleteNotInMode;
+begin
+  FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_CREATED);
+end;
+
+{ sceNetAdhocDiscover }
+
+// Phases: 0 started, 1 discovering, 2 stop asked, 3 leaving, 4 left.
+procedure TPSPNet.hDiscoverInitStart;
+begin
+  if FDiscoverStatus <> 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_DISCOVER_ERROR_ALREADY_STARTED);
+    Exit;
+  end;
+  FDiscoverStatus := 1;
+  FDiscoverPhase := 0;
+  FDiscoverParam := FHLE.Arg(0);
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hDiscoverUpdate;
+begin
+  // The discovery advances as the program pumps it.
+  FHLE.Result(0);
+  if FDiscoverStatus <> 1 then
+    Exit;
+  case FDiscoverPhase of
+    0:
+      begin
+        FDiscoverPhase := 1;
+        FAdhocDeviceUp := True;
+        AdhocctlEvent(-1, 0, AdhocQuickNs,
+          procedure
+          begin
+            if FDiscoverStatus = 1 then
+              FAdhocctlState := AdhocctlDiscovering;
+          end);
+      end;
+    2:
+      begin
+        FDiscoverPhase := 3;
+        AdhocctlEvent(AdhocEventDisconnect, 0, AdhocQuickNs,
+          procedure
+          begin
+            if FAdhocctlState = AdhocctlDiscovering then
+              FAdhocctlState := AdhocctlDisconnected;
+          end);
+      end;
+    3:
+      if FAdhocctlState <> AdhocctlDiscovering then
+        FDiscoverPhase := 4;
+    4:
+      begin
+        FDiscoverStatus := 2;
+        if FDiscoverParam <> 0 then
+          FMemory.Write32(FDiscoverParam + 16, 1);
+      end;
+  end;
+end;
+
+procedure TPSPNet.hDiscoverGetStatus;
+begin
+  FHLE.Result(Cardinal(FDiscoverStatus));
+end;
+
+procedure TPSPNet.hDiscoverStop;
+begin
+  if (FDiscoverStatus = 1) and (FDiscoverPhase < 2) then
+    FDiscoverPhase := 2;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hDiscoverTerm;
+begin
+  if FAdhocctlState = AdhocctlDiscovering then
+    FAdhocctlState := AdhocctlDisconnected;
+  FDiscoverStatus := 0;
+  FDiscoverPhase := 0;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hDiscoverRequestSuspend;
+begin
+  FHLE.Result(SCE_NET_ADHOC_DISCOVER_ERROR_NOT_SUPPORTED);
+end;
+
+// sceNetAdhoc sockets in a group of one: PDP datagrams and PTP connections
+// reach this console's own sockets (broadcasts are not looped back), and
+// whatever goes to another address is lost. Socket alerts make the calls
+// they name fail at once, and wake the threads blocked in them.
+
+const
+  SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID = Cardinal($80410701);
+  SCE_NET_ADHOC_ERROR_INVALID_PORT = Cardinal($80410703);
+  SCE_NET_ADHOC_ERROR_INVALID_DATALEN = Cardinal($80410705);
+  SCE_NET_ADHOC_ERROR_SOCKET_DELETED = Cardinal($80410707);
+  SCE_NET_ADHOC_ERROR_SOCKET_ALERTED = Cardinal($80410708);
+  SCE_NET_ADHOC_ERROR_WOULD_BLOCK = Cardinal($80410709);
+  SCE_NET_ADHOC_ERROR_PORT_IN_USE = Cardinal($8041070A);
+  SCE_NET_ADHOC_ERROR_NOT_CONNECTED = Cardinal($8041070B);
+  SCE_NET_ADHOC_ERROR_DISCONNECTED = Cardinal($8041070C);
+  SCE_NET_ADHOC_ERROR_NOT_LISTENED = Cardinal($8040070E);
+  SCE_NET_ADHOC_ERROR_SOCKET_ID_NOT_AVAIL = Cardinal($8041070F);
+  SCE_NET_ADHOC_ERROR_INVALID_ARG = Cardinal($80410711);
+  SCE_NET_ADHOC_ERROR_NOT_INITIALIZED = Cardinal($80410712);
+  SCE_NET_ADHOC_ERROR_ALREADY_INITIALIZED = Cardinal($80410713);
+  SCE_NET_ADHOC_ERROR_TIMEOUT = Cardinal($80410715);
+  SCE_NET_ADHOC_ERROR_EXCEPTION_EVENT = Cardinal($80410717);
+  SCE_NET_ADHOC_ERROR_CONNECTION_REFUSED = Cardinal($80410718);
+  SCE_NET_ADHOC_ERROR_NOT_ENOUGH_SPACE = Cardinal($80400706);
+  SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MODE = Cardinal($80410801);
+  SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MAXNUM = Cardinal($80410803);
+  SCE_NET_ADHOC_MATCHING_ERROR_RXBUF_TOO_SHORT = Cardinal($80410804);
+  SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG = Cardinal($80410806);
+  SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID = Cardinal($80410807);
+  SCE_NET_ADHOC_MATCHING_ERROR_ID_NOT_AVAIL = Cardinal($80410808);
+  SCE_NET_ADHOC_MATCHING_ERROR_IS_RUNNING = Cardinal($8041080A);
+  SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING = Cardinal($8041080B);
+  SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET = Cardinal($8041080C);
+  SCE_NET_ADHOC_MATCHING_ERROR_ALREADY_INITIALIZED = Cardinal($80410812);
+  SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED = Cardinal($80410813);
+  SCE_NET_ADHOC_MATCHING_ERROR_PORT_IN_USE = Cardinal($80410814);
+  SCE_NET_ADHOC_MATCHING_ERROR_STACKSIZE_TOO_SHORT = Cardinal($80410815);
+
+  AlertSend = $10;
+  AlertRecv = $20;
+  AlertPoll = $40;
+  AlertConnect = $80;
+  AlertAccept = $100;
+  AlertFlush = $200;
+  AlertMask = $3F0;
+  EvSend = $1;
+  EvRecv = $2;
+  EvConnect = $4;
+  EvAccept = $8;
+  EvFlush = $10;
+  EvInvalid = $100;
+  EvAlert = $400;
+  EvError = $800;
+  AdhocMaxSockets = 255;
+  AdhocMaxDatagram = 65523;
+  MatchingMaxContexts = 15;
+
+{ TAdhocSocket }
+
+constructor TAdhocSocket.Create;
+begin
+  inherited Create;
+  Queue := TQueue<TAdhocDatagram>.Create;
+  Pending := TList<TAdhocSocket>.Create;
+end;
+
+destructor TAdhocSocket.Destroy;
+begin
+  Queue.Free;
+  Pending.Free;
+  inherited;
+end;
+
+{ Sockets }
+
+function TPSPNet.AdhocObj(Id: Integer): TAdhocSocket;
+begin
+  if Id > 0 then
+    for var S in FAdhocObjs do
+      if S.Id = Id then
+        Exit(S);
+  Result := nil;
+end;
+
+function TPSPNet.AdhocNewId: Integer;
+begin
+  Inc(FNextAdhocId);
+  Result := FNextAdhocId;
+end;
+
+function TPSPNet.AdhocCount: Integer;
+begin
+  Result := 0;
+  for var S in FAdhocObjs do
+    if S.Id > 0 then
+      Inc(Result);
+end;
+
+function TPSPNet.AdhocPortUsed(Ptp: Boolean; Port: Integer): Boolean;
+begin
+  for var S in FAdhocObjs do
+    if (S.Ptp = Ptp) and (S.Port = Port) and (S.Id > 0) and (not Ptp or (S.State = 1)) then
+      Exit(True);
+  Result := False;
+end;
+
+function TPSPNet.PtpListenerFor(Port: Integer): TAdhocSocket;
+begin
+  for var S in FAdhocObjs do
+    if S.Ptp and (S.State = 1) and (S.Port = Port) and not S.Deleted then
+      Exit(S);
+  Result := nil;
+end;
+
+procedure TPSPNet.AdhocDrop(S: TAdhocSocket);
+begin
+  S.Deleted := True;
+  if S.Peer <> nil then
+  begin
+    S.Peer.PeerClosed := True;
+    S.Peer.State := 0;
+    S.Peer.Peer := nil;
+    S.Peer := nil;
+  end;
+  for var P in S.Pending.ToArray do
+    AdhocDrop(P);
+  S.Pending.Clear;
+  InetWake;
+  if FAdhocObjs.Remove(S) >= 0 then
+    FAdhocDead.Add(S);
+end;
+
+procedure TPSPNet.AdhocWait(TimeoutUs: Cardinal; NonBlocking: Boolean; const Attempt: TInetAttempt);
+begin
+  Run(nil, Int64(TimeoutUs) * 1000, NonBlocking, Attempt);
+end;
+
+procedure TPSPNet.hAdhocInit;
+begin
+  if FAdhocInited then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_ALREADY_INITIALIZED)
+  else
+  begin
+    FAdhocInited := True;
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hAdhocTerm;
+begin
+  for var S in FAdhocObjs.ToArray do
+    if FAdhocObjs.Contains(S) then
+      AdhocDrop(S);
+  FAdhocInited := False;
+  FHLE.Result(0);
+end;
+
+function NextAdhocPort(Net: TPSPNet; Ptp: Boolean): Integer;
+begin
+  repeat
+    Inc(Net.FNextAdhocPort);
+    if Net.FNextAdhocPort > $7FFF then
+      Net.FNextAdhocPort := $1001;
+  until not Net.AdhocPortUsed(Ptp, Net.FNextAdhocPort);
+  Result := Net.FNextAdhocPort;
+end;
+
+procedure TPSPNet.hPdpCreate;
+begin
+  var MacPtr := FHLE.Arg(0);
+  var Port := Integer(FHLE.Arg(1) and $FFFF);
+  var BufSize := FHLE.ArgInt(2);
+  var Flag := FHLE.ArgInt(3);
+  if not FAdhocInited then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_INITIALIZED);
+    Exit;
+  end;
+  if (Flag <> 0) or (MacPtr = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if FAdhocctlState <> AdhocctlConnected then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC);
+    Exit;
+  end;
+  // The id is taken before the address is looked at.
+  var Id := AdhocNewId;
+  if not IsLocalMac(ReadMac(MacPtr)) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC)
+  else if Port = $FFFF then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_PORT)
+  else if (Port <> 0) and AdhocPortUsed(False, Port) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_PORT_IN_USE)
+  else if AdhocCount >= AdhocMaxSockets then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_SOCKET_ID_NOT_AVAIL)
+  else
+  begin
+    if Port = 0 then
+      Port := NextAdhocPort(Self, False);
+    var S := TAdhocSocket.Create;
+    S.Id := Id;
+    S.Port := Port;
+    S.BufSize := BufSize;
+    FAdhocObjs.Add(S);
+    FHLE.Result(Cardinal(Id));
+  end;
+end;
+
+procedure TPSPNet.hPdpSend;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  var Dst := FHLE.Arg(1);
+  var Port := Integer(FHLE.Arg(2) and $FFFF);
+  var Data := FHLE.Arg(3);
+  var Len := FHLE.ArgInt(4);
+  var Flag := FHLE.ArgInt(6);
+  if ((Flag and not 1) <> 0) or (Dst = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if (S = nil) or S.Ptp then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  var Mac := ReadMac(Dst);
+  var Kind := MacKind(Mac);
+  if Kind in [0, 2] then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC)
+  else if (Port = 0) or (Port = $FFFF) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_PORT)
+  else if (Len < 0) or (Len > AdhocMaxDatagram) or ((Data = 0) and (Len > 0)) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_DATALEN)
+  else if (S.Alert and AlertSend) <> 0 then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_SOCKET_ALERTED)
+  else
+  begin
+    if (Kind = 3) and IsLocalMac(Mac) then
+      for var R in FAdhocObjs do
+        if not R.Ptp and (R.Port = Port) and (R.Id > 0) then
+        begin
+          var D: TAdhocDatagram;
+          SetLength(D.Data, Len);
+          if Len > 0 then
+            FMemory.ReadBytes(Data, D.Data[0], Len);
+          D.Port := S.Port;
+          R.Queue.Enqueue(D);
+          Inc(R.QueuedBytes, Len);
+          InetWake;
+          Break;
+        end;
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hPdpRecv;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  var MacPtr := FHLE.Arg(1);
+  var PortPtr := FHLE.Arg(2);
+  var Buf := FHLE.Arg(3);
+  var LenPtr := FHLE.Arg(4);
+  var Timeout := FHLE.Arg(5);
+  var Flag := FHLE.ArgInt(6);
+  if ((Flag and not 1) <> 0) or (Buf = 0) or (LenPtr = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if (S = nil) or S.Ptp then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  var NonBlocking := Flag <> 0;
+  AdhocWait(Timeout, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Err := 0;
+      if S.Deleted then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_DELETED)
+      else if (S.Alert and AlertRecv) <> 0 then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_ALERTED)
+      else if S.Queue.Count > 0 then
+      begin
+        var D := S.Queue.Peek;
+        var Len := Integer(FMemory.Read32(LenPtr));
+        if MacPtr <> 0 then
+          FMemory.WriteBytes(MacPtr, PSPEtherAddr[0], 6);
+        if PortPtr <> 0 then
+          FMemory.Write16(PortPtr, Cardinal(D.Port));
+        FMemory.Write32(LenPtr, Cardinal(Length(D.Data)));
+        if Length(D.Data) > Len then
+        begin
+          // Left queued; the length says how much room it needs.
+          Ret := Integer(SCE_NET_ADHOC_ERROR_NOT_ENOUGH_SPACE);
+          Exit;
+        end;
+        S.Queue.Dequeue;
+        Dec(S.QueuedBytes, Length(D.Data));
+        if Length(D.Data) > 0 then
+          FMemory.WriteBytes(Buf, D.Data[0], Length(D.Data));
+        Ret := 0;
+      end
+      else if Final then
+      begin
+        if NonBlocking then
+          Ret := Integer(SCE_NET_ADHOC_ERROR_WOULD_BLOCK)
+        else
+          Ret := Integer(SCE_NET_ADHOC_ERROR_TIMEOUT);
+      end
+      else
+        Result := False;
+    end);
+end;
+
+procedure TPSPNet.hPdpDelete;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  if FHLE.ArgInt(1) <> 0 then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG)
+  else if (S = nil) or S.Ptp then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID)
+  else
+  begin
+    AdhocDrop(S);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hGetPdpStat;
+begin
+  // Oldest first; the size comes back as what was written.
+  var SizePtr := FHLE.Arg(0);
+  var Buf := FHLE.Arg(1);
+  if SizePtr = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  var List: TArray<TAdhocSocket> := nil;
+  for var S in FAdhocObjs do
+    if not S.Ptp and (S.Id > 0) then
+      List := List + [S];
+  if Buf = 0 then
+  begin
+    FMemory.Write32(SizePtr, Cardinal(Length(List) * 20));
+    FHLE.Result(0);
+    Exit;
+  end;
+  var Fit := Min(Length(List), Integer(FMemory.Read32(SizePtr)) div 20);
+  for var I := 0 to Fit - 1 do
+  begin
+    var P := Buf + Cardinal(I * 20);
+    if I < Fit - 1 then
+      FMemory.Write32(P, P + 20)
+    else
+      FMemory.Write32(P, 0);
+    FMemory.Write32(P + 4, Cardinal(List[I].Id));
+    FMemory.WriteBytes(P + 8, PSPEtherAddr[0], 6);
+    FMemory.Write16(P + 14, Cardinal(List[I].Port));
+    FMemory.Write32(P + 16, Cardinal(List[I].QueuedBytes));
+  end;
+  FMemory.Write32(SizePtr, Cardinal(Fit * 20));
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hPtpOpen;
+begin
+  var MacPtr := FHLE.Arg(0);
+  var Port := Integer(FHLE.Arg(1) and $FFFF);
+  var Dst := FHLE.Arg(2);
+  var DPort := Integer(FHLE.Arg(3) and $FFFF);
+  var BufSize := FHLE.ArgInt(4);
+  var Flag := FHLE.ArgInt(7);
+  if not FAdhocInited then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_INITIALIZED);
+    Exit;
+  end;
+  if (Flag <> 0) or (MacPtr = 0) or (Dst = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if FAdhocctlState <> AdhocctlConnected then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC);
+    Exit;
+  end;
+  var Id := AdhocNewId;
+  var DstMac := ReadMac(Dst);
+  if not IsLocalMac(ReadMac(MacPtr)) or (MacKind(DstMac) in [0, 2]) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC)
+  else if (DPort = 0) or (DPort = $FFFF) or (Port = $FFFF) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_PORT)
+  else if AdhocCount >= AdhocMaxSockets then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_SOCKET_ID_NOT_AVAIL)
+  else
+  begin
+    if Port = 0 then
+      Port := NextAdhocPort(Self, True);
+    var S := TAdhocSocket.Create;
+    S.Id := Id;
+    S.Ptp := True;
+    S.Port := Port;
+    S.BufSize := BufSize;
+    S.PeerMac := DstMac;
+    S.PeerPort := DPort;
+    S.State := 2;
+    FAdhocObjs.Add(S);
+    if IsLocalMac(DstMac) then
+    begin
+      // The SYN reaches this console at once.
+      var L := PtpListenerFor(DPort);
+      if L = nil then
+      begin
+        S.State := 0;
+        S.Refused := True;
+      end
+      else
+      begin
+        var A := TAdhocSocket.Create;
+        A.Id := -1;
+        A.Ptp := True;
+        A.Port := DPort;
+        A.BufSize := L.BufSize;
+        A.PeerMac := PSPEtherAddr;
+        A.PeerPort := Port;
+        A.State := 4;
+        A.Peer := S;
+        S.Peer := A;
+        S.State := 4;
+        L.Pending.Add(A);
+        FAdhocObjs.Add(A);
+      end;
+      InetWake;
+    end;
+    FHLE.Result(Cardinal(Id));
+  end;
+end;
+
+procedure TPSPNet.hPtpListen;
+begin
+  var MacPtr := FHLE.Arg(0);
+  var Port := Integer(FHLE.Arg(1) and $FFFF);
+  var BufSize := FHLE.ArgInt(2);
+  var Flag := FHLE.ArgInt(6);
+  if not FAdhocInited then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_INITIALIZED);
+    Exit;
+  end;
+  if (Flag <> 0) or (MacPtr = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if FAdhocctlState <> AdhocctlConnected then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC);
+    Exit;
+  end;
+  var Id := AdhocNewId;
+  if not IsLocalMac(ReadMac(MacPtr)) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_MAC)
+  else if Port = $FFFF then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_PORT)
+  else if (Port <> 0) and AdhocPortUsed(True, Port) then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_PORT_IN_USE)
+  else if AdhocCount >= AdhocMaxSockets then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_SOCKET_ID_NOT_AVAIL)
+  else
+  begin
+    if Port = 0 then
+      Port := NextAdhocPort(Self, True);
+    var S := TAdhocSocket.Create;
+    S.Id := Id;
+    S.Ptp := True;
+    S.Port := Port;
+    S.BufSize := BufSize;
+    S.State := 1;
+    FAdhocObjs.Add(S);
+    FHLE.Result(Cardinal(Id));
+  end;
+end;
+
+procedure TPSPNet.hPtpConnect;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  var Timeout := FHLE.Arg(1);
+  var Flag := FHLE.ArgInt(2);
+  if (Flag and not 1) <> 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if (S = nil) or not S.Ptp then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  if S.State = 1 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_CONNECTED);
+    Exit;
+  end;
+  var NonBlocking := Flag <> 0;
+  AdhocWait(Timeout, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Err := 0;
+      if S.State = 4 then
+        Ret := 0
+      else if S.Refused then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_CONNECTION_REFUSED)
+      else if S.Deleted then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_DELETED)
+      else if S.PeerClosed then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_DISCONNECTED)
+      else if (S.Alert and AlertConnect) <> 0 then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_ALERTED)
+      else if Final then
+      begin
+        if NonBlocking then
+          Ret := Integer(SCE_NET_ADHOC_ERROR_WOULD_BLOCK)
+        else
+          Ret := Integer(SCE_NET_ADHOC_ERROR_TIMEOUT);
+      end
+      else
+        Result := False;
+    end);
+end;
+
+procedure TPSPNet.hPtpAccept;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  var MacPtr := FHLE.Arg(1);
+  var PortPtr := FHLE.Arg(2);
+  var Timeout := FHLE.Arg(3);
+  var Flag := FHLE.ArgInt(4);
+  if (Flag and not 1) <> 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if (S = nil) or not S.Ptp then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  if S.State <> 1 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_LISTENED);
+    Exit;
+  end;
+  var NonBlocking := Flag <> 0;
+  AdhocWait(Timeout, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Err := 0;
+      if S.Deleted then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_DELETED)
+      else if (S.Alert and AlertAccept) <> 0 then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_ALERTED)
+      else if S.Pending.Count > 0 then
+      begin
+        var A := S.Pending[0];
+        S.Pending.Delete(0);
+        A.Id := AdhocNewId;
+        if MacPtr <> 0 then
+          FMemory.WriteBytes(MacPtr, A.PeerMac[0], 6);
+        if PortPtr <> 0 then
+          FMemory.Write16(PortPtr, Cardinal(A.PeerPort));
+        Ret := A.Id;
+      end
+      else if Final then
+      begin
+        if NonBlocking then
+          Ret := Integer(SCE_NET_ADHOC_ERROR_WOULD_BLOCK)
+        else
+          Ret := Integer(SCE_NET_ADHOC_ERROR_TIMEOUT);
+      end
+      else
+        Result := False;
+    end);
+end;
+
+procedure TPSPNet.hPtpSend;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  var Data := FHLE.Arg(1);
+  var LenPtr := FHLE.Arg(2);
+  var Flag := FHLE.ArgInt(4);
+  if ((Flag and not 1) <> 0) or (LenPtr = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if (S = nil) or not S.Ptp then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  if S.State = 1 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_CONNECTED);
+    Exit;
+  end;
+  var Len := Integer(FMemory.Read32(LenPtr));
+  if (Len < 0) or ((Data = 0) and (Len > 0)) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_DATALEN);
+    Exit;
+  end;
+  if S.PeerClosed or S.Refused or (S.State = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_DISCONNECTED);
+    Exit;
+  end;
+  if (S.Alert and AlertSend) <> 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_SOCKET_ALERTED);
+    Exit;
+  end;
+  if S.State <> 4 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_CONNECTED);
+    Exit;
+  end;
+  var P := S.Peer;
+  if (P <> nil) and (Len > 0) then
+  begin
+    if Length(P.RecvData) < P.RecvLen + Len then
+      SetLength(P.RecvData, P.RecvLen + Len);
+    FMemory.ReadBytes(Data, P.RecvData[P.RecvLen], Len);
+    Inc(P.RecvLen, Len);
+    InetWake;
+  end;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hPtpRecv;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  var Buf := FHLE.Arg(1);
+  var LenPtr := FHLE.Arg(2);
+  var Timeout := FHLE.Arg(3);
+  var Flag := FHLE.ArgInt(4);
+  if ((Flag and not 1) <> 0) or (Buf = 0) or (LenPtr = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  if (S = nil) or not S.Ptp then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  if S.State = 1 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_CONNECTED);
+    Exit;
+  end;
+  var NonBlocking := Flag <> 0;
+  AdhocWait(Timeout, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Result := True;
+      Err := 0;
+      if S.Deleted then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_DELETED)
+      else if (S.Alert and AlertRecv) <> 0 then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_SOCKET_ALERTED)
+      else if S.RecvLen > 0 then
+      begin
+        var N := Min(Integer(FMemory.Read32(LenPtr)), S.RecvLen);
+        if N < 0 then
+          N := 0;
+        if N > 0 then
+          FMemory.WriteBytes(Buf, S.RecvData[0], N);
+        Move(S.RecvData[N], S.RecvData[0], S.RecvLen - N);
+        Dec(S.RecvLen, N);
+        FMemory.Write32(LenPtr, Cardinal(N));
+        Ret := 0;
+      end
+      else if S.PeerClosed or S.Refused then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_DISCONNECTED)
+      else if Final then
+      begin
+        if NonBlocking then
+          Ret := Integer(SCE_NET_ADHOC_ERROR_WOULD_BLOCK)
+        else
+          Ret := Integer(SCE_NET_ADHOC_ERROR_TIMEOUT);
+      end
+      else
+        Result := False;
+    end);
+end;
+
+procedure TPSPNet.hPtpFlush;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  if (FHLE.ArgInt(2) and not 1) <> 0 then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG)
+  else if (S = nil) or not S.Ptp then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID)
+  else if S.State = 1 then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_NOT_CONNECTED)
+  else if S.PeerClosed or S.Refused then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_DISCONNECTED)
+  else
+    // Everything sent has already arrived.
+    FHLE.Result(0);
+end;
+
+procedure TPSPNet.hPtpClose;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  if FHLE.ArgInt(1) <> 0 then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG)
+  else if (S = nil) or not S.Ptp then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID)
+  else
+  begin
+    AdhocDrop(S);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hGetPtpStat;
+begin
+  var SizePtr := FHLE.Arg(0);
+  var Buf := FHLE.Arg(1);
+  if SizePtr = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  var List: TArray<TAdhocSocket> := nil;
+  for var S in FAdhocObjs do
+    if S.Ptp then
+      List := List + [S];
+  if Buf = 0 then
+  begin
+    FMemory.Write32(SizePtr, Cardinal(Length(List) * 36));
+    FHLE.Result(0);
+    Exit;
+  end;
+  var Fit := Min(Length(List), Integer(FMemory.Read32(SizePtr)) div 36);
+  for var I := 0 to Fit - 1 do
+  begin
+    var S := List[I];
+    var P := Buf + Cardinal(I * 36);
+    FMemory.Fill(P, 0, 36);
+    if I < Fit - 1 then
+      FMemory.Write32(P, P + 36);
+    FMemory.Write32(P + 4, Cardinal(S.Id));
+    FMemory.WriteBytes(P + 8, PSPEtherAddr[0], 6);
+    if S.State <> 1 then
+    begin
+      FMemory.WriteBytes(P + 14, S.PeerMac[0], 6);
+      FMemory.Write16(P + 22, Cardinal(S.PeerPort));
+    end;
+    FMemory.Write16(P + 20, Cardinal(S.Port));
+    FMemory.Write32(P + 28, Cardinal(S.RecvLen));
+    FMemory.Write32(P + 32, Cardinal(S.State));
+  end;
+  FMemory.Write32(SizePtr, Cardinal(Fit * 36));
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hSetSocketAlert;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  if S = nil then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+    Exit;
+  end;
+  S.Alert := FHLE.Arg(1) and AlertMask;
+  FHLE.Result(0);
+  InetWake;
+end;
+
+procedure TPSPNet.hGetSocketAlert;
+begin
+  var S := AdhocObj(FHLE.ArgInt(0));
+  if S = nil then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID)
+  else if FHLE.Arg(1) = 0 then
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG)
+  else
+  begin
+    FMemory.Write32(FHLE.Arg(1), S.Alert);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hPollSocket;
+begin
+  var Sds := FHLE.Arg(0);
+  var Count := FHLE.ArgInt(1);
+  var Timeout := FHLE.Arg(2);
+  var Flag := FHLE.ArgInt(3);
+  if ((Flag and not 1) <> 0) or (Count <= 0) or (Sds = 0) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  for var I := 0 to Count - 1 do
+    if AdhocObj(Integer(FMemory.Read32(Sds + Cardinal(I * 12)))) = nil then
+    begin
+      // The firmware marks the first entry, whichever was bad.
+      FMemory.Write32(Sds + 8, EvInvalid);
+      FHLE.Result(SCE_NET_ADHOC_ERROR_INVALID_SOCKET_ID);
+      Exit;
+    end;
+  var NonBlocking := Flag <> 0;
+  AdhocWait(Timeout, NonBlocking,
+    function(Final: Boolean; out Ret, Err: Integer): Boolean
+    begin
+      Err := 0;
+      var R: TArray<Cardinal>;
+      SetLength(R, Count);
+      var Ready := 0;
+      var Failed := False;
+      for var I := 0 to Count - 1 do
+      begin
+        var S := AdhocObj(Integer(FMemory.Read32(Sds + Cardinal(I * 12))));
+        var Events := FMemory.Read32(Sds + Cardinal(I * 12) + 4);
+        if (S = nil) or S.Deleted then
+        begin
+          R[I] := EvInvalid;
+          Failed := True;
+          Continue;
+        end;
+        if (S.Alert and AlertPoll) <> 0 then
+        begin
+          R[I] := EvAlert;
+          Failed := True;
+          Continue;
+        end;
+        var V: Cardinal := 0;
+        if not S.Ptp then
+        begin
+          V := EvSend;
+          if S.Queue.Count > 0 then
+            V := V or EvRecv;
+        end
+        else
+          case S.State of
+            1:
+              begin
+                V := EvSend or EvFlush;
+                if S.Pending.Count > 0 then
+                  V := V or EvAccept;
+              end;
+            4:
+              if S.PeerClosed then
+                V := EvError
+              else
+              begin
+                V := EvSend or EvConnect or EvFlush;
+                if S.RecvLen > 0 then
+                  V := V or EvRecv;
+              end;
+            0: V := EvError;
+          end;
+        if (V and EvError) <> 0 then
+        begin
+          R[I] := EvError;
+          Failed := True;
+          Continue;
+        end;
+        R[I] := V and Events;
+        if R[I] <> 0 then
+          Inc(Ready);
+      end;
+      Result := Failed or (Ready > 0) or Final;
+      if not Result then
+        Exit;
+      for var I := 0 to Count - 1 do
+        FMemory.Write32(Sds + Cardinal(I * 12) + 8, R[I]);
+      if Failed then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_EXCEPTION_EVENT)
+      else if (Ready = 0) and not NonBlocking then
+        Ret := Integer(SCE_NET_ADHOC_ERROR_TIMEOUT)
+      else
+        Ret := Ready;
+    end);
+end;
+
+{ sceNetAdhocMatching }
+
+procedure TPSPNet.hMatchingInit;
+begin
+  if FMatchingInited then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_ALREADY_INITIALIZED);
+    Exit;
+  end;
+  FMatchingInited := True;
+  FMatchingPool := FHLE.Arg(0);
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hMatchingTerm;
+begin
+  FMatchingInited := False;
+  FMatching.Clear;
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hMatchingCreate;
+begin
+  var Mode := FHLE.ArgInt(0);
+  var MaxNum := FHLE.ArgInt(1);
+  var Port := Integer(FHLE.Arg(2) and $FFFF);
+  var RxBufLen := FHLE.ArgInt(3);
+  var Hello := FHLE.Arg(4);
+  var KeepAlive := FHLE.Arg(5);
+  var Count := FHLE.ArgInt(6);
+  var Rexmt := FHLE.Arg(7);
+  if not FMatchingInited then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED)
+  else if (Mode < 1) or (Mode > 3) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MODE)
+  else if (MaxNum < 2) or (MaxNum > 16) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MAXNUM)
+  else if RxBufLen < 6 * MaxNum + 4 then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_RXBUF_TOO_SHORT)
+  else if (Rexmt = 0) or (Count < 0) or ((Mode <> 2) and ((Hello = 0) or (KeepAlive = 0))) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG)
+  else
+  begin
+    for var C in FMatching.Values do
+      if C.Port = Port then
+      begin
+        FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_PORT_IN_USE);
+        Exit;
+      end;
+    if FMatching.Count >= MatchingMaxContexts then
+    begin
+      FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_ID_NOT_AVAIL);
+      Exit;
+    end;
+    // Ids go round 1..15.
+    var Id := FLastMatchingId;
+    repeat
+      Id := Id mod MatchingMaxContexts + 1;
+    until not FMatching.ContainsKey(Id);
+    FLastMatchingId := Id;
+    var C := TMatchingContext.Create;
+    C.Id := Id;
+    C.Mode := Mode;
+    C.MaxNum := MaxNum;
+    C.Port := Port;
+    FMatching.Add(Id, C);
+    FHLE.Result(Cardinal(Id));
+  end;
+end;
+
+procedure TPSPNet.MatchingStart(Id, StackA, StackB: Integer; PartA, PartB: Integer; OptLen: Integer; Opt: Cardinal);
+begin
+  var C: TMatchingContext;
+  if not FMatching.TryGetValue(Id, C) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
+    Exit;
+  end;
+  if (StackA < $200) or (StackB < $200) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_STACKSIZE_TOO_SHORT);
+    Exit;
+  end;
+  if not (PartA in [2, 5, 6]) or not (PartB in [2, 5, 6]) then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
+    Exit;
+  end;
+  if C.Running then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_IS_RUNNING);
+    Exit;
+  end;
+  C.Running := True;
+  SetLength(C.HelloOpt, Max(OptLen, 0));
+  if (OptLen > 0) and (Opt <> 0) then
+    FMemory.ReadBytes(Opt, C.HelloOpt[0], OptLen);
+  // Its threads would report peers; there never are any.
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hMatchingStart;
+begin
+  MatchingStart(FHLE.ArgInt(0), FHLE.ArgInt(2), FHLE.ArgInt(4), 2, 2, FHLE.ArgInt(5), FHLE.Arg(6));
+end;
+
+procedure TPSPNet.hMatchingStart2;
+begin
+  // The ninth argument is on the stack.
+  var Opt := FMemory.Read32(FSystem.CPU.Ctx.GPR[29]);
+  MatchingStart(FHLE.ArgInt(0), FHLE.ArgInt(2), FHLE.ArgInt(5), FHLE.ArgInt(3), FHLE.ArgInt(6), FHLE.ArgInt(7),
+    Opt);
+end;
+
+procedure TPSPNet.hMatchingStop;
+begin
+  var C: TMatchingContext;
+  if not FMatching.TryGetValue(FHLE.ArgInt(0), C) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID)
+  else
+  begin
+    C.Running := False;
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hMatchingDelete;
+begin
+  var C: TMatchingContext;
+  if not FMatching.TryGetValue(FHLE.ArgInt(0), C) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID)
+  else if C.Running then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_IS_RUNNING)
+  else
+  begin
+    FMatching.Remove(C.Id);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hMatchingRunning;
+begin
+  // The calls about a target: nobody is ever a known one.
+  var C: TMatchingContext;
+  if not FMatching.TryGetValue(FHLE.ArgInt(0), C) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID)
+  else if not C.Running then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING)
+  else
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET);
+end;
+
+procedure TPSPNet.hMatchingSetHelloOpt;
+begin
+  var C: TMatchingContext;
+  var Len := FHLE.ArgInt(1);
+  if not FMatching.TryGetValue(FHLE.ArgInt(0), C) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID)
+  else if not C.Running then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING)
+  else
+  begin
+    SetLength(C.HelloOpt, Max(Len, 0));
+    if (Len > 0) and (FHLE.Arg(2) <> 0) then
+      FMemory.ReadBytes(FHLE.Arg(2), C.HelloOpt[0], Len);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hMatchingGetHelloOpt;
+begin
+  // Copies as much as asked for out of the context, where the data is
+  // followed by the context's mode; the length is left as the caller gave it.
+  var C: TMatchingContext;
+  var LenPtr := FHLE.Arg(1);
+  if not FMatching.TryGetValue(FHLE.ArgInt(0), C) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID)
+  else if not C.Running then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING)
+  else if LenPtr = 0 then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG)
+  else
+  begin
+    var Stored := C.HelloOpt + [Byte(C.Mode)];
+    var N := EnsureRange(Integer(FMemory.Read32(LenPtr)), 0, 256);
+    SetLength(Stored, Max(N, Length(Stored)));
+    if (N > 0) and (FHLE.Arg(2) <> 0) then
+      FMemory.WriteBytes(FHLE.Arg(2), Stored[0], N);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hMatchingGetMembers;
+begin
+  // Only this console.
+  var C: TMatchingContext;
+  var SizePtr := FHLE.Arg(1);
+  var Buf := FHLE.Arg(2);
+  if not FMatching.TryGetValue(FHLE.ArgInt(0), C) then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID)
+  else if not C.Running then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING)
+  else if SizePtr = 0 then
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG)
+  else
+  begin
+    if (Buf <> 0) and (Integer(FMemory.Read32(SizePtr)) >= 12) then
+    begin
+      FMemory.Fill(Buf, 0, 12);
+      FMemory.WriteBytes(Buf + 4, PSPEtherAddr[0], 6);
+    end;
+    FMemory.Write32(SizePtr, 12);
+    FHLE.Result(0);
+  end;
+end;
+
+procedure TPSPNet.hMatchingGetPoolMaxAlloc;
+begin
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.hMatchingGetPoolStat;
+begin
+  var P := FHLE.Arg(0);
+  if P = 0 then
+  begin
+    FHLE.Result(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
+    Exit;
+  end;
+  var Pool := FMatchingPool - NetPoolReserved;
+  FMemory.Write32(P, Pool);
+  FMemory.Write32(P + 4, 0);
+  FMemory.Write32(P + 8, Pool);
+  FHLE.Result(0);
+end;
+
+procedure TPSPNet.AdhocRegister;
+const
+  C = 'sceNetAdhocctl';
+  A = 'sceNetAdhoc';
+  M = 'sceNetAdhocMatching';
+  D = 'sceNetAdhocDiscover';
+begin
+  var X := FHLE;
+  X.Register(C, $E26F226E, 'sceNetAdhocctlInit', hAdhocctlInit);
+  X.Register(C, $9D689E13, 'sceNetAdhocctlTerm', hAdhocctlTerm);
+  X.Register(C, $20B317A0, 'sceNetAdhocctlAddHandler', hAdhocctlAddHandler);
+  X.Register(C, $6402490B, 'sceNetAdhocctlDelHandler', hAdhocctlDelHandler);
+  X.Register(C, $75ECD386, 'sceNetAdhocctlGetState', hAdhocctlGetState);
+  X.Register(C, $EC0635C1, 'sceNetAdhocctlCreate', hAdhocctlCreate);
+  X.Register(C, $0AD043ED, 'sceNetAdhocctlConnect', hAdhocctlConnect);
+  X.Register(C, $5E7F79C9, 'sceNetAdhocctlJoin', hAdhocctlJoin);
+  X.Register(C, $08FFF7A0, 'sceNetAdhocctlScan', hAdhocctlScan);
+  X.Register(C, $34401D65, 'sceNetAdhocctlDisconnect', hAdhocctlDisconnect);
+  X.Register(C, $DED9D28E, 'sceNetAdhocctlGetParameter', hAdhocctlGetParameter);
+  X.Register(C, $E162CB14, 'sceNetAdhocctlGetPeerList', hAdhocctlGetPeerList);
+  X.Register(C, $8DB83FDC, 'sceNetAdhocctlGetPeerInfo', hAdhocctlGetPeerInfo);
+  X.Register(C, $81AEE1BE, 'sceNetAdhocctlGetScanInfo', hAdhocctlGetScanInfo);
+  X.Register(C, $362CBE8F, 'sceNetAdhocctlGetAdhocId', hAdhocctlGetAdhocId);
+  X.Register(C, $8916C003, 'sceNetAdhocctlGetNameByAddr', hAdhocctlGetNameByAddr);
+  X.Register(C, $99560ABE, 'sceNetAdhocctlGetAddrByName', hAdhocctlGetAddrByName);
+  X.Register(C, $A5C055CE, 'sceNetAdhocctlCreateEnterGameMode', hAdhocctlCreateEnterGameMode);
+  X.Register(C, $B0B80E80, 'sceNetAdhocctlCreateEnterGameModeMin', hAdhocctlCreateEnterGameModeMin);
+  X.Register(C, $1FF89745, 'sceNetAdhocctlJoinEnterGameMode', hAdhocctlJoinEnterGameMode);
+  X.Register(C, $CF8E084D, 'sceNetAdhocctlExitGameMode', hAdhocctlExitGameMode);
+  X.Register(C, $5A014CE0, 'sceNetAdhocctlGetGameModeInfo', hAdhocctlGetGameModeInfo);
+
+  X.Register(A, $E1D621D7, 'sceNetAdhocInit', hAdhocInit);
+  X.Register(A, $A62C6F57, 'sceNetAdhocTerm', hAdhocTerm);
+  X.Register(A, $6F92741B, 'sceNetAdhocPdpCreate', hPdpCreate);
+  X.Register(A, $ABED3790, 'sceNetAdhocPdpSend', hPdpSend);
+  X.Register(A, $DFE53E03, 'sceNetAdhocPdpRecv', hPdpRecv);
+  X.Register(A, $7F27BB5E, 'sceNetAdhocPdpDelete', hPdpDelete);
+  X.Register(A, $C7C1FC57, 'sceNetAdhocGetPdpStat', hGetPdpStat);
+  X.Register(A, $877F6D66, 'sceNetAdhocPtpOpen', hPtpOpen);
+  X.Register(A, $E08BDAC1, 'sceNetAdhocPtpListen', hPtpListen);
+  X.Register(A, $FC6FC07B, 'sceNetAdhocPtpConnect', hPtpConnect);
+  X.Register(A, $9DF81198, 'sceNetAdhocPtpAccept', hPtpAccept);
+  X.Register(A, $4DA4C788, 'sceNetAdhocPtpSend', hPtpSend);
+  X.Register(A, $8BEA2B3E, 'sceNetAdhocPtpRecv', hPtpRecv);
+  X.Register(A, $9AC2EEAC, 'sceNetAdhocPtpFlush', hPtpFlush);
+  X.Register(A, $157E6225, 'sceNetAdhocPtpClose', hPtpClose);
+  X.Register(A, $B9685118, 'sceNetAdhocGetPtpStat', hGetPtpStat);
+  X.Register(A, $73BFD52D, 'sceNetAdhocSetSocketAlert', hSetSocketAlert);
+  X.Register(A, $4D2CE199, 'sceNetAdhocGetSocketAlert', hGetSocketAlert);
+  X.Register(A, $7A662D6B, 'sceNetAdhocPollSocket', hPollSocket);
+  X.Register(A, $7F75C338, 'sceNetAdhocGameModeCreateMaster', hGameModeNotInMode);
+  X.Register(A, $98C204C8, 'sceNetAdhocGameModeUpdateMaster', hGameModeNotInMode);
+  X.Register(A, $A0229362, 'sceNetAdhocGameModeDeleteMaster', hGameModeDeleteNotInMode);
+  X.Register(A, $3278AB0C, 'sceNetAdhocGameModeCreateReplica', hGameModeNotInMode);
+  X.Register(A, $FA324B4E, 'sceNetAdhocGameModeUpdateReplica', hGameModeNotInMode);
+  X.Register(A, $0B2228E9, 'sceNetAdhocGameModeDeleteReplica', hGameModeDeleteNotInMode);
+
+  X.Register(M, $2A2A1E07, 'sceNetAdhocMatchingInit', hMatchingInit);
+  X.Register(M, $7945ECDA, 'sceNetAdhocMatchingTerm', hMatchingTerm);
+  X.Register(M, $CA5EDA6F, 'sceNetAdhocMatchingCreate', hMatchingCreate);
+  X.Register(M, $93EF3843, 'sceNetAdhocMatchingStart', hMatchingStart);
+  X.Register(M, $E8454C65, 'sceNetAdhocMatchingStart2', hMatchingStart2);
+  X.Register(M, $32B156B3, 'sceNetAdhocMatchingStop', hMatchingStop);
+  X.Register(M, $F16EAF4F, 'sceNetAdhocMatchingDelete', hMatchingDelete);
+  X.Register(M, $5E3D4B79, 'sceNetAdhocMatchingSelectTarget', hMatchingRunning);
+  X.Register(M, $EA3C6108, 'sceNetAdhocMatchingCancelTarget', hMatchingRunning);
+  X.Register(M, $8F58BEDF, 'sceNetAdhocMatchingCancelTargetWithOpt', hMatchingRunning);
+  X.Register(M, $F79472D7, 'sceNetAdhocMatchingSendData', hMatchingRunning);
+  X.Register(M, $EC19337D, 'sceNetAdhocMatchingAbortSendData', hMatchingRunning);
+  X.Register(M, $B58E61B7, 'sceNetAdhocMatchingSetHelloOpt', hMatchingSetHelloOpt);
+  X.Register(M, $B5D96C2A, 'sceNetAdhocMatchingGetHelloOpt', hMatchingGetHelloOpt);
+  X.Register(M, $C58BCD9E, 'sceNetAdhocMatchingGetMembers', hMatchingGetMembers);
+  X.Register(M, $40F8F435, 'sceNetAdhocMatchingGetPoolMaxAlloc', hMatchingGetPoolMaxAlloc);
+  X.Register(M, $9C5CFB7D, 'sceNetAdhocMatchingGetPoolStat', hMatchingGetPoolStat);
+
+  X.Register(D, $941B3877, 'sceNetAdhocDiscoverInitStart', hDiscoverInitStart);
+  X.Register(D, $52DE1B97, 'sceNetAdhocDiscoverUpdate', hDiscoverUpdate);
+  X.Register(D, $944DDBC6, 'sceNetAdhocDiscoverGetStatus', hDiscoverGetStatus);
+  X.Register(D, $A2246614, 'sceNetAdhocDiscoverTerm', hDiscoverTerm);
+  X.Register(D, $F7D13214, 'sceNetAdhocDiscoverStop', hDiscoverStop);
+  X.Register(D, $A423A21B, 'sceNetAdhocDiscoverRequestSuspend', hDiscoverRequestSuspend);
+end;
+
 
 { TPSPNetWorker }
 

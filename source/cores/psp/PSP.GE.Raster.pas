@@ -633,7 +633,12221 @@ begin
 end;
 
 // Pixel pipelines specialised on target format, texture, blend and depth.
-{$I PSP.GE.PixelProcs.inc}
+{$DEFINE GEPIX_565}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_0(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_1(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_2(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_3(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_4(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_5(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_6(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_7(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_565}
+{$DEFINE GEPIX_5551}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_0(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_1(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_2(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_3(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_4(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_5(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_6(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_7(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_5551}
+{$DEFINE GEPIX_4444}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_0(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_1(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_2(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_3(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_4(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_5(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_6(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_7(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_4444}
+{$DEFINE GEPIX_8888}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_0(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_1(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_2(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_3(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_4(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_5(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_6(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_7(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_8888}
+// The same with secondary colour, fog and the stencil test.
+{$DEFINE GEPIX_EXTRA}
+{$DEFINE GEPIX_565}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_0X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_1X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_2X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel565_3X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_4X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_5X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_6X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel565_7X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_565}
+{$DEFINE GEPIX_5551}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_0X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_1X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_2X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel5551_3X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_4X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_5X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_6X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel5551_7X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_5551}
+{$DEFINE GEPIX_4444}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_0X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_1X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_2X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel4444_3X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_4X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_5X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_6X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel4444_7X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_4444}
+{$DEFINE GEPIX_8888}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_0X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_1X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_2X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+procedure Pixel8888_3X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_4X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_5X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_6X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$DEFINE GEPIX_TEXTURE}
+{$DEFINE GEPIX_BLEND}
+{$DEFINE GEPIX_DEPTH}
+procedure Pixel8888_7X(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  if not S.Through then
+  begin
+    var TestZ := F.Z;
+    if S.DepthClamp then
+    begin
+      if TestZ < 0 then TestZ := 0;
+      if TestZ > 65535 then TestZ := 65535;
+    end;
+    if (TestZ < S.MinZ) or (TestZ > S.MaxZ) then Exit;
+  end;
+{$IFDEF GEPIX_TEXTURE}
+  // ApplyTexture, straight for modulate through a format sampler.
+  if (S.TexFunc = 0) and Assigned(S.Tex.Sampler) and not S.Tex.NeedLod and not GEGenericTexels then
+  begin
+    var TC := S.Tex.Sampler(@S.Tex, F.S, F.T);
+    var Dbl := 1;
+    if S.ColorDouble then
+      Dbl := 2;
+    F.R := TexMul(F.R, Integer(TC and $FF), Dbl);
+    F.G := TexMul(F.G, Integer((TC shr 8) and $FF), Dbl);
+    F.B := TexMul(F.B, Integer((TC shr 16) and $FF), Dbl);
+    if S.TexAlpha then
+      F.A := TexMul(F.A, Integer(TC shr 24), 1);
+  end
+  else
+    ApplyTexture(S, F);
+{$ENDIF}
+{$IFDEF GEPIX_EXTRA}
+  // Secondary colour, then fog, as PlotPixel.
+  F.R := Clamp255(F.R + F.SR);
+  F.G := Clamp255(F.G + F.SG);
+  F.B := Clamp255(F.B + F.SB);
+  if S.FogEnabled then
+  begin
+    var Fg := F.Fog;
+    if not (Fg > 0) then Fg := 0;
+    if Fg > 1 then Fg := 1;
+    var FI := Trunc(Fg * 255);
+    F.R := TexLerp(S.FogR, F.R, FI, 1);
+    F.G := TexLerp(S.FogG, F.G, FI, 1);
+    F.B := TexLerp(S.FogB, F.B, FI, 1);
+  end;
+{$ENDIF}
+  if S.AlphaTest then
+    if not TestFunc(S.AlphaFunc, F.A and S.AlphaMask, S.AlphaRef and S.AlphaMask) then Exit;
+
+{$IFDEF GEPIX_8888}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 4) and (PSPVRAMSize - 1);
+  var P := PCardinal(S.VRAM + Addr);
+{$ELSE}
+  var Addr := (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * 2) and (PSPVRAMSize - 1);
+  var P := PWord(S.VRAM + Addr);
+{$ENDIF}
+  var Old := Cardinal(P^);
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  // The stencil test and operations, as PlotPixel (a 565 target has none).
+{$IFDEF GEPIX_8888}
+  const SFmt = 3;
+{$ELSEIF DEFINED(GEPIX_5551)}
+  const SFmt = 1;
+{$ELSE}
+  const SFmt = 2;
+{$ENDIF}
+  var Stencil := RawStencil(SFmt, Old);
+  var NewStencil := Stencil;
+  var StencilWrite := False;
+  if S.StencilTest then
+  begin
+    if not TestFunc(S.StencilFunc, S.StencilRef and S.StencilMask, StencilOf(SFmt, Old) and S.StencilMask) then
+    begin
+      NewStencil := StencilOp(S.StencilFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+      Exit;
+    end;
+    StencilWrite := True;
+  end;
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  var Z := F.Z;
+  if Z < 0 then Z := 0;
+  if Z > 65535 then Z := 65535;
+  var ZA := PSPDepthOffset(S.ZAddr + (Cardinal(Y) * S.ZStride + Cardinal(X)) * 2, S.ZPermutation);
+  var ZP := PWord(S.VRAM + ZA);
+  if not TestFunc(S.DepthFunc, Z, ZP^) then
+  begin
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+    if StencilWrite then
+    begin
+      NewStencil := StencilOp(S.StencilZFail, SFmt, Stencil, S.StencilRef);
+      if NewStencil <> Stencil then
+      begin
+        var NewP := (Old and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+        NewP := (NewP and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+        P^ := NewP;
+{$ELSE}
+        P^ := Word(NewP);
+{$ENDIF}
+      end;
+    end;
+{$ENDIF}
+    Exit;
+  end;
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    NewStencil := StencilOp(S.StencilZPass, SFmt, Stencil, S.StencilRef);
+{$ENDIF}
+{$IFDEF GEPIX_DEPTH}
+  if S.DepthWrite then ZP^ := Word(Z);
+{$ENDIF}
+
+  var R := F.R; var G := F.G; var B := F.B;
+{$IFDEF GEPIX_BLEND}
+  var DR, DG, DB, DA: Integer;
+{$IFDEF GEPIX_8888}
+  DecodePixel(3, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_565)}
+  DecodePixel(0, Old, DR, DG, DB, DA);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  DecodePixel(1, Old, DR, DG, DB, DA);
+{$ELSE}
+  DecodePixel(2, Old, DR, DG, DB, DA);
+{$ENDIF}
+  // BlendChannel, straight for the common equations.
+  case S.BlendKind of
+    1:
+      begin
+        var SA := F.A;
+        var DF := 255 - SA;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+      end;
+    2:
+      begin
+        var SA := F.A;
+        var Fix := S.FixB;
+        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
+        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
+        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+      end;
+  else
+    R := BlendChannel(S, R, DR, F.A, DA, 0);
+    G := BlendChannel(S, G, DG, F.A, DA, 8);
+    B := BlendChannel(S, B, DB, F.A, DA, 16);
+  end;
+{$ENDIF}
+  if S.Dither then
+  begin
+    var D := S.DitherMatrix[(Y and 3) * 4 + (X and 3)];
+    Inc(R, D); Inc(G, D); Inc(B, D);
+  end;
+  R := Clamp255(R); G := Clamp255(G); B := Clamp255(B);
+{$IFDEF GEPIX_8888}
+  var C := (Old and $FF000000) or Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
+{$ELSEIF DEFINED(GEPIX_565)}
+  var C := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+{$ELSEIF DEFINED(GEPIX_5551)}
+  var C := (Old and $8000) or Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+{$ELSE}
+  var C := (Old and $F000) or Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+{$ENDIF}
+{$IF DEFINED(GEPIX_EXTRA) and not DEFINED(GEPIX_565)}
+  if StencilWrite then
+    C := (C and not StencilBits(SFmt, $FF)) or StencilBits(SFmt, NewStencil);
+{$ENDIF}
+  C := (C and not S.KeepMask) or (Old and S.KeepMask);
+{$IFDEF GEPIX_8888}
+  P^ := C;
+{$ELSE}
+  P^ := Word(C);
+{$ENDIF}
+end;
+
+
+{$UNDEF GEPIX_8888}
+{$UNDEF GEPIX_EXTRA}
+{$UNDEF GEPIX_TEXTURE}
+{$UNDEF GEPIX_BLEND}
+{$UNDEF GEPIX_DEPTH}
+type
+  TGEPlotProc = procedure(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+
+const
+  PixelProcs: array[0..3, 0..7] of TGEPlotProc = (
+    (Pixel565_0, Pixel565_1, Pixel565_2, Pixel565_3, Pixel565_4, Pixel565_5, Pixel565_6, Pixel565_7),
+    (Pixel5551_0, Pixel5551_1, Pixel5551_2, Pixel5551_3, Pixel5551_4, Pixel5551_5, Pixel5551_6, Pixel5551_7),
+    (Pixel4444_0, Pixel4444_1, Pixel4444_2, Pixel4444_3, Pixel4444_4, Pixel4444_5, Pixel4444_6, Pixel4444_7),
+    (Pixel8888_0, Pixel8888_1, Pixel8888_2, Pixel8888_3, Pixel8888_4, Pixel8888_5, Pixel8888_6, Pixel8888_7));
+  PixelProcsExtra: array[0..3, 0..7] of TGEPlotProc = (
+    (Pixel565_0X, Pixel565_1X, Pixel565_2X, Pixel565_3X, Pixel565_4X, Pixel565_5X, Pixel565_6X, Pixel565_7X),
+    (Pixel5551_0X, Pixel5551_1X, Pixel5551_2X, Pixel5551_3X, Pixel5551_4X, Pixel5551_5X, Pixel5551_6X, Pixel5551_7X),
+    (Pixel4444_0X, Pixel4444_1X, Pixel4444_2X, Pixel4444_3X, Pixel4444_4X, Pixel4444_5X, Pixel4444_6X, Pixel4444_7X),
+    (Pixel8888_0X, Pixel8888_1X, Pixel8888_2X, Pixel8888_3X, Pixel8888_4X, Pixel8888_5X, Pixel8888_6X, Pixel8888_7X));
+
+// Specialise once per primitive. The generic path handles clearing, the
+// colour test and logic operations.
+function SelectPixel(const S: TGERaster; Secondary: Boolean): TGEPlotProc;
+begin
+  if S.ClearMode or S.ColorTest or S.LogicOp or GEGenericPixels then
+  begin
+    Result := PlotPixel;
+    Exit;
+  end;
+  // A depth test that always passes and writes nothing has no effect.
+  var Depth := S.DepthTest and ((S.DepthFunc <> 1) or S.DepthWrite);
+  var Kind := Ord(S.Textured) or (Ord(S.Blend) shl 1) or (Ord(Depth) shl 2);
+  if S.FogEnabled or Secondary or S.StencilTest then
+    Result := PixelProcsExtra[S.FBFormat, Kind]
+  else
+    Result := PixelProcs[S.FBFormat, Kind];
+end;
+
 
 // Clear-mode primitives of one colour and depth: the bits PlotPixel's clear
 // path writes, the same in every pixel but for the dither matrix's 4x4

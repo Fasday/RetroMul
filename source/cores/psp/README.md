@@ -56,6 +56,10 @@ compilation for other hosts is not runtime qualification.
 
 ## Verification
 
+PSP sources and their generators use ordinary Pascal units/data blocks, not
+textual implementation includes. Run `python tests/cores/psp/run/check_sources.py`
+to check the no-`.inc` rule in the owned PSP/shader sources and tests.
+
 From the repository root:
 
 ```powershell
@@ -76,15 +80,18 @@ report its results separately. Never change expected images to match a renderer.
 compares stdout, all screenshots and final VRAM; tests without GPU draws are
 reported separately. Frame hashes alone do not verify all CPU state.
 
-The state/font/DMA verification run passes 534/638 hardware tests, with identical
+The current direct-state/IO verification run passes 535/638 hardware tests, with identical
 JIT/pool and interpreter/serial reports. See
-[the detailed report](../../../tests/cores/psp/run/STATES-FONTS-ACCURACY.md).
+[the direct-state report](../../../tests/cores/psp/run/DIRECT-STATES.md).
 
 ## Known gaps and provenance
 
-- Save states reconstruct a separately validated console from initial data and
-  input history. Loading is cancellable but grows slower with session length;
-  initial host data has a 48 MiB limit. Host closures are never serialized.
+- Save states first use a separately validated direct memory/object-graph format,
+  without executing guest history. Still-opaque operations can use the older
+  compatibility reconstruction format when a history exists. Loading remains
+  cancellable; current filesystem capture is bounded to 48 MiB. Host pointers
+  and closures are never dumped. See
+  [direct-state verification and limitations](../../../tests/cores/psp/run/DIRECT-STATES.md).
   In-game memory-stick saves remain a separate feature.
 - PGD-protected files and unsupported PRX tags can prevent game loading.
 - Some VFPU functions and GE precision/timing still differ from hardware.

@@ -164,6 +164,7 @@ type
     // The GE stops running for now: the backend makes what it drew visible.
     procedure ReleaseBackend; inline;
     procedure Synchronize;
+    procedure Restored;
     procedure Reset;
     // Address of a 24-bit pointer parameter with the BASE upper bits and OFFSET.
     function Address(Param: Cardinal): Cardinal; inline;
@@ -226,6 +227,18 @@ procedure TPSPGEEngine.Synchronize;
 begin
   FWorkers.Sync;
   if Backend <> nil then Backend.Sync;
+end;
+
+procedure TPSPGEEngine.Restored;
+begin
+  FGeomValid := False;
+  FGeomCached := False;
+  FLightValid := False;
+  FLightRegsValid := False;
+  FRasterKeyValid := False;
+  FRaster.Tex.PalValid := False;
+  FRaster.Tex.Sampler := nil;
+  FWorkers.ClutChanged;
 end;
 
 procedure TPSPGEEngine.Reset;

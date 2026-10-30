@@ -160,13 +160,7 @@ begin
   if T.Wait.HLETag <> 'vcodec' then
     Exit;
   T.Wait.Data[0] := Value;
-  var K := FKernel;
-  FKernel.AddTimer(FKernel.Scheduler.Now + Us * 1000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'vcodec') then
-        K.EndWait(T, T.Wait.Data[0]);
-    end);
+  FKernel.AddWakeTimer(FKernel.Scheduler.Now + Us * 1000, T, 'vcodec', Value, 0);
 end;
 
 procedure TPSPVideocodec.Publish(D: TPSPVideoDecoder; const Pictures: TArray<TPSPPicture>);

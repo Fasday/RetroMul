@@ -944,14 +944,8 @@ begin
   if not FKernel.CanWait then
     Exit;
   var T := FKernel.Current;
-  var K := FKernel;
   FKernel.BeginWait(PSPWaitDelay, nil, 0, 0, False, nil, nil, 'sascore');
-  FKernel.AddTimer(FScheduler.Now + 200000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'sascore') then
-        K.EndWait(T, 0);
-    end);
+  FKernel.AddWakeTimer(FScheduler.Now + 200000, T, 'sascore', 0);
 end;
 
 procedure TPSPSasCore.hInit;

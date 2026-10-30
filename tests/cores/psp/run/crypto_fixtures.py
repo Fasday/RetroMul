@@ -207,8 +207,9 @@ def main():
         chunks = [hx[i:i+96] for i in range(0, len(hx), 96)]
         lines.append('  Fixture' + name + ' =')
         lines += ["    '%s'%s" % (part, ' +' if i < len(chunks)-1 else ';') for i, part in enumerate(chunks)]
-    out = Path(__file__).with_name('PSPCryptoFixtures.inc')
-    out.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    from pascal_data import write_block
+    out = Path(__file__).with_name('PSPCryptoTest.dpr')
+    write_block(out, 'PSP_CRYPTO_FIXTURES', '\n'.join(lines))
     print('Generated', len(fixtures), 'synthetic fixtures:', out)
 
 

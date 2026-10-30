@@ -201,14 +201,8 @@ begin
   if not FKernel.CanWait then
     Exit;
   var T := FKernel.Current;
-  var K := FKernel;
   FKernel.BeginWait(PSPWaitDelay, nil, 0, 0, False, nil, nil, 'audiocodec');
-  FKernel.AddTimer(FScheduler.Now + 60000, T,
-    procedure
-    begin
-      if T.IsWaiting and (T.Wait.HLETag = 'audiocodec') then
-        K.EndWait(T, Result);
-    end);
+  FKernel.AddWakeTimer(FScheduler.Now + 60000, T, 'audiocodec', Result);
 end;
 
 function TPSPAudioCodec.State(Ctx: Cardinal; Codec: Integer): TPSPAudioCodecState;

@@ -41,7 +41,8 @@ type
     procedure Materialize(const OriginalRoots: TPSPStateRoots);
     procedure HostChanged(const Name: string; Time: TDateTime; Created: Boolean = False; Tree: Boolean = False);
     procedure RecordInput(const Input: TEmulatorInput);
-    procedure Transfer(State: TStateArchive);
+    procedure Transfer(State: TStateArchive; VersionRead: Boolean = False);
+    procedure CopyDataFrom(Source: TPSPReplayState);
     function LiveRoots: TPSPStateRoots;
     property Roots: TPSPStateRoots read FRoots;
     property Publishing: Boolean read FPublishing write FPublishing;
@@ -150,7 +151,13 @@ var
         raise EReadError.Create('PSP snapshot initial host data exceeds 48 MiB');
       Created := TFile.GetCreationTime(Name);
       Modified := TFile.GetLastWriteTime(Name);
-      Data := TFile.ReadAllBytes(Name);
+      var FileStream := TFileStream.Create(Name, fmOpenRead or fmShareDenyNone);
+      try
+        SetLength(Data, FileStream.Size);
+        if Length(Data) > 0 then FileStream.ReadBuffer(Data[0], Length(Data));
+      finally
+        FileStream.Free;
+      end;
     end;
     Archive.Field(Root, SizeOf(Root));
     StateString(Archive, Path);
@@ -429,10 +436,10 @@ begin
   Inc(Frames);
 end;
 
-procedure TPSPReplayState.Transfer(State: TStateArchive);
+procedure TPSPReplayState.Transfer(State: TStateArchive; VersionRead: Boolean);
 begin
   var Version := StateVersion;
-  State.Field(Version, SizeOf(Version));
+  if not VersionRead then State.Field(Version, SizeOf(Version));
   if Version <> StateVersion then raise EReadError.Create('Unsupported PSP reconstruction state version');
   PSPStateBytes(State, InitialFiles, MaxFilesSize + 65536);
   PSPStateBytes(State, Digest, 32);
@@ -468,6 +475,21 @@ begin
   end;
   if (Total <> Frames) or (Frames > UInt64(60) * 60 * 60 * 24 * 7) then
     raise EReadError.Create('Invalid PSP snapshot duration');
+end;
+
+procedure TPSPReplayState.CopyDataFrom(Source: TPSPReplayState);
+begin
+  InitialFiles := Source.InitialFiles;
+  Settings := Source.Settings;
+  Frames := Source.Frames;
+  Digest := Source.Digest;
+  MediaDigest := Source.MediaDigest;
+  HasDisplay := Source.HasDisplay;
+  NoEmulatorDevice := Source.NoEmulatorDevice;
+  NoClobber := Source.NoClobber;
+  CaptureError := Source.CaptureError;
+  Inputs.Clear;
+  Inputs.AddRange(Source.Inputs);
 end;
 
 end.
