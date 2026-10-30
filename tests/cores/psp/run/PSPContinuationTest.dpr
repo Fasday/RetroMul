@@ -89,7 +89,7 @@ begin
   var Found := False;
   for var I := 0 to C.HLE.Count - 1 do
     if C.HLE.FunctionInfo(I).Name = Name then
-    begin C.HLE.FunctionInfo(I).Handler(); Found := True; Break; end;
+    begin C.HLE.Call(I); Found := True; Break; end;
   Require(Found, 'Missing HLE ' + Name);
   Result := C.CPU.Ctx.GPR[2];
 end;
@@ -230,10 +230,15 @@ begin
     Call(C, 'sceIoAddDrv', [Params]);
     C.Memory.WriteString(Params + $A0, 'state0:/data', 32);
     Call(C, 'sceIoOpen', [Params + $A0, 1, 0]);
+    Require(C.Kernel.Current.Frames.Count > 0, 'Guest driver open callback is not active');
     Checkpoint(C, Root, 'guest IO driver open');
     var Fd := C.CPU.Ctx.GPR[2];
-    Call(C, 'sceIoClose', [Fd]); Checkpoint(C, Root, 'guest IO driver close');
-    Call(C, 'sceIoDelDrv', [Params + $80]); Checkpoint(C, Root, 'guest IO driver exit');
+    Call(C, 'sceIoClose', [Fd]);
+    Require(C.Kernel.Current.Frames.Count > 0, 'Guest driver close callback is not active');
+    Checkpoint(C, Root, 'guest IO driver close');
+    Call(C, 'sceIoDelDrv', [Params + $80]);
+    Require(C.Kernel.Current.Frames.Count > 0, 'Guest driver exit callback is not active');
+    Checkpoint(C, Root, 'guest IO driver exit');
   finally C.Free; end;
 end;
 
@@ -276,6 +281,64 @@ begin
   finally C.Free; end;
 end;
 
+procedure FatCases(const P: TPSPProgram; const Root: string);
+  function FileCall(C: TPSPConsole; const Name: string; const Args: array of Cardinal): Cardinal;
+  begin
+    Call(C, Name, Args);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 100000);
+    Result := C.CPU.Ctx.GPR[2];
+  end;
+  procedure OpenClose(C: TPSPConsole; const Path: RawByteString; Flags: Cardinal);
+  begin
+    C.Memory.WriteString(Params, Path, 256);
+    var Fd := FileCall(C, 'sceIoOpen', [Params, Flags, $1FF]);
+    Require(Fd < $80000000, 'FAT open failed: ' + string(Path) + ' ' + IntToHex(Fd, 8));
+    Require(FileCall(C, 'sceIoClose', [Fd]) = 0, 'FAT close failed');
+  end;
+begin
+  var C := CreateConsole(P, Root);
+  var D: TPSPConsole := nil;
+  try
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    OpenClose(C, 'ms0:/LongFileName.txt', $602);
+    OpenClose(C, 'ms0:/LongFileName2.txt', $602);
+    C.Memory.WriteString(Params, 'ms0:/', 256);
+    var Fd := FileCall(C, 'sceIoDopen', [Params]);
+    C.Memory.Fill(Pixels, 0, $1000);
+    C.Memory.Write32(Pixels + $158, Pixels + $400);
+    C.Memory.Write32(Pixels + $400, 1044);
+    Require(FileCall(C, 'sceIoDread', [Fd, Pixels]) = 1, 'FAT directory read failed');
+    Require(C.Memory.ReadString(Pixels + $400, 13) = '.', 'Old FAT private layout failed');
+    var Path := TPath.Combine(Root, 'fat.snapshot');
+    C.SaveSnapshot(Path);
+    D := C.RestoreSnapshot(Path);
+    OpenClose(D, 'ms0:/LONGFI~1.TXT', 1);
+    OpenClose(D, 'ms0:/longfi~2.txt', 1);
+    D.Memory.Fill(Pixels, 0, $1000);
+    D.Memory.Write32(Pixels + $158, Pixels + $400);
+    D.Memory.Write32(Pixels + $400, 1044);
+    Call(D, 'sceKernelSetCompiledSdkVersion', [$06060010]);
+    Require(FileCall(D, 'sceIoDread', [Fd, Pixels]) = 1, 'Restored FAT enumeration failed');
+    Require((D.Memory.Read32(Pixels + $400) = 1044) and
+      (D.Memory.ReadString(Pixels + $404, 16) = '..') and
+      (D.Memory.ReadString(Pixels + $414, 1024) = '..'), 'Modern FAT private layout failed');
+    FileCall(D, 'sceIoDclose', [Fd]);
+    D.Memory.WriteString(Params, 'ms0:/LONGFI~1.TXT', 256);
+    Require(FileCall(D, 'sceIoRemove', [Params]) = 0, 'FAT alias deletion failed');
+    OpenClose(D, 'ms0:/LongFileName3.txt', $602);
+    OpenClose(D, 'ms0:/LONGFI~1.TXT', 1);
+    D.Memory.WriteString(Params, 'ms0:/LongDirectoryName', 256);
+    Require(FileCall(D, 'sceIoMkdir', [Params, $1FF]) = 0, 'FAT directory creation failed');
+    OpenClose(D, 'ms0:/LongDirectoryName/LongFileName.txt', $602);
+    D.Memory.WriteString(Params, 'ms0:/LongDirectoryName', 256);
+    D.Memory.WriteString(Params + $100, 'RenamedDirectory', 256);
+    Require(FileCall(D, 'sceIoRename', [Params, Params + $100]) = 0, 'FAT directory rename failed');
+    OpenClose(D, 'ms0:/RENAME~1/LONGFI~1.TXT', 1);
+    Writeln('PASS FAT aliases/private layouts, pending enumeration state, reuse and directory rename');
+  finally D.Free; C.Free; end;
+end;
+
 begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
@@ -284,6 +347,7 @@ begin
       var P := ProgramData;
       FontCases(P, Root); MediaCases(P, Root);
       LoaderAndDriverCases(P, Root); NetworkAndUtilityCases(P, Root);
+      FatCases(P, Root);
     finally TDirectory.Delete(Root, True); end;
   except
     on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;

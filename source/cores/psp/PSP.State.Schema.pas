@@ -68,6 +68,7 @@ begin
     Result.AddPublicTypes(['PSP.', 'Audio.ATRAC3', 'Audio.MP3', 'Audio.MPEG', 'Video.AVC']);
     RegisterPSPKernelStateTypes(Result);
     Result.Optional(TPSPStateAction, ['Failure', 'Arrays', 'Buffers', 'Texts', 'Results', 'Owned']);
+    Result.Optional(TPSPIO, ['FFatNames']);
     Result.AddClass(TMemoryStream, []);
     Result.AddClass(TFileStream, []);
     Result.AddClass(TStringBuilder, []);

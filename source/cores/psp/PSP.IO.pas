@@ -20,6 +20,9 @@ type
   end;
 
   TPSPDeviceKind = (dkNone, dkUMD, dkHost, dkEmulator, dkTTY, dkMsStor);
+  TPSPFatName = record
+    LongName, ShortName: string;
+  end;
 
   TPSPOpenFile = class
   public
@@ -58,6 +61,7 @@ type
     FDisc: TPSPDisc;
     FFiles: TDictionary<Integer, TPSPOpenFile>;
     FDrivers: TDictionary<string, TPSPIoDriver>;
+    FFatNames: TDictionary<string, TPSPFatName>;
     FMemstickRoot, FFlashRoot, FHostRoot: string;
     FCwd: string;
     FOnOutput: TPSPOutputEvent;
@@ -69,6 +73,10 @@ type
     function HostRoot(const Device: string): string;
     function Resolve(const Path: string): string;
     function HostPath(const Device, Rest: string): string;
+    function FatName(const Rest, Name: string): string;
+    procedure SeedFatDirectory(const Host, Rest: string);
+    procedure ForgetFatPath(const Host: string; const Destination: string = '');
+    procedure RememberFatPath(const Host: string);
     function AllocFd: Integer;
     function AllocTTYFd: Integer;
     function GetFile(Fd: Cardinal): TPSPOpenFile;
@@ -204,6 +212,7 @@ begin
   FMemory := Kernel.Memory;
   FFiles := TDictionary<Integer, TPSPOpenFile>.Create;
   FDrivers := TDictionary<string, TPSPIoDriver>.Create;
+  FFatNames := TDictionary<string, TPSPFatName>.Create;
   FHasDisplay := True;
 end;
 
@@ -213,6 +222,7 @@ begin
     F.Free;
   FFiles.Free;
   FDrivers.Free;
+  FFatNames.Free;
   inherited;
 end;
 
@@ -222,6 +232,7 @@ begin
     F.Free;
   FFiles.Clear;
   FDrivers.Clear;
+  FFatNames.Clear;
   FCwd := '';
 end;
 
@@ -310,6 +321,105 @@ begin
   if Root = '' then
     Exit('');
   Result := TPath.Combine(Root, NormalizeRest(Rest).Substring(1).Replace('/', PathDelim));
+  if not ((Device = 'ms0') or (Device = 'ms') or (Device = 'fatms0') or
+    (Device = 'fatms') or (Device = 'ef0')) then Exit;
+  Result := Root;
+  var Dir := '';
+  for var Part in NormalizeRest(Rest).Split(['/'], TStringSplitOptions.ExcludeEmpty) do
+  begin
+    SeedFatDirectory(Result, Dir);
+    var Item: TPSPFatName;
+    var Actual := Part;
+    if FFatNames.TryGetValue((Dir + '/' + Part).ToLower, Item) then Actual := Item.LongName
+    else for var Pair in FFatNames do
+      if (Pair.Key.Substring(0, Pair.Key.LastIndexOf('/')) = Dir.ToLower) and
+        SameText(Pair.Value.ShortName, Part) then begin Actual := Pair.Value.LongName; Break; end;
+    Result := TPath.Combine(Result, Actual);
+    Dir := Dir + '/' + Actual;
+  end;
+end;
+
+function TPSPIO.FatName(const Rest, Name: string): string;
+  function Clean(const S: string): string;
+  begin
+    Result := '';
+    for var C in S.ToUpper do
+      if (C <> ' ') and (C <> '.') then
+        if CharInSet(C, ['A'..'Z', '0'..'9', '$', '%', #39, '-', '_', '@', '~', '`', '!', '(', ')', '{', '}', '^', '#', '&']) then
+          Result := Result + C
+        else Result := Result + '_';
+  end;
+begin
+  if (Name = '.') or (Name = '..') then Exit(Name);
+  var Key := NormalizeRest(Rest).ToLower;
+  var Item: TPSPFatName;
+  if FFatNames.TryGetValue(Key, Item) then Exit(Item.ShortName);
+  var Dot := Name.LastIndexOf('.');
+  var Base := Name; var Ext := '';
+  if Dot >= 0 then begin Base := Name.Substring(0, Dot); Ext := Name.Substring(Dot + 1); end;
+  if Dot = 0 then begin Base := Ext; Ext := ''; end;
+  var Stem := Clean(Base); var Suffix := Clean(Ext);
+  Suffix := Suffix.Substring(0, Min(3, Length(Suffix)));
+  if Stem = '' then Stem := '_';
+  var Direct := (Length(Stem) <= 8) and (Length(Ext) <= 3) and
+    (Stem = Base.ToUpper) and ((Dot < 0) or (Name = Name.ToUpper));
+  var Parent := Key.Substring(0, Key.LastIndexOf('/') + 1);
+  var Used := TDictionary<string, Boolean>.Create;
+  try
+    for var Pair in FFatNames do
+      if Pair.Key.Substring(0, Pair.Key.LastIndexOf('/') + 1) = Parent then
+        Used.AddOrSetValue(Pair.Value.ShortName, True);
+    Result := Stem;
+    if Suffix <> '' then Result := Result + '.' + Suffix;
+    if not Direct or Used.ContainsKey(Result) then
+    begin
+      var N := 1;
+      repeat
+        var Tail := '~' + IntToStr(N);
+        Result := Stem.Substring(0, Min(Length(Stem), Max(1, 8 - Length(Tail)))) + Tail;
+        if Suffix <> '' then Result := Result + '.' + Suffix;
+        Inc(N);
+      until not Used.ContainsKey(Result);
+    end;
+  finally Used.Free; end;
+  Item.LongName := Name; Item.ShortName := Result;
+  FFatNames.Add(Key, Item);
+end;
+
+procedure TPSPIO.SeedFatDirectory(const Host, Rest: string);
+begin
+  // A folder mount has no on-disk FAT entries. Seed it once; subsequent guest
+  // creations reserve aliases immediately, not in the host's listing order.
+  var Key := Rest.ToLower + '/';
+  if FFatNames.ContainsKey(Key) or not DirectoryExists(Host) then Exit;
+  FFatNames.Add(Key, Default(TPSPFatName));
+  for var Name in TDirectory.GetFileSystemEntries(Host) do
+    FatName(Rest + '/' + ExtractFileName(Name), ExtractFileName(Name));
+end;
+
+procedure TPSPIO.RememberFatPath(const Host: string);
+begin
+  var Root := IncludeTrailingPathDelimiter(FMemstickRoot);
+  if (FMemstickRoot = '') or not Host.StartsWith(Root, True) then Exit;
+  var Rest := '/' + Host.Substring(Root.Length).Replace(PathDelim, '/');
+  FatName(Rest, ExtractFileName(Host));
+end;
+
+procedure TPSPIO.ForgetFatPath(const Host, Destination: string);
+begin
+  var Root := IncludeTrailingPathDelimiter(FMemstickRoot);
+  if (FMemstickRoot = '') or not Host.StartsWith(Root, True) then Exit;
+  var Key := '/' + Host.Substring(Root.Length).Replace(PathDelim, '/').ToLower;
+  var NewKey := '';
+  if Destination <> '' then NewKey := '/' + Destination.Substring(Root.Length).Replace(PathDelim, '/').ToLower;
+  for var Pair in FFatNames.ToArray do
+    if (Pair.Key = Key) or Pair.Key.StartsWith(Key + '/') then
+    begin
+      FFatNames.Remove(Pair.Key);
+      if (NewKey <> '') and (Pair.Key <> Key) then
+        FFatNames.AddOrSetValue(NewKey + Pair.Key.Substring(Key.Length), Pair.Value);
+    end;
+  if Destination <> '' then RememberFatPath(Destination);
 end;
 
 function TPSPIO.OnHostDevice(const Path: string): Boolean;
@@ -494,6 +604,7 @@ begin
         F.Kind := dkHost;
         F.Path := Canonical;
         F.Stream := S;
+        if not Exists then RememberFatPath(Name);
         if ((Flags and PSP_O_WRONLY) <> 0) and (not Exists or ((Flags and PSP_O_TRUNC) <> 0)) then
           HostChanged(Name, not Exists);
         if (Flags and PSP_O_APPEND) <> 0 then
@@ -802,6 +913,9 @@ begin
   var ResPtr := FHLE.Arg(1);
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if FKernel.InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if not AllowCB and FKernel.RefuseWait then Exit;
   if not F.AsyncPending and (F.AsyncDone = 0) then
     begin FHLE.Result(SCE_KERNEL_ERROR_NOASYNC); Exit; end;
   FHLE.Result(0);
@@ -1058,6 +1172,9 @@ end;
 
 procedure TPSPIO.hOpen;
 begin
+  if FKernel.InInterrupt then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if not FKernel.CanWait then begin FHLE.Result($FFFFFFFF); Exit; end;
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
   if OpenGuestDriver(Path, FHLE.Arg(1), FHLE.Arg(2)) then
     Exit;
@@ -1151,6 +1268,7 @@ begin
     Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+  if (F.Kind in [dkHost, dkUMD]) and FKernel.RefuseWait then Exit;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
   // The caller waits for the drive, the UMD's as the memory stick's (GTA
   // Liberty City Stories streams the city only when its reads take time).
@@ -1188,6 +1306,7 @@ begin
     Exit;
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+  if (F.Kind in [dkHost, dkUMD]) and FKernel.RefuseWait then Exit;
   FHLE.Result(Cardinal(DoWrite(F, FHLE.Arg(1), FHLE.Arg(2))));
 end;
 
@@ -1587,6 +1706,29 @@ begin
   else
     WriteStat(P, E.Directory, E.Size, E.Modified, E.Accessed <> 0);
   FMemory.WriteString(P + $58, RawByteString(E.Name), 256);
+  if F.Kind = dkHost then
+  begin
+    var Dev, Rest: string;
+    Split(F.Path, Dev, Rest);
+    if (Dev = 'ms0') or (Dev = 'ms') or (Dev = 'fatms0') or (Dev = 'fatms') or (Dev = 'ef0') then
+    begin
+      var Priv := FMemory.Read32(P + $158);
+      if Priv <> 0 then
+      begin
+        var Short := FatName(NormalizeRest(Rest) + '/' + E.Name, E.Name);
+        if FKernel.CompiledSdkVersion < $03080000 then
+        begin
+          FMemory.WriteString(Priv, RawByteString(Short), 13);
+          FMemory.WriteString(Priv + 13, RawByteString(E.Name), 256);
+        end
+        else if FMemory.Read32(Priv) >= 1044 then
+        begin
+          FMemory.WriteString(Priv + 4, RawByteString(Short), 16);
+          FMemory.WriteString(Priv + 20, RawByteString(E.Name), 1024);
+        end;
+      end;
+    end;
+  end;
   FHLE.Result(1);
 end;
 
@@ -1609,7 +1751,7 @@ begin
     begin DeviceYield(SCE_ERROR_ERRNO_EEXIST, 20000); Exit; end;
   if not DirectoryExists(ExtractFileDir(Name)) then
     begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if CreateDir(Name) then begin HostChanged(Name, True); DeviceYield(0, 30000); end
+  if CreateDir(Name) then begin RememberFatPath(Name); HostChanged(Name, True); DeviceYield(0, 30000); end
   else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
@@ -1620,7 +1762,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not DirectoryExists(Name) then
     begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if RemoveDir(Name) then begin HostChanged(Name); DeviceYield(0, 30000); end
+  if RemoveDir(Name) then begin ForgetFatPath(Name); HostChanged(Name); DeviceYield(0, 30000); end
   else DeviceYield(SCE_ERROR_ERRNO_ENOTEMPTY, 30000);
 end;
 
@@ -1631,7 +1773,7 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
   if not FileExists(Name) then
     begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if DeleteFile(Name) then begin HostChanged(Name); DeviceYield(0, 30000); end
+  if DeleteFile(Name) then begin ForgetFatPath(Name); HostChanged(Name); DeviceYield(0, 30000); end
   else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
@@ -1692,6 +1834,7 @@ begin
       end;
     HostChanged(Src);
     HostChanged(Dst, False, True);
+    ForgetFatPath(Src, Dst);
     DeviceYield(0, 30000)
   end
   else
@@ -1776,6 +1919,8 @@ end;
 
 procedure TPSPIO.hGetAsyncStat;
 begin
+  if FKernel.InInterrupt and (GetFile(FHLE.Arg(0)) <> nil) then
+    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
   var Poll := FHLE.Arg(1) <> 0;
   if Poll then
   begin

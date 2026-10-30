@@ -192,6 +192,16 @@ begin
   Result := Find(Lib, NID);
   if Result >= 0 then
     Exit;
+  // Firmware 6.6x kernel entry names for the same module-manager operations.
+  // Resolve to the existing entry, retaining syscall indices of older images.
+  if Lib = 'ModuleMgrForKernel' then
+  begin
+    case NID of
+      $939E4270: Result := Find('ModuleMgrForUser', $977DE386);
+      $387E3CA9: Result := Find('ModuleMgrForUser', $2E0911AA);
+    end;
+    if Result >= 0 then Exit;
+  end;
   var Alias := UserLibrary(Lib);
   if Alias <> '' then
   begin
@@ -253,7 +263,8 @@ begin
     end;
     if FStrict then
       raise EPSPUnimplemented.CreateFmt('PSP: unimplemented %s', [F.Name]);
-    FCPU.Ctx.GPR[2] := 0;
+    if F.Known then FCPU.Ctx.GPR[2] := 0
+    else FCPU.Ctx.GPR[2] := SCE_KERNEL_ERROR_LIBRARY_NOT_YET_LINKED;
   end;
   Result := True;
 end;

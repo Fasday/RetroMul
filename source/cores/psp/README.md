@@ -80,9 +80,9 @@ report its results separately. Never change expected images to match a renderer.
 compares stdout, all screenshots and final VRAM; tests without GPU draws are
 reported separately. Frame hashes alone do not verify all CPU state.
 
-The current direct-only continuation run passes 535/638 hardware tests, with identical
+The current accuracy follow-up passes 539/638 hardware-reference tests, with identical
 JIT/pool and interpreter/serial reports. See
-[the continuation report](../../../tests/cores/psp/run/CONTINUATIONS.md).
+[the accuracy report and profile distinctions](../../../tests/cores/psp/run/ACCURACY-FOLLOWUP.md).
 
 ## Known gaps and provenance
 

@@ -16,6 +16,7 @@ uses
 const
   ERROR_MPEG_NO_DATA = Cardinal($80618001);
   ERROR_MPEG_ALREADY_USED = Cardinal($80618005);
+  ERROR_MPEG_INVALID_CONTEXT = Cardinal($80618008);
   ERROR_MPEG_NOT_YET_INIT = Cardinal($80618009);
   ERROR_MPEG_INVALID_VALUE = Cardinal($806101FE);
   ERROR_MPEG_INVALID_ADDR = Cardinal($80610103);
@@ -402,6 +403,7 @@ end;
 
 procedure TPSPMpeg.hCreate;
 begin
+  if not FKernel.CanWait then begin FHLE.Result(ERROR_MPEG_INVALID_CONTEXT); Exit; end;
   var MpegPtr := FHLE.Arg(0);
   var Data := FHLE.Arg(1);
   var Size := FHLE.Arg(2);

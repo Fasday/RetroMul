@@ -1036,6 +1036,7 @@ end;
 
 procedure TPSPLoader.hStartModule;
 begin
+  if FKernel.RefuseWait then Exit;
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
   begin
@@ -1061,6 +1062,7 @@ end;
 
 procedure TPSPLoader.hStopModule;
 begin
+  if FKernel.RefuseWait then Exit;
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
   begin

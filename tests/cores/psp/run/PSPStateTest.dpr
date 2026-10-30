@@ -25,24 +25,67 @@ begin
 end;
 
 procedure GuestWrite(C: TPSPConsole; const Path, Text: RawByteString);
-const
-  Buffer = $0BFF0000;
+var
+  Block, PC: Cardinal;
+  procedure Emit(Word: Cardinal);
+  begin C.Memory.Write32(PC, Word); Inc(PC, 4); end;
+  procedure Load(Reg, Value: Cardinal);
+  begin
+    Emit($3C000000 or (Reg shl 16) or (Value shr 16));
+    Emit($34000000 or (Reg shl 21) or (Reg shl 16) or (Value and $FFFF));
+  end;
+  procedure Syscall(NID: Cardinal);
+  begin
+    var Index := C.HLE.Find('IoFileMgrForUser', NID);
+    if Index < 0 then raise Exception.Create('Missing fixture IO syscall');
+    Emit((Cardinal(Index) shl 6) or $0C);
+  end;
 begin
+  // A frame boundary can leave the whole guest idle. Host-side handler calls
+  // in that state are not legal blocking IO; use an actual guest thread instead.
+  if C.Kernel.Exited then raise Exception.Create('Guest IO fixture requires a live program');
+  Block := C.Kernel.AllocUser($1000, False, 'state test IO');
+  if Block = 0 then raise Exception.Create('No space for guest IO fixture');
+  var ThreadID: Cardinal := 0;
+  PC := Block;
   C.IO.Cwd := 'ms0:/';
-  C.Memory.WriteString(Buffer, Path, 1024);
-  C.CPU.Ctx.GPR[4] := Buffer;
-  C.CPU.Ctx.GPR[5] := PSP_O_WRONLY or PSP_O_CREAT or PSP_O_TRUNC;
-  C.CPU.Ctx.GPR[6] := $1FF;
-  C.HLE.FunctionInfo(C.HLE.Find('IoFileMgrForUser', $109F50BC)).Handler();
-  var Fd := C.CPU.Ctx.GPR[2];
-  if Fd >= $80000000 then raise Exception.CreateFmt('Guest open failed: %.8x', [Fd]);
-  C.IO.Cwd := 'ms0:/PSP/GAME';
-  C.Memory.WriteString(Buffer, Text, 1024);
-  C.CPU.Ctx.GPR[4] := Fd;
-  C.CPU.Ctx.GPR[5] := Buffer;
-  C.CPU.Ctx.GPR[6] := Length(Text);
-  C.HLE.FunctionInfo(C.HLE.Find('IoFileMgrForUser', $42EC03AC)).Handler();
-  if C.CPU.Ctx.GPR[2] <> Cardinal(Length(Text)) then raise Exception.Create('Guest write failed');
+  try
+    C.Memory.WriteString(Block + $100, Path, $200);
+    C.Memory.WriteString(Block + $300, 'ms0:/PSP/GAME', $200);
+    C.Memory.WriteString(Block + $500, Text, $300);
+    C.Memory.Write32(Block + $900, $FFFFFFFF);
+    C.Memory.Write32(Block + $904, $FFFFFFFF);
+    Load(4, Block + $100); Load(5, PSP_O_WRONLY or PSP_O_CREAT or PSP_O_TRUNC); Load(6, $1FF);
+    Syscall($109F50BC);
+    Load(16, Block + $900);
+    Emit($AE020000); // sw v0, 0(s0)
+    Emit($00408821); // move s1, v0
+    Load(4, Block + $300); Syscall($55F4717D);
+    Emit($02202021); // move a0, s1
+    Load(5, Block + $500); Load(6, Length(Text)); Syscall($42EC03AC);
+    Emit($AE020004); // sw v0, 4(s0)
+    Emit($00001021); Emit($03E00008); Emit(0); // return 0 through thread-exit trap
+    var T := C.Kernel.CreateThread('state test IO', Block, 8, $1000, $80000000, 0);
+    if T = nil then raise Exception.Create('Could not create guest IO fixture thread');
+    ThreadID := T.UID;
+    T.DeleteOnExit := True;
+    C.Kernel.StartThread(T, 0, 0);
+    C.Kernel.AfterSyscall;
+    var Deadline := C.Scheduler.Now + 1000000000;
+    while C.Kernel.ThreadById(ThreadID) <> nil do
+    begin
+      if C.Kernel.Exited then raise Exception.Create('Guest exited before fixture write');
+      if C.Scheduler.Now >= Deadline then raise Exception.Create('Guest IO fixture did not return');
+      C.RunUntil(C.Scheduler.Now + 100000);
+    end;
+    var Fd := C.Memory.Read32(Block + $900);
+    if Fd >= $80000000 then raise Exception.CreateFmt('Guest open failed: %.8x', [Fd]);
+    if C.Memory.Read32(Block + $904) <> Cardinal(Length(Text)) then raise Exception.Create('Guest write failed');
+    // Deliberately leave the file open: it is part of the saved graph.
+  finally
+    if (ThreadID = 0) or (C.Kernel.ThreadById(ThreadID) = nil) then
+      C.Kernel.UserPartition.FreeBlock(Block);
+  end;
 end;
 
 function Digest(C: TPSPConsole): string;

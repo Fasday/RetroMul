@@ -364,11 +364,7 @@ end;
 procedure TPSPDisplay.WaitFields(Count: Integer; AllowCB: Boolean);
 begin
   FHLE.Result(0);
-  if not FKernel.CanWait then
-  begin
-    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
-    Exit;
-  end;
+  if FKernel.RefuseWait then Exit;
   var T := FKernel.Current;
   FWaiters.Add(T);
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, AllowCB, VBlankRetry, VBlankAbort, 'vblank');
@@ -700,7 +696,7 @@ begin
   FModeWidth := W;
   FModeHeight := H;
   // Changing the mode waits for the next vblank.
-  WaitFields(1, False);
+  if FKernel.CanWait then WaitFields(1, False) else FHLE.Result(0);
 end;
 
 procedure TPSPDisplay.hGetMode;
@@ -1010,6 +1006,7 @@ begin
     FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
     Exit;
   end;
+  if FKernel.RefuseWait then Exit;
   var Unread := FSampleIndex - FReadIndex;
   if (Unread > 0) or not FKernel.CanWait then
   begin

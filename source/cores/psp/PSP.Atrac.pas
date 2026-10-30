@@ -1039,6 +1039,8 @@ begin
   EnsureContexts;
   var At3 := FHLE.ArgInt(0);
   var At3Plus := FHLE.ArgInt(1);
+  if FKernel.InInterrupt and ((At3 > 0) or (At3Plus > 0)) then
+    begin FHLE.Result($807F00FD); Exit; end;
   for var S in FSlots do
     if S.InUse then
     begin

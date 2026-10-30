@@ -356,7 +356,9 @@ begin
       if Rel <> '' then
         Dest := TPath.Combine(Host, Rel);
       // Tests also read data next to their folder (../sample.at3, ../mp3/sample.mp3): the data
-      // files of the whole test group (tests/<group>) come along, without sources and programs.
+      // files of the whole test group (tests/<group>) come along, including PRX
+      // fixtures loaded by other programs. Never fabricate a successful load
+      // when an isolated fixture was accidentally omitted.
       var Parts := Rel.Split(['\'], TStringSplitOptions.ExcludeEmpty);
       if Length(Parts) >= 2 then
       begin
@@ -364,7 +366,7 @@ begin
         for var F in TDirectory.GetFiles(GroupDir, '*', TSearchOption.soAllDirectories) do
         begin
           var X := ExtractFileExt(F).ToLower;
-          if (X = '.c') or (X = '.cpp') or (X = '.h') or (X = '.expected') or (X = '.bmp') or (X = '.prx') or
+          if (X = '.c') or (X = '.cpp') or (X = '.h') or (X = '.expected') or (X = '.bmp') or
             (X = '.mak') or (X = '.s') or (X = '.exp') or SameText(ExtractFileName(F), 'Makefile') then
             Continue;
           var Target := TPath.Combine(Host, F.Substring(At + 1));

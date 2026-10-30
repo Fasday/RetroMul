@@ -1007,6 +1007,7 @@ end;
 
 procedure TPSPSasCore.hCore;
 begin
+  if FKernel.RefuseWait then Exit;
   FHLE.Result(0);
   MixGrain(FHLE.Arg(1), False, 0, 0);
   CoreWait;
@@ -1014,6 +1015,7 @@ end;
 
 procedure TPSPSasCore.hCoreWithMix;
 begin
+  if FKernel.RefuseWait then Exit;
   if FOutputMode = 1 then
   begin
     FHLE.Result(PSP_SAS_ERROR_NOT_SUPPORTED);

@@ -1442,7 +1442,7 @@ begin
     FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
     Exit;
   end;
-  if not FSystem.CPU.InterruptsEnabled then
+  if not FKernel.CanWait then
   begin
     VolatileGrant(Ptr, SizePtr);
     FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);

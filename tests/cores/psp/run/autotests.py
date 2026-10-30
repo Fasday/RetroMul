@@ -134,7 +134,8 @@ def main():
     ap.add_argument('filters', nargs='*')
     ap.add_argument('--exe', default=EXE)
     ap.add_argument('--backend', choices=('cpu', 'vulkan', 'check'), default='cpu')
-    ap.add_argument('--frames', type=int, default=1200)
+    # Some dialog and WLAN scenarios legitimately run beyond 20 guest seconds.
+    ap.add_argument('--frames', type=int, default=12000)
     ap.add_argument('--jobs', type=int, default=8)
     ap.add_argument('--timeout', type=int, default=60)
     ap.add_argument('--out', default=os.path.join(ROOT, 'autotests.txt'))
