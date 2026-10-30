@@ -1466,7 +1466,10 @@ begin
   if F.AsyncPending then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   if RefuseFileWait(F) then Exit;
-  FHLE.Result(Cardinal(DoWrite(F, FHLE.Arg(1), FHLE.Arg(2))));
+  var R := DoWrite(F, FHLE.Arg(1), FHLE.Arg(2));
+  if (F.Kind = dkHost) and (R > 0) then
+    DeviceYield(Cardinal(R), ReadLatency(F, R))
+  else FHLE.Result(Cardinal(R));
 end;
 
 procedure TPSPIO.hWriteAsync;

@@ -564,6 +564,44 @@ begin
   finally C.Free; end;
 end;
 
+procedure SyncWriteCases(const P: TPSPProgram; const Root: string);
+begin
+  var Host := TPath.Combine(Root, 'sync-write-host');
+  TDirectory.CreateDirectory(Host);
+  var C := CreateConsole(P, Host);
+  try
+    C.RunUntil(C.Scheduler.Now + 10000000);
+    C.Memory.WriteString(Params, 'host0:/output.bin', 128);
+    Call(C, 'sceIoOpen', [Params, $602, $1FF]);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 1000000);
+    var Fd := C.CPU.Ctx.GPR[2];
+    Require(Fd < $80000000, 'Sync-write fixture open failed');
+    Emit(C, Code + $600, [OpI($0F, 0, 8, Globals shr 16), OpI($0D, 8, 8, Globals and $FFFF),
+      OpI(9, 0, 9, 1), OpI($2B, 8, 9, 48), OpR(0, 0, 2, $21), $03E00008, 0]);
+    C.Memory.Write32(Globals + 48, 0);
+    var Lower := C.Kernel.CreateThread('write lower', Code + $600,
+      C.Kernel.Current.Priority + 1, $800, $80000000, 0);
+    Require(Lower <> nil, 'Sync-write probe allocation failed');
+    Lower.DeleteOnExit := True;
+    C.Kernel.StartThread(Lower, 0, 0);
+    C.Memory.WriteString(Pixels, 'sync', 5);
+    Call(C, 'sceIoWrite', [Fd, Pixels, 4]);
+    Require(C.Kernel.Current.IsWaiting and (C.Kernel.Current.Wait.HLETag = 'iodev'),
+      'Synchronous host write did not wait for its drive transfer');
+    C.Kernel.AfterSyscall;
+    Checkpoint(C, Root, 'synchronous host write transfer and lower-priority progress');
+    Require((C.CPU.Ctx.GPR[2] = 4) and (C.Memory.Read32(Globals + 48) = 1),
+      'Sync-write completion lost its result or starved the lower-priority probe');
+    Call(C, 'sceIoClose', [Fd]);
+    C.Kernel.AfterSyscall;
+    C.RunUntil(C.Scheduler.Now + 1000000);
+    Require(Call(C, 'sceIoWrite', [1, Pixels, 4]) = 4, 'Stdout write failed');
+    Require(not C.Kernel.Current.IsWaiting, 'Stdout was incorrectly treated as a host disk transfer');
+    Writeln('PASS sync disk writes yield through transfer waits; stdout stays independent');
+  finally C.Free; end;
+end;
+
 begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-continuation-test-' + TGUID.NewGuid.ToString);
@@ -576,6 +614,7 @@ begin
       AsyncIOCases(P, Root);
       SRCContextCases(P, Root);
       ScanClockCases(P, Root);
+      SyncWriteCases(P, Root);
     finally TDirectory.Delete(Root, True); end;
   except
     on E: Exception do begin Writeln(E.ClassName, ': ', E.Message); ExitCode := 1; end;
