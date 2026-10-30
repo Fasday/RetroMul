@@ -4,6 +4,10 @@ The previous AES/PRX implementation was replaced, with no legacy fallback.
 Reference sources and numeric key provenance: `source/cores/psp/PSP.Crypto.md`.
 All fixtures in `PSPCryptoFixtures.inc` are synthetic, not game data.
 
+The geometry follow-up is in `GE-REGION.md`: an independent raster-clipping
+defect was subsequently found and fixed. Its corrected game hashes supersede
+the crypto-only game hashes below; the decrypted ELF hashes remain unchanged.
+
 ## Verified
 
 - **97** encrypted modules that the preceding binary decoded have the exact

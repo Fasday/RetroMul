@@ -119,9 +119,9 @@ type
     FGeomPort: array[0..7] of Cardinal;
     FGeomBones: array[0..95] of Cardinal;
     FGeomCached: Boolean;
-    // What BuildRaster built FRaster from (the 77 registers of GERasterRuns,
+    // What BuildRaster built FRaster from (the 79 registers of GERasterRuns,
     // the VRAM layout), while FRaster is as it built it.
-    FRasterKey: array[0..79] of Cardinal;
+    FRasterKey: array[0..81] of Cardinal;
     FRasterKeyValid: Boolean;
     procedure PrepareLight;
     procedure PrepareGeometry;
@@ -1691,7 +1691,7 @@ const
   TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
   // The registers BuildRaster reads, as runs (first, count); with them a few
   // it does not ($1D, $25, $26).
-  GERasterRuns: array[0..8, 0..1] of Byte = ((GE_VTYPE, 1), (GE_CLIPENABLE, 13), (GE_SHADEMODE, 1),
+  GERasterRuns: array[0..9, 0..1] of Byte = ((GE_VTYPE, 1), (GE_REGION1, 2), (GE_CLIPENABLE, 13), (GE_SHADEMODE, 1),
     (GE_FRAMEBUFPTR, 20), (GE_TEXSIZE0, 8), (GE_TEXMODE, 2), (GE_CLUTFORMAT, 6), (GE_FOGCOLOR, 2),
     (GE_FRAMEBUFPIXFORMAT, 24));
 
@@ -1745,10 +1745,12 @@ begin
   S.ZAddr := C[GE_ZBUFPTR] and $1FFFF0;
   S.ZStride := C[GE_ZBUFWIDTH] and $7FC;
   S.ZPermutation := FMemory.VRAMShift;
-  S.ScissorX1 := C[GE_SCISSOR1] and $3FF;
-  S.ScissorY1 := (C[GE_SCISSOR1] shr 10) and $3FF;
-  S.ScissorX2 := C[GE_SCISSOR2] and $3FF;
-  S.ScissorY2 := (C[GE_SCISSOR2] shr 10) and $3FF;
+  // REGION bounds drawing independently of the scissor. In particular, an
+  // oversized scissor must not let depth writes escape into adjacent vertices.
+  S.ScissorX1 := Max(C[GE_SCISSOR1] and $3FF, C[GE_REGION1] and $3FF);
+  S.ScissorY1 := Max((C[GE_SCISSOR1] shr 10) and $3FF, (C[GE_REGION1] shr 10) and $3FF);
+  S.ScissorX2 := Min(C[GE_SCISSOR2] and $3FF, C[GE_REGION2] and $3FF);
+  S.ScissorY2 := Min((C[GE_SCISSOR2] shr 10) and $3FF, (C[GE_REGION2] shr 10) and $3FF);
   S.BandY1 := 0;
   S.BandY2 := 1023;
   S.Through := (C[GE_VTYPE] and (1 shl 23)) <> 0;
