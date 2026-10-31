@@ -79,6 +79,17 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   slopes near 1, and antialiased lines with random vertex alpha blended over
   black (`aa_<n>_col.bin` the colours). 3 s on the PSP.
 
+- `ge_patch`: Bezier patches (4 x 4 control points, random divisions) drawn
+  as points: 32 a frame, each point on its own pixel centre, the colour and
+  depth buffers read back (`patch/<set>_<n>_c.bin`, `_z.bin`; `_in.bin` the
+  divisions and the control points' z and colours): one control point set
+  (the weights), random depths and colours, and in 3D with z in -1..1 at
+  random exponents and signs. 3 s on the PSP.
+
+- `ge_spline`: the same for splines (4..7 x 4..7 control points, random edge
+  types and divisions, 16 a frame; `spline/`), the points on a grid that
+  sorts by x and y. 5 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -149,6 +160,21 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   that above, so 128 at the centre (the minor position from a slope
   truncated to 2^-24; 98.9% of the probe's antialiased pixels, the rest one
   off).
+- Patches (`ge_patch`, `ge_spline`) are evaluated in steps between
+  neighbours: t = i / div in 8 bits, floored from the nearer end (so the
+  weights are symmetric), first along v (each column), then along u. Bezier
+  curves take de Casteljau's three levels, every step at t; splines de
+  Boor's, each step's fraction between its two knots floored from the nearer
+  knot (knot k is k - 3, an open end repeating its knot; type bit 0 opens
+  the start). A step on floats cuts both values toward zero at the larger
+  one's 16th significant bit and floors a (256 - s) + b s over 256 there
+  (t = 0 and 1 give the end itself); colours step in 2^-7, floored, and
+  round up at the end. A spline segment's far edge is the next segment's
+  near one. Every point's depth (through mode and 3D) and colour of both
+  probes matches; float weights were up to 120 depth units off. Without
+  normals, a Bezier patch's normal is the tangent along u (the last step's
+  two values' difference) cross the one along v (gpu/exact's normals jobs;
+  the reverse order mirrors them), negated by PATCHFACING.
 - Near-plane clipping: the clipped vertices' depth is not exactly that of
   the near plane: the hardware's planes give 2 to 3 (of 65535) where the
   core puts 0, so its intersection arithmetic (16-bit, like the vertex

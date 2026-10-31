@@ -20,6 +20,14 @@ type
     X, Y, Z: Single;
   end;
 
+  // The values a Bezier patch interpolates of a control point: position,
+  // normal, texture coordinates and weights (F: P.X .. P.Z, N.X .. N.Z, U, V,
+  // Weights[0..7]), the colour in 2^-7 (C: R, G, B, A).
+  TGEPatchValues = record
+    F: array[0..15] of Double;
+    C: array[0..3] of Integer;
+  end;
+
   // A decoded vertex before transform.
   TGEInVertex = record
     U, V: Single;
@@ -111,6 +119,7 @@ type
     FLastN: TGEVec3;
     FAsm: array[0..2] of TGEAsmVertex;
     FPatchCP: array of TGEInVertex;
+    FPatchVal: array of TGEPatchValues;
     FPatchGrid: array of TGEAsmVertex;
     FCullOn, FCullCW, FDepthClamp: Boolean;
     FLight: TGELightSetup;
@@ -2437,66 +2446,133 @@ end;
 
 { Patches }
 
+// Patches as the GE evaluates them (recorded on a PSP-E1000,
+// tests/cores/psp/hw/ge_patch and ge_spline: every point's depth and colour,
+// through mode and 3D): t = I / Div in 8 bits, floored from the nearer end
+// (PatchT); along v (each column), then along u. A curve is three levels of
+// steps between neighbours (de Casteljau's for Bezier, every step at t; de
+// Boor's for splines, from the knots: SplineSteps). A step on floats
+// (PatchLerp) cuts both values toward zero at the larger one's 16th
+// significant bit and floors A (256 - S) + B S over 256 there; on colours (in
+// 2^-7) it floors, and the colour rounds up at the end.
 type
-  TGEPatchWeights = array[0..3] of Single;
+  // A curve's six steps (in 1/256): the three of the first level, the two of
+  // the second, the last.
+  TGEPatchSteps = array[0..5] of Integer;
 
-// The four weights of a Bezier segment's control points at T.
-procedure BezierWeights(T: Single; out W: TGEPatchWeights);
+function PatchT(I, Divs: Integer): Integer;
 begin
-  var S := 1 - T;
-  W[0] := S * S * S;
-  W[1] := 3 * T * S * S;
-  W[2] := 3 * T * T * S;
-  W[3] := T * T * T;
+  if 2 * I <= Divs then
+    Result := (I shl 8) div Divs
+  else
+    Result := 256 - (((Divs - I) shl 8) div Divs);
 end;
 
-// The weights of control points Seg..Seg+3 of a uniform cubic B-spline of N
-// points at Seg + T. An open end repeats its knot, so the curve starts (or
-// ends) at the end point.
-procedure SplineWeights(N, Seg: Integer; T: Single; StartOpen, EndOpen: Boolean; out W: TGEPatchWeights);
-var
-  K: array[0..7] of Single;
-  Left, Right: array[0..3] of Single;
+procedure BezierSteps(T: Integer; out A: TGEPatchSteps);
 begin
-  // Knots Seg .. Seg+7 of the full vector (k[i] = i - 3, clamped at the ends).
-  for var I := 0 to 7 do
+  for var K := 0 to 5 do
+    A[K] := T;
+end;
+
+// A uniform cubic B-spline of N points on segment Seg (points Seg .. Seg + 3)
+// at T: knot I is I - 3, an open end repeating its knot. Each step's
+// fraction between its knots is floored from the nearer one.
+procedure SplineSteps(N, Seg, T: Integer; StartOpen, EndOpen: Boolean; out A: TGEPatchSteps);
+
+  function Knot(I: Integer): Integer;
   begin
-    var KI := Seg + I - 3;
-    if StartOpen and (KI < 0) then
-      KI := 0;
-    if EndOpen and (KI > N - 3) then
-      KI := N - 3;
-    K[I] := KI;
+    Result := I - 3;
+    if StartOpen and (Result < 0) then
+      Result := 0;
+    if EndOpen and (Result > N - 3) then
+      Result := N - 3;
   end;
-  var X := Seg + T;
-  W[0] := 1;
-  for var D := 1 to 3 do
+
+  function Step(KI, KJ: Integer): Integer;
   begin
-    Left[D] := X - K[4 - D];
-    Right[D] := K[3 + D] - X;
-    var Saved: Single := 0;
-    for var R := 0 to D - 1 do
-    begin
-      var Den := Right[R + 1] + Left[D - R];
-      var Tmp: Single := 0;
-      if Den <> 0 then
-        Tmp := W[R] / Den;
-      W[R] := Saved + Right[R + 1] * Tmp;
-      Saved := Left[D - R] * Tmp;
-    end;
-    W[D] := Saved;
+    if KJ = KI then
+      Exit(0);
+    var L := T + 256 * (Seg - KI);
+    var R := 256 * (KJ - Seg) - T;
+    if L <= R then
+      Result := L div (KJ - KI)
+    else
+      Result := 256 - R div (KJ - KI);
   end;
+
+begin
+  for var K := 0 to 2 do
+    A[K] := Step(Knot(Seg + 1 + K), Knot(Seg + 4 + K));
+  for var K := 0 to 1 do
+    A[3 + K] := Step(Knot(Seg + 2 + K), Knot(Seg + 4 + K));
+  A[5] := Step(Knot(Seg + 3), Knot(Seg + 4));
+end;
+
+function PatchLerp(A, B: Double; T: Integer): Double;
+begin
+  if T = 0 then
+    Exit(A);
+  if T = 256 then
+    Exit(B);
+  if IsNan(A) or IsNan(B) or IsInfinite(A) or IsInfinite(B) then
+    Exit(A + (B - A) * (T / 256));
+  var E: Integer;
+  if A = 0 then
+  begin
+    if B = 0 then
+      Exit(0);
+    E := Exp24(B);
+  end
+  else if B = 0 then
+    E := Exp24(A)
+  else
+    E := Max(Exp24(A), Exp24(B));
+  var Ulp := Ldexp(1, E - 16);
+  var N := Int(A / Ulp) * (256 - T) + Int(B / Ulp) * T;
+  Result := FloorInt(N / 256) * Ulp;
+end;
+
+// A curve's value, and the difference of its last step's two values (its
+// tangent there, in its units).
+function PatchCurve(P0, P1, P2, P3: Double; const A: TGEPatchSteps; out D: Double): Double; overload;
+begin
+  var AB := PatchLerp(P0, P1, A[0]);
+  var BC := PatchLerp(P1, P2, A[1]);
+  var CD := PatchLerp(P2, P3, A[2]);
+  var ABC := PatchLerp(AB, BC, A[3]);
+  var BCD := PatchLerp(BC, CD, A[4]);
+  D := BCD - ABC;
+  Result := PatchLerp(ABC, BCD, A[5]);
+end;
+
+function PatchCurve(P0, P1, P2, P3: Double; const A: TGEPatchSteps): Double; overload;
+var
+  D: Double;
+begin
+  Result := PatchCurve(P0, P1, P2, P3, A, D);
+end;
+
+function PatchCurveC(C0, C1, C2, C3: Integer; const A: TGEPatchSteps): Integer;
+begin
+  var AB := (C0 * (256 - A[0]) + C1 * A[0]) shr 8;
+  var BC := (C1 * (256 - A[1]) + C2 * A[1]) shr 8;
+  var CD := (C2 * (256 - A[2]) + C3 * A[2]) shr 8;
+  var ABC := (AB * (256 - A[3]) + BC * A[3]) shr 8;
+  var BCD := (BC * (256 - A[4]) + CD * A[4]) shr 8;
+  Result := (ABC * (256 - A[5]) + BCD * A[5]) shr 8;
 end;
 
 // BEZIER and SPLINE: a grid of UCount x VCount control points, as patches
-// (Bezier: 4x4 points sharing edges; spline: every 4x4 window) each cut into
-// PATCHDIVISION's U x V cells. Each row of cells goes out as a strip
+// (Bezier: 4x4 points sharing edges; spline: every 4x4 window, its points
+// on a segment's far edge those of the next segment's near edge) each cut
+// into PATCHDIVISION's U x V cells. Each row of cells goes out as a strip
 // (top-left, bottom-left, top-right, ...), drawn as triangles, a line strip
-// or points by PATCHPRIMITIVE.
+// or points by PATCHPRIMITIVE. Without normals, a Bezier patch's come from
+// its tangents (along u cross along v: gpu/exact's curves normals jobs).
 procedure TPSPGEEngine.DrawPatch(Op: Cardinal; Spline: Boolean);
 var
-  WU, WV: TGEPatchWeights;
   Ev: TGEInVertex;
+  SU, SV: TGEPatchSteps;
 begin
   var C: PGECmds := @Regs.Cmd;
   var UCount := Integer(Op and $FF);
@@ -2516,6 +2592,19 @@ begin
   for var I := 0 to Total - 1 do
     ReadVertex(VertexIndex(I, VType), VType, FPatchCP[I]);
   AdvanceVertices(Total, VType);
+  if Length(FPatchVal) < Total then
+    SetLength(FPatchVal, Total);
+  for var I := 0 to Total - 1 do
+  begin
+    var P: ^TGEInVertex := @FPatchCP[I];
+    var Q: ^TGEPatchValues := @FPatchVal[I];
+    Q.F[0] := P.P.X; Q.F[1] := P.P.Y; Q.F[2] := P.P.Z;
+    Q.F[3] := P.N.X; Q.F[4] := P.N.Y; Q.F[5] := P.N.Z;
+    Q.F[6] := P.U; Q.F[7] := P.V;
+    for var K := 0 to 7 do
+      Q.F[8 + K] := P.Weights[K];
+    Q.C[0] := P.R shl 7; Q.C[1] := P.G shl 7; Q.C[2] := P.B shl 7; Q.C[3] := P.A shl 7;
+  end;
 
   var UDiv := Max(Integer(C[GE_PATCHDIVISION] and $FF), 1);
   var VDiv := Max(Integer((C[GE_PATCHDIVISION] shr 8) and $FF), 1);
@@ -2537,6 +2626,42 @@ begin
   var HasTC := (VType and 3) <> 0;
   var HasNrm := ((VType shr 5) and 3) <> 0;
   var HasPos := ((VType shr 7) and 3) <> 0;
+  // The values evaluated (TGEPatchValues.F).
+  var Comps: array[0..15] of Integer;
+  var NComps := 0;
+  if HasPos then
+    for var K := 0 to 2 do
+    begin
+      Comps[NComps] := K;
+      Inc(NComps);
+    end;
+  if HasNrm then
+    for var K := 3 to 5 do
+    begin
+      Comps[NComps] := K;
+      Inc(NComps);
+    end;
+  if HasTC then
+    for var K := 6 to 7 do
+    begin
+      Comps[NComps] := K;
+      Inc(NComps);
+    end;
+  if ((VType shr 9) and 3) <> 0 then
+    for var K := 0 to Integer((VType shr 14) and 7) do
+    begin
+      Comps[NComps] := 8 + K;
+      Inc(NComps);
+    end;
+  var PCol: array[0..3] of TGEPatchValues;
+  var Pt: TGEPatchValues;
+  // Each column's tangent along v (for normals), carried along u.
+  var DCol: array[0..3, 0..2] of Double;
+  var MakeNormals := not Spline and not HasNrm and HasPos;
+  // (Values a vertex does not have stay 0.)
+  FillChar(PCol, SizeOf(PCol), 0);
+  FillChar(Pt, SizeOf(Pt), 0);
+  FillChar(DCol, SizeOf(DCol), 0);
 
   BuildRaster;
   FCullOn := ((C[GE_CULLENABLE] and 1) <> 0) and not FRaster.ClearMode;
@@ -2556,62 +2681,102 @@ begin
   for var PV := 0 to VSegs - 1 do
     for var PU := 0 to USegs - 1 do
     begin
-      var U0, V0: Integer;
-      if Spline then
-      begin
-        U0 := PU;
-        V0 := PV;
-      end
-      else
-      begin
-        U0 := PU * 3;
-        V0 := PV * 3;
-      end;
       for var J := 0 to VDiv do
       begin
-        var TV: Single := J / VDiv;
+        // The segment and step along v (a spline's far edge: the next
+        // segment's near one).
+        var SegV := PV;
+        var QV := PatchT(J, VDiv);
         if Spline then
-          SplineWeights(VCount, PV, TV, VStartOpen, VEndOpen, WV)
+        begin
+          if (J = VDiv) and (PV < VSegs - 1) then
+          begin
+            SegV := PV + 1;
+            QV := 0;
+          end;
+          SplineSteps(VCount, SegV, QV, VStartOpen, VEndOpen, SV);
+        end
         else
-          BezierWeights(TV, WV);
+          BezierSteps(QV, SV);
+        var V0 := SegV;
+        if not Spline then
+          V0 := PV * 3;
+        // Each column along v at this row (the segment along u decides
+        // which: see below; both segments' columns where they differ).
         for var I := 0 to UDiv do
         begin
-          var TU: Single := I / UDiv;
+          var SegU := PU;
+          var QU := PatchT(I, UDiv);
           if Spline then
-            SplineWeights(UCount, PU, TU, UStartOpen, UEndOpen, WU)
+          begin
+            if (I = UDiv) and (PU < USegs - 1) then
+            begin
+              SegU := PU + 1;
+              QU := 0;
+            end;
+            SplineSteps(UCount, SegU, QU, UStartOpen, UEndOpen, SU);
+          end
           else
-            BezierWeights(TU, WU);
-          Ev := Default(TGEInVertex);
-          var CR, CG, CB, CA: Single;
-          CR := 0; CG := 0; CB := 0; CA := 0;
-          for var B := 0 to 3 do
+            BezierSteps(QU, SU);
+          var U0 := SegU;
+          if not Spline then
+            U0 := PU * 3;
+          if (I = 0) or (SegU <> PU) then
             for var A := 0 to 3 do
             begin
-              var W := WU[A] * WV[B];
-              var P: ^TGEInVertex := @FPatchCP[(V0 + B) * UCount + U0 + A];
-              Ev.P.X := Ev.P.X + P.P.X * W;
-              Ev.P.Y := Ev.P.Y + P.P.Y * W;
-              Ev.P.Z := Ev.P.Z + P.P.Z * W;
-              Ev.N.X := Ev.N.X + P.N.X * W;
-              Ev.N.Y := Ev.N.Y + P.N.Y * W;
-              Ev.N.Z := Ev.N.Z + P.N.Z * W;
-              Ev.U := Ev.U + P.U * W;
-              Ev.V := Ev.V + P.V * W;
-              CR := CR + P.R * W; CG := CG + P.G * W; CB := CB + P.B * W; CA := CA + P.A * W;
-              for var K := 0 to 7 do
-                Ev.Weights[K] := Ev.Weights[K] + P.Weights[K] * W;
+              var P0: ^TGEPatchValues := @FPatchVal[V0 * UCount + U0 + A];
+              var P1: ^TGEPatchValues := @FPatchVal[(V0 + 1) * UCount + U0 + A];
+              var P2: ^TGEPatchValues := @FPatchVal[(V0 + 2) * UCount + U0 + A];
+              var P3: ^TGEPatchValues := @FPatchVal[(V0 + 3) * UCount + U0 + A];
+              for var K := 0 to NComps - 1 do
+              begin
+                var X := Comps[K];
+                if MakeNormals and (X < 3) then
+                  PCol[A].F[X] := PatchCurve(P0.F[X], P1.F[X], P2.F[X], P3.F[X], SV, DCol[A, X])
+                else
+                  PCol[A].F[X] := PatchCurve(P0.F[X], P1.F[X], P2.F[X], P3.F[X], SV);
+              end;
+              for var X := 0 to 3 do
+                PCol[A].C[X] := PatchCurveC(P0.C[X], P1.C[X], P2.C[X], P3.C[X], SV);
             end;
+          Ev := Default(TGEInVertex);
+          var DU, DV: array[0..2] of Double;
+          for var K := 0 to NComps - 1 do
+          begin
+            var X := Comps[K];
+            if MakeNormals and (X < 3) then
+            begin
+              Pt.F[X] := PatchCurve(PCol[0].F[X], PCol[1].F[X], PCol[2].F[X], PCol[3].F[X], SU, DU[X]);
+              DV[X] := PatchCurve(DCol[0, X], DCol[1, X], DCol[2, X], DCol[3, X], SU);
+            end
+            else
+              Pt.F[X] := PatchCurve(PCol[0].F[X], PCol[1].F[X], PCol[2].F[X], PCol[3].F[X], SU);
+          end;
+          if MakeNormals then
+          begin
+            Pt.F[3] := DU[1] * DV[2] - DU[2] * DV[1];
+            Pt.F[4] := DU[2] * DV[0] - DU[0] * DV[2];
+            Pt.F[5] := DU[0] * DV[1] - DU[1] * DV[0];
+            if (C[GE_PATCHFACING] and 1) <> 0 then
+              for var X := 3 to 5 do
+                Pt.F[X] := -Pt.F[X];
+          end;
+          Ev.P.X := Pt.F[0]; Ev.P.Y := Pt.F[1]; Ev.P.Z := Pt.F[2];
+          Ev.N.X := Pt.F[3]; Ev.N.Y := Pt.F[4]; Ev.N.Z := Pt.F[5];
+          Ev.U := Pt.F[6]; Ev.V := Pt.F[7];
+          for var K := 0 to 7 do
+            Ev.Weights[K] := Pt.F[8 + K];
+          Ev.R := Min(255, (PatchCurveC(PCol[0].C[0], PCol[1].C[0], PCol[2].C[0], PCol[3].C[0], SU) + 127) shr 7);
+          Ev.G := Min(255, (PatchCurveC(PCol[0].C[1], PCol[1].C[1], PCol[2].C[1], PCol[3].C[1], SU) + 127) shr 7);
+          Ev.B := Min(255, (PatchCurveC(PCol[0].C[2], PCol[1].C[2], PCol[2].C[2], PCol[3].C[2], SU) + 127) shr 7);
+          Ev.A := Min(255, (PatchCurveC(PCol[0].C[3], PCol[1].C[3], PCol[2].C[3], PCol[3].C[3], SU) + 127) shr 7);
           Ev.HasColor := FPatchCP[0].HasColor;
-          Ev.R := EnsureRange(Ceil(CR - 0.001), 0, 255);
-          Ev.G := EnsureRange(Ceil(CG - 0.001), 0, 255);
-          Ev.B := EnsureRange(Ceil(CB - 0.001), 0, 255);
-          Ev.A := EnsureRange(Ceil(CA - 0.001), 0, 255);
           if not HasTC then
           begin
-            Ev.U := PU + TU;
-            Ev.V := PV + TV;
+            Ev.U := PU + I / UDiv;
+            Ev.V := PV + J / VDiv;
           end;
-          if not HasNrm then
+          if not HasNrm and not MakeNormals then
             Ev.N := FPatchCP[0].N;
           TransformVertex(Ev, VType, FPatchGrid[J * Cols + I]);
           if not HasPos then
