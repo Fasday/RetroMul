@@ -38,7 +38,8 @@ type
     Code: Integer;
   end;
 
-  TGERGB = array[0..2] of Single;
+  // A colour's 8-bit channels.
+  TGERGB = array[0..2] of Integer;
 
   // The lighting registers as Light reads them, decoded once a primitive.
   TGELightUnit = record
@@ -47,7 +48,7 @@ type
     Pos, SpotDir: TGEVec3;
     KA, KB, KC, Cutoff, Expo: Single;
     SpotPositive: Boolean;
-    LA, LD, LS: array[0..2] of Single;
+    LA, LD, LS: TGERGB;
     // A directional light's (LType 0) vector and half vector as Light makes
     // them: the same for every vertex.
     DirD, DirH: TGEVec3;
@@ -56,7 +57,8 @@ type
 
   TGELightSetup = record
     MA, MD, MS, E, AL: TGERGB;
-    MAA, ALA, Shine: Single;
+    MAA, ALA: Integer;
+    Shine: Single;
     View: TGEVec3;
     Separate: Boolean;
     Lights: array[0..3] of TGELightUnit;
@@ -1184,6 +1186,15 @@ begin
   Result := PSingle(@Bits)^;
 end;
 
+// A square root truncated to a 24-bit float (not rounded to single first:
+// a light 2.000061 away is 2 to the lighting unit).
+function SqrtF24(V: Single): Single;
+begin
+  var D: Double := Sqrt(Double(V));
+  var Bits := PUInt64(@D)^ and not ((UInt64(1) shl 37) - 1);
+  Result := PDouble(@Bits)^;
+end;
+
 function NormalizedF24(const P: TGEVec3): TGEVec3;
 var
   L: Single;
@@ -1239,14 +1250,17 @@ begin
   Result := (1 + (Y - F)) * PDouble(@Scale)^;
 end;
 
-function Unit8(C: Cardinal; Shift: Integer): Single; inline;
+function Byte8(C: Cardinal; Shift: Integer): Integer; inline;
 begin
-  Result := ((C shr Shift) and $FF) / 255;
+  Result := (C shr Shift) and $FF;
 end;
 
-// Lighting works on colours as fractions of 255; the result goes back to
-// 8 bits as a fraction of 256, truncated.
-function LitChannel(V: Single): Integer; inline;
+// Lighting works in 8 bits (recorded on a PSP-E1000, tests/cores/psp/hw): a
+// factor in [0, 1] (N.L, a power, the attenuation, the spot factor) becomes
+// 256 times it, truncated, at most 255; two 8-bit values x and y multiply as
+// (x + 1/2) (y + 1/2) / 256, truncated (so times 255 changes nothing); the
+// terms add up and the sum stops at 255.
+function Frac8(V: Single): Integer; inline;
 begin
   if not (V > 0) then
     Exit(0);
@@ -1255,6 +1269,11 @@ begin
     Result := 255
   else
     Result := Trunc(V);
+end;
+
+function Mul8(X, Y: Integer): Integer; inline;
+begin
+  Result := ((2 * X + 1) * (2 * Y + 1)) shr 10;
 end;
 
 // The registers lighting reads do not change within a primitive.
@@ -1296,14 +1315,14 @@ begin
   FLightRegsValid := True;
   for var Ch := 0 to 2 do
   begin
-    FLight.MA[Ch] := Unit8(C[GE_MATERIALAMBIENT], Ch * 8);
-    FLight.MD[Ch] := Unit8(C[GE_MATERIALDIFFUSE], Ch * 8);
-    FLight.MS[Ch] := Unit8(C[GE_MATERIALSPECULAR], Ch * 8);
-    FLight.E[Ch] := Unit8(C[GE_MATERIALEMISSIVE], Ch * 8);
-    FLight.AL[Ch] := Unit8(C[GE_AMBIENTCOLOR], Ch * 8);
+    FLight.MA[Ch] := Byte8(C[GE_MATERIALAMBIENT], Ch * 8);
+    FLight.MD[Ch] := Byte8(C[GE_MATERIALDIFFUSE], Ch * 8);
+    FLight.MS[Ch] := Byte8(C[GE_MATERIALSPECULAR], Ch * 8);
+    FLight.E[Ch] := Byte8(C[GE_MATERIALEMISSIVE], Ch * 8);
+    FLight.AL[Ch] := Byte8(C[GE_AMBIENTCOLOR], Ch * 8);
   end;
-  FLight.MAA := Unit8(C[GE_MATERIALALPHA], 0);
-  FLight.ALA := Unit8(C[GE_AMBIENTALPHA], 0);
+  FLight.MAA := Byte8(C[GE_MATERIALALPHA], 0);
+  FLight.ALA := Byte8(C[GE_AMBIENTALPHA], 0);
   // The exponent keeps the top 4 bits of its mantissa.
   FLight.Shine := GEFloat(C[GE_MATERIALSPECULARCOEF] and $FFF800);
   // The viewer is at infinity along view space +z.
@@ -1322,13 +1341,15 @@ begin
     U.KC := GEFloat(C[GE_LKA0 + L * 3 + 2]);
     U.SpotDir := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
     U.Cutoff := GEFloat(C[GE_LKO0 + L]);
-    U.Expo := GEFloat(C[GE_LKS0 + L]);
+    // Like the shininess, the spot exponent keeps the top 4 bits of its
+    // mantissa.
+    U.Expo := GEFloat(C[GE_LKS0 + L] and $FFF800);
     U.SpotPositive := GEFloat(C[GE_LDX0 + L * 3]) > 0;
     for var Ch := 0 to 2 do
     begin
-      U.LA[Ch] := Unit8(C[GE_LAC0 + L * 3], Ch * 8);
-      U.LD[Ch] := Unit8(C[GE_LAC0 + L * 3 + 1], Ch * 8);
-      U.LS[Ch] := Unit8(C[GE_LAC0 + L * 3 + 2], Ch * 8);
+      U.LA[Ch] := Byte8(C[GE_LAC0 + L * 3], Ch * 8);
+      U.LD[Ch] := Byte8(C[GE_LAC0 + L * 3 + 1], Ch * 8);
+      U.LS[Ch] := Byte8(C[GE_LAC0 + L * 3 + 2], Ch * 8);
     end;
     if U.LType = 0 then
     begin
@@ -1344,9 +1365,9 @@ end;
 procedure TPSPGEEngine.Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
 var
   Upd: Cardinal;
-  MA, MD, MS: TGERGB;
-  Lit, Spec: array[0..2] of Single;
-  MAA, Att, Spot, Dist, Den, CosA, NdotL, Diff, NdotH, Sp: Single;
+  MA, MD, MS, Lit, Spec: TGERGB;
+  MAA, A8, S8, D8: Integer;
+  Att, Dist, Den, CosA, NdotL, Diff, NdotH: Single;
   N, D, H: TGEVec3;
   Ch: Integer;
 begin
@@ -1361,20 +1382,20 @@ begin
   begin
     if (Upd and 1) <> 0 then
     begin
-      MA[0] := V.R / 255; MA[1] := V.G / 255; MA[2] := V.B / 255; MAA := V.A / 255;
+      MA[0] := V.R; MA[1] := V.G; MA[2] := V.B; MAA := V.A;
     end;
     if (Upd and 2) <> 0 then
     begin
-      MD[0] := V.R / 255; MD[1] := V.G / 255; MD[2] := V.B / 255;
+      MD[0] := V.R; MD[1] := V.G; MD[2] := V.B;
     end;
     if (Upd and 4) <> 0 then
     begin
-      MS[0] := V.R / 255; MS[1] := V.G / 255; MS[2] := V.B / 255;
+      MS[0] := V.R; MS[1] := V.G; MS[2] := V.B;
     end;
   end;
   for Ch := 0 to 2 do
   begin
-    Lit[Ch] := FLight.E[Ch] + FLight.AL[Ch] * MA[Ch];
+    Lit[Ch] := FLight.E[Ch] + Mul8(FLight.AL[Ch], MA[Ch]);
     Spec[Ch] := 0;
   end;
   N := Normalized(WN);
@@ -1383,43 +1404,48 @@ begin
     var U: PGELightUnit := @FLight.Lights[L];
     if not U.On then
       Continue;
-    Att := 1;
+    A8 := 255;
     if U.LType = 0 then
       D := U.DirD
     else
     begin
       D := U.Pos;
       D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
-      Dist := Sqrt(F24(Dot(D, D)));
+      // The squared distance in 24 bits, and its root (the quadratic term
+      // takes the square itself).
+      var Dist2 := F24(Dot(D, D));
+      Dist := SqrtF24(Dist2);
       D := NormalizedF24(D);
-      Den := U.KA + U.KB * Dist + U.KC * Dist * Dist;
+      Den := U.KA + U.KB * Dist + U.KC * Dist2;
       if Den <> 0 then
         Att := 1 / Den
       else
         Att := 0;
-      if Att > 1 then
-        Att := 1;
-      if not (Att > 0) then
-        Att := 0;
+      // The hardware's reciprocal comes out a little high: this matches 99.9%
+      // of its 8-bit attenuations (the rest are one step off either way).
+      A8 := Frac8(Att * (1 + 1 / 65536));
     end;
-    Spot := 1;
+    S8 := 255;
     if U.LType = 2 then
     begin
       CosA := Dot(D, U.SpotDir);
       // An infinite direction lights everything or nothing by its sign.
       if IsNan(CosA) then
-        Spot := Ord(U.SpotPositive)
+        S8 := 255 * Ord(U.SpotPositive)
       else if CosA >= U.Cutoff then
-        Spot := Min(GEPow(Max(CosA, 0), U.Expo), 1E30)
+        S8 := Frac8(GEPow(Max(CosA, 0), U.Expo))
       else
-        Spot := 0;
+        S8 := 0;
     end;
     NdotL := Dot(N, D);
     Diff := MaxS(NdotL, 0);
     if U.Kind = 2 then
-      Diff := MinS(GEPow(Diff, FLight.Shine), 1);
+      Diff := GEPow(Diff, FLight.Shine);
+    D8 := Frac8(Diff);
+    // The spot factor scales the attenuated terms, each on its own.
     for Ch := 0 to 2 do
-      Lit[Ch] := Lit[Ch] + Att * Spot * (U.LA[Ch] * MA[Ch] + U.LD[Ch] * MD[Ch] * Diff);
+      Lit[Ch] := Lit[Ch] + Mul8(S8, Mul8(A8, Mul8(U.LA[Ch], MA[Ch]))) +
+        Mul8(S8, Mul8(A8, Mul8(D8, Mul8(U.LD[Ch], MD[Ch]))));
     if (U.Kind = 1) and (NdotL >= 0) then
     begin
       var VW := FLight.View;
@@ -1428,25 +1454,24 @@ begin
       else
         H := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
       NdotH := MaxS(Dot(N, H), 0);
-      Sp := Att * Spot * Min(GEPow(NdotH, FLight.Shine), 1);
+      var P8 := Frac8(GEPow(NdotH, FLight.Shine));
       for Ch := 0 to 2 do
-        Spec[Ch] := Spec[Ch] + Sp * U.LS[Ch] * MS[Ch];
+        Spec[Ch] := Spec[Ch] + Mul8(S8, Mul8(A8, Mul8(P8, Mul8(U.LS[Ch], MS[Ch]))));
     end;
   end;
-  var ALA := FLight.ALA;
   if FLight.Separate then
   begin
-    SR := LitChannel(Spec[0]);
-    SG := LitChannel(Spec[1]);
-    SB := LitChannel(Spec[2]);
+    SR := Min(Spec[0], 255);
+    SG := Min(Spec[1], 255);
+    SB := Min(Spec[2], 255);
   end
   else
     for Ch := 0 to 2 do
       Lit[Ch] := Lit[Ch] + Spec[Ch];
-  R := LitChannel(Lit[0]);
-  G := LitChannel(Lit[1]);
-  B := LitChannel(Lit[2]);
-  A := LitChannel(ALA * MAA);
+  R := Min(Lit[0], 255);
+  G := Min(Lit[1], 255);
+  B := Min(Lit[2], 255);
+  A := Mul8(FLight.ALA, MAA);
 end;
 
 // The vector to a light as lighting sees it, for shade mapping: the half

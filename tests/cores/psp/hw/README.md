@@ -35,7 +35,31 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   (`sweep/*.bin`, 32-bit little endian results in input order). 35 s on the
   PSP.
 
+- `ge_light`: the GE's lighting, one lit point per pixel with its own
+  registers, 65536 samples a frame (`light/*.bin`, 272 rows of 512 8888
+  pixels): light x material colour products, emissive plus global ambient,
+  the attenuation over every 24-bit float of a range (constant, linear and
+  quadratic terms), the diffuse factor, the spot factor and cutoff, specular
+  and powered diffuse at several exponents, and their combinations. 5 s on
+  the PSP.
+
 ## Findings (PSP-E1000, 2026-10-31)
+
+- Lighting is an 8-bit pipeline. Factors in [0, 1] (N.L, N.H or N.L raised
+  to the shininess, the attenuation, the spot factor) become
+  min(255, floor(256 x)). Two 8-bit values multiply as
+  floor((2a + 1)(2b + 1) / 1024), so 255 is 1. A light adds
+  S * (A * (La * Ma)) + S * (A * (D * (Ld * Md))) and, for specular,
+  S * (A * (P * (Ls * Ms))), each product in that order; the colour is
+  emissive + Al * Ma plus the lights' terms, stopped at 255. These are exact
+  over all recorded samples. The 8-bit attenuation is floor(256 / den)
+  except that the hardware's reciprocal comes out slightly high: with a
+  factor of 1 + 2^-16, 99.9% match. The distance is the root of the squared
+  distance (a 24-bit float) truncated to a 24-bit float; the quadratic term
+  uses the squared distance. pow is the piecewise-linear log2/exp2 the core
+  already had (100% for exponents 0.5, 1, 2, 10); the spot exponent, like
+  the shininess, keeps 4 mantissa bits. The core does all this:
+  `gpu/commands/light` passes.
 
 - The stored `cpu/vfpu/exact`, `cpu/vfpu/vector` and `gpu/exact/lighting`
   expectations match this PSP exactly.
