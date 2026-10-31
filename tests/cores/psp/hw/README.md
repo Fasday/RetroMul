@@ -43,6 +43,15 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   and powered diffuse at several exponents, and their combinations. 5 s on
   the PSP.
 
+- `ge_xform`: the vertex unit's arithmetic through the depth it writes, one
+  point per pixel with its own z and matrix registers, 65536 samples a set
+  (`xform/<set>_<view>.bin`, the depth buffer through VRAM's mirrors 0, 2
+  and 6, plus `<set>_in.bin` with each sample's inputs): the viewport z,
+  world-matrix multiply-adds, view after world, perspective, and exact
+  readouts (results in [0.5, 1) at viewport scale 65536, centre -32768) of a
+  product, a sum, a multiply-add, a dot product and the reciprocal of every
+  24-bit w in [1, 4). 4 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -59,6 +68,27 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
 - A sprite's texture step per pixel is the difference over the length
   truncated toward zero (12 texels over 7 pixels steps a hair under 12/7);
   rounding it moved 20% of a scaled-sprite job's pixels.
+- A triangle's fog factor is a plane like the Gouraud colours: each vertex's
+  factor clamped to [0, 1] and rounded to 8 bits, interpolated from the
+  lowest vertex. Interpolating the unclamped factor was up to 127 off where
+  vertex factors lie outside [0, 1]; what is left (±1) comes from the
+  projection.
+- Without depth clamping, a triangle with a vertex beyond the far plane is
+  still drawn when its depth after the viewport lies in 0..65535, and one
+  inside the planes whose depth falls outside that range is not; the near
+  plane culls. Points beyond the far plane are not drawn.
+
+- The vertex unit (`ge_xform`) works on 16-bit significands: inputs are
+  truncated to 16 bits; a product keeps its bits down to 2^(ea + eb - 15)
+  (ea, eb the factors' exponents), truncated; a row's terms (three products
+  and the term added) are truncated at the quantum of the largest of them,
+  summed, and the sum cut to 16 bits. The viewport is the same arithmetic.
+  The GE first multiplies view by world with this arithmetic and transforms
+  vertices by the result (applying the two in turn misses 20% of the
+  view-after-world samples). The core does this: viewport, product, sum,
+  multiply-add, dot product and world-matrix sets exact, view after world
+  87 of 53,189 off. The perspective reciprocal is not modelled yet (7% of the
+  perspective set off by one).
 
 - Lighting is an 8-bit pipeline. Factors in [0, 1] (N.L, N.H or N.L raised
   to the shininess, the attenuation, the spot factor) become

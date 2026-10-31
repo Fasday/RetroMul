@@ -82,6 +82,10 @@ type
     // The rows as ClipPosition uses them (factors, the term added):
     // World's and View's x, y, z, Proj's x, y, z, w.
     Rows: array[0..9, 0..3] of Double;
+    // View times world as the vertex unit forms it (Rows24), when every
+    // element is normal or zero; else the two apply in turn.
+    ViewWorld: array[0..2, 0..3] of Double;
+    Combined: Boolean;
     WorldS, TGen: TGESingle12;
     Bone: array[0..95] of Single;
     BoneCount: Integer;
@@ -1013,12 +1017,129 @@ asm
 end;
 {$ENDIF}
 
-procedure Rows24(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer); inline;
+// The older model (every row's dot product exact, then truncated, then the
+// term added with Add24), kept for values outside Rows24's normal range.
+procedure Rows24Old(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer); inline;
 begin
   {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   if not Rows24Fast(Rows, X, Y, Z, Res, Count) then
   {$ENDIF}
     Rows24Pascal(Rows, X, Y, Z, Res, Count);
+end;
+
+// The vertex unit's matrix rows (recorded on a PSP-E1000 through the depth
+// it writes, tests/cores/psp/hw/ge_xform): a product keeps its bits down to
+// 2^(ea + eb - 15) (ea, eb the factors' exponents), truncated; a row's terms
+// (three products and the term added) are truncated at the quantum of the
+// largest of them and summed, the sum cut to 16 bits. Normal or zero values
+// only (Exact24 says): others go through Rows24Old.
+
+function Exact24(V: Double): Boolean; inline;
+begin
+  var X := (PUInt64(@V)^ shr 52) and $7FF;
+  Result := ((X <> 0) and (X <> $7FF) and (X > 1023 - 900) and (X < 1023 + 900)) or ((PUInt64(@V)^ shl 1) = 0);
+end;
+
+// 2^E for E well inside the normal range.
+function Pow2(E: Integer): Double; inline;
+begin
+  var Bits := UInt64(E + 1023) shl 52;
+  Result := PDouble(@Bits)^;
+end;
+
+function Exponent(V: Double): Integer; inline;
+begin
+  Result := Integer((PUInt64(@V)^ shr 52) and $7FF) - 1023;
+end;
+
+// One term of a row: its value (exact) and its quantum's exponent.
+type
+  TGETerm24 = record
+    V: Double;
+    Q: Integer;
+  end;
+
+function Product24(A, B: Double): TGETerm24; inline;
+begin
+  if (A = 0) or (B = 0) then
+  begin
+    Result.V := 0;
+    Result.Q := 0;
+    Exit;
+  end;
+  Result.Q := Exponent(A) + Exponent(B) - 15;
+  var Q := Pow2(Result.Q);
+  Result.V := Int(A * B / Q) * Q;
+end;
+
+function Term24(A: Double): TGETerm24; inline;
+begin
+  Result.V := A;
+  if A = 0 then
+    Result.Q := 0
+  else
+    Result.Q := Exponent(A) - 15;
+end;
+
+function Sum24(const T0, T1, T2, T3: TGETerm24): Double;
+begin
+  var L := T0;
+  if Abs(T1.V) > Abs(L.V) then L := T1;
+  if Abs(T2.V) > Abs(L.V) then L := T2;
+  if Abs(T3.V) > Abs(L.V) then L := T3;
+  if L.V = 0 then
+    Exit(0);
+  var Q := Pow2(L.Q);
+  Result := T24(Int(T0.V / Q) * Q + Int(T1.V / Q) * Q + Int(T2.V / Q) * Q + Int(T3.V / Q) * Q);
+end;
+
+function Row24(const Row: TGERow24; X, Y, Z: Double): Double; inline;
+begin
+  Result := Sum24(Product24(Row[0], X), Product24(Row[1], Y), Product24(Row[2], Z), Term24(Row[3]));
+end;
+
+procedure Rows24(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer);
+begin
+  var Exact := Exact24(X) and Exact24(Y) and Exact24(Z);
+  if Exact then
+  begin
+    var R := Rows;
+    for var I := 0 to Count - 1 do
+    begin
+      if not (Exact24(R[0]) and Exact24(R[1]) and Exact24(R[2]) and Exact24(R[3])) then
+      begin
+        Exact := False;
+        Break;
+      end;
+      Inc(R);
+    end;
+  end;
+  if not Exact then
+  begin
+    Rows24Old(Rows, X, Y, Z, Res, Count);
+    Exit;
+  end;
+  for var I := 0 to Count - 1 do
+  begin
+    Res^ := Row24(Rows^, X, Y, Z);
+    Inc(Rows);
+    Inc(Res);
+  end;
+end;
+
+// The view times the world matrix (4x3, columns of three), as the vertex
+// unit forms it before it transforms vertices: each element a row sum.
+procedure CombineViewWorld(const View, World: array of Double; Rows: PGERow24);
+begin
+  for var R := 0 to 2 do
+  begin
+    for var J := 0 to 2 do
+      Rows[J] := Sum24(Product24(View[R], World[3 * J]), Product24(View[3 + R], World[3 * J + 1]),
+        Product24(View[6 + R], World[3 * J + 2]), Term24(0));
+    Rows[3] := Sum24(Product24(View[R], World[9]), Product24(View[3 + R], World[10]),
+      Product24(View[6 + R], World[11]), Term24(View[9 + R]));
+    Inc(Rows);
+  end;
 end;
 
 // Three clip coordinates (V) to the viewport (Port: scale and centre of x, y,
@@ -1544,8 +1665,13 @@ begin
   var G: ^TGEGeometry := @FGeom;
   var A, B: array[0..2] of Double;
   var Q: array[0..3] of Double;
-  Rows24(@G.Rows[0], T24(P.X), T24(P.Y), T24(P.Z), @A[0], 3);
-  Rows24(@G.Rows[3], A[0], A[1], A[2], @B[0], 3);
+  if G.Combined then
+    Rows24(@G.ViewWorld[0], T24(P.X), T24(P.Y), T24(P.Z), @B[0], 3)
+  else
+  begin
+    Rows24(@G.Rows[0], T24(P.X), T24(P.Y), T24(P.Z), @A[0], 3);
+    Rows24(@G.Rows[3], A[0], A[1], A[2], @B[0], 3);
+  end;
   Rows24(@G.Rows[6], B[0], B[1], B[2], @Q[0], 4);
   CX := Q[0];
   CY := Q[1];
@@ -1597,6 +1723,12 @@ begin
     G.Rows[6 + R, 0] := G.Proj[R]; G.Rows[6 + R, 1] := G.Proj[R + 4]; G.Rows[6 + R, 2] := G.Proj[R + 8];
     G.Rows[6 + R, 3] := G.ProjW[R];
   end;
+  G.Combined := True;
+  for var I := 0 to 11 do
+    if not (Exact24(G.World[I]) and Exact24(G.View[I])) then
+      G.Combined := False;
+  if G.Combined then
+    CombineViewWorld(G.View, G.World, @G.ViewWorld[0]);
   G.XScale := GEFloat(C[GE_VIEWPORTXSCALE]);
   G.XCenter := GEFloat(C[GE_VIEWPORTXCENTER]);
   G.YScale := GEFloat(C[GE_VIEWPORTYSCALE]);
