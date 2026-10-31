@@ -492,10 +492,11 @@ begin
 end;
 
 // The bilinear mix of four texels with 4-bit weights, every channel
-// (Top * (16 - FracY) + Bottom * FracY) shr 8 with Top and Bottom mixed by
-// FracX. With weights in 0..16 the products of two channels at a time fit
-// 16-bit lanes of a 32-bit word (at most 255 * 16 * 16), so the lanes give
-// the per channel result exactly.
+// (Top * (16 - FracY) + Bottom * FracY) shr 4 with Top and Bottom mixed by
+// FracX and shifted right by 4 first (recorded on a PSP-E1000: the rows are
+// truncated before the column mix). With weights in 0..16 two channels at a
+// time fit 16-bit lanes of a 32-bit word (at most 255 * 16), so the lanes
+// give the per channel result exactly.
 function BilerpPacked(T00, T10, T01, T11, FracX, FracY: Cardinal): Cardinal; inline;
 begin
   var C00 := T00; var C10 := T10; var C01 := T01; var C11 := T11;
@@ -503,11 +504,11 @@ begin
   var IX := 16 - FX;
   var FY := FracY;
   var IY := 16 - FY;
-  var TopRB := (C00 and $00FF00FF) * IX + (C10 and $00FF00FF) * FX;
-  var BotRB := (C01 and $00FF00FF) * IX + (C11 and $00FF00FF) * FX;
-  var TopGA := ((C00 shr 8) and $00FF00FF) * IX + ((C10 shr 8) and $00FF00FF) * FX;
-  var BotGA := ((C01 shr 8) and $00FF00FF) * IX + ((C11 shr 8) and $00FF00FF) * FX;
-  Result := (((TopRB * IY + BotRB * FY) shr 8) and $00FF00FF) or ((TopGA * IY + BotGA * FY) and $FF00FF00);
+  var TopRB := (((C00 and $00FF00FF) * IX + (C10 and $00FF00FF) * FX) shr 4) and $00FF00FF;
+  var BotRB := (((C01 and $00FF00FF) * IX + (C11 and $00FF00FF) * FX) shr 4) and $00FF00FF;
+  var TopGA := ((((C00 shr 8) and $00FF00FF) * IX + ((C10 shr 8) and $00FF00FF) * FX) shr 4) and $00FF00FF;
+  var BotGA := ((((C01 shr 8) and $00FF00FF) * IX + ((C11 shr 8) and $00FF00FF) * FX) shr 4) and $00FF00FF;
+  Result := (((TopRB * IY + BotRB * FY) shr 4) and $00FF00FF) or (((TopGA * IY + BotGA * FY) shl 4) and $FF00FF00);
 end;
 
 function Bilerp(T00, T10, T01, T11: Cardinal; FracX, FracY: Int64): Cardinal; inline;
@@ -523,9 +524,9 @@ begin
     var B := Integer((C10 shr Shift) and $FF);
     var C := Integer((C01 shr Shift) and $FF);
     var D := Integer((C11 shr Shift) and $FF);
-    var Top := A * (16 - FracX) + B * FracX;
-    var Bottom := C * (16 - FracX) + D * FracX;
-    var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
+    var Top := (A * (16 - FracX) + B * FracX) shr 4;
+    var Bottom := (C * (16 - FracX) + D * FracX) shr 4;
+    var V := (Top * (16 - FracY) + Bottom * FracY) shr 4;
     Result := Result or (Cardinal(V) shl Shift);
   end;
 end;
@@ -562,9 +563,9 @@ begin
     var B := Integer((C10 shr Shift) and $FF);
     var C := Integer((C01 shr Shift) and $FF);
     var D := Integer((C11 shr Shift) and $FF);
-    var Top := A * (16 - FracX) + B * FracX;
-    var Bottom := C * (16 - FracX) + D * FracX;
-    var V := (Top * (16 - FracY) + Bottom * FracY) shr 8;
+    var Top := (A * (16 - FracX) + B * FracX) shr 4;
+    var Bottom := (C * (16 - FracX) + D * FracX) shr 4;
+    var V := (Top * (16 - FracY) + Bottom * FracY) shr 4;
     Result := Result or (Cardinal(V) shl Shift);
   end;
 end;

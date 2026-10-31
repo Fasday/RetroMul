@@ -1686,8 +1686,10 @@ begin
   end;
   if (VType and (1 shl 23)) <> 0 then
   begin
-    O.V.X := Round(V.P.X * 16);
-    O.V.Y := Round(V.P.Y * 16);
+    // Through-mode positions are truncated to 1/16 pixel (recorded on a
+    // PSP-E1000: a point at x.97 stays on pixel x).
+    O.V.X := Trunc(V.P.X * 16);
+    O.V.Y := Trunc(V.P.Y * 16);
     O.V.Z := Trunc(V.P.Z);
     O.V.W := 1;
     O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
@@ -2234,8 +2236,8 @@ begin
     var SX, SY: Integer;
     if Through then
     begin
-      SX := Round(Raw.P.X * 16);
-      SY := Round(Raw.P.Y * 16);
+      SX := Trunc(Raw.P.X * 16);
+      SY := Trunc(Raw.P.Y * 16);
     end
     else
     begin

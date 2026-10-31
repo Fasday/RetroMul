@@ -128,9 +128,10 @@ ivec4 sampleLevel(vec2 st, int level, bool linear) {
   int xb = wrapCoord(p0.x + 1, size.x, cu);
   int ya = wrapCoord(p0.y, size.y, cv);
   int yb = wrapCoord(p0.y + 1, size.y, cv);
-  ivec4 top = texel(ivec2(xa, ya), level) * (16 - fr.x) + texel(ivec2(xb, ya), level) * fr.x;
-  ivec4 bottom = texel(ivec2(xa, yb), level) * (16 - fr.x) + texel(ivec2(xb, yb), level) * fr.x;
-  return (top * (16 - fr.y) + bottom * fr.y) >> 8;
+  // The rows are truncated before the column mix.
+  ivec4 top = (texel(ivec2(xa, ya), level) * (16 - fr.x) + texel(ivec2(xb, ya), level) * fr.x) >> 4;
+  ivec4 bottom = (texel(ivec2(xa, yb), level) * (16 - fr.x) + texel(ivec2(xb, yb), level) * fr.x) >> 4;
+  return (top * (16 - fr.y) + bottom * fr.y) >> 4;
 }
 
 // The image's level 0 is the GE's; coordinates go with the level's size.

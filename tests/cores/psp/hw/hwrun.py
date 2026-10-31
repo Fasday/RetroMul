@@ -75,6 +75,9 @@ def main():
         with open(os.path.join(a.results, name + '.log'), 'w', encoding='utf-8') as f:
             f.write('%s %.1fs\n%s\n' % (status, elapsed, msg or ''))
         print(prog, status, '%.1fs' % elapsed, flush=True)
+        # PSPLink resets after a program exits; a command sent before it is
+        # back is lost.
+        time.sleep(4)
 
 
 if __name__ == '__main__':

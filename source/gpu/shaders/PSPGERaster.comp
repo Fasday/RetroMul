@@ -368,9 +368,10 @@ uint sampleLevel(uint s, int level, float fs, float ft, bool linear)
     int64_t b = int64_t((c10 >> shift) & 0xFFu);
     int64_t c = int64_t((c01 >> shift) & 0xFFu);
     int64_t d = int64_t((c11 >> shift) & 0xFFu);
-    int64_t top = a * (16l - fracX) + b * fracX;
-    int64_t bottom = c * (16l - fracX) + d * fracX;
-    uint64_t v = uint64_t(top * (16l - fracY) + bottom * fracY) >> 8;
+    // The rows are truncated before the column mix, as the CPU sampler.
+    int64_t top = int64_t(uint64_t(a * (16l - fracX) + b * fracX) >> 4);
+    int64_t bottom = int64_t(uint64_t(c * (16l - fracX) + d * fracX) >> 4);
+    uint64_t v = uint64_t(top * (16l - fracY) + bottom * fracY) >> 4;
     result |= uint(v) << shift;
   }
   return result;
