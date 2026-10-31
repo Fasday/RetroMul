@@ -58,7 +58,17 @@ renderer is used.
   `OnWatchFault` with the write's address, separate from `OnVRAMFault`.
   A target that is not held is compared with its shadow copy and reloaded
   when the CPU changed it. Targets that take turns with one depth buffer pass
-  it on with a GPU image copy. Render-to-texture goes through VRAM.
+  it on with a GPU image copy.
+- **Render-to-texture** samples the target's image directly, at its scale,
+  without reading it back. This needs a texture with one level, not swizzled,
+  of the target's format, address and stride, and a current image (newer than
+  guest memory with no stale rows, or equal to it). It is not used when the
+  draw's own target shares bytes with it. The shader takes the texels in the
+  target format's precision; their alpha is the stencil, and 565 is opaque.
+  The fixed function's stencil operations leave the colour's alpha (the
+  stencil's mirror) behind. A compute pass brings it up to date before such
+  a texture, or a blend with destination alpha, reads it. Other cases go
+  through VRAM.
 - **Shader blending** applies where the device has
   `VK_EXT_fragment_shader_interlock` (pixel interlock) and RGBA8 storage
   images, for draws that blend, use a logic operation or mask part of a
@@ -134,7 +144,7 @@ shown at 1×. Before frames were shown from the renderer, HLE at 1× flushed
 2796 times. The 1× frames shown from the renderer are identical to those
 shown from guest memory.
 
-`autotests.py --backend hle --scale 2`: 531/638. The 11 further failures
+`autotests.py --backend hle --scale 2`: 533/638. The 11 further failures
 against 1× read exact sampling results back (`gpu/filtering/*`,
 `textures/mipmap`, `mipinvalid`, `size`, `texmtx/uvs`, `clipping/homogeneous`):
 at 2× they get the block's sample and finer mipmap levels. At 3× (an exact
@@ -144,26 +154,34 @@ centre sample) 8 of these still differ, from the level of detail.
 
 Measured on Windows x64 with an AMD Radeon RX 9070 XT.
 
-- `autotests.py --backend hle` (regular profile): **542 PASS / 96 FAIL / 638**,
-  against 547 for the CPU renderer. The only differences are 5 GPU tests that
+- `autotests.py --backend hle` (regular profile): **544 PASS / 94 FAIL / 638**,
+  against 547 for the CPU renderer. The only differences are 3 GPU tests that
   pass on the CPU, all from the limits listed above:
-  - `gpu/commands/blend` and `blend565`: blend rounding, doubled destination
-    alpha, absolute difference;
-  - `gpu/dither/dither`: partial channel write masks;
+  - `gpu/commands/blend`: its blends also write the stencil, so they keep
+    the fixed function (rounding, doubled destination alpha);
   - `gpu/primitives/immediate`: Gouraud ±1 on 960 pixels;
   - `gpu/stencil/writemask`: 4444/5551 increment and decrement.
 
-  In `gpu/` the HLE passes 72 of the 77 tests the CPU renderer passes. Among
+  In `gpu/` the HLE passes 74 of the 77 tests the CPU renderer passes. Among
   them are texture filtering, mipmaps, the level-of-detail modes, render
-  targets and copies.
+  targets and copies. Shader blending made `blend565` and `dither` pass.
 - Monster Hunter Portable 3rd, 12000 frames with the state test's menu inputs:
   - The final frame hash is the same as with the CPU renderer.
-  - Of the frames at every 1000, 8 are identical. Four menu frames differ in
-    up to 13,692 pixels (at most 1,440 of them by more than 8), from blend
-    rounding.
-  - Run time is 33.8 s, against 30.9 s for the CPU renderer on its 10 threads.
-    At this resolution the HLE is not faster yet: flushing to VRAM, which the
-    display needs every frame, takes 2.4 s and state setup 0.9 s.
+  - Of the frames at every 1000, 9 are identical. Four menu frames differ in
+    73 to 490 pixels (with fixed-function blending: up to 13,692).
+  - Flushes went from 2796 to 175 once frames were shown from the renderer
+    and watched-page writes stopped flushing (times: see the table above).
+- 14 games, 3600 frames each with start/cross presses, frames every 300
+  compared with the CPU renderer: at most 34 pixels in a frame differ by more
+  than 24 (Dissidia; the rest 0 to 12).
+  - God of War: flushes 116,927 → 4,812 with row holds and watch faults; run
+    time 54.6 → 25.5–26.2 s (CPU renderer 26.5 s) with render-to-texture,
+    which takes 1158 textures straight from target images.
+  - Tekken 6's glow (a 128×64 565 target drawn in one pass and sampled in the
+    next) needed a full barrier at every pass switch; with it the frame buffer
+    at frame 3600 differs from the CPU renderer's in 12,752 pixels by at most
+    3 (of 31), as without render-to-texture. At 2× and 4× the glow is
+    sampled at the higher resolution, so it differs more from the 1× result.
 - Unchanged CPU and LLE behaviour:
   - The regular suite (547/638) and the `--hw` suite (520/638) have unchanged
     status sets. JIT and interpreter reports are byte-identical.

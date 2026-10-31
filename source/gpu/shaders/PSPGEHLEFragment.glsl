@@ -66,19 +66,54 @@ int ditherAt() {
   return n >= 8 ? n - 16 : n;
 }
 
+// The colour as the target format keeps it, expanded back to 8 bits.
+ivec3 quantize(ivec3 c, uint format) {
+  if (format == 0u) {
+    ivec3 q = c >> ivec3(3, 2, 3);
+    return ivec3((q.r << 3) | (q.r >> 2), (q.g << 2) | (q.g >> 4), (q.b << 3) | (q.b >> 2));
+  }
+  if (format == 1u) {
+    ivec3 q = c >> 3;
+    return (q << 3) | (q >> 2);
+  }
+  if (format == 2u)
+    return (c >> 4) * 17;
+  return c;
+}
+
 // Texture sampling as the GE does it: coordinates in texels, wrapped or
 // clamped per level, nearest texels by floor, bilinear with 4-bit weights,
 // the level of detail in 1/16 levels from a log2 of 4 mantissa bits.
+// A texture that is a render target's image (TEX_TARGET) holds the PSP's
+// texels at the target's scale; its sizes need not be powers of two.
 int wrapCoord(int v, int size, bool clampIt) {
-  return clampIt ? clamp(v, 0, size - 1) : (v & (size - 1));
+  if (clampIt)
+    return clamp(v, 0, size - 1);
+  if ((pc.texFunc & TEX_TARGET) != 0u)
+    return v - size * int(floor(float(v) / float(size)));
+  return v & (size - 1);
 }
 
 ivec4 texel(ivec2 p, int level) {
-  return ivec4(round(texelFetch(uTexture, p, level) * 255.0));
+  if ((pc.texFunc & TEX_TARGET) == 0u)
+    return ivec4(round(texelFetch(uTexture, p, level) * 255.0));
+  // Texels past the target's rows read its last row; the colour is the one
+  // the target format keeps, the alpha its stencil (565 is opaque).
+  ivec4 t = ivec4(round(texelFetch(uTexture, min(p, textureSize(uTexture, 0) - 1), 0) * 255.0));
+  uint format = (pc.texFunc >> 21) & 3u;
+  t.rgb = quantize(t.rgb, format);
+  if (format == 0u)
+    t.a = 255;
+  return t;
 }
 
 ivec4 sampleLevel(vec2 st, int level, bool linear) {
   ivec2 size = textureSize(uTexture, level);
+  if ((pc.texFunc & TEX_TARGET) != 0u) {
+    int scale = int((pc.texFunc >> 17) & 15u);
+    st *= float(scale);
+    size = ivec2(pc.texSize) * scale;
+  }
   bool cu = (pc.texFunc & TEX_CLAMPU) != 0u;
   bool cv = (pc.texFunc & TEX_CLAMPV) != 0u;
   if (!linear) {
@@ -147,20 +182,6 @@ ivec4 sampleTexture(vec2 st, float scale, float w) {
   return (c0 * (16 - frac) + sampleAt(st, level + 1, linear) * frac) >> 4;
 }
 
-// The colour as the target format keeps it, expanded back to 8 bits.
-ivec3 quantize(ivec3 c, uint format) {
-  if (format == 0u) {
-    ivec3 q = c >> ivec3(3, 2, 3);
-    return ivec3((q.r << 3) | (q.r >> 2), (q.g << 2) | (q.g >> 4), (q.b << 3) | (q.b >> 2));
-  }
-  if (format == 1u) {
-    ivec3 q = c >> 3;
-    return (q << 3) | (q >> 2);
-  }
-  if (format == 2u)
-    return (c >> 4) * 17;
-  return c;
-}
 
 // The fragment's colour after the tests, as it goes to the blend (or, in
 // clear mode, as it is written, with the stencil value as alpha).

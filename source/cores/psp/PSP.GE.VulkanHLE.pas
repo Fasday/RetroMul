@@ -38,7 +38,7 @@ uses
 type
   TGEVulkanHLEStats = record
     Draws, Prims, Submits, Flushes, TargetLoads, DepthLoads, DepthCopies, Readbacks: Int64;
-    TextureUploads, TextureHits, Pipelines, Presents, WatchFaults: Int64;
+    TextureUploads, TextureHits, Pipelines, Presents, WatchFaults, TargetTextures: Int64;
     // In flushes: waiting for the GPU, and everything (waiting and reading back).
     WaitSeconds, FlushSeconds: Double;
     // Setting up state (textures, targets, depth) for primitives, showing frames.
@@ -50,6 +50,8 @@ type
     Memory: VkDeviceMemory;
     View: VkImageView;
   end;
+
+  TGEHLETexture = class;
 
   TGEHLETarget = class
   public
@@ -64,6 +66,11 @@ type
     // sampled, and a framebuffer without attachments.
     BlendSet: VkDescriptorSet;
     BlendFramebuffer: VkFramebuffer;
+    // The image as a texture, made when one is drawn from it.
+    AsTexture: TGEHLETexture;
+    // Drawing changed the stencil since the colour's alpha (its mirror) was
+    // loaded.
+    AlphaStale: Boolean;
     LastUse: Int64;
     Framebuffer: VkFramebuffer;
     // Guest memory's colour bytes when the image was last made equal to it.
@@ -107,6 +114,8 @@ type
     Checkable: Boolean;
     // The GE run (TGEVulkanHLEBackend.FRun) it was last compared or decoded in.
     Verified: Int64;
+    // A render target's colour image used as the texture (not this object's).
+    Target: TGEHLETarget;
     Image: TGEHLEImage;
     Sets: TDictionary<Cardinal, VkDescriptorSet>;
     LastUse: Int64;
@@ -229,6 +238,7 @@ type
     procedure CreateBlend;
     procedure CreateBlendTarget(T: TGEHLETarget);
     function CreateView(Image: VkImage; Format: VkFormat; Aspect: Cardinal): VkImageView;
+    procedure RefreshAlpha(T: TGEHLETarget);
     procedure DownSample(T: TGEHLETarget; X, Y, W, H: Integer; Offset, What: Cardinal; Step: Integer = 0);
     function Pipeline(Key: UInt64): VkPipeline;
     function Sampler(Key: Cardinal): VkSampler;
@@ -260,6 +270,7 @@ type
     procedure LoadDepth(T: TGEHLETarget);
     procedure CopyDepth(Source, Dest: TGEHLETarget);
     function EnsureTexture(const S: TGERaster): TGEHLETexture;
+    function TargetTexture(const S: TGERaster): TGEHLETexture;
     procedure DecodeTexture(T: TGEHLETexture; const S: TGERaster);
     function SourceMatches(T: TGEHLETexture; const S: TGERaster): Boolean;
     procedure ReadbackTarget(T: TGEHLETarget);
@@ -951,6 +962,9 @@ begin
     WaitAll;
     for var U in FTextures.Values do
       FreeSets(U);
+    for var U in FTargets do
+      if U.AsTexture <> nil then
+        FreeSets(U.AsTexture);
     FreeSets(FDummy);
   end;
   Alloc := Default(VkDescriptorSetAllocateInfo);
@@ -1004,6 +1018,11 @@ begin
     FAPI.vkFreeDescriptorSets(FDevice, FBlendPool, 1, @T.BlendSet);
   if T.BlendFramebuffer <> 0 then
     FAPI.vkDestroyFramebuffer(FDevice, T.BlendFramebuffer, nil);
+  if T.AsTexture <> nil then
+  begin
+    FreeSets(T.AsTexture);
+    T.AsTexture.Free;
+  end;
   if T.ZView <> 0 then FAPI.vkDestroyImageView(FDevice, T.ZView, nil);
   if T.SView <> 0 then FAPI.vkDestroyImageView(FDevice, T.SView, nil);
   DestroyImage(T.Color);
@@ -1030,15 +1049,15 @@ end;
 // colour, depth and stencil of a target, the read-back buffer.
 procedure TGEVulkanHLEBackend.CreateDown;
 var
-  Bindings: array[0..3] of VkDescriptorSetLayoutBinding;
+  Bindings: array[0..4] of VkDescriptorSetLayoutBinding;
   SetInfo: VkDescriptorSetLayoutCreateInfo;
   Push: VkPushConstantRange;
   Info: VkPipelineLayoutCreateInfo;
-  Sizes: array[0..1] of VkDescriptorPoolSize;
+  Sizes: array[0..2] of VkDescriptorPoolSize;
   PoolInfo: VkDescriptorPoolCreateInfo;
   Pipe: VkComputePipelineCreateInfo;
 begin
-  for var I := 0 to 3 do
+  for var I := 0 to 4 do
   begin
     Bindings[I] := Default(VkDescriptorSetLayoutBinding);
     Bindings[I].binding := I;
@@ -1047,9 +1066,10 @@ begin
     Bindings[I].stageFlags := VK_SHADER_STAGE_COMPUTE_BIT;
   end;
   Bindings[3].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  Bindings[4].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
   SetInfo := Default(VkDescriptorSetLayoutCreateInfo);
   SetInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  SetInfo.bindingCount := 4;
+  SetInfo.bindingCount := 5;
   SetInfo.pBindings := @Bindings[0];
   CheckVulkan(FAPI.vkCreateDescriptorSetLayout(FDevice, @SetInfo, nil, @FDownSetLayout), 'vkCreateDescriptorSetLayout');
   Push.stageFlags := VK_SHADER_STAGE_COMPUTE_BIT;
@@ -1066,11 +1086,13 @@ begin
   Sizes[0].descriptorCount := 3 * (MaxTargets + 8);
   Sizes[1].&type := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   Sizes[1].descriptorCount := MaxTargets + 8;
+  Sizes[2].&type := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  Sizes[2].descriptorCount := MaxTargets + 8;
   PoolInfo := Default(VkDescriptorPoolCreateInfo);
   PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   PoolInfo.flags := VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
   PoolInfo.maxSets := MaxTargets + 8;
-  PoolInfo.poolSizeCount := 2;
+  PoolInfo.poolSizeCount := 3;
   PoolInfo.pPoolSizes := @Sizes[0];
   CheckVulkan(FAPI.vkCreateDescriptorPool(FDevice, @PoolInfo, nil, @FDownPool), 'vkCreateDescriptorPool');
   FDownModule := FCompute.CreateShaderModule(PSPGEHLEDownSPV);
@@ -1199,6 +1221,18 @@ begin
   CheckVulkan(FAPI.vkCreateFramebuffer(FDevice, @Info, nil, @T.BlendFramebuffer), 'vkCreateFramebuffer');
 end;
 
+// The colour's alpha made the stencil again (the fixed function's stencil
+// operations leave it behind), on the GPU.
+procedure TGEVulkanHLEBackend.RefreshAlpha(T: TGEHLETarget);
+begin
+  Record_;
+  EndPass;
+  ImageBarrier;
+  DownSample(T, 0, 0, T.Width * FScale, T.Height * FScale, 0, 4, 1);
+  ImageBarrier;
+  T.AlphaStale := False;
+end;
+
 // What = 1: colour and stencil, 2: depth, of the box in PSP pixels, 3: the
 // shown colour of the box in image pixels (Step 1), into the read-back buffer
 // from word Offset. Step 0 is the scale.
@@ -1289,6 +1323,10 @@ begin
   if (FPass = T) and (FPassBlended = Blended) then
     Exit;
   EndPass;
+  // Everything recorded before is visible to the pass: the render passes'
+  // external dependencies alone proved not to be enough for a target drawn in
+  // one pass and sampled in the next (Tekken 6's glow).
+  ImageBarrier;
   Info := Default(VkRenderPassBeginInfo);
   Info.sType := VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
   if Blended then
@@ -1554,9 +1592,9 @@ begin
   Result.ZWatched := -1;
   var ColorUsage: Cardinal := VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
     VK_IMAGE_USAGE_TRANSFER_DST_BIT or VK_IMAGE_USAGE_SAMPLED_BIT;
-  // The shader-blending pipelines read and write it as a storage image.
-  if FShaderBlend then
-    ColorUsage := ColorUsage or VK_IMAGE_USAGE_STORAGE_BIT;
+  // The shader-blending pipelines and the down-sampling kernel write it as a
+  // storage image (RGBA8 storage is required of every device).
+  ColorUsage := ColorUsage or VK_IMAGE_USAGE_STORAGE_BIT;
   Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1, ColorUsage, VK_IMAGE_ASPECT_COLOR_BIT);
   var DepthUsage: Cardinal := VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
     VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -1585,9 +1623,9 @@ end;
 procedure TGEVulkanHLEBackend.CreateDownSet(T: TGEHLETarget);
 var
   Alloc: VkDescriptorSetAllocateInfo;
-  Images: array[0..2] of VkDescriptorImageInfo;
+  Images: array[0..3] of VkDescriptorImageInfo;
   Buffer: VkDescriptorBufferInfo;
-  Writes: array[0..3] of VkWriteDescriptorSet;
+  Writes: array[0..4] of VkWriteDescriptorSet;
 begin
   T.ZView := CreateView(T.Depth.Image, FDepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
   T.SView := CreateView(T.Depth.Image, FDepthFormat, VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -1601,10 +1639,11 @@ begin
   Images[0].sampler := Nearest; Images[0].imageView := T.Color.View; Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
   Images[1].sampler := Nearest; Images[1].imageView := T.ZView; Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
   Images[2].sampler := Nearest; Images[2].imageView := T.SView; Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[3].sampler := Nearest; Images[3].imageView := T.Color.View; Images[3].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
   Buffer.buffer := FReadback.Handle;
   Buffer.offset := 0;
   Buffer.range := VK_WHOLE_SIZE;
-  for var I := 0 to 3 do
+  for var I := 0 to 4 do
   begin
     Writes[I] := Default(VkWriteDescriptorSet);
     Writes[I].sType := VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1617,7 +1656,9 @@ begin
   end;
   Writes[3].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   Writes[3].pBufferInfo := @Buffer;
-  FAPI.vkUpdateDescriptorSets(FDevice, 4, @Writes[0], 0, nil);
+  Writes[4].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  Writes[4].pImageInfo := @Images[3];
+  FAPI.vkUpdateDescriptorSets(FDevice, 5, @Writes[0], 0, nil);
 end;
 
 // Rows of PSP pixels a band of an upload holds: Bytes for each pixel at the
@@ -1684,6 +1725,7 @@ begin
   end;
   CopyVRAM(FMemory, T.Addr, T.Bytes, T.Shadow);
   T.Loaded := True;
+  T.AlphaStale := False;
   Inc(FStats.TargetLoads);
 end;
 
@@ -2332,6 +2374,65 @@ begin
   Inc(FStats.TextureUploads);
 end;
 
+// A render target drawn from as a texture, sampled from its image (at its
+// scale) without going through VRAM: one level, not swizzled, the target's
+// format, address and stride, and an image that is current (newer than guest
+// memory with no stale rows, or equal to it). Not the target the draw renders
+// into, nor one that shares bytes with it. Nil when the texture is not one.
+function TGEVulkanHLEBackend.TargetTexture(const S: TGERaster): TGEHLETexture;
+begin
+  Result := nil;
+  var X: PGETexture := @S.Tex;
+  if X.Swizzle or (X.Format > 3) then
+    Exit;
+  var Level := 0;
+  if X.NeedLod then
+  begin
+    if (X.MinFilter >= 4) and (X.MaxLevel > 0) then
+      Exit;
+  end
+  else
+    Level := X.Level;
+  var L: PGETexLevel := @X.Levels[Level];
+  var A := L.Addr and $1FFFFFFF;
+  if (A < PSPVRAMBase) or (A >= PSPVRAMBase + 4 * PSPVRAMSize) or ((A and PSPVRAMSize) <> 0) then
+    Exit;
+  var T: TGEHLETarget := nil;
+  for var U in FTargets do
+    if (U.Addr = A and VRAMMask) and (U.Format = Cardinal(X.Format)) and (U.Stride = Cardinal(L.BufWidth)) then
+    begin
+      T := U;
+      Break;
+    end;
+  if T = nil then
+    Exit;
+  var DrawBytes := Max(S.FBStride, 1) * Bpp(S.FBFormat and 3) * Cardinal(T.Height);
+  if Overlaps(T.Addr, T.Bytes, S.FBAddr and VRAMMask, DrawBytes) then
+    Exit;
+  if T.Dirty then
+  begin
+    if T.Stale then
+      Exit;
+  end
+  else if not T.Loaded or RangeHeld(T.Addr, T.Bytes) or not SameVRAM(FMemory, T.Addr, T.Shadow) then
+    Exit;
+  // Its alpha is its stencil.
+  if T.AlphaStale then
+    RefreshAlpha(T);
+  if T.AsTexture = nil then
+  begin
+    T.AsTexture := TGEHLETexture.Create;
+    T.AsTexture.Target := T;
+    T.AsTexture.Image := T.Color;
+    T.AsTexture.Count := 1;
+  end;
+  Result := T.AsTexture;
+  // The texture's size in the PSP's texels.
+  Result.Width := Max(L.Width, 1);
+  Result.Height := Max(L.Height, 1);
+  Inc(FStats.TargetTextures);
+end;
+
 // The texture of S's level (or of its levels, halving in size, when the level
 // of detail picks one), decoded, compared with its bytes, uploaded.
 function TGEVulkanHLEBackend.EnsureTexture(const S: TGERaster): TGEHLETexture;
@@ -2531,7 +2632,11 @@ begin
   var Textured := S.Textured and not Clear;
   var Tex := FDummy;
   if Textured then
-    Tex := EnsureTexture(S);
+  begin
+    Tex := TargetTexture(S);
+    if Tex = nil then
+      Tex := EnsureTexture(S);
+  end;
   var T := FindTarget(S);
   EnsureTarget(T);
   var DepthTest := not Clear and S.DepthTest;
@@ -2618,6 +2723,9 @@ begin
         (Cardinal(Ord(S.ColorDouble)) shl 4) or (LodMode shl 5) or (Cardinal(Ord(S.Tex.Linear)) shl 7) or
         (Cardinal(S.Tex.MinFilter and 7) shl 8) or (Cardinal(Ord(S.Tex.ClampU)) shl 11) or
         (Cardinal(Ord(S.Tex.ClampV)) shl 12) or (Cardinal(Tex.Count - 1) shl 13);
+      if Tex.Target <> nil then
+        Push.TexFunc := Push.TexFunc or (Cardinal(1) shl 16) or (Cardinal(FScale) shl 17) or
+          (Tex.Target.Format shl 21);
       Push.Env := PackColor(S.EnvR, S.EnvG, S.EnvB, 0);
       Push.LodBias := S.Tex.LodBias;
       Push.LodSlope := S.Tex.Slope;
@@ -2650,6 +2758,12 @@ begin
       WritesStencil(S.StencilZPass));
     Blended := FShaderBlend and (S.Blend or (S.LogicOp and (S.LogicFunc <> 3)) or PartialMask(Fmt, Keep)) and
       not (DepthTest and S.DepthWrite) and not StencilWrites;
+    // The fixed function changes the stencil but not its mirror in the alpha:
+    // a blend with the destination's alpha needs it brought up to date.
+    if T.AlphaStale and (Blended or (S.Blend and ((S.BlendSrc in [4, 5, 8, 9]) or (S.BlendDst in [4, 5, 8, 9])))) then
+      RefreshAlpha(T);
+    if StencilWrites then
+      T.AlphaStale := True;
     if Blended then
     begin
       Key := Cardinal(Kind) or (UInt64(1) shl 43);

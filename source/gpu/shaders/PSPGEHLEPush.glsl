@@ -8,7 +8,8 @@ layout(push_constant) uniform Push {
   // Function in bits 0-2, texture alpha in bit 3, colour doubling in bit 4,
   // the level of detail in bits 5-6 (0 none, 1 from the derivatives plus the
   // bias, 2 the bias, 3 from the slope and w plus the bias), TEX_* bits, the
-  // minification filter in bits 8-10, the image's highest level in 13-15.
+  // minification filter in bits 8-10, the image's highest level in 13-15,
+  // TEX_TARGET's scale and format in bits 17-22.
   uint texFunc;
   uint env;
   uint fogColor;
@@ -51,3 +52,6 @@ const uint FLAG_QUANTIZE = 1024u;
 const uint TEX_MAGLINEAR = 128u;
 const uint TEX_CLAMPU = 2048u;
 const uint TEX_CLAMPV = 4096u;
+// The texture is a render target's image: its scale in bits 17-20, its format
+// in bits 21-22.
+const uint TEX_TARGET = 65536u;

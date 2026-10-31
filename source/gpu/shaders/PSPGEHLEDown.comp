@@ -4,6 +4,7 @@
 // The colour goes out as RGBA8 words with the stencil in the alpha byte, the
 // depth as float words. The third mode copies the colour as it is shown:
 // opaque ARGB words, at the scale (step 1), in the target format's precision.
+// The fourth writes the stencil into the colour's alpha (its mirror) in place.
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -13,6 +14,7 @@ layout(set = 0, binding = 2) uniform usampler2D uStencil;
 layout(set = 0, binding = 3) buffer Out {
   uint words[];
 };
+layout(set = 0, binding = 4, rgba8) uniform image2D uTarget;
 
 layout(push_constant) uniform Push {
   // The box, in output pixels.
@@ -22,7 +24,7 @@ layout(push_constant) uniform Push {
   int step;
   // In words.
   uint offset;
-  // 1: colour and stencil, 2: depth, 3: shown colour.
+  // 1: colour and stencil, 2: depth, 3: shown colour, 4: stencil into alpha.
   uint what;
   // The target format (mode 3).
   uint format;
@@ -46,6 +48,13 @@ void main() {
   ivec2 p = ivec2(gl_GlobalInvocationID.xy);
   if (p.x >= pc.size.x || p.y >= pc.size.y)
     return;
+  if (pc.what == 4u) {
+    ivec2 q = pc.origin + p;
+    vec4 c = imageLoad(uTarget, q);
+    c.a = float(texelFetch(uStencil, q, 0).r & 255u) / 255.0;
+    imageStore(uTarget, q, c);
+    return;
+  }
   ivec2 src = (pc.origin + p) * pc.step + pc.step / 2;
   uint i = pc.offset + uint(p.y * pc.size.x + p.x);
   if (pc.what == 1u) {
