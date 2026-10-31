@@ -13152,6 +13152,20 @@ begin
     Result := C1;
 end;
 
+// The GE's reciprocal of a triangle's area (recorded on a PSP-E1000,
+// tests/cores/psp/hw/ge_recip: every one of the 2^16 mantissas): for the
+// area's mantissa 1 + M16 / 2^16, 2^16 over it from a table of 256 segments
+// of M16, each from its node 2^27 / (256 + J) (in 2^-11) down by the slope
+// 2^24 / (256 + J)^2 a step of M16 (in 2^-8), both floored, the sum floored
+// to an integer. Floor(2^32 / (2^16 + M16)) is one off for a fifth of them.
+function GEAreaRecip(M16: Integer): Int64; inline;
+begin
+  var J := M16 shr 8;
+  var Node := (Int64(1) shl 27) div (256 + J);
+  var Slope := (Int64(1) shl 24) div ((256 + J) * (256 + J));
+  Result := (Node * 32 - Slope * (M16 and 255)) shr 8;
+end;
+
 procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
 begin
   var X: array[0..2] of Int64;
@@ -13176,16 +13190,17 @@ begin
       P.Valid := False;
   if not P.Valid then
     Exit;
-  // 1/area to 16 bits from the area's top 17 (floor((2^16 / m)) for the
-  // area's mantissa m cut to 16 fraction bits); the steps are N times it,
-  // floored to 2^-14.
+  // 1/area to 16 bits from the area's top 17 (GEAreaRecip of its mantissa's
+  // 16 fraction bits); the steps are N times it, floored to 2^-14.
   var E := 63;
   while (Area shr E) = 0 do
     Dec(E);
-  var Cut := Area;
-  if E > 16 then
-    Cut := (Area shr (E - 16)) shl (E - 16);
-  var R := (Int64(1) shl (16 + E)) div Cut;
+  var M16: Int64;
+  if E >= 16 then
+    M16 := (Area shr (E - 16)) - 65536
+  else
+    M16 := (Area shl (16 - E)) - 65536;
+  var R := GEAreaRecip(Integer(M16));
   P.GX := FloorShr(NX * R, E + 2);
   P.GY := FloorShr(NY * R, E + 2);
   var A := DepthAnchor(X, Y);

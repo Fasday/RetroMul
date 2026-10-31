@@ -97,6 +97,11 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   `cells_<n>.bin` the settings). Frame 2: where a buffer's rows lie for
   widths 1..64, CLUT4..CLUT32, 5650 and 8888. Under a second on the PSP.
 
+- `ge_recip`: the depth plane's reciprocal of the area for every one of the
+  2^16 mantissas: one strip triangle per mantissa (area (2^16 + m) * 4,
+  480 pixels wide, depth 2000 to 62000), 60 a frame, the depth buffer read
+  back (`recip/frame_<n>.bin`, 272 rows of 480). 48 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -126,11 +131,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   vertex's side of the line through them picks one. Vertex order, mirroring
   and the depths do not change it; every triangle whose plane goes through
   a single vertex (1,416) fits. The steps are floor(N R / 2^(e + 2)), N the
-  depth gradient times the area, R = floor(2^(16 + e) / A17), A17 the area
-  (2^e to 2^(e+1)) cut to its top 17 bits. The hardware's own R is a
-  monotone function of the area's top 17 bits but one more or less than
-  that in 17% of them (no division or table model found yet), so 2-4% of
-  pixels stay one step off; the core's barycentric depth matched 28-58%.
+  depth gradient times the area, R the reciprocal of the area's top 17 bits
+  (`ge_recip`, every mantissa): for the mantissa 1 + m / 2^16, a table of
+  256 segments of m, node floor(2^27 / (256 + j)) in 2^-11 and slope
+  floor(2^24 / (256 + j)^2) in 2^-8 a step, R = (32 node - slope (m & 255))
+  >> 8. All 65,536 match; floor(2^32 / (2^16 + m)) was one off for a fifth
+  of them (2-4% of pixels a step off). gpu/exact's depth plane jobs now
+  match; the core's barycentric depth matched 28-58%.
 - Slope-mode level of detail (`ge_lod`) is log(TEXLODSLOPE) - log(1/w) +
   16 (+ bias) in 1/16 levels, each log the exponent and 4 mantissa bits of
   its own float, with 1/w as the pixel interpolates it (the vertices' 1/w
