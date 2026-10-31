@@ -66,6 +66,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   w of [1, 4); `lod/ws_*.bin`: random w and slope; `*_in.bin` the inputs).
   4 s on the PSP.
 
+- `ge_sprite`: where a through-mode sprite samples its texture: a 16 x 16
+  texture whose texel (i, j) is red 16 i, green 16 j, bilinear and clamped,
+  so red and green are the sample position in 1/16 texels less half a texel
+  (`sprite/int.bin`: integer spans, every texel span 1..15 over pixel spans
+  1..24; `frac.bin` and `neg.bin`: random fractional and decreasing spans;
+  `*_in.bin` the sprites). 1 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -113,6 +120,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   sixteenths off. Levels narrower than 16 texels with a buffer width below 16
   read their lower rows elsewhere on the PSP (`ge_lod`'s random set, levels
   4 to 7); not recorded further yet.
+- Sprite sampling (`ge_sprite`): the core's positions (start plus the
+  truncated step times the distance to the pixel centre) match the random
+  sets to 99.8% but are one sixteenth of a texel too high on most samples
+  that land exactly on a sixteenth (integer spans: 1:1, 2:1 and so on). A
+  constant unit off a 16-bit fixed point fits ge_sprite to 95-99.8% but
+  breaks gpu/filtering's precision tests (recorded on real PSPs), so when
+  the hardware lands lower is not known yet; not modelled.
 - Near-plane clipping: the clipped vertices' depth is not exactly that of
   the near plane: the hardware's planes give 2 to 3 (of 65535) where the
   core puts 0, so its intersection arithmetic (16-bit, like the vertex
