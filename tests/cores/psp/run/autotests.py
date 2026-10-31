@@ -68,13 +68,15 @@ def compare_bmp(expected, actual):
     return diff, diff_rgb, first
 
 
-def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu', no_memstick=False):
+def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu', no_memstick=False, scale=1):
     base = os.path.join(TESTS, rel)
     has_bmp = os.path.exists(base + '.expected.bmp')
     shot = None
     args = [exe, base + '.prx', '-test', '-quiet', '-frames', str(frames)]
     if backend != 'cpu':
         args += [{'check': '-gpu-check', 'hle': '-gpu-hle'}.get(backend, '-gpu')]
+    if scale != 1:
+        args += ['-scale', str(scale)]
     if hw:
         args.append('-hw')
     if no_memstick:
@@ -139,6 +141,8 @@ def main():
     ap.add_argument('--exe', default=EXE)
     # vulkan: the bit-exact compute renderer (LLE); hle: the graphics-pipeline one.
     ap.add_argument('--backend', choices=('cpu', 'vulkan', 'check', 'hle'), default='cpu')
+    # hle only: the internal resolution (results still come from VRAM at 1x).
+    ap.add_argument('--scale', type=int, default=1)
     # Some dialog and WLAN scenarios legitimately run beyond 20 guest seconds.
     ap.add_argument('--frames', type=int, default=12000)
     ap.add_argument('--jobs', type=int, default=8)
@@ -156,7 +160,8 @@ def main():
     tests = collect(args.filters)
     results = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
-        futs = [ex.submit(run, t, args.exe, args.frames, args.timeout, args.keep, args.hw, args.backend, args.no_memstick) for t in tests]
+        futs = [ex.submit(run, t, args.exe, args.frames, args.timeout, args.keep, args.hw, args.backend, args.no_memstick,
+                           args.scale) for t in tests]
         for f in concurrent.futures.as_completed(futs):
             results.append(f.result())
     results.sort()

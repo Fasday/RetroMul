@@ -50,7 +50,8 @@ Nickname=RetroMul
 
 `Execution=interpreter` disables the recompiler. `Renderer=vulkan` requests the
 compute backend (shown as Vulkan LLE) and `Renderer=vulkan-hle` the graphics-pipeline
-backend (Vulkan HLE) on the next worker start; CPU is the default. Missing Vulkan,
+backend (Vulkan HLE) on the next worker start; CPU is the default. `Resolution=N`
+(1 to 8) sets the Vulkan HLE renderer's internal resolution, N times 480×272. Missing Vulkan,
 unsupported features or failed arithmetic qualification select CPU. Reset and
 LoadExec retain the active renderer. Vulkan qualification and CPU-fallback cases
 are documented in [`tests/gpu/vulkan/README.md`](../../../tests/gpu/vulkan/README.md).

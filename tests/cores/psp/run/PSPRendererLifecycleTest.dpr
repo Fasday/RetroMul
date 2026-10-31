@@ -70,6 +70,20 @@ begin
     Ini.DeleteKey('Video', 'Renderer');
     C.ReadCore(Ini);
     Require(C.Renderer = prCPU, 'Absent choice must return to CPU');
+    Require(C.Resolution = 1, 'The internal resolution must default to 1x');
+    Ini.WriteInteger('Video', 'Resolution', 4);
+    C.ReadCore(Ini);
+    Require(C.Resolution = 4, 'Internal resolution not read');
+    Ini.WriteInteger('Video', 'Resolution', 99);
+    C.ReadCore(Ini);
+    Require(C.Resolution = 8, 'Internal resolution not limited');
+    C.WriteCore(Ini);
+    Require(Ini.ReadInteger('Video', 'Resolution', 0) = 8, 'Internal resolution not saved');
+    Ini.DeleteKey('Video', 'Resolution');
+    C.ReadCore(Ini);
+    Require(C.Resolution = 8, 'Absent resolution must keep the current one');
+    Ini.WriteInteger('Video', 'Resolution', 1);
+    C.ReadCore(Ini);
     C.WriteCore(Ini);
     Require(Ini.ReadString('Video', 'Renderer', '') = 'cpu', 'CPU choice not saved');
   finally
@@ -145,6 +159,32 @@ begin
     // Reattach after both failures; the memory must be usable again.
     R := TPSPRendererSession.Create(C, Kind);
     R.Free;
+    if Kind = prVulkanHLE then
+    begin
+      // At twice the resolution the shown frames come from the renderer.
+      R := TPSPRendererSession.Create(C, Kind, 2);
+      try
+        Require(R.Status.Contains('at 2x') and Assigned(C.OnPresent), 'Scaled HLE session not attached');
+        C.Reset;
+        C.Loader.OnLoadExec(P.BootPath, 0, 0);
+        var Scaled := False;
+        for var F := 1 to 120 do
+        begin
+          var Frame: TEmulatorFrame;
+          C.RunFrame(Frame);
+          if (Frame.Width = 960) and (Frame.Height = 544) and (Length(Frame.Pixels) = 960 * 544) then
+          begin
+            Scaled := True;
+            Break;
+          end;
+        end;
+        Require(Scaled, 'No frame shown at twice the resolution');
+      finally
+        R.Free;
+      end;
+      Require(not Assigned(C.OnPresent) and (GE.Backend = nil) and not Assigned(C.Memory.OnVRAMFault),
+        'Scaled session left its hooks');
+    end;
   finally
     C.OnLog := nil;
     Log.Free;

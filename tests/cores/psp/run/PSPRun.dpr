@@ -5,7 +5,8 @@ program PSPRun;
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
-// -gpu-hle: Vulkan graphics-pipeline rendering (fast, not bit exact).
+// -gpu-hle [-scale N]: Vulkan graphics-pipeline rendering (fast, not bit exact), N times the PSP's resolution;
+// frames (-out, hashes) are then the renderer's at that resolution.
 // -test: isolated pspautotests host0: tree, no display, stops at exit.
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
@@ -313,6 +314,7 @@ begin
     var DumpLen := 0;
     var ShotFile := '';
     var GPUMode := 0;
+    var Scale := 1;
     var VRAMFile := '';
     var WavFile := '';
     var CallsOn := False;
@@ -341,6 +343,7 @@ begin
       else if A = '-gpu' then GPUMode := 1
       else if A = '-gpu-check' then GPUMode := 2
       else if A = '-gpu-hle' then GPUMode := 3
+      else if A = '-scale' then begin Inc(I); Scale := StrToInt(ParamStr(I)); end
       else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
@@ -465,8 +468,9 @@ begin
       if GPUMode = 3 then
       begin
         var Error: string;
-        if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error) then
+        if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error, '', Scale) then
         begin
+          Console.OnPresent := HLE.Present;
           TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE;
           if not Quiet then
             Writeln(ErrOutput, 'gpu hle: ' + HLE.Compute.Name);
@@ -694,9 +698,10 @@ begin
         var St := HLE.Stats;
         Writeln(ErrOutput, Format('gpu hle: %d prims in %d draws, %d submits, %d flushes, %d read back, ' +
           '%d target loads, %d depth loads, %d depth copies, %d textures uploaded, %d reused, %d pipelines; ' +
-          '%.2fs flushing (%.2fs waiting), %.2fs setting up',
+          '%.2fs flushing (%.2fs waiting), %.2fs setting up; %d frames shown at %dx in %.2fs',
           [St.Prims, St.Draws, St.Submits, St.Flushes, St.Readbacks, St.TargetLoads, St.DepthLoads, St.DepthCopies,
-          St.TextureUploads, St.TextureHits, St.Pipelines, St.FlushSeconds, St.WaitSeconds, St.SetupSeconds]));
+          St.TextureUploads, St.TextureHits, St.Pipelines, St.FlushSeconds, St.WaitSeconds, St.SetupSeconds,
+          St.Presents, HLE.Scale, St.PresentSeconds]));
       end
       else if not Quiet then
         Writeln(ErrOutput, 'ge cpu: ' + TPSPGE(Console.System.Find(TPSPGE)).Engine.Workers.Describe);
@@ -717,6 +722,7 @@ begin
       end;
       if HLE <> nil then
       begin
+        Console.OnPresent := nil;
         TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := nil;
         HLE.Free;
       end;

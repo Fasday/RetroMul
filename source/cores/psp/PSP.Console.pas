@@ -15,6 +15,10 @@ uses
   PSP.State.Graph, PSP.State.Direct, Core.Snapshots;
 
 type
+  // The shown framebuffer (VRAM address, format, stride in pixels) as a renderer
+  // holds it, at its own resolution: True when it filled Frame.
+  TPSPPresentEvent = function(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean of object;
+
   TPSPConsole = class
   private
     FMemory: TPSPMemory;
@@ -38,6 +42,7 @@ type
     FRunDeadline: Int64;
     FLog: TStringList;
     FOnLog: TPSPLogEvent;
+    FOnPresent: TPSPPresentEvent;
     FOutput: TStringBuilder;
     FMemstickRoot, FHostRoot, FFlashRoot: string;
     FPendingExec: string;
@@ -101,6 +106,8 @@ type
     // CPU cycles run (instructions plus HLE costs), for speed measurements.
     property Executed: Int64 read FExecuted;
     property OnLog: TPSPLogEvent read FOnLog write FOnLog;
+    // Not state: the renderer session sets it.
+    property OnPresent: TPSPPresentEvent read FOnPresent write FOnPresent;
     property LastSnapshotFormat: string read FLastSnapshotFormat;
   end;
 
@@ -429,7 +436,9 @@ begin
   end;
   Inc(FFrameNumber);
   Frame := Default(TEmulatorFrame);
-  FDisplay.Render(Frame);
+  if not Assigned(FOnPresent) or (FDisplay.CurrentAddress = 0) or
+    not FOnPresent(FDisplay.CurrentAddress, FDisplay.Format, FDisplay.Width, Frame) then
+    FDisplay.Render(Frame);
   Frame.FrameNumber := FFrameNumber;
   Frame.FramesPerSecond := PSPFrameRate;
   FAudioSamples := FAudio.TakeSamples;

@@ -97,6 +97,7 @@ uses
   SPV.PSPGESelfTest in '..\..\source\gpu\shaders\SPV.PSPGESelfTest.pas',
   SPV.PSPGEHLEVert in '..\..\source\gpu\shaders\SPV.PSPGEHLEVert.pas',
   SPV.PSPGEHLEFrag in '..\..\source\gpu\shaders\SPV.PSPGEHLEFrag.pas',
+  SPV.PSPGEHLEDown in '..\..\source\gpu\shaders\SPV.PSPGEHLEDown.pas',
   PSP.VFPU.Math in '..\..\source\cores\psp\PSP.VFPU.Math.pas',
   PSP.Net in '..\..\source\cores\psp\PSP.Net.pas',
   PSP.Videocodec in '..\..\source\cores\psp\PSP.Videocodec.pas',

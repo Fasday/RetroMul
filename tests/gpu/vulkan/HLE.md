@@ -70,8 +70,52 @@ renderer is used.
 - Gouraud colours are interpolated in float, not with the GE's fixed-point
   planes (off by one at times).
 - Dither is added to the source before the blend.
-- Upscaling is not enabled yet (the scale is 1). The pipeline and the
-  shaders already take a scale.
+- At a scale above 1, guest memory gets the sample at the centre of each
+  pixel's block (the nearest one for even scales). Programs that read rendered
+  pixels back (render-to-texture, CPU reads) see that sample, and mipmap
+  levels follow the higher resolution, as intended for sharper output.
+
+## Internal resolution (upscaling)
+
+*Settings → PSP video → Internal resolution* (`[Video] Resolution=1..8` in
+`psp.ini`, offered as 1×, 2×, 3×, 4×, 6× and 8×) applies to the Vulkan HLE
+renderer. `PSPRun -gpu-hle -scale N` and `autotests.py --backend hle --scale N`
+take it as well.
+
+- Targets are drawn at N times the PSP's resolution: the viewport, scissor,
+  points and dither scale with it.
+- Frames are shown from the renderer's image (`TPSPConsole.OnPresent`), at
+  1920×1088 for 4×. This applies whenever the shown framebuffer is a target
+  whose image is current: newer than guest memory, or equal to it. Otherwise,
+  for example movies the CPU writes, the display shows guest memory at 1×.
+  Showing a frame does not read the targets back, so at 1× this path also
+  saves the per-frame flush.
+- A compute kernel (`PSPGEHLEDown.comp`) brings targets back to the PSP's
+  resolution when guest memory needs them. It also writes the shown frame as
+  ARGB.
+- Loads from guest memory expand every pixel to its block, in row bands. The
+  device used here cannot blit into depth/stencil images.
+
+Measurements (MHP3rd, 12000 frames with the state test's inputs, same final
+hash at every scale):
+
+| Renderer | Time | Frames shown by the renderer | Flushes |
+|---|---:|---:|---:|
+| CPU, 10 threads | 41.1 s | – | – |
+| Vulkan HLE 1× | 36.7 s | 5236 (1.2 s) | 184 |
+| Vulkan HLE 2× | 37.4 s | 5236 (3.1 s) | 184 |
+| Vulkan HLE 4× | 45.9 s | 5236 (10.4 s, about 2 ms a frame) | 184 |
+
+The rest of the 12000 frames are movies the CPU writes into VRAM; they are
+shown at 1×. Before frames were shown from the renderer, HLE at 1× flushed
+2796 times. The 1× frames shown from the renderer are identical to those
+shown from guest memory.
+
+`autotests.py --backend hle --scale 2`: 531/638. The 11 further failures
+against 1× read exact sampling results back (`gpu/filtering/*`,
+`textures/mipmap`, `mipinvalid`, `size`, `texmtx/uvs`, `clipping/homogeneous`):
+at 2× they get the block's sample and finer mipmap levels. At 3× (an exact
+centre sample) 8 of these still differ, from the level of detail.
 
 ## Results
 

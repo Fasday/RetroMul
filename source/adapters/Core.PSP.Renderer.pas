@@ -20,7 +20,8 @@ type
     FKind: TPSPRenderer;
     FDescription: string;
   public
-    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer);
+    // Scale: the Vulkan HLE renderer's internal resolution (1 to 8 times the PSP's).
+    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer = 1);
     destructor Destroy; override;
     function Status: string;
   end;
@@ -59,7 +60,7 @@ begin
     Result := prCPU;
 end;
 
-constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer);
+constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer);
 begin
   inherited Create;
   FConsole := Console;
@@ -71,12 +72,16 @@ begin
   if Renderer = prVulkanHLE then
   begin
     var Backend: TGEVulkanHLEBackend;
-    if CreateGEVulkanHLEBackend(Console.Memory, Backend, Reason) then
+    if CreateGEVulkanHLEBackend(Console.Memory, Backend, Reason, '', Scale) then
     begin
       FBackend := Backend;
       FKind := prVulkanHLE;
       TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
+      // Frames come from its images, at its resolution.
+      Console.OnPresent := Backend.Present;
       FDescription := 'vulkan-hle: ' + Backend.Compute.Name;
+      if Backend.Scale > 1 then
+        FDescription := FDescription + Format(' at %dx', [Backend.Scale]);
       Console.HLE.Log('gpu: ' + FDescription);
       Exit;
     end;
@@ -110,6 +115,8 @@ destructor TPSPRendererSession.Destroy;
 begin
   if FBackend <> nil then
   begin
+    if FKind = prVulkanHLE then
+      FConsole.OnPresent := nil;
     var GE := TPSPGE(FConsole.System.Find(TPSPGE));
     if GE.Engine.Backend = FBackend then
       GE.Engine.Backend := nil;

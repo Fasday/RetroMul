@@ -32,17 +32,17 @@ interface
 
 uses
   System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections, System.Generics.Defaults,
-  PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
+  Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
   PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
 
 type
   TGEVulkanHLEStats = record
     Draws, Prims, Submits, Flushes, TargetLoads, DepthLoads, DepthCopies, Readbacks: Int64;
-    TextureUploads, TextureHits, Pipelines: Int64;
+    TextureUploads, TextureHits, Pipelines, Presents: Int64;
     // In flushes: waiting for the GPU, and everything (waiting and reading back).
     WaitSeconds, FlushSeconds: Double;
-    // Setting up state (textures, targets, depth) for primitives.
-    SetupSeconds: Double;
+    // Setting up state (textures, targets, depth) for primitives, showing frames.
+    SetupSeconds, PresentSeconds: Double;
   end;
 
   TGEHLEImage = record
@@ -57,6 +57,9 @@ type
     // Width is the stride's; the height grows up to MaxHeight as drawing needs it.
     Width, Height, MaxHeight: Integer;
     Color, Depth: TGEHLEImage;
+    // The depth and stencil aspects alone, for the down-sampling kernel.
+    ZView, SView: VkImageView;
+    DownSet: VkDescriptorSet;
     LastUse: Int64;
     Framebuffer: VkFramebuffer;
     // Guest memory's colour bytes when the image was last made equal to it.
@@ -154,6 +157,13 @@ type
     FSlots: array[0..1] of TGEHLESlot;
     FSlot: Integer;
     FReadback: TVulkanBuffer;
+    // The kernel that brings targets back to the PSP's resolution (at a scale)
+    // and copies the frames shown.
+    FDownSetLayout: VkDescriptorSetLayout;
+    FDownLayout: VkPipelineLayout;
+    FDownModule: VkShaderModule;
+    FDownPipeline: VkPipeline;
+    FDownPool: VkDescriptorPool;
     FUseCounter: Int64;
     // Recording: the render pass's target, what is bound, the draw being built.
     FPass: TGEHLETarget;
@@ -188,6 +198,10 @@ type
     procedure DestroyImage(var Image: TGEHLEImage);
     procedure CreateRenderPass;
     procedure CreateLayout;
+    procedure CreateDown;
+    procedure CreateDownSet(T: TGEHLETarget);
+    function CreateView(Image: VkImage; Format: VkFormat; Aspect: Cardinal): VkImageView;
+    procedure DownSample(T: TGEHLETarget; X, Y, W, H: Integer; Offset, What: Cardinal; Step: Integer = 0);
     function Pipeline(Key: UInt64): VkPipeline;
     function Sampler(Key: Cardinal): VkSampler;
     function TextureSet(T: TGEHLETexture; SamplerKey: Cardinal): VkDescriptorSet;
@@ -209,6 +223,7 @@ type
     procedure HoldDepth(T: TGEHLETarget);
     procedure WatchDepth(T: TGEHLETarget);
     function FindTarget(const S: TGERaster): TGEHLETarget;
+    function BandRows(T: TGEHLETarget; Bytes: Integer): Integer;
     procedure LoadTarget(T: TGEHLETarget);
     procedure EnsureTarget(T: TGEHLETarget);
     procedure EnsureDepth(T: TGEHLETarget; const S: TGERaster);
@@ -234,20 +249,22 @@ type
     procedure Access(Address, Size: Cardinal; Write: Boolean); override;
     procedure Sync; override;
     procedure Release; override;
+    // The shown framebuffer at the scale, when a target holds it (TPSPConsole.OnPresent).
+    function Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
     property Compute: TVulkanCompute read FCompute;
     property Scale: Integer read FScale;
     property Stats: TGEVulkanHLEStats read FStats;
   end;
 
 // An HLE backend on a Vulkan device with a graphics queue, or False with the
-// reason. Scale is 1 for now (the PSP's own resolution).
+// reason. Scale: the internal resolution in multiples of the PSP's (1 to 8).
 function CreateGEVulkanHLEBackend(Memory: TPSPMemory; out Backend: TGEVulkanHLEBackend; out Error: string;
-  const DeviceName: string = ''): Boolean;
+  const DeviceName: string = ''; Scale: Integer = 1): Boolean;
 
 implementation
 
 uses
-  SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag;
+  SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEDown;
 
 const
   VRAMMask = PSPVRAMSize - 1;
@@ -404,7 +421,7 @@ end;
 { TGEVulkanHLEBackend }
 
 function CreateGEVulkanHLEBackend(Memory: TPSPMemory; out Backend: TGEVulkanHLEBackend; out Error: string;
-  const DeviceName: string): Boolean;
+  const DeviceName: string; Scale: Integer): Boolean;
 var
   Compute: TVulkanCompute;
 begin
@@ -417,7 +434,7 @@ begin
   if not TryCreateVulkanCompute(Compute, Error, DeviceName, False, True) then
     Exit(False);
   try
-    Backend := TGEVulkanHLEBackend.Create(Memory, Compute, 1);
+    Backend := TGEVulkanHLEBackend.Create(Memory, Compute, Scale);
     Result := True;
   except
     on E: Exception do
@@ -465,7 +482,10 @@ begin
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     FSlots[I].Upload := Compute.CreateBuffer(UploadCapacity, vbkUpload, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
   end;
-  FReadback := Compute.CreateBuffer(UploadCapacity, vbkReadback, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  // Also the frames shown at the scale.
+  FReadback := Compute.CreateBuffer(Max(UploadCapacity, PSPFrameWidth * PSPFrameHeight * 4 * FScale * FScale), vbkReadback,
+    VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  CreateDown;
   // The texture of untextured draws: one opaque white texel.
   FDummy := TGEHLETexture.Create;
   FDummy.Width := 1;
@@ -511,6 +531,11 @@ begin
       FSlots[I].Upload.Free;
     end;
     FReadback.Free;
+    if FDownPipeline <> 0 then FAPI.vkDestroyPipeline(FDevice, FDownPipeline, nil);
+    if FDownModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FDownModule, nil);
+    if FDownPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FDownPool, nil);
+    if FDownLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FDownLayout, nil);
+    if FDownSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FDownSetLayout, nil);
     if FVertexModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FVertexModule, nil);
     if FFragmentModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FFragmentModule, nil);
     if FPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FPool, nil);
@@ -911,9 +936,109 @@ procedure TGEVulkanHLEBackend.DestroyTarget(T: TGEHLETarget);
 begin
   if T.Framebuffer <> 0 then
     FAPI.vkDestroyFramebuffer(FDevice, T.Framebuffer, nil);
+  if T.DownSet <> 0 then
+    FAPI.vkFreeDescriptorSets(FDevice, FDownPool, 1, @T.DownSet);
+  if T.ZView <> 0 then FAPI.vkDestroyImageView(FDevice, T.ZView, nil);
+  if T.SView <> 0 then FAPI.vkDestroyImageView(FDevice, T.SView, nil);
   DestroyImage(T.Color);
   DestroyImage(T.Depth);
   T.Free;
+end;
+
+function TGEVulkanHLEBackend.CreateView(Image: VkImage; Format: VkFormat; Aspect: Cardinal): VkImageView;
+var
+  View: VkImageViewCreateInfo;
+begin
+  View := Default(VkImageViewCreateInfo);
+  View.sType := VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  View.image := Image;
+  View.viewType := VK_IMAGE_VIEW_TYPE_2D;
+  View.format := Format;
+  View.subresourceRange.aspectMask := Aspect;
+  View.subresourceRange.levelCount := 1;
+  View.subresourceRange.layerCount := 1;
+  CheckVulkan(FAPI.vkCreateImageView(FDevice, @View, nil, @Result), 'vkCreateImageView');
+end;
+
+// The down-sampling kernel (source/gpu/shaders/PSPGEHLEDown.comp): the
+// colour, depth and stencil of a target, the read-back buffer.
+procedure TGEVulkanHLEBackend.CreateDown;
+var
+  Bindings: array[0..3] of VkDescriptorSetLayoutBinding;
+  SetInfo: VkDescriptorSetLayoutCreateInfo;
+  Push: VkPushConstantRange;
+  Info: VkPipelineLayoutCreateInfo;
+  Sizes: array[0..1] of VkDescriptorPoolSize;
+  PoolInfo: VkDescriptorPoolCreateInfo;
+  Pipe: VkComputePipelineCreateInfo;
+begin
+  for var I := 0 to 3 do
+  begin
+    Bindings[I] := Default(VkDescriptorSetLayoutBinding);
+    Bindings[I].binding := I;
+    Bindings[I].descriptorType := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    Bindings[I].descriptorCount := 1;
+    Bindings[I].stageFlags := VK_SHADER_STAGE_COMPUTE_BIT;
+  end;
+  Bindings[3].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  SetInfo := Default(VkDescriptorSetLayoutCreateInfo);
+  SetInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  SetInfo.bindingCount := 4;
+  SetInfo.pBindings := @Bindings[0];
+  CheckVulkan(FAPI.vkCreateDescriptorSetLayout(FDevice, @SetInfo, nil, @FDownSetLayout), 'vkCreateDescriptorSetLayout');
+  Push.stageFlags := VK_SHADER_STAGE_COMPUTE_BIT;
+  Push.offset := 0;
+  Push.size := 32;
+  Info := Default(VkPipelineLayoutCreateInfo);
+  Info.sType := VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  Info.setLayoutCount := 1;
+  Info.pSetLayouts := @FDownSetLayout;
+  Info.pushConstantRangeCount := 1;
+  Info.pPushConstantRanges := @Push;
+  CheckVulkan(FAPI.vkCreatePipelineLayout(FDevice, @Info, nil, @FDownLayout), 'vkCreatePipelineLayout');
+  Sizes[0].&type := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  Sizes[0].descriptorCount := 3 * (MaxTargets + 8);
+  Sizes[1].&type := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  Sizes[1].descriptorCount := MaxTargets + 8;
+  PoolInfo := Default(VkDescriptorPoolCreateInfo);
+  PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  PoolInfo.flags := VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  PoolInfo.maxSets := MaxTargets + 8;
+  PoolInfo.poolSizeCount := 2;
+  PoolInfo.pPoolSizes := @Sizes[0];
+  CheckVulkan(FAPI.vkCreateDescriptorPool(FDevice, @PoolInfo, nil, @FDownPool), 'vkCreateDescriptorPool');
+  FDownModule := FCompute.CreateShaderModule(PSPGEHLEDownSPV);
+  Pipe := Default(VkComputePipelineCreateInfo);
+  Pipe.sType := VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  Pipe.stage.sType := VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  Pipe.stage.stage := VK_SHADER_STAGE_COMPUTE_BIT;
+  Pipe.stage.module := FDownModule;
+  Pipe.stage.pName := 'main';
+  Pipe.layout := FDownLayout;
+  Pipe.basePipelineIndex := -1;
+  CheckVulkan(FAPI.vkCreateComputePipelines(FDevice, 0, 1, @Pipe, nil, @FDownPipeline), 'vkCreateComputePipelines');
+end;
+
+// What = 1: colour and stencil, 2: depth, of the box in PSP pixels, 3: the
+// shown colour of the box in image pixels (Step 1), into the read-back buffer
+// from word Offset. Step 0 is the scale.
+procedure TGEVulkanHLEBackend.DownSample(T: TGEHLETarget; X, Y, W, H: Integer; Offset, What: Cardinal; Step: Integer);
+var
+  Push: array[0..7] of Integer;
+begin
+  var Cmd := Slot.Cmd.Handle;
+  FAPI.vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_COMPUTE, FDownPipeline);
+  FAPI.vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_COMPUTE, FDownLayout, 0, 1, @T.DownSet, 0, nil);
+  Push[0] := X; Push[1] := Y; Push[2] := W; Push[3] := H;
+  if Step = 0 then
+    Step := FScale;
+  Push[4] := Step; Push[5] := Integer(Offset); Push[6] := Integer(What); Push[7] := Integer(T.Format);
+  FAPI.vkCmdPushConstants(Cmd, FDownLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SizeOf(Push), @Push[0]);
+  FAPI.vkCmdDispatch(Cmd, (W + 7) div 8, (H + 7) div 8, 1);
+  // The draws' pipeline, texture and push constants are bound again.
+  FBoundPipeline := 0;
+  FBoundSet := 0;
+  FPushValid := False;
 end;
 
 function TGEVulkanHLEBackend.Slot: PGEHLESlot;
@@ -1220,8 +1345,11 @@ begin
   Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1,
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT or
     VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-  Result.Depth := CreateImage(FDepthFormat, W * FScale, H * FScale, 1,
-    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+  var DepthUsage: Cardinal := VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
+    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  // Sampled by the down-sampling kernel.
+  DepthUsage := DepthUsage or VK_IMAGE_USAGE_SAMPLED_BIT;
+  Result.Depth := CreateImage(FDepthFormat, W * FScale, H * FScale, 1, DepthUsage,
     VK_IMAGE_ASPECT_DEPTH_BIT or VK_IMAGE_ASPECT_STENCIL_BIT);
   Views[0] := Result.Color.View;
   Views[1] := Result.Depth.View;
@@ -1234,35 +1362,111 @@ begin
   Info.height := H * FScale;
   Info.layers := 1;
   CheckVulkan(FAPI.vkCreateFramebuffer(FDevice, @Info, nil, @Result.Framebuffer), 'vkCreateFramebuffer');
+  CreateDownSet(Result);
   FTargets.Add(Result);
 end;
 
-procedure TGEVulkanHLEBackend.LoadTarget(T: TGEHLETarget);
+// A target's inputs to the down-sampling kernel.
+procedure TGEVulkanHLEBackend.CreateDownSet(T: TGEHLETarget);
+var
+  Alloc: VkDescriptorSetAllocateInfo;
+  Images: array[0..2] of VkDescriptorImageInfo;
+  Buffer: VkDescriptorBufferInfo;
+  Writes: array[0..3] of VkWriteDescriptorSet;
 begin
-  var N := T.Width * T.Height;
-  var ColorBytes := (Int64(N) * 4 + 15) and not Int64(15);
-  var Offset: Int64;
-  var P := StageUpload(ColorBytes + N, Offset);
-  var Color := PCardinal(P);
-  var Stencil := P + ColorBytes;
+  T.ZView := CreateView(T.Depth.Image, FDepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+  T.SView := CreateView(T.Depth.Image, FDepthFormat, VK_IMAGE_ASPECT_STENCIL_BIT);
+  Alloc := Default(VkDescriptorSetAllocateInfo);
+  Alloc.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  Alloc.descriptorPool := FDownPool;
+  Alloc.descriptorSetCount := 1;
+  Alloc.pSetLayouts := @FDownSetLayout;
+  CheckVulkan(FAPI.vkAllocateDescriptorSets(FDevice, @Alloc, @T.DownSet), 'vkAllocateDescriptorSets');
+  var Nearest := Sampler(0);
+  Images[0].sampler := Nearest; Images[0].imageView := T.Color.View; Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[1].sampler := Nearest; Images[1].imageView := T.ZView; Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[2].sampler := Nearest; Images[2].imageView := T.SView; Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Buffer.buffer := FReadback.Handle;
+  Buffer.offset := 0;
+  Buffer.range := VK_WHOLE_SIZE;
+  for var I := 0 to 3 do
+  begin
+    Writes[I] := Default(VkWriteDescriptorSet);
+    Writes[I].sType := VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    Writes[I].dstSet := T.DownSet;
+    Writes[I].dstBinding := I;
+    Writes[I].descriptorCount := 1;
+    Writes[I].descriptorType := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    if I < 3 then
+      Writes[I].pImageInfo := @Images[I];
+  end;
+  Writes[3].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  Writes[3].pBufferInfo := @Buffer;
+  FAPI.vkUpdateDescriptorSets(FDevice, 4, @Writes[0], 0, nil);
+end;
+
+// Rows of PSP pixels a band of an upload holds: Bytes for each pixel at the
+// scale, and the staging buffer's half at most.
+function TGEVulkanHLEBackend.BandRows(T: TGEHLETarget; Bytes: Integer): Integer;
+begin
+  Result := EnsureRange((UploadCapacity div 2) div (T.Width * FScale * FScale * Bytes), 1, T.Height);
+end;
+
+// Guest memory's pixels into the colour image and the stencil aspect, each
+// pixel as a block of the scale's size.
+procedure TGEVulkanHLEBackend.LoadTarget(T: TGEHLETarget);
+var
+  RowColor: TArray<Cardinal>;
+  RowStencil: TBytes;
+begin
   var B := Bpp(T.Format);
   var V: PByte := @FMemory.VRAM[0];
-  for var Y := 0 to T.Height - 1 do
-    for var X := 0 to T.Width - 1 do
+  var SW := T.Width * FScale;
+  // A row at the scale is built here and copied to the staging buffer, which
+  // is only written (it may be write-combined memory).
+  SetLength(RowColor, SW);
+  SetLength(RowStencil, SW);
+  var Rows := BandRows(T, 5);
+  var Y0 := 0;
+  while Y0 < T.Height do
+  begin
+    var N := Min(Rows, T.Height - Y0);
+    var ColorBytes := (Int64(SW) * N * FScale * 4 + 15) and not Int64(15);
+    var Offset: Int64;
+    var P := StageUpload(ColorBytes + Int64(SW) * N * FScale, Offset);
+    var Color := PCardinal(P);
+    var Stencil := P + ColorBytes;
+    for var Y := Y0 to Y0 + N - 1 do
     begin
-      var A := (T.Addr + (Cardinal(Y) * T.Stride + Cardinal(X)) * B) and VRAMMask;
-      var Px: Cardinal;
-      if B = 4 then Px := PCardinal(V + A)^ else Px := PWord(V + A)^;
-      var R, G, BB: Cardinal;
-      DecodeColor(T.Format, Px, R, G, BB);
-      var S8 := Stencil8(T.Format, Px);
-      Color^ := R or (G shl 8) or (BB shl 16) or (S8 shl 24);
-      Inc(Color);
-      Stencil^ := S8;
-      Inc(Stencil);
+      var I := 0;
+      for var X := 0 to T.Width - 1 do
+      begin
+        var A := (T.Addr + (Cardinal(Y) * T.Stride + Cardinal(X)) * B) and VRAMMask;
+        var Px: Cardinal;
+        if B = 4 then Px := PCardinal(V + A)^ else Px := PWord(V + A)^;
+        var R, G, BB: Cardinal;
+        DecodeColor(T.Format, Px, R, G, BB);
+        var S8 := Stencil8(T.Format, Px);
+        var C := R or (G shl 8) or (BB shl 16) or (S8 shl 24);
+        for var K := 0 to FScale - 1 do
+        begin
+          RowColor[I] := C;
+          RowStencil[I] := S8;
+          Inc(I);
+        end;
+      end;
+      for var K := 0 to FScale - 1 do
+      begin
+        Move(RowColor[0], Color^, SW * 4);
+        Inc(Color, SW);
+        Move(RowStencil[0], Stencil^, SW);
+        Inc(Stencil, SW);
+      end;
     end;
-  CopyToImage(T.Color.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, 0, 0, 0, T.Width, T.Height);
-  CopyToImage(T.Depth.Image, VK_IMAGE_ASPECT_STENCIL_BIT, Offset + ColorBytes, 0, 0, 0, T.Width, T.Height);
+    CopyToImage(T.Color.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, 0, 0, Y0 * FScale, SW, N * FScale);
+    CopyToImage(T.Depth.Image, VK_IMAGE_ASPECT_STENCIL_BIT, Offset + ColorBytes, 0, 0, Y0 * FScale, SW, N * FScale);
+    Inc(Y0, N);
+  end;
   CopyVRAM(FMemory, T.Addr, T.Bytes, T.Shadow);
   T.Loaded := True;
   Inc(FStats.TargetLoads);
@@ -1281,23 +1485,48 @@ begin
 end;
 
 procedure TGEVulkanHLEBackend.LoadDepth(T: TGEHLETarget);
+var
+  Row: TArray<Cardinal>;
 begin
-  var N := T.Width * T.Height;
-  var Offset: Int64;
-  var P := PCardinal(StageUpload(Int64(N) * 4, Offset));
-  SetLength(T.ZShadow, N);
+  SetLength(T.ZShadow, T.Width * T.Height);
   for var Y := 0 to T.Height - 1 do
     DepthRow(FMemory, T, 0, Y, T.Width, @T.ZShadow[Y * T.Width], False);
-  for var I := 0 to N - 1 do
+  var SW := T.Width * FScale;
+  SetLength(Row, SW);
+  var Rows := BandRows(T, 4);
+  var Y0 := 0;
+  while Y0 < T.Height do
   begin
-    var Z := T.ZShadow[I];
-    // The fragment shader writes depth as Z / 65536, exact in a float.
-    if FD24 then
-      P[I] := Cardinal(Round(Z * (16777215 / 65536)))
-    else
-      PSingle(P)[I] := Z / 65536;
+    var N := Min(Rows, T.Height - Y0);
+    var Offset: Int64;
+    var P := PCardinal(StageUpload(Int64(SW) * N * FScale * 4, Offset));
+    for var Y := Y0 to Y0 + N - 1 do
+    begin
+      var I := 0;
+      for var X := 0 to T.Width - 1 do
+      begin
+        var Z := T.ZShadow[Y * T.Width + X];
+        // The fragment shader writes depth as Z / 65536, exact in a float.
+        var D: Cardinal;
+        if FD24 then
+          D := Cardinal(Round(Z * (16777215 / 65536)))
+        else
+          PSingle(@D)^ := Z / 65536;
+        for var K := 0 to FScale - 1 do
+        begin
+          Row[I] := D;
+          Inc(I);
+        end;
+      end;
+      for var K := 0 to FScale - 1 do
+      begin
+        Move(Row[0], P^, SW * 4);
+        Inc(P, SW);
+      end;
+    end;
+    CopyToImage(T.Depth.Image, VK_IMAGE_ASPECT_DEPTH_BIT, Offset, 0, 0, Y0 * FScale, SW, N * FScale);
+    Inc(Y0, N);
   end;
-  CopyToImage(T.Depth.Image, VK_IMAGE_ASPECT_DEPTH_BIT, Offset, 0, 0, 0, T.Width, T.Height);
   T.ZLoaded := True;
   Inc(FStats.DepthLoads);
 end;
@@ -1423,50 +1652,69 @@ begin
   EndPass;
   ImageBarrier;
   var Count := 0;
-  if CW * CH > 0 then
+  if FScale = 1 then
   begin
-    Regions[0] := Default(VkBufferImageCopy);
-    Regions[0].bufferOffset := 0;
-    Regions[0].imageSubresource.aspectMask := VK_IMAGE_ASPECT_COLOR_BIT;
-    Regions[0].imageSubresource.layerCount := 1;
-    Regions[0].imageOffset.x := T.X1;
-    Regions[0].imageOffset.y := T.Y1;
-    Regions[0].imageExtent.width := CW;
-    Regions[0].imageExtent.height := CH;
-    Regions[0].imageExtent.depth := 1;
-    FAPI.vkCmdCopyImageToBuffer(Slot.Cmd.Handle, T.Color.Image, VK_IMAGE_LAYOUT_GENERAL, FReadback.Handle, 1,
-      @Regions[0]);
-    Regions[1] := Regions[0];
-    Regions[1].bufferOffset := ColorBytes;
-    Regions[1].imageSubresource.aspectMask := VK_IMAGE_ASPECT_STENCIL_BIT;
-    FAPI.vkCmdCopyImageToBuffer(Slot.Cmd.Handle, T.Depth.Image, VK_IMAGE_LAYOUT_GENERAL, FReadback.Handle, 1,
-      @Regions[1]);
-    Inc(Count);
-  end;
-  if ZW * ZH > 0 then
+    if CW * CH > 0 then
+    begin
+      Regions[0] := Default(VkBufferImageCopy);
+      Regions[0].bufferOffset := 0;
+      Regions[0].imageSubresource.aspectMask := VK_IMAGE_ASPECT_COLOR_BIT;
+      Regions[0].imageSubresource.layerCount := 1;
+      Regions[0].imageOffset.x := T.X1;
+      Regions[0].imageOffset.y := T.Y1;
+      Regions[0].imageExtent.width := CW;
+      Regions[0].imageExtent.height := CH;
+      Regions[0].imageExtent.depth := 1;
+      FAPI.vkCmdCopyImageToBuffer(Slot.Cmd.Handle, T.Color.Image, VK_IMAGE_LAYOUT_GENERAL, FReadback.Handle, 1,
+        @Regions[0]);
+      Regions[1] := Regions[0];
+      Regions[1].bufferOffset := ColorBytes;
+      Regions[1].imageSubresource.aspectMask := VK_IMAGE_ASPECT_STENCIL_BIT;
+      FAPI.vkCmdCopyImageToBuffer(Slot.Cmd.Handle, T.Depth.Image, VK_IMAGE_LAYOUT_GENERAL, FReadback.Handle, 1,
+        @Regions[1]);
+      Inc(Count);
+    end;
+    if ZW * ZH > 0 then
+    begin
+      Regions[2] := Default(VkBufferImageCopy);
+      Regions[2].bufferOffset := ColorBytes + StencilBytes;
+      Regions[2].imageSubresource.aspectMask := VK_IMAGE_ASPECT_DEPTH_BIT;
+      Regions[2].imageSubresource.layerCount := 1;
+      Regions[2].imageOffset.x := T.ZX1;
+      Regions[2].imageOffset.y := T.ZY1;
+      Regions[2].imageExtent.width := ZW;
+      Regions[2].imageExtent.height := ZH;
+      Regions[2].imageExtent.depth := 1;
+      FAPI.vkCmdCopyImageToBuffer(Slot.Cmd.Handle, T.Depth.Image, VK_IMAGE_LAYOUT_GENERAL, FReadback.Handle, 1,
+        @Regions[2]);
+      Inc(Count);
+    end;
+  end
+  else
   begin
-    Regions[2] := Default(VkBufferImageCopy);
-    Regions[2].bufferOffset := ColorBytes + StencilBytes;
-    Regions[2].imageSubresource.aspectMask := VK_IMAGE_ASPECT_DEPTH_BIT;
-    Regions[2].imageSubresource.layerCount := 1;
-    Regions[2].imageOffset.x := T.ZX1;
-    Regions[2].imageOffset.y := T.ZY1;
-    Regions[2].imageExtent.width := ZW;
-    Regions[2].imageExtent.height := ZH;
-    Regions[2].imageExtent.depth := 1;
-    FAPI.vkCmdCopyImageToBuffer(Slot.Cmd.Handle, T.Depth.Image, VK_IMAGE_LAYOUT_GENERAL, FReadback.Handle, 1,
-      @Regions[2]);
-    Inc(Count);
+    // At a scale the images go through the down-sampling kernel: colour with
+    // the stencil in its alpha, then depth as floats.
+    if CW * CH > 0 then
+    begin
+      DownSample(T, T.X1, T.Y1, CW, CH, 0, 1);
+      Inc(Count);
+    end;
+    if ZW * ZH > 0 then
+    begin
+      DownSample(T, T.ZX1, T.ZY1, ZW, ZH, Cardinal((ColorBytes + StencilBytes) div 4), 2);
+      Inc(Count);
+    end;
   end;
   HostBarrier := Default(VkMemoryBarrier);
   HostBarrier.sType := VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-  HostBarrier.srcAccessMask := VK_ACCESS_TRANSFER_WRITE_BIT;
+  HostBarrier.srcAccessMask := VK_ACCESS_TRANSFER_WRITE_BIT or VK_ACCESS_SHADER_WRITE_BIT;
   HostBarrier.dstAccessMask := VK_ACCESS_HOST_READ_BIT;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
-    @HostBarrier, 0, nil, 0, nil);
+  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_TRANSFER_BIT or VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    VK_PIPELINE_STAGE_HOST_BIT, 0, 1, @HostBarrier, 0, nil, 0, nil);
   WaitAll;
   if Count > 0 then
     FReadback.Invalidate;
+  var Scaled := FScale > 1;
   var V: PByte := @FMemory.VRAM[0];
   if CW * CH > 0 then
   begin
@@ -1480,8 +1728,11 @@ begin
       begin
         // The common case, a row in one piece.
         var D := PCardinal(V + A);
-        for var X := 0 to CW - 1 do
-          D[X] := (C[X] and $FFFFFF) or (Cardinal(St[X]) shl 24);
+        if Scaled then
+          Move(C^, D^, CW * 4)
+        else
+          for var X := 0 to CW - 1 do
+            D[X] := (C[X] and $FFFFFF) or (Cardinal(St[X]) shl 24);
         Inc(C, CW);
         Inc(St, CW);
         Continue;
@@ -1490,8 +1741,11 @@ begin
       begin
         var Px := C^;
         Inc(C);
+        var S8: Cardinal := St^;
+        if Scaled then
+          S8 := Px shr 24;
         var P := EncodeColorOf(T.Format, Px and $FF, (Px shr 8) and $FF, (Px shr 16) and $FF) or
-          StencilBitsOf(T.Format, St^);
+          StencilBitsOf(T.Format, S8);
         Inc(St);
         A := (T.Addr + (Cardinal(Y) * T.Stride + Cardinal(X)) * B) and VRAMMask;
         if B = 4 then PCardinal(V + A)^ := P else PWord(V + A)^ := Word(P);
@@ -1508,7 +1762,7 @@ begin
       begin
         // The fragment shader writes k / 65536: the product is k.
         var F: Single;
-        if FD24 then
+        if FD24 and not Scaled then
           F := (Z^ and $FFFFFF) * (65536 / 16777215)
         else
           F := PSingle(Z)^ * 65536;
@@ -2412,6 +2666,55 @@ begin
   FlushAll;
 end;
 
+// The display's framebuffer as the target image holds it, at the scale. The
+// image must be what the PSP would show: newer than guest memory (held), or
+// equal to it. Guest memory is left alone (nothing is read back).
+function TGEVulkanHLEBackend.Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
+var
+  HostBarrier: VkMemoryBarrier;
+begin
+  Result := False;
+  var A := Address and $1FFFFFFF;
+  // The linear views of VRAM.
+  if (A < PSPVRAMBase) or (A >= PSPVRAMBase + 4 * PSPVRAMSize) or ((A and PSPVRAMSize) <> 0) then
+    Exit;
+  var T: TGEHLETarget := nil;
+  for var U in FTargets do
+    if (U.Addr = A and VRAMMask) and (U.Format = Format and 3) and (U.Stride = Stride) and
+      (U.Width >= PSPFrameWidth) and (U.Height >= PSPFrameHeight) then
+    begin
+      T := U;
+      Break;
+    end;
+  if T = nil then
+    Exit;
+  if not T.Dirty and (not T.Loaded or RangeHeld(T.Addr, T.Bytes) or not SameVRAM(FMemory, T.Addr, T.Shadow)) then
+    Exit;
+  var Watch := TStopwatch.StartNew;
+  var W := PSPFrameWidth * FScale;
+  var H := PSPFrameHeight * FScale;
+  Record_;
+  EndPass;
+  ImageBarrier;
+  // Opaque ARGB in the target format's precision, by the kernel.
+  DownSample(T, 0, 0, W, H, 0, 3, 1);
+  HostBarrier := Default(VkMemoryBarrier);
+  HostBarrier.sType := VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  HostBarrier.srcAccessMask := VK_ACCESS_SHADER_WRITE_BIT;
+  HostBarrier.dstAccessMask := VK_ACCESS_HOST_READ_BIT;
+  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+    @HostBarrier, 0, nil, 0, nil);
+  WaitAll;
+  FReadback.Invalidate(0, UInt64(W * H) * 4);
+  Frame.Width := W;
+  Frame.Height := H;
+  if Length(Frame.Pixels) <> W * H then
+    SetLength(Frame.Pixels, W * H);
+  Move(FReadback.Data^, Frame.Pixels[0], W * H * 4);
+  Inc(FStats.Presents);
+  FStats.PresentSeconds := FStats.PresentSeconds + Watch.Elapsed.TotalSeconds;
+  Result := True;
+end;
 // The GE stops: what is recorded starts on the GPU when it has finished the
 // previous submission (recording goes on in the other slot without waiting),
 // else it grows until then or until a Sync. The targets stay held.
