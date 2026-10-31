@@ -992,8 +992,18 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
     f.sg = roundRasterD(sg);
     f.sb = roundRasterD(sb);
   }
-  precise double zz = double(vInt(p, V0, 2u)) * w0 + double(vInt(p, V1, 2u)) * w1 + double(vInt(p, V2, 2u)) * w2;
-  f.z = roundRasterD(zz);
+  // The depth plane (PSP.GE.Raster's GEMakeDepthPlane) where the depths differ.
+  if (prims[p + 110u] != 0u)
+  {
+    int64_t zdx = sx - int64_t(int(prims[p + 102u]));
+    int64_t zdy = sy - int64_t(int(prims[p + 103u]));
+    f.z = int((primInt64(p + 104u) + primInt64(p + 106u) * zdx + primInt64(p + 108u) * zdy) >> 14);
+  }
+  else
+  {
+    precise double zz = double(vInt(p, V0, 2u)) * w0 + double(vInt(p, V1, 2u)) * w1 + double(vInt(p, V2, 2u)) * w2;
+    f.z = roundRasterD(zz);
+  }
   f.s = 0.0;
   f.t = 0.0;
   f.lod = 0;

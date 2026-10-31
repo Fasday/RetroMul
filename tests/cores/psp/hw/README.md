@@ -52,6 +52,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   product, a sum, a multiply-add, a dot product and the reciprocal of every
   24-bit w in [1, 4). 4 s on the PSP.
 
+- `ge_zplane`: how the GE interpolates depth over a triangle: through-mode
+  triangles, 16 a frame, depth read back through the linear view
+  (`zplane/frame_*.bin` with `tris.bin`: random triangles with steep ramps;
+  `var_*.bin` with `vtris.bin`: random triangles drawn eight ways, vertex
+  order rotated and reversed, depths flipped, mirrored; `tie_*.bin` with
+  `ttris.bin`: shared rows and columns, right angles). 7 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -73,6 +80,23 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   lowest vertex. Interpolating the unclamped factor was up to 127 off where
   vertex factors lie outside [0, 1]; what is left (±1) comes from the
   projection.
+- A triangle's depth is a plane from one of its vertices (`ge_zplane`): that
+  vertex's depth plus steps per 1/16 pixel in x and y, fixed point with 14
+  fraction bits, floored at the pixel centre. The vertex: of those at the
+  ends in x (a tie to the upper one) and in y (a tie to the left one), the
+  one not between the others on either axis; where two are left, the third
+  vertex's side of the line through them picks one. Vertex order, mirroring
+  and the depths do not change it; every triangle whose plane goes through
+  a single vertex (1,416) fits. The steps are floor(N R / 2^(e + 2)), N the
+  depth gradient times the area, R = floor(2^(16 + e) / A17), A17 the area
+  (2^e to 2^(e+1)) cut to its top 17 bits. The hardware's own R is a
+  monotone function of the area's top 17 bits but one more or less than
+  that in 17% of them (no division or table model found yet), so 2-4% of
+  pixels stay one step off; the core's barycentric depth matched 28-58%.
+- Near-plane clipping: the clipped vertices' depth is not exactly that of
+  the near plane: the hardware's planes give 2 to 3 (of 65535) where the
+  core puts 0, so its intersection arithmetic (16-bit, like the vertex
+  unit's) is still to record.
 - Without depth clamping, a triangle with a vertex beyond the far plane is
   still drawn when its depth after the viewport lies in 0..65535, and one
   inside the planes whose depth falls outside that range is not; the near

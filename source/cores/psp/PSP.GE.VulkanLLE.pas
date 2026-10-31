@@ -1839,6 +1839,22 @@ begin
   // The fog plane, from the vertices' 8-bit fog factors (GEFogByte).
   if S.FogEnabled then
     PutPlane(P + 96, GEFogByte(A0.Fog), GEFogByte(A1.Fog), GEFogByte(A2.Fog), DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+  // The depth plane (GEMakeDepthPlane) when the depths differ: 102, 103 its
+  // vertex, 104..109 the start and the steps, 110 whether it is used.
+  if (V0.Z <> V1.Z) or (V0.Z <> V2.Z) then
+  begin
+    var DP: TGEDepthPlane;
+    GEMakeDepthPlane(V0, V1, V2, DP);
+    if DP.Valid then
+    begin
+      P[102] := Cardinal(Integer(DP.AX));
+      P[103] := Cardinal(Integer(DP.AY));
+      PInt64(P + 104)^ := DP.C0;
+      PInt64(P + 106)^ := DP.GX;
+      PInt64(P + 108)^ := DP.GY;
+      P[110] := 1;
+    end;
+  end;
   if NeedLod then
   begin
     // GEDrawTriangle's steps of S, T and Q along x and y, as it rounds them.

@@ -101,6 +101,19 @@ function GESpriteStep(D: Single; Len: Integer): Single;
 // those like the colours.
 function GEFogByte(F: Single): Integer;
 
+type
+  // A triangle's depth as the GE interpolates it (recorded on a PSP-E1000,
+  // tests/cores/psp/hw/ge_zplane): from one vertex's depth (at AX, AY in 1/16
+  // pixels) by steps per 1/16 pixel in x and y, fixed point with 14 fraction
+  // bits; a pixel takes the floor at its centre. Valid is False where the
+  // depths or the area are beyond the range this is exact in.
+  TGEDepthPlane = record
+    AX, AY, C0, GX, GY: Int64;
+    Valid: Boolean;
+  end;
+
+procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
+
 implementation
 
 function GESpriteStep(D: Single; Len: Integer): Single;
@@ -13044,6 +13057,90 @@ begin
     Hi := Lo - 1;
 end;
 
+// Floor of V / 2^S.
+function FloorShr(V: Int64; S: Integer): Int64; inline;
+begin
+  if V >= 0 then
+    Result := V shr S
+  else
+    Result := -((-V - 1) shr S) - 1;
+end;
+
+// The vertex the depth plane starts from: of the vertices at the ends in x
+// (a tie going to the upper one) and in y (a tie to the left one), the one
+// not between the others on either axis; where two are, the third vertex's
+// side of the line through them picks one. Recorded on a PSP-E1000: every
+// triangle of ge_zplane whose plane goes through one vertex only.
+function DepthAnchor(const X, Y: array of Int64): Integer;
+begin
+  var XMin := 0; var XMax := 0; var YMin := 0; var YMax := 0;
+  for var I := 1 to 2 do
+  begin
+    if (X[I] < X[XMin]) or ((X[I] = X[XMin]) and (Y[I] < Y[XMin])) then XMin := I;
+    if (X[I] > X[XMax]) or ((X[I] = X[XMax]) and (Y[I] < Y[XMax])) then XMax := I;
+    if (Y[I] < Y[YMin]) or ((Y[I] = Y[YMin]) and (X[I] < X[YMin])) then YMin := I;
+    if (Y[I] > Y[YMax]) or ((Y[I] = Y[YMax]) and (X[I] < X[YMax])) then YMax := I;
+  end;
+  var MX := 3 - XMin - XMax;
+  var MY := 3 - YMin - YMax;
+  if MX <> MY then
+    Exit(3 - MX - MY);
+  // Two candidates: C1 the left one (the upper of a column), C2 the other.
+  var C1 := (MX + 1) mod 3;
+  var C2 := (MX + 2) mod 3;
+  if (X[C2] < X[C1]) or ((X[C2] = X[C1]) and (Y[C2] < Y[C1])) then
+  begin
+    var T := C1; C1 := C2; C2 := T;
+  end;
+  var Cross := (X[C2] - X[C1]) * (Y[MX] - Y[C1]) - (Y[C2] - Y[C1]) * (X[MX] - X[C1]);
+  if (Cross > 0) = (Y[C1] <= Y[C2]) then
+    Result := C2
+  else
+    Result := C1;
+end;
+
+procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
+begin
+  var X: array[0..2] of Int64;
+  var Y: array[0..2] of Int64;
+  var Z: array[0..2] of Int64;
+  X[0] := V0.X; Y[0] := V0.Y; Z[0] := V0.Z;
+  X[1] := V1.X; Y[1] := V1.Y; Z[1] := V1.Z;
+  X[2] := V2.X; Y[2] := V2.Y; Z[2] := V2.Z;
+  var Area := (X[1] - X[0]) * (Y[2] - Y[0]) - (Y[1] - Y[0]) * (X[2] - X[0]);
+  // dz/dx and dz/dy times the area.
+  var NX := -(Z[0] * (Y[2] - Y[1]) + Z[1] * (Y[0] - Y[2]) + Z[2] * (Y[1] - Y[0]));
+  var NY := Z[0] * (X[2] - X[1]) + Z[1] * (X[0] - X[2]) + Z[2] * (X[1] - X[0]);
+  if Area < 0 then
+  begin
+    Area := -Area;
+    NX := -NX;
+    NY := -NY;
+  end;
+  P.Valid := (Area > 0) and (Area < (Int64(1) shl 34));
+  for var I := 0 to 2 do
+    if Abs(Z[I]) >= 1 shl 20 then
+      P.Valid := False;
+  if not P.Valid then
+    Exit;
+  // 1/area to 16 bits from the area's top 17 (floor((2^16 / m)) for the
+  // area's mantissa m cut to 16 fraction bits); the steps are N times it,
+  // floored to 2^-14.
+  var E := 63;
+  while (Area shr E) = 0 do
+    Dec(E);
+  var Cut := Area;
+  if E > 16 then
+    Cut := (Area shr (E - 16)) shl (E - 16);
+  var R := (Int64(1) shl (16 + E)) div Cut;
+  P.GX := FloorShr(NX * R, E + 2);
+  P.GY := FloorShr(NY * R, E + 2);
+  var A := DepthAnchor(X, Y);
+  P.AX := X[A];
+  P.AY := Y[A];
+  P.C0 := Z[A] shl 14;
+end;
+
 function GEFogByte(F: Single): Integer;
 begin
   if not (F > 0) then
@@ -13163,7 +13260,11 @@ begin
      (A0.SB <> A1.SB) or (A0.SB <> A2.SB));
   var Secondary := (A0.SR or A0.SG or A0.SB or A1.SR or A1.SG or A1.SB or A2.SR or A2.SG or A2.SB) <> 0;
   var ConstantZ := (A0.Z = A1.Z) and (A0.Z = A2.Z);
-  var NeedWeights := S.Textured or Secondary or not ConstantZ;
+  var DP: TGEDepthPlane;
+  DP.Valid := False;
+  if not ConstantZ then
+    GEMakeDepthPlane(V0, V1, V2, DP);
+  var NeedWeights := S.Textured or Secondary or (not ConstantZ and not DP.Valid);
   // Clear mode in one colour and depth: spans of PlotPixel's clear bits.
   if S.ClearMode and not Gouraud and (ConstantZ or not S.ClearDepth) and not GEGenericPixels then
   begin
@@ -13228,6 +13329,9 @@ begin
     var NF: Int64 := 0;
     if Fog then
       NF := PF.GX * (Int64(Lo) * 16 + 8 - AX) + PF.GY * (SY - AY);
+    var NZ: Int64 := 0;
+    if DP.Valid then
+      NZ := DP.C0 + DP.GX * (Int64(Lo) * 16 + 8 - DP.AX) + DP.GY * (SY - DP.AY);
     for var PX := Lo to Hi do
     begin
       var W0, W1, W2: Double;
@@ -13259,7 +13363,12 @@ begin
           F.SB := GERound(SB0 * W0 + SB1 * W1 + SB2 * W2);
         end;
       end;
-      if not ConstantZ then
+      if DP.Valid then
+      begin
+        F.Z := Integer(FloorShr(NZ, 14));
+        Inc(NZ, DP.GX * 16);
+      end
+      else if not ConstantZ then
         F.Z := GERound(Z0 * W0 + Z1 * W1 + Z2 * W2);
       if Textured then
       begin
