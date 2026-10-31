@@ -1974,11 +1974,20 @@ begin
   D.SR := S.SR; D.SG := S.SG; D.SB := S.SB;
 end;
 
+// Without depth clamping a primitive with a vertex whose depth after the
+// viewport lies outside 0..65535 is not drawn (recorded on a PSP-E1000:
+// beyond the far plane but inside that range it is; inside the planes but
+// outside it, not).
+function DepthOut(const A: TGEAsmVertex): Boolean; inline;
+begin
+  Result := (A.V.Z < 0) or (A.V.Z > 65535);
+end;
+
 // A triangle through the clipper. It is culled when all its vertices lie
-// beyond one plane, when without depth clamping any lies beyond the near or
-// far plane, and when any vertex it is drawn with lies outside the 4096
-// pixel screen. With depth clamping the near plane cuts it and the far plane
-// only clamps depth.
+// beyond one plane, when without depth clamping any lies beyond the near
+// plane or outside the depth range (DepthOut), and when any vertex it is
+// drawn with lies outside the 4096 pixel screen. With depth clamping the near
+// plane cuts it and the far plane only clamps depth.
 procedure TPSPGEEngine.ClipTriangle(const A, B, C: TGEAsmVertex; Odd: Boolean);
 var
   Src: array[0..2] of PGEAsmVertex;
@@ -1987,7 +1996,7 @@ begin
   var Codes := A.Code or B.Code or C.Code;
   if ((Codes and GEOutNone) <> 0) or ((A.Code and B.Code and C.Code and GEOutPlanes) <> 0) then
     Exit;
-  if ((Codes and GEOutZ) <> 0) and not FDepthClamp then
+  if not FDepthClamp and (((Codes and GEOutNear) <> 0) or DepthOut(A) or DepthOut(B) or DepthOut(C)) then
     Exit;
   if (Codes and GEOutNear) = 0 then
   begin
@@ -2036,7 +2045,7 @@ begin
   var Codes := A.Code or B.Code;
   if ((Codes and GEOutNone) <> 0) or ((A.Code and B.Code and GEOutPlanes) <> 0) then
     Exit;
-  if ((Codes and GEOutZ) <> 0) and not FDepthClamp then
+  if not FDepthClamp and (((Codes and GEOutNear) <> 0) or DepthOut(A) or DepthOut(B)) then
     Exit;
   P := A;
   Q := B;
@@ -2061,7 +2070,7 @@ begin
   var Codes := A.Code or B.Code;
   if ((Codes and (GEOutNone or GEOutNear or GEOutScreen)) <> 0) or ((A.Code and B.Code and GEOutPlanes) <> 0) then
     Exit;
-  if ((Codes and GEOutFar) <> 0) and not FDepthClamp then
+  if not FDepthClamp and (DepthOut(A) or DepthOut(B)) then
     Exit;
   if Backend <> nil then Backend.DrawSprite(FRaster, A.V, B.V) else FWorkers.Sprite(FRaster, A.V, B.V);
   Inc(FPrimCost, 100 + ScissoredArea(Min(A.V.X, B.V.X), Min(A.V.Y, B.V.Y), Max(A.V.X, B.V.X), Max(A.V.Y, B.V.Y)) * 3);
