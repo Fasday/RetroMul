@@ -2006,6 +2006,10 @@ const
   VK_SAMPLER_ADDRESS_MODE_REPEAT = 0;
   VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE = 2;
   VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK = 0;
+  VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT = $00000002;
+  VK_DESCRIPTOR_TYPE_STORAGE_IMAGE = 3;
+  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT = 1000251000;
+  VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME = 'VK_EXT_fragment_shader_interlock';
 
 type
   VkFilter = Integer;
@@ -2106,6 +2110,14 @@ type
     bufferFeatures: VkFormatFeatureFlags;
   end;
   PVkFormatProperties = ^VkFormatProperties;
+
+  VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    fragmentShaderSampleInterlock: VkBool32;
+    fragmentShaderPixelInterlock: VkBool32;
+    fragmentShaderShadingRateInterlock: VkBool32;
+  end;
 
   PFN_vkCreateSampler = function(device: VkDevice; pCreateInfo: PVkSamplerCreateInfo; pAllocator: Pointer; pSampler: PVkSampler): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
   PFN_vkDestroySampler = procedure(device: VkDevice; sampler: VkSampler; pAllocator: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};

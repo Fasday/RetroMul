@@ -38,7 +38,7 @@ uses
 type
   TGEVulkanHLEStats = record
     Draws, Prims, Submits, Flushes, TargetLoads, DepthLoads, DepthCopies, Readbacks: Int64;
-    TextureUploads, TextureHits, Pipelines, Presents: Int64;
+    TextureUploads, TextureHits, Pipelines, Presents, WatchFaults: Int64;
     // In flushes: waiting for the GPU, and everything (waiting and reading back).
     WaitSeconds, FlushSeconds: Double;
     // Setting up state (textures, targets, depth) for primitives, showing frames.
@@ -65,9 +65,14 @@ type
     // Guest memory's colour bytes when the image was last made equal to it.
     Shadow: TBytes;
     Loaded: Boolean;
-    // Newer than guest memory (its pages are held), with the box drawn.
+    // Newer than guest memory, with the box drawn. Only the pages of the rows
+    // drawn (HeldY1..HeldY2) are held, the rest of the target's are watched:
+    // a write there makes the image Stale outside those rows (drawing there
+    // reads it back and loads it again).
     Dirty: Boolean;
     X1, Y1, X2, Y2: Integer;
+    HeldY1, HeldY2: Integer;
+    Stale: Boolean;
     // The depth buffer the depth aspect holds, as depth values when loaded.
     ZAddr, ZStride: Cardinal;
     ZPerm: Integer;
@@ -80,6 +85,8 @@ type
     ZShadow: TArray<Word>;
     ZDirty: Boolean;
     ZX1, ZY1, ZX2, ZY2: Integer;
+    ZHeldY1, ZHeldY2: Integer;
+    ZStale: Boolean;
     function Bytes: Cardinal;
   end;
 
@@ -185,7 +192,7 @@ type
     FTarget: TGEHLETarget;
     // Clear-mode stencil writes take the primitive's alpha as the reference.
     FClearStencil: Boolean;
-    FDepthWrites: Boolean;
+    FDepthWrites, FDepthUsed: Boolean;
     // The lowest row the primitive being set up needs in its target.
     FNeedY: Integer;
     // Counts GE runs and flushes: what was verified in the current one stands.
@@ -219,8 +226,10 @@ type
     function StageUpload(Bytes: Int64; out Offset: Int64): PByte;
     procedure CopyToImage(Image: VkImage; Aspect: Cardinal; Offset: Int64; Level, X, Y, W, H: Integer);
     function RangeHeld(Lo, Size: Cardinal): Boolean;
-    procedure HoldTarget(T: TGEHLETarget);
-    procedure HoldDepth(T: TGEHLETarget);
+    procedure HoldRows(T: TGEHLETarget; Y1, Y2: Integer);
+    procedure HoldDepthRows(T: TGEHLETarget; Y1, Y2: Integer);
+    procedure HoldNewRows(T: TGEHLETarget; Y1, Y2: Integer);
+    procedure WatchTarget(T: TGEHLETarget);
     procedure WatchDepth(T: TGEHLETarget);
     function FindTarget(const S: TGERaster): TGEHLETarget;
     function BandRows(T: TGEHLETarget; Bytes: Integer): Integer;
@@ -235,6 +244,7 @@ type
     procedure ReadbackTarget(T: TGEHLETarget);
     procedure FlushAll;
     procedure VRAMFault;
+    procedure WatchFault;
     function SameState(const S: TGERaster; Kind: Integer): Boolean;
     procedure SetupState(const S: TGERaster; Kind: Integer);
     procedure ApplyBindings;
@@ -497,6 +507,7 @@ begin
   PCardinal(StageUpload(4, Offset))^ := $FFFFFFFF;
   CopyToImage(FDummy.Image.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, 0, 0, 0, 1, 1);
   FMemory.OnVRAMFault := VRAMFault;
+  FMemory.OnWatchFault := WatchFault;
 end;
 
 destructor TGEVulkanHLEBackend.Destroy;
@@ -510,6 +521,7 @@ begin
     FCompute.WaitIdle;
     if Assigned(FMemory.OnVRAMFault) then
       FMemory.OnVRAMFault := nil;
+    FMemory.OnWatchFault := nil;
     for var T in FTargets do
       DestroyTarget(T);
     FTargets.Free;
@@ -1206,11 +1218,13 @@ begin
   Result := False;
 end;
 
-procedure TGEVulkanHLEBackend.HoldTarget(T: TGEHLETarget);
+// The pages of rows Y1..Y2 of a target.
+procedure TGEVulkanHLEBackend.HoldRows(T: TGEHLETarget; Y1, Y2: Integer);
 begin
-  var First := T.Addr shr PSPPageShift;
-  var Last := (T.Addr + T.Bytes - 1) shr PSPPageShift;
-  for var P := First to Last do
+  var RowBytes := T.Stride * Bpp(T.Format);
+  var First := T.Addr + Cardinal(Y1) * RowBytes;
+  var Last := T.Addr + Cardinal(Y2 + 1) * RowBytes - 1;
+  for var P := First shr PSPPageShift to Last shr PSPPageShift do
     FMemory.HoldVRAM(P and (PSPVRAMSize div PSPPageSize - 1));
 end;
 
@@ -1219,17 +1233,18 @@ begin
   Result := Cardinal(T.Height) * T.ZStride * 2;
 end;
 
-procedure TGEVulkanHLEBackend.HoldDepth(T: TGEHLETarget);
+// The physical pages of rows Y1..Y2 of a depth buffer (each guest page of the
+// depth view stays one physical page).
+procedure TGEVulkanHLEBackend.HoldDepthRows(T: TGEHLETarget; Y1, Y2: Integer);
 begin
-  // Each guest page of the depth view stays one physical page.
-  var A := T.ZAddr and not Cardinal(PSPPageSize - 1);
-  while A < T.ZAddr + DepthBytes(T) do
+  var A := (T.ZAddr + Cardinal(Y1) * T.ZStride * 2) and not Cardinal(PSPPageSize - 1);
+  var Last := T.ZAddr + Cardinal(Y2 + 1) * T.ZStride * 2;
+  while A < Last do
   begin
     FMemory.HoldVRAM(PSPDepthOffset(A and VRAMMask, T.ZPerm) shr PSPPageShift);
     Inc(A, PSPPageSize);
   end;
 end;
-
 function DepthHeld(M: TPSPMemory; ZAddr, Bytes: Cardinal; Perm: Integer): Boolean;
 begin
   if M.HeldVRAMPages = 0 then
@@ -1263,6 +1278,21 @@ begin
   Move(M.VRAM[Addr], Shadow[0], First);
   if First < N then
     Move(M.VRAM[0], Shadow[First], N - First);
+end;
+
+// Rows Y1..Y2 of a target's shadow from guest memory.
+procedure CopyVRAMRows(M: TPSPMemory; T: TGEHLETarget; Y1, Y2: Integer);
+begin
+  var RowBytes := T.Stride * Bpp(T.Format);
+  for var Y := Y1 to Y2 do
+  begin
+    var Off := Cardinal(Y) * RowBytes;
+    var A := (T.Addr + Off) and VRAMMask;
+    var First := Min(RowBytes, PSPVRAMSize - A);
+    Move(M.VRAM[A], T.Shadow[Off], First);
+    if First < RowBytes then
+      Move(M.VRAM[0], T.Shadow[Off + First], RowBytes - First);
+  end;
 end;
 
 // Count depth values of row Y from X between guest memory and Values. The
@@ -1593,8 +1623,10 @@ begin
       T.ZShadow := Copy(U.ZShadow);
       T.ZDirty := True;
       T.ZX1 := U.ZX1; T.ZY1 := U.ZY1; T.ZX2 := Min(U.ZX2, T.Width - 1); T.ZY2 := Min(U.ZY2, T.Height - 1);
+      // The same pages stay held and watched.
+      T.ZHeldY1 := U.ZHeldY1; T.ZHeldY2 := U.ZHeldY2;
+      T.ZStale := U.ZStale;
       U.ZDirty := False;
-      HoldDepth(T);
       Exit;
     end;
   T.ZAddr := ZA; T.ZStride := ZS; T.ZPerm := ZP;
@@ -1783,13 +1815,21 @@ begin
   if T.Dirty then
   begin
     T.Dirty := False;
-    CopyVRAM(FMemory, T.Addr, T.Bytes, T.Shadow);
+    // The shadow is what the image holds: guest memory's in the rows drawn,
+    // and outside them what it was when loaded (the CPU may have written there
+    // since: the next use compares and loads the target again).
+    if (Cardinal(Length(T.Shadow)) <> T.Bytes) or (T.HeldY1 > T.HeldY2) then
+      CopyVRAM(FMemory, T.Addr, T.Bytes, T.Shadow)
+    else
+      CopyVRAMRows(FMemory, T, T.HeldY1, T.HeldY2);
+    T.Stale := False;
   end;
   if T.ZDirty then
   begin
     T.ZDirty := False;
-    // Outside the box the image held what guest memory did (its pages were
-    // held); a shadow of another size is taken again whole.
+    T.ZStale := False;
+    // Outside the box the image holds what guest memory held when it was
+    // loaded; a shadow of another size is taken again whole.
     if Length(T.ZShadow) <> T.Width * T.Height then
     begin
       SetLength(T.ZShadow, T.Width * T.Height);
@@ -1842,6 +1882,65 @@ end;
 procedure TGEVulkanHLEBackend.VRAMFault;
 begin
   FlushAll;
+end;
+
+// Two VRAM ranges (offsets, wrapping round VRAM) share a byte.
+function Overlaps(Addr, Bytes, Lo, Size: Cardinal): Boolean;
+begin
+  Result := (((Int64(Lo) - Addr) and VRAMMask) < Bytes) or (((Int64(Addr) - Lo) and VRAMMask) < Size);
+end;
+
+// A depth buffer's physical pages and a VRAM range share a page.
+function DepthOverlaps(T: TGEHLETarget; Lo, Size: Cardinal): Boolean;
+begin
+  var A := T.ZAddr and not Cardinal(PSPPageSize - 1);
+  while A < T.ZAddr + DepthBytes(T) do
+  begin
+    var Page := PSPDepthOffset(A and VRAMMask, T.ZPerm) and not Cardinal(PSPPageSize - 1);
+    if Overlaps(Page, PSPPageSize, Lo, Size) then
+      Exit(True);
+    Inc(A, PSPPageSize);
+  end;
+  Result := False;
+end;
+
+// A watched page is about to be written: a texture's, a depth buffer's that
+// was only read, or a drawn target's outside the rows drawn. The GPU draws
+// from its own copies: nothing waits, nothing is read back. Textures and
+// depth buffers are compared again when used; a drawn target the write may
+// reach is Stale outside its rows. The other targets are watched again.
+procedure TGEVulkanHLEBackend.WatchFault;
+begin
+  FMemory.ReleaseWatches;
+  Inc(FRun);
+  FStateValid := False;
+  Inc(FStats.WatchFaults);
+  var A := FMemory.WatchAddress and $1FFFFFFF;
+  if (A < PSPVRAMBase) or (A >= PSPVRAMBase + 4 * PSPVRAMSize) then
+    Exit;
+  // The odd mirrors permute bytes within 64 KB banks: the whole bank counts.
+  var Lo, Size: Cardinal;
+  if (A and PSPVRAMSize) <> 0 then
+  begin
+    Lo := A and VRAMMask and not Cardinal($FFFF);
+    Size := $10000;
+  end
+  else
+  begin
+    Lo := A and VRAMMask;
+    Size := Max(FMemory.WatchSize, 1);
+  end;
+  for var T in FTargets do
+  begin
+    if T.Dirty and not T.Stale and Overlaps(T.Addr, T.Bytes, Lo, Size) then
+      T.Stale := True;
+    if T.ZDirty and not T.ZStale and DepthOverlaps(T, Lo, Size) then
+      T.ZStale := True;
+    if T.Dirty and not T.Stale then
+      WatchTarget(T);
+    if T.ZDirty and not T.ZStale then
+      WatchDepth(T);
+  end;
 end;
 
 function IsClutFormat(Format: Integer): Boolean; inline;
@@ -1922,6 +2021,58 @@ begin
     var Page := PSPDepthOffset(A and VRAMMask, T.ZPerm) shr PSPPageShift;
     WatchBytes(FMemory, PSPVRAMBase + (Page shl PSPPageShift), PSPPageSize);
     Inc(A, PSPPageSize);
+  end;
+end;
+
+// A target's pages, watched in every mirror.
+procedure TGEVulkanHLEBackend.WatchTarget(T: TGEHLETarget);
+begin
+  WatchBytes(FMemory, PSPVRAMBase + T.Addr, T.Bytes);
+end;
+
+// Rows Y1..Y2 of a target are drawn: the colour's pages, and the depth's when
+// it is written, of the rows not yet held are held.
+procedure TGEVulkanHLEBackend.HoldNewRows(T: TGEHLETarget; Y1, Y2: Integer);
+begin
+  if T.HeldY1 > T.HeldY2 then
+  begin
+    HoldRows(T, Y1, Y2);
+    T.HeldY1 := Y1;
+    T.HeldY2 := Y2;
+  end
+  else
+  begin
+    if Y1 < T.HeldY1 then
+    begin
+      HoldRows(T, Y1, T.HeldY1 - 1);
+      T.HeldY1 := Y1;
+    end;
+    if Y2 > T.HeldY2 then
+    begin
+      HoldRows(T, T.HeldY2 + 1, Y2);
+      T.HeldY2 := Y2;
+    end;
+  end;
+  if not FDepthWrites then
+    Exit;
+  if T.ZHeldY1 > T.ZHeldY2 then
+  begin
+    HoldDepthRows(T, Y1, Y2);
+    T.ZHeldY1 := Y1;
+    T.ZHeldY2 := Y2;
+  end
+  else
+  begin
+    if Y1 < T.ZHeldY1 then
+    begin
+      HoldDepthRows(T, Y1, T.ZHeldY1 - 1);
+      T.ZHeldY1 := Y1;
+    end;
+    if Y2 > T.ZHeldY2 then
+    begin
+      HoldDepthRows(T, T.ZHeldY2 + 1, Y2);
+      T.ZHeldY2 := Y2;
+    end;
   end;
 end;
 
@@ -2190,19 +2341,25 @@ begin
   var TexSet := TextureSet(Tex, 0);
   Inc(FUseCounter);
   T.LastUse := FUseCounter;
-  // From the first primitive on the target is newer than guest memory.
+  // From the first primitive on the target is newer than guest memory: the
+  // rows drawn are held (Emit), the rest watched.
   if not T.Dirty then
   begin
     T.Dirty := True;
     T.X1 := MaxInt; T.Y1 := MaxInt; T.X2 := -1; T.Y2 := -1;
-    HoldTarget(T);
+    T.HeldY1 := MaxInt; T.HeldY2 := -1;
+    T.Stale := False;
+    WatchTarget(T);
   end;
   FDepthWrites := (DepthTest and S.DepthWrite) or (Clear and S.ClearDepth);
+  FDepthUsed := DepthTest or (Clear and S.ClearDepth);
   if FDepthWrites and not T.ZDirty then
   begin
     T.ZDirty := True;
     T.ZX1 := MaxInt; T.ZY1 := MaxInt; T.ZX2 := -1; T.ZY2 := -1;
-    HoldDepth(T);
+    T.ZHeldY1 := MaxInt; T.ZHeldY2 := -1;
+    T.ZStale := False;
+    WatchDepth(T);
   end
   else if DepthTest and not T.ZDirty and (T.ZWatched <> FRun) then
   begin
@@ -2431,6 +2588,17 @@ begin
   Y2 := Min(Y2, T.Height - 1);
   if (X1 > X2) or (Y1 > Y2) then
     Exit;
+  // Guest memory changed outside the rows drawn so far: the image there is
+  // brought back to it before drawing there.
+  if (T.Stale and ((Y1 < T.HeldY1) or (Y2 > T.HeldY2))) or
+    (T.ZStale and FDepthUsed and ((Y1 < T.ZHeldY1) or (Y2 > T.ZHeldY2))) then
+  begin
+    FlushAll;
+    FNeedY := Y2;
+    SetupState(S, Kind);
+    T := FTarget;
+  end;
+  HoldNewRows(T, Y1, Y2);
   if FClearStencil then
   begin
     var A := V[Count - 1].Color shr 24;
@@ -2689,6 +2857,10 @@ begin
   if T = nil then
     Exit;
   if not T.Dirty and (not T.Loaded or RangeHeld(T.Addr, T.Bytes) or not SameVRAM(FMemory, T.Addr, T.Shadow)) then
+    Exit;
+  // Guest memory changed outside the rows drawn: the display reads it (and
+  // the drawn rows back) instead.
+  if T.Dirty and T.Stale then
     Exit;
   var Watch := TStopwatch.StartNew;
   var W := PSPFrameWidth * FScale;

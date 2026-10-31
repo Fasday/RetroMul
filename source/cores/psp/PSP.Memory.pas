@@ -37,12 +37,15 @@ type
     FHeld: array[0..PSPVRAMSize div PSPPageSize - 1] of Boolean;
     FHeldCount: Integer;
     FOnVRAMFault: TPSPVRAMFault;
+    FOnWatchFault: TPSPVRAMFault;
+    FWatchAddress, FWatchSize: Cardinal;
     FVRAMShift: Integer;
     FWatched: TArray<Integer>;
     FWatchCount: Integer;
     function VRAMOffset(Address: Cardinal): Cardinal;
     function LinearPtr(Address, Size: Cardinal): PByte;
     procedure WatchRange(Address, Size: Cardinal);
+    procedure WatchFault(Address, Size: Cardinal);
     function MirrorPtr(Address: Cardinal): PByte;
     procedure MapRange(Physical, Size: Cardinal; Base: PByte);
     function Unmapped(Address: Cardinal; Write: Boolean): Cardinal;
@@ -103,6 +106,12 @@ type
     function CodeMarks: PByte; inline;
     property OnCodeWrite: TPSPCodeWrite read FOnCodeWrite write FOnCodeWrite;
     property OnVRAMFault: TPSPVRAMFault read FOnVRAMFault write FOnVRAMFault;
+    // When set, a write to a watched page calls it instead of OnVRAMFault: it
+    // must finish reading the watched pages and release them (held pages may
+    // stay held). WatchAddress and WatchSize are the write's.
+    property OnWatchFault: TPSPVRAMFault read FOnWatchFault write FOnWatchFault;
+    property WatchAddress: Cardinal read FWatchAddress;
+    property WatchSize: Cardinal read FWatchSize;
     property RAM: TBytes read FRAM;
     property VRAM: TBytes read FVRAM;
     property Scratch: TBytes read FScratch;
@@ -341,7 +350,7 @@ end;
 procedure TPSPMemory.Write8(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
-  if (FCodePages[Page] and PSPPageWatched) <> 0 then FOnVRAMFault();
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then WatchFault(Address, 1);
   var P := FPages[Page];
   if P = nil then
   begin
@@ -367,7 +376,7 @@ end;
 procedure TPSPMemory.Write16(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
-  if (FCodePages[Page] and PSPPageWatched) <> 0 then FOnVRAMFault();
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then WatchFault(Address, 2);
   var P := FPages[Page];
   if P = nil then
   begin
@@ -393,7 +402,7 @@ end;
 procedure TPSPMemory.Write32(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
-  if (FCodePages[Page] and PSPPageWatched) <> 0 then FOnVRAMFault();
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then WatchFault(Address, 4);
   var P := FPages[Page];
   if P = nil then
   begin
@@ -438,9 +447,19 @@ begin
   for var Page := First to Cardinal(Last) do
     if (FCodePages[Page] and PSPPageWatched) <> 0 then
     begin
-      FOnVRAMFault();
+      WatchFault(Address, Size);
       Exit;
     end;
+end;
+
+procedure TPSPMemory.WatchFault(Address, Size: Cardinal);
+begin
+  FWatchAddress := Address;
+  FWatchSize := Size;
+  if Assigned(FOnWatchFault) then
+    FOnWatchFault()
+  else
+    FOnVRAMFault();
 end;
 
 procedure TPSPMemory.WatchPage(Page: Integer);

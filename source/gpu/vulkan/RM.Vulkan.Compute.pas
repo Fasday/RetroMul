@@ -21,6 +21,9 @@ type
     SignedZeroInfNan32, SignedZeroInfNan64: Boolean;
     // With a graphics queue: fixed-function features enabled when supported.
     DepthClamp, LogicOp, DualSrcBlend: Boolean;
+    // With a graphics queue: fragment shaders that write storage images in
+    // primitive order (VK_EXT_fragment_shader_interlock, pixel interlock).
+    PixelInterlock: Boolean;
   end;
 
   // Device: device-local, not mapped. Upload: host-visible for CPU writes.
@@ -143,6 +146,7 @@ type
     procedure CreateInstance(Validation: Boolean);
     procedure SelectDevice(const DeviceName: string);
     procedure CreateDevice;
+    function HasExtension(const Name: AnsiString): Boolean;
   public
     // Graphics: the queue also renders (a family with graphics and compute).
     constructor Create(const DeviceName: string = ''; Validation: Boolean = False; Graphics: Boolean = False);
@@ -332,6 +336,23 @@ begin
   FAPI.vkGetPhysicalDeviceMemoryProperties(FPhysicalDevice, @FMemory);
 end;
 
+function TVulkanCompute.HasExtension(const Name: AnsiString): Boolean;
+var
+  Count: Cardinal;
+  List: TArray<VkExtensionProperties>;
+begin
+  Count := 0;
+  if FAPI.vkEnumerateDeviceExtensionProperties(FPhysicalDevice, nil, @Count, nil) <> VK_SUCCESS then
+    Exit(False);
+  SetLength(List, Count);
+  if (Count > 0) and (FAPI.vkEnumerateDeviceExtensionProperties(FPhysicalDevice, nil, @Count, @List[0]) <> VK_SUCCESS) then
+    Exit(False);
+  for var I := 0 to Integer(Count) - 1 do
+    if AnsiString(PAnsiChar(@List[I].extensionName[0])) = Name then
+      Exit(True);
+  Result := False;
+end;
+
 procedure TVulkanCompute.CreateDevice;
 var
   Features: VkPhysicalDeviceFeatures2;
@@ -339,6 +360,7 @@ var
   Storage8: VkPhysicalDevice8BitStorageFeatures;
   Int8: VkPhysicalDeviceShaderFloat16Int8Features;
   Timeline: VkPhysicalDeviceTimelineSemaphoreFeatures;
+  Interlock: VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
   Controls: VkPhysicalDeviceFloatControlsProperties;
   Properties: VkPhysicalDeviceProperties2;
   Priority: Single;
@@ -360,6 +382,14 @@ begin
   Features := Default(VkPhysicalDeviceFeatures2);
   Features.sType := VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
   Features.pNext := @Timeline;
+  Interlock := Default(VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT);
+  Interlock.sType := VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
+  var HasInterlock := FGraphics and HasExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+  if HasInterlock then
+  begin
+    Interlock.pNext := Features.pNext;
+    Features.pNext := @Interlock;
+  end;
   FAPI.vkGetPhysicalDeviceFeatures2(FPhysicalDevice, @Features);
   Controls := Default(VkPhysicalDeviceFloatControlsProperties);
   Controls.sType := VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;
@@ -395,7 +425,18 @@ begin
     FFeatures.DepthClamp := Core.depthClamp <> 0;
     FFeatures.LogicOp := Core.logicOp <> 0;
     FFeatures.DualSrcBlend := Core.dualSrcBlend <> 0;
+    if HasInterlock and (Interlock.fragmentShaderPixelInterlock <> 0) and
+      (Features.features.fragmentStoresAndAtomics <> 0) then
+    begin
+      Core.fragmentStoresAndAtomics := 1;
+      Interlock.fragmentShaderSampleInterlock := 0;
+      Interlock.fragmentShaderShadingRateInterlock := 0;
+      FFeatures.PixelInterlock := True;
+    end;
   end;
+  // The interlock features go to the device only with their extension.
+  if HasInterlock and not FFeatures.PixelInterlock then
+    Features.pNext := Interlock.pNext;
   Features.features := Core;
   Storage16.storagePushConstant16 := 0;
   Storage16.storageInputOutput16 := 0;
@@ -415,6 +456,13 @@ begin
   DeviceInfo.pNext := @Features;
   DeviceInfo.queueCreateInfoCount := 1;
   DeviceInfo.pQueueCreateInfos := @QueueInfo;
+  var Extensions: array[0..0] of PAnsiChar;
+  if FFeatures.PixelInterlock then
+  begin
+    Extensions[0] := VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME;
+    DeviceInfo.enabledExtensionCount := 1;
+    DeviceInfo.ppEnabledExtensionNames := @Extensions[0];
+  end;
   CheckVulkan(FAPI.vkCreateDevice(FPhysicalDevice, @DeviceInfo, nil, @FDevice), 'vkCreateDevice');
   FAPI.LoadDevice(FDevice);
   FAPI.vkGetDeviceQueue(FDevice, FQueueFamily, 0, @FQueue);

@@ -696,10 +696,10 @@ begin
       else if HLE <> nil then
       begin
         var St := HLE.Stats;
-        Writeln(ErrOutput, Format('gpu hle: %d prims in %d draws, %d submits, %d flushes, %d read back, ' +
+        Writeln(ErrOutput, Format('gpu hle: %d prims in %d draws, %d submits, %d flushes (%d watch faults without), %d read back, ' +
           '%d target loads, %d depth loads, %d depth copies, %d textures uploaded, %d reused, %d pipelines; ' +
           '%.2fs flushing (%.2fs waiting), %.2fs setting up; %d frames shown at %dx in %.2fs',
-          [St.Prims, St.Draws, St.Submits, St.Flushes, St.Readbacks, St.TargetLoads, St.DepthLoads, St.DepthCopies,
+          [St.Prims, St.Draws, St.Submits, St.Flushes, St.WatchFaults, St.Readbacks, St.TargetLoads, St.DepthLoads, St.DepthCopies,
           St.TextureUploads, St.TextureHits, St.Pipelines, St.FlushSeconds, St.WaitSeconds, St.SetupSeconds,
           St.Presents, HLE.Scale, St.PresentSeconds]));
       end
