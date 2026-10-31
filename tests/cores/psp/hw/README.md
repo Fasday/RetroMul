@@ -43,7 +43,22 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   and powered diffuse at several exponents, and their combinations. 5 s on
   the PSP.
 
+- `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
+  runner that also writes every job's readback to `host0:/exact/`. All 131
+  jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
+  are a pixel-level reference; the same PRX in the emulator gives the
+  emulator's.
+
 ## Findings (PSP-E1000, 2026-10-31)
+
+- Through-mode positions are truncated to 1/16 pixel (a point at x.97 stays
+  on pixel x).
+- Bilinear filtering truncates each row's mix before the column mix:
+  ((top >> 4) (16 - fy) + (bottom >> 4) fy) >> 4. Every pixel of the
+  texture jobs matches.
+- A sprite's texture step per pixel is the difference over the length
+  truncated toward zero (12 texels over 7 pixels steps a hair under 12/7);
+  rounding it moved 20% of a scaled-sprite job's pixels.
 
 - Lighting is an 8-bit pipeline. Factors in [0, 1] (N.L, N.H or N.L raised
   to the shininess, the attenuation, the spot factor) become

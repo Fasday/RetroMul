@@ -1891,22 +1891,22 @@ begin
   if V1.X <> V0.X then
   begin
     if Turned then
-      TX := (V1.T - V0.T) / ((V1.X - V0.X) / 16)
+      TX := GESpriteStep(V1.T - V0.T, V1.X - V0.X)
     else
     begin
-      SX := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
-      QX := (V1.Q - V0.Q) / ((V1.X - V0.X) / 16);
+      SX := GESpriteStep(V1.S - V0.S, V1.X - V0.X);
+      QX := GESpriteStep(V1.Q - V0.Q, V1.X - V0.X);
     end;
   end;
   if V1.Y <> V0.Y then
   begin
     if Turned then
     begin
-      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16);
-      QY := (V1.Q - V0.Q) / ((V1.Y - V0.Y) / 16);
+      SY := GESpriteStep(V1.S - V0.S, V1.Y - V0.Y);
+      QY := GESpriteStep(V1.Q - V0.Q, V1.Y - V0.Y);
     end
     else
-      TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+      TY := GESpriteStep(V1.T - V0.T, V1.Y - V0.Y);
   end;
 
   var State := PackState(S, Tex, Ok);

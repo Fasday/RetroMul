@@ -92,8 +92,20 @@ procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 procedure GEDrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
 procedure GEDrawLine(const S: TGERaster; const V0, V1: TGEVertex);
 procedure GEDrawPoint(const S: TGERaster; const V: TGEVertex);
+// A sprite's texture coordinate step per pixel: the difference over the
+// length (in 1/16 pixels), truncated toward zero to single precision
+// (recorded on a PSP-E1000: 12 texels over 7 pixels steps a hair under 12/7).
+function GESpriteStep(D: Single; Len: Integer): Single;
 
 implementation
+
+function GESpriteStep(D: Single; Len: Integer): Single;
+begin
+  var Q: Double := D / (Len / 16);
+  Result := Q;
+  if Abs(Double(Result)) > Abs(Q) then
+    PCardinal(@Result)^ := PCardinal(@Result)^ - 1;
+end;
 
 type
   TGEFragment = record
@@ -13299,22 +13311,22 @@ begin
   if V1.X <> V0.X then
   begin
     if Turned then
-      TX := (V1.T - V0.T) / ((V1.X - V0.X) / 16)
+      TX := GESpriteStep(V1.T - V0.T, V1.X - V0.X)
     else
     begin
-      SX := (V1.S - V0.S) / ((V1.X - V0.X) / 16);
-      QX := (V1.Q - V0.Q) / ((V1.X - V0.X) / 16);
+      SX := GESpriteStep(V1.S - V0.S, V1.X - V0.X);
+      QX := GESpriteStep(V1.Q - V0.Q, V1.X - V0.X);
     end;
   end;
   if V1.Y <> V0.Y then
   begin
     if Turned then
     begin
-      SY := (V1.S - V0.S) / ((V1.Y - V0.Y) / 16);
-      QY := (V1.Q - V0.Q) / ((V1.Y - V0.Y) / 16);
+      SY := GESpriteStep(V1.S - V0.S, V1.Y - V0.Y);
+      QY := GESpriteStep(V1.Q - V0.Q, V1.Y - V0.Y);
     end
     else
-      TY := (V1.T - V0.T) / ((V1.Y - V0.Y) / 16);
+      TY := GESpriteStep(V1.T - V0.T, V1.Y - V0.Y);
   end;
   var Projected := (V0.Q <> 1) or (V1.Q <> 1);
   var Lod := 0;
