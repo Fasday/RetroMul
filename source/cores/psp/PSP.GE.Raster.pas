@@ -259,24 +259,32 @@ begin
   end;
 end;
 
-// One side of the blend equation: a colour times its factor. The colour
-// counts as (c + 1) / 256; doubled factors double the product, "one minus
-// double" factors clamp at zero.
+// A colour times a factor as the GE's 8-bit units multiply (the lighting's
+// Mul8): (2c + 1) (2f + 1) / 1024, truncated, so 255 counts as one.
+function BlendMul(C, F: Integer): Integer; inline;
+begin
+  Result := ((2 * C + 1) * (2 * F + 1)) shr 10;
+end;
+
+// One side of the blend equation: a colour times its factor (BlendMul:
+// source alpha over one minus it matches every one of 65,536 colour and alpha
+// pairs on a PSP-E1000, gpu/exact's dither and 565 job); doubled factors
+// double the product, "one minus double" factors clamp at zero.
 function BlendTerm(Kind, C, Other, SA, DA, Fix: Integer): Integer; inline;
 begin
   case Kind of
-    0: Result := ((C + 1) * Other) shr 8;
-    1: Result := ((C + 1) * (255 - Other)) shr 8;
-    2: Result := ((C + 1) * SA) shr 8;
-    3: Result := ((C + 1) * (255 - SA)) shr 8;
-    4: Result := ((C + 1) * DA) shr 8;
-    5: Result := ((C + 1) * (255 - DA)) shr 8;
-    6: Result := (((C + 1) * SA) shr 8) * 2;
-    7: Result := ((C + 1) * Max(0, 255 - 2 * SA)) shr 8;
-    8: Result := (((C + 1) * DA) shr 8) * 2;
-    9: Result := ((C + 1) * Max(0, 255 - 2 * DA)) shr 8;
+    0: Result := BlendMul(C, Other);
+    1: Result := BlendMul(C, 255 - Other);
+    2: Result := BlendMul(C, SA);
+    3: Result := BlendMul(C, 255 - SA);
+    4: Result := BlendMul(C, DA);
+    5: Result := BlendMul(C, 255 - DA);
+    6: Result := BlendMul(C, SA) * 2;
+    7: Result := BlendMul(C, Max(0, 255 - 2 * SA));
+    8: Result := BlendMul(C, DA) * 2;
+    9: Result := BlendMul(C, Max(0, 255 - 2 * DA));
   else
-    Result := ((C + 1) * Fix) shr 8;
+    Result := BlendMul(C, Fix);
   end;
 end;
 
@@ -826,17 +834,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -1016,17 +1024,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -1206,17 +1214,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -1396,17 +1404,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -1586,17 +1594,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -1776,17 +1784,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -1966,17 +1974,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -2156,17 +2164,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -2348,17 +2356,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -2538,17 +2546,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -2728,17 +2736,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -2918,17 +2926,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -3108,17 +3116,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -3298,17 +3306,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -3488,17 +3496,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -3678,17 +3686,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -3870,17 +3878,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -4060,17 +4068,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -4250,17 +4258,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -4440,17 +4448,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -4630,17 +4638,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -4820,17 +4828,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -5010,17 +5018,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -5200,17 +5208,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -5392,17 +5400,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -5582,17 +5590,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -5772,17 +5780,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -5962,17 +5970,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -6152,17 +6160,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -6342,17 +6350,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -6532,17 +6540,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -6722,17 +6730,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -6916,17 +6924,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -7106,17 +7114,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -7296,17 +7304,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -7486,17 +7494,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -7676,17 +7684,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -7866,17 +7874,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -8056,17 +8064,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -8246,17 +8254,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -8438,17 +8446,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -8628,17 +8636,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -8818,17 +8826,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -9008,17 +9016,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -9198,17 +9206,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -9388,17 +9396,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -9578,17 +9586,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -9768,17 +9776,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -9960,17 +9968,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -10150,17 +10158,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -10340,17 +10348,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -10530,17 +10538,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -10720,17 +10728,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -10910,17 +10918,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -11100,17 +11108,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -11290,17 +11298,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -11482,17 +11490,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -11672,17 +11680,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -11862,17 +11870,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -12052,17 +12060,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -12242,17 +12250,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -12432,17 +12440,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -12622,17 +12630,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);
@@ -12812,17 +12820,17 @@ begin
       begin
         var SA := F.A;
         var DF := 255 - SA;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * DF) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * DF) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * DF) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, DF);
+        G := BlendMul(G, SA) + BlendMul(DG, DF);
+        B := BlendMul(B, SA) + BlendMul(DB, DF);
       end;
     2:
       begin
         var SA := F.A;
         var Fix := S.FixB;
-        R := (((R + 1) * SA) shr 8) + (((DR + 1) * Integer(Fix and $FF)) shr 8);
-        G := (((G + 1) * SA) shr 8) + (((DG + 1) * Integer((Fix shr 8) and $FF)) shr 8);
-        B := (((B + 1) * SA) shr 8) + (((DB + 1) * Integer((Fix shr 16) and $FF)) shr 8);
+        R := BlendMul(R, SA) + BlendMul(DR, Integer(Fix and $FF));
+        G := BlendMul(G, SA) + BlendMul(DG, Integer((Fix shr 8) and $FF));
+        B := BlendMul(B, SA) + BlendMul(DB, Integer((Fix shr 16) and $FF));
       end;
   else
     R := BlendChannel(S, R, DR, F.A, DA, 0);

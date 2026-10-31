@@ -142,6 +142,11 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   reciprocals, matched 61%. With it the perspective, divide and full
   perspective-path sets are exact.
 
+- Alpha blending multiplies the same way as lighting: each side is
+  floor((2c + 1)(2f + 1) / 1024) of the colour and its factor, the sum
+  stopped at 255 (gpu/exact's dither and 565 job: all 65,536 colour and
+  alpha pairs of source alpha over one minus source alpha; the core's
+  (c + 1) f / 256 matched 77%).
 - Lighting is an 8-bit pipeline. Factors in [0, 1] (N.L, N.H or N.L raised
   to the shininess, the attenuation, the spot factor) become
   min(255, floor(256 x)). Two 8-bit values multiply as

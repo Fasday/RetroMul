@@ -559,22 +559,28 @@ int rawStencil(uint format, uint pixel)
   return 0;
 }
 
+// PSP.GE.Raster's BlendMul and BlendTerm.
+int blendMul(int c, int f)
+{
+  return shr((2 * c + 1) * (2 * f + 1), 10u);
+}
+
 int blendTerm(int kind, int c, int other, int sa, int da, int fix)
 {
   switch (kind)
   {
-    case 0: return shr((c + 1) * other, 8u);
-    case 1: return shr((c + 1) * (255 - other), 8u);
-    case 2: return shr((c + 1) * sa, 8u);
-    case 3: return shr((c + 1) * (255 - sa), 8u);
-    case 4: return shr((c + 1) * da, 8u);
-    case 5: return shr((c + 1) * (255 - da), 8u);
-    case 6: return shr((c + 1) * sa, 8u) * 2;
-    case 7: return shr((c + 1) * max(0, 255 - 2 * sa), 8u);
-    case 8: return shr((c + 1) * da, 8u) * 2;
-    case 9: return shr((c + 1) * max(0, 255 - 2 * da), 8u);
+    case 0: return blendMul(c, other);
+    case 1: return blendMul(c, 255 - other);
+    case 2: return blendMul(c, sa);
+    case 3: return blendMul(c, 255 - sa);
+    case 4: return blendMul(c, da);
+    case 5: return blendMul(c, 255 - da);
+    case 6: return blendMul(c, sa) * 2;
+    case 7: return blendMul(c, max(0, 255 - 2 * sa));
+    case 8: return blendMul(c, da) * 2;
+    case 9: return blendMul(c, max(0, 255 - 2 * da));
   }
-  return shr((c + 1) * fix, 8u);
+  return blendMul(c, fix);
 }
 
 int blendChannel(uint s, int sc, int dc, int sa, int da, uint shift)
