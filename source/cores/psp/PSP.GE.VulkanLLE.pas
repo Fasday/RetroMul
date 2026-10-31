@@ -1,4 +1,4 @@
-unit PSP.GE.GPU;
+unit PSP.GE.VulkanLLE;
 
 // The GE's rasterizer and pixel pipeline on a Vulkan compute device, with the
 // arithmetic of PSP.GE.Raster bit for bit (source/gpu/shaders/PSPGERaster.comp).
@@ -40,7 +40,7 @@ const
   VRAMPageCount = PSPVRAMSize div PSPPageSize;
 
 type
-  TGEGPUStats = record
+  TGEVulkanLLEStats = record
     Batches, Passes, Prims, Fallbacks, UploadedPages: Int64;
     // Waits for everything drawn: in all, for an access to held or watched
     // memory, before a primitive drawn on the CPU. Pages compared and read back.
@@ -53,9 +53,9 @@ type
     WaitSeconds, UploadSeconds, DrawSeconds, ReadbackSeconds: Double;
   end;
 
-  TGEGPUMessage = reference to procedure(const Text: string);
+  TGEVulkanLLEMessage = reference to procedure(const Text: string);
 
-  TGEGPUSpan = record
+  TGEVulkanLLESpan = record
     Lo, Len: Int64; // VRAM offset and length, may run past the end (wraps)
     // When Stride > 0, only Rows rows of Width bytes, Stride bytes apart, from
     // Lo (a render target's box, an unswizzled texture level).
@@ -63,27 +63,27 @@ type
   end;
 
   // The VRAM a primitive's texture reads: one span a level it can sample.
-  TGEGPUReads = record
+  TGEVulkanLLEReads = record
     Count: Integer;
-    Spans: array[0..7] of TGEGPUSpan;
+    Spans: array[0..7] of TGEVulkanLLESpan;
     // Only TGETexture.Level is sampled (the first span, when in VRAM).
     OneLevel: Boolean;
   end;
 
-  TGEGPUPass = record
+  TGEVulkanLLEPass = record
     First, Count: Integer;
     X1, Y1, X2, Y2: Integer;
     FBAddr, FBStride, FBFormat, ZAddr, ZStride: Cardinal;
     ZPermutation: Integer;
     UsesZ: Boolean;
     // Bytes the pass's whole box covers (depth in whole permutation blocks).
-    FB, Z: TGEGPUSpan;
-    Reads: TArray<TGEGPUSpan>;
+    FB, Z: TGEVulkanLLESpan;
+    Reads: TArray<TGEVulkanLLESpan>;
     ReadCount: Integer;
   end;
-  PGEGPUPass = ^TGEGPUPass;
+  PGEVulkanLLEPass = ^TGEVulkanLLEPass;
 
-  TGEGPUCheckPrim = record
+  TGEVulkanLLECheckPrim = record
     Kind: Integer;
     S: TGERaster;
     V: array[0..2] of TGEVertex;
@@ -91,7 +91,7 @@ type
   end;
 
   // A submitted batch: its buffers, and the pages to copy back when it is done.
-  TGEGPUSlot = record
+  TGEVulkanLLESlot = record
     Cmd: TVulkanCommands;
     PrimBuf, StateBuf, DataBuf, BinBuf, Upload, Readback: TVulkanBuffer;
     Pages: array[0..VRAMPageCount - 1] of Boolean;
@@ -99,15 +99,15 @@ type
     Busy: Boolean;
     Order: Int64;
   end;
-  PGEGPUSlot = ^TGEGPUSlot;
+  PGEVulkanLLESlot = ^TGEVulkanLLESlot;
 
-  TGEGPUBackend = class(TGERasterBackend)
+  TGEVulkanLLEBackend = class(TGERasterBackend)
   private
     FMemory: TPSPMemory;
     FCompute: TVulkanCompute;
     FKernel: TVulkanKernel;
     FVRAM: TVulkanBuffer;
-    FSlots: array[0..1] of TGEGPUSlot;
+    FSlots: array[0..1] of TGEVulkanLLESlot;
     FNextSlot: Integer;
     FSubmitted: Int64;
     // Until the next Sync (an epoch): pages held as render targets, pages the
@@ -134,17 +134,17 @@ type
     FStateCount: Integer;
     FData: TBytes;
     FDataSize: Integer;
-    FPasses: TArray<TGEGPUPass>;
+    FPasses: TArray<TGEVulkanLLEPass>;
     FPassCount: Integer;
     FLastRaster: TGERaster;
     FLastClut: array[0..1023] of Byte;
     FLastState: Integer;
     FLastTranslation: Integer;
-    FLastTex: TGEGPUReads;
+    FLastTex: TGEVulkanLLEReads;
     FCheck: Boolean;
-    FCheckPrims: TList<TGEGPUCheckPrim>;
-    FStats: TGEGPUStats;
-    FOnMessage: TGEGPUMessage;
+    FCheckPrims: TList<TGEVulkanLLECheckPrim>;
+    FStats: TGEVulkanLLEStats;
+    FOnMessage: TGEVulkanLLEMessage;
     FWhy: string;
     FReasons: TDictionary<string, Integer>;
     FSnapshots: TDictionary<UInt64, Integer>;
@@ -175,11 +175,11 @@ type
     procedure Submit(ReadBack: Boolean);
     procedure Complete(Slot: Integer);
     procedure Split(const Why: string);
-    function BinPass(const P: TGEGPUPass; out TilesX, TilesY: Integer): Cardinal;
+    function BinPass(const P: TGEVulkanLLEPass; out TilesX, TilesY: Integer): Cardinal;
     procedure Verify(Page: Integer); inline;
     procedure VerifyPage(Page: Integer);
-    procedure Hold(const Span: TGEGPUSpan);
-    procedure WatchVRAM(const Span: TGEGPUSpan);
+    procedure Hold(const Span: TGEVulkanLLESpan);
+    procedure WatchVRAM(const Span: TGEVulkanLLESpan);
     procedure WatchRAM(Address, Size: Cardinal);
     procedure EndEpoch;
     function Pending: Boolean;
@@ -188,8 +188,8 @@ type
     procedure Grow(Slot: Integer; var Buffer: TVulkanBuffer; Bytes: Int64);
     function AddData(Bytes: Integer): Integer;
     function NewPrim: PCardinal;
-    function PackState(const S: TGERaster; out Tex: TGEGPUReads; out Ok: Boolean): Integer;
-    function Place(const S: TGERaster; State: Integer; const Tex: TGEGPUReads;
+    function PackState(const S: TGERaster; out Tex: TGEVulkanLLEReads; out Ok: Boolean): Integer;
+    function Place(const S: TGERaster; State: Integer; const Tex: TGEVulkanLLEReads;
       X1, Y1, X2, Y2: Integer): Boolean;
     procedure Record_(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
     procedure Fallback;
@@ -211,12 +211,12 @@ type
     property Compute: TVulkanCompute read FCompute;
     // Pixels a run of primitives after a CPU-drawn one may cover (0: none).
     property CPURunPixels: Int64 read FCPURunPixels write FCPURunPixels;
-    property Stats: TGEGPUStats read FStats;
-    property OnMessage: TGEGPUMessage read FOnMessage write FOnMessage;
+    property Stats: TGEVulkanLLEStats read FStats;
+    property OnMessage: TGEVulkanLLEMessage read FOnMessage write FOnMessage;
   end;
 
 // A GPU backend, or False with the reason when there is no suitable device.
-function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEGPUBackend; out Error: string;
+function CreateGEVulkanLLEBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEVulkanLLEBackend; out Error: string;
   const DeviceName: string = ''): Boolean;
 
 implementation
@@ -261,12 +261,12 @@ const
   RunReturn = 64;
 
 type
-  TGEGPUPush = record
+  TGEVulkanLLEPush = record
     Table, TilesX: Cardinal;
     X1, Y1, X2, Y2: Integer;
   end;
 
-  TGEGPUFragment = record
+  TGEVulkanLLEFragment = record
     R, G, B, A: Integer;
     SR, SG, SB: Integer;
     Z: Integer;
@@ -410,7 +410,7 @@ begin
   end;
 end;
 
-function CreateGEGPUBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEGPUBackend; out Error: string;
+function CreateGEVulkanLLEBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEVulkanLLEBackend; out Error: string;
   const DeviceName: string): Boolean;
 var
   Compute: TVulkanCompute;
@@ -446,7 +446,7 @@ begin
       Exit(False);
     end;
     Taken := True;
-    Backend := TGEGPUBackend.Create(Memory, Compute, Check);
+    Backend := TGEVulkanLLEBackend.Create(Memory, Compute, Check);
   except
     on E: Exception do
     begin
@@ -484,7 +484,7 @@ end;
 
 { Spans of VRAM }
 
-function Span(Lo, Len: Int64): TGEGPUSpan; inline;
+function Span(Lo, Len: Int64): TGEVulkanLLESpan; inline;
 begin
   Result.Lo := Lo and VRAMMask;
   Result.Len := Min(Len, Int64(PSPVRAMSize));
@@ -494,7 +494,7 @@ begin
 end;
 
 // Rows bytes of Width, Stride apart (Width <= Stride), from Lo.
-function RowSpan(Lo, Stride, Width, Rows: Int64): TGEGPUSpan;
+function RowSpan(Lo, Stride, Width, Rows: Int64): TGEVulkanLLESpan;
 begin
   Result := Span(Lo, (Rows - 1) * Stride + Width);
   if (Width <= Stride) and (Rows > 1) and (Result.Len < PSPVRAMSize) then
@@ -513,7 +513,7 @@ begin
 end;
 
 // Whether bytes [Lo, Hi) meet a row of R (R.Lo relative to them by Delta).
-function MeetsRows(const R: TGEGPUSpan; Delta, Lo, Hi: Int64): Boolean;
+function MeetsRows(const R: TGEVulkanLLESpan; Delta, Lo, Hi: Int64): Boolean;
 begin
   // Rows J with Delta + J * Stride < Hi and Delta + J * Stride + Width > Lo.
   var First := Max(Int64(0), FloorDiv(Lo - Delta - R.Width, R.Stride) + 1);
@@ -521,7 +521,7 @@ begin
   Result := First <= Last;
 end;
 
-function Overlap(const A, B: TGEGPUSpan): Boolean;
+function Overlap(const A, B: TGEVulkanLLESpan): Boolean;
 begin
   if (A.Len <= 0) or (B.Len <= 0) then
     Exit(False);
@@ -568,7 +568,7 @@ begin
 end;
 
 // Whether every byte of R is one of Q's.
-function Contains(const Q, R: TGEGPUSpan): Boolean;
+function Contains(const Q, R: TGEVulkanLLESpan): Boolean;
 begin
   if (R.Lo < Q.Lo) or (R.Lo + R.Len > Q.Lo + Q.Len) then
     Exit(False);
@@ -584,7 +584,7 @@ begin
 end;
 
 // Bytes of a render target a box of pixels covers (X2 < Stride).
-function TargetSpan(Addr, Stride, Bpp: Cardinal; X1, Y1, X2, Y2: Integer): TGEGPUSpan;
+function TargetSpan(Addr, Stride, Bpp: Cardinal; X1, Y1, X2, Y2: Integer): TGEVulkanLLESpan;
 begin
   var First := Int64(Y1) * Stride + X1;
   Result := RowSpan(Int64(Addr) + First * Bpp, Int64(Stride) * Bpp, Int64(X2 - X1 + 1) * Bpp, Y2 - Y1 + 1);
@@ -602,7 +602,7 @@ begin
 end;
 
 // The whole blocks a logical span's bytes lie in: where they can be physically.
-function BlockSpan(const S: TGEGPUSpan; Block: Int64): TGEGPUSpan;
+function BlockSpan(const S: TGEVulkanLLESpan; Block: Int64): TGEVulkanLLESpan;
 begin
   if S.Len <= 0 then
     Exit(S);
@@ -690,7 +690,7 @@ const
 // that coordinates within MinS..MaxS, MinT..MaxT computed with rounding errors
 // can sample: two texels more either way for those and the bilinear
 // neighbours, and more for large coordinates.
-function TexelWindow(const S: TGERaster; MinS, MaxS, MinT, MaxT: Double; const Full: TGEGPUSpan): TGEGPUSpan;
+function TexelWindow(const S: TGERaster; MinS, MaxS, MinT, MaxT: Double; const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
 begin
   Result := Full;
   var L: PGETexLevel := @S.Tex.Levels[S.Tex.Level];
@@ -725,7 +725,7 @@ end;
 // The texels a triangle can sample. Its pixels' S and T (GEDrawTriangle) are
 // combinations of the vertices' S/Q and T/Q with non-negative weights when
 // every vertex has positive Q and W.
-function TriangleTexels(const S: TGERaster; const V0, V1, V2: TGEVertex; const Full: TGEGPUSpan): TGEGPUSpan;
+function TriangleTexels(const S: TGERaster; const V0, V1, V2: TGEVertex; const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
 begin
   Result := Full;
   var MinS: Double := 0; var MaxS: Double := 0; var MinT: Double := 0; var MaxT: Double := 0;
@@ -757,7 +757,7 @@ end;
 // and T are linear across the box, so every pixel's lie between their values
 // at the corner pixels (GEDrawSprite).
 function SpriteTexels(const S: TGERaster; const V0: TGEVertex; SX, SY, TX, TY: Single;
-  PX1, PY1, PX2, PY2: Integer; const Full: TGEGPUSpan): TGEGPUSpan;
+  PX1, PY1, PX2, PY2: Integer; const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
 begin
   var MinS: Double := 0; var MaxS: Double := 0; var MinT: Double := 0; var MaxT: Double := 0;
   for var Corner := 0 to 3 do
@@ -815,23 +815,23 @@ begin
     ((Hi > $20000000) and (Hi - $20000000 > PSPVRAMBase));
 end;
 
-{ TGEGPUBackend }
+{ TGEVulkanLLEBackend }
 
-constructor TGEGPUBackend.Create(Memory: TPSPMemory; Compute: TVulkanCompute; Check: Boolean);
+constructor TGEVulkanLLEBackend.Create(Memory: TPSPMemory; Compute: TVulkanCompute; Check: Boolean);
 begin
   inherited Create;
   FMemory := Memory;
   FCompute := Compute;
   FCheck := Check;
-  FCheckPrims := TList<TGEGPUCheckPrim>.Create;
+  FCheckPrims := TList<TGEVulkanLLECheckPrim>.Create;
   FReasons := TDictionary<string, Integer>.Create;
   FSnapshots := TDictionary<UInt64, Integer>.Create;
   SetLength(FShadow, PSPVRAMSize);
   FVRAM := Compute.CreateBuffer(PSPVRAMSize + 256, vbkDevice);
-  FKernel := Compute.CreateKernel(PSPGERasterSPV, 8, SizeOf(TGEGPUPush), [], Length(FSlots));
+  FKernel := Compute.CreateKernel(PSPGERasterSPV, 8, SizeOf(TGEVulkanLLEPush), [], Length(FSlots));
   for var I := 0 to High(FSlots) do
   begin
-    var S: PGEGPUSlot := @FSlots[I];
+    var S: PGEVulkanLLESlot := @FSlots[I];
     S.Upload := Compute.CreateBuffer(PSPVRAMSize, vbkUpload);
     S.Readback := Compute.CreateBuffer(PSPVRAMSize, vbkReadback);
     S.PrimBuf := Compute.CreateBuffer(4096 * PrimWords * 4, vbkShared);
@@ -856,7 +856,7 @@ begin
   FMemory.OnVRAMFault := VRAMFault;
 end;
 
-destructor TGEGPUBackend.Destroy;
+destructor TGEVulkanLLEBackend.Destroy;
 begin
   try
     if Pending or FQueued then
@@ -868,7 +868,7 @@ begin
     FMemory.OnVRAMFault := nil;
     for var I := 0 to High(FSlots) do
     begin
-      var S: PGEGPUSlot := @FSlots[I];
+      var S: PGEVulkanLLESlot := @FSlots[I];
       S.Cmd.Free;
       S.BinBuf.Free;
       S.DataBuf.Free;
@@ -887,7 +887,7 @@ begin
   end;
 end;
 
-procedure TGEGPUBackend.Message(const Text: string);
+procedure TGEVulkanLLEBackend.Message(const Text: string);
 begin
   if Assigned(FOnMessage) then
     FOnMessage(Text);
@@ -897,13 +897,13 @@ end;
 // first uses it: from then on the page is held or watched, so guest memory
 // cannot change it before the batch is drawn. Pages are compared with what
 // the GPU was last given or gave back.
-procedure TGEGPUBackend.Verify(Page: Integer);
+procedure TGEVulkanLLEBackend.Verify(Page: Integer);
 begin
   if not FVerified[Page] then
     VerifyPage(Page);
 end;
 
-procedure TGEGPUBackend.VerifyPage(Page: Integer);
+procedure TGEVulkanLLEBackend.VerifyPage(Page: Integer);
 begin
   FVerified[Page] := True;
   FVerifiedList[FVerifiedCount] := Page;
@@ -919,7 +919,7 @@ begin
 end;
 
 // Render target pages: held, so that any access first gives them back.
-procedure TGEGPUBackend.Hold(const Span: TGEGPUSpan);
+procedure TGEVulkanLLEBackend.Hold(const Span: TGEVulkanLLESpan);
 begin
   if Span.Len <= 0 then
     Exit;
@@ -945,7 +945,7 @@ end;
 // Texture pages in VRAM: watched, so that a write first draws the batch. The
 // odd mirrors permute bytes within 64 KB banks, so all of a bank's pages
 // there are watched.
-procedure TGEGPUBackend.WatchVRAM(const Span: TGEGPUSpan);
+procedure TGEVulkanLLEBackend.WatchVRAM(const Span: TGEVulkanLLESpan);
 const
   Linear0 = PSPVRAMBase shr PSPPageShift;
   Linear2 = (PSPVRAMBase + 2 * PSPVRAMSize) shr PSPPageShift;
@@ -979,7 +979,7 @@ begin
 end;
 
 // Textures in main memory: the batch keeps a copy, valid while it is watched.
-procedure TGEGPUBackend.WatchRAM(Address, Size: Cardinal);
+procedure TGEVulkanLLEBackend.WatchRAM(Address, Size: Cardinal);
 begin
   var Lo := Address and $1FFFFFFF;
   var Hi := UInt64(Lo) + Max(Size, 1) - 1;
@@ -991,7 +991,7 @@ begin
 end;
 
 // Everything has been drawn and given back: guest memory is free again.
-procedure TGEGPUBackend.EndEpoch;
+procedure TGEVulkanLLEBackend.EndEpoch;
 begin
   FMemory.ReleaseVRAM;
   FMemory.ReleaseWatches;
@@ -1005,7 +1005,7 @@ begin
 end;
 
 // Batches stay within reasonable buffer sizes.
-procedure TGEGPUBackend.BeginPrim;
+procedure TGEVulkanLLEBackend.BeginPrim;
 begin
   if (FPrimCount >= 65536) or (FDataSize >= 64 shl 20) then
     if FCheck then
@@ -1014,13 +1014,13 @@ begin
       Submit(False);
 end;
 
-procedure TGEGPUBackend.VRAMFault;
+procedure TGEVulkanLLEBackend.VRAMFault;
 begin
   Inc(FStats.AccessSyncs);
   Sync;
 end;
 
-procedure TGEGPUBackend.Split(const Why: string);
+procedure TGEVulkanLLEBackend.Split(const Why: string);
 begin
   var N := 0;
   var Key := 'pass split: ' + Why;
@@ -1028,7 +1028,7 @@ begin
   FReasons.AddOrSetValue(Key, N + 1);
 end;
 
-function TGEGPUBackend.Describe: string;
+function TGEVulkanLLEBackend.Describe: string;
 begin
   if FSlots[0].PrimBuf.DeviceLocal then
     Result := 'batches in device memory'
@@ -1036,7 +1036,7 @@ begin
     Result := 'batches in host memory';
 end;
 
-function TGEGPUBackend.Report: string;
+function TGEVulkanLLEBackend.Report: string;
 begin
   Result := '';
   for var Pair in FReasons do
@@ -1048,7 +1048,7 @@ end;
 // fewer, larger passes the busier it is. Nothing is read back: the pages
 // stay held or watched until an access or a CPU-drawn primitive needs them
 // (Sync).
-procedure TGEGPUBackend.Release;
+procedure TGEVulkanLLEBackend.Release;
 begin
   // The queue, too, keeps its primitives across GE runs (a large batch
   // starts drawing in the background).
@@ -1058,15 +1058,15 @@ begin
     Sync
   else if FPrimCount >= FReleasePrims then
   begin
-    var Last: PGEGPUSlot := @FSlots[(FNextSlot + Length(FSlots) - 1) mod Length(FSlots)];
+    var Last: PGEVulkanLLESlot := @FSlots[(FNextSlot + Length(FSlots) - 1) mod Length(FSlots)];
     if not Last.Busy or Last.Cmd.Done then
       Submit(False);
   end;
 end;
 
-procedure TGEGPUBackend.Bind(Slot: Integer);
+procedure TGEVulkanLLEBackend.Bind(Slot: Integer);
 begin
-  var S: PGEGPUSlot := @FSlots[Slot];
+  var S: PGEVulkanLLESlot := @FSlots[Slot];
   FKernel.Bind(Slot, 0, FVRAM);
   FKernel.Bind(Slot, 1, FVRAM);
   FKernel.Bind(Slot, 2, FVRAM);
@@ -1079,7 +1079,7 @@ end;
 
 // Sorts a pass's primitives into 16x16 tiles, keeping their order: a table of
 // (first, count) per tile, then the lists. Returns the table's word offset.
-function TGEGPUBackend.BinPass(const P: TGEGPUPass; out TilesX, TilesY: Integer): Cardinal;
+function TGEVulkanLLEBackend.BinPass(const P: TGEVulkanLLEPass; out TilesX, TilesY: Integer): Cardinal;
 begin
   var TX1 := P.X1 shr 4;
   var TY1 := P.Y1 shr 4;
@@ -1129,7 +1129,7 @@ begin
 end;
 
 // Only for an idle slot.
-procedure TGEGPUBackend.Grow(Slot: Integer; var Buffer: TVulkanBuffer; Bytes: Int64);
+procedure TGEVulkanLLEBackend.Grow(Slot: Integer; var Buffer: TVulkanBuffer; Bytes: Int64);
 begin
   if Bytes <= Int64(Buffer.Size) then
     Exit;
@@ -1141,7 +1141,7 @@ begin
   Bind(Slot);
 end;
 
-function TGEGPUBackend.AddData(Bytes: Integer): Integer;
+function TGEVulkanLLEBackend.AddData(Bytes: Integer): Integer;
 begin
   Result := (FDataSize + 15) and not 15;
   FDataSize := Result + Bytes;
@@ -1149,7 +1149,7 @@ begin
     SetLength(FData, Max(FDataSize, Length(FData) * 2));
 end;
 
-function TGEGPUBackend.NewPrim: PCardinal;
+function TGEVulkanLLEBackend.NewPrim: PCardinal;
 begin
   if (FPrimCount + 1) * PrimWords > Length(FPrims) then
     SetLength(FPrims, Max(4096 * PrimWords, Length(FPrims) * 2));
@@ -1160,7 +1160,7 @@ begin
     Inc(FGPUSinceRun);
 end;
 
-function TGEGPUBackend.PackState(const S: TGERaster; out Tex: TGEGPUReads; out Ok: Boolean): Integer;
+function TGEVulkanLLEBackend.PackState(const S: TGERaster; out Tex: TGEVulkanLLEReads; out Ok: Boolean): Integer;
 var
   LevelData: array[0..7] of Cardinal;
 begin
@@ -1404,7 +1404,7 @@ begin
 end;
 
 // Whether a pass already reads (and keeps apart from what it draws) a span.
-function Covered(const P: TGEGPUPass; const R: TGEGPUSpan): Boolean;
+function Covered(const P: TGEVulkanLLEPass; const R: TGEVulkanLLESpan): Boolean;
 begin
   for var I := P.ReadCount - 1 downto 0 do
     if Contains(P.Reads[I], R) then
@@ -1415,7 +1415,7 @@ end;
 // Puts the next primitive (covering the box) into a pass. False when the
 // kernel cannot draw it exactly as the CPU does. Pixels of a box no wider
 // than the stride all have their own bytes, even past the stride's end.
-function TGEGPUBackend.Place(const S: TGERaster; State: Integer; const Tex: TGEGPUReads;
+function TGEVulkanLLEBackend.Place(const S: TGERaster; State: Integer; const Tex: TGEVulkanLLEReads;
   X1, Y1, X2, Y2: Integer): Boolean;
 begin
   var UsesZ := (S.ClearMode and S.ClearDepth) or (not S.ClearMode and S.DepthTest);
@@ -1423,7 +1423,7 @@ begin
   // everything below has been checked and held for the whole box already.
   if FPassCount > 0 then
   begin
-    var P: PGEGPUPass := @FPasses[FPassCount - 1];
+    var P: PGEVulkanLLEPass := @FPasses[FPassCount - 1];
     if (X1 >= P.X1) and (Y1 >= P.Y1) and (X2 <= P.X2) and (Y2 <= P.Y2) and (P.FBAddr = S.FBAddr) and
       (P.FBStride = S.FBStride) and (P.FBFormat = S.FBFormat) and
       (not UsesZ or (P.UsesZ and (P.ZAddr = S.ZAddr) and (P.ZStride = S.ZStride) and
@@ -1451,7 +1451,7 @@ begin
   if (X2 - X1 + 1 > Integer(S.FBStride)) or ((Int64(Y2 - Y1) * S.FBStride + X2 - X1 + 1) * Bpp > PSPVRAMSize) then
   begin FWhy := 'pixels share colour memory'; Exit(False); end;
   var FB := TargetSpan(S.FBAddr, S.FBStride, Bpp, X1, Y1, X2, Y2);
-  var Z := Default(TGEGPUSpan);
+  var Z := Default(TGEVulkanLLESpan);
   if UsesZ then
   begin
     if (X2 - X1 + 1 > Integer(S.ZStride)) or ((Int64(Y2 - Y1) * S.ZStride + X2 - X1 + 1) * 2 > PSPVRAMSize) then
@@ -1470,7 +1470,7 @@ begin
   var PZ := Z;
   if not NewPass then
   begin
-    var P: PGEGPUPass := @FPasses[FPassCount - 1];
+    var P: PGEVulkanLLEPass := @FPasses[FPassCount - 1];
     // Primitives without depth go with any depth buffer.
     if (P.FBAddr <> S.FBAddr) or (P.FBStride <> S.FBStride) or (P.FBFormat <> S.FBFormat) or
       (UsesZ and P.UsesZ and ((P.ZAddr <> S.ZAddr) or (P.ZStride <> S.ZStride) or
@@ -1538,10 +1538,10 @@ begin
   begin
     if FPassCount = Length(FPasses) then
       SetLength(FPasses, Max(64, FPassCount * 2));
-    var P: PGEGPUPass := @FPasses[FPassCount];
+    var P: PGEVulkanLLEPass := @FPasses[FPassCount];
     Inc(FPassCount);
     var Reads := P.Reads;
-    P^ := Default(TGEGPUPass);
+    P^ := Default(TGEVulkanLLEPass);
     P.Reads := Reads;
     P.First := FPrimCount;
     P.X1 := X1; P.Y1 := Y1; P.X2 := X2; P.Y2 := Y2;
@@ -1549,7 +1549,7 @@ begin
     P.FBStride := S.FBStride;
     P.FBFormat := S.FBFormat;
   end;
-  var P: PGEGPUPass := @FPasses[FPassCount - 1];
+  var P: PGEVulkanLLEPass := @FPasses[FPassCount - 1];
   if UsesZ and not P.UsesZ then
   begin
     P.UsesZ := True;
@@ -1583,11 +1583,11 @@ begin
   Result := True;
 end;
 
-procedure TGEGPUBackend.Record_(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
+procedure TGEVulkanLLEBackend.Record_(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
 begin
   if not FCheck then
     Exit;
-  var C := Default(TGEGPUCheckPrim);
+  var C := Default(TGEVulkanLLECheckPrim);
   C.Kind := Kind;
   C.S := S;
   C.V[0] := V0;
@@ -1605,7 +1605,7 @@ end;
 // it follows a CPU-drawn one closely enough. Guest memory has everything:
 // nothing is pending on the GPU during the run, whose pages the next GPU
 // batch compares and uploads as usual.
-function TGEGPUBackend.OnCPU(Pixels: Int64): Boolean;
+function TGEVulkanLLEBackend.OnCPU(Pixels: Int64): Boolean;
 begin
   if FCPURun and (Pixels <= FCPUBudget) then
   begin
@@ -1621,7 +1621,7 @@ end;
 
 // The CPU renderer's queue draws exactly as PSP.GE.Raster in order (in row
 // bands, in the background), holding and watching what it uses meanwhile.
-procedure TGEGPUBackend.Enqueue(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
+procedure TGEVulkanLLEBackend.Enqueue(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
 begin
   if FCheck or (FQueue = nil) then
   begin
@@ -1652,7 +1652,7 @@ begin
   end;
 end;
 
-procedure TGEGPUBackend.DrainQueue;
+procedure TGEVulkanLLEBackend.DrainQueue;
 begin
   if FQueued then
   begin
@@ -1663,7 +1663,7 @@ end;
 
 // Draws everything on the GPU and starts a run on the CPU, whose queue the
 // primitive goes to.
-procedure TGEGPUBackend.Fallback;
+procedure TGEVulkanLLEBackend.Fallback;
 begin
   if Pending then
   begin
@@ -1716,9 +1716,9 @@ begin
   PInt64(P + 4)^ := (NY shl 14) div Area;
 end;
 
-procedure TGEGPUBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
+procedure TGEVulkanLLEBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 var
-  Tex: TGEGPUReads;
+  Tex: TGEVulkanLLEReads;
   Ok: Boolean;
 begin
   BeginPrim;
@@ -1859,9 +1859,9 @@ begin
   Record_(KindTriangle, S, V0, V1, V2);
 end;
 
-procedure TGEGPUBackend.DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
+procedure TGEVulkanLLEBackend.DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
 var
-  Tex: TGEGPUReads;
+  Tex: TGEVulkanLLEReads;
   Ok: Boolean;
 begin
   BeginPrim;
@@ -1961,12 +1961,12 @@ begin
 end;
 {$ENDIF}
 
-procedure TGEGPUBackend.DrawLine(const S: TGERaster; const V0, V1: TGEVertex);
+procedure TGEVulkanLLEBackend.DrawLine(const S: TGERaster; const V0, V1: TGEVertex);
 var
-  F: TGEGPUFragment;
-  Frags: TArray<TGEGPUFragment>;
+  F: TGEVulkanLLEFragment;
+  Frags: TArray<TGEVulkanLLEFragment>;
   Pos: TArray<TPoint>;
-  Tex: TGEGPUReads;
+  Tex: TGEVulkanLLEReads;
   Ok: Boolean;
 begin
   BeginPrim;
@@ -2088,9 +2088,9 @@ begin
   Record_(KindLine, S, V0, V1, V1);
 end;
 
-procedure TGEGPUBackend.DrawPoint(const S: TGERaster; const V: TGEVertex);
+procedure TGEVulkanLLEBackend.DrawPoint(const S: TGERaster; const V: TGEVertex);
 var
-  Tex: TGEGPUReads;
+  Tex: TGEVulkanLLEReads;
   Ok: Boolean;
 begin
   BeginPrim;
@@ -2148,15 +2148,15 @@ begin
   Record_(KindPoint, S, V, V, V);
 end;
 
-procedure TGEGPUBackend.Submit(ReadBack: Boolean);
+procedure TGEVulkanLLEBackend.Submit(ReadBack: Boolean);
 var
-  Push: TGEGPUPush;
+  Push: TGEVulkanLLEPush;
 begin
   ReadBack := ReadBack and (FDrawnCount > 0);
   if (FPrimCount = 0) and (FUploadCount = 0) and not ReadBack then
     Exit;
   var Index := FNextSlot;
-  var Slot: PGEGPUSlot := @FSlots[Index];
+  var Slot: PGEVulkanLLESlot := @FSlots[Index];
   if Slot.Busy then
     Complete(Index);
   FNextSlot := (FNextSlot + 1) mod Length(FSlots);
@@ -2218,7 +2218,7 @@ begin
     FKernel.ActiveSet := Index;
     for var I := 0 to FPassCount - 1 do
     begin
-      var P: PGEGPUPass := @FPasses[I];
+      var P: PGEVulkanLLEPass := @FPasses[I];
       Push.Table := Tables[I];
       Push.TilesX := Grid[I].X;
       Push.X1 := P.X1;
@@ -2288,9 +2288,9 @@ end;
 
 // Waits for a slot's batch and puts the pages it read back into guest memory
 // (which in check mode gets the CPU's drawing instead, compared with the GPU's).
-procedure TGEGPUBackend.Complete(Slot: Integer);
+procedure TGEVulkanLLEBackend.Complete(Slot: Integer);
 begin
-  var S: PGEGPUSlot := @FSlots[Slot];
+  var S: PGEVulkanLLESlot := @FSlots[Slot];
   if not S.Busy then
     Exit;
   var Watch := TStopwatch.StartNew;
@@ -2322,14 +2322,14 @@ begin
 end;
 
 // Work or held and watched pages of the GPU's own (not of the queue's).
-function TGEGPUBackend.Pending: Boolean;
+function TGEVulkanLLEBackend.Pending: Boolean;
 begin
   Result := (FPrimCount > 0) or (FDrawnCount > 0) or (FUploadCount > 0) or (FVerifiedCount > 0) or FWatchedRAM;
   for var I := 0 to High(FSlots) do
     Result := Result or FSlots[I].Busy;
 end;
 
-procedure TGEGPUBackend.Sync;
+procedure TGEVulkanLLEBackend.Sync;
 begin
   if FSyncing then
     Exit;
@@ -2355,7 +2355,7 @@ begin
   end;
 end;
 
-procedure TGEGPUBackend.CheckBatch(const Held: array of Boolean; Readback: TVulkanBuffer);
+procedure TGEVulkanLLEBackend.CheckBatch(const Held: array of Boolean; Readback: TVulkanBuffer);
 begin
   Inc(FStats.CheckedBatches);
   for var I := 0 to FCheckPrims.Count - 1 do

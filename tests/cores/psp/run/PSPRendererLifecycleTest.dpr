@@ -29,7 +29,7 @@ end;
 
 procedure TFailLog.Log(const Text: string);
 begin
-  if Fail and Text.StartsWith('gpu: vulkan:') then
+  if Fail and Text.StartsWith('gpu: vulkan') then
     raise EAbort.Create('injected renderer constructor failure');
 end;
 
@@ -44,23 +44,32 @@ begin
   var C := TConfigAccess.Create('', nil);
   var Ini := TMemIniFile.Create('');
   try
-    Require(not C.VulkanRenderer, 'CPU must be the default');
+    Require(C.Renderer = prCPU, 'CPU must be the default');
     Ini.WriteString('Video', 'Renderer', 'unknown');
     Ini.WriteString('Emulation', 'Execution', 'interpreter');
     Ini.WriteInteger('System', 'Language', 9);
     Ini.WriteInteger('System', 'ButtonSwap', 0);
     Ini.WriteString('System', 'Nickname', 'RendererTest');
     C.ReadCore(Ini);
-    Require(not C.VulkanRenderer and not C.Recompiler, 'Unknown renderer must use CPU; JIT choice preserved');
+    Require((C.Renderer = prCPU) and not C.Recompiler, 'Unknown renderer must use CPU; JIT choice preserved');
+    Ini.WriteString('Video', 'Renderer', 'vulkan-hle');
+    C.ReadCore(Ini);
+    Require(C.Renderer = prVulkanHLE, 'Vulkan HLE INI choice not read');
+    C.WriteCore(Ini);
+    Require(Ini.ReadString('Video', 'Renderer', '') = 'vulkan-hle', 'Vulkan HLE choice not saved');
+    Ini.WriteString('Video', 'Renderer', 'Vulkan-LLE');
+    C.ReadCore(Ini);
+    Require(C.Renderer = prVulkanLLE, 'Vulkan LLE alias not read');
     Ini.WriteString('Video', 'Renderer', 'VULKAN');
     C.ReadCore(Ini);
-    Require(C.VulkanRenderer, 'Vulkan INI choice not read');
+    Require(C.Renderer = prVulkanLLE, 'Vulkan INI choice not read');
     C.WriteCore(Ini);
+    // The LLE keeps the value earlier versions wrote.
     Require(Ini.ReadString('Video', 'Renderer', '') = 'vulkan', 'Vulkan choice not saved');
     Require((C.Language = 9) and (C.ButtonSwap = 0) and (C.Nickname = 'RendererTest'), 'System settings changed');
     Ini.DeleteKey('Video', 'Renderer');
     C.ReadCore(Ini);
-    Require(not C.VulkanRenderer, 'Absent choice must return to CPU');
+    Require(C.Renderer = prCPU, 'Absent choice must return to CPU');
     C.WriteCore(Ini);
     Require(Ini.ReadString('Video', 'Renderer', '') = 'cpu', 'CPU choice not saved');
   finally
@@ -69,7 +78,7 @@ begin
   end;
 end;
 
-procedure Exercise(const FileName: string);
+procedure Exercise(const FileName: string; Kind: TPSPRenderer);
 begin
   var Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
   var P: TPSPProgram;
@@ -87,7 +96,7 @@ begin
     Log.Fail := True;
     var Failed := False;
     try
-      var R := TPSPRendererSession.Create(C, True);
+      var R := TPSPRendererSession.Create(C, Kind);
       R.Free;
     except
       on E: EAbort do Failed := True;
@@ -95,10 +104,10 @@ begin
     Require(Failed, 'GPU unavailable or constructor failure injection was not reached');
     Require((GE.Backend = nil) and not Assigned(C.Memory.OnVRAMFault), 'Constructor failure leaked renderer ownership');
     Log.Fail := False;
-    var R := TPSPRendererSession.Create(C, True);
+    var R := TPSPRendererSession.Create(C, Kind);
     try
       try
-        Require(R.Status.StartsWith('vulkan:'), 'Test requires a qualified Vulkan device');
+        Require(R.Status.StartsWith(PSPRendererName(Kind) + ':'), 'Test requires a qualified Vulkan device');
         var Backend := GE.Backend;
         var S := Default(TGERaster);
         S.VRAM := @C.Memory.VRAM[0];
@@ -134,7 +143,7 @@ begin
     Require((GE.Backend = nil) and not Assigned(C.Memory.OnVRAMFault) and (C.Memory.HeldVRAMPages = 0),
       'Run failure leaked the renderer or held pages');
     // Reattach after both failures; the memory must be usable again.
-    R := TPSPRendererSession.Create(C, True);
+    R := TPSPRendererSession.Create(C, Kind);
     R.Free;
   finally
     C.OnLog := nil;
@@ -152,7 +161,8 @@ begin
       procedure
       begin
         try
-          Exercise(Path);
+          Exercise(Path, prVulkanLLE);
+          Exercise(Path, prVulkanHLE);
         except
           on E: Exception do Failure := E.ClassName + ': ' + E.Message;
         end;
@@ -162,7 +172,7 @@ begin
     Worker.WaitFor;
     Worker.Free;
     Require(Failure = '', Failure);
-    Writeln('PASS: settings, worker-owned GPU, Reset, LoadExec, constructor/run failure cleanup and reattach');
+    Writeln('PASS: settings, worker-owned GPU (LLE and HLE), Reset, LoadExec, constructor/run failure cleanup and reattach');
   except
     on E: Exception do
     begin

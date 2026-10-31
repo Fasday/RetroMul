@@ -1917,6 +1917,210 @@ type
 
   PFN_vkGetQueryPoolResults = function(device: VkDevice; queryPool: VkQueryPool; firstQuery: Cardinal; queryCount: Cardinal; dataSize: NativeUInt; pData: Pointer; stride: VkDeviceSize; flags: VkQueryResultFlags): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
 
+// Rendering with graphics pipelines into images: samplers, depth/stencil,
+// image transfers and the fixed-function state enums.
+const
+  VK_FORMAT_R8_UINT = 13;
+  VK_FORMAT_R8G8B8A8_UINT = 41;
+  VK_FORMAT_R32_UINT = 98;
+  VK_FORMAT_R32_SFLOAT = 100;
+  VK_FORMAT_R32G32_SFLOAT = 103;
+  VK_FORMAT_R32G32B32_SFLOAT = 106;
+  VK_FORMAT_R32G32B32A32_SFLOAT = 109;
+  VK_FORMAT_D32_SFLOAT = 126;
+  VK_FORMAT_D24_UNORM_S8_UINT = 129;
+  VK_FORMAT_D32_SFLOAT_S8_UINT = 130;
+  VK_IMAGE_USAGE_TRANSFER_DST_BIT = $00000002;
+  VK_IMAGE_USAGE_STORAGE_BIT = $00000008;
+  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT = $00000020;
+  VK_IMAGE_ASPECT_DEPTH_BIT = $00000002;
+  VK_IMAGE_ASPECT_STENCIL_BIT = $00000004;
+  VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL = 3;
+  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL = 5;
+  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL = 6;
+  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL = 7;
+  VK_REMAINING_MIP_LEVELS = $FFFFFFFF;
+  VK_ATTACHMENT_LOAD_OP_LOAD = 0;
+  VK_PIPELINE_STAGE_VERTEX_INPUT_BIT = $00000004;
+  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT = $00000008;
+  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT = $00000080;
+  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT = $00000100;
+  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT = $00000200;
+  VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT = $00000004;
+  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT = $00000200;
+  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT = $00000400;
+  VK_DEPENDENCY_BY_REGION_BIT = $00000001;
+  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT = $00000080;
+  VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT = $00000200;
+  VK_FORMAT_FEATURE_BLIT_SRC_BIT = $00000400;
+  VK_FORMAT_FEATURE_BLIT_DST_BIT = $00000800;
+  VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO = 25;
+  VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO = 31;
+  VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER = 1;
+  VK_PRIMITIVE_TOPOLOGY_POINT_LIST = 0;
+  VK_PRIMITIVE_TOPOLOGY_LINE_LIST = 1;
+  VK_VERTEX_INPUT_RATE_VERTEX = 0;
+  VK_DYNAMIC_STATE_BLEND_CONSTANTS = 4;
+  VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK = 6;
+  VK_DYNAMIC_STATE_STENCIL_WRITE_MASK = 7;
+  VK_DYNAMIC_STATE_STENCIL_REFERENCE = 8;
+  VK_STENCIL_FACE_FRONT_AND_BACK = 3;
+  VK_BLEND_FACTOR_ZERO = 0;
+  VK_BLEND_FACTOR_ONE = 1;
+  VK_BLEND_FACTOR_SRC_COLOR = 2;
+  VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR = 3;
+  VK_BLEND_FACTOR_DST_COLOR = 4;
+  VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR = 5;
+  VK_BLEND_FACTOR_SRC_ALPHA = 6;
+  VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA = 7;
+  VK_BLEND_FACTOR_DST_ALPHA = 8;
+  VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA = 9;
+  VK_BLEND_FACTOR_CONSTANT_COLOR = 10;
+  VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR = 11;
+  VK_BLEND_FACTOR_SRC1_COLOR = 15;
+  VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR = 16;
+  VK_BLEND_OP_ADD = 0;
+  VK_BLEND_OP_SUBTRACT = 1;
+  VK_BLEND_OP_REVERSE_SUBTRACT = 2;
+  VK_BLEND_OP_MIN = 3;
+  VK_BLEND_OP_MAX = 4;
+  VK_COMPARE_OP_NEVER = 0;
+  VK_COMPARE_OP_LESS = 1;
+  VK_COMPARE_OP_EQUAL = 2;
+  VK_COMPARE_OP_LESS_OR_EQUAL = 3;
+  VK_COMPARE_OP_GREATER = 4;
+  VK_COMPARE_OP_NOT_EQUAL = 5;
+  VK_COMPARE_OP_GREATER_OR_EQUAL = 6;
+  VK_COMPARE_OP_ALWAYS = 7;
+  VK_STENCIL_OP_KEEP = 0;
+  VK_STENCIL_OP_ZERO = 1;
+  VK_STENCIL_OP_REPLACE = 2;
+  VK_STENCIL_OP_INCREMENT_AND_CLAMP = 3;
+  VK_STENCIL_OP_DECREMENT_AND_CLAMP = 4;
+  VK_STENCIL_OP_INVERT = 5;
+  VK_LOGIC_OP_COPY = 3;
+  VK_FILTER_NEAREST = 0;
+  VK_FILTER_LINEAR = 1;
+  VK_SAMPLER_MIPMAP_MODE_NEAREST = 0;
+  VK_SAMPLER_MIPMAP_MODE_LINEAR = 1;
+  VK_SAMPLER_ADDRESS_MODE_REPEAT = 0;
+  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE = 2;
+  VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK = 0;
+
+type
+  VkFilter = Integer;
+  VkSamplerMipmapMode = Integer;
+  VkSamplerAddressMode = Integer;
+  VkBorderColor = Integer;
+  VkSampler = UInt64;
+  PVkSampler = ^VkSampler;
+  PVkDeviceSize = ^VkDeviceSize;
+
+  VkSamplerCreateInfo = record
+    sType: VkStructureType;
+    pNext: Pointer;
+    flags: VkFlags;
+    magFilter: VkFilter;
+    minFilter: VkFilter;
+    mipmapMode: VkSamplerMipmapMode;
+    addressModeU: VkSamplerAddressMode;
+    addressModeV: VkSamplerAddressMode;
+    addressModeW: VkSamplerAddressMode;
+    mipLodBias: Single;
+    anisotropyEnable: VkBool32;
+    maxAnisotropy: Single;
+    compareEnable: VkBool32;
+    compareOp: VkCompareOp;
+    minLod: Single;
+    maxLod: Single;
+    borderColor: VkBorderColor;
+    unnormalizedCoordinates: VkBool32;
+  end;
+  PVkSamplerCreateInfo = ^VkSamplerCreateInfo;
+
+  VkDescriptorImageInfo = record
+    sampler: VkSampler;
+    imageView: VkImageView;
+    imageLayout: VkImageLayout;
+  end;
+
+  VkImageSubresourceLayers = record
+    aspectMask: VkImageAspectFlags;
+    mipLevel: Cardinal;
+    baseArrayLayer: Cardinal;
+    layerCount: Cardinal;
+  end;
+
+  VkOffset3D = record
+    x: Integer;
+    y: Integer;
+    z: Integer;
+  end;
+
+  VkBufferImageCopy = record
+    bufferOffset: VkDeviceSize;
+    bufferRowLength: Cardinal;
+    bufferImageHeight: Cardinal;
+    imageSubresource: VkImageSubresourceLayers;
+    imageOffset: VkOffset3D;
+    imageExtent: VkExtent3D;
+  end;
+  PVkBufferImageCopy = ^VkBufferImageCopy;
+
+  VkImageBlit = record
+    srcSubresource: VkImageSubresourceLayers;
+    srcOffsets: array[0..1] of VkOffset3D;
+    dstSubresource: VkImageSubresourceLayers;
+    dstOffsets: array[0..1] of VkOffset3D;
+  end;
+  PVkImageBlit = ^VkImageBlit;
+
+  VkImageCopy = record
+    srcSubresource: VkImageSubresourceLayers;
+    srcOffset: VkOffset3D;
+    dstSubresource: VkImageSubresourceLayers;
+    dstOffset: VkOffset3D;
+    extent: VkExtent3D;
+  end;
+  PVkImageCopy = ^VkImageCopy;
+
+  // clearValue holds a VkClearDepthStencilValue (depth, stencil) in its first
+  // two words for depth/stencil aspects.
+  VkClearAttachment = record
+    aspectMask: VkImageAspectFlags;
+    colorAttachment: Cardinal;
+    clearValue: VkClearValue;
+  end;
+  PVkClearAttachment = ^VkClearAttachment;
+
+  VkClearRect = record
+    rect: VkRect2D;
+    baseArrayLayer: Cardinal;
+    layerCount: Cardinal;
+  end;
+  PVkClearRect = ^VkClearRect;
+
+  VkFormatProperties = record
+    linearTilingFeatures: VkFormatFeatureFlags;
+    optimalTilingFeatures: VkFormatFeatureFlags;
+    bufferFeatures: VkFormatFeatureFlags;
+  end;
+  PVkFormatProperties = ^VkFormatProperties;
+
+  PFN_vkCreateSampler = function(device: VkDevice; pCreateInfo: PVkSamplerCreateInfo; pAllocator: Pointer; pSampler: PVkSampler): VkResult; {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkDestroySampler = procedure(device: VkDevice; sampler: VkSampler; pAllocator: Pointer); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdBindVertexBuffers = procedure(commandBuffer: VkCommandBuffer; firstBinding: Cardinal; bindingCount: Cardinal; pBuffers: PVkBuffer; pOffsets: PVkDeviceSize); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdCopyBufferToImage = procedure(commandBuffer: VkCommandBuffer; srcBuffer: VkBuffer; dstImage: VkImage; dstImageLayout: VkImageLayout; regionCount: Cardinal; pRegions: PVkBufferImageCopy); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdCopyImageToBuffer = procedure(commandBuffer: VkCommandBuffer; srcImage: VkImage; srcImageLayout: VkImageLayout; dstBuffer: VkBuffer; regionCount: Cardinal; pRegions: PVkBufferImageCopy); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdBlitImage = procedure(commandBuffer: VkCommandBuffer; srcImage: VkImage; srcImageLayout: VkImageLayout; dstImage: VkImage; dstImageLayout: VkImageLayout; regionCount: Cardinal; pRegions: PVkImageBlit; filter: VkFilter); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdCopyImage = procedure(commandBuffer: VkCommandBuffer; srcImage: VkImage; srcImageLayout: VkImageLayout; dstImage: VkImage; dstImageLayout: VkImageLayout; regionCount: Cardinal; pRegions: PVkImageCopy); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdSetBlendConstants = procedure(commandBuffer: VkCommandBuffer; blendConstants: PSingle); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdSetStencilReference = procedure(commandBuffer: VkCommandBuffer; faceMask: VkFlags; reference: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdSetStencilCompareMask = procedure(commandBuffer: VkCommandBuffer; faceMask: VkFlags; compareMask: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdSetStencilWriteMask = procedure(commandBuffer: VkCommandBuffer; faceMask: VkFlags; writeMask: Cardinal); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkCmdClearAttachments = procedure(commandBuffer: VkCommandBuffer; attachmentCount: Cardinal; pAttachments: PVkClearAttachment; rectCount: Cardinal; pRects: PVkClearRect); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+  PFN_vkGetPhysicalDeviceFormatProperties = procedure(physicalDevice: VkPhysicalDevice; format: VkFormat; pFormatProperties: PVkFormatProperties); {$IFDEF MSWINDOWS}stdcall{$ELSE} cdecl{$ENDIF};
+
 implementation
 
 end.

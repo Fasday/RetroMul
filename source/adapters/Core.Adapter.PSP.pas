@@ -12,7 +12,7 @@ type
   private
     FKeys: TPSPKeyMap;
     FRecompiler: Boolean;
-    FVulkanRenderer: Boolean;
+    FRenderer: TPSPRenderer;
     FLanguage, FButtonSwap: Integer;
     FNickname: string;
     FFontDirectory: string;
@@ -25,7 +25,7 @@ type
     // The CPU through its recompiler (Emulation/Execution jit), else interpreted.
     property Recompiler: Boolean read FRecompiler write FRecompiler;
     // Applied by Start, not by live Configure or a guest Reset/LoadExec.
-    property VulkanRenderer: Boolean read FVulkanRenderer write FVulkanRenderer;
+    property Renderer: TPSPRenderer read FRenderer write FRenderer;
     property Language: Integer read FLanguage;
     property ButtonSwap: Integer read FButtonSwap;
     property Nickname: string read FNickname;
@@ -46,7 +46,7 @@ type
     FRecompiler: Boolean;
     FFrame: TEmulatorFrame;
     FError: string;
-    FVulkanRenderer: Boolean;
+    FRenderer: TPSPRenderer;
     FRendererStatus: string;
     FRate: TEmulationFrameRate;
     FSnapshotDone: TEvent;
@@ -57,7 +57,7 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage; VulkanRenderer: Boolean = False;
+    constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer = prCPU;
       const FontDirectory: string = ''; const SnapshotDirectory: string = '');
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1;
@@ -134,7 +134,7 @@ begin
   inherited Create(FileName, Storage);
   FKeys := DefaultKeys;
   FRecompiler := True;
-  FVulkanRenderer := False;
+  FRenderer := prCPU;
   FLanguage := 1;
   FButtonSwap := 1;
   FNickname := 'RetroMul';
@@ -145,7 +145,7 @@ begin
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
     FKeys[Button] := ReadEmulatorKey(Ini,'Keys',KeyNames[Button],FKeys[Button]);
   FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
-  FVulkanRenderer := SameText(Ini.ReadString('Video', 'Renderer', 'cpu'), 'vulkan');
+  FRenderer := PSPRendererFromName(Ini.ReadString('Video', 'Renderer', 'cpu'));
   FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
   FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
   FNickname := Ini.ReadString('System', 'Nickname', FNickname);
@@ -160,22 +160,19 @@ begin
     Ini.WriteString('Emulation', 'Execution', 'jit')
   else
     Ini.WriteString('Emulation', 'Execution', 'interpreter');
-  if FVulkanRenderer then
-    Ini.WriteString('Video', 'Renderer', 'vulkan')
-  else
-    Ini.WriteString('Video', 'Renderer', 'cpu');
+  Ini.WriteString('Video', 'Renderer', PSPRendererName(FRenderer));
   Ini.WriteInteger('System', 'Language', FLanguage);
   Ini.WriteInteger('System', 'ButtonSwap', FButtonSwap);
   Ini.WriteString('System', 'Nickname', FNickname);
   Ini.WriteString('System', 'FontDirectory', FFontDirectory);
 end;
 
-constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage; VulkanRenderer: Boolean;
+constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer;
   const FontDirectory, SnapshotDirectory: string);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
-  FVulkanRenderer := VulkanRenderer;
+  FRenderer := Renderer;
   FStorage := Storage;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil,False,False,'');
@@ -280,7 +277,7 @@ begin
           end;
         end);
       try
-        var NewRenderer := TPSPRendererSession.Create(Candidate, FVulkanRenderer);
+        var NewRenderer := TPSPRendererSession.Create(Candidate, FRenderer);
         try
           var Frame: TEmulatorFrame;
           Candidate.Display.Render(Frame);
@@ -388,7 +385,7 @@ begin
   {$ENDIF}
   try
     try
-      var Renderer := TPSPRendererSession.Create(FConsole,FVulkanRenderer);
+      var Renderer := TPSPRendererSession.Create(FConsole,FRenderer);
       try
         FLock.Acquire;
         try
@@ -607,7 +604,7 @@ begin
   PSPSettings.Language := FConfigObject.Language;
   PSPSettings.ButtonSwap := FConfigObject.ButtonSwap;
   PSPSettings.Nickname := FConfigObject.Nickname;
-  FWorker := TPSPWorker.Create(FProgram,FStorage,FConfigObject.VulkanRenderer,FConfigObject.FontDirectory,FSnapshotDirectory);
+  FWorker := TPSPWorker.Create(FProgram,FStorage,FConfigObject.Renderer,FConfigObject.FontDirectory,FSnapshotDirectory);
   try
     Configure;
     FWorker.Start;

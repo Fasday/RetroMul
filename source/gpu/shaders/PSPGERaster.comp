@@ -915,7 +915,7 @@ void plotPixel(uint s, int x, int y, Fragment f)
 
 // ---- Primitives -----------------------------------------------------------
 
-// Vertex fields as packed by PSP.GE.GPU: X, Y, Z, W, R, G, B, A, SR, SG, SB, S, T, Fog.
+// Vertex fields as packed by PSP.GE.VulkanLLE: X, Y, Z, W, R, G, B, A, SR, SG, SB, S, T, Fog.
 int vInt(uint p, uint v, uint field)
 {
   return int(prims[p + v + field]);

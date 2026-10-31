@@ -95,6 +95,8 @@ uses
   PSP.State.Schema in '..\..\source\cores\psp\PSP.State.Schema.pas',
   SPV.PSPGERaster in '..\..\source\gpu\shaders\SPV.PSPGERaster.pas',
   SPV.PSPGESelfTest in '..\..\source\gpu\shaders\SPV.PSPGESelfTest.pas',
+  SPV.PSPGEHLEVert in '..\..\source\gpu\shaders\SPV.PSPGEHLEVert.pas',
+  SPV.PSPGEHLEFrag in '..\..\source\gpu\shaders\SPV.PSPGEHLEFrag.pas',
   PSP.VFPU.Math in '..\..\source\cores\psp\PSP.VFPU.Math.pas',
   PSP.Net in '..\..\source\cores\psp\PSP.Net.pas',
   PSP.Videocodec in '..\..\source\cores\psp\PSP.Videocodec.pas',
@@ -606,7 +608,8 @@ uses
   PSP.GE.Backend in '..\..\source\cores\psp\PSP.GE.Backend.pas',
   PSP.GE.Workers in '..\..\source\cores\psp\PSP.GE.Workers.pas',
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
-  PSP.GE.GPU in '..\..\source\cores\psp\PSP.GE.GPU.pas',
+  PSP.GE.VulkanLLE in '..\..\source\cores\psp\PSP.GE.VulkanLLE.pas',
+  PSP.GE.VulkanHLE in '..\..\source\cores\psp\PSP.GE.VulkanHLE.pas',
   PSP.Crypto in '..\..\source\cores\psp\PSP.Crypto.pas',
   PSP.Crypto.ECDSA in '..\..\source\cores\psp\PSP.Crypto.ECDSA.pas',
   PSP.Crypto.Keys in '..\..\source\cores\psp\PSP.Crypto.Keys.pas',

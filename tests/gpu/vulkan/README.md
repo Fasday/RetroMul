@@ -1,7 +1,10 @@
 # Vulkan compute and the optional PSP GE backend
 
 The normal renderer is still `PSP.GE.Raster`. Nothing in the frontend enables
-Vulkan implicitly. `PSPRun -gpu` attaches `TGEGPUBackend` to the GE engine;
+Vulkan implicitly. This file is about the bit-exact compute backend (Vulkan LLE,
+`PSP.GE.VulkanLLE`); the graphics-pipeline backend (Vulkan HLE,
+`PSP.GE.VulkanHLE`, `PSPRun -gpu-hle`) is described in **`HLE.md`**.
+`PSPRun -gpu` attaches `TGEVulkanLLEBackend` to the GE engine;
 `-gpu-check` draws each batch with both implementations, compares VRAM and keeps
 the CPU result. If Vulkan initialization, required features or the startup
 arithmetic self-test fail, the runner prints the reason and uses the CPU.
@@ -110,7 +113,7 @@ the CPU can modify them. Only held pages are read back.
 pointer without consuming held data. It must not be used for ordinary guest
 reads. Fallback drawing synchronizes before using such texture pointers.
 
-The caller owns `TGEGPUBackend`; detach `Engine.Backend` and destroy it while its
+The caller owns `TGEVulkanLLEBackend`; detach `Engine.Backend` and destroy it while its
 `TPSPMemory` is still alive. It owns its `TVulkanCompute`. One backend may hold a
 memory instance's pages. The PSP frontend now has an optional, restart-applied
 `[Video] Renderer=cpu|vulkan` choice (CPU default); see

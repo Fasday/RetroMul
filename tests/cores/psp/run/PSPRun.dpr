@@ -5,6 +5,7 @@ program PSPRun;
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
+// -gpu-hle: Vulkan graphics-pipeline rendering (fast, not bit exact).
 // -test: isolated pspautotests host0: tree, no display, stops at exit.
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
@@ -15,7 +16,8 @@ program PSPRun;
 
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
-  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.GPU;
+  Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.VulkanLLE,
+  PSP.GE.VulkanHLE;
 
 type
   TPress = record
@@ -338,6 +340,7 @@ begin
       else if A = '-shot' then begin Inc(I); ShotFile := ParamStr(I); end
       else if A = '-gpu' then GPUMode := 1
       else if A = '-gpu-check' then GPUMode := 2
+      else if A = '-gpu-hle' then GPUMode := 3
       else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
@@ -456,12 +459,25 @@ begin
     var History: THistoryRunner := nil;
     var OriginalRunner := Console.CPU.Runner;
     var Wav := TList<SmallInt>.Create;
-    var GPU: TGEGPUBackend := nil;
+    var GPU: TGEVulkanLLEBackend := nil;
+    var HLE: TGEVulkanHLEBackend := nil;
     try
-      if GPUMode > 0 then
+      if GPUMode = 3 then
       begin
         var Error: string;
-        if CreateGEGPUBackend(Console.Memory, GPUMode = 2, GPU, Error) then
+        if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error) then
+        begin
+          TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE;
+          if not Quiet then
+            Writeln(ErrOutput, 'gpu hle: ' + HLE.Compute.Name);
+        end
+        else
+          Writeln(ErrOutput, 'gpu hle: unavailable (' + Error + '), the GE draws on the CPU');
+      end
+      else if GPUMode > 0 then
+      begin
+        var Error: string;
+        if CreateGEVulkanLLEBackend(Console.Memory, GPUMode = 2, GPU, Error) then
         begin
           GPU.OnMessage :=
             procedure(const Text: string)
@@ -572,6 +588,8 @@ begin
       // Everything queued is drawn before VRAM is saved.
       if GPU <> nil then
         GPU.Sync
+      else if HLE <> nil then
+        HLE.Sync
       else
         TPSPGE(Console.System.Find(TPSPGE)).Engine.Workers.Sync;
       if VRAMFile <> '' then
@@ -671,6 +689,15 @@ begin
           Writeln(ErrOutput, Format('gpu check: %d of %d batches differ (%d bytes)', [St.BadBatches, St.CheckedBatches,
             St.BadBytes]));
       end
+      else if HLE <> nil then
+      begin
+        var St := HLE.Stats;
+        Writeln(ErrOutput, Format('gpu hle: %d prims in %d draws, %d submits, %d flushes, %d read back, ' +
+          '%d target loads, %d depth loads, %d depth copies, %d textures uploaded, %d reused, %d pipelines; ' +
+          '%.2fs flushing (%.2fs waiting), %.2fs setting up',
+          [St.Prims, St.Draws, St.Submits, St.Flushes, St.Readbacks, St.TargetLoads, St.DepthLoads, St.DepthCopies,
+          St.TextureUploads, St.TextureHits, St.Pipelines, St.FlushSeconds, St.WaitSeconds, St.SetupSeconds]));
+      end
       else if not Quiet then
         Writeln(ErrOutput, 'ge cpu: ' + TPSPGE(Console.System.Find(TPSPGE)).Engine.Workers.Describe);
     finally
@@ -687,6 +714,11 @@ begin
       begin
         TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := nil;
         GPU.Free;
+      end;
+      if HLE <> nil then
+      begin
+        TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := nil;
+        HLE.Free;
       end;
       Console.Free;
       Sink.Free;

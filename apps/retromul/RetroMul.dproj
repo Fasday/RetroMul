@@ -528,6 +528,8 @@
         <DCCReference Include="..\..\source\cores\psp\PSP.State.Schema.pas"/>
         <DCCReference Include="..\..\source\gpu\shaders\SPV.PSPGERaster.pas"/>
         <DCCReference Include="..\..\source\gpu\shaders\SPV.PSPGESelfTest.pas"/>
+        <DCCReference Include="..\..\source\gpu\shaders\SPV.PSPGEHLEVert.pas"/>
+        <DCCReference Include="..\..\source\gpu\shaders\SPV.PSPGEHLEFrag.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.VFPU.Math.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Net.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Videocodec.pas"/>
@@ -1076,7 +1078,8 @@
         <DCCReference Include="..\..\source\adapters\Core.PSP.Playback.pas"/>
         <DCCReference Include="..\..\source\adapters\Core.PSP.Renderer.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.GE.Backend.pas"/>
-        <DCCReference Include="..\..\source\cores\psp\PSP.GE.GPU.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.VulkanLLE.pas"/>
+        <DCCReference Include="..\..\source\cores\psp\PSP.GE.VulkanHLE.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.GE.Workers.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Crypto.pas"/>
         <DCCReference Include="..\..\source\cores\psp\PSP.Crypto.ECDSA.pas"/>

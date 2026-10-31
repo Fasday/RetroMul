@@ -13,10 +13,12 @@ The master clock is in guest nanoseconds; devices and waits run on that clock.
 and invalidates generated blocks on code writes.
 
 `PSP.GE.Engine` performs list interpretation and primitive setup. The software
-rasterizer is the reference. The optional `PSP.GE.GPU` backend uses ordered Vulkan
+rasterizer is the reference. The optional `PSP.GE.VulkanLLE` backend uses ordered Vulkan
 compute tiles and synchronizes held VRAM pages before CPU access. Unsupported
 primitives use the software path. CPU/GPU equality is verified separately from
-agreement with hardware-recorded pspautotests.
+agreement with hardware-recorded pspautotests. The optional `PSP.GE.VulkanHLE`
+backend draws with Vulkan graphics pipelines into render-target images and is
+not bit exact; see [`tests/gpu/vulkan/HLE.md`](../../../tests/gpu/vulkan/HLE.md).
 
 On Windows the CPU renderer queues primitives in batches (`PSP.GE.Workers`) and
 draws a batch on a pool while the emulator goes on (processor count minus two
@@ -47,7 +49,8 @@ Nickname=RetroMul
 ```
 
 `Execution=interpreter` disables the recompiler. `Renderer=vulkan` requests the
-compute backend on the next worker start; CPU is the default. Missing Vulkan,
+compute backend (shown as Vulkan LLE) and `Renderer=vulkan-hle` the graphics-pipeline
+backend (Vulkan HLE) on the next worker start; CPU is the default. Missing Vulkan,
 unsupported features or failed arithmetic qualification select CPU. Reset and
 LoadExec retain the active renderer. Vulkan qualification and CPU-fallback cases
 are documented in [`tests/gpu/vulkan/README.md`](../../../tests/gpu/vulkan/README.md).

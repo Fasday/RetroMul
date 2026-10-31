@@ -8,48 +8,96 @@ uses
   System.SysUtils, PSP.Console, PSP.GE.Backend;
 
 type
+  // CPU: PSP.GE.Raster, the reference. Vulkan LLE: the same pixel pipeline in
+  // compute shaders, bit exact. Vulkan HLE: graphics pipelines, fast and not
+  // bit exact.
+  TPSPRenderer = (prCPU, prVulkanLLE, prVulkanHLE);
+
   TPSPRendererSession = class
   private
     FConsole: TPSPConsole;
     FBackend: TGERasterBackend;
+    FKind: TPSPRenderer;
     FDescription: string;
   public
-    constructor Create(Console: TPSPConsole; Vulkan: Boolean);
+    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer);
     destructor Destroy; override;
     function Status: string;
   end;
+
+// The settings' values: cpu, vulkan (LLE, also read as vulkan-lle), vulkan-hle.
+// Anything else is the CPU.
+function PSPRendererName(Renderer: TPSPRenderer): string;
+function PSPRendererFromName(const Name: string): TPSPRenderer;
 
 implementation
 
 uses
   PSP.GE
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
-  , PSP.GE.GPU
+  , PSP.GE.VulkanLLE, PSP.GE.VulkanHLE
   {$ENDIF}
   ;
 
-constructor TPSPRendererSession.Create(Console: TPSPConsole; Vulkan: Boolean);
+function PSPRendererName(Renderer: TPSPRenderer): string;
+begin
+  case Renderer of
+    prVulkanLLE: Result := 'vulkan';
+    prVulkanHLE: Result := 'vulkan-hle';
+  else
+    Result := 'cpu';
+  end;
+end;
+
+function PSPRendererFromName(const Name: string): TPSPRenderer;
+begin
+  if SameText(Name, 'vulkan') or SameText(Name, 'vulkan-lle') then
+    Result := prVulkanLLE
+  else if SameText(Name, 'vulkan-hle') then
+    Result := prVulkanHLE
+  else
+    Result := prCPU;
+end;
+
+constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer);
 begin
   inherited Create;
   FConsole := Console;
   FDescription := 'cpu';
-  if not Vulkan then
+  if Renderer = prCPU then
     Exit;
   var Reason: string;
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
-  var Backend: TGEGPUBackend;
-  if CreateGEGPUBackend(Console.Memory, False, Backend, Reason) then
+  if Renderer = prVulkanHLE then
   begin
-    FBackend := Backend;
-    Backend.OnMessage :=
-      procedure(const Text: string)
-      begin
-        FConsole.HLE.Log(Text);
-      end;
-    TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
-    FDescription := 'vulkan: ' + Backend.Compute.Name;
-    Console.HLE.Log('gpu: ' + FDescription);
-    Exit;
+    var Backend: TGEVulkanHLEBackend;
+    if CreateGEVulkanHLEBackend(Console.Memory, Backend, Reason) then
+    begin
+      FBackend := Backend;
+      FKind := prVulkanHLE;
+      TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
+      FDescription := 'vulkan-hle: ' + Backend.Compute.Name;
+      Console.HLE.Log('gpu: ' + FDescription);
+      Exit;
+    end;
+  end
+  else
+  begin
+    var Backend: TGEVulkanLLEBackend;
+    if CreateGEVulkanLLEBackend(Console.Memory, False, Backend, Reason) then
+    begin
+      FBackend := Backend;
+      FKind := prVulkanLLE;
+      Backend.OnMessage :=
+        procedure(const Text: string)
+        begin
+          FConsole.HLE.Log(Text);
+        end;
+      TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
+      FDescription := 'vulkan: ' + Backend.Compute.Name;
+      Console.HLE.Log('gpu: ' + FDescription);
+      Exit;
+    end;
   end;
   {$ELSE}
   Reason := 'this host is not qualified for Vulkan GE rendering';
@@ -74,9 +122,16 @@ function TPSPRendererSession.Status: string;
 begin
   Result := FDescription;
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
-  if FBackend <> nil then
+  if FBackend = nil then
+    Exit;
+  if FKind = prVulkanHLE then
   begin
-    var S := TGEGPUBackend(FBackend).Stats;
+    var S := TGEVulkanHLEBackend(FBackend).Stats;
+    Result := Result + Format(' (%d primitives in %d draws, %d read backs)', [S.Prims, S.Draws, S.Readbacks]);
+  end
+  else
+  begin
+    var S := TGEVulkanLLEBackend(FBackend).Stats;
     Result := Result + Format(' (%d batches, %d GPU primitives, %d CPU fallbacks)', [S.Batches, S.Prims, S.Fallbacks]);
   end;
   {$ENDIF}

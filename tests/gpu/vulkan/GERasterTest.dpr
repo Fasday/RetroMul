@@ -5,7 +5,7 @@ program GERasterTest;
 
 uses
   System.SysUtils, System.Math, System.Diagnostics, PSP.Types, PSP.Memory,
-  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.GPU;
+  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.VulkanLLE;
 
 const
   Permutations: array[0..4] of Integer = (0, 9, 10, 11, 12);
@@ -14,7 +14,7 @@ const
 var
   Seed: Cardinal = $FEED1357;
   CPU, DeviceMemory: TPSPMemory;
-  GPU: TGEGPUBackend;
+  GPU: TGEVulkanLLEBackend;
   Clut: array[0..1023] of Byte;
   Draws, Checks: Integer;
 
@@ -167,7 +167,7 @@ begin
   try
     try
       var Error: string;
-      if not CreateGEGPUBackend(DeviceMemory, False, GPU, Error) then
+      if not CreateGEVulkanLLEBackend(DeviceMemory, False, GPU, Error) then
         raise Exception.Create(Error);
       // The GPU draws all it can; runs on the CPU are tested at the end.
       GPU.CPURunPixels := 0;

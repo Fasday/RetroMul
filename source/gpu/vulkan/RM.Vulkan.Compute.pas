@@ -19,6 +19,8 @@ type
     DenormPreserve32, DenormPreserve64: Boolean;
     RoundEven32, RoundEven64: Boolean;
     SignedZeroInfNan32, SignedZeroInfNan64: Boolean;
+    // With a graphics queue: fixed-function features enabled when supported.
+    DepthClamp, LogicOp, DualSrcBlend: Boolean;
   end;
 
   // Device: device-local, not mapped. Upload: host-visible for CPU writes.
@@ -137,11 +139,13 @@ type
     FPool: VkCommandPool;
     FName: string;
     FValidation: Boolean;
+    FGraphics: Boolean;
     procedure CreateInstance(Validation: Boolean);
     procedure SelectDevice(const DeviceName: string);
     procedure CreateDevice;
   public
-    constructor Create(const DeviceName: string = ''; Validation: Boolean = False);
+    // Graphics: the queue also renders (a family with graphics and compute).
+    constructor Create(const DeviceName: string = ''; Validation: Boolean = False; Graphics: Boolean = False);
     destructor Destroy; override;
     // A memory type index with all Required flags, trying each preference in order; -1 if none.
     function FindMemory(TypeBits, Required: Cardinal; const Preferred: array of Cardinal): Integer;
@@ -169,21 +173,22 @@ type
     property Name: string read FName;
     // The Khronos validation layer is active (it reports to stdout).
     property Validation: Boolean read FValidation;
+    property Graphics: Boolean read FGraphics;
   end;
 
 // A compute context, or nil (with the reason) when there is no usable Vulkan device.
 function TryCreateVulkanCompute(out Compute: TVulkanCompute; out Error: string; const DeviceName: string = '';
-  Validation: Boolean = False): Boolean;
+  Validation: Boolean = False; Graphics: Boolean = False): Boolean;
 
 implementation
 
 function TryCreateVulkanCompute(out Compute: TVulkanCompute; out Error: string; const DeviceName: string;
-  Validation: Boolean): Boolean;
+  Validation, Graphics: Boolean): Boolean;
 begin
   Compute := nil;
   Error := '';
   try
-    Compute := TVulkanCompute.Create(DeviceName, Validation);
+    Compute := TVulkanCompute.Create(DeviceName, Validation, Graphics);
   except
     on E: Exception do
       Error := E.Message;
@@ -193,9 +198,10 @@ end;
 
 { TVulkanCompute }
 
-constructor TVulkanCompute.Create(const DeviceName: string; Validation: Boolean);
+constructor TVulkanCompute.Create(const DeviceName: string; Validation, Graphics: Boolean);
 begin
   inherited Create;
+  FGraphics := Graphics;
   FAPI := TVulkanAPI.Create;
   CreateInstance(Validation);
   SelectDevice(DeviceName);
@@ -261,7 +267,7 @@ begin
   FAPI.LoadInstance(FInstance);
 end;
 
-function ComputeFamily(API: TVulkanAPI; Device: VkPhysicalDevice): Integer;
+function ComputeFamily(API: TVulkanAPI; Device: VkPhysicalDevice; Graphics: Boolean): Integer;
 var
   Count: Cardinal;
   Families: TArray<VkQueueFamilyProperties>;
@@ -271,8 +277,11 @@ begin
   SetLength(Families, Count);
   if Count <> 0 then
     API.vkGetPhysicalDeviceQueueFamilyProperties(Device, @Count, @Families[0]);
+  var Want: Cardinal := VK_QUEUE_COMPUTE_BIT;
+  if Graphics then
+    Want := Want or VK_QUEUE_GRAPHICS_BIT;
   for var I := 0 to High(Families) do
-    if (Families[I].queueFlags and VK_QUEUE_COMPUTE_BIT <> 0) and (Families[I].queueCount > 0) then
+    if (Families[I].queueFlags and Want = Want) and (Families[I].queueCount > 0) then
       Exit(I);
   Result := -1;
 end;
@@ -299,7 +308,7 @@ begin
     var DeviceText := string(UTF8String(PAnsiChar(@P.deviceName[0])));
     if (DeviceName <> '') and (Pos(DeviceName.ToLower, DeviceText.ToLower) = 0) then
       Continue;
-    if ComputeFamily(FAPI, Device) < 0 then
+    if ComputeFamily(FAPI, Device, FGraphics) < 0 then
       Continue;
     var Score := 0;
     if (P.deviceType >= 0) and (P.deviceType <= High(Rank)) then
@@ -315,9 +324,11 @@ begin
   if FPhysicalDevice = nil then
     if DeviceName <> '' then
       raise EVulkanError.Create('No Vulkan 1.2 compute device matches "' + DeviceName + '".')
+    else if FGraphics then
+      raise EVulkanError.Create('No Vulkan 1.2 device with a graphics and compute queue.')
     else
       raise EVulkanError.Create('No Vulkan 1.2 device with a compute queue.');
-  FQueueFamily := ComputeFamily(FAPI, FPhysicalDevice);
+  FQueueFamily := ComputeFamily(FAPI, FPhysicalDevice, FGraphics);
   FAPI.vkGetPhysicalDeviceMemoryProperties(FPhysicalDevice, @FMemory);
 end;
 
@@ -376,6 +387,15 @@ begin
   Core.shaderInt64 := Features.features.shaderInt64;
   Core.shaderInt16 := Features.features.shaderInt16;
   Core.shaderFloat64 := Features.features.shaderFloat64;
+  if FGraphics then
+  begin
+    Core.depthClamp := Features.features.depthClamp;
+    Core.logicOp := Features.features.logicOp;
+    Core.dualSrcBlend := Features.features.dualSrcBlend;
+    FFeatures.DepthClamp := Core.depthClamp <> 0;
+    FFeatures.LogicOp := Core.logicOp <> 0;
+    FFeatures.DualSrcBlend := Core.dualSrcBlend <> 0;
+  end;
   Features.features := Core;
   Storage16.storagePushConstant16 := 0;
   Storage16.storageInputOutput16 := 0;

@@ -158,7 +158,7 @@ Workers.Add 4.5%, Light 4%, DecodeVertex 3.6%, Render 2.3%):
 **Shared files changed:** `PSP.GE.Engine.pas` (vertex pipeline, BuildRaster key,
 RAMBase), `PSP.GE.Workers.pas` (Add's bookkeeping and the help statistic only),
 `PSP.GE.pas` (RunHW's list fetch), `PSP.Display.pas` (Render). Not touched:
-PSP.GE.Raster/Texture/Pixel*.inc, PSP.GE.GPU*, shaders, VFPU handlers, HW.JIT.
+PSP.GE.Raster/Texture/Pixel*.inc, PSP.GE.VulkanLLE*, shaders, VFPU handlers, HW.JIT.
 
 ## Native CPU-only improvement
 

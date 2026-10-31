@@ -2,7 +2,7 @@
 (.expected) and drew (.expected.bmp, the 512x272 BGRA framebuffer).
 
   autotests.py [filter...] [--exe PATH] [--frames N] [--jobs N] [--out FILE] [--show] [--keep DIR]
-               [--backend cpu|vulkan|check]
+               [--backend cpu|vulkan|check|hle]
 Results: PASS / FAIL / CRASH / TIMEOUT. Writes a summary file (default autotests.txt).
 Environment: PSP_AUTOTESTS overrides the test folder.
 """
@@ -74,7 +74,7 @@ def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu', no_memstick=Fa
     shot = None
     args = [exe, base + '.prx', '-test', '-quiet', '-frames', str(frames)]
     if backend != 'cpu':
-        args += ['-gpu-check' if backend == 'check' else '-gpu']
+        args += [{'check': '-gpu-check', 'hle': '-gpu-hle'}.get(backend, '-gpu')]
     if hw:
         args.append('-hw')
     if no_memstick:
@@ -114,6 +114,8 @@ def run(rel, exe, frames, timeout, keep, hw=False, backend='cpu', no_memstick=Fa
             except OSError:
                 pass
     backend_ok = backend == 'cpu' or ('gpu: unavailable' not in err and 'gpu: ' in err)
+    if backend == 'hle':
+        backend_ok = 'gpu hle: unavailable' not in err and 'gpu hle: ' in err
     if backend == 'check':
         backend_ok = backend_ok and 'gpu check: 0 of ' in err
     if code == 0 and text_ok and bmp_ok and backend_ok:
@@ -135,7 +137,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('filters', nargs='*')
     ap.add_argument('--exe', default=EXE)
-    ap.add_argument('--backend', choices=('cpu', 'vulkan', 'check'), default='cpu')
+    # vulkan: the bit-exact compute renderer (LLE); hle: the graphics-pipeline one.
+    ap.add_argument('--backend', choices=('cpu', 'vulkan', 'check', 'hle'), default='cpu')
     # Some dialog and WLAN scenarios legitimately run beyond 20 guest seconds.
     ap.add_argument('--frames', type=int, default=12000)
     ap.add_argument('--jobs', type=int, default=8)

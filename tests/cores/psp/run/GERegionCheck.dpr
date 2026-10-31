@@ -9,7 +9,7 @@ program GERegionCheck;
 
 uses
   System.SysUtils, Winapi.Windows, PSP.Types, PSP.Memory, PSP.GE.Types,
-  PSP.GE.Engine, PSP.GE.GPU;
+  PSP.GE.Engine, PSP.GE.VulkanLLE;
 
 type
   TInputVertex = record
@@ -26,7 +26,7 @@ const
 var
   M: TPSPMemory;
   E: TPSPGEEngine;
-  GPU: TGEGPUBackend;
+  GPU: TGEVulkanLLEBackend;
   Expected: TBytes;
   Cases: Integer;
 
@@ -191,7 +191,7 @@ begin
       if SameText(ParamStr(1), '-gpu') then
       begin
         var Error: string;
-        if not CreateGEGPUBackend(M, False, GPU, Error) then raise Exception.Create('GPU required: ' + Error);
+        if not CreateGEVulkanLLEBackend(M, False, GPU, Error) then raise Exception.Create('GPU required: ' + Error);
         E.Backend := GPU;
       end;
       Check;

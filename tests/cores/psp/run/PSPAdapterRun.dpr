@@ -3,7 +3,7 @@ program PSPAdapterRun;
 {$APPTYPE CONSOLE}
 
 // The actual factory/adapter/worker, paced with sound unless -mute.
-// PSPAdapterRun <file> <seconds> [out.png] [-mute] [-interpreter] [-gpu]
+// PSPAdapterRun <file> <seconds> [out.png] [-mute] [-interpreter] [-gpu | -gpu-hle]
 // -frame N: capture exactly guest frame N (fail if it was missed).
 // -lifecycle: pause/resume, Reset, then Stop/Start during the run.
 // -mash: Start and Cross (Enter, Z) in turn every 1.25 s from 8 s to 36 s, then
@@ -11,7 +11,7 @@ program PSPAdapterRun;
 
 uses
   System.SysUtils, System.Classes, System.Diagnostics, System.Hash, System.UITypes, Core.Emulation, Core.Emulation.Types,
-  Core.EmulatorFactory, Core.Snapshots, Core.Adapter.PSP;
+  Core.EmulatorFactory, Core.Snapshots, Core.Adapter.PSP, Core.PSP.Renderer;
 
 function Hash(const Frame: TEmulatorFrame): string;
 begin
@@ -28,7 +28,7 @@ begin
     var OutFile := '';
     var Mute := False;
     var Interpreter := False;
-    var Vulkan := False;
+    var Renderer := prCPU;
     var Lifecycle := False;
     var Capture := 0;
     var Mash := False;
@@ -39,7 +39,8 @@ begin
       var A := ParamStr(I);
       if A = '-mute' then Mute := True
       else if A = '-interpreter' then Interpreter := True
-      else if A = '-gpu' then Vulkan := True
+      else if A = '-gpu' then Renderer := prVulkanLLE
+      else if A = '-gpu-hle' then Renderer := prVulkanHLE
       else if A = '-lifecycle' then Lifecycle := True
       else if A = '-frame' then begin Inc(I); Capture := StrToInt(ParamStr(I)); end
       else if A = '-mash' then Mash := True
@@ -54,7 +55,7 @@ begin
     if Config is TPSPConfig then
     begin
       TPSPConfig(Config).Recompiler := not Interpreter;
-      TPSPConfig(Config).VulkanRenderer := Vulkan;
+      TPSPConfig(Config).Renderer := Renderer;
     end;
     var Adapter := Core as TObject;
     var Frame, LastFrame: TEmulatorFrame;

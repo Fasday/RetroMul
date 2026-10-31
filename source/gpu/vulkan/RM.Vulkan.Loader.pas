@@ -113,6 +113,20 @@ type
     vkCmdResetQueryPool: PFN_vkCmdResetQueryPool;
     vkCmdWriteTimestamp: PFN_vkCmdWriteTimestamp;
     vkGetQueryPoolResults: PFN_vkGetQueryPoolResults;
+    // Graphics rendering into images
+    vkGetPhysicalDeviceFormatProperties: PFN_vkGetPhysicalDeviceFormatProperties;
+    vkCreateSampler: PFN_vkCreateSampler;
+    vkDestroySampler: PFN_vkDestroySampler;
+    vkCmdBindVertexBuffers: PFN_vkCmdBindVertexBuffers;
+    vkCmdCopyBufferToImage: PFN_vkCmdCopyBufferToImage;
+    vkCmdCopyImageToBuffer: PFN_vkCmdCopyImageToBuffer;
+    vkCmdBlitImage: PFN_vkCmdBlitImage;
+    vkCmdCopyImage: PFN_vkCmdCopyImage;
+    vkCmdSetBlendConstants: PFN_vkCmdSetBlendConstants;
+    vkCmdSetStencilReference: PFN_vkCmdSetStencilReference;
+    vkCmdSetStencilCompareMask: PFN_vkCmdSetStencilCompareMask;
+    vkCmdSetStencilWriteMask: PFN_vkCmdSetStencilWriteMask;
+    vkCmdClearAttachments: PFN_vkCmdClearAttachments;
     // Vulkan 1.2 (nil on 1.1 devices)
     vkWaitSemaphores: PFN_vkWaitSemaphores;
     vkSignalSemaphore: PFN_vkSignalSemaphore;
@@ -188,6 +202,8 @@ begin
   vkGetDeviceProcAddr := PFN_vkGetDeviceProcAddr(InstanceProc(Instance, 'vkGetDeviceProcAddr'));
   vkGetPhysicalDeviceProperties := PFN_vkGetPhysicalDeviceProperties(InstanceProc(Instance, 'vkGetPhysicalDeviceProperties'));
   vkGetPhysicalDeviceFeatures2 := PFN_vkGetPhysicalDeviceFeatures2(InstanceProc(Instance, 'vkGetPhysicalDeviceFeatures2'));
+  vkGetPhysicalDeviceFormatProperties := PFN_vkGetPhysicalDeviceFormatProperties(
+    InstanceProc(Instance, 'vkGetPhysicalDeviceFormatProperties'));
   {$IF Defined(LINUX) or Defined(ANDROID)}
   vkGetPhysicalDeviceExternalSemaphoreProperties := PFN_vkGetPhysicalDeviceExternalSemaphoreProperties(
     InstanceProc(Instance, 'vkGetPhysicalDeviceExternalSemaphoreProperties'));
@@ -285,6 +301,18 @@ begin
   vkCmdResetQueryPool := PFN_vkCmdResetQueryPool(DeviceProc(Device, 'vkCmdResetQueryPool'));
   vkCmdWriteTimestamp := PFN_vkCmdWriteTimestamp(DeviceProc(Device, 'vkCmdWriteTimestamp'));
   vkGetQueryPoolResults := PFN_vkGetQueryPoolResults(DeviceProc(Device, 'vkGetQueryPoolResults'));
+  vkCreateSampler := PFN_vkCreateSampler(DeviceProc(Device, 'vkCreateSampler'));
+  vkDestroySampler := PFN_vkDestroySampler(DeviceProc(Device, 'vkDestroySampler'));
+  vkCmdBindVertexBuffers := PFN_vkCmdBindVertexBuffers(DeviceProc(Device, 'vkCmdBindVertexBuffers'));
+  vkCmdCopyBufferToImage := PFN_vkCmdCopyBufferToImage(DeviceProc(Device, 'vkCmdCopyBufferToImage'));
+  vkCmdCopyImageToBuffer := PFN_vkCmdCopyImageToBuffer(DeviceProc(Device, 'vkCmdCopyImageToBuffer'));
+  vkCmdBlitImage := PFN_vkCmdBlitImage(DeviceProc(Device, 'vkCmdBlitImage'));
+  vkCmdCopyImage := PFN_vkCmdCopyImage(DeviceProc(Device, 'vkCmdCopyImage'));
+  vkCmdSetBlendConstants := PFN_vkCmdSetBlendConstants(DeviceProc(Device, 'vkCmdSetBlendConstants'));
+  vkCmdSetStencilReference := PFN_vkCmdSetStencilReference(DeviceProc(Device, 'vkCmdSetStencilReference'));
+  vkCmdSetStencilCompareMask := PFN_vkCmdSetStencilCompareMask(DeviceProc(Device, 'vkCmdSetStencilCompareMask'));
+  vkCmdSetStencilWriteMask := PFN_vkCmdSetStencilWriteMask(DeviceProc(Device, 'vkCmdSetStencilWriteMask'));
+  vkCmdClearAttachments := PFN_vkCmdClearAttachments(DeviceProc(Device, 'vkCmdClearAttachments'));
   vkWaitSemaphores := PFN_vkWaitSemaphores(vkGetDeviceProcAddr(Device, 'vkWaitSemaphores'));
   vkSignalSemaphore := PFN_vkSignalSemaphore(vkGetDeviceProcAddr(Device, 'vkSignalSemaphore'));
   vkGetSemaphoreCounterValue := PFN_vkGetSemaphoreCounterValue(vkGetDeviceProcAddr(Device, 'vkGetSemaphoreCounterValue'));

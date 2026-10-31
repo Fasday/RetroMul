@@ -15,11 +15,12 @@ begin
   try
     var Root := TPath.Combine(TPath.GetTempPath, 'RetroMul-worker-test-' + TGUID.NewGuid.ToString);
     var Storage: IStorage := TStorage.Create(Root);
-    if SameText(ParamStr(2), 'vulkan') then
+    // vulkan (LLE) or vulkan-hle.
+    if ParamStr(2) <> '' then
     begin
       var Ini := Storage.ReadConfig(Storage.ConfigFile('psp'));
       try
-        Ini.WriteString('Video', 'Renderer', 'vulkan');
+        Ini.WriteString('Video', 'Renderer', ParamStr(2).ToLower);
         Storage.WriteConfig(Ini);
       finally
         Ini.Free;

@@ -5,7 +5,7 @@ program GECoherenceTest;
 
 uses
   System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.CPU, PSP.CPU.JIT, PSP.VFPU,
-  PSP.GE.Raster, PSP.GE.GPU;
+  PSP.GE.Raster, PSP.GE.VulkanLLE;
 
 const
   Widths: array[0..4] of Cardinal = (0, 512, 1024, 2048, 4096);
@@ -15,7 +15,7 @@ const
 
 var
   CPU, DeviceMemory: TPSPMemory;
-  GPU: TGEGPUBackend;
+  GPU: TGEVulkanLLEBackend;
   Core: TPSPCPU;
   Jit: TPSPRecompiler;
   Checks, Draws, NativeCopies: Integer;
@@ -406,7 +406,7 @@ begin
   try
     try
       var Error: string;
-      Require(CreateGEGPUBackend(DeviceMemory, False, GPU, Error), Error);
+      Require(CreateGEVulkanLLEBackend(DeviceMemory, False, GPU, Error), Error);
       Core := TPSPCPU.Create(DeviceMemory);
       Jit := TPSPRecompiler.Create(Core, []);
       try

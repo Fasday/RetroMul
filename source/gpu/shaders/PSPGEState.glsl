@@ -1,4 +1,4 @@
-// A TGERaster as PSP.GE.GPU packs it: 128 words per state, integers as
+// A TGERaster as PSP.GE.VulkanLLE packs it: 128 words per state, integers as
 // their two's complement bits.
 const uint ST_FBADDR = 0u;
 const uint ST_FBSTRIDE = 1u;

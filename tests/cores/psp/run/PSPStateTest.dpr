@@ -143,7 +143,7 @@ begin
       FileCase;
       Exit;
     end;
-    if ParamCount < 2 then raise Exception.Create('PSPStateTest image checkpoint-frame [font-dir] [vulkan]');
+    if ParamCount < 2 then raise Exception.Create('PSPStateTest image checkpoint-frame [font-dir] [vulkan|vulkan-hle]');
     var S := TFileStream.Create(ParamStr(1), fmOpenRead or fmShareDenyWrite);
     var P: TPSPProgram;
     try P := TPSPProgram.Read(S); finally S.Free; end;
@@ -154,7 +154,7 @@ begin
     var SavePath := TPath.Combine(Root, 'ms' + PathDelim + 'snapshot-test-save.dat');
     TFile.WriteAllText(SavePath, 'initial-save', TEncoding.ASCII);
     var C := TPSPConsole.Create(P, nil, '', TPath.Combine(Root, 'ms'), ParamStr(3), True);
-    var Renderer := TPSPRendererSession.Create(C, SameText(ParamStr(4), 'vulkan'));
+    var Renderer := TPSPRendererSession.Create(C, PSPRendererFromName(ParamStr(4)));
     var D: TPSPConsole := nil;
     try
       var Frame: TEmulatorFrame;
