@@ -1980,10 +1980,27 @@ begin
     T.Format := C[GE_TEXFORMAT] and $F;
     T.Swizzle := (C[GE_TEXMODE] and 1) <> 0;
     T.LevelCount := Integer((C[GE_TEXMODE] shr 16) and 7) + 1;
+    // With a CLUT per level (TEXMODE bit 8) level L's CLUT4 indices go up by
+    // 16 L and CLUT8's by 256 L (recorded on a PSP-E1000, ge_clut: CLUT16
+    // and CLUT32 unchanged, within the CLUT's 512 entries).
+    var ClutStep := 0;
+    if (C[GE_TEXMODE] and $100) <> 0 then
+      case T.Format of
+        4: ClutStep := 16;
+        5: ClutStep := 256;
+      end;
     for var L := 0 to 7 do
     begin
       T.Levels[L].Addr := ((C[GE_TEXBUFWIDTH0 + L] and $0F0000) shl 8) or (C[GE_TEXADDR0 + L] and $FFFFFF);
       T.Levels[L].BufWidth := C[GE_TEXBUFWIDTH0 + L] and $7FF;
+      // A row is the buffer width's bytes cut to a multiple of 16, at least
+      // 16 (ge_clut: every format but DXT, widths 1 to 64; 0 not recorded).
+      if (T.Format < 8) and (T.Levels[L].BufWidth > 0) then
+      begin
+        var RowBytes := Max(16, ((T.Levels[L].BufWidth * TexBits[T.Format]) shr 3) and not 15);
+        T.Levels[L].BufWidth := (RowBytes shl 3) div TexBits[T.Format];
+      end;
+      T.Levels[L].ClutAdd := (L * ClutStep) and $1FF;
       T.Levels[L].Width := 1 shl Min(C[GE_TEXSIZE0 + L] and $F, 9);
       T.Levels[L].Height := 1 shl Min((C[GE_TEXSIZE0 + L] shr 8) and $F, 9);
       T.Levels[L].Size := Cardinal(T.Levels[L].BufWidth * T.Levels[L].Height * TexBits[T.Format]) div 8;

@@ -71,6 +71,7 @@ const uint ST_MAXLEVEL = 116u;
 const uint ST_LEVELMODE = 117u;
 const uint ST_LODBIAS = 118u;
 const uint ST_SLOPE = 119u; // float bits
+const uint ST_CLUTSTEP = 120u; // a CLUT per level: level L's indices + L x this
 const uint NO_DATA = 0xFFFFFFFFu;
 
 const uint SF_THROUGH = 1u << 0;

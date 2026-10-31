@@ -248,6 +248,7 @@ const
   ST_LEVELMODE = 117;
   ST_LODBIAS = 118;
   ST_SLOPE = 119;
+  ST_CLUTSTEP = 120;
   NoData = Cardinal($FFFFFFFF);
   // A batch this large starts drawing when the GE stops (PSP_GPU_RELEASE
   // for measurements).
@@ -1376,6 +1377,7 @@ begin
     W[ST_LEVELMODE] := Cardinal(S.Tex.LevelMode);
     W[ST_LODBIAS] := Cardinal(S.Tex.LodBias);
     W[ST_SLOPE] := PCardinal(@S.Tex.Slope)^;
+    W[ST_CLUTSTEP] := Cardinal(S.Tex.Levels[1].ClutAdd);
     for var L := 0 to 7 do
     begin
       W[ST_LEVELS + L * 4] := S.Tex.Levels[L].Addr;

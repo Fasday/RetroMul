@@ -179,9 +179,10 @@ uint decode16(int format, uint p)
   return (r * 17u) | ((g * 17u) << 8) | ((b * 17u) << 16) | ((a * 17u) << 24);
 }
 
-uint clutLookup(uint s, uint index)
+uint clutLookup(uint s, uint index, int level)
 {
   uint i = ((index >> uint(stInt(s, ST_CLUTSHIFT))) & uint(stInt(s, ST_CLUTMASK))) | (uint(stInt(s, ST_CLUTOFFSET)) & 0x1FFu);
+  i += (uint(level) * states[s + ST_CLUTSTEP]) & 0x1FFu;
   if (stInt(s, ST_CLUTFORMAT) == 3)
   {
     uint o = (i & 0xFFu) * 4u;
@@ -254,14 +255,14 @@ uint fetchTexel(uint s, int level, int x, int y)
       b = b >> 4;
     else
       b = b & 0xFu;
-    return clutLookup(s, b);
+    return clutLookup(s, b, level);
   }
   if (format == 5)
-    return clutLookup(s, texRead8(addr + texelOffset(swizzle, bufWidth, x, y, 8)));
+    return clutLookup(s, texRead8(addr + texelOffset(swizzle, bufWidth, x, y, 8)), level);
   if (format == 6)
-    return clutLookup(s, texRead16(addr + texelOffset(swizzle, bufWidth, x, y, 16)));
+    return clutLookup(s, texRead16(addr + texelOffset(swizzle, bufWidth, x, y, 16)), level);
   if (format == 7)
-    return clutLookup(s, texRead32(addr + texelOffset(swizzle, bufWidth, x, y, 32)));
+    return clutLookup(s, texRead32(addr + texelOffset(swizzle, bufWidth, x, y, 32)), level);
   if (format <= 10)
   {
     int blockBytes = format == 8 ? 8 : 16;

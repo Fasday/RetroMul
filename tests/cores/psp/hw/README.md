@@ -90,6 +90,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   types and divisions, 16 a frame; `spline/`), the points on a grid that
   sorts by x and y. 5 s on the PSP.
 
+- `ge_clut`: which CLUT entry a texel reads with a CLUT per level (TEXMODE
+  bit 8): 8 x 8 through-mode sprites at a constant level, the CLUT's entries
+  holding their own index; CLUT4..CLUT32, levels 0..7, CLUTFORMAT shifts,
+  masks and offsets, the bit set and clear (`clut/frame_<n>.bin`,
+  `cells_<n>.bin` the settings). Frame 2: where a buffer's rows lie for
+  widths 1..64, CLUT4..CLUT32, 5650 and 8888. Under a second on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -136,7 +143,7 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   exactly), where the core's per-pixel derivative of S and T was up to 38
   sixteenths off. Levels narrower than 16 texels with a buffer width below 16
   read their lower rows elsewhere on the PSP (`ge_lod`'s random set, levels
-  4 to 7); not recorded further yet.
+  4 to 7): rows are at least 16 bytes (`ge_clut`, below).
 - Sprite sampling (`ge_sprite`): the core's positions (start plus the
   truncated step times the distance to the pixel centre) match the random
   sets to 99.8% but are one sixteenth of a texel too high on most samples
@@ -175,6 +182,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   normals, a Bezier patch's normal is the tangent along u (the last step's
   two values' difference) cross the one along v (gpu/exact's normals jobs;
   the reverse order mirrors them), negated by PATCHFACING.
+- A CLUT per level (`ge_clut`, TEXMODE bit 8): level L's CLUT4 index (after
+  shift, mask and offset) goes up by 16 L and CLUT8's by 256 L, within the
+  CLUT's 512 entries; CLUT16 and CLUT32 are unchanged. Every texel of the
+  probe and gpu/exact's clut per level job match.
+- A texture row is the buffer width's bytes cut down to a multiple of 16, at
+  least 16 (`ge_clut` frame 2: every non-DXT format, widths 1 to 64; width 0
+  not recorded). That is also what `ge_lod`'s narrow levels showed.
 - Near-plane clipping: the clipped vertices' depth is not exactly that of
   the near plane: the hardware's planes give 2 to 3 (of 65535) where the
   core puts 0, so its intersection arithmetic (16-bit, like the vertex

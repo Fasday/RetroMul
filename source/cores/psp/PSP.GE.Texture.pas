@@ -23,6 +23,8 @@ type
     // Every texel the sampler can address lies in Ptr's Size bytes (set by
     // GEFitLevel; False only costs speed).
     Fits: Boolean;
+    // Added to a CLUT index read from this level (a CLUT per level).
+    ClutAdd: Integer;
   end;
 
   PGETexLevel = ^TGETexLevel;
@@ -148,9 +150,9 @@ begin
   Result := Decode16(Format, P);
 end;
 
-function ClutLookup(const T: TGETexture; Index: Cardinal): Cardinal; inline;
+function ClutLookup(const T: TGETexture; Index: Cardinal; Add: Integer = 0): Cardinal; inline;
 begin
-  var I := ((Index shr T.ClutShift) and Cardinal(T.ClutMask)) or (Cardinal(T.ClutOffset) and $1FF);
+  var I := (((Index shr T.ClutShift) and Cardinal(T.ClutMask)) or (Cardinal(T.ClutOffset) and $1FF)) + Cardinal(Add);
   if T.ClutFormat = 3 then
     Result := PCardinal(T.Clut + (I and $FF) * 4)^
   else
@@ -172,13 +174,14 @@ begin
   T.PalValid := True;
 end;
 
-// A CLUT4/CLUT8 texel's colour: Pal holds ClutLookup of every such index.
-function PalLookup(const T: TGETexture; Index: Cardinal): Cardinal; inline;
+// A CLUT4/CLUT8 texel's colour: Pal holds ClutLookup of every such index
+// (level 0's).
+function PalLookup(const T: TGETexture; Index: Cardinal; Add: Integer): Cardinal; inline;
 begin
-  if T.PalValid then
+  if T.PalValid and (Add = 0) then
     Result := T.Pal[Index]
   else
-    Result := ClutLookup(T, Index);
+    Result := ClutLookup(T, Index, Add);
 end;
 
 // Byte offset of texel (X, Y) for a format of Bits per texel, swizzled or linear.
@@ -284,12 +287,12 @@ begin
               B := B shr 4
             else
               B := B and $F;
-            Exit(PalLookup(T, B));
+            Exit(PalLookup(T, B, L.ClutAdd));
           end;
-        5: Exit(PalLookup(T, L.Ptr[Off]));
-        6: Exit(ClutLookup(T, PWord(L.Ptr + Off)^));
+        5: Exit(PalLookup(T, L.Ptr[Off], L.ClutAdd));
+        6: Exit(ClutLookup(T, PWord(L.Ptr + Off)^, L.ClutAdd));
       else
-        Exit(ClutLookup(T, PCardinal(L.Ptr + Off)^));
+        Exit(ClutLookup(T, PCardinal(L.Ptr + Off)^, L.ClutAdd));
       end;
   end;
   Result := FetchTexel(T, L, X, Y);
@@ -310,14 +313,14 @@ begin
           B := B shr 4
         else
           B := B and $F;
-        Result := ClutLookup(T, B);
+        Result := ClutLookup(T, B, L.ClutAdd);
       end;
     5:
-      Result := ClutLookup(T, TexR8(L^, M, TexelOffset(T, L^, X, Y, 8)));
+      Result := ClutLookup(T, TexR8(L^, M, TexelOffset(T, L^, X, Y, 8)), L.ClutAdd);
     6:
-      Result := ClutLookup(T, TexR16(L^, M, TexelOffset(T, L^, X, Y, 16)));
+      Result := ClutLookup(T, TexR16(L^, M, TexelOffset(T, L^, X, Y, 16)), L.ClutAdd);
     7:
-      Result := ClutLookup(T, TexR32(L^, M, TexelOffset(T, L^, X, Y, 32)));
+      Result := ClutLookup(T, TexR32(L^, M, TexelOffset(T, L^, X, Y, 32)), L.ClutAdd);
     8, 9, 10:
       begin
         // 4x4 blocks in rows of BufWidth/4 blocks: the colour block (indices,
@@ -461,7 +464,7 @@ begin
     Result := ByteX;
 end;
 
-function FitTexel(const T: TGETexture; P: PByte; Off: Cardinal; X: Integer): Cardinal; inline;
+function FitTexel(const T: TGETexture; P: PByte; Off: Cardinal; X, Add: Integer): Cardinal; inline;
 begin
   case T.Format of
     0, 1, 2: Result := Decode16(T.Format, PWord(P + Off)^);
@@ -473,12 +476,12 @@ begin
           B := B shr 4
         else
           B := B and $F;
-        Result := PalLookup(T, B);
+        Result := PalLookup(T, B, Add);
       end;
-    5: Result := PalLookup(T, P[Off]);
-    6: Result := ClutLookup(T, PWord(P + Off)^);
+    5: Result := PalLookup(T, P[Off], Add);
+    6: Result := ClutLookup(T, PWord(P + Off)^, Add);
   else
-    Result := ClutLookup(T, PCardinal(P + Off)^);
+    Result := ClutLookup(T, PCardinal(P + Off)^, Add);
   end;
 end;
 
@@ -584,6 +587,8 @@ begin
     var RowBytes := (L.BufWidth * Bits) shr 3;
     var P := L.Ptr;
     var Sw := T.Swizzle;
+    // The palette is level 0's CLUT.
+    var Pal := T.PalValid and (L.ClutAdd = 0);
     if not Linear then
     begin
       var X := WrapCoord(NearestCoord(S), L.Width, T.ClampU);
@@ -591,10 +596,10 @@ begin
       var Off := FitOffset(Sw, RowBytes, Bits, X, Y);
       case T.Format of
         3: Exit(PCardinal(P + Off)^);
-        4: if T.PalValid then Exit(T.Pal[Nibble(P[Off], X)]);
-        5: if T.PalValid then Exit(T.Pal[P[Off]]);
+        4: if Pal then Exit(T.Pal[Nibble(P[Off], X)]);
+        5: if Pal then Exit(T.Pal[P[Off]]);
       end;
-      Exit(FitTexel(T, P, Off, X));
+      Exit(FitTexel(T, P, Off, X, L.ClutAdd));
     end;
     var X0, Y0: Integer;
     var FracX, FracY: Int64;
@@ -609,7 +614,7 @@ begin
     var C00, C10, C01, C11: Cardinal;
     case T.Format of
       4:
-        if T.PalValid then
+        if Pal then
         begin
           var CA := FitColumn(Sw, XA shr 1);
           var CB := FitColumn(Sw, XB shr 1);
@@ -620,7 +625,7 @@ begin
           Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
         end;
       5:
-        if T.PalValid then
+        if Pal then
         begin
           var CA := FitColumn(Sw, XA);
           var CB := FitColumn(Sw, XB);
@@ -652,10 +657,10 @@ begin
           Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
         end;
     end;
-    C00 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YA), XA);
-    C10 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YA), XB);
-    C01 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YB), XA);
-    C11 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YB), XB);
+    C00 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YA), XA, L.ClutAdd);
+    C10 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YA), XB, L.ClutAdd);
+    C01 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XA, YB), XA, L.ClutAdd);
+    C11 := FitTexel(T, P, FitOffset(Sw, RowBytes, Bits, XB, YB), XB, L.ClutAdd);
     Exit(Bilerp(C00, C10, C01, C11, FracX, FracY));
   end;
   if not Linear then
