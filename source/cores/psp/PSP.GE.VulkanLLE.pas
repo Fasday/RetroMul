@@ -2014,6 +2014,8 @@ begin
       F.B := GELineColor(LW, PX, PY, V0.B, V1.B);
       F.A := GELineColor(LW, PX, PY, V0.A, V1.A);
     end;
+    if S.Antialias then
+      F.A := GELineCoverage(LW, PX, PY);
     F.Z := RasterRound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;

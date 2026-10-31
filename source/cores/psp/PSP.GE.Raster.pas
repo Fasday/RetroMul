@@ -44,6 +44,8 @@ type
     ClearColor, ClearStencil, ClearDepth: Boolean;
     Flat: Boolean;
     Gouraud: Boolean;
+    // Lines: the fragment's alpha is the line's coverage (GELineCoverage).
+    Antialias: Boolean;
     Textured: Boolean;
     Tex: TGETexture;
     TexFunc: Integer;
@@ -128,6 +130,9 @@ type
     // Major and minor axis: start, step, the end on the major axis.
     M0, N0, DM, DN: Int64;
     Lo, Hi, P, Last, Step: Int64;
+    // The first pixel drawn on the major axis and the pixel last given's
+    // index from it.
+    FirstP, K, Count: Int64;
   end;
 
 function GELineStart(const V0, V1: TGEVertex; out W: TGELineWalk): Boolean;
@@ -137,6 +142,8 @@ function GELineNext(var W: TGELineWalk; out PX, PY: Integer; out T: Single): Boo
 // A Gouraud line's colour channel at pixel (PX, PY), from C0 at the first
 // vertex to C1 at the last.
 function GELineColor(const W: TGELineWalk; PX, PY, C0, C1: Integer): Integer;
+// An antialiased line's coverage of the pixel GELineNext gave last, 0..128.
+function GELineCoverage(const W: TGELineWalk; PX, PY: Integer): Integer;
 
 implementation
 
@@ -13247,6 +13254,9 @@ begin
   // From the pixel before the first vertex's to the one after the last's.
   W.P := FloorDiv64(W.M0, 16) - W.Step;
   W.Last := FloorDiv64(W.M0 + W.DM, 16) + W.Step;
+  W.FirstP := 0;
+  W.K := 0;
+  W.Count := 0;
 end;
 
 function GELineNext(var W: TGELineWalk; out PX, PY: Integer; out T: Single): Boolean;
@@ -13270,6 +13280,10 @@ begin
     var InB := LineMember(X, Y, W.X1, W.Y1, W.XMajor);
     if (InA and not InB) or (not InA and not InB and (C > W.Lo) and (C < W.Hi)) then
     begin
+      if W.Count = 0 then
+        W.FirstP := P;
+      W.K := W.Count;
+      Inc(W.Count);
       PX := X;
       PY := Y;
       T := (C - W.M0) / W.DM;
@@ -13309,6 +13323,29 @@ begin
     Result := 0;
   if Result > 255 then
     Result := 255;
+end;
+
+// Recorded on a PSP-E1000 (ge_line's antialiased set: 98.9% of the pixels,
+// the rest one off; gpu/exact's antialiased jobs): the line's position on the
+// minor axis comes from the first pixel drawn and a step per pixel, both with
+// 14 fraction bits (in 1/16 pixel) truncated toward zero; X, its offset into
+// the pixel in 1/256 pixel rounded up, gives the coverage X up to the middle
+// and 256 - X past it.
+function GELineCoverage(const W: TGELineWalk; PX, PY: Integer): Integer;
+begin
+  var CF := W.FirstP * 16 + 8;
+  var First := W.N0 * 16384 + (W.DN * (CF - W.M0) * 16384) div W.DM;
+  var Step := (W.DN * 16 * 16384 * W.Step) div W.DM;
+  var Pos := First + Step * W.K;
+  var Q: Int64;
+  if W.XMajor then
+    Q := PY
+  else
+    Q := PX;
+  var X := -FloorShr(-(Pos - Q * 16 * 16384), 10);
+  if X > 128 then
+    X := 256 - X;
+  Result := Max(0, Min(255, X));
 end;
 
 function GEFogByte(F: Single): Integer;
@@ -13689,6 +13726,8 @@ begin
       F.B := GELineColor(W, PX, PY, V0.B, V1.B);
       F.A := GELineColor(W, PX, PY, V0.A, V1.A);
     end;
+    if S.Antialias then
+      F.A := GELineCoverage(W, PX, PY);
     F.Z := GERound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
     F.T := V0.T + (V1.T - V0.T) * T;

@@ -1892,7 +1892,7 @@ const
   // Bits a texel by texture format (DXT by their blocks).
   TexBits: array[0..15] of Integer = (16, 16, 16, 32, 4, 8, 16, 32, 4, 8, 8, 0, 0, 0, 0, 0);
   // The registers BuildRaster reads, as runs (first, count); with them a few
-  // it does not ($1D, $25, $26).
+  // it does not ($1D, $26).
   GERasterRuns: array[0..9, 0..1] of Byte = ((GE_VTYPE, 1), (GE_REGION1, 2), (GE_CLIPENABLE, 13), (GE_SHADEMODE, 1),
     (GE_FRAMEBUFPTR, 20), (GE_TEXSIZE0, 8), (GE_TEXMODE, 2), (GE_CLUTFORMAT, 6), (GE_FOGCOLOR, 2),
     (GE_FRAMEBUFPIXFORMAT, 24));
@@ -1961,6 +1961,7 @@ begin
   S.ClearStencil := (C[GE_CLEARMODE] and $200) <> 0;
   S.ClearDepth := (C[GE_CLEARMODE] and $400) <> 0;
   S.Gouraud := (C[GE_SHADEMODE] and 1) <> 0;
+  S.Antialias := ((C[GE_ANTIALIASENABLE] and 1) <> 0) and not S.ClearMode;
   S.Flat := not S.Gouraud;
   S.Textured := ((C[GE_TEXENABLE] and 1) <> 0) and not S.ClearMode;
   if S.Textured then
