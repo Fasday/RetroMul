@@ -475,16 +475,22 @@ int geLog16(float v)
   return (int((bits >> 23) & 0xFFu) - 127) * 16 + int((bits >> 19) & 0xFu);
 }
 
-// PSP.GE.Raster.TexLod.
-int texLod(uint s, float scale, float w)
+// PSP.GE.Raster.GETexLod.
+int texLod(uint s, float g, float q, float iw)
 {
   int mode = stInt(s, ST_LEVELMODE);
   int bias = stInt(s, ST_LODBIAS);
   if (mode == 0)
-    return geLog16(scale) + bias;
+    return geLog16(g) - geLog16(q) + bias;
   if (mode == 2)
   {
-    precise float sw = uintBitsToFloat(stUint(s, ST_SLOPE)) * w;
+    float slope = uintBitsToFloat(stUint(s, ST_SLOPE));
+    if (iw > 0.0)
+      return geLog16(slope) - geLog16(iw) + 16 + bias;
+    float w = 1.0;
+    if (iw != 0.0)
+      w = float(divD(1.0lf, double(iw)));
+    precise float sw = slope * w;
     return geLog16(sw) + 16 + bias;
   }
   return bias;
@@ -1030,25 +1036,12 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
       f.t = st[1];
       if (stFlag(s, SF_NEEDLOD))
       {
-        // How S and T change per pixel (single precision, with the steps of
-        // the perspective-weighted sums the host packed), over |Q|.
+        // The largest step of S/w and T/w per pixel (GETexLod's G) from the steps
+        // the host packed.
         float nsx = uintBitsToFloat(prims[p + 90u]), nsy = uintBitsToFloat(prims[p + 91u]);
         float ntx = uintBitsToFloat(prims[p + 92u]), nty = uintBitsToFloat(prims[p + 93u]);
-        float dqx = uintBitsToFloat(prims[p + 94u]), dqy = uintBitsToFloat(prims[p + 95u]);
-        precise float a = f.s * dqx;
-        precise float b = f.s * dqy;
-        precise float c = f.t * dqx;
-        precise float d = f.t * dqy;
-        precise float ea = nsx - a;
-        precise float eb = nsy - b;
-        precise float ec = ntx - c;
-        precise float ed = nty - d;
-        float m = delphiMax(delphiMax(abs(ea), abs(eb)), delphiMax(abs(ec), abs(ed)));
-        float scale = float(divD(double(m), abs(q)));
-        float w = 1.0;
-        if (iw != 0.0lf)
-          w = float(divD(1.0lf, iw));
-        f.lod = texLod(s, scale, w);
+        float lodG = delphiMax(delphiMax(abs(nsx), abs(nsy)), delphiMax(abs(ntx), abs(nty)));
+        f.lod = texLod(s, lodG, float(abs(q)), float(iw));
       }
     }
     else

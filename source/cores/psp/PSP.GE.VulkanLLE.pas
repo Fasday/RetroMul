@@ -788,17 +788,6 @@ begin
   Result := TexelWindow(S, MinS, MaxS, MinT, MaxT, Full);
 end;
 
-// PSP.GE.Raster's TexLod (not exported), the same expressions and types.
-function TexLod(const S: TGERaster; Scale, W: Single): Integer;
-begin
-  case S.Tex.LevelMode of
-    0: Result := GELog16(Scale) + S.Tex.LodBias;
-    2: Result := GELog16(S.Tex.Slope * W) + 16 + S.Tex.LodBias;
-  else
-    Result := S.Tex.LodBias;
-  end;
-end;
-
 // Whether Size bytes from Address all lie in VRAM's mirrors.
 function InVRAM(Address, Size: Cardinal): Boolean;
 begin
@@ -1857,23 +1846,19 @@ begin
   end;
   if NeedLod then
   begin
-    // GEDrawTriangle's steps of S, T and Q along x and y, as it rounds them.
+    // GEDrawTriangle's steps of S/w and T/w along x and y, as it rounds them.
     var BX0 := -16 * DY0 * FArea; var BY0 := 16 * DX0 * FArea;
     var BX1 := -16 * DY1 * FArea; var BY1 := 16 * DX1 * FArea;
     var BX2 := -16 * DY2 * FArea; var BY2 := 16 * DX2 * FArea;
-    var NSX, NSY, NTX, NTY, DQX, DQY: Single;
+    var NSX, NSY, NTX, NTY: Single;
     NSX := A0.S * A0.W * BX0 + A1.S * A1.W * BX1 + A2.S * A2.W * BX2;
     NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
     NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
     NTY := A0.T * A0.W * BY0 + A1.T * A1.W * BY1 + A2.T * A2.W * BY2;
-    DQX := A0.Q * A0.W * BX0 + A1.Q * A1.W * BX1 + A2.Q * A2.W * BX2;
-    DQY := A0.Q * A0.W * BY0 + A1.Q * A1.W * BY1 + A2.Q * A2.W * BY2;
     P[90] := PCardinal(@NSX)^;
     P[91] := PCardinal(@NSY)^;
     P[92] := PCardinal(@NTX)^;
     P[93] := PCardinal(@NTY)^;
-    P[94] := PCardinal(@DQX)^;
-    P[95] := PCardinal(@DQY)^;
   end;
   Record_(KindTriangle, S, V0, V1, V2);
 end;
@@ -1959,10 +1944,10 @@ begin
   var Lod := 0;
   if S.Textured and S.Tex.NeedLod then
   begin
-    var W: Single := 1;
+    var IW: Single := 1;
     if V1.W > 0 then
-      W := 1 / V1.W;
-    Lod := TexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), W);
+      IW := V1.W;
+    Lod := GETexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), 1, IW);
   end;
   P[42] := Cardinal(Lod);
   Record_(KindSprite, S, V0, V1, V1);

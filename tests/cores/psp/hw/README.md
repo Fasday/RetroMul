@@ -59,6 +59,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   order rotated and reversed, depths flipped, mirrored; `tie_*.bin` with
   `ttris.bin`: shared rows and columns, right angles). 7 s on the PSP.
 
+- `ge_lod`: the texture level of detail in slope mode (TEXLEVEL mode 2):
+  4 x 4 pixel quads, one w and TEXLODSLOPE each, over an 8-level texture
+  whose level k is a solid colour with red 32 k, mipmap-linear, so red is
+  twice the level of detail in 1/16 (`lod/w_*.bin`: slope 1 and every 24-bit
+  w of [1, 4); `lod/ws_*.bin`: random w and slope; `*_in.bin` the inputs).
+  4 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -93,6 +100,19 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   monotone function of the area's top 17 bits but one more or less than
   that in 17% of them (no division or table model found yet), so 2-4% of
   pixels stay one step off; the core's barycentric depth matched 28-58%.
+- Slope-mode level of detail (`ge_lod`) is log(TEXLODSLOPE) - log(1/w) +
+  16 (+ bias) in 1/16 levels, each log the exponent and 4 mantissa bits of
+  its own float, with 1/w as the pixel interpolates it (the vertices' 1/w
+  from the vertex unit's reciprocal table): every sample matches. The core
+  took log(slope * w), up to two sixteenths off; gpu/exact's mip slope job
+  now matches. The automatic mode (gpu/exact's auto lod job) is likewise
+  log(G) - log(Q/w): G the primitive's largest step of S/w or T/w per pixel
+  (level 0 texels, one value a triangle), Q/w the pixel's; 85% of its pixels
+  exact, the rest one sixteenth off (the vertex values, not recorded
+  exactly), where the core's per-pixel derivative of S and T was up to 38
+  sixteenths off. Levels narrower than 16 texels with a buffer width below 16
+  read their lower rows elsewhere on the PSP (`ge_lod`'s random set, levels
+  4 to 7); not recorded further yet.
 - Near-plane clipping: the clipped vertices' depth is not exactly that of
   the near plane: the hardware's planes give 2 to 3 (of 65535) where the
   core puts 0, so its intersection arithmetic (16-bit, like the vertex

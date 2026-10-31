@@ -100,6 +100,11 @@ function GESpriteStep(D: Single; Len: Integer): Single;
 // PSP-E1000): clamped to [0, 1] and rounded to 8 bits; the plane interpolates
 // those like the colours.
 function GEFogByte(F: Single): Integer;
+// A pixel's texture level of detail in 1/16 levels by TEXLEVEL's mode: from
+// the primitive's largest step of S and T times 1/w per pixel (G, in level 0
+// texels) over the pixel's Q times 1/w (Q), from TEXLODSLOPE over 1/w (IW),
+// or the bias alone.
+function GETexLod(const S: TGERaster; G, Q, IW: Single): Integer;
 
 type
   // A triangle's depth as the GE interpolates it (recorded on a PSP-E1000,
@@ -135,13 +140,27 @@ type
     Lod: Integer;
   end;
 
-// The level of detail: TEXLEVEL's mode picks the texels per pixel (Scale,
-// in level 0 texels), TEXLODSLOPE times w, or only the bias.
-function TexLod(const S: TGERaster; Scale, W: Single): Integer;
+// The level of detail (recorded on a PSP-E1000): both modes take two
+// logarithms apart, each the exponent and 4 mantissa bits of its float. The
+// automatic mode: log(G) - log(Q), G the primitive's largest step of S/w or
+// T/w per pixel and Q the pixel's Q/w (gpu/exact's auto lod job: 85% exact,
+// the rest one off from the vertex arithmetic); the slope mode: log(slope) -
+// log(1/w) (tests/cores/psp/hw/ge_lod: every sample), where 1/w is not
+// positive slope times w.
+function GETexLod(const S: TGERaster; G, Q, IW: Single): Integer;
 begin
   case S.Tex.LevelMode of
-    0: Result := GELog16(Scale) + S.Tex.LodBias;
-    2: Result := GELog16(S.Tex.Slope * W) + 16 + S.Tex.LodBias;
+    0: Result := GELog16(G) - GELog16(Q) + S.Tex.LodBias;
+    2:
+      if IW > 0 then
+        Result := GELog16(S.Tex.Slope) - GELog16(IW) + 16 + S.Tex.LodBias
+      else
+      begin
+        var W: Single := 1;
+        if IW <> 0 then
+          W := 1 / IW;
+        Result := GELog16(S.Tex.Slope * W) + 16 + S.Tex.LodBias;
+      end;
   else
     Result := S.Tex.LodBias;
   end;
@@ -13229,11 +13248,11 @@ begin
   var PF: TGEPlane;
   if S.FogEnabled then
     PF := MakePlane(GEFogByte(A0.Fog), GEFogByte(A1.Fog), GEFogByte(A2.Fog), DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-  // For the level of detail: per pixel, how S and T (perspective correct)
-  // change along x and y, from the steps of the weights.
+  // For the level of detail: the steps of S/w and T/w per pixel along x and
+  // y, from the steps of the weights, and the largest of them (GETexLod's G).
   var NeedLod := S.Textured and S.Tex.NeedLod;
-  var NSX, NSY, NTX, NTY, DQX, DQY: Single;
-  NSX := 0; NSY := 0; NTX := 0; NTY := 0; DQX := 0; DQY := 0;
+  var NSX, NSY, NTX, NTY, LodG: Single;
+  NSX := 0; NSY := 0; NTX := 0; NTY := 0; LodG := 0;
   F.Lod := 0;
   if NeedLod then
   begin
@@ -13244,8 +13263,7 @@ begin
     NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
     NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
     NTY := A0.T * A0.W * BY0 + A1.T * A1.W * BY1 + A2.T * A2.W * BY2;
-    DQX := A0.Q * A0.W * BX0 + A1.Q * A1.W * BX1 + A2.Q * A2.W * BX2;
-    DQY := A0.Q * A0.W * BY0 + A1.Q * A1.W * BY1 + A2.Q * A2.W * BY2;
+    LodG := Max(Max(Abs(NSX), Abs(NSY)), Max(Abs(NTX), Abs(NTY)));
   end;
   var Step0 := -16 * DY0; var Step1 := -16 * DY1; var Step2 := -16 * DY2;
   var OriginX := Int64(PX1) * 16 + 8;
@@ -13382,12 +13400,7 @@ begin
           F.T := (TW0 * W0 + TW1 * W1 + TW2 * W2) / Q;
           if NeedLod then
           begin
-            var Scale := Max(Max(Abs(NSX - F.S * DQX), Abs(NSY - F.S * DQY)),
-              Max(Abs(NTX - F.T * DQX), Abs(NTY - F.T * DQY))) / Abs(Q);
-            var W: Single := 1;
-            if IW <> 0 then
-              W := 1 / IW;
-            F.Lod := TexLod(S, Scale, W);
+            F.Lod := GETexLod(S, LodG, Abs(Q), IW);
           end;
         end
         else
@@ -13465,10 +13478,10 @@ begin
   var Lod := 0;
   if S.Textured and S.Tex.NeedLod then
   begin
-    var W: Single := 1;
+    var IW: Single := 1;
     if V1.W > 0 then
-      W := 1 / V1.W;
-    Lod := TexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), W);
+      IW := V1.W;
+    Lod := GETexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), 1, IW);
   end;
   SetupFragment(F, V1);
   F.Lod := Lod;
