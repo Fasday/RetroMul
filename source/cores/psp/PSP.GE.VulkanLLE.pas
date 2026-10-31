@@ -1975,44 +1975,33 @@ var
 begin
   BeginPrim;
   // GEDrawLine, keeping the fragments.
-  var X0 := V0.X; var Y0 := V0.Y;
-  var DX := V1.X - X0; var DY := V1.Y - Y0;
-  if (DX = 0) and (DY = 0) then
+  var LW: TGELineWalk;
+  if not GELineStart(V0, V1, LW) then
     Exit;
-  var XMajor := Abs(DX) >= Abs(DY);
-  var A0, A1, D: Integer;
-  if XMajor then
+  var PX, PY: Integer;
+  var T: Single;
+  // Count the pixels (one a step of the major axis, without gaps), then walk
+  // them again, kept in increasing order on the major axis as the shader
+  // looks them up.
+  var Count := 0;
+  var First := MaxInt;
+  var Probe := LW;
+  while GELineNext(Probe, PX, PY, T) do
   begin
-    A0 := Min(V0.X, V1.X); A1 := Max(V0.X, V1.X); D := DX;
-  end
-  else
-  begin
-    A0 := Min(V0.Y, V1.Y); A1 := Max(V0.Y, V1.Y); D := DY;
-  end;
-  var P1 := (A0 - 8 + 15 + $100000) div 16 - $10000;
-  var P2 := (A1 - 8 + 15 + $100000) div 16 - $10000 - 1;
-  if P2 < P1 then
-    Exit;
-  SetLength(Frags, P2 - P1 + 1);
-  SetLength(Pos, P2 - P1 + 1);
-  var BX1 := MaxInt; var BY1 := MaxInt; var BX2 := -MaxInt; var BY2 := -MaxInt;
-  for var P := P1 to P2 do
-  begin
-    var C := P * 16 + 8;
-    var T: Single;
-    var PX, PY: Integer;
-    if XMajor then
-    begin
-      T := (C - X0) / D;
-      PX := P;
-      PY := (Y0 + RasterRound(DY * T) + $100000) div 16 - $10000;
-    end
+    Inc(Count);
+    if LW.XMajor then
+      First := Min(First, PX)
     else
-    begin
-      T := (C - Y0) / D;
-      PY := P;
-      PX := (X0 + RasterRound(DX * T) + $100000) div 16 - $10000;
-    end;
+      First := Min(First, PY);
+  end;
+  if Count = 0 then
+    Exit;
+  SetLength(Frags, Count);
+  SetLength(Pos, Count);
+  var BX1 := MaxInt; var BY1 := MaxInt; var BX2 := -MaxInt; var BY2 := -MaxInt;
+  var N := 0;
+  while GELineNext(LW, PX, PY, T) do
+  begin
     F.R := V1.R; F.G := V1.G; F.B := V1.B; F.A := V1.A;
     F.SR := V1.SR; F.SG := V1.SG; F.SB := V1.SB;
     F.Z := V1.Z;
@@ -2020,10 +2009,10 @@ begin
     F.Fog := V1.Fog;
     if not S.Flat and S.Gouraud then
     begin
-      F.R := RasterRound(V0.R + (V1.R - V0.R) * T);
-      F.G := RasterRound(V0.G + (V1.G - V0.G) * T);
-      F.B := RasterRound(V0.B + (V1.B - V0.B) * T);
-      F.A := RasterRound(V0.A + (V1.A - V0.A) * T);
+      F.R := GELineColor(LW, PX, PY, V0.R, V1.R);
+      F.G := GELineColor(LW, PX, PY, V0.G, V1.G);
+      F.B := GELineColor(LW, PX, PY, V0.B, V1.B);
+      F.A := GELineColor(LW, PX, PY, V0.A, V1.A);
     end;
     F.Z := RasterRound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
@@ -2035,8 +2024,12 @@ begin
       F.T := F.T / Q;
     end;
     F.Fog := V0.Fog + (V1.Fog - V0.Fog) * T;
-    Frags[P - P1] := F;
-    Pos[P - P1] := TPoint.Create(PX, PY);
+    var Slot := N;
+    if LW.Step < 0 then
+      Slot := Count - 1 - N;
+    Frags[Slot] := F;
+    Pos[Slot] := TPoint.Create(PX, PY);
+    Inc(N);
     BX1 := Min(BX1, PX); BY1 := Min(BY1, PY);
     BX2 := Max(BX2, PX); BY2 := Max(BY2, PY);
   end;
@@ -2086,8 +2079,8 @@ begin
   P[4] := Cardinal(BX2);
   P[5] := Cardinal(BY2);
   P[6] := Cardinal(Length(Frags));
-  P[7] := Cardinal(P1);
-  P[8] := Ord(XMajor);
+  P[7] := Cardinal(First);
+  P[8] := Ord(LW.XMajor);
   P[9] := Cardinal(Ofs div 4);
   Record_(KindLine, S, V0, V1, V1);
 end;

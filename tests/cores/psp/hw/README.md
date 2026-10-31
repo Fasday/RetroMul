@@ -73,6 +73,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   1..24; `frac.bin` and `neg.bin`: random fractional and decreasing spans;
   `*_in.bin` the sprites). 1 s on the PSP.
 
+- `ge_line`: which pixels a line covers: through-mode lines, one per 30 x 17
+  cell, 256 a frame (`line/<set>_<n>.bin`, `_in.bin` the end points in 1/16
+  pixel): random end points, end points on the half-pixel grid, short lines,
+  slopes near 1, and antialiased lines with random vertex alpha blended over
+  black (`aa_<n>_col.bin` the colours). 3 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -127,6 +133,22 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   constant unit off a 16-bit fixed point fits ge_sprite to 95-99.8% but
   breaks gpu/filtering's precision tests (recorded on real PSPs), so when
   the hardware lands lower is not known yet; not modelled.
+- Lines (`ge_line`) follow a diamond-exit rule: a pixel is drawn when the
+  line leaves its diamond (|x - cx| + |y - cy| < 1/2 pixel): the first
+  vertex inside and the last not, or the line crossing it with neither end
+  inside; a point on a diamond's edge counts as inside when it lies above the
+  centre on x-major lines (|dx| > |dy|) or left of it on y-major ones. Every
+  one of the probe's 8,192 lines and gpu/exact's line coverage jobs match
+  (the core's centres-between rule missed about one line in ten).
+  Gouraud colours step along the major axis: (c1 - c0) * 16 / length per
+  pixel, floored to 12 fraction bits, from the first vertex, floored and
+  clamped (99.9% of gpu/exact's Gouraud line channels; that also settles
+  the curves jobs' patch lines).
+  Antialiased lines replace the fragment's alpha with a coverage from the
+  line's minor position in the pixel: ceil(256 f) for f in [0, 1/2], 256 -
+  that above, so 128 at the centre (the minor position from a slope
+  truncated to 2^-24; 98.9% of the probe's antialiased pixels, the rest one
+  off).
 - Near-plane clipping: the clipped vertices' depth is not exactly that of
   the near plane: the hardware's planes give 2 to 3 (of 65535) where the
   core puts 0, so its intersection arithmetic (16-bit, like the vertex

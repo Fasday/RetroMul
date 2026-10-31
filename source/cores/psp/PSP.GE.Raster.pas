@@ -119,6 +119,25 @@ type
 
 procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
 
+type
+  // The pixels a line covers, in order from its first vertex (GELineStart,
+  // then GELineNext until False).
+  TGELineWalk = record
+    XMajor: Boolean;
+    X0, Y0, X1, Y1: Int64;
+    // Major and minor axis: start, step, the end on the major axis.
+    M0, N0, DM, DN: Int64;
+    Lo, Hi, P, Last, Step: Int64;
+  end;
+
+function GELineStart(const V0, V1: TGEVertex; out W: TGELineWalk): Boolean;
+// The next pixel and its position along the line (T in [0, 1], for the
+// vertex values); False after the last.
+function GELineNext(var W: TGELineWalk; out PX, PY: Integer; out T: Single): Boolean;
+// A Gouraud line's colour channel at pixel (PX, PY), from C0 at the first
+// vertex to C1 at the last.
+function GELineColor(const W: TGELineWalk; PX, PY, C0, C1: Integer): Integer;
+
 implementation
 
 function GESpriteStep(D: Single; Len: Integer): Single;
@@ -13168,6 +13187,130 @@ begin
   P.C0 := Z[A] shl 14;
 end;
 
+// Floor of A / B (B <> 0).
+function FloorDiv64(A, B: Int64): Int64; inline;
+begin
+  if B < 0 then
+  begin
+    A := -A;
+    B := -B;
+  end;
+  Result := A div B;
+  if (A mod B) < 0 then
+    Dec(Result);
+end;
+
+// Lines (recorded on a PSP-E1000, tests/cores/psp/hw/ge_line: every one of
+// 8,192 lines, and gpu/exact's line jobs): a pixel is drawn when the line
+// leaves its diamond (|x - cx| + |y - cy| < 1/2 pixel round the centre): the
+// first vertex inside it and the last not, or the line crossing it with
+// neither end inside. A point on a diamond's edge counts as inside when it
+// lies above the centre (x-major lines, |dx| > |dy|) or left of it (y-major).
+// On each step of the major axis the line meets one diamond: the one on the
+// row (column) the line is in at the pixel centre.
+function LineMember(PX, PY, X, Y: Int64; XMajor: Boolean): Boolean; inline;
+begin
+  var A := X - (PX * 16 + 8);
+  var B := Y - (PY * 16 + 8);
+  var D := Abs(A) + Abs(B);
+  if D <> 8 then
+    Exit(D < 8);
+  if XMajor then
+    Result := B < 0
+  else
+    Result := A < 0;
+end;
+
+function GELineStart(const V0, V1: TGEVertex; out W: TGELineWalk): Boolean;
+begin
+  W.X0 := V0.X; W.Y0 := V0.Y; W.X1 := V1.X; W.Y1 := V1.Y;
+  var DX := W.X1 - W.X0;
+  var DY := W.Y1 - W.Y0;
+  Result := (DX <> 0) or (DY <> 0);
+  if not Result then
+    Exit;
+  W.XMajor := Abs(DX) > Abs(DY);
+  if W.XMajor then
+  begin
+    W.M0 := W.X0; W.N0 := W.Y0; W.DM := DX; W.DN := DY;
+    W.Lo := Min(W.X0, W.X1); W.Hi := Max(W.X0, W.X1);
+  end
+  else
+  begin
+    W.M0 := W.Y0; W.N0 := W.X0; W.DM := DY; W.DN := DX;
+    W.Lo := Min(W.Y0, W.Y1); W.Hi := Max(W.Y0, W.Y1);
+  end;
+  if W.DM > 0 then
+    W.Step := 1
+  else
+    W.Step := -1;
+  // From the pixel before the first vertex's to the one after the last's.
+  W.P := FloorDiv64(W.M0, 16) - W.Step;
+  W.Last := FloorDiv64(W.M0 + W.DM, 16) + W.Step;
+end;
+
+function GELineNext(var W: TGELineWalk; out PX, PY: Integer; out T: Single): Boolean;
+begin
+  while W.P <> W.Last + W.Step do
+  begin
+    var P := W.P;
+    Inc(W.P, W.Step);
+    var C := P * 16 + 8;
+    var Q := FloorDiv64(W.N0 * W.DM + W.DN * (C - W.M0), 16 * W.DM);
+    var X, Y: Int64;
+    if W.XMajor then
+    begin
+      X := P; Y := Q;
+    end
+    else
+    begin
+      X := Q; Y := P;
+    end;
+    var InA := LineMember(X, Y, W.X0, W.Y0, W.XMajor);
+    var InB := LineMember(X, Y, W.X1, W.Y1, W.XMajor);
+    if (InA and not InB) or (not InA and not InB and (C > W.Lo) and (C < W.Hi)) then
+    begin
+      PX := X;
+      PY := Y;
+      T := (C - W.M0) / W.DM;
+      if not (T > 0) then
+        T := 0;
+      if T > 1 then
+        T := 1;
+      Exit(True);
+    end;
+  end;
+  Result := False;
+end;
+
+// Recorded on a PSP-E1000 (gpu/exact's Gouraud line jobs: 99.9% of the
+// channels): the step per pixel along the major axis is (C1 - C0) * 16 times
+// 1/length (the length in 1/16 pixels, its reciprocal floored to 24 bits
+// below its leading one), floored to 12 fraction bits; a pixel's value is C0
+// plus the step times its centre's distance from the first vertex along the
+// line, floored, then clamped to 0..255.
+function GELineColor(const W: TGELineWalk; PX, PY, C0, C1: Integer): Integer;
+begin
+  var L := Abs(W.DM);
+  var E := 0;
+  while (L shr (E + 1)) <> 0 do
+    Inc(E);
+  var R := (Int64(1) shl (24 + E)) div L;
+  var Step := FloorShr(Int64(C1 - C0) * 16 * R * 4096, 24 + E);
+  var C: Int64;
+  if W.XMajor then
+    C := Int64(PX) * 16 + 8
+  else
+    C := Int64(PY) * 16 + 8;
+  // The distance in the direction of travel.
+  var D := (C - W.M0) * W.Step;
+  Result := FloorShr(Int64(C0) * 4096 + FloorShr(Step * D, 4), 12);
+  if Result < 0 then
+    Result := 0;
+  if Result > 255 then
+    Result := 255;
+end;
+
 function GEFogByte(F: Single): Integer;
 begin
   if not (F > 0) then
@@ -13530,48 +13673,21 @@ procedure GEDrawLine(const S: TGERaster; const V0, V1: TGEVertex);
 var
   F: TGEFragment;
 begin
-  var X0 := V0.X; var Y0 := V0.Y;
-  var DX := V1.X - X0; var DY := V1.Y - Y0;
-  if (DX = 0) and (DY = 0) then
+  // The pixels as GELineNext walks them.
+  var W: TGELineWalk;
+  if not GELineStart(V0, V1, W) then
     Exit;
-  // Pixels whose centre on the major axis lies between the end points; the
-  // minor axis is the containing pixel of the line there.
-  var XMajor := Abs(DX) >= Abs(DY);
-  var A0, A1, D: Integer;
-  if XMajor then
+  var PX, PY: Integer;
+  var T: Single;
+  while GELineNext(W, PX, PY, T) do
   begin
-    A0 := Min(V0.X, V1.X); A1 := Max(V0.X, V1.X); D := DX;
-  end
-  else
-  begin
-    A0 := Min(V0.Y, V1.Y); A1 := Max(V0.Y, V1.Y); D := DY;
-  end;
-  var P1 := (A0 - 8 + 15 + $100000) div 16 - $10000;
-  var P2 := (A1 - 8 + 15 + $100000) div 16 - $10000 - 1;
-  for var P := P1 to P2 do
-  begin
-    var C := P * 16 + 8;
-    var T: Single;
-    var PX, PY: Integer;
-    if XMajor then
-    begin
-      T := (C - X0) / D;
-      PX := P;
-      PY := (Y0 + GERound(DY * T) + $100000) div 16 - $10000;
-    end
-    else
-    begin
-      T := (C - Y0) / D;
-      PY := P;
-      PX := (X0 + GERound(DX * T) + $100000) div 16 - $10000;
-    end;
     SetupFragment(F, V1);
     if not S.Flat and S.Gouraud then
     begin
-      F.R := GERound(V0.R + (V1.R - V0.R) * T);
-      F.G := GERound(V0.G + (V1.G - V0.G) * T);
-      F.B := GERound(V0.B + (V1.B - V0.B) * T);
-      F.A := GERound(V0.A + (V1.A - V0.A) * T);
+      F.R := GELineColor(W, PX, PY, V0.R, V1.R);
+      F.G := GELineColor(W, PX, PY, V0.G, V1.G);
+      F.B := GELineColor(W, PX, PY, V0.B, V1.B);
+      F.A := GELineColor(W, PX, PY, V0.A, V1.A);
     end;
     F.Z := GERound(V0.Z + (V1.Z - V0.Z) * T);
     F.S := V0.S + (V1.S - V0.S) * T;
