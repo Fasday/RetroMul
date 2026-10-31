@@ -1836,6 +1836,9 @@ begin
     PutPlane(P + 78, A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
     PutPlane(P + 84, A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
   end;
+  // The fog plane, from the vertices' 8-bit fog factors (GEFogByte).
+  if S.FogEnabled then
+    PutPlane(P + 96, GEFogByte(A0.Fog), GEFogByte(A1.Fog), GEFogByte(A2.Fog), DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
   if NeedLod then
   begin
     // GEDrawTriangle's steps of S, T and Q along x and y, as it rounds them.

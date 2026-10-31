@@ -1047,8 +1047,17 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
       f.t = float(double(stLevelHeight(s, 0)) - 0.5lf);
     }
   }
-  precise double fog = double(vFloat(p, V0, 13u)) * w0 + double(vFloat(p, V1, 13u)) * w1 + double(vFloat(p, V2, 13u)) * w2;
-  f.fog = float(fog);
+  // The fog factor is a plane like the colours (PSP.GE.Raster), at half a step
+  // above the 8-bit value the pixel truncates.
+  if (stFlag(s, SF_FOGENABLED))
+  {
+    int64_t fdx = sx - int64_t(int(prims[p + 64u]));
+    int64_t fdy = sy - int64_t(int(prims[p + 65u]));
+    precise float fv = float(planeAt(p + 96u, fdx, fdy)) + 0.5;
+    f.fog = fv / 255.0;
+  }
+  else
+    f.fog = 0.0;
   return true;
 }
 

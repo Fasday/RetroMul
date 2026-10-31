@@ -96,6 +96,10 @@ procedure GEDrawPoint(const S: TGERaster; const V: TGEVertex);
 // length (in 1/16 pixels), truncated toward zero to single precision
 // (recorded on a PSP-E1000: 12 texels over 7 pixels steps a hair under 12/7).
 function GESpriteStep(D: Single; Len: Integer): Single;
+// A vertex's fog factor as a triangle's fog plane takes it (recorded on a
+// PSP-E1000): clamped to [0, 1] and rounded to 8 bits; the plane interpolates
+// those like the colours.
+function GEFogByte(F: Single): Integer;
 
 implementation
 
@@ -13040,6 +13044,15 @@ begin
     Hi := Lo - 1;
 end;
 
+function GEFogByte(F: Single): Integer;
+begin
+  if not (F > 0) then
+    Exit(0);
+  if F >= 1 then
+    Exit(255);
+  Result := Trunc(F * 255 + 0.5);
+end;
+
 function PlaneNumerator(C0, N: Int64): Integer; inline;
 begin
   var V := C0 + N div 16;
@@ -13115,6 +13128,10 @@ begin
     PB := MakePlane(A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
     PA := MakePlane(A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
   end;
+  // The fog factor is a plane like the colours.
+  var PF: TGEPlane;
+  if S.FogEnabled then
+    PF := MakePlane(GEFogByte(A0.Fog), GEFogByte(A1.Fog), GEFogByte(A2.Fog), DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
   // For the level of detail: per pixel, how S and T (perspective correct)
   // change along x and y, from the steps of the weights.
   var NeedLod := S.Textured and S.Tex.NeedLod;
@@ -13146,7 +13163,7 @@ begin
      (A0.SB <> A1.SB) or (A0.SB <> A2.SB));
   var Secondary := (A0.SR or A0.SG or A0.SB or A1.SR or A1.SG or A1.SB or A2.SR or A2.SG or A2.SB) <> 0;
   var ConstantZ := (A0.Z = A1.Z) and (A0.Z = A2.Z);
-  var NeedWeights := S.Textured or S.FogEnabled or Secondary or not ConstantZ;
+  var NeedWeights := S.Textured or Secondary or not ConstantZ;
   // Clear mode in one colour and depth: spans of PlotPixel's clear bits.
   if S.ClearMode and not Gouraud and (ConstantZ or not S.ClearDepth) and not GEGenericPixels then
   begin
@@ -13208,6 +13225,9 @@ begin
       NB := PB.GX * DX + PB.GY * DY;
       NA := PA.GX * DX + PA.GY * DY;
     end;
+    var NF: Int64 := 0;
+    if Fog then
+      NF := PF.GX * (Int64(Lo) * 16 + 8 - AX) + PF.GY * (SY - AY);
     for var PX := Lo to Hi do
     begin
       var W0, W1, W2: Double;
@@ -13268,7 +13288,11 @@ begin
         end;
       end;
       if Fog then
-        F.Fog := Fog0 * W0 + Fog1 * W1 + Fog2 * W2;
+      begin
+        // The pixel pipelines take Trunc(Fog * 255): half a step above keeps it.
+        F.Fog := (PlaneNumerator(PF.C0, NF) + 0.5) / 255;
+        Inc(NF, PF.GX * 16);
+      end;
       Plot(S, PX, PY, F);
       Inc(E0, Step0); Inc(E1, Step1); Inc(E2, Step2);
     end;
