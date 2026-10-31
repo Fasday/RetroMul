@@ -189,10 +189,17 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
 - A texture row is the buffer width's bytes cut down to a multiple of 16, at
   least 16 (`ge_clut` frame 2: every non-DXT format, widths 1 to 64; width 0
   not recorded). That is also what `ge_lod`'s narrow levels showed.
-- Near-plane clipping: the clipped vertices' depth is not exactly that of
-  the near plane: the hardware's planes give 2 to 3 (of 65535) where the
-  core puts 0, so its intersection arithmetic (16-bit, like the vertex
-  unit's) is still to record.
+- Near-plane clipping (gpu/exact's nearclip jobs, fitted through the
+  emulator): the intersection is in the vertex unit's arithmetic: the
+  distances z + w and their difference as its sums, the fraction their
+  quotient by its reciprocal cut to 16 bits, each clip coordinate A + (B -
+  A) t from the inside vertex. So the clipped vertices land a hair inside
+  the plane (depth 2 to 3 where exact arithmetic gave 0). The polygon left
+  starts at the point where its edges come back inside, as a fan; a strip's
+  every other triangle has its first two vertices swapped. All clipped
+  triangle, rotated order and strip jobs match; the dense and far-inside
+  depth jobs keep 10% and 37% of their pixels 1 to 7 off (two vertices
+  clipped, the inside one far from the plane; not resolved).
 - Without depth clamping, a triangle with a vertex beyond the far plane is
   still drawn when its depth after the viewport lies in 0..65535, and one
   inside the planes whose depth falls outside that range is not; the near

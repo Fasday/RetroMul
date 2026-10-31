@@ -2126,15 +2126,19 @@ type
 
 // Where the edge from A (inside) to B (beyond the near plane z = -w) meets
 // the plane: clip coordinates and attributes in proportion, not projected.
+// In the vertex unit's arithmetic (gpu/exact's nearclip depth jobs, recorded
+// on a PSP-E1000): the distances z + w and their difference as its sums,
+// the fraction their quotient by its reciprocal cut to 16 bits, each
+// coordinate A + (B - A) T from A.
 function NearPoint(const A, B: TGEAsmVertex): TGEAsmVertex;
 begin
-  var DA := A.CZ + A.CW;
-  var DB := B.CZ + B.CW;
-  var T := DA / (DA - DB);
-  Result.CX := A.CX + (B.CX - A.CX) * T;
-  Result.CY := A.CY + (B.CY - A.CY) * T;
-  Result.CZ := A.CZ + (B.CZ - A.CZ) * T;
-  Result.CW := A.CW + (B.CW - A.CW) * T;
+  var DA := Add24(A.CZ, A.CW);
+  var DB := Add24(B.CZ, B.CW);
+  var T := T24(DA * Recip24(Add24(DA, -DB)));
+  Result.CX := Add24(A.CX, T24(Add24(B.CX, -A.CX) * T));
+  Result.CY := Add24(A.CY, T24(Add24(B.CY, -A.CY) * T));
+  Result.CZ := Add24(A.CZ, T24(Add24(B.CZ, -A.CZ) * T));
+  Result.CW := Add24(A.CW, T24(Add24(B.CW, -A.CW) * T));
   Result.Code := 0;
   Result.V := A.V;
   Result.V.R := A.V.R + Round((B.V.R - A.V.R) * T);
@@ -2169,7 +2173,9 @@ end;
 // beyond one plane, when without depth clamping any lies beyond the near
 // plane or outside the depth range (DepthOut), and when any vertex it is
 // drawn with lies outside the 4096 pixel screen. With depth clamping the near
-// plane cuts it and the far plane only clamps depth.
+// plane cuts it and the far plane only clamps depth; the polygon left starts
+// at the point where its edges come back inside and goes out as a fan
+// (gpu/exact's nearclip jobs).
 procedure TPSPGEEngine.ClipTriangle(const A, B, C: TGEAsmVertex; Odd: Boolean);
 var
   Src: array[0..2] of PGEAsmVertex;
@@ -2188,6 +2194,7 @@ begin
   end;
   Src[0] := @A; Src[1] := @B; Src[2] := @C;
   var N := 0;
+  var Entry := 0;
   for var I := 0 to 2 do
   begin
     var P := Src[I];
@@ -2204,10 +2211,21 @@ begin
       if PIn then
         Poly[N] := NearPoint(P^, Q^)
       else
+      begin
         Poly[N] := NearPoint(Q^, P^);
+        Entry := N;
+      end;
       Project(Poly[N]);
       Inc(N);
     end;
+  end;
+  if Entry <> 0 then
+  begin
+    var Tmp: array[0..3] of TGEAsmVertex;
+    for var I := 0 to N - 1 do
+      Tmp[I] := Poly[(Entry + I) mod N];
+    for var I := 0 to N - 1 do
+      Poly[I] := Tmp[I];
   end;
   for var I := 0 to N - 1 do
   begin
@@ -2287,10 +2305,16 @@ begin
       end;
     4:
       begin
-        // (The last three vertices in turn in FAsm, not moved along.)
+        // (The last three vertices in turn in FAsm, not moved along.) Every
+        // other triangle goes out with its first two vertices swapped, so
+        // all wind alike (where the near plane cuts it, this decides where
+        // its polygon starts: gpu/exact's nearclip strips).
         FAsm[N mod 3] := A;
         if N >= 2 then
-          ClipTriangle(FAsm[(N - 2) mod 3], FAsm[(N - 1) mod 3], FAsm[N mod 3], ((N - 2) and 1) <> 0);
+          if ((N - 2) and 1) <> 0 then
+            ClipTriangle(FAsm[(N - 1) mod 3], FAsm[(N - 2) mod 3], FAsm[N mod 3], False)
+          else
+            ClipTriangle(FAsm[(N - 2) mod 3], FAsm[(N - 1) mod 3], FAsm[N mod 3], False);
       end;
     5:
       begin
