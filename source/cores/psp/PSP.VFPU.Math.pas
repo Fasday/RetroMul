@@ -355,6 +355,11 @@ end;
 
 var
   SinNodes: array[0..256] of Double;
+  // vasin: the values at the ends and middles of 128 segments of [0, 1], and
+  // the segments' quadratic terms (recorded on a PSP-E1000: 78% of all 2^23
+  // inputs bit-exact, the rest within two steps of 22 bits).
+  AsinNodes: array[0..256] of Double;
+  AsinCurve: array[0..127] of Double;
 
 // Angles are in quarter turns, taken as a magnitude in fixed point with 23
 // fraction bits (truncated) modulo four turns. From 2^32 on the shifter takes
@@ -449,11 +454,18 @@ begin
     Exit(NaNOf(X));
   if (X and $7FFFFFFF) = 0 then
     Exit(X);
-  // The input is taken in fixed point with 23 fraction bits, the result
-  // floored to 29.
-  var A: Double := Int(Abs(Double(BitsToSingle(X))) * 8388608.0) / 8388608.0;
-  Result := Trunc22(Floor(ArcSin(A) / (Pi / 2) * 536870912.0) / 536870912.0) or
-    (X and $80000000);
+  if (X and $7FFFFFFF) = VF_ONE then
+    Exit(X);
+  // The input is taken in fixed point with 23 fraction bits: 128 segments of
+  // 65536 steps, each a quadratic (the first a line), floored to 30 fraction
+  // bits.
+  var A := Trunc(Abs(Double(BitsToSingle(X))) * 8388608.0);
+  var K := A shr 16;
+  var U: Double := (A and $FFFF) / 65536.0;
+  var YA := AsinNodes[K * 2];
+  var YB := AsinNodes[K * 2 + 2];
+  var V := YA + (YB - YA) * U + AsinCurve[K] * U * (U - 1);
+  Result := Trunc22(Floor(V * 1073741824.0) / 1073741824.0) or (X and $80000000);
 end;
 
 function VExp2(X: Cardinal): Cardinal;
@@ -491,16 +503,41 @@ begin
     Exit(VF_NAN);
   if X = $7F800000 then
     Exit($7F800000);
+  var E := Integer((X shr 23) and $FF) - 127;
+  var L := Log2(1.0 + (X and $7FFFFF) / 8388608.0);
+  // Below 1 the result is fixed point with 15 fraction bits, in [1, 2) with
+  // 22. The rounding offsets are the ones that match a PSP-E1000 best (87%
+  // and 82% of mantissas, the rest one step off). From 2 on the rounded
+  // logarithm is kept (the hardware's own approximation is not known).
+  if E < 0 then
+  begin
+    var Mag := Floor((-E - L) * 32768.0 + 0.375);
+    Exit($80000000 or SingleToBits(Mag / 32768.0));
+  end;
+  if E = 0 then
+    Exit(Trunc22(Max(Floor(L * 4194304.0 - 0.375), 0) / 4194304.0));
   Result := Round22(Log2(Double(BitsToSingle(X))));
 end;
 
-procedure InitSinNodes;
+procedure InitTables;
 begin
   for var K := 0 to 256 do
     SinNodes[K] := Sin(K * (Pi / 512));
+  for var K := 0 to 256 do
+    AsinNodes[K] := Floor(ArcSin(K / 256) / (Pi / 2) * 1073741824.0) / 1073741824.0;
+  // The quadratic term is kept in 2^-26 units, in a field that wraps every
+  // 2^-11: near 1, where the arcsine curves more, it wraps (up to 135 times),
+  // which leaves the last 12 segments up to 0.02 off.
+  AsinCurve[0] := 0;
+  for var K := 1 to 127 do
+  begin
+    var C: Int64 := Floor(2 * (AsinNodes[K * 2] + AsinNodes[K * 2 + 2] - 2 * AsinNodes[K * 2 + 1]) * 67108864.0);
+    C := ((C + 16384) and 32767) - 16384;
+    AsinCurve[K] := C / 67108864.0;
+  end;
 end;
 
 initialization
-  InitSinNodes;
+  InitTables;
 
 end.
