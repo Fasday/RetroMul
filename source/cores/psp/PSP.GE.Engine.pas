@@ -1560,14 +1560,14 @@ begin
       var Dist2 := F24(Dot(D, D));
       Dist := SqrtF24(Dist2);
       D := NormalizedF24(D);
+      // 1 / Den by the vertex unit's reciprocal table (Recip24): every
+      // recorded attenuation over KA alone and over KC alone.
       Den := U.KA + U.KB * Dist + U.KC * Dist2;
       if Den <> 0 then
-        Att := 1 / Den
+        Att := Recip24(Den)
       else
         Att := 0;
-      // The hardware's reciprocal comes out a little high: this matches 99.9%
-      // of its 8-bit attenuations (the rest are one step off either way).
-      A8 := Frac8(Att * (1 + 1 / 65536));
+      A8 := Frac8(Att);
     end;
     S8 := 255;
     if U.LType = 2 then

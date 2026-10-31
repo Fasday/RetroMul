@@ -105,11 +105,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   S * (A * (La * Ma)) + S * (A * (D * (Ld * Md))) and, for specular,
   S * (A * (P * (Ls * Ms))), each product in that order; the colour is
   emissive + Al * Ma plus the lights' terms, stopped at 255. These are exact
-  over all recorded samples. The 8-bit attenuation is floor(256 / den)
-  except that the hardware's reciprocal comes out slightly high: with a
-  factor of 1 + 2^-16, 99.9% match. The distance is the root of the squared
-  distance (a 24-bit float) truncated to a 24-bit float; the quadratic term
-  uses the squared distance. pow is the piecewise-linear log2/exp2 the core
+  over all recorded samples. The 8-bit attenuation is floor(256 r) with r
+  the vertex unit's table reciprocal of den (see the perspective divide
+  below): exact over the KA and KC sweeps (the exact 1 / den: 99.75-99.9%).
+  With KB the distance's root leaves 0.3% one step off. The distance is the
+  root of the squared distance (a 24-bit float) truncated to a 24-bit float;
+  the quadratic term uses the squared distance. pow is the piecewise-linear log2/exp2 the core
   already had (100% for exponents 0.5, 1, 2, 10); the spot exponent, like
   the shininess, keeps 4 mantissa bits. The core does all this:
   `gpu/commands/light` passes.
