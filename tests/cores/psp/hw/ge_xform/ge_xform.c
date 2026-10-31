@@ -256,6 +256,43 @@ static void s_recip(int s) {
 	verts[s * 3 + 1] *= b;
 }
 
+// The perspective divide's product: w = b (the projection's w translation)
+// in [1, 4), z = b * u with u in [0.5, 0.98), so the depth reads z * (1 / w)
+// exactly; x and y scaled by b keep the point on its pixel.
+static void s_pdiv(int s) {
+	if (s == 0)
+		exactPort();
+	float b = frand(1.0f, 4.0f);
+	float z = b * frand(0.5f, 0.98f);
+	emit(PROJNUM, 15);
+	emit(PROJDATA, f24(b));
+	inputs[s * 4 + 1] = f24(b);
+	point(s, z);
+	verts[s * 3] *= b;
+	verts[s * 3 + 1] *= b;
+}
+
+// As s_pdiv with w from the projection's w row, w = a * z + b (a in
+// [-0.25, 0.25), b in [1, 3)), and z in [0.5, 0.98) of w's value without
+// the row's truncation: the whole perspective path.
+static void s_pdivw(int s) {
+	if (s == 0)
+		exactPort();
+	float a = frand(-0.25f, 0.25f), b = frand(1.0f, 3.0f);
+	float u = frand(0.5f, 0.9f);
+	float z = b * u / (1.0f - a * u);
+	float w = a * z + b;
+	emit(PROJNUM, 11);
+	emit(PROJDATA, f24(a));
+	emit(PROJNUM, 15);
+	emit(PROJDATA, f24(b));
+	inputs[s * 4 + 1] = f24(a);
+	inputs[s * 4 + 2] = f24(b);
+	point(s, z);
+	verts[s * 3] *= w;
+	verts[s * 3 + 1] *= w;
+}
+
 static SceUID logFd = -1;
 
 static void writeFile(const char *name, const void *p, int bytes) {
@@ -334,6 +371,8 @@ int main(int argc, char *argv[]) {
 	run("madd", s_madd);
 	run("dot", s_dot);
 	run("recip", s_recip);
+	run("pdiv", s_pdiv);
+	run("pdivw", s_pdivw);
 
 	sceGuTerm();
 	if (logFd >= 0)

@@ -87,8 +87,16 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   vertices by the result (applying the two in turn misses 20% of the
   view-after-world samples). The core does this: viewport, product, sum,
   multiply-add, dot product and world-matrix sets exact, view after world
-  87 of 53,189 off. The perspective reciprocal is not modelled yet (7% of the
-  perspective set off by one).
+  87 of 53,189 off.
+- The perspective divide multiplies by a 16-bit reciprocal of w and cuts the
+  product to 16 bits. The reciprocal is a table of 128 linear segments over
+  w's top 15 mantissa bits, the same in every octave: segment F >> 8 gives
+  floor((64 A - S (F & 255) - 1) / 128) in 2^-16, A in 2^-17 and S in 2^-23
+  fitted per segment (each segment has exactly one pair that reproduces all
+  its 256 recorded values; neither follows a simple formula, so the core
+  keeps the measured table). The old model, linear between the exact
+  reciprocals, matched 61%. With it the perspective, divide and full
+  perspective-path sets are exact.
 
 - Lighting is an 8-bit pipeline. Factors in [0, 1] (N.L, N.H or N.L raised
   to the shininess, the attenuation, the spot factor) become

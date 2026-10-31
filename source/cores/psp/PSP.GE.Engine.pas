@@ -808,7 +808,44 @@ begin
     Result := Add24Slow(A, B);
 end;
 
-// The GE's 1/x: linear between the reciprocals of 1 + k/128.
+const
+  // The vertex unit's reciprocal (recorded on a PSP-E1000: ge_xform's recip
+  // set, every 24-bit float in [1, 4), the same in both octaves): for
+  // 1 / (1 + F / 2^15), F a mantissa's 15 bits, segment F shr 8 starts at
+  // GERecipNode (in 2^-17) and falls by GERecipSlope (in 2^-23) a step of F;
+  // the result keeps 16 fraction bits, truncated (RecipMantissa).
+  GERecipNode: array[0..127] of Integer = (
+    131073, 130056, 129055, 128072, 127100, 126144, 125204, 124275, 123362, 122462,
+    121575, 120701, 119837, 118987, 118151, 117324, 116509, 115705, 114914, 114131,
+    113359, 112600, 111848, 111108, 110376, 109655, 108944, 108240, 107546, 106862,
+    106185, 105518, 104859, 104207, 103564, 102928, 102301, 101681, 101068, 100464,
+    99866, 99274, 98690, 98114, 97543, 96978, 96422, 95870, 95327, 94787,
+    94256, 93728, 93208, 92692, 92183, 91681, 91181, 90689, 90202, 89718,
+    89241, 88770, 88303, 87839, 87382, 86929, 86482, 86038, 85600, 85165,
+    84733, 84308, 83886, 83469, 83056, 82647, 82242, 81840, 81443, 81050,
+    80660, 80276, 79893, 79514, 79139, 78767, 78399, 78034, 77674, 77316,
+    76961, 76609, 76261, 75915, 75575, 75235, 74899, 74565, 74237, 73909,
+    73585, 73265, 72945, 72629, 72317, 72006, 71698, 71394, 71091, 70790,
+    70494, 70198, 69907, 69616, 69328, 69043, 68760, 68480, 68201, 67926,
+    67651, 67379, 67110, 66842, 66578, 66314, 66053, 65794);
+  GERecipSlope: array[0..127] of Byte = (
+    254, 250, 246, 243, 239, 235, 232, 228, 225, 222, 219, 216, 212, 209, 207, 204,
+    201, 198, 196, 193, 190, 188, 185, 183, 180, 178, 176, 173, 171, 169, 167, 165,
+    163, 161, 159, 157, 155, 153, 151, 150, 148, 146, 144, 143, 141, 139, 138, 136,
+    135, 133, 132, 130, 129, 127, 126, 125, 123, 122, 121, 119, 118, 117, 116, 114,
+    113, 112, 111, 110, 109, 108, 106, 105, 104, 103, 102, 101, 100, 99, 98, 97,
+    96, 96, 95, 94, 93, 92, 91, 90, 90, 89, 88, 87, 86, 85, 85, 84,
+    83, 82, 82, 81, 80, 80, 79, 78, 78, 77, 76, 76, 75, 74, 74, 73,
+    73, 72, 71, 71, 70, 70, 69, 69, 68, 67, 67, 66, 66, 65, 65, 64);
+
+// 1 / (1 + F / 2^15) in 2^-16: 32769..65536.
+function RecipMantissa(F: Integer): Integer; inline;
+begin
+  var I := F shr 8;
+  Result := (64 * GERecipNode[I] - GERecipSlope[I] * (F and 255) - 1) shr 7;
+end;
+
+// The GE's 1/x from the table, of the top 15 mantissa bits.
 function Recip24Slow(V: Double): Double;
 var
   M: Double;
@@ -821,35 +858,21 @@ begin
   Frexp(Abs(V), M, E);
   M := M * 2;
   Dec(E);
-  var K := Trunc((M - 1) * 128);
-  var T := (M - 1) * 128 - K;
-  var R0 := 1 / (1 + K / 128);
-  var R1 := 1 / (1 + (K + 1) / 128);
-  Result := T24(Ldexp(R0 + (R1 - R0) * T, -E));
+  Result := T24(Ldexp(RecipMantissa(Trunc((M - 1) * 32768)), -16 - E));
   if V < 0 then
     Result := -Result;
 end;
 
-const
-  // 2^-45: a mantissa's bits below its top 7 as a fraction of them.
-  Recip24Fraction: Double = 1 / 35184372088832;
-
 function Recip24(V: Double): Double;
 begin
-  // A normal V whose reciprocal is normal: Frexp's mantissa and exponent
-  // from its bits (M = 1 + F / 2^52, E = X - 1023) and Ldexp's power of two
-  // made the same way; else Recip24Slow.
+  // A normal V whose reciprocal is normal: the mantissa's bits and the power
+  // of two (2^(1023 - X - 16)) from its bits; else Recip24Slow.
   var Bits := PUInt64(@V)^;
   var X := Integer((Bits shr 52) and $7FF);
   if (X < 64) or (X > 1980) then
     Exit(Recip24Slow(V));
-  var F := Bits and $000FFFFFFFFFFFFF;
-  var K := Integer(F shr 45);
-  var T := Int64(F and $1FFFFFFFFFFF) * Recip24Fraction;
-  var R0 := 1 / (1 + K / 128);
-  var R1 := 1 / (1 + (K + 1) / 128);
-  var Scale := UInt64(2046 - X) shl 52;
-  Result := T24((R0 + (R1 - R0) * T) * PDouble(@Scale)^);
+  var Scale := UInt64(2030 - X) shl 52;
+  Result := RecipMantissa(Integer((Bits shr 37) and $7FFF)) * PDouble(@Scale)^;
   if (Bits shr 63) <> 0 then
     Result := -Result;
 end;
