@@ -26,6 +26,16 @@ layout(push_constant) uniform Push {
   uint dither1;
   uint fixA;
   float lodSlope;
+  // PSPGEHLEBlend.frag: source factor in bits 0-3, destination factor in bits
+  // 4-7, operation in bits 8-10, blending on in bit 11, logic operation in
+  // bits 12-15 (on in bit 16), depth test function in bits 20-22 (on in bit
+  // 23), stencil test function in bits 24-26 (on in bit 27).
+  uint blend;
+  uint fixB;
+  // The pixel bits the masks keep, in the target format.
+  uint keep;
+  // Stencil reference in bits 0-7, mask in bits 8-15.
+  uint stencil;
 } pc;
 
 const uint FLAG_TEXTURED = 1u;

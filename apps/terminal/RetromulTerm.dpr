@@ -100,6 +100,7 @@ uses
   SPV.PSPGESelfTest in '..\..\source\gpu\shaders\SPV.PSPGESelfTest.pas',
   SPV.PSPGEHLEVert in '..\..\source\gpu\shaders\SPV.PSPGEHLEVert.pas',
   SPV.PSPGEHLEFrag in '..\..\source\gpu\shaders\SPV.PSPGEHLEFrag.pas',
+  SPV.PSPGEHLEBlendFrag in '..\..\source\gpu\shaders\SPV.PSPGEHLEBlendFrag.pas',
   SPV.PSPGEHLEDown in '..\..\source\gpu\shaders\SPV.PSPGEHLEDown.pas',
   PSP.VFPU.Math in '..\..\source\cores\psp\PSP.VFPU.Math.pas',
   PSP.Net in '..\..\source\cores\psp\PSP.Net.pas',

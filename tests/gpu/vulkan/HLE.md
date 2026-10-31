@@ -47,29 +47,52 @@ renderer is used.
   The colour image's alpha mirrors it for destination-alpha blending and is
   written only by clears.
 - **Coherence with guest memory**: a target's pages are held while it is
-  newer than VRAM. Any CPU, DMA, display or GE access to one reads every target
-  back (`FlushAll`). Textures are decoded on the CPU (`GEFetchTexel`), cached,
-  compared with their source bytes once per epoch, and watched from then on.
-  Depth buffers that are only read are watched as well. A target that is not
-  held is compared with its shadow copy and reloaded when the CPU changed it.
-  Targets that take turns with one depth buffer pass it on with a GPU image
-  copy. Render-to-texture goes through VRAM.
+  newer than VRAM, but only the rows actually drawn. Any CPU, DMA, display or
+  GE access to a held page reads every target back (`FlushAll`). The rest of
+  a drawn target is watched. A write there marks the image stale outside the
+  drawn rows: it is not shown from the image, and drawing into those rows
+  reads it back and loads it again. Such a write does not stop the GPU. The
+  same holds for textures and for depth buffers that are only read: they are
+  decoded on the CPU (`GEFetchTexel`), cached, compared with their source
+  bytes once per epoch, and watched from then on. For this, the memory got
+  `OnWatchFault` with the write's address, separate from `OnVRAMFault`.
+  A target that is not held is compared with its shadow copy and reloaded
+  when the CPU changed it. Targets that take turns with one depth buffer pass
+  it on with a GPU image copy. Render-to-texture goes through VRAM.
+- **Shader blending** applies where the device has
+  `VK_EXT_fragment_shader_interlock` (pixel interlock) and RGBA8 storage
+  images, for draws that blend, use a logic operation or mask part of a
+  channel's bits, but write no depth and no stencil. Such draws go through a
+  second fragment shader (`PSPGEHLEBlend.frag`) in a render pass without
+  attachments:
+  - it tests depth and stencil against the target's images (only read);
+  - then, in primitive order, it does the GE's blend (every factor, the
+    `(c + 1) * f >> 8` rounding, the absolute difference), dither after the
+    blend, the logic operation and the bit masks, in the target format's
+    bits.
+
+  Other draws keep the fixed function. `PSPRun -fixed-blend` turns shader
+  blending off.
 
 ## Known differences from hardware (and from the CPU renderer)
 
-- Blending rounds like the GPU, not with the GE's `(c + 1) * f >> 8`. This
-  causes off-by-one colours in alpha blends. Double destination alpha and the
-  doubled factors on the destination side have no fixed-function factor and
-  are drawn undoubled. The absolute-difference op is drawn as the maximum.
-  A source FIX factor is applied in the shader, which is wrong when the
-  destination factor also uses the source colour.
-- Write masks that keep only some bits of a colour channel are applied per
-  channel.
+- Draws that blend with the fixed function have these differences. These are
+  all blending draws without shader blending, and those that also write depth
+  or stencil:
+  - blending rounds like the GPU, not with the GE's `(c + 1) * f >> 8`, so
+    alpha blends can be off by one;
+  - double destination alpha and the doubled factors on the destination side
+    are drawn undoubled;
+  - the absolute-difference op is drawn as the maximum;
+  - a source FIX factor is applied in the shader, which is wrong when the
+    destination factor also uses the source colour;
+  - write masks that keep only some bits of a colour channel are applied per
+    channel.
 - Stencil increment and decrement on 4444/5551 targets work on the 8-bit
   value, not in the format's precision.
 - Gouraud colours are interpolated in float, not with the GE's fixed-point
   planes (off by one at times).
-- Dither is added to the source before the blend.
+- Without shader blending, dither is added to the source before the blend.
 - At a scale above 1, guest memory gets the sample at the centre of each
   pixel's block (the nearest one for even scales). Programs that read rendered
   pixels back (render-to-texture, CPU reads) see that sample, and mipmap

@@ -60,6 +60,10 @@ type
     // The depth and stencil aspects alone, for the down-sampling kernel.
     ZView, SView: VkImageView;
     DownSet: VkDescriptorSet;
+    // With shader blending: the colour as a storage image, depth and stencil
+    // sampled, and a framebuffer without attachments.
+    BlendSet: VkDescriptorSet;
+    BlendFramebuffer: VkFramebuffer;
     LastUse: Int64;
     Framebuffer: VkFramebuffer;
     // Guest memory's colour bytes when the image was last made equal to it.
@@ -127,10 +131,14 @@ type
   TGEHLEBindings = record
     Pipeline: VkPipeline;
     TexSet: VkDescriptorSet;
-    Push: array[0..17] of Cardinal;
+    Push: array[0..21] of Cardinal;
     Scissor: VkRect2D;
     Blend: Cardinal;
     Stencil: TGEHLEStencil;
+    // Drawn by the shader-blending pipelines (no attachments), with the
+    // target's set.
+    Blended: Boolean;
+    TargetSet: VkDescriptorSet;
   end;
 
   TGEHLESlot = record
@@ -171,6 +179,15 @@ type
     FDownModule: VkShaderModule;
     FDownPipeline: VkPipeline;
     FDownPool: VkDescriptorPool;
+    // Shader blending (VK_EXT_fragment_shader_interlock): the GE's blend,
+    // dither, logic operations and bit masks exactly, for draws that write no
+    // depth or stencil.
+    FShaderBlend: Boolean;
+    FBlendModule: VkShaderModule;
+    FBlendSetLayout: VkDescriptorSetLayout;
+    FBlendLayout: VkPipelineLayout;
+    FBlendPool: VkDescriptorPool;
+    FBlendPass: VkRenderPass;
     FUseCounter: Int64;
     // Recording: the render pass's target, what is bound, the draw being built.
     FPass: TGEHLETarget;
@@ -179,7 +196,9 @@ type
     FBoundScissor: VkRect2D;
     FBoundBlend: Cardinal;
     FBoundStencil: TGEHLEStencil;
-    FBoundPush: array[0..17] of Cardinal;
+    FBoundPush: array[0..21] of Cardinal;
+    FBoundTargetSet: VkDescriptorSet;
+    FPassBlended: Boolean;
     FPushValid, FScissorValid, FBlendValid, FStencilValid: Boolean;
     // What the current state binds.
     FWant: TGEHLEBindings;
@@ -207,6 +226,8 @@ type
     procedure CreateLayout;
     procedure CreateDown;
     procedure CreateDownSet(T: TGEHLETarget);
+    procedure CreateBlend;
+    procedure CreateBlendTarget(T: TGEHLETarget);
     function CreateView(Image: VkImage; Format: VkFormat; Aspect: Cardinal): VkImageView;
     procedure DownSample(T: TGEHLETarget; X, Y, W, H: Integer; Offset, What: Cardinal; Step: Integer = 0);
     function Pipeline(Key: UInt64): VkPipeline;
@@ -219,7 +240,7 @@ type
     procedure Record_;
     procedure ImageBarrier;
     procedure EndPass;
-    procedure BeginPass(T: TGEHLETarget);
+    procedure BeginPass(T: TGEHLETarget; Blended: Boolean);
     procedure FlushDraw;
     procedure Submit;
     procedure WaitAll;
@@ -250,7 +271,9 @@ type
     procedure ApplyBindings;
     procedure Emit(Kind: Integer; const S: TGERaster; V: PGEHLEVertex; Count: Integer; X1, Y1, X2, Y2: Integer);
   public
-    constructor Create(Memory: TPSPMemory; Compute: TVulkanCompute; Scale: Integer = 1);
+    // ShaderBlend: blend in the shader where the device can (else always the
+    // fixed function's).
+    constructor Create(Memory: TPSPMemory; Compute: TVulkanCompute; Scale: Integer = 1; ShaderBlend: Boolean = True);
     destructor Destroy; override;
     procedure DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex); override;
     procedure DrawSprite(const S: TGERaster; const V0, V1: TGEVertex); override;
@@ -263,18 +286,20 @@ type
     function Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
     property Compute: TVulkanCompute read FCompute;
     property Scale: Integer read FScale;
+    property ShaderBlend: Boolean read FShaderBlend;
     property Stats: TGEVulkanHLEStats read FStats;
   end;
 
 // An HLE backend on a Vulkan device with a graphics queue, or False with the
 // reason. Scale: the internal resolution in multiples of the PSP's (1 to 8).
+// ShaderBlend: blending in the shader where the device can.
 function CreateGEVulkanHLEBackend(Memory: TPSPMemory; out Backend: TGEVulkanHLEBackend; out Error: string;
-  const DeviceName: string = ''; Scale: Integer = 1): Boolean;
+  const DeviceName: string = ''; Scale: Integer = 1; ShaderBlend: Boolean = True): Boolean;
 
 implementation
 
 uses
-  SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEDown;
+  SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEBlendFrag, SPV.PSPGEHLEDown;
 
 const
   VRAMMask = PSPVRAMSize - 1;
@@ -320,6 +345,7 @@ type
     TexW, TexH: Single;
     Dither0, Dither1, FixA: Cardinal;
     LodSlope: Single;
+    Blend, FixB, Keep, Stencil: Cardinal;
   end;
 
 function Bpp(Format: Cardinal): Cardinal; inline;
@@ -431,7 +457,7 @@ end;
 { TGEVulkanHLEBackend }
 
 function CreateGEVulkanHLEBackend(Memory: TPSPMemory; out Backend: TGEVulkanHLEBackend; out Error: string;
-  const DeviceName: string; Scale: Integer): Boolean;
+  const DeviceName: string; Scale: Integer; ShaderBlend: Boolean): Boolean;
 var
   Compute: TVulkanCompute;
 begin
@@ -444,7 +470,7 @@ begin
   if not TryCreateVulkanCompute(Compute, Error, DeviceName, False, True) then
     Exit(False);
   try
-    Backend := TGEVulkanHLEBackend.Create(Memory, Compute, Scale);
+    Backend := TGEVulkanHLEBackend.Create(Memory, Compute, Scale, ShaderBlend);
     Result := True;
   except
     on E: Exception do
@@ -456,7 +482,8 @@ begin
   end;
 end;
 
-constructor TGEVulkanHLEBackend.Create(Memory: TPSPMemory; Compute: TVulkanCompute; Scale: Integer);
+constructor TGEVulkanHLEBackend.Create(Memory: TPSPMemory; Compute: TVulkanCompute; Scale: Integer;
+  ShaderBlend: Boolean);
 var
   Props: VkFormatProperties;
 begin
@@ -496,6 +523,11 @@ begin
   FReadback := Compute.CreateBuffer(Max(UploadCapacity, PSPFrameWidth * PSPFrameHeight * 4 * FScale * FScale), vbkReadback,
     VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   CreateDown;
+  FAPI.vkGetPhysicalDeviceFormatProperties(Compute.PhysicalDevice, VK_FORMAT_R8G8B8A8_UNORM, @Props);
+  FShaderBlend := ShaderBlend and Compute.Features.PixelInterlock and
+    ((Props.optimalTilingFeatures and VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) <> 0);
+  if FShaderBlend then
+    CreateBlend;
   // The texture of untextured draws: one opaque white texel.
   FDummy := TGEHLETexture.Create;
   FDummy.Width := 1;
@@ -548,6 +580,11 @@ begin
     if FDownPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FDownPool, nil);
     if FDownLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FDownLayout, nil);
     if FDownSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FDownSetLayout, nil);
+    if FBlendModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FBlendModule, nil);
+    if FBlendPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FBlendPool, nil);
+    if FBlendLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FBlendLayout, nil);
+    if FBlendSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FBlendSetLayout, nil);
+    if FBlendPass <> 0 then FAPI.vkDestroyRenderPass(FDevice, FBlendPass, nil);
     if FVertexModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FVertexModule, nil);
     if FFragmentModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FFragmentModule, nil);
     if FPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FPool, nil);
@@ -724,7 +761,8 @@ end;
 // Key bits: 0-1 topology kind, 2 blend, 3-7 source factor, 8-12 destination
 // factor, 13-15 blend op, 16-19 colour write mask, 20 logic op, 21-24 its
 // function, 25 depth test, 26 depth write, 27-29 depth compare, 30 stencil
-// test, 31-33 stencil compare, 34-36 fail, 37-39 depth fail, 40-42 pass.
+// test, 31-33 stencil compare, 34-36 fail, 37-39 depth fail, 40-42 pass, 43
+// shader blending (no attachments: the rest of the key is unused).
 function TGEVulkanHLEBackend.Pipeline(Key: UInt64): VkPipeline;
 var
   Stages: array[0..1] of VkPipelineShaderStageCreateInfo;
@@ -752,8 +790,12 @@ begin
   end;
   Stages[0].stage := VK_SHADER_STAGE_VERTEX_BIT;
   Stages[0].module := FVertexModule;
+  var Blended := ((Key shr 43) and 1) <> 0;
   Stages[1].stage := VK_SHADER_STAGE_FRAGMENT_BIT;
-  Stages[1].module := FFragmentModule;
+  if Blended then
+    Stages[1].module := FBlendModule
+  else
+    Stages[1].module := FFragmentModule;
   Binding.binding := 0;
   Binding.stride := SizeOf(TGEHLEVertex);
   Binding.inputRate := VK_VERTEX_INPUT_RATE_VERTEX;
@@ -848,6 +890,14 @@ begin
   Info.pDynamicState := @Dynamic;
   Info.layout := FLayout;
   Info.renderPass := FRenderPass;
+  if Blended then
+  begin
+    Info.pDepthStencilState := nil;
+    BlendState.logicOpEnable := 0;
+    BlendState.attachmentCount := 0;
+    Info.layout := FBlendLayout;
+    Info.renderPass := FBlendPass;
+  end;
   Info.basePipelineIndex := -1;
   CheckVulkan(FAPI.vkCreateGraphicsPipelines(FDevice, 0, 1, @Info, nil, @Result), 'vkCreateGraphicsPipelines');
   FPipelines.Add(Key, Result);
@@ -950,6 +1000,10 @@ begin
     FAPI.vkDestroyFramebuffer(FDevice, T.Framebuffer, nil);
   if T.DownSet <> 0 then
     FAPI.vkFreeDescriptorSets(FDevice, FDownPool, 1, @T.DownSet);
+  if T.BlendSet <> 0 then
+    FAPI.vkFreeDescriptorSets(FDevice, FBlendPool, 1, @T.BlendSet);
+  if T.BlendFramebuffer <> 0 then
+    FAPI.vkDestroyFramebuffer(FDevice, T.BlendFramebuffer, nil);
   if T.ZView <> 0 then FAPI.vkDestroyImageView(FDevice, T.ZView, nil);
   if T.SView <> 0 then FAPI.vkDestroyImageView(FDevice, T.SView, nil);
   DestroyImage(T.Color);
@@ -1031,6 +1085,120 @@ begin
   CheckVulkan(FAPI.vkCreateComputePipelines(FDevice, 0, 1, @Pipe, nil, @FDownPipeline), 'vkCreateComputePipelines');
 end;
 
+// The shader-blending pipelines' fragment shader (PSPGEHLEBlend.frag), set 1
+// (the target's colour as a storage image, its depth and stencil sampled),
+// layout and render pass without attachments.
+procedure TGEVulkanHLEBackend.CreateBlend;
+var
+  Bindings: array[0..2] of VkDescriptorSetLayoutBinding;
+  SetInfo: VkDescriptorSetLayoutCreateInfo;
+  Layouts: array[0..1] of VkDescriptorSetLayout;
+  Push: VkPushConstantRange;
+  Info: VkPipelineLayoutCreateInfo;
+  Sizes: array[0..1] of VkDescriptorPoolSize;
+  PoolInfo: VkDescriptorPoolCreateInfo;
+  Subpass: VkSubpassDescription;
+  Deps: array[0..1] of VkSubpassDependency;
+  PassInfo: VkRenderPassCreateInfo;
+begin
+  FBlendModule := FCompute.CreateShaderModule(PSPGEHLEBlendFragSPV);
+  for var I := 0 to 2 do
+  begin
+    Bindings[I] := Default(VkDescriptorSetLayoutBinding);
+    Bindings[I].binding := I;
+    Bindings[I].descriptorType := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    Bindings[I].descriptorCount := 1;
+    Bindings[I].stageFlags := VK_SHADER_STAGE_FRAGMENT_BIT;
+  end;
+  Bindings[0].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  SetInfo := Default(VkDescriptorSetLayoutCreateInfo);
+  SetInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  SetInfo.bindingCount := 3;
+  SetInfo.pBindings := @Bindings[0];
+  CheckVulkan(FAPI.vkCreateDescriptorSetLayout(FDevice, @SetInfo, nil, @FBlendSetLayout), 'vkCreateDescriptorSetLayout');
+  Layouts[0] := FSetLayout;
+  Layouts[1] := FBlendSetLayout;
+  Push.stageFlags := VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT;
+  Push.offset := 0;
+  Push.size := SizeOf(TGEHLEPush);
+  Info := Default(VkPipelineLayoutCreateInfo);
+  Info.sType := VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  Info.setLayoutCount := 2;
+  Info.pSetLayouts := @Layouts[0];
+  Info.pushConstantRangeCount := 1;
+  Info.pPushConstantRanges := @Push;
+  CheckVulkan(FAPI.vkCreatePipelineLayout(FDevice, @Info, nil, @FBlendLayout), 'vkCreatePipelineLayout');
+  Sizes[0].&type := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  Sizes[0].descriptorCount := MaxTargets + 8;
+  Sizes[1].&type := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  Sizes[1].descriptorCount := 2 * (MaxTargets + 8);
+  PoolInfo := Default(VkDescriptorPoolCreateInfo);
+  PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  PoolInfo.flags := VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  PoolInfo.maxSets := MaxTargets + 8;
+  PoolInfo.poolSizeCount := 2;
+  PoolInfo.pPoolSizes := @Sizes[0];
+  CheckVulkan(FAPI.vkCreateDescriptorPool(FDevice, @PoolInfo, nil, @FBlendPool), 'vkCreateDescriptorPool');
+  Subpass := Default(VkSubpassDescription);
+  Subpass.pipelineBindPoint := VK_PIPELINE_BIND_POINT_GRAPHICS;
+  Deps[0] := Default(VkSubpassDependency);
+  Deps[0].srcSubpass := VK_SUBPASS_EXTERNAL;
+  Deps[0].dstSubpass := 0;
+  Deps[0].srcStageMask := VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  Deps[0].dstStageMask := VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  Deps[0].srcAccessMask := VK_ACCESS_MEMORY_WRITE_BIT;
+  Deps[0].dstAccessMask := VK_ACCESS_MEMORY_READ_BIT or VK_ACCESS_MEMORY_WRITE_BIT;
+  Deps[1] := Deps[0];
+  Deps[1].srcSubpass := 0;
+  Deps[1].dstSubpass := VK_SUBPASS_EXTERNAL;
+  PassInfo := Default(VkRenderPassCreateInfo);
+  PassInfo.sType := VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  PassInfo.subpassCount := 1;
+  PassInfo.pSubpasses := @Subpass;
+  PassInfo.dependencyCount := 2;
+  PassInfo.pDependencies := @Deps[0];
+  CheckVulkan(FAPI.vkCreateRenderPass(FDevice, @PassInfo, nil, @FBlendPass), 'vkCreateRenderPass');
+end;
+
+// A target's set 1 and framebuffer for the shader-blending pipelines.
+procedure TGEVulkanHLEBackend.CreateBlendTarget(T: TGEHLETarget);
+var
+  Alloc: VkDescriptorSetAllocateInfo;
+  Images: array[0..2] of VkDescriptorImageInfo;
+  Writes: array[0..2] of VkWriteDescriptorSet;
+  Info: VkFramebufferCreateInfo;
+begin
+  Alloc := Default(VkDescriptorSetAllocateInfo);
+  Alloc.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  Alloc.descriptorPool := FBlendPool;
+  Alloc.descriptorSetCount := 1;
+  Alloc.pSetLayouts := @FBlendSetLayout;
+  CheckVulkan(FAPI.vkAllocateDescriptorSets(FDevice, @Alloc, @T.BlendSet), 'vkAllocateDescriptorSets');
+  var Nearest := Sampler(0);
+  Images[0].sampler := Nearest; Images[0].imageView := T.Color.View; Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[1].sampler := Nearest; Images[1].imageView := T.ZView; Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[2].sampler := Nearest; Images[2].imageView := T.SView; Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  for var I := 0 to 2 do
+  begin
+    Writes[I] := Default(VkWriteDescriptorSet);
+    Writes[I].sType := VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    Writes[I].dstSet := T.BlendSet;
+    Writes[I].dstBinding := I;
+    Writes[I].descriptorCount := 1;
+    Writes[I].descriptorType := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    Writes[I].pImageInfo := @Images[I];
+  end;
+  Writes[0].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  FAPI.vkUpdateDescriptorSets(FDevice, 3, @Writes[0], 0, nil);
+  Info := Default(VkFramebufferCreateInfo);
+  Info.sType := VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  Info.renderPass := FBlendPass;
+  Info.width := T.Width * FScale;
+  Info.height := T.Height * FScale;
+  Info.layers := 1;
+  CheckVulkan(FAPI.vkCreateFramebuffer(FDevice, @Info, nil, @T.BlendFramebuffer), 'vkCreateFramebuffer');
+end;
+
 // What = 1: colour and stencil, 2: depth, of the box in PSP pixels, 3: the
 // shown colour of the box in image pixels (Step 1), into the read-back buffer
 // from word Offset. Step 0 is the scale.
@@ -1109,20 +1277,30 @@ begin
   FPass := nil;
 end;
 
-procedure TGEVulkanHLEBackend.BeginPass(T: TGEHLETarget);
+// The target's render pass: with its colour and depth/stencil attachments, or,
+// for the shader-blending pipelines, without attachments.
+procedure TGEVulkanHLEBackend.BeginPass(T: TGEHLETarget; Blended: Boolean);
 var
   Info: VkRenderPassBeginInfo;
   VP: VkViewport;
   Offset: VkDeviceSize;
 begin
   Record_;
-  if FPass = T then
+  if (FPass = T) and (FPassBlended = Blended) then
     Exit;
   EndPass;
   Info := Default(VkRenderPassBeginInfo);
   Info.sType := VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-  Info.renderPass := FRenderPass;
-  Info.framebuffer := T.Framebuffer;
+  if Blended then
+  begin
+    Info.renderPass := FBlendPass;
+    Info.framebuffer := T.BlendFramebuffer;
+  end
+  else
+  begin
+    Info.renderPass := FRenderPass;
+    Info.framebuffer := T.Framebuffer;
+  end;
   Info.renderArea.extent.width := T.Width * FScale;
   Info.renderArea.extent.height := T.Height * FScale;
   var Cmd := Slot.Cmd.Handle;
@@ -1136,8 +1314,10 @@ begin
   Offset := 0;
   FAPI.vkCmdBindVertexBuffers(Cmd, 0, 1, @Buffer, @Offset);
   FPass := T;
+  FPassBlended := Blended;
   FBoundPipeline := 0;
   FBoundSet := 0;
+  FBoundTargetSet := 0;
   FPushValid := False;
   FScissorValid := False;
   FBlendValid := False;
@@ -1372,9 +1552,12 @@ begin
   Result.MaxHeight := MaxH;
   Result.ZVerified := -1;
   Result.ZWatched := -1;
-  Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1,
-    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT or
-    VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+  var ColorUsage: Cardinal := VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
+    VK_IMAGE_USAGE_TRANSFER_DST_BIT or VK_IMAGE_USAGE_SAMPLED_BIT;
+  // The shader-blending pipelines read and write it as a storage image.
+  if FShaderBlend then
+    ColorUsage := ColorUsage or VK_IMAGE_USAGE_STORAGE_BIT;
+  Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1, ColorUsage, VK_IMAGE_ASPECT_COLOR_BIT);
   var DepthUsage: Cardinal := VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
     VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   // Sampled by the down-sampling kernel.
@@ -1393,6 +1576,8 @@ begin
   Info.layers := 1;
   CheckVulkan(FAPI.vkCreateFramebuffer(FDevice, @Info, nil, @Result.Framebuffer), 'vkCreateFramebuffer');
   CreateDownSet(Result);
+  if FShaderBlend then
+    CreateBlendTarget(Result);
   FTargets.Add(Result);
 end;
 
@@ -2294,6 +2479,21 @@ begin
   end;
 end;
 
+// A stencil operation that changes the stencil (keep is 0, and so are 6 and 7).
+function WritesStencil(Op: Integer): Boolean; inline;
+begin
+  Result := (Op and 7) in [1..5];
+end;
+
+// The masks keep some of a colour channel's bits, not all or none.
+function PartialMask(Format, Keep: Cardinal): Boolean;
+begin
+  Result := False;
+  for var Bits in [EncodeColorOf(Format, 255, 0, 0), EncodeColorOf(Format, 0, 255, 0), EncodeColorOf(Format, 0, 0, 255)] do
+    if ((Keep and Bits) <> 0) and ((Keep and Bits) <> Bits) then
+      Exit(True);
+end;
+
 function DestFactor(const S: TGERaster): Integer;
 begin
   case S.BlendDst of
@@ -2381,6 +2581,7 @@ begin
   var StencilCompare := Cardinal(S.StencilMask and $FF);
   FClearStencil := False;
   Push := Default(TGEHLEPush);
+  var Blended := False;
   if Clear then
   begin
     Flags := Flags or FLAG_CLEAR;
@@ -2442,11 +2643,30 @@ begin
     end;
     if S.Dither then
       Flags := Flags or FLAG_DITHER;
-    var Logic := S.LogicOp and (S.LogicFunc <> 3) and FCompute.Features.LogicOp;
-    var Blend := S.Blend and not Logic;
+    // In the shader where the device can and the draw writes no depth or
+    // stencil (those it only tests, from the images).
+    var StencilTest := S.StencilTest and (Fmt <> 0);
+    var StencilWrites := StencilTest and (WritesStencil(S.StencilFail) or WritesStencil(S.StencilZFail) or
+      WritesStencil(S.StencilZPass));
+    Blended := FShaderBlend and (S.Blend or (S.LogicOp and (S.LogicFunc <> 3)) or PartialMask(Fmt, Keep)) and
+      not (DepthTest and S.DepthWrite) and not StencilWrites;
+    if Blended then
+    begin
+      Key := Cardinal(Kind) or (UInt64(1) shl 43);
+      Push.Blend := Cardinal(S.BlendSrc and 15) or (Cardinal(S.BlendDst and 15) shl 4) or
+        (Cardinal(S.BlendOp and 7) shl 8) or (Cardinal(Ord(S.Blend)) shl 11) or
+        (Cardinal(S.LogicFunc and 15) shl 12) or (Cardinal(Ord(S.LogicOp)) shl 16) or
+        (Cardinal(S.DepthFunc and 7) shl 20) or (Cardinal(Ord(DepthTest)) shl 23) or
+        (Cardinal(S.StencilFunc and 7) shl 24) or (Cardinal(Ord(StencilTest)) shl 27);
+      Push.FixB := S.FixB and $FFFFFF;
+      Push.Keep := Keep;
+      Push.Stencil := Cardinal(S.StencilRef and $FF) or (Cardinal(S.StencilMask and $FF) shl 8);
+    end;
+    var Logic := not Blended and S.LogicOp and (S.LogicFunc <> 3) and FCompute.Features.LogicOp;
+    var Blend := not Blended and S.Blend and not Logic;
     // Unblended colours are stored as the target keeps them (logic
     // operations on the expanded values are the operations on its bits).
-    if (Fmt < 3) and not Blend then
+    if (Fmt < 3) and not Blend and not Blended then
       Flags := Flags or FLAG_QUANTIZE;
     if Blend then
     begin
@@ -2460,15 +2680,16 @@ begin
     end;
     if Logic then
       Key := Key or (UInt64(1) shl 20) or (UInt64(S.LogicFunc and 15) shl 21);
-    if DepthTest then
+    if DepthTest and not Blended then
       Key := Key or (UInt64(1) shl 25) or (UInt64(Ord(S.DepthWrite)) shl 26) or
         (UInt64(CompareOps[S.DepthFunc and 7]) shl 27);
-    if S.StencilTest and (Fmt <> 0) then
+    if StencilTest and not Blended then
       Key := Key or (UInt64(1) shl 30) or (UInt64(CompareOps[S.StencilFunc and 7]) shl 31) or
         (UInt64(StencilOps[S.StencilFail and 7]) shl 34) or (UInt64(StencilOps[S.StencilZFail and 7]) shl 37) or
         (UInt64(StencilOps[S.StencilZPass and 7]) shl 40);
   end;
-  Key := Key or (UInt64(WriteMask) shl 16);
+  if not Blended then
+    Key := Key or (UInt64(WriteMask) shl 16);
 
   Push.NdcX := 2 / T.Width;
   Push.NdcY := 2 / T.Height;
@@ -2498,6 +2719,8 @@ begin
   FWant.Scissor.extent.width := Cardinal(Max(X2 - X1 + 1, 0) * FScale);
   FWant.Scissor.extent.height := Cardinal(Max(Y2 - Y1 + 1, 0) * FScale);
   FWant.Blend := S.FixB and $FFFFFF;
+  FWant.Blended := Blended;
+  FWant.TargetSet := T.BlendSet;
   FWant.Stencil[0] := StencilCompare;
   FWant.Stencil[1] := StencilWrite;
   FWant.Stencil[2] := StencilRef;
@@ -2519,8 +2742,12 @@ procedure TGEVulkanHLEBackend.ApplyBindings;
 var
   Consts: array[0..3] of Single;
 begin
-  BeginPass(FTarget);
+  BeginPass(FTarget, FWant.Blended);
   var Cmd := Slot.Cmd.Handle;
+  // Both layouts take set 0 and the push constants alike.
+  var Layout := FLayout;
+  if FWant.Blended then
+    Layout := FBlendLayout;
   if FWant.Pipeline <> FBoundPipeline then
   begin
     FAPI.vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, FWant.Pipeline);
@@ -2528,12 +2755,17 @@ begin
   end;
   if FWant.TexSet <> FBoundSet then
   begin
-    FAPI.vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, FLayout, 0, 1, @FWant.TexSet, 0, nil);
+    FAPI.vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Layout, 0, 1, @FWant.TexSet, 0, nil);
     FBoundSet := FWant.TexSet;
+  end;
+  if FWant.Blended and (FWant.TargetSet <> FBoundTargetSet) then
+  begin
+    FAPI.vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, FBlendLayout, 1, 1, @FWant.TargetSet, 0, nil);
+    FBoundTargetSet := FWant.TargetSet;
   end;
   if not FPushValid or not CompareMem(@FWant.Push, @FBoundPush[0], SizeOf(FWant.Push)) then
   begin
-    FAPI.vkCmdPushConstants(Cmd, FLayout, VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+    FAPI.vkCmdPushConstants(Cmd, Layout, VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT, 0,
       SizeOf(FWant.Push), @FWant.Push);
     Move(FWant.Push, FBoundPush[0], SizeOf(FWant.Push));
     FPushValid := True;

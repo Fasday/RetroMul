@@ -6,7 +6,7 @@ program PSPRun;
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
 // -gpu-hle [-scale N]: Vulkan graphics-pipeline rendering (fast, not bit exact), N times the PSP's resolution;
-// frames (-out, hashes) are then the renderer's at that resolution.
+// frames (-out, hashes) are then the renderer's at that resolution. -fixed-blend: no blending in the shader.
 // -test: isolated pspautotests host0: tree, no display, stops at exit.
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
@@ -315,6 +315,7 @@ begin
     var ShotFile := '';
     var GPUMode := 0;
     var Scale := 1;
+    var FixedBlend := False;
     var VRAMFile := '';
     var WavFile := '';
     var CallsOn := False;
@@ -344,6 +345,7 @@ begin
       else if A = '-gpu-check' then GPUMode := 2
       else if A = '-gpu-hle' then GPUMode := 3
       else if A = '-scale' then begin Inc(I); Scale := StrToInt(ParamStr(I)); end
+      else if A = '-fixed-blend' then FixedBlend := True
       else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
       else if A = '-calls' then begin CallsOn := True; if (I < ParamCount) and not ParamStr(I + 1).StartsWith('-') then begin Inc(I); CallsFilter := ParamStr(I); end; end
@@ -468,12 +470,12 @@ begin
       if GPUMode = 3 then
       begin
         var Error: string;
-        if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error, '', Scale) then
+        if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error, '', Scale, not FixedBlend) then
         begin
           Console.OnPresent := HLE.Present;
           TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE;
           if not Quiet then
-            Writeln(ErrOutput, 'gpu hle: ' + HLE.Compute.Name);
+            Writeln(ErrOutput, 'gpu hle: ' + HLE.Compute.Name + ', shader blending ' + BoolToStr(HLE.ShaderBlend, True));
         end
         else
           Writeln(ErrOutput, 'gpu hle: unavailable (' + Error + '), the GE draws on the CPU');
