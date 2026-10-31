@@ -430,6 +430,12 @@ begin
     Checkpoint(C, Root, 'asynchronous read worker in transfer wait');
     Require(C.Memory.Read32(Pixels) = $41544144, 'Async read did not transfer the requested bytes');
     Checkpoint(C, Root, 'completed asynchronous result before collection', 0);
+    Require(Call(C, 'sceIoLseek32Async', [Fd, 0, 1]) = $80020329,
+      'A new async request replaced an uncollected result');
+    var OldSdk := C.Kernel.CompiledSdkVersion;
+    Call(C, 'sceKernelSetCompiledSdkVersion', [$06060010]);
+    Require(Call(C, 'sceIoClose', [Fd]) = $80020329, 'A newer program closed past an uncollected result');
+    Call(C, 'sceKernelSetCompiledSdkVersion', [OldSdk]);
     Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = 0, 'Ready async read result could not be collected');
     Require(C.Memory.Read32(ErrWord) = 4, 'Async read returned the wrong count');
     Require(Call(C, 'sceIoPollAsync', [Fd, ErrWord]) = $8002032A, 'Polled async result was not consumed');

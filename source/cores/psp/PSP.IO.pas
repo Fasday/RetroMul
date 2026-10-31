@@ -974,6 +974,13 @@ begin
   end;
 end;
 
+// A descriptor takes one asynchronous request at a time: the next is refused
+// until the last one's result has been collected, not merely completed.
+function AsyncSlotHeld(F: TPSPOpenFile): Boolean;
+begin
+  Result := F.AsyncPending or (F.AsyncDone <> 0);
+end;
+
 function TPSPIO.StartAsync(F: TPSPOpenFile; const Task: IPSPStateAction; Latency: Int64): Boolean;
 begin
   Result := EnsureAsyncWorker(F);
@@ -1434,7 +1441,8 @@ begin
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
   if CallFileDriver(F, 3, []) then
     Exit;
-  if F.AsyncPending then
+  // Programs built after 2.60 cannot close past an uncollected result.
+  if F.AsyncPending or ((F.AsyncDone <> 0) and (FKernel.CompiledSdkVersion > $02060010)) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   FKernel.CancelTimersOf(F);
   StopAsyncWorker(F);
@@ -1453,7 +1461,7 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if F.AsyncPending then
+  if AsyncSlotHeld(F) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   // The descriptor closes when its async result is collected.
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [1]), 20000) then Exit;
@@ -1485,7 +1493,7 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if F.AsyncPending then
+  if AsyncSlotHeld(F) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [2, FHLE.Arg(1), FHLE.Arg(2)]),
     TransferLatency(F, FHLE.Arg(1), FHLE.Arg(2), False)) then Exit;
@@ -1522,7 +1530,7 @@ begin
   var F := GetFile(Fd);
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if F.AsyncPending then
+  if AsyncSlotHeld(F) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [3, FHLE.Arg(1), FHLE.Arg(2)]),
     TransferLatency(F, FHLE.Arg(1), FHLE.Arg(2), True)) then Exit;
@@ -1550,7 +1558,7 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if F.AsyncPending then
+  if AsyncSlotHeld(F) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
     [4, Int64(FHLE.Arg64(2)), FHLE.ArgInt(4)]), 20000) then Exit;
@@ -1577,7 +1585,7 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if F.AsyncPending then
+  if AsyncSlotHeld(F) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
     [4, FHLE.ArgInt(1), FHLE.ArgInt(2)]), 20000) then Exit;
@@ -1639,7 +1647,7 @@ begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
     begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if F.AsyncPending then
+  if AsyncSlotHeld(F) then
     begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
     [5, FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3), FHLE.Arg(4), FHLE.Arg(5)]), 20000) then Exit;
