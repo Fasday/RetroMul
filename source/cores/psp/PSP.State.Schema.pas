@@ -17,7 +17,7 @@ uses
   System.SysUtils, System.Classes, System.TypInfo, System.Generics.Collections, Core.Emulation.Types,
   PSP.CPU, PSP.Memory, PSP.Kernel, PSP.Scheduler, PSP.HLE, PSP.IO, PSP.Loader,
   PSP.Display, PSP.Service, PSP.Audio, PSP.Font, PSP.GE, PSP.GE.Types, PSP.GE.Engine,
-  PSP.SAS, PSP.SysLibs, PSP.Misc, PSP.MP3, PSP.Mpeg, PSP.MpegDemux, PSP.MpegVideo,
+  PSP.SAS, PSP.SysLibs, PSP.Misc, PSP.MP3, PSP.Atrac, PSP.Mpeg, PSP.MpegDemux, PSP.MpegVideo,
   PSP.Jpeg, PSP.Net, PSP.Utility, PSP.Videocodec, Audio.MP3.Layer3, Core.Snapshots, PSP.State.Action,
   Video.AVC.H264, Video.AVC.H264.Syntax, Video.AVC.Types, FMXAudio.Transform;
 
@@ -72,6 +72,7 @@ begin
     Result.Optional(TPSPOpenFile, ['AsyncWorker', 'AsyncPriority', 'AsyncLatency', 'AsyncTask']);
     Result.Optional(TPSPAudio, ['FO2WaitFailed']);
     Result.Optional(TPSPThread, ['BusyYieldEqual']);
+    Result.Optional(TPSPAtracSlot, ['Decoded']);
     Result.AddClass(TMemoryStream, []);
     Result.AddClass(TFileStream, []);
     Result.AddClass(TStringBuilder, []);

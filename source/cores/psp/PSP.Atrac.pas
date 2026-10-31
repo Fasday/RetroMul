@@ -81,6 +81,8 @@ type
     FrozenOff: Int64;
     Err: Cardinal;
     PrimeFailed: Boolean;
+    // A frame has been decoded since the data was set.
+    Decoded: Boolean;
     Decoder: TPSPAtracFrameDecoder;
     destructor Destroy; override;
     procedure Clear;
@@ -106,6 +108,7 @@ type
     procedure EnsureContexts;
     procedure Configure(At3Plus, At3: Integer);
     procedure ShortWait(Us: Integer; Result: Cardinal);
+    procedure CodecWait(S: TPSPAtracSlot; Step: Integer; Result: Cardinal);
     function Slot(ID: Integer; out S: TPSPAtracSlot): Boolean;
     function Lookup(ID: Integer; out S: TPSPAtracSlot): Boolean;
     function DataError(S: TPSPAtracSlot): Cardinal;
@@ -208,6 +211,17 @@ const
   MaxSlots = 6;
   CtxSize = 256;
   Info = $80;
+
+  // What the calls cost (us) as threads/scheduling/callcosts measured them on
+  // hardware: the library's own work, then the media engine's decode the
+  // caller waits for, while other threads run. Steps: setting the data (it
+  // decodes the first frame), the first frame decoded after it, later frames.
+  // Index 0 is ATRAC3 (recorded mono), 1 ATRAC3+ (recorded stereo).
+  CodecSetData = 0;
+  CodecFirstFrame = 1;
+  CodecFrame = 2;
+  CodecBusyUs: array[0..1, 0..2] of Integer = ((250, 150, 40), (800, 150, 100));
+  CodecWaitUs: array[0..1, 0..2] of Integer = ((650, 550, 660), (2700, 2850, 2400));
 
   RIFF_ = $46464952;
   WAVE_ = $45564157;
@@ -441,6 +455,13 @@ begin
   var T := FKernel.Current;
   FKernel.BeginWait(PSPWaitDelay, nil, 0, 0, False, nil, nil, 'atrac');
   FKernel.AddWakeTimer(FScheduler.Now + Int64(Us) * 1000, T, 'atrac', Result);
+end;
+
+procedure TPSPAtrac.CodecWait(S: TPSPAtracSlot; Step: Integer; Result: Cardinal);
+begin
+  var Plus := Ord(S.Codec = CODEC_AT3PLUS);
+  FKernel.Spend(Int64(CodecBusyUs[Plus, Step]) * 1000);
+  ShortWait(CodecWaitUs[Plus, Step], Result);
 end;
 
 function TPSPAtrac.Slot(ID: Integer; out S: TPSPAtracSlot): Boolean;
@@ -932,6 +953,7 @@ begin
   S.CurBuffer := 0;
   S.Err := 0;
   S.PrimeFailed := False;
+  S.Decoded := False;
   S.RPass := 0;
   if S.HasLoop then
   begin
@@ -1074,6 +1096,8 @@ begin
   WriteCtx(S);
   if (R <> 0) and (R <> ERROR_ATRAC_API_FAIL) then
     FHLE.Result(R)
+  else if R = 0 then
+    CodecWait(S, CodecSetData, R)
   else
     ShortWait(100, R);
 end;
@@ -1113,7 +1137,7 @@ begin
       Exit;
     end;
     WriteCtx(S);
-    ShortWait(100, Cardinal(ID));
+    CodecWait(S, CodecSetData, Cardinal(ID));
   finally
     Probe.Free;
   end;
@@ -1254,7 +1278,13 @@ begin
   end;
   WriteCtx(S);
   if R = 0 then
-    ShortWait(100, 0)
+  begin
+    if S.Decoded then
+      CodecWait(S, CodecFrame, 0)
+    else
+      CodecWait(S, CodecFirstFrame, 0);
+    S.Decoded := True;
+  end
   else
     FHLE.Result(R);
 end;
