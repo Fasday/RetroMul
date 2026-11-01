@@ -89,11 +89,12 @@ ivec3 quantize(ivec3 c, uint format) {
 // clamped per level, nearest texels by floor, bilinear with 4-bit weights,
 // the level of detail in 1/16 levels from a log2 of 4 mantissa bits.
 // A texture that is a render target's image (TEX_TARGET) holds the PSP's
-// texels at the target's scale; its sizes need not be powers of two.
+// texels at the target's scale, a scaled one (TEX_SCALED) the GE's at its
+// own; their sizes need not be powers of two.
 int wrapCoord(int v, int size, bool clampIt) {
   if (clampIt)
     return clamp(v, 0, size - 1);
-  if ((pc.texFunc & TEX_TARGET) != 0u)
+  if ((pc.texFunc & (TEX_TARGET | TEX_SCALED)) != 0u)
     return v - size * int(floor(float(v) / float(size)));
   return v & (size - 1);
 }
@@ -113,11 +114,12 @@ ivec4 texel(ivec2 p, int level) {
 
 ivec4 sampleLevel(vec2 st, int level, bool linear) {
   ivec2 size = textureSize(uTexture, level);
+  int scale = int((pc.texFunc >> 17) & 15u);
   if ((pc.texFunc & TEX_TARGET) != 0u) {
-    int scale = int((pc.texFunc >> 17) & 15u);
     st *= float(scale);
     size = ivec2(pc.texSize) * scale;
-  }
+  } else if (scale > 1)
+    st *= float(scale);
   bool cu = (pc.texFunc & TEX_CLAMPU) != 0u;
   bool cv = (pc.texFunc & TEX_CLAMPV) != 0u;
   if (!linear) {

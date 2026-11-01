@@ -9,7 +9,8 @@ layout(push_constant) uniform Push {
   // the level of detail in bits 5-6 (0 none, 1 from the derivatives plus the
   // bias, 2 the bias, 3 from the slope and w plus the bias), TEX_* bits, the
   // minification filter in bits 8-10, the image's highest level in 13-15,
-  // TEX_TARGET's scale and format in bits 17-22.
+  // TEX_TARGET's scale and format in bits 17-22; without TEX_TARGET, a scale
+  // in bits 17-20 is a texture made larger (TEX_SCALED).
   uint texFunc;
   uint env;
   uint fogColor;
@@ -55,3 +56,6 @@ const uint TEX_CLAMPV = 4096u;
 // The texture is a render target's image: its scale in bits 17-20, its format
 // in bits 21-22.
 const uint TEX_TARGET = 65536u;
+// The scale bits: without TEX_TARGET, the image holds the GE's texels that
+// many times larger along each side (texture scaling, an option).
+const uint TEX_SCALED = 15u << 17;

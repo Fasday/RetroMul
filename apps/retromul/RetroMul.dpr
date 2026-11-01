@@ -682,6 +682,7 @@ uses
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
   PSP.GE.VulkanLLE in '..\..\source\cores\psp\PSP.GE.VulkanLLE.pas',
   PSP.GE.VulkanHLE in '..\..\source\cores\psp\PSP.GE.VulkanHLE.pas',
+  PSP.GE.TexScale in '..\..\source\cores\psp\PSP.GE.TexScale.pas',
   PSP.Crypto in '..\..\source\cores\psp\PSP.Crypto.pas',
   PSP.Crypto.ECDSA in '..\..\source\cores\psp\PSP.Crypto.ECDSA.pas',
   PSP.Crypto.Keys in '..\..\source\cores\psp\PSP.Crypto.Keys.pas',

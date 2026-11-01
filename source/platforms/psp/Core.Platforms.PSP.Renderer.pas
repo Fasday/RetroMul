@@ -20,8 +20,9 @@ type
     FKind: TPSPRenderer;
     FDescription: string;
   public
-    // Scale: the Vulkan HLE renderer's internal resolution (1 to 8 times the PSP's).
-    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer = 1);
+    // Scale: the Vulkan HLE renderer's internal resolution (1 to 8 times the PSP's);
+    // TextureScale: its texture scaling above 1x (0 none, else 2 to 4).
+    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer = 1; TextureScale: Integer = 0);
     destructor Destroy; override;
     function Status: string;
   end;
@@ -60,7 +61,7 @@ begin
     Result := prCPU;
 end;
 
-constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer);
+constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale, TextureScale: Integer);
 begin
   inherited Create;
   FConsole := Console;
@@ -76,12 +77,17 @@ begin
     begin
       FBackend := Backend;
       FKind := prVulkanHLE;
+      Backend.TextureScale := TextureScale;
       TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
       // Frames come from its images, at its resolution.
       Console.OnPresent := Backend.Present;
       FDescription := 'vulkan-hle: ' + Backend.Compute.Name;
       if Backend.Scale > 1 then
+      begin
         FDescription := FDescription + Format(' at %dx', [Backend.Scale]);
+        if Backend.TextureScale > 1 then
+          FDescription := FDescription + Format(', textures %dx', [Backend.TextureScale]);
+      end;
       Console.HLE.Log('gpu: ' + FDescription);
       Exit;
     end;

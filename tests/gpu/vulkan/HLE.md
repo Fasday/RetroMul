@@ -150,6 +150,35 @@ against 1× read exact sampling results back (`gpu/filtering/*`,
 at 2× they get the block's sample and finer mipmap levels. At 3× (an exact
 centre sample) 8 of these still differ, from the level of detail.
 
+## Texture scaling
+
+*Settings → PSP video → Texture scaling* (`[Video] TextureScale=0|2|3|4` in
+`psp.ini`, off by default; `PSPRun -texscale N`) makes textures larger with an
+edge-preserving filter when the internal resolution is above 1×. It is not the
+GE's behaviour: it trades exactness for sharper text, interface and outlines.
+
+- `PSP.GE.TexScale` scales each decoded level on the CPU, in the way of xBRZ:
+  edges at the corners between texels come from colour differences along the
+  two diagonals of the 4×4 around them; each texel's block then takes the
+  colour across the edge in its corners, cut diagonally, at half or twice
+  that slope, or rounded. Colours are compared in Y'CbCr with alpha and mixed
+  weighted by alpha. Textures of 64×64 and up are scaled in row bands on the
+  thread pool.
+- The image holds the texels N times larger (`TGEHLETexture.Scale`); the
+  shader multiplies its coordinates by N (`TEX_SCALED`) and wraps at any size.
+  The level of detail still comes from the GE's coordinates.
+- Not scaled: render targets used as textures (already at the internal
+  resolution), textures under 8 texels a side (ramps and tables that bilinear
+  filtering keeps smooth), sizes beyond 1024 texels after scaling (the factor
+  drops), levels that do not halve in both directions, and textures decoded
+  again in every GE run. A scaled texture whose bytes change twice within 60
+  frames shown (videos, textures streamed through one place) is made again
+  unscaled; its old image goes once the GPU has finished.
+
+Tekken 6 at 4× with 4× textures: 1392 uploads scaled in 4600 frames, 1.1 s in
+all (at most 9 ms for one 256×256), most of it while loading; the battle's
+frame rate does not change.
+
 ## Results
 
 Measured on Windows x64 with an AMD Radeon RX 9070 XT.

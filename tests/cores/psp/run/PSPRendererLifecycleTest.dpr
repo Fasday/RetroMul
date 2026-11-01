@@ -84,8 +84,19 @@ begin
     Require(C.Resolution = 8, 'Absent resolution must keep the current one');
     Ini.WriteInteger('Video', 'Resolution', 1);
     C.ReadCore(Ini);
+    Require(C.TextureScale = 0, 'Texture scaling must default to off');
+    Ini.WriteInteger('Video', 'TextureScale', 3);
+    C.ReadCore(Ini);
+    Require(C.TextureScale = 3, 'Texture scaling not read');
+    Ini.WriteInteger('Video', 'TextureScale', 9);
+    C.ReadCore(Ini);
+    Require(C.TextureScale = 4, 'Texture scaling not limited');
+    Ini.WriteInteger('Video', 'TextureScale', 1);
+    C.ReadCore(Ini);
+    Require(C.TextureScale = 0, 'Texture scaling 1x must be off');
     C.WriteCore(Ini);
     Require(Ini.ReadString('Video', 'Renderer', '') = 'cpu', 'CPU choice not saved');
+    Require(Ini.ReadInteger('Video', 'TextureScale', -1) = 0, 'Texture scaling not saved');
   finally
     Ini.Free;
     C.Free;
@@ -162,9 +173,10 @@ begin
     if Kind = prVulkanHLE then
     begin
       // At twice the resolution the shown frames come from the renderer.
-      R := TPSPRendererSession.Create(C, Kind, 2);
+      R := TPSPRendererSession.Create(C, Kind, 2, 3);
       try
         Require(R.Status.Contains('at 2x') and Assigned(C.OnPresent), 'Scaled HLE session not attached');
+        Require(R.Status.Contains('textures 3x'), 'Texture scaling not passed to the HLE renderer');
         C.Reset;
         C.Loader.OnLoadExec(P.BootPath, 0, 0);
         var Scaled := False;

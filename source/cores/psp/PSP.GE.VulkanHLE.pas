@@ -39,6 +39,9 @@ type
   TGEVulkanHLEStats = record
     Draws, Prims, Submits, Flushes, TargetLoads, DepthLoads, DepthCopies, Readbacks: Int64;
     TextureUploads, TextureHits, Pipelines, Presents, WatchFaults, TargetTextures: Int64;
+    // Uploads scaled (texture scaling), and the time scaling them.
+    TextureScales: Int64;
+    ScaleSeconds: Double;
     // In flushes: waiting for the GPU, and everything (waiting and reading back).
     WaitSeconds, FlushSeconds: Double;
     // Setting up state (textures, targets, depth) for primitives, showing frames.
@@ -117,6 +120,13 @@ type
     // A render target's colour image used as the texture (not this object's).
     Target: TGEHLETarget;
     Image: TGEHLEImage;
+    // The image's texels per the GE's along a side: 1, or the texture scaling
+    // option's (GEScaleTexture).
+    Scale: Integer;
+    // A scaled texture's bytes changing in close succession (in frames shown,
+    // the last at ChangedAt): it is made again unscaled.
+    Changes: Integer;
+    ChangedAt: Int64;
     Sets: TDictionary<Cardinal, VkDescriptorSet>;
     LastUse: Int64;
     constructor Create;
@@ -183,6 +193,13 @@ type
     FSamplers: TDictionary<Cardinal, VkSampler>;
     FTargets: TObjectList<TGEHLETarget>;
     FTextures: TObjectDictionary<UInt64, TGEHLETexture>;
+    // Textures replaced while the GPU may still read them: destroyed once it
+    // has finished (DestroyRetired).
+    FRetired: TList<TGEHLETexture>;
+    // The texture scaling option (0 or 1 none, else the factor), and the
+    // texels being scaled.
+    FTextureScale: Integer;
+    FScaleIn, FScaleOut: TArray<Cardinal>;
     FDummy: TGEHLETexture;
     FSlots: array[0..1] of TGEHLESlot;
     FSlot: Integer;
@@ -278,6 +295,11 @@ type
     procedure LoadDepth(T: TGEHLETarget);
     procedure CopyDepth(Source, Dest: TGEHLETarget);
     function EnsureTexture(const S: TGERaster): TGEHLETexture;
+    function AddTexture(Key: UInt64; First, Count: Integer; const S: TGERaster; Scale: Integer): TGEHLETexture;
+    function TextureScaleFor(const X: TGETexture; First, Count: Integer): Integer;
+    function Changing(T: TGEHLETexture): Boolean;
+    procedure DestroyRetired;
+    procedure SetTextureScale(Value: Integer);
     function TargetTexture(const S: TGERaster): TGEHLETexture;
     procedure DecodeTexture(T: TGEHLETexture; const S: TGERaster);
     function SourceMatches(T: TGEHLETexture; const S: TGERaster): Boolean;
@@ -305,6 +327,10 @@ type
     function Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
     property Compute: TVulkanCompute read FCompute;
     property Scale: Integer read FScale;
+    // Textures made larger by GEScaleTexture (2 to GETextureScaleMax; 0 or 1
+    // none) when the scale is above 1: an option that is not the GE's. Applies
+    // to textures uploaded from then on.
+    property TextureScale: Integer read FTextureScale write SetTextureScale;
     property ShaderBlend: Boolean read FShaderBlend;
     property Stats: TGEVulkanHLEStats read FStats;
   end;
@@ -318,7 +344,7 @@ function CreateGEVulkanHLEBackend(Memory: TPSPMemory; out Backend: TGEVulkanHLEB
 implementation
 
 uses
-  SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEBlendFrag, SPV.PSPGEHLEDown;
+  PSP.GE.TexScale, SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEBlendFrag, SPV.PSPGEHLEDown;
 
 const
   VRAMMask = PSPVRAMSize - 1;
@@ -466,6 +492,7 @@ end;
 constructor TGEHLETexture.Create;
 begin
   inherited;
+  Scale := 1;
   Sets := TDictionary<Cardinal, VkDescriptorSet>.Create;
 end;
 
@@ -518,6 +545,7 @@ begin
   FSamplers := TDictionary<Cardinal, VkSampler>.Create;
   FTargets := TObjectList<TGEHLETarget>.Create(False);
   FTextures := TObjectDictionary<UInt64, TGEHLETexture>.Create([]);
+  FRetired := TList<TGEHLETexture>.Create;
   FAPI.vkGetPhysicalDeviceFormatProperties(Compute.PhysicalDevice, VK_FORMAT_D32_SFLOAT_S8_UINT, @Props);
   if (Props.optimalTilingFeatures and VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) <> 0 then
     FDepthFormat := VK_FORMAT_D32_SFLOAT_S8_UINT
@@ -581,6 +609,8 @@ begin
     for var T in FTextures.Values do
       DestroyTexture(T);
     FTextures.Free;
+    DestroyRetired;
+    FRetired.Free;
     if FDummy <> nil then
       DestroyTexture(FDummy);
     for var P in FPipelines.Values do
@@ -972,6 +1002,7 @@ begin
   if FSetCount >= MaxSets then
   begin
     WaitAll;
+    DestroyRetired;
     for var U in FTextures.Values do
       FreeSets(U);
     for var U in FTargets do
@@ -1018,6 +1049,21 @@ begin
   FreeSets(T);
   DestroyImage(T.Image);
   T.Free;
+end;
+
+// The GPU has finished (WaitAll).
+procedure TGEVulkanHLEBackend.DestroyRetired;
+begin
+  for var T in FRetired do
+    DestroyTexture(T);
+  FRetired.Clear;
+end;
+
+procedure TGEVulkanHLEBackend.SetTextureScale(Value: Integer);
+begin
+  if Value < 2 then
+    Value := 0;
+  FTextureScale := Min(Value, GETextureScaleMax);
 end;
 
 procedure TGEVulkanHLEBackend.DestroyTarget(T: TGEHLETarget);
@@ -2087,6 +2133,7 @@ begin
   var Watch := TStopwatch.StartNew;
   try
     WaitAll;
+    DestroyRetired;
     FStats.WaitSeconds := FStats.WaitSeconds + Watch.Elapsed.TotalSeconds;
     for var T in FTargets do
       if T.Dirty or T.ZDirty then
@@ -2372,14 +2419,35 @@ begin
     var W := Max(X.Levels[Level].Width, 1);
     var H := Max(X.Levels[Level].Height, 1);
     var Offset: Int64;
-    var P := PCardinal(StageUpload(Int64(W) * H * 4, Offset));
+    var P: PCardinal;
+    // Scaled in host memory (the staging buffer is slow to read).
+    if T.Scale > 1 then
+    begin
+      if Length(FScaleIn) < W * H then
+        SetLength(FScaleIn, W * H);
+      P := @FScaleIn[0];
+    end
+    else
+      P := PCardinal(StageUpload(Int64(W) * H * 4, Offset));
+    var Q := P;
     for var Y := 0 to H - 1 do
       for var XX := 0 to W - 1 do
       begin
-        P^ := GEFetchTexel(X^, Level, XX, Y);
-        Inc(P);
+        Q^ := GEFetchTexel(X^, Level, XX, Y);
+        Inc(Q);
       end;
-    CopyToImage(T.Image.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, I, 0, 0, W, H);
+    if T.Scale > 1 then
+    begin
+      var Watch := TStopwatch.StartNew;
+      var N := W * H * T.Scale * T.Scale;
+      if Length(FScaleOut) < N then
+        SetLength(FScaleOut, N);
+      GEScaleTexture(P, W, H, T.Scale, @FScaleOut[0]);
+      Move(FScaleOut[0], StageUpload(Int64(N) * 4, Offset)^, N * 4);
+      Inc(FStats.TextureScales);
+      FStats.ScaleSeconds := FStats.ScaleSeconds + Watch.Elapsed.TotalSeconds;
+    end;
+    CopyToImage(T.Image.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, I, 0, 0, W * T.Scale, H * T.Scale);
   end;
   WatchTexture(FMemory, T, S);
   T.Verified := FRun;
@@ -2505,23 +2573,72 @@ begin
       Result.Verified := FRun;
       Inc(FStats.TextureHits);
     end
+    else if (Result.Scale > 1) and Changing(Result) then
+    begin
+      // Bytes that keep changing (a video, textures streamed through one
+      // place): made again unscaled, the old image kept until the GPU is done.
+      FTextures.Remove(Key);
+      FRetired.Add(Result);
+      Result := AddTexture(Key, First, Count, S, 1);
+    end
     else
       DecodeTexture(Result, S);
   end
   else
-  begin
-    Result := TGEHLETexture.Create;
-    Result.Key := Key;
-    Result.First := First;
-    Result.Count := Count;
-    Result.Width := Max(X.Levels[First].Width, 1);
-    Result.Height := Max(X.Levels[First].Height, 1);
-    Result.Image := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, Result.Width, Result.Height, Count,
-      VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    FTextures.Add(Key, Result);
-    DecodeTexture(Result, S);
-  end;
+    Result := AddTexture(Key, First, Count, S, TextureScaleFor(X^, First, Count));
   Result.LastUse := FUseCounter;
+end;
+
+function TGEVulkanHLEBackend.AddTexture(Key: UInt64; First, Count: Integer; const S: TGERaster;
+  Scale: Integer): TGEHLETexture;
+begin
+  var X: PGETexture := @S.Tex;
+  Result := TGEHLETexture.Create;
+  Result.Key := Key;
+  Result.First := First;
+  Result.Count := Count;
+  Result.Width := Max(X.Levels[First].Width, 1);
+  Result.Height := Max(X.Levels[First].Height, 1);
+  Result.Scale := Scale;
+  Result.Image := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, Result.Width * Scale, Result.Height * Scale, Count,
+    VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+  FTextures.Add(Key, Result);
+  DecodeTexture(Result, S);
+end;
+
+// The scale a new texture is made at: the option's above 1x, within 1024
+// texels a side; 1 for textures under 8 texels a side (ramps and tables,
+// whose smooth filtering scaling would break into steps), ones that are
+// decoded again in every GE run, and levels that do not halve in both
+// directions.
+function TGEVulkanHLEBackend.TextureScaleFor(const X: TGETexture; First, Count: Integer): Integer;
+begin
+  Result := 1;
+  if (FTextureScale < 2) or (FScale < 2) then
+    Exit;
+  var W := Max(X.Levels[First].Width, 1);
+  var H := Max(X.Levels[First].Height, 1);
+  if (W < 8) or (H < 8) then
+    Exit;
+  var F := Min(FTextureScale, 1024 div Max(W, H));
+  if F < 2 then
+    Exit;
+  for var I := First to First + Count - 1 do
+    if (X.Levels[I].Ptr = nil) or ((W shr (I - First)) = 0) or ((H shr (I - First)) = 0) then
+      Exit;
+  Result := F;
+end;
+
+// A scaled texture's bytes changed: True when they did so last within a
+// second (60 frames shown).
+function TGEVulkanHLEBackend.Changing(T: TGEHLETexture): Boolean;
+begin
+  if (T.Changes > 0) and (FStats.Presents - T.ChangedAt <= 60) then
+    Inc(T.Changes)
+  else
+    T.Changes := 1;
+  T.ChangedAt := FStats.Presents;
+  Result := T.Changes >= 2;
 end;
 
 function TGEVulkanHLEBackend.SameState(const S: TGERaster; Kind: Integer): Boolean;
@@ -2737,7 +2854,9 @@ begin
         (Cardinal(Ord(S.Tex.ClampV)) shl 12) or (Cardinal(Tex.Count - 1) shl 13);
       if Tex.Target <> nil then
         Push.TexFunc := Push.TexFunc or (Cardinal(1) shl 16) or (Cardinal(FScale) shl 17) or
-          (Tex.Target.Format shl 21);
+          (Tex.Target.Format shl 21)
+      else if Tex.Scale > 1 then
+        Push.TexFunc := Push.TexFunc or (Cardinal(Tex.Scale) shl 17);
       Push.Env := PackColor(S.EnvR, S.EnvG, S.EnvB, 0);
       Push.LodBias := S.Tex.LodBias;
       Push.LodSlope := S.Tex.Slope;

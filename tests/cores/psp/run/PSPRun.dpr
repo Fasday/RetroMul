@@ -7,6 +7,7 @@ program PSPRun;
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
 // -gpu-hle [-scale N]: Vulkan graphics-pipeline rendering (fast, not bit exact), N times the PSP's resolution;
 // frames (-out, hashes) are then the renderer's at that resolution. -fixed-blend: no blending in the shader.
+// -texscale N: with -gpu-hle above 1x, textures made N times larger (2 to 4, texture scaling).
 // -test: isolated pspautotests host0: tree, no display, stops at exit.
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
@@ -315,6 +316,7 @@ begin
     var ShotFile := '';
     var GPUMode := 0;
     var Scale := 1;
+    var TexScale := 0;
     var FixedBlend := False;
     var VRAMFile := '';
     var WavFile := '';
@@ -345,6 +347,7 @@ begin
       else if A = '-gpu-check' then GPUMode := 2
       else if A = '-gpu-hle' then GPUMode := 3
       else if A = '-scale' then begin Inc(I); Scale := StrToInt(ParamStr(I)); end
+      else if A = '-texscale' then begin Inc(I); TexScale := StrToInt(ParamStr(I)); end
       else if A = '-fixed-blend' then FixedBlend := True
       else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
@@ -472,6 +475,7 @@ begin
         var Error: string;
         if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error, '', Scale, not FixedBlend) then
         begin
+          HLE.TextureScale := TexScale;
           Console.OnPresent := HLE.Present;
           TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE;
           if not Quiet then
@@ -700,10 +704,10 @@ begin
         var St := HLE.Stats;
         Writeln(ErrOutput, Format('gpu hle: %d prims in %d draws, %d submits, %d flushes (%d watch faults without), %d read back, ' +
           '%d target loads, %d depth loads, %d depth copies, %d textures uploaded, %d reused, %d from targets, %d pipelines; ' +
-          '%.2fs flushing (%.2fs waiting), %.2fs setting up; %d frames shown at %dx in %.2fs',
+          '%.2fs flushing (%.2fs waiting), %.2fs setting up; %d frames shown at %dx in %.2fs; %d uploads scaled %dx in %.2fs',
           [St.Prims, St.Draws, St.Submits, St.Flushes, St.WatchFaults, St.Readbacks, St.TargetLoads, St.DepthLoads, St.DepthCopies,
           St.TextureUploads, St.TextureHits, St.TargetTextures, St.Pipelines, St.FlushSeconds, St.WaitSeconds, St.SetupSeconds,
-          St.Presents, HLE.Scale, St.PresentSeconds]));
+          St.Presents, HLE.Scale, St.PresentSeconds, St.TextureScales, HLE.TextureScale, St.ScaleSeconds]));
       end
       else if not Quiet then
         Writeln(ErrOutput, 'ge cpu: ' + TPSPGE(Console.System.Find(TPSPGE)).Engine.Workers.Describe);

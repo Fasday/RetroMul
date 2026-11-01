@@ -14,6 +14,7 @@ type
     FRecompiler: Boolean;
     FRenderer: TPSPRenderer;
     FResolution: Integer;
+    FTextureScale: Integer;
     FLanguage, FButtonSwap: Integer;
     FNickname: string;
     FFontDirectory: string;
@@ -30,6 +31,9 @@ type
     // The Vulkan HLE renderer's internal resolution, 1 to 8 times the PSP's.
     // Applied by Start, as the renderer.
     property Resolution: Integer read FResolution write FResolution;
+    // The Vulkan HLE renderer's texture scaling above 1x: 0 none, else 2 to 4
+    // (Video/TextureScale). Applied by Start, as the renderer.
+    property TextureScale: Integer read FTextureScale write FTextureScale;
     property Language: Integer read FLanguage;
     property ButtonSwap: Integer read FButtonSwap;
     property Nickname: string read FNickname;
@@ -52,6 +56,7 @@ type
     FError: string;
     FRenderer: TPSPRenderer;
     FResolution: Integer;
+    FTextureScale: Integer;
     FRendererStatus: string;
     FRate: TEmulationFrameRate;
     FSnapshotDone: TEvent;
@@ -63,7 +68,8 @@ type
     procedure Execute; override;
   public
     constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer = prCPU;
-      const FontDirectory: string = ''; const SnapshotDirectory: string = ''; Resolution: Integer = 1);
+      const FontDirectory: string = ''; const SnapshotDirectory: string = ''; Resolution: Integer = 1;
+      TextureScale: Integer = 0);
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1;
       Recompiler: Boolean = True);
@@ -152,6 +158,9 @@ begin
   FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
   FRenderer := PSPRendererFromName(Ini.ReadString('Video', 'Renderer', 'cpu'));
   FResolution := EnsureRange(Ini.ReadInteger('Video', 'Resolution', FResolution), 1, 8);
+  FTextureScale := EnsureRange(Ini.ReadInteger('Video', 'TextureScale', FTextureScale), 0, 4);
+  if FTextureScale = 1 then
+    FTextureScale := 0;
   FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
   FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
   FNickname := Ini.ReadString('System', 'Nickname', FNickname);
@@ -168,6 +177,7 @@ begin
     Ini.WriteString('Emulation', 'Execution', 'interpreter');
   Ini.WriteString('Video', 'Renderer', PSPRendererName(FRenderer));
   Ini.WriteInteger('Video', 'Resolution', FResolution);
+  Ini.WriteInteger('Video', 'TextureScale', FTextureScale);
   Ini.WriteInteger('System', 'Language', FLanguage);
   Ini.WriteInteger('System', 'ButtonSwap', FButtonSwap);
   Ini.WriteString('System', 'Nickname', FNickname);
@@ -175,12 +185,13 @@ begin
 end;
 
 constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer;
-  const FontDirectory, SnapshotDirectory: string; Resolution: Integer);
+  const FontDirectory, SnapshotDirectory: string; Resolution, TextureScale: Integer);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
   FRenderer := Renderer;
   FResolution := Resolution;
+  FTextureScale := TextureScale;
   FStorage := Storage;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil,False,False,'');
@@ -285,7 +296,7 @@ begin
           end;
         end);
       try
-        var NewRenderer := TPSPRendererSession.Create(Candidate, FRenderer, FResolution);
+        var NewRenderer := TPSPRendererSession.Create(Candidate, FRenderer, FResolution, FTextureScale);
         try
           var Frame: TEmulatorFrame;
           Candidate.Display.Render(Frame);
@@ -393,7 +404,7 @@ begin
   {$ENDIF}
   try
     try
-      var Renderer := TPSPRendererSession.Create(FConsole, FRenderer, FResolution);
+      var Renderer := TPSPRendererSession.Create(FConsole, FRenderer, FResolution, FTextureScale);
       try
         FLock.Acquire;
         try
@@ -617,7 +628,7 @@ begin
   PSPSettings.ButtonSwap := FConfigObject.ButtonSwap;
   PSPSettings.Nickname := FConfigObject.Nickname;
   FWorker := TPSPWorker.Create(FProgram,FStorage,FConfigObject.Renderer,FConfigObject.FontDirectory,FSnapshotDirectory,
-    FConfigObject.Resolution);
+    FConfigObject.Resolution, FConfigObject.TextureScale);
   try
     Configure;
     FWorker.Start;
