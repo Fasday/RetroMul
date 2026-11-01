@@ -2,9 +2,13 @@
 
 interface
 
-uses System.UITypes;
+uses
+  System.UITypes, System.Types;
 
 {$SCOPEDENUMS ON}
+
+const
+  EmulatorMaxPlayers = 12;
 
 type
   // Every frontend supplies the same logical pad.  A core can ignore buttons
@@ -15,8 +19,8 @@ type
 
   TEmulatorAnalogPad = record
     Valid: Boolean;
-    X,Y: SmallInt; // -32768..32767; zero is centered.
-    LeftTrigger,RightTrigger: Byte;
+    X, Y: SmallInt; // -32768..32767; zero is centered.
+    LeftTrigger, RightTrigger: Byte;
   end;
 
   TEmulatorInput = record
@@ -24,8 +28,8 @@ type
     Buttons3, Buttons4: TEmulatorButtons; // Additional adapter controllers.
     Buttons5, Buttons6, Buttons7, Buttons8: TEmulatorButtons; // SNES Multitap.
     Buttons2: TEmulatorButtons; // Second controller; ignored by single-player cores.
-    Buttons9,Buttons10,Buttons11,Buttons12: TEmulatorButtons; // Two Saturn six-player taps.
-    Analog: array[0..11] of TEmulatorAnalogPad;
+    Buttons9, Buttons10, Buttons11, Buttons12: TEmulatorButtons; // Two Saturn six-player taps.
+    Analog: array[0..EmulatorMaxPlayers - 1] of TEmulatorAnalogPad;
   end;
 
   IEmulatorConfig = interface
@@ -55,6 +59,13 @@ type
     Pixels: TArray<TAlphaColor>;
     FrameNumber: UInt64;
     FramesPerSecond: Double;
+  end;
+
+  // Independent display regions in the most recently published frame.
+  // Post-processing must isolate their source pixels and temporal histories.
+  IEmulationVideoRegions = interface
+    ['{AF85F329-1830-4EBA-A4A7-76BE777F360E}']
+    function GetVideoRegions: TArray<TRect>;
   end;
 
   // Device warnings do not stop emulation; frontends may report them once.
@@ -148,11 +159,10 @@ type
   end;
 
   IEmulationCore = interface
-    ['{757D169F-CE44-4B9F-AE15-9D81C6948D0A}']
+    ['{60C5F8B6-85D8-46F5-BA4D-0EC532A7E7F0}']
     function GetName: string;
     function GetSystemId: string;
     function GetSupportsSnapshots: Boolean;
-    function GetUsesSuborKeyboard: Boolean;
     function GetHasCoinAcceptor: Boolean;
     procedure InsertCoin1;
     procedure InsertCoin2;
@@ -175,7 +185,6 @@ type
     property Name: string read GetName;
     property SystemId: string read GetSystemId;
     property SupportsSnapshots: Boolean read GetSupportsSnapshots;
-    property UsesSuborKeyboard: Boolean read GetUsesSuborKeyboard;
     // Coin methods do nothing when the loaded ROM has no coin acceptor.
     property HasCoinAcceptor: Boolean read GetHasCoinAcceptor;
     property Config: IEmulatorConfig read GetConfig;
@@ -185,3 +194,4 @@ type
 implementation
 
 end.
+

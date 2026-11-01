@@ -16,17 +16,19 @@ type
   end;
 
   TMDEEPROM = class
-  private type
-    TPhase = (Idle, Control, AddressHigh, AddressLow, WriteData,
-      SlaveAck, ReadData, MasterAck);
-    TSerialState = record
-      Phase, NextPhase: TPhase;
-      SCL, SDA, OutputHigh, Accepted: Boolean;
-      Bits, Shift, AckStep: Byte;
-      Address, PageBase: Word;
-      Written: UInt64;
-      Page: array[0..63] of Byte;
-    end;
+  private
+    type
+      TPhase = (Idle, Control, AddressHigh, AddressLow, WriteData,
+        SlaveAck, ReadData, MasterAck);
+
+      TSerialState = record
+        Phase, NextPhase: TPhase;
+        SCL, SDA, OutputHigh, Accepted: Boolean;
+        Bits, Shift, AckStep: Byte;
+        Address, PageBase: Word;
+        Written: UInt64;
+        Page: array[0..63] of Byte;
+      end;
   private
     FConfig: TMDEEPROMConfig;
     FState: TSerialState;
@@ -55,9 +57,11 @@ implementation
 // https://krikzz.com/pub/support/everdrive-md/v2/gen_eeprom.pdf .
 // Independently checked against sanni/cartreader's physical cartridge reader.
 // Protocol: Xicor X24C01 and Microchip 24xx serial EEPROM datasheets.
+
 function DetectMDEEPROM(const Serial: string; Checksum: Word; StackPointer: Cardinal): TMDEEPROMConfig;
 type
   TBoard = (Sega, EA, Acclaim1, Acclaim2, Codemasters);
+
   TEntry = record
     Product: string;
     Checksum: Word; // Zero means all revisions of this product.
@@ -144,7 +148,7 @@ constructor TMDEEPROM.Create(const Config: TMDEEPROMConfig);
 begin
   inherited Create;
   if (Config.Mode = TMDEEPROMMode.None) or (Config.Size < 128) or
-    (Config.Size > 8192) or (Config.Size and (Config.Size - 1) <> 0) or
+    (Config.Size > 32768) or (Config.Size and (Config.Size - 1) <> 0) or
     (Config.PageSize < 1) or (Config.PageSize > 64) or
     (Config.PageSize and (Config.PageSize - 1) <> 0) or
     (Config.PageAlignment < 1) or (Config.PageAlignment > Config.PageSize) or
@@ -344,11 +348,13 @@ begin
 end;
 
 function TMDEEPROM.WriteBus(Address: Cardinal; Value: Word; HighByte, LowByte: Boolean): Boolean;
+
   function Selected(PinAddress: Cardinal): Boolean;
   begin
     Result := (Address = (PinAddress and $FFFFFE)) and
       ((Odd(PinAddress) and LowByte) or (not Odd(PinAddress) and HighByte));
   end;
+
   function PinHigh(PinAddress: Cardinal; Mask: Byte): Boolean;
   begin
     if Odd(PinAddress) then
@@ -356,6 +362,7 @@ function TMDEEPROM.WriteBus(Address: Cardinal; Value: Word; HighByte, LowByte: B
     else
       Result := (Value shr 8) and Mask <> 0;
   end;
+
 begin
   var SDA := FState.SDA;
   var SCL := FState.SCL;
@@ -400,3 +407,4 @@ begin
 end;
 
 end.
+

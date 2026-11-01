@@ -9,8 +9,9 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph, DC.Types, DC.Memory, DC.Scheduler,
-  DC.Interrupts, DC.PVR, DC.PVR.TA, DC.PVR.Render, DC.GDROM, DC.GDROM.HLE, DC.AICA, DC.Maple, DC.Holly, DC.Boot,
+  System.SysUtils, System.Classes, Core.Snapshots, HW.SH4, HW.SH4.Periph,
+  DC.Types, DC.Memory, DC.Scheduler, DC.Interrupts, DC.PVR, DC.PVR.TA,
+  DC.PVR.Render, DC.GDROM, DC.GDROM.HLE, DC.AICA, DC.Maple, DC.Holly, DC.Boot,
   DC.Disc, DC.Flash, Core.CD.Disc;
 
 type
@@ -237,7 +238,7 @@ begin
   Holly := TDCHolly.Create(Memory, Scheduler, Interrupts, Periph, PVR, GDROM, AICA, Maple);
   Holly.OnSoftReset := RequestSoftReset;
   Boot := TDCBoot.Create(CPU, Memory, Periph, PVR);
-  GDROMHLE := TDCGDROMHLE.Create(GDROM, Memory, Interrupts, ReadBus, WriteBus);
+  GDROMHLE := TDCGDROMHLE.Create(GDROM, Memory, Interrupts, ReadBus, WriteBus, Scheduler);
   Boot.GDROM := GDROMHLE;
   Flash := TDCFlash.Create(Memory.Flash);
   AICA.GDROM := GDROM;
@@ -430,8 +431,10 @@ begin
         var A := Address and $7FFFFF;
         Memory.Observe(A and not Cardinal(3), 4);
         case Size of
-          1: Result := Memory.VRAM[A];
-          2: Result := PWord(Memory.VRAM + (A and $7FFFFE))^;
+          1:
+            Result := Memory.VRAM[A];
+          2:
+            Result := PWord(Memory.VRAM + (A and $7FFFFE))^;
         else
           Result := PCardinal(Memory.VRAM + (A and $7FFFFC))^;
         end;
@@ -440,8 +443,10 @@ begin
       begin
         var A := Address and (DCRAMSize - 1);
         case Size of
-          1: Result := Memory.RAM[A];
-          2: Result := PWord(Memory.RAM + (A and not Cardinal(1)))^;
+          1:
+            Result := Memory.RAM[A];
+          2:
+            Result := PWord(Memory.RAM + (A and not Cardinal(1)))^;
         else
           Result := PCardinal(Memory.RAM + (A and not Cardinal(3)))^;
         end;
@@ -450,9 +455,12 @@ begin
       Result := Holly.ReadArea4(Address, Size);
   end;
   case Size of
-    1: Result := Result and $FF;
-    2: Result := Result and $FFFF;
-    4: Result := Result and $FFFFFFFF;
+    1:
+      Result := Result and $FF;
+    2:
+      Result := Result and $FFFF;
+    4:
+      Result := Result and $FFFFFFFF;
   end;
 end;
 
@@ -500,8 +508,10 @@ begin
         var A := Address and $7FFFFF;
         Memory.Observe(A and not Cardinal(3), 4);
         case Size of
-          1: Memory.VRAM[A] := Byte(Value);
-          2: PWord(Memory.VRAM + (A and $7FFFFE))^ := Word(Value);
+          1:
+            Memory.VRAM[A] := Byte(Value);
+          2:
+            PWord(Memory.VRAM + (A and $7FFFFE))^ := Word(Value);
         else
           PCardinal(Memory.VRAM + (A and $7FFFFC))^ := Cardinal(Value);
         end;
@@ -511,8 +521,10 @@ begin
       begin
         var A := Address and (DCRAMSize - 1);
         case Size of
-          1: Memory.RAM[A] := Byte(Value);
-          2: PWord(Memory.RAM + (A and not Cardinal(1)))^ := Word(Value);
+          1:
+            Memory.RAM[A] := Byte(Value);
+          2:
+            PWord(Memory.RAM + (A and not Cardinal(1)))^ := Word(Value);
         else
           PCardinal(Memory.RAM + (A and not Cardinal(3)))^ := Cardinal(Value);
         end;
@@ -548,7 +560,12 @@ begin
         Interrupts.RaiseNormal(HollyRenderDoneTSP);
         Interrupts.RaiseNormal(HollyRenderDoneVideo);
       end;
-    TDCEvent.Ch2DMA, TDCEvent.SortDMA, TDCEvent.PVRDMA, TDCEvent.MapleDMA, TDCEvent.GDDMA, TDCEvent.G2DMA:
+    TDCEvent.GDDMA:
+      begin
+        GDROMHLE.DMAReadComplete;
+        Holly.Event(Event);
+      end;
+    TDCEvent.Ch2DMA, TDCEvent.SortDMA, TDCEvent.PVRDMA, TDCEvent.MapleDMA, TDCEvent.G2DMA:
       Holly.Event(Event);
     TDCEvent.GDROM:
       GDROM.Event;
@@ -716,3 +733,4 @@ begin
 end;
 
 end.
+

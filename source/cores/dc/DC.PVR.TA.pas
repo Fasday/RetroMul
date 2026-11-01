@@ -15,7 +15,8 @@
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Math, Core.Snapshots, DC.Types, DC.Memory, DC.Interrupts, DC.PVR;
+  System.SysUtils, System.Classes, System.Math, Core.Snapshots, DC.Types,
+  DC.Memory, DC.Interrupts, DC.PVR;
 
 const
   TAListOpaque = 0;
@@ -37,6 +38,7 @@ type
     U1, V1: Single;           // second volume
     Base1, Offset1: Cardinal;
   end;
+
   PPVRVertex = ^TPVRVertex;
 
   TPVRPoly = record
@@ -54,6 +56,7 @@ type
     ClipMode: Byte;
     ClipX0, ClipY0, ClipX1, ClipY1: Word;
   end;
+
   PPVRPoly = ^TPVRPoly;
 
   TPVRContext = class
@@ -65,7 +68,7 @@ type
     // Polygon index ranges per list in submission order.
     ListOrder: TArray<Integer>;
     Used: Int64;
-    // TA_OL_BASE..TA_OL_LIMIT at list init (not saved): where the region
+    // TA_OL_BASE..TA_OL_LIMIT at list init: where the region
     // array of a render with another parameter base points.
     OLBase, OLLimit: Cardinal;
     procedure Clear;
@@ -339,11 +342,16 @@ begin
   if FList >= 0 then
   begin
     case FList of
-      TAListOpaque: FInterrupts.RaiseNormal(HollyOpaqueDone);
-      TAListOpaqueMod: FInterrupts.RaiseNormal(HollyOpaqueModDone);
-      TAListTranslucent: FInterrupts.RaiseNormal(HollyTransDone);
-      TAListTranslucentMod: FInterrupts.RaiseNormal(HollyTransModDone);
-      TAListPunchThrough: FInterrupts.RaiseNormal(HollyPunchThroughDone);
+      TAListOpaque:
+        FInterrupts.RaiseNormal(HollyOpaqueDone);
+      TAListOpaqueMod:
+        FInterrupts.RaiseNormal(HollyOpaqueModDone);
+      TAListTranslucent:
+        FInterrupts.RaiseNormal(HollyTransDone);
+      TAListTranslucentMod:
+        FInterrupts.RaiseNormal(HollyTransModDone);
+      TAListPunchThrough:
+        FInterrupts.RaiseNormal(HollyPunchThroughDone);
     end;
     FListsDone := FListsDone or (Cardinal(1) shl FList);
     if FCurrent <> nil then
@@ -395,8 +403,10 @@ begin
   FTSP := P[2];
   FTCW := P[3];
   FStripOpen := False;
-  // User clip mode applies to the following objects.
-  FClipMode := (PCW shr 16) and 3;
+  // Group control is latched only when Group_En is set; otherwise the
+  // previous user clip mode continues to apply to subsequent objects.
+  if (PCW and $00800000) <> 0 then
+    FClipMode := (PCW shr 16) and 3;
   var Mod_ := (FList = TAListOpaqueMod) or (FList = TAListTranslucentMod);
   if (PCW shr 29) = 4 then
   begin
@@ -417,11 +427,17 @@ begin
       FTCW1 := P[5];
       if not Textured then
       begin
-        if ColType = 0 then FVertexType := 9 else FVertexType := 10;
+        if ColType = 0 then
+          FVertexType := 9
+        else
+          FVertexType := 10;
       end
       else if ColType = 0 then
       begin
-        if UV16Bit then FVertexType := 12 else FVertexType := 11;
+        if UV16Bit then
+          FVertexType := 12
+        else
+          FVertexType := 11;
       end
       else if UV16Bit then
         FVertexType := 14
@@ -444,17 +460,30 @@ begin
       FTCW1 := 0;
       if not Textured then
         case ColType of
-          0: FVertexType := 0;
-          1: FVertexType := 1;
+          0:
+            FVertexType := 0;
+          1:
+            FVertexType := 1;
         else
           FVertexType := 2;
         end
       else
         case ColType of
-          0: if UV16Bit then FVertexType := 4 else FVertexType := 3;
-          1: if UV16Bit then FVertexType := 6 else FVertexType := 5;
+          0:
+            if UV16Bit then
+              FVertexType := 4
+            else
+              FVertexType := 3;
+          1:
+            if UV16Bit then
+              FVertexType := 6
+            else
+              FVertexType := 5;
         else
-          if UV16Bit then FVertexType := 8 else FVertexType := 7;
+          if UV16Bit then
+            FVertexType := 8
+          else
+            FVertexType := 7;
         end;
       // Intensity mode 1 loads face colors; mode 2 keeps the previous ones.
       if ColType = 2 then
@@ -524,9 +553,21 @@ begin
           V.Offset := FSpriteOffset;
           if FVertexType = 16 then
             case K of
-              0: begin V.U := UV16(P[13], True); V.V := UV16(P[13], False); end;
-              1: begin V.U := UV16(P[14], True); V.V := UV16(P[14], False); end;
-              2: begin V.U := UV16(P[15], True); V.V := UV16(P[15], False); end;
+              0:
+                begin
+                  V.U := UV16(P[13], True);
+                  V.V := UV16(P[13], False);
+                end;
+              1:
+                begin
+                  V.U := UV16(P[14], True);
+                  V.V := UV16(P[14], False);
+                end;
+              2:
+                begin
+                  V.U := UV16(P[15], True);
+                  V.V := UV16(P[15], False);
+                end;
             end;
         end;
         // D lies on the plane of A, B, C: Z and UV follow D = A + C - B.
@@ -700,7 +741,19 @@ begin
   var PCW := Data[0];
   case PCW shr 29 of
     0:
-      EndList;
+      begin
+        // Standalone EOL packets also complete empty lists. An active
+        // list keeps the type selected by its first global parameter;
+        // without one, use the type in the completion packet itself.
+        if FList < 0 then
+        begin
+          var List := Integer((PCW shr 24) and 7);
+          if List > TAListPunchThrough then
+            Exit;
+          FList := List;
+        end;
+        EndList;
+      end;
     1:
       begin
         // User tile clip: tile coordinates in words 4..7.
@@ -711,7 +764,7 @@ begin
       end;
     2:
       ; // Object list set: direct object pointers are not used by the decoded lists.
-    4, 5:
+      4, 5:
       begin
         if FList < 0 then
         begin
@@ -819,6 +872,16 @@ begin
   for var C in FContexts do
   begin
     Archive.Field(C.Base, SizeOf(C.Base));
+    if Archive.Version <> 1 then
+    begin
+      Archive.Field(C.OLBase, SizeOf(C.OLBase));
+      Archive.Field(C.OLLimit, SizeOf(C.OLLimit));
+    end
+    else if Archive.Loading then
+    begin
+      C.OLBase := 0;
+      C.OLLimit := 0;
+    end;
     Archive.Field(C.Used, SizeOf(C.Used));
     Archive.Field(C.PolyCount, SizeOf(C.PolyCount));
     Archive.Field(C.VertexCount, SizeOf(C.VertexCount));
@@ -894,6 +957,13 @@ begin
     FCurrent := nil;
     if Current >= 0 then
       FCurrent := FContexts[Current];
+    // Version 1 omitted context ranges. Recover the active list's range
+    // from saved PVR registers; historical ranges cannot be reconstructed.
+    if (Archive.Version = 1) and (FCurrent <> nil) then
+    begin
+      FCurrent.OLBase := FPVR.R[PVRTAOLBase shr 2] and $7FFFFF;
+      FCurrent.OLLimit := FPVR.R[PVRTAOLLimit shr 2] and $7FFFFF;
+    end;
     Rendering := nil;
     if RenderingIndex >= 0 then
       Rendering := FContexts[RenderingIndex];
@@ -903,3 +973,4 @@ begin
 end;
 
 end.
+

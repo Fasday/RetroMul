@@ -44,8 +44,8 @@ type
 implementation
 
 uses
-  System.SysUtils, System.Types, System.Math, FMX.Types, FMX.Controls,
-  FMX.StdCtrls, FMX.Objects, FMX.Layouts, RM.Main.View, RM.Toolbar,
+  RM.Input.Runtime, System.SysUtils, System.Types, System.Math, FMX.Types,
+  FMX.Controls, FMX.StdCtrls, FMX.Objects, FMX.Layouts, RM.Main.View, RM.Toolbar,
   RM.LibraryView, RM.Dialogs, RM.Styles, RM.Icons, Core.Emulation, Core.Storage;
 
 procedure TBrowserController.InitializeScreenshotTool;
@@ -318,7 +318,7 @@ begin
     DiscMenu.Name := 'MenuItemChangeDisc';
     for var I := 0 to Discs.GetDiscCount - 1 do
     begin
-      var Caption := Format('%d. %s', [I + 1, Discs.GetDiscName(I)]);
+      var Caption := Format('%d. %s', [I + 1, TranslateCoreMessage(Discs.GetDiscName(I))]);
       if I = Discs.GetDiscIndex then
         Caption := '✓ ' + Caption;
       var DiscItem := Add(DiscMenu, Caption, DiscMenuClick);
@@ -476,7 +476,7 @@ begin
     FView.LoadRom(Game.FileInfo.Location, Game.Title, Snapshot <> '', Snapshot);
   except
     on E: Exception do
-      ShowRetroMessage(FView, Translate('Unable to open game: ') + E.Message);
+      ShowRetroMessage(FView, Translate('Unable to open game: ') + TranslateCoreMessage(E.Message));
   end;
 end;
 
@@ -568,10 +568,15 @@ begin
       FView.FormResize(FView);
   end;
   if FState.Browser.ScreenshotTool <> nil then
-    if FState.Input.SystemId = 'zx' then
+  begin
+    var InputContext := Default(TInputRuntimeContext);
+    InputContext.State := FState;
+    InputContext.View := FView;
+    if PlatformInputHandler(FState.Input.SystemId).KeyPolicy(InputContext).ReserveCaptureShortcuts then
       FState.Browser.ScreenshotTool.Hint := Translate('Take screenshot')
     else
       FState.Browser.ScreenshotTool.Hint := Translate('Take screenshot · F8');
+  end;
   if FState.Browser.HelpTool <> nil then
   begin
     FState.Browser.HelpTool.Enabled := (FState.Session.Emulation <> nil) and not FState.Session.OpeningRom and not FState.Help.Closing;

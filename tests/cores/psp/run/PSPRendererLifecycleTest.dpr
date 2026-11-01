@@ -3,7 +3,7 @@ program PSPRendererLifecycleTest;
 {$APPTYPE CONSOLE}
 
 uses
-  System.SysUtils, System.Classes, System.IniFiles, Core.Adapter.PSP, Core.PSP.Renderer,
+  System.SysUtils, System.Classes, System.IniFiles, Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer,
   PSP.Types, PSP.Media, PSP.Console, PSP.GE, PSP.GE.Raster, Core.Emulation.Types;
 
 type

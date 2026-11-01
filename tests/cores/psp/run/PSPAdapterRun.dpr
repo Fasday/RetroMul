@@ -11,7 +11,7 @@ program PSPAdapterRun;
 
 uses
   System.SysUtils, System.Classes, System.Diagnostics, System.Hash, System.UITypes, Core.Emulation, Core.Emulation.Types,
-  Core.EmulatorFactory, Core.Snapshots, Core.Adapter.PSP, Core.PSP.Renderer;
+  Core.EmulatorFactory, Core.Snapshots, Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer;
 
 function Hash(const Frame: TEmulatorFrame): string;
 begin

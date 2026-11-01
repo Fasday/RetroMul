@@ -105,5 +105,5 @@ changed. Work stays on the separate PSP branch without pushes or main merges.
 
 Shared changes: `source/cores/psp/PSP.Console.pas`, `PSP.Kernel.pas`, `PSP.IO.pas`,
 `PSP.Loader.pas`, `PSP.State*.pas`; font/media/network/utility HLE owners; and the
-array type names in `source/hardware/video/avc/Video.AVC.H264.pas`. The existing
+array type names in `source/media/video/avc/Video.AVC.H264.pas`. The existing
 adapter transport and frontend API remain unchanged.

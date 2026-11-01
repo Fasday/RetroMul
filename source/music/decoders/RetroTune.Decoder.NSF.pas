@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, RetroTune.Decoder, NES.CPU, NES.APU, NES.Types, NES.Mapper,
-  RetroTune.Chip.FDS;
+  NES.Audio.FDS;
 
 type
   TNSFDecoder = class(TInterfacedObject, ITuneDecoder)
@@ -143,6 +143,7 @@ begin
   if (Chips and 4) <> 0 then
   begin
     FFds := TFdsAudio.Create;
+    FFds.SetClockRate(FCpuHz);
     FInfo.Details := FInfo.Details + ' / FDS';
   end;
   SetLength(Dummy, $8000);
@@ -246,7 +247,7 @@ begin
   end;
   if Address = $4015 then
     Exit(FAPU.CpuReadStatus);
-  if (FFds <> nil) and (Address >= $4040) and (Address <= $4092) then
+  if (FFds <> nil) and (Address >= $4040) and (Address <= $4097) then
     Exit(FFds.Read(Address));
   if (Address >= $4800) and (Address <= $4FFF) and (FNamco <> nil) then
   begin

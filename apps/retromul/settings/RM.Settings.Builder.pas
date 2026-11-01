@@ -87,7 +87,7 @@ type
   TPathSetting = class(TTextSetting)
   public
     Folder, AllowEmpty, AllowClear: Boolean;
-    Filters: TArray<string>;
+    FileFilter, PickerTitle: string;
   end;
 
   TSliderSetting = class(TSettingsFieldDefinition)
@@ -151,8 +151,9 @@ type
     function GetDraft: TMemIniFile;
     procedure SetDraft(Value: TMemIniFile);
     procedure Add(Field: TSettingsFieldDefinition; const Id, Caption, Description, Section, Key, Default: string);
+    procedure RequireGroup;
   public
-    PageId: Integer;
+    PageId: string;
     CurrentGroup: TSettingsGroup;
     OnGroup: TProc<TSettingsGroup>;
     OnField: TProc<TSettingsFieldDefinition>;
@@ -371,7 +372,10 @@ end;
 procedure TSettingsPageBuilder.AddBlock(Block: TSettingsBlockDefinition; const Id, Caption, Description: string);
 begin
   try
-    if (CurrentGroup = nil) or (Id = '') then
+    if Block = nil then
+      raise EArgumentNilException.Create('Block');
+    RequireGroup;
+    if Id = '' then
       raise EArgumentException.Create('Incomplete settings block: ' + Id);
     for var Field in FFields do
       if SameText(Field.Id, Id) then
@@ -421,6 +425,8 @@ end;
 
 function TSettingsPageBuilder.Heading(const Id, Caption: string; Emphasized, Preview: Boolean; TitleSize: Single): TSettingsGroup;
 begin
+  if Id = '' then
+    raise EArgumentException.Create('Empty settings group ID');
   for var Existing in FGroups do
     if SameText(Existing.Id, Id) then
       raise EArgumentException.Create('Duplicate settings group: ' + Id);
@@ -440,7 +446,10 @@ end;
 procedure TSettingsPageBuilder.Add(Field: TSettingsFieldDefinition; const Id, Caption, Description, Section, Key, Default: string);
 begin
   try
-    if (CurrentGroup = nil) or (Id = '') or (Section = '') or (Key = '') then
+    RequireGroup;
+    if Draft = nil then
+      raise EArgumentNilException.Create('Draft');
+    if (Id = '') or (Section = '') or (Key = '') then
       raise EArgumentException.Create('Incomplete settings field: ' + Id);
     for var Existing in FFields do
       if SameText(Existing.Id, Id) then
@@ -465,6 +474,12 @@ begin
     OnField(Field);
 end;
 
+procedure TSettingsPageBuilder.RequireGroup;
+begin
+  if (CurrentGroup = nil) or not FGroups.Contains(CurrentGroup) then
+    raise EArgumentException.Create('Settings item requires a group from this page');
+end;
+
 function TSettingsPageBuilder.AddBoolean(const Id, Caption, Description, Section, Key: string; Default: Boolean; SingleLineDescription: Boolean): TBooleanSetting;
 begin
   Result := TBooleanSetting.Create(Draft);
@@ -475,6 +490,18 @@ end;
 
 function TSettingsPageBuilder.AddChoice(const Id, Caption, Description, Section, Key: string; const Items: array of TSettingsChoiceItem; const Default: string; SingleLineDescription: Boolean): TChoiceSetting;
 begin
+  if Length(Items) = 0 then
+    raise EArgumentException.Create('Empty settings choices: ' + Id);
+  var HasDefault := False;
+  for var I := 0 to High(Items) do
+  begin
+    HasDefault := HasDefault or SameText(Items[I].Value, Default);
+    for var J := 0 to I - 1 do
+      if SameText(Items[I].Value, Items[J].Value) then
+        raise EArgumentException.Create('Duplicate settings choice value: ' + Id);
+  end;
+  if not HasDefault then
+    raise EArgumentException.Create('Missing default settings choice: ' + Id);
   Result := TChoiceSetting.Create(Draft);
   Result.Kind := TSettingsFieldKind.Choice;
   SetLength(Result.Items, Length(Items));
@@ -505,6 +532,8 @@ function TSettingsPageBuilder.AddPath(const Id, Caption, Description, Section, K
 begin
   Result := TPathSetting.Create(Draft);
   Result.Kind := TSettingsFieldKind.Path;
+  Result.FileFilter := 'All files|*.*';
+  Result.PickerTitle := 'Choose file';
   Result.Folder := Folder;
   Result.AllowEmpty := True;
   Result.AllowClear := not Folder;
@@ -514,8 +543,10 @@ end;
 
 function TSettingsPageBuilder.AddSlider(const Id, Caption, Description, Section, Key: string; Default, Minimum, Maximum, Scale: Single; IntegerStorage: Boolean): TSliderSetting;
 begin
-  if Scale <= 0 then
-    raise EArgumentException.Create('Invalid settings slider scale');
+  if IsNan(Scale) or IsInfinite(Scale) or (Scale <= 0) or
+    IsNan(Minimum) or IsInfinite(Minimum) or IsNan(Maximum) or IsInfinite(Maximum) or
+    (Minimum > Maximum) or IsNan(Default) or IsInfinite(Default) then
+    raise EArgumentException.Create('Invalid settings slider range or scale: ' + Id);
   Result := TSliderSetting.Create(Draft);
   Result.Kind := TSettingsFieldKind.Slider;
   Result.Min := Minimum;
@@ -528,6 +559,8 @@ end;
 
 procedure TSettingsPageBuilder.PalettePreview(Palette: TChoiceSetting);
 begin
+  if (Palette = nil) or not FFields.Contains(Palette) then
+    raise EArgumentException.Create('Palette requires a choice from this page');
   if Assigned(OnPalette) then
     OnPalette(Palette);
 end;
@@ -544,4 +577,3 @@ begin
 end;
 
 end.
-

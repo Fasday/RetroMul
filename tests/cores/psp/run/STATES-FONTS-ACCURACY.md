@@ -142,7 +142,7 @@ Local full reports: `autotests_states_jit.txt`,
 - `source/cores/psp/PSP.GE.Engine.pas`: explicit CPU/backend synchronization.
 - `source/runtime/Core.Emulation.Types.pas`, `Core.Emulation.pas`: optional
   snapshot-operation interface and its alias; existing interfaces are unchanged.
-- `source/adapters/Core.Adapter.PSP.pas`: worker commands, lifecycle integration,
+- `source/platforms/psp/Core.Platforms.PSP.Adapter.pas`: worker commands, lifecycle integration,
   snapshot namespace and optional font configuration.
 - `apps/retromul/controllers/RM.Controllers.Snapshots.pas`: optional asynchronous
   UI path with its own polling timer; existing synchronous cores keep working.

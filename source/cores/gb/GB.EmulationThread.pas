@@ -3,10 +3,10 @@
 interface
 
 uses
-  Core.RomFormat, Core.Storage, Core.Snapshots, System.SysUtils, System.Classes,
-  System.SyncObjs, System.Generics.Collections, System.Diagnostics, GB.Joypad,
-  GB.GPU, GB.ROM, GB.MBC, GB.Memory, GB.Timer, GB.InterruptManager, GB.Camera,
-  GB.Palettes, GB.CPU, GB.Sound;
+  Core.Storage, Core.Snapshots, System.SysUtils, System.Classes, System.SyncObjs,
+  System.Generics.Collections, System.Diagnostics, GB.Joypad, GB.GPU, GB.ROM,
+  GB.MBC, GB.Memory, GB.Timer, GB.InterruptManager, GB.Camera, GB.Palettes,
+  GB.CPU, GB.Sound, GB.RomFormat;
 
 type
   TGBInputEvent = record
@@ -94,7 +94,8 @@ type
 implementation
 
 uses
-  Core.SavePaths, Core.PerformanceHints, System.IOUtils, System.Math;
+  GB.Cartridge, Core.SavePaths, Core.PerformanceHints, System.IOUtils,
+  System.Math;
 
 function TGBEmulationThread.CoreID: string;
 begin
@@ -147,7 +148,7 @@ begin
   FROMData := Copy(ROMData);
   FSnapshotIdentityData := FROMData;
   FEnableAudio := EnableAudio;
-  FSoundVolume := 0.5;
+  FSoundVolume := 1.0;
   FRuntimeOptions := TGBRuntimeOptions.Defaults;
   FLock := TCriticalSection.Create;
   FStopEvent := TEvent.Create(nil, True, False, '');

@@ -178,7 +178,7 @@ Authored this round (not other workers' changes brought by merges):
 - `source/cores/psp/PSP.HLE.pas`: `NoClobber`, needed by the integrated runner.
 - `source/cores/psp/PSP.IO.pas`: host-device read/seek yields; no new host-time input.
 - `source/cores/psp/PSP.Utility.Dialogs.inc`: valid module `0x308` for libmp4.
-- `source/hardware/video/avc/Video.AVC.H264.pas`: exact half-pixel optimization.
+- `source/media/video/avc/Video.AVC.H264.pas`: exact half-pixel optimization.
 - `tests/cores/psp/run/PSPRun.dpr`: initially add WAV capture and avoid hashing
   every frame; merge the audio worker's richer WAV implementation; add host
   and guest timestamps to `-every` output for phase measurements. Diagnostic

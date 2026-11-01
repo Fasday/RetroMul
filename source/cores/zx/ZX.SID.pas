@@ -3,7 +3,7 @@
 interface
 
 uses
-  System.SysUtils, C64.Sound.SID, Core.Snapshots;
+  System.SysUtils, HW.Sound.SID, Core.Snapshots;
 
 type
   // One MOS SID through either eLeMeNt ZX / MB03+ or HardSID / ZX-TSid xxCF.
@@ -98,8 +98,10 @@ end;
 class function TZXSID.Decodes(Address: Word; InterfaceType: Integer): Boolean;
 begin
   case InterfaceType of
-    0: Result := (Address = $6C3B) or (Address = $6D3B);
-    1: Result := (Address and $FF) = $CF;
+    0:
+      Result := (Address = $6C3B) or (Address = $6D3B);
+    1:
+      Result := (Address and $FF) = $CF;
   else
     Result := False;
   end;

@@ -47,6 +47,9 @@ __recovery/
 /tests/cores/psp/run/pspsdk/
 /tests/cores/psp/run/*.txt
 /tests/cores/psp/run/*.json
+!/tests/cores/dc/
+/tests/cores/dc/*
+!/tests/cores/dc/jit/
 /tests/**/bin/
 /tests/cores/n64/hardware/roms/
 /tools/*

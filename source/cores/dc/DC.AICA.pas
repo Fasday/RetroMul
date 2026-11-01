@@ -12,8 +12,8 @@
 interface
 
 uses
-  System.SysUtils, System.Math, Core.Snapshots, DC.Types, DC.Memory, DC.Scheduler, DC.Interrupts,
-  DC.CPU.ARM7, DC.Sound.AICA, DC.GDROM;
+  System.SysUtils, System.Math, Core.Snapshots, DC.Types, DC.Memory,
+  DC.Scheduler, DC.Interrupts, DC.CPU.ARM7, HW.Sound.AICA, DC.GDROM;
 
 const
   AICASampleRate = 44100;
@@ -31,8 +31,8 @@ type
     RTCSubsecond: Int64;   // SH-4 clocks into the current RTC second
     // SH-4 side interrupt enable/pending (MCIEB/MCIPD).
     MCIEB, MCIPD: Cardinal;
-    // Timer bits of the ARM side pending register at the last sync; a rising
-    // bit is pending for the SH-4 too.
+    // Last observed ARM timer bits, retained in the legacy snapshot layout.
+    // Delivery to the SH-4 follows each sample's newly generated sources.
     TimerPending: Cardinal;
   end;
 
@@ -231,6 +231,10 @@ begin
   end;
   var L, R: SmallInt;
   FAICA.Sample(L, R);
+  // Each overflow latches independently for both CPUs. Testing only a
+  // rising SCIPD bit would lose later MCPU requests while the SCPU keeps
+  // its earlier request pending.
+  S.MCIPD := S.MCIPD or FAICA.SampleInterrupts;
   if FSampleCount + 2 > Length(FSamples) then
     SetLength(FSamples, FSampleCount * 2 + 4096);
   FSamples[FSampleCount] := L;
@@ -268,9 +272,8 @@ end;
 
 procedure TDCAICA.UpdateSH4Interrupt;
 begin
-  // Timer A/B/C overflows (bits 6..8) are pending for both processors.
+  // Keep the historical observation for snapshot compatibility only.
   var Timers := (Cardinal(FAICA.ReadRegister(RegSCIPD)) or (Cardinal(FAICA.ReadRegister(RegSCIPD + 1)) shl 8)) and $1C0;
-  S.MCIPD := S.MCIPD or (Timers and not S.TimerPending);
   S.TimerPending := Timers;
   FInterrupts.SetExternal(HollyExtAICA, (S.MCIEB and S.MCIPD) <> 0);
 end;
@@ -368,8 +371,10 @@ begin
   Sync;
   Offset := Offset and (DCARAMSize - 1);
   case Size of
-    1: Result := FMemory.ARAM[Offset];
-    2: Result := PWord(FMemory.ARAM + (Offset and not Cardinal(1)))^;
+    1:
+      Result := FMemory.ARAM[Offset];
+    2:
+      Result := PWord(FMemory.ARAM + (Offset and not Cardinal(1)))^;
   else
     Result := PCardinal(FMemory.ARAM + (Offset and not Cardinal(3)))^;
   end;
@@ -380,8 +385,10 @@ begin
   Sync;
   Offset := Offset and (DCARAMSize - 1);
   case Size of
-    1: FMemory.ARAM[Offset] := Byte(Value);
-    2: PWord(FMemory.ARAM + (Offset and not Cardinal(1)))^ := Word(Value);
+    1:
+      FMemory.ARAM[Offset] := Byte(Value);
+    2:
+      PWord(FMemory.ARAM + (Offset and not Cardinal(1)))^ := Word(Value);
   else
     PCardinal(FMemory.ARAM + (Offset and not Cardinal(3)))^ := Value;
   end;
@@ -391,8 +398,10 @@ function TDCAICA.ReadRTC(Offset: Cardinal): Cardinal;
 begin
   Sync;
   case Offset and $C of
-    0: Result := S.RTC shr 16;
-    4: Result := S.RTC and $FFFF;
+    0:
+      Result := S.RTC shr 16;
+    4:
+      Result := S.RTC and $FFFF;
   else
     Result := 0;
   end;
@@ -435,3 +444,4 @@ begin
 end;
 
 end.
+

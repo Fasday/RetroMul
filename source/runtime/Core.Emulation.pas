@@ -19,6 +19,8 @@ type
 
   TEmulatorFrame = Core.Emulation.Types.TEmulatorFrame;
 
+  IEmulationVideoRegions = Core.Emulation.Types.IEmulationVideoRegions;
+
   IEmulationAudioDiagnostics = Core.Emulation.Types.IEmulationAudioDiagnostics;
 
   IEmulationMouseInput = Core.Emulation.Types.IEmulationMouseInput;
@@ -45,6 +47,9 @@ type
   TEmulatorConfigBase = Core.Emulation.Config.TEmulatorConfigBase;
 
   TEmulationFrameRate = Core.Emulation.Timing.TEmulationFrameRate;
+
+const
+  DEFAULT_AUDIO_VOLUME = Core.Emulation.Config.DEFAULT_AUDIO_VOLUME;
 
 function EmulatorConfigFileName(const EmulatorId: string): string;
 

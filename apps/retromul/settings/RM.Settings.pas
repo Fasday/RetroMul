@@ -5,14 +5,15 @@
 interface
 
 uses
-  Core.Platforms, Core.RomFormat, System.IOUtils, System.SysUtils,
-  System.Classes, System.IniFiles, System.Generics.Collections, System.Types,
-  System.UITypes, FMX.Forms, FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls,
-  FMX.Text, FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox,
-  FMX.Controls.Presentation, Core.Storage, Core.Emulation, FMXInput, FMX.Objects,
-  RM.Settings.Platform, RM.Settings.Catalog, RM.ShaderBitmap, RM.BitmapShaders,
-  RM.Settings.Builder, RM.Settings.Binding, RM.Settings.Session,
-  RM.Settings.Rendering, RM.Settings.Template.Device;
+  Core.Platforms, System.IOUtils, System.SysUtils, System.Classes,
+  System.IniFiles, System.Generics.Collections, System.Types, System.UITypes,
+  FMX.Forms, FMX.Types, FMX.Controls, FMX.Layouts, FMX.StdCtrls, FMX.Text,
+  FMX.Edit, FMX.EditBox, FMX.SpinBox, FMX.ListBox, FMX.Controls.Presentation,
+  Core.Storage, Core.Emulation, FMXInput, FMX.Objects, RM.Settings.Platform,
+  RM.Settings.Catalog, RM.ShaderBitmap, RM.BitmapShaders, RM.Settings.Builder,
+  RM.Settings.Binding, RM.Settings.Session, RM.Settings.Rendering,
+  RM.Settings.Template.Device, RM.Settings.Callouts, RM.Settings.Devices,
+  RM.Settings.PalettePreview;
 
 const
   SETTINGS_CATEGORY_GENERAL = RM.Settings.platform.SETTINGS_CATEGORY_GENERAL;
@@ -22,35 +23,12 @@ const
   SETTINGS_CATEGORY_PERIPHERALS = RM.Settings.platform.SETTINGS_CATEGORY_PERIPHERALS;
 
 const
-  SETTINGS_PAGE_MAIN = RM.Settings.platform.SETTINGS_PAGE_MAIN;
-  SETTINGS_PAGE_GB = RM.Settings.platform.SETTINGS_PAGE_GB;
-  SETTINGS_PAGE_GBC = RM.Settings.platform.SETTINGS_PAGE_GBC;
-  SETTINGS_PAGE_NES = RM.Settings.platform.SETTINGS_PAGE_NES;
-  SETTINGS_PAGE_MD = RM.Settings.platform.SETTINGS_PAGE_MD;
-  SETTINGS_PAGE_SNES = RM.Settings.platform.SETTINGS_PAGE_SNES;
-  SETTINGS_PAGE_NEOGEO = RM.Settings.platform.SETTINGS_PAGE_NEOGEO;
-  SETTINGS_PAGE_GBA = RM.Settings.platform.SETTINGS_PAGE_GBA;
-  SETTINGS_PAGE_N64 = RM.Settings.platform.SETTINGS_PAGE_N64;
-  SETTINGS_PAGE_SG1000 = RM.Settings.platform.SETTINGS_PAGE_SG1000;
-  SETTINGS_PAGE_SC3000 = RM.Settings.platform.SETTINGS_PAGE_SC3000;
-  SETTINGS_PAGE_SF7000 = RM.Settings.platform.SETTINGS_PAGE_SF7000;
-  SETTINGS_PAGE_MULTIVISION = RM.Settings.platform.SETTINGS_PAGE_MULTIVISION;
-  SETTINGS_PAGE_SMS = RM.Settings.platform.SETTINGS_PAGE_SMS;
-  SETTINGS_PAGE_GG = RM.Settings.platform.SETTINGS_PAGE_GG;
-  SETTINGS_PAGE_GW = RM.Settings.platform.SETTINGS_PAGE_GW;
-
-const
   AUTOSAVE_DEFAULT_MINUTES = 10;
   AUTOSAVE_MAX_MINUTES = 1440;
 
 const
   SettingsCategoryNames: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of string =
     ('General', 'Library', 'Video and audio', 'Controls', 'Peripherals');
-
-// Read the catalog's current tables; do not capture an initialization-time copy.
-function SettingsCoreIds: TArray<string>;
-function SettingsPageNames: TArray<string>;
-function SettingsCoreOrder: TArray<Integer>;
 
 type
   TDeviceCallouts = class;
@@ -61,21 +39,21 @@ type
   end;
 
   TBindingCallout = record
-    Button: Integer;
-    Name: string;
-    Left: Boolean;
+    Definition: TDeviceCalloutDefinition;
     LabelControl: TLabel;
   end;
 
   TDeviceCallouts = class(TControl)
   private
     FDevice: TControl;
+    FCalloutProvider: TPlatformDeviceCalloutsClass;
+    FCalloutContext: TDeviceCalloutContext;
     FItems: TArray<TBindingCallout>;
     FLines: TBindingLines;
     FInput: TInputManager;
     FAnnotations: Boolean;
     function ButtonBounds(Index: Integer): TRectF;
-    procedure AddCallout(Button, Action: Integer; const Name, Caption: string; Left: Boolean; Click: TNotifyEvent);
+    procedure AddCallout(const Definition: TDeviceCalloutDefinition; Click: TNotifyEvent);
   protected
     procedure Resize; override;
   public
@@ -91,6 +69,8 @@ type
   TSettingsField = TSettingsBinding;
 
   TSettingsDevice = class
+    Provider: TPlatformSettingsDevicesClass;
+    Context: TSettingsDeviceContext;
     RowView: TSettingsRowView;
     Template: TSettingsDeviceTemplate;
     Control: TControl;
@@ -133,11 +113,10 @@ type
     FStorage: IStorage;
     FPicker: TSettingsLocationPicker;
     FTemplatePicker: TSettingsTemplatePicker;
-    FPickingBootROM: Boolean;
+    FPickingFilter, FPickingTitle: string;
     FPickingTranslation: Boolean;
     FInput: TInputManager; // Draft assignments owned by this view.
     FHostInput: TInputManager; // Shared device snapshots; owned by the form.
-    FDrafts: TArray<TMemIniFile>;
     FContext: TSettingsPageBuilder;
     FSession: TSettingsSession;
     FRows: TObjectList<TSettingsRowView>;
@@ -149,6 +128,9 @@ type
     FNextEditor: TControl;
     FNextKind: TSettingsRowKind;
     FScaling, FPalette: TComboBox;
+    FPaletteProvider: TPlatformPalettePreviewClass;
+    FPaletteDefinition: TChoiceSetting;
+    FPaletteSystemId: string;
     FVideoGroup: TPanel;
     FShaderStatus: TLabel;
     FFields: TObjectList<TSettingsField>;
@@ -158,11 +140,13 @@ type
     FInvalidate: TProc;
     FSearch: TEdit;
     FPagePicker: TComboBox;
-    FCategory, FCorePage, FPlayer: Integer;
+    FCategory, FPlayer: Integer;
+    FCorePage: string;
     FPlatformSearch: TEdit;
     FPlatformPicker: TComboBox;
     FCategoryIcons: array[SETTINGS_CATEGORY_GENERAL..SETTINGS_CATEGORY_PERIPHERALS] of TControl;
-    FPage: Integer;
+    FPage: string;
+    FPageBuildError: string;
     FGroup: TPanel;
     FPreview: TControl;
     FPreviewGroup: TPanel;
@@ -183,6 +167,8 @@ type
     procedure PlatformSelectionChange(Sender: TObject);
     procedure PlatformPickerChange(Sender: TObject);
     procedure BuildPalettePreview(Palette: TChoiceSetting);
+    function PalettePreviewContext: TSettingsPalettePreviewContext;
+    procedure DisconnectPreview;
     procedure BuildVideoPreview;
     procedure UpdateShaderPreview;
     procedure ShaderParameterChange(Sender: TObject);
@@ -191,8 +177,10 @@ type
     procedure ClearPathClick(Sender: TObject);
     procedure SaveTemplateClick(Sender: TObject);
     procedure BuildPage(PreserveScroll: Boolean = False);
+    procedure BuildPageContent(PreserveScroll: Boolean);
     procedure RequestRebuild;
     procedure StorePage;
+    function CurrentCoreId: string;
     procedure WireConfigurationChanges;
     procedure ConfigurationChange(Sender: TObject);
     procedure UpdateConfigurationNotice;
@@ -224,9 +212,10 @@ type
     procedure PagePickerChange(Sender: TObject);
     procedure SearchChange(Sender: TObject);
     procedure PlayerChange(Sender: TObject);
+    function DeviceContext(Port: Integer; const Device: string): TSettingsDeviceContext;
     procedure BuildPort(Port: Integer; const Caption: string);
     procedure BuildBindings(Port: Integer; const Device: string);
-    function AddBinding(const Caption: string; Action, Port: Integer): TButton;
+    function AddBinding(const Caption: string; Action, Port: Integer; const IdSuffix: string = ''): TButton;
     procedure BuildDevice(Port: Integer; const Device: string);
     procedure AddDeviceAssignment(Device: TSettingsDevice; Panel: TPanel; Action: Integer; const Caption: string);
     procedure RefreshBindings;
@@ -255,13 +244,15 @@ type
     constructor CreateSettings(AOwner: TComponent; const Storage: IStorage; Input: TInputManager);
     destructor Destroy; override;
     procedure SelectCategory(Index: Integer);
-    procedure SelectCore(Index: Integer; PreserveCategory: Boolean = False);
+    procedure SelectCore(const PageId: string; PreserveCategory: Boolean = False);
     function ControlFor(Block: TSettingsBlockDefinition): TControl;
     property PageDefinition: TSettingsPageDefinition read GetPageDefinition;
     property Bindings: TObjectList<TSettingsField> read FFields;
     property SettingsSearch: TEdit read FSearch;
     property Category: Integer read FCategory;
-    property CorePage: Integer read FCorePage;
+    property CorePage: string read FCorePage;
+    // Diagnostic detail for callers; the UI displays a single translated message.
+    property PageBuildError: string read FPageBuildError;
     procedure Poll;
     procedure CancelCapture;
     property InputManager: TInputManager read FInput;
@@ -280,30 +271,12 @@ uses
   RM.Settings.Template.Path, RM.Settings.Template.Interval,
   RM.Settings.Template.Volume, RM.Settings.Template.Track,
   RM.Settings.Template.Preview, RM.Settings.Template.Binding, System.Math,
-  System.StrUtils, System.TypInfo, RM.Input, GB.Memory, GB.Palettes,
-  FMX.OpenDialog, RM.Gamepad, NES.PowerPad, NES.SuborKeyboard,
-  NES.FamicomKeyboard, NES.MiraclePiano, NES.Controller, NES.MiraclePianoDevice,
-  FMX.BehaviorManager, FMX.Graphics, FMX.SpinBox.Style, FMX.Presentation.Style,
-  FMX.Presentation.Factory, RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles,
-  RM.Dialogs, FMX.TextLayout, Core.Adapter.PS1, Core.Adapter.DC
+  System.StrUtils, RM.Input, FMX.OpenDialog, FMX.BehaviorManager, FMX.Graphics,
+  FMX.SpinBox.Style, FMX.Presentation.Style, FMX.Presentation.Factory,
+  RM.LibraryView, RM.Icons, RM.SearchEdit, RM.Styles, RM.Dialogs, FMX.TextLayout
   {$IFDEF ANDROID}, Core.Storage.Android{$ENDIF};
 
 {$R *.fmx}
-
-function SettingsCoreIds: TArray<string>;
-begin
-  Result := RM.Settings.Catalog.SettingsCoreIds;
-end;
-
-function SettingsPageNames: TArray<string>;
-begin
-  Result := RM.Settings.Catalog.SettingsPageNames;
-end;
-
-function SettingsCoreOrder: TArray<Integer>;
-begin
-  Result := RM.Settings.Catalog.SettingsCoreOrder;
-end;
 
 type
   TSettingsLayoutAccess = class(TLayout);
@@ -320,11 +293,9 @@ type
 
   TSettingsPreview = class(TShaderBitmap)
   private
-    FPaletteIndex: Integer;
-    procedure SetPaletteIndex(Value: Integer);
+    FColorPatternBuilt: Boolean;
   public
     constructor Create(AOwner: TComponent); override;
-    property PaletteIndex: Integer read FPaletteIndex write SetPaletteIndex;
     procedure SetColorPattern;
   published
     property Align;
@@ -436,53 +407,11 @@ begin
   inherited;
   WrapMode := TImageWrapMode.Fit;
   DisableInterpolation := True;
-  FPaletteIndex := -1;
-  SetPaletteIndex(0);
-end;
-
-procedure TSettingsPreview.SetPaletteIndex(Value: Integer);
-begin
-  Value := EnsureRange(Value, 0, SCREEN_PALETTE_COUNT - 1);
-  if Value = FPaletteIndex then
-    Exit;
-  Bitmap.SetSize(160, 144);
-  var Data: TBitmapData;
-  if not Bitmap.Map(TMapAccess.Write, Data) then
-    Exit;
-  try
-    var Palette := ScreenPalettes[Value];
-    for var PixelY := 0 to Bitmap.Height - 1 do
-      for var PixelX := 0 to Bitmap.Width - 1 do
-      begin
-        var X := PixelX * 32 div Bitmap.Width;
-        var Y := PixelY * 29 div Bitmap.Height;
-        var Shade := 0;
-        if Y > 12 + Abs(16 - X) div 2 then
-          Shade := 1;
-        if Y > 19 then
-          Shade := 2;
-        if (Y = 20) or ((Y > 20) and ((X + Y) mod 4 = 0)) then
-          Shade := 3;
-        if (X in [4..7]) and (Y in [9..16]) then
-          Shade := 2;
-        if (X = 6) and (Y in [16..19]) then
-          Shade := 3;
-        if (X in [14..15]) and (Y in [16..19]) then
-          Shade := 3;
-        if (Y in [4..5]) and (X in [18..22]) then
-          Shade := 0;
-        Data.SetPixel(PixelX, PixelY, Palette.Colors[Shade]);
-      end;
-    FPaletteIndex := Value;
-  finally
-    Bitmap.Unmap(Data);
-  end;
-  ResetHistory;
 end;
 
 procedure TSettingsPreview.SetColorPattern;
 begin
-  if FPaletteIndex = -1 then
+  if FColorPatternBuilt then
     Exit;
   Bitmap.SetSize(256, 240);
   var Data: TBitmapData;
@@ -515,7 +444,7 @@ begin
           Pixel.Color := TAlphaColors.White;
         Data.SetPixel(X, Y, Pixel.Color);
       end;
-    FPaletteIndex := -1;
+    FColorPatternBuilt := True;
   finally
     Bitmap.Unmap(Data);
   end;
@@ -561,35 +490,27 @@ end;
 
 function TDeviceCallouts.ButtonBounds(Index: Integer): TRectF;
 begin
-  if FDevice is TNesPowerPad then
-    Result := TNesPowerPad(FDevice).ButtonBounds(FItems[Index].Button)
-  else if FItems[Index].Button < 0 then
-    // -1 - N: auxiliary button N.
-    Result := TScreenGamepad(FDevice).AuxiliaryButtonBounds(-1 - FItems[Index].Button)
-  else
-    Result := TScreenGamepad(FDevice).ButtonBounds(TEmulatorButton(FItems[Index].Button));
+  Result := FCalloutProvider.ButtonBounds(FCalloutContext, FItems[Index].Definition.Button);
 end;
 
-procedure TDeviceCallouts.AddCallout(Button, Action: Integer; const Name, Caption: string; Left: Boolean; Click: TNotifyEvent);
+procedure TDeviceCallouts.AddCallout(const Definition: TDeviceCalloutDefinition; Click: TNotifyEvent);
 begin
   var Index := Length(FItems);
   SetLength(FItems, Index + 1);
-  FItems[Index].Button := Button;
-  FItems[Index].Name := Name;
-  FItems[Index].Left := Left;
+  FItems[Index].Definition := Definition;
   var L := SettingsLabel(Self);
   FItems[Index].LabelControl := L;
   L.Parent := Self;
   L.Height := 28;
   L.HitTest := FInput <> nil;
   L.OnClick := Click;
-  L.Tag := Action;
-  L.TagString := Caption;
+  L.Tag := Definition.Action;
+  L.TagString := Definition.Caption;
   L.StyledSettings := L.StyledSettings - [TStyledSetting.Size, TStyledSetting.Other];
   L.TextSettings.Font.Size := 12;
   L.TextSettings.WordWrap := False;
   L.TextSettings.Trimming := TTextTrimming.Character;
-  if Left then
+  if Definition.Left then
     L.TextSettings.HorzAlign := TTextAlign.Trailing
   else
     L.TextSettings.HorzAlign := TTextAlign.Leading;
@@ -597,6 +518,10 @@ end;
 
 procedure TDeviceCallouts.Configure(Device: TControl; Input: TInputManager; const Core: string; Port: Integer; Click: TNotifyEvent);
 begin
+  FCalloutContext.SystemId := Core;
+  FCalloutContext.Port := Port;
+  FCalloutContext.Device := Device;
+  FCalloutProvider := PlatformDeviceCallouts(Core);
   HitTest := False;
   FDevice := Device;
   FInput := Input;
@@ -607,29 +532,8 @@ begin
   FLines.Parent := Self;
   FLines.Align := TAlignLayout.Client;
   FLines.HitTest := False;
-  if Device is TNesPowerPad then
-    for var Button := 1 to 12 do
-      AddCallout(Button, PowerPadAction + Button - 1, IntToStr(Button),
-        Translate('Pad ') + IntToStr(Button), (Button - 1) mod 4 < 2, Click)
-  else
-    for var B in TScreenGamepad(Device).ButtonMask do
-    begin
-      var Left := B in [TEmulatorButton.Up, TEmulatorButton.Down,
-          TEmulatorButton.Left, TEmulatorButton.Right, TEmulatorButton.Select,
-          TEmulatorButton.Mode];
-      if (Core = ROM_SYSTEM_SNES) and (B = TEmulatorButton.C) then
-        Left := True;
-      var Name := Translate(CoreButtonName(Core, B));
-      AddCallout(Ord(B), PadAction(Port, B), Name, Translate('Button ') + Name, Left, Click);
-    end;
-  if (Core = ROM_SYSTEM_N64) and (Device is TScreenGamepad) and
-    not TScreenGamepad(Device).AuxiliaryButtonBounds(0).IsEmpty then
-    AddCallout(-1, N64LAction + Port, 'L', Translate('Button ') + 'L', True, Click);
-  if (Core = ROM_SYSTEM_PS1) and (Device is TScreenGamepad) then
-    for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
-      if not TScreenGamepad(Device).AuxiliaryButtonBounds(Ord(Extra)).IsEmpty then
-        AddCallout(-1 - Ord(Extra), PS1Action(Port, Extra), Translate(PS1ExtraName(Extra)),
-          Translate('Button ') + Translate(PS1ExtraName(Extra)), True, Click);
+  for var Definition in FCalloutProvider.Definitions(FCalloutContext) do
+    AddCallout(Definition, Click);
   Refresh;
   Resize;
 end;
@@ -643,7 +547,7 @@ begin
       Continue;
 
     var Assignment := BindingCaption(FInput, L.Tag);
-    L.Text := Item.Name + ' · ' + Assignment;
+    L.Text := Item.Definition.Name + ' · ' + Assignment;
     if Width < 460 then
       L.Text := Assignment;
     L.Hint := L.TagString + ': ' + Assignment;
@@ -662,11 +566,7 @@ begin
   var Rail := Min(170, Max(40, Width * 0.18));
   if not FAnnotations then
     Rail := 0;
-  var Aspect: Single := 0.46;
-  if FDevice is TScreenGamepad then
-    Aspect := TScreenGamepad(FDevice).AspectRatio;
-  if FDevice is TNesPowerPad then
-    Aspect := TNesPowerPad(FDevice).AspectRatio;
+  var Aspect := FCalloutProvider.AspectRatio(FCalloutContext);
   var Limit := IfThen(FAnnotations, 400, 640);
   var PadWidth := Min(Min(Limit, Max(40, Height / Aspect)), Max(40, Width - 2 * (Rail + 12)));
   FDevice.SetBounds((Width - PadWidth) / 2, (Height - PadWidth * Aspect) / 2,
@@ -675,7 +575,7 @@ begin
   begin
     var Buttons: TArray<Integer> := nil;
     for var B := 0 to High(FItems) do
-      if FItems[B].Left = (Side = 0) then
+      if FItems[B].Definition.Left = (Side = 0) then
       begin
         var N := Length(Buttons);
         SetLength(Buttons, N + 1);
@@ -685,7 +585,7 @@ begin
     for var i := 0 to High(Buttons) - 1 do
       for var J := i + 1 to High(Buttons) do
       begin
-        var ReverseColumns := (FDevice is TNesPowerPad) and (Side = 1);
+        var ReverseColumns := FCalloutProvider.ReverseColumns(FCalloutContext, Side = 0);
         var EarlierColumn := ButtonBounds(Buttons[J]).CenterPoint.X < ButtonBounds(Buttons[i]).CenterPoint.X;
         if ReverseColumns then
           EarlierColumn := ButtonBounds(Buttons[J]).CenterPoint.X > ButtonBounds(Buttons[i]).CenterPoint.X;
@@ -734,37 +634,15 @@ begin
   begin
     var R := D.ButtonBounds(B);
     var L := D.FItems[B].LabelControl;
-    var Start := R.CenterPoint + D.FDevice.Position.Point;
-    var Finish := TPointF.Create(L.Position.X - 5, L.Position.Y + L.Height / 2);
-    Start.X := R.Right + D.FDevice.Position.X;
-    if D.FItems[B].Left then
+    var Points := D.FCalloutProvider.LinePath(D.FCalloutContext, D.FItems[B].Definition, R, L);
+    for var i := 0 to High(Points) - 1 do
+      Canvas.DrawLine(Points[i], Points[i + 1], AbsoluteOpacity * 0.8);
+    if Length(Points) > 0 then
     begin
-      Start.X := R.Left + D.FDevice.Position.X;
-      Finish.X := L.Position.X + L.Width + 5;
+      var Start := Points[0];
+      Canvas.Fill.Color := TAlphaColors.Gray;
+      Canvas.FillEllipse(TRectF.Create(Start.X - 2, Start.Y - 2, Start.X + 2, Start.Y + 2), AbsoluteOpacity);
     end;
-    if (D.FDevice is TNesPowerPad) and ((D.FItems[B].Button - 1) mod 4 in [1, 2]) then
-    begin
-      // Route inner columns through the gaps below each row, away from pad numbers.
-      Start := TPointF.Create(R.CenterPoint.X + D.FDevice.Position.X, R.Bottom + D.FDevice.Position.Y);
-      var ExitPoint := TPointF.Create(Start.X, Start.Y + 4);
-      var RailX := D.FDevice.Position.X + D.FDevice.Width + 8;
-      if D.FItems[B].Left then
-        RailX := D.FDevice.Position.X - 8;
-      var Outside := TPointF.Create(RailX, ExitPoint.Y);
-      var Elbow := TPointF.Create(RailX, Finish.Y);
-      Canvas.DrawLine(Start, ExitPoint, AbsoluteOpacity * 0.8);
-      Canvas.DrawLine(ExitPoint, Outside, AbsoluteOpacity * 0.8);
-      Canvas.DrawLine(Outside, Elbow, AbsoluteOpacity * 0.8);
-      Canvas.DrawLine(Elbow, Finish, AbsoluteOpacity * 0.8);
-    end
-    else
-    begin
-      var Elbow := TPointF.Create((Start.X + Finish.X) / 2, Finish.Y);
-      Canvas.DrawLine(Start, Elbow, AbsoluteOpacity * 0.8);
-      Canvas.DrawLine(Elbow, Finish, AbsoluteOpacity * 0.8);
-    end;
-    Canvas.Fill.Color := TAlphaColors.Gray;
-    Canvas.FillEllipse(TRectF.Create(Start.X - 2, Start.Y - 2, Start.X + 2, Start.Y + 2), AbsoluteOpacity);
   end;
 end;
 
@@ -773,13 +651,15 @@ begin
   FBuilding := True;
   inherited Create(AOwner);
   FCategory := SETTINGS_CATEGORY_GENERAL;
-  FPage := SETTINGS_PAGE_MAIN;
-  FCorePage := SETTINGS_PAGE_GB;
+  FPage := 'main';
+  FCorePage := '';
   if SettingsPlatforms.Find(FCorePage) = nil then
   begin
     var Available := SettingsPlatforms.Matching('');
-    if Length(Available) > 0 then FCorePage := Available[0].PageId
-    else FCorePage := SETTINGS_PAGE_MAIN;
+    if Length(Available) > 0 then
+      FCorePage := Available[0].PageId
+    else
+      FCorePage := 'main';
   end;
   FStorage := Storage;
   FHostInput := Input;
@@ -803,11 +683,10 @@ begin
     begin
       Alive := False;
     end;
-  FSession := TSettingsSession.Create(FStorage, SettingsPlatforms.MaxPageId + 1);
-  FSession.Open(SETTINGS_PAGE_MAIN, 'config');
-  for var platform in SettingsPlatforms.Items do
-    FSession.Open(platform.PageId, platform.CoreId);
-  FDrafts := FSession.Drafts;
+  FSession := TSettingsSession.Create(FStorage);
+  FSession.Open('main', 'config');
+  for var SettingsPlatform in SettingsPlatforms.Items do
+    FSession.Open(SettingsPlatform.PageId, SettingsPlatform.CoreId);
   FContext := TSettingsPageBuilder.Create;
   FContext.OnRebuild := PortChange;
   FContext.OnGroup :=
@@ -884,7 +763,12 @@ begin
       Row.Panel.Height := 350;
       Row.Text.Visible := False;
       var Template := TSettingsPreviewTemplate(Row.Template);
-      FPreview := TSettingsPreview.Create(Template);
+      if FPaletteProvider <> nil then
+        FPreview := FPaletteProvider.CreatePreview(Template, PalettePreviewContext)
+      else
+        FPreview := TSettingsPreview.Create(Template);
+      if FPreview = nil then
+        raise EInvalidOperation.Create('Palette preview provider returned no control');
       FPreview.Parent := Template.LayoutPalettePreviewSlot;
       FPreview.Align := TAlignLayout.Client;
       FShaderStatus := Template.LabelShaderStatus;
@@ -895,17 +779,50 @@ begin
   FContext.CurrentGroup := PreviousDefinition;
 end;
 
+function TSettingsView.PalettePreviewContext: TSettingsPalettePreviewContext;
+begin
+  Result := Default(TSettingsPalettePreviewContext);
+  Result.SystemId := FPaletteSystemId;
+  Result.Palette := FPaletteDefinition;
+  Result.SelectedIndex := -1;
+  if FPalette <> nil then
+    Result.SelectedIndex := FPalette.ItemIndex;
+end;
+
+procedure TSettingsView.DisconnectPreview;
+begin
+  if FPreview is TShaderBitmap then
+    if FPaletteProvider <> nil then
+      FPaletteProvider.DisconnectPreview(TShaderBitmap(FPreview), PalettePreviewContext)
+    else
+      TShaderBitmap(FPreview).Mode := TBitmapShaderMode.Original;
+  FPreview := nil;
+  FPaletteProvider := nil;
+  FPaletteDefinition := nil;
+  FPaletteSystemId := '';
+end;
+
 procedure TSettingsView.BuildPalettePreview(Palette: TChoiceSetting);
 begin
+  if not TryPlatformPalettePreview(CurrentCoreId, FPaletteProvider) then
+    Exit;
   for var Binding in FFields do
     if Binding.Definition = Palette then
       FPalette := TComboBox(Binding.Control);
+  if FPalette = nil then
+  begin
+    FPaletteProvider := nil;
+    Exit;
+  end;
+  FPaletteDefinition := Palette;
+  FPaletteSystemId := CurrentCoreId;
   SetChangeHandler(FPalette, PreviewChange);
   if FScaling <> nil then
     SetChangeHandler(FScaling, PreviewChange);
   BuildVideoPreview;
-  TSettingsPreview(FPreview).PaletteIndex := FPalette.ItemIndex;
-  TSettingsPreview(FPreview).DisableInterpolation := FScaling.ItemIndex = 0;
+  FPaletteProvider.UpdatePreview(TShaderBitmap(FPreview), PalettePreviewContext);
+  if FScaling <> nil then
+    TShaderBitmap(FPreview).DisableInterpolation := FScaling.ItemIndex = 0;
 end;
 
 function TSettingsView.ShaderTrack(const Name, Caption, Description, Key: string; Default, Minimum, Maximum: Integer): TTrackBar;
@@ -951,10 +868,10 @@ end;
 
 procedure TSettingsView.UpdateShaderPreview;
 begin
-  if not (FPreview is TSettingsPreview) then
+  if not (FPreview is TShaderBitmap) then
     Exit;
-  var Preview := TSettingsPreview(FPreview);
-  var Draft := FDrafts[FPage];
+  var Preview := TShaderBitmap(FPreview);
+  var Draft := FSession.Drafts[FPage];
   var Options := TBitmapShaderSettings.Default;
   Options.ScanlineStrength := Draft.ReadInteger('Shaders', 'Scanlines', 35) / 100;
   Options.Curvature := Draft.ReadInteger('Shaders', 'Curvature', 8) / 100;
@@ -1074,7 +991,6 @@ begin
   FBlockControls.Free;
   FSelections.Free;
   FDevices.Free;
-  FDrafts := nil;
   FSession.Free;
   FInput.Free;
   inherited;
@@ -1082,25 +998,73 @@ end;
 
 procedure TSettingsView.BuildPage(PreserveScroll: Boolean);
 begin
+  var Draft: TMemIniFile := nil;
+  var Before := TStringList.Create;
+  try
+    FPageBuildError := '';
+    try
+      Draft := FSession.Drafts[FPage];
+      Draft.GetStrings(Before);
+      BuildPageContent(PreserveScroll);
+      ButtonApply.Enabled := True;
+      ButtonReset.Enabled := True;
+      ButtonRefresh.Enabled := FInput <> nil;
+    except
+      on E: Exception do
+      begin
+        FPageBuildError := E.ClassName + ': ' + E.Message;
+        FBuilding := True;
+        try
+          // Drop partially rendered controls before their definitions. ReleasePage
+          // disconnects events and capture and retires the controls through FMX.
+          ReleasePage;
+          if Draft <> nil then
+          begin
+            Draft.Clear;
+            Draft.SetStrings(Before);
+          end;
+          FGroup := nil;
+          FPreviewGroup := nil;
+          FAutosaveMinutes := nil;
+          FVolumeValue := nil;
+          FNextKind := TSettingsRowKind.Standard;
+          LabelConfigurationNotice.Text := '';
+          PanelConfigurationNotice.Visible := False;
+          LabelStatus.Text := Translate('Unable to build the settings page.');
+          ButtonApply.Enabled := False;
+          ButtonReset.Enabled := False;
+          ButtonRefresh.Enabled := False;
+        finally
+          FBuilding := False;
+        end;
+        Resize;
+      end;
+    end;
+  finally
+    Before.Free;
+  end;
+end;
+
+procedure TSettingsView.BuildPageContent(PreserveScroll: Boolean);
+begin
   var Position := VertScrollBoxScroll.ViewportPosition;
+  var Complete := False;
   FBuilding := True;
   VertScrollBoxScroll.BeginUpdate;
+  LayoutSettingsMainColumn.BeginUpdate;
+  LayoutSettingsPreviewColumn.BeginUpdate;
   try
     FPagePicker.ItemIndex := FCategory;
     CancelCapture;
     FAutosaveMinutes := nil;
     FVolumeValue := nil;
-    if FPreview is TSettingsPreview then
-      TSettingsPreview(FPreview).Mode := TBitmapShaderMode.Original;
-    FPreview := nil;
+    DisconnectPreview;
     FPreviewGroup := nil;
     FPreviewShaderFile := '';
     FPreviewShaderLoaded := False;
     ReleasePage;
     FContext.PageId := FPage;
-    FContext.Draft := FDrafts[FPage];
-    LayoutSettingsMainColumn.BeginUpdate;
-    LayoutSettingsPreviewColumn.BeginUpdate;
+    FContext.Draft := FSession.Drafts[FPage];
     LayoutContent.Margins.Right := Max(16, VertScrollBoxScroll.Width - 1240);
     FGroup := nil;
     FHeight := 0;
@@ -1152,9 +1116,9 @@ begin
       FContext.AddAction('RowDetectRomFolders', 'Detect platform folders',
         'Choose a parent folder to fill the platform paths below.',
         'Detect automatically', DetectRomFoldersClick);
-      for var platform in TPlatformRegistry.All do
-        PathEdit('RowRomFolder' + platform.Folder.Substring(0, 1).ToUpper + platform.Folder.Substring(1), platform.Name.Replace(' (experimental)', ''), 'ROM folder',
-          'RomFolders', platform.Id, '', True);
+      for var Item in TPlatformRegistry.All do
+        PathEdit('RowRomFolder' + Item.Folder.Substring(0, 1).ToUpper + Item.Folder.Substring(1),
+          Item.Name.Replace(' (experimental)', ''), 'ROM folder', 'RomFolders', Item.Id, '', True);
       Heading('GroupGamelibrary', 'Game library');
       Combo('RowLibraryview', 'Library view', 'Cover grid or compact list.', 'Library', 'View', ['Covers', 'List'], ['grid', 'list'], 'grid');
       Combo('RowCardsize', 'Card size', 'The number of covers per row adapts to the window.', 'Library', 'CardWidth', ['Compact', 'Normal', 'Large'], ['140', '170', '220'], '170');
@@ -1166,19 +1130,19 @@ begin
     end
     else
     begin
-      var platform := SettingsPlatforms.Find(FPage);
-      if platform = nil then
+      var SettingsPlatform := SettingsPlatforms.Find(FPage);
+      if SettingsPlatform = nil then
       begin
         LabelStatus.Text := Translate('No platforms found');
         Exit;
       end;
       FContext.PageId := FPage;
-      FContext.Draft := FDrafts[FPage];
+      FContext.Draft := FSession.Drafts[FPage];
       if FInput <> nil then
-        LoadInputBindings(FInput, FDrafts[FPage], SettingsCoreIds[FPage]);
+        LoadInputBindings(FInput, FSession.Drafts[FPage], CurrentCoreId);
       if FCategory = SETTINGS_CATEGORY_VIDEO_AUDIO then
       begin
-        platform.Configuration(FContext);
+        SettingsPlatform.Configuration(FContext);
         Heading('GroupVideo', 'Video');
         var Scaling := Combo('RowImagescaling', 'Image scaling', 'Nearest neighbor preserves sharp pixels; smoothing softens the i' + 'mage.', 'Video', 'Filter',
           ['Nearest neighbor', 'Smoothing'], ['nearest', 'linear'], 'nearest');
@@ -1186,13 +1150,13 @@ begin
         SetChangeHandler(Scaling, PreviewChange);
         FVideoGroup := FGroup;
         var VideoDefinition := FContext.CurrentGroup;
-        platform.Video(FContext);
+        SettingsPlatform.Video(FContext);
         FGroup := FVideoGroup;
         FContext.CurrentGroup := VideoDefinition;
         var ShaderMode := Combo('RowShaderMode', 'Shader', 'Display effect for this platform.', 'Shaders', 'Mode', ['Off', 'Scanlines', 'CRT', 'LCD', 'Color correction',
             'Custom'], ['off', 'scanlines', 'crt', 'lcd', 'color', 'custom'], 'off');
         SetChangeHandler(ShaderMode, PortChange);
-        var Effect := FDrafts[FPage].ReadString('Shaders', 'Mode', 'off');
+        var Effect := FSession.Drafts[FPage].ReadString('Shaders', 'Mode', 'off');
         if (Effect = 'scanlines') or (Effect = 'crt') then
           ShaderTrack('RowShaderScanlines', 'Scanline strength (%)', 'Darkening between scanlines.', 'Scanlines', 35, 0, 100);
         if Effect = 'crt' then
@@ -1221,54 +1185,72 @@ begin
         end;
         Heading('GroupAudio', 'Audio');
         FNextKind := TSettingsRowKind.Volume;
-        FContext.AddSlider('RowVolume', 'Volume', 'Audio level for the selected platform.', 'Audio', 'Volume', 0.5, 0, 100, 100, False);
+        FContext.AddSlider('RowVolume', 'Volume', 'Audio level for the selected platform.', 'Audio', 'Volume', DEFAULT_AUDIO_VOLUME, 0, 100, 100, False);
         var Volume := TTrackBar(FFields.Last.Control);
         FVolumeValue := FLastRow.ValueLabel;
         SetChangeHandler(Volume, VolumeChange);
         VolumeChange(Volume);
-        platform.Audio(FContext);
+        SettingsPlatform.Audio(FContext);
       end
       else if FCategory = SETTINGS_CATEGORY_CONTROLS then
       begin
         Heading('GroupController', 'Controller');
-        var Count := platform.PlayerCount(FDrafts[FPage]);
+        var Count := SettingsPlatform.PlayerCount(FSession.Drafts[FPage]);
         FPlayer := EnsureRange(FPlayer, 0, Count - 1);
         var Players: TArray<string>;
         SetLength(Players, Count);
-        for var I := 0 to Count - 1 do
-          Players[I] := Translate('Player ') + IntToStr(I + 1);
+        for var i := 0 to Count - 1 do
+          Players[i] := Translate('Player ') + IntToStr(i + 1);
         FContext.AddSelection('RowPlayer', 'Player', 'Bindings are saved separately for each player.',
           Players, FPlayer, PlayerChange);
         BuildPort(FPlayer, Translate('Bindings · player ') + IntToStr(FPlayer + 1));
       end
-      else if FPage <> SETTINGS_PAGE_GW then
+      else if PlatformSettingsDevices(CurrentCoreId).HasPortSettings then
       begin
-        platform.Peripherals(FContext);
-        for var Port := 0 to platform.Ports - 1 do
+        SettingsPlatform.Peripherals(FContext);
+        for var Port := 0 to SettingsPlatform.Ports - 1 do
           BuildPort(Port, Translate('Port ') + IntToStr(Port + 1));
-        platform.Expansion(FContext);
+        SettingsPlatform.Expansion(FContext);
       end;
 
       LabelStatus.Text := Translate('Settings are saved separately for each platform. Core options apply when you next open a ROM.');
-      if platform.HasConfiguration then
+      if SettingsPlatform.HasConfiguration then
         LabelStatus.Text := Translate('Configuration changes stay in this draft until you click Apply. Hardware options apply when you next open a ROM.');
     end;
     WireConfigurationChanges;
+    Complete := True;
   finally
-    FBuilding := False;
-    UpdateShaderPreview;
-    UpdateConfigurationNotice;
-    Resize;
-    LayoutSettingsMainColumn.EndUpdate;
-    LayoutSettingsPreviewColumn.EndUpdate;
-    VertScrollBoxScroll.EndUpdate;
-    if PreserveScroll then
-      VertScrollBoxScroll.ViewportPosition := TPointF.Create(0, EnsureRange(Position.Y, 0,
-          Max(0, VertScrollBoxScroll.ContentBounds.Height - VertScrollBoxScroll.ClientHeight)))
-    else
-      VertScrollBoxScroll.ViewportPosition := TPointF.Zero;
-    SearchChange(FSearch);
+    try
+      if Complete then
+      begin
+        UpdateShaderPreview;
+        UpdateConfigurationNotice;
+      end;
+    finally
+      // Balance every update even when a provider, preview or notice fails.
+      // Keep resize callbacks suspended until all containers are settled.
+      try
+        try
+          LayoutSettingsMainColumn.EndUpdate;
+        finally
+          LayoutSettingsPreviewColumn.EndUpdate;
+        end;
+      finally
+        try
+          VertScrollBoxScroll.EndUpdate;
+        finally
+          FBuilding := False;
+        end;
+      end;
+    end;
   end;
+  Resize;
+  if PreserveScroll then
+    VertScrollBoxScroll.ViewportPosition := TPointF.Create(0, EnsureRange(Position.Y, 0,
+        Max(0, VertScrollBoxScroll.ContentBounds.Height - VertScrollBoxScroll.ClientHeight)))
+  else
+    VertScrollBoxScroll.ViewportPosition := TPointF.Zero;
+  SearchChange(FSearch);
 end;
 
 procedure TSettingsView.RequestRebuild;
@@ -1325,12 +1307,12 @@ begin
         F.ChangeHandler(Sender)
       else
       begin
-        var platform := SettingsPlatforms.Find(FPage);
-        if (platform <> nil) and platform.HasConfiguration then
+        var SettingsPlatform := SettingsPlatforms.Find(FPage);
+        if (SettingsPlatform <> nil) and SettingsPlatform.HasConfiguration then
         begin
           LabelStatus.Text := Translate('Configuration changed in the draft. Click Apply to save, or Cancel to discard.');
           StorePage;
-          if platform.ChangeConfiguration(FDrafts[FPage], F.Section, F.Key) then
+          if SettingsPlatform.ChangeConfiguration(FSession.Drafts[FPage], F.Section, F.Key) then
             RequestRebuild
           else
           begin
@@ -1374,10 +1356,12 @@ end;
 
 procedure TSettingsView.UpdateConfigurationNotice;
 begin
-  var platform := SettingsPlatforms.Find(FPage);
+  if FPageBuildError <> '' then
+    Exit;
+  var SettingsPlatform := SettingsPlatforms.Find(FPage);
   var Text := '';
-  if (platform <> nil) and platform.HasConfiguration then
-    Text := platform.ConfigurationNotice(FDrafts[FPage]);
+  if (SettingsPlatform <> nil) and SettingsPlatform.HasConfiguration then
+    Text := SettingsPlatform.ConfigurationNotice(FSession.Drafts[FPage]);
   if LabelConfigurationNotice.Text <> Text then
     VertScrollBoxConfigurationNotice.ViewportPosition := TPointF.Zero;
   LabelConfigurationNotice.Text := Text;
@@ -1385,12 +1369,22 @@ begin
   MeasureConfigurationNotice;
 end;
 
+function TSettingsView.CurrentCoreId: string;
+begin
+  var SettingsPlatform := SettingsPlatforms.Find(FPage);
+  if SettingsPlatform = nil then
+    Exit('');
+  Result := SettingsPlatform.CoreId;
+end;
+
 procedure TSettingsView.StorePage;
 begin
+  if FPageBuildError <> '' then
+    Exit;
   for var Field in FFields do
     Field.Pull;
-  if (FPage > SETTINGS_PAGE_MAIN) and (FInput <> nil) then
-    SaveInputBindings(FInput, FDrafts[FPage]);
+  if (FPage <> 'main') and (FInput <> nil) then
+    SaveInputBindings(FInput, FSession.Drafts[FPage]);
 end;
 
 procedure TSettingsView.Heading(const Name, Caption: string; Emphasized: Boolean; TitleSize: Single);
@@ -1448,6 +1442,7 @@ end;
 
 procedure TSettingsView.ReleasePage;
 begin
+  DisconnectPreview;
   FLastRow := nil;
   FNextRow := nil;
   FNextEditor := nil;
@@ -1459,18 +1454,8 @@ begin
   FBlockControls.Clear;
   FSelections.Clear;
   for var D in FDevices do
-  begin
-    if D.Control is TScreenGamepad then
-      TScreenGamepad(D.Control).OnChange := nil;
-    if D.Control is TNesPowerPad then
-      TNesPowerPad(D.Control).OnChange := nil;
-    if D.Control is TNesSuborKeyboard then
-      TNesSuborKeyboard(D.Control).OnChange := nil;
-    if D.Control is TNesFamicomKeyboard then
-      TNesFamicomKeyboard(D.Control).OnChange := nil;
-    if D.Control is TNesMiraclePiano then
-      TNesMiraclePiano(D.Control).OnChange := nil;
-  end;
+    if D.Provider <> nil then
+      D.Provider.Disconnect(D.Context, D.Control);
   // Templates own their detached visual roots. Disconnect every root before
   // releasing its owner; queued FMX events must not see obsolete bindings.
   for var R in FRows do
@@ -1608,6 +1593,8 @@ begin
   FNextKind := TSettingsRowKind.Standard;
   if Definition.Kind = TSettingsFieldKind.Path then
     Kind := TSettingsRowKind.Path;
+  if (Definition.Kind = TSettingsFieldKind.Slider) and (Kind = TSettingsRowKind.Standard) then
+    Kind := TSettingsRowKind.Track;
   var R := FNextRow;
   FNextRow := nil;
   if R = nil then
@@ -1659,8 +1646,8 @@ begin
   if Definition.SingleLineDescription then
   begin
     R.Title.TextSettings.Trimming := TTextTrimming.Character;
-    R.Detail.TextSettings.Trimming := TTextTrimming.Character;
-    R.Detail.TextSettings.WordWrap := False;
+    R.Detail.TextSettings.Trimming := TTextTrimming.None;
+    R.Detail.TextSettings.WordWrap := True;
   end;
   Binding.Definition := Definition;
   Binding.RowView := R;
@@ -1812,11 +1799,11 @@ begin
     LabelTitle.Text := Translate(SettingsCategoryNames[FCategory]);
     if FCategory = SETTINGS_CATEGORY_GENERAL then
       LabelTitle.Text := Translate('General settings');
-    for var I := Low(FCategoryIcons) to High(FCategoryIcons) do
-      if I = FCategory then
-        TPath(FCategoryIcons[I]).Stroke.Color := $FFFFB344
+    for var i := Low(FCategoryIcons) to High(FCategoryIcons) do
+      if i = FCategory then
+        TPath(FCategoryIcons[i]).Stroke.Color := $FFFFB344
       else
-        TPath(FCategoryIcons[I]).Stroke.Color := $FFB9C2CC;
+        TPath(FCategoryIcons[i]).Stroke.Color := $FFB9C2CC;
     var CompactSearch := LayoutHeader.Width < 740;
     var HeadingRow := LayoutSettingsHeading;
     var CompactSearchSlot := LayoutSettingsCompactSearchSlot;
@@ -1895,10 +1882,10 @@ begin
       begin
         Column.BeginUpdate;
         try
-          for var I := 0 to Column.ChildrenCount - 1 do
-            if Column.Children[I] is TPanel then
+          for var i := 0 to Column.ChildrenCount - 1 do
+            if Column.Children[i] is TPanel then
             begin
-              var Card := TPanel(Column.Children[I]);
+              var Card := TPanel(Column.Children[i]);
               if not Card.Visible then
                 Continue;
               // A resize can arrive while FMX is already aligning this column.
@@ -1991,12 +1978,43 @@ begin
   C.ListBox.ScrollAnimation := TBehaviorBoolean.True;
 end;
 
+function SettingsDescriptionHeight(Row: TSettingsRowView; TextWidth: Single): Single;
+begin
+  Result := Row.Title.Height;
+  if not Row.Detail.Visible or (Row.Detail.Text = '') then
+    Exit;
+  // Legacy providers requested single-line rows, including Dreamcast's long
+  // controller descriptions. Descriptions now wrap consistently for every core.
+  Row.Detail.TextSettings.WordWrap := True;
+  Row.Detail.TextSettings.Trimming := TTextTrimming.None;
+  var Layout := TTextLayoutManager.DefaultTextLayout.Create;
+  try
+    Layout.BeginUpdate;
+    Layout.Font.Assign(Row.Detail.ResultingTextSettings.Font);
+    Layout.MaxSize := TPointF.Create(Max(1, TextWidth - 4), 100000);
+    Layout.WordWrap := True;
+    Layout.Text := Row.Detail.Text;
+    Layout.EndUpdate;
+    Result := Result + Max(24, Ceil(Layout.TextHeight) + 4);
+  finally
+    Layout.Free;
+  end;
+end;
+
 procedure TSettingsView.RowResize(Sender: TObject);
 begin
   var P := TPanel(Sender);
   var R := RowView(P);
-  if (R = nil) or R.CustomLayout then
+  if R = nil then
     Exit;
+  if R.CustomLayout then
+  begin
+    // Information-only blocks use the same row template but have no editor.
+    if not R.Editors.Visible and R.Text.Visible then
+      P.Height := P.Padding.Top + P.Padding.Bottom +
+        SettingsDescriptionHeight(R, Max(1, P.Width - P.Padding.Left - P.Padding.Right));
+    Exit;
+  end;
   P.Padding.Rect := TRectF.Create(16, 12, 16, 12);
   var Text := R.Text;
   var Editors := R.Editors;
@@ -2004,7 +2022,6 @@ begin
   Text.Margins.Rect := TRectF.Empty;
   R.Detail.Visible := True;
   var Narrow := P.Width < 600;
-  P.Height := IfThen(Narrow, 134, 72);
   var W: Single := 220;
   if R.Editor <> nil then
   begin
@@ -2034,6 +2051,22 @@ begin
     Editors.Width := Min(W, Max(0, P.Width - 32));
     Editors.Margins.Rect := TRectF.Create(16, 8, 0, 8);
   end;
+  // Measure wrapped translations at their final available width. A fixed
+  // 72px row clips multi-line descriptions even in the desktop layout.
+  var TextWidth := Max(1, P.Width - P.Padding.Left - P.Padding.Right);
+  if not Narrow then
+    TextWidth := Max(1, TextWidth - Editors.Width - Editors.Margins.Left);
+  var TextHeight := SettingsDescriptionHeight(R, TextWidth);
+  var RowHeight := P.Padding.Top + P.Padding.Bottom + TextHeight;
+  if Narrow then
+    RowHeight := RowHeight + Editors.Height + Editors.Margins.Top;
+  P.Height := Max(IfThen(Narrow, 134, 72), RowHeight);
+  for var Binding in FFields do
+    if (Binding.RowView = R) and (Binding is TSliderSettingsBinding) then
+    begin
+      TSliderSettingsBinding(Binding).UpdateValueLabel;
+      Break;
+    end;
   // Mobile FMX can resize aligned rows after the view's layout pass. Keep
   // card and scroll-content heights in sync with those final row sizes.
   if not FBuilding and not FArranging then
@@ -2050,6 +2083,9 @@ begin
     for var D in FDevices do
       if (D.Control <> nil) and (D.Control.Owner = P) then
       begin
+        var Header := D.RowView.Text;
+        if Header.Visible and D.RowView.Detail.Visible then
+          Header.Height := SettingsDescriptionHeight(D.RowView, Max(1, P.Width - P.Padding.Left - P.Padding.Right));
         var Slot := D.Template.LayoutBindingPreview;
         Slot.Visible := (D.Assignments = nil) or (P.Width >= 600);
         Slot.Align := TAlignLayout.Client;
@@ -2074,7 +2110,6 @@ begin
               Slot.Height := 280;
               BodyHeight := BodyHeight + Slot.Height + Slot.Margins.Top + Slot.Margins.Bottom;
             end;
-          var Header := D.RowView.Text;
           var Footer := D.Template.LayoutBindingFooter;
           P.Height := P.Padding.Top + P.Padding.Bottom +
             Header.Height + Header.Margins.Top + Header.Margins.Bottom +
@@ -2126,7 +2161,7 @@ begin
   StorePage;
   FCategory := Index;
   if Index < SETTINGS_CATEGORY_VIDEO_AUDIO then
-    FPage := SETTINGS_PAGE_MAIN
+    FPage := 'main'
   else
     FPage := FCorePage;
   FBuilding := True;
@@ -2140,18 +2175,18 @@ begin
   BuildPage;
 end;
 
-procedure TSettingsView.SelectCore(Index: Integer; PreserveCategory: Boolean);
+procedure TSettingsView.SelectCore(const PageId: string; PreserveCategory: Boolean);
 begin
-  if FBuilding or (SettingsPlatforms.Find(Index) = nil) then
+  if FBuilding or (SettingsPlatforms.Find(PageId) = nil) then
     Exit;
 
   StorePage;
-  FCorePage := Index;
+  FCorePage := SettingsPlatforms.Require(PageId).PageId;
   FPlayer := 0;
   if (FCategory < SETTINGS_CATEGORY_VIDEO_AUDIO) and not PreserveCategory then
     FCategory := SETTINGS_CATEGORY_VIDEO_AUDIO;
   if FCategory < SETTINGS_CATEGORY_VIDEO_AUDIO then
-    FPage := SETTINGS_PAGE_MAIN
+    FPage := 'main'
   else
     FPage := FCorePage;
   FBuilding := True;
@@ -2176,6 +2211,23 @@ begin
   SelectCategory(FPagePicker.ItemIndex);
 end;
 
+function PlatformItemName(const PageId: string): string;
+begin
+  Result := 'ListBoxItemPlatform';
+  // Page IDs may contain punctuation; encode it instead of putting invalid
+  // characters in component names or making distinct IDs collide.
+  for var C in PageId do
+    if CharInSet(C, ['a'..'z', 'A'..'Z', '0'..'9']) then
+    begin
+      if Length(Result) = Length('ListBoxItemPlatform') then
+        Result := Result + UpCase(C)
+      else
+        Result := Result + C;
+    end
+    else
+      Result := Result + '_' + IntToHex(Ord(C), 4);
+end;
+
 procedure TSettingsView.RefreshPlatformList;
 begin
   var WasBuilding := FBuilding;
@@ -2187,11 +2239,11 @@ begin
     FPlatformPicker.Items.Clear;
     var Brand := '';
     var Matches := SettingsPlatforms.Matching(FPlatformSearch.Text);
-    for var platform in Matches do
+    for var Match in Matches do
     begin
-      if Brand <> platform.Brand then
+      if Brand <> Match.Brand then
       begin
-        Brand := platform.Brand;
+        Brand := Match.Brand;
         var Header := TListBoxGroupHeader.Create(ListBoxPlatforms);
         Header.Parent := ListBoxPlatforms;
         Header.Text := Brand;
@@ -2201,24 +2253,24 @@ begin
       end;
       var Item := TListBoxItem.Create(ListBoxPlatforms);
       Item.Parent := ListBoxPlatforms;
-      Item.Name := 'ListBoxItemPlatform' + IntToStr(platform.PageId);
-      Item.Tag := platform.PageId;
-      Item.Text := Translate(platform.Name);
+      Item.Name := PlatformItemName(Match.PageId);
+      Item.TagString := Match.PageId;
+      Item.Text := Translate(Match.Name);
       Item.Height := 44;
       Item.TextSettings.HorzAlign := TTextAlign.Leading;
       Item.TextSettings.Trimming := TTextTrimming.Character;
       Item.TextSettings.WordWrap := False;
       Item.StylesData['text.Margins.Left'] := 44;
-      CreatePlatformIcon(Item, platform.CoreId);
+      CreatePlatformIcon(Item, Match.CoreId);
       Item.StyleLookup := 'listboxitemstyle';
-      if platform.PageId = FCorePage then
+      if Match.PageId = FCorePage then
         ListBoxPlatforms.ItemIndex := Item.Index;
     end;
     // The compact selector remains complete even when the sidebar is filtered.
-    for var platform in SettingsPlatforms.Matching('') do
+    for var Match in SettingsPlatforms.Matching('') do
     begin
-      var Index := FPlatformPicker.Items.AddObject(platform.Brand + ' · ' + Translate(platform.Name), platform);
-      if platform.PageId = FCorePage then
+      var Index := FPlatformPicker.Items.AddObject(Match.Brand + ' · ' + Translate(Match.Name), Match);
+      if Match.PageId = FCorePage then
         FPlatformPicker.ItemIndex := Index;
     end;
     LabelNoPlatforms.Visible := Length(Matches) = 0;
@@ -2242,16 +2294,16 @@ begin
   FBuilding := True;
   try
     ListBoxPlatforms.ItemIndex := -1;
-    for var I := 0 to ListBoxPlatforms.Count - 1 do
-      if ListBoxPlatforms.ListItems[I].Tag = FCorePage then
+    for var i := 0 to ListBoxPlatforms.Count - 1 do
+      if ListBoxPlatforms.ListItems[i].TagString = FCorePage then
       begin
-        ListBoxPlatforms.ItemIndex := I;
+        ListBoxPlatforms.ItemIndex := i;
         Break;
       end;
-    for var I := 0 to FPlatformPicker.Items.Count - 1 do
-      if TSettingsPlatform(FPlatformPicker.Items.Objects[I]).PageId = FCorePage then
+    for var i := 0 to FPlatformPicker.Items.Count - 1 do
+      if TSettingsPlatform(FPlatformPicker.Items.Objects[i]).PageId = FCorePage then
       begin
-        FPlatformPicker.ItemIndex := I;
+        FPlatformPicker.ItemIndex := i;
         Break;
       end;
   finally
@@ -2261,9 +2313,8 @@ end;
 
 procedure TSettingsView.PlatformSelectionChange(Sender: TObject);
 begin
-  if not FBuilding and (ListBoxPlatforms.Selected <> nil) and
-    (ListBoxPlatforms.Selected.Tag > 0) then
-    SelectCore(ListBoxPlatforms.Selected.Tag, True);
+  if not FBuilding and (ListBoxPlatforms.Selected <> nil) and (ListBoxPlatforms.Selected.TagString <> '') then
+    SelectCore(ListBoxPlatforms.Selected.TagString, True);
 end;
 
 procedure TSettingsView.PlatformPickerChange(Sender: TObject);
@@ -2307,27 +2358,36 @@ begin
   RequestRebuild;
 end;
 
+function TSettingsView.DeviceContext(Port: Integer; const Device: string): TSettingsDeviceContext;
+begin
+  Result := Default(TSettingsDeviceContext);
+  Result.SystemId := CurrentCoreId;
+  Result.Port := Port;
+  Result.Device := Device;
+  Result.OnChange := VirtualDeviceChange;
+end;
+
 procedure TSettingsView.BuildPort(Port: Integer; const Caption: string);
 begin
   if FCategory <> SETTINGS_CATEGORY_CONTROLS then
     Heading('GroupPort' + IntToStr(Port + 1), 'Port ' + IntToStr(Port + 1), Port < 2);
   var Key := 'Port' + IntToStr(Port + 1);
-  if FPage = SETTINGS_PAGE_GW then
+  var FixedDevice := PlatformSettingsDevices(CurrentCoreId).FixedDevice(DeviceContext(Port, ''));
+  if FixedDevice <> '' then
   begin
-    // The handheld's controls are built in; only host input bindings are configurable.
-    FDrafts[FPage].WriteString('Ports', Key, 'pad');
-    BuildBindings(Port, 'pad');
+    FSession.Drafts[FPage].WriteString('Ports', Key, FixedDevice);
+    BuildBindings(Port, FixedDevice);
     Exit;
   end;
-  var Device := FDrafts[FPage].ReadString('Ports', Key, 'auto');
+  var Device := FSession.Drafts[FPage].ReadString('Ports', Key, 'auto');
   var Options := SettingsPlatforms.Find(FPage).PortOptions(Port);
   var C := Combo(Options.RowName, Options.Caption, Options.Description, 'Ports', Key,
     Options.Labels, Options.Values, Options.Default);
   if Options.SingleLineDescription then
   begin
     FFields.Last.Definition.SingleLineDescription := True;
-    FFields.Last.RowView.Detail.TextSettings.WordWrap := False;
-    FFields.Last.RowView.Detail.TextSettings.Trimming := TTextTrimming.Character;
+    FFields.Last.RowView.Detail.TextSettings.WordWrap := True;
+    FFields.Last.RowView.Detail.TextSettings.Trimming := TTextTrimming.None;
   end;
   // Normalize absent legacy values to the device displayed by the selector.
   for var F in FFields do
@@ -2360,10 +2420,10 @@ begin
       Labels[i + 1] := Translate('Mouse');
     Values[i + 1] := Devices[i].Id;
   end;
-  var SourceKey := 'Source' + IntToStr(Port + 1);
-  if (FPage = SETTINGS_PAGE_NES) and (Port = 4) then
-    SourceKey := 'SourceExpansion';
-  var SavedId := FDrafts[FPage].ReadString('Ports', SourceKey, '');
+  var Provider := PlatformSettingsDevices(CurrentCoreId);
+  var Context := DeviceContext(Port, Device);
+  var SourceKey := Provider.SourceKey(Context);
+  var SavedId := FSession.Drafts[FPage].ReadString('Ports', SourceKey, '');
   var Found := SavedId = '';
   for var Id in Values do
     if Id = SavedId then
@@ -2381,21 +2441,24 @@ begin
   Source.Tag := Port;
   SetChangeHandler(Source, DeviceChange);
   Source.Enabled := FInput <> nil;
-  if (Device = 'piano') then
-  begin
-    Check('RowPhysicalkeyboard2' + IntToStr(Port), 'Physical keyboard', 'Notes Z'#8211'M and Q'#8211'P; Space is the pedal. An on-screen piano is als' + 'o available.', 'Ports',
-      'KeyboardEnabled', True);
-  end;
-  if Device = 'zapper' then
-    AddBinding(Translate('Zapper trigger'), ZapperTriggerAction, Port)
+  Provider.BindingFields(Context, FContext);
+  var Bindings := Provider.DirectBindings(Context);
+  if Length(Bindings) > 0 then
+    for var i := 0 to High(Bindings) do
+    begin
+      var Suffix := '';
+      if i > 0 then
+        Suffix := '_' + IntToStr(i);
+      AddBinding(Bindings[i].Caption, Bindings[i].Action, Port, Suffix);
+    end
   else
     BuildDevice(Port, Device);
 end;
 
-function TSettingsView.AddBinding(const Caption: string; Action, Port: Integer): TButton;
+function TSettingsView.AddBinding(const Caption: string; Action, Port: Integer; const IdSuffix: string): TButton;
 begin
   var Capture: TButton := nil;
-  AddSettingsControl(FContext, 'RowBinding' + IntToStr(Port), 'Zapper trigger',
+  AddSettingsControl(FContext, 'RowBinding' + IntToStr(Port) + IdSuffix, Caption,
     'Click Assign, then press a button or direction on the device.', TSettingsRowKind.Binding,
     function(R: TSettingsRowView): TControl
     begin
@@ -2451,80 +2514,41 @@ begin
       Text.Align := TAlignLayout.Top;
       Text.Height := 34;
       D.RowView.Detail.Visible := False;
-      if Device = 'powerpad' then
-      begin
-        var Pad := TNesPowerPad.Create(P);
-        Pad.OnChange := VirtualDeviceChange;
-        D.Control := Pad;
-        var Diagram := TDeviceCallouts.Create(P);
-        Diagram.Configure(Pad, FInput, ROM_SYSTEM_NES, Port, CalloutClick);
-        D.Diagram := Diagram;
-        P.Height := 448;
-      end
-      else if Device = 'subor' then
-      begin
-        var Keyboard := TNesSuborKeyboard.Create(P);
-        Keyboard.OnChange := VirtualDeviceChange;
-        D.Control := Keyboard;
-      end
-      else if Device = 'famicom' then
-      begin
-        var Keyboard := TNesFamicomKeyboard.Create(P);
-        Keyboard.OnChange := VirtualDeviceChange;
-        D.Control := Keyboard;
-      end
-      else if Device = 'piano' then
-      begin
-        var Piano := TNesMiraclePiano.Create(P);
-        Piano.OnChange := VirtualDeviceChange;
-        D.Control := Piano;
-      end
-      else
-      begin
-        var Pad := TScreenGamepad.Create(P);
-        Pad.Configure(TPlatformRegistry.Require(SettingsCoreIds[FPage]).System, Device,
-          CoreButtons(SettingsCoreIds[FPage], Device));
-        Pad.OnChange := VirtualDeviceChange;
-        D.Control := Pad;
-        var Diagram := TDeviceCallouts.Create(P);
-        Diagram.Configure(Pad, FInput, SettingsCoreIds[FPage], Port, CalloutClick);
-        D.Diagram := Diagram;
-        P.Height := 460;
-      end;
+      D.Provider := PlatformSettingsDevices(CurrentCoreId);
+      D.Context := DeviceContext(Port, Device);
+      D.Context.Owner := P;
+      var DiagramOwner := P;
+      var DiagramInput := FInput;
+      var DiagramCore := CurrentCoreId;
+      var DiagramPort := Port;
+      D.Context.CreateDiagram :=
+        function(Control: TControl): TControl
+        begin
+          var Diagram := TDeviceCallouts.Create(DiagramOwner);
+          Diagram.Configure(Control, DiagramInput, DiagramCore, DiagramPort, CalloutClick);
+          Result := Diagram;
+        end;
+      var Visual := D.Provider.CreateVisual(D.Context);
+      D.Control := Visual.Control;
+      D.Diagram := Visual.Diagram;
+      if D.Control = nil then
+        raise EInvalidOpException.Create('Settings device provider returned no control');
+      P.Height := Visual.InitialHeight;
       var Preview := D.Control;
       if D.Diagram <> nil then
         Preview := D.Diagram;
       D.Template.LayoutPadAssignments.Visible := False;
-      if (FPage = SETTINGS_PAGE_GW) or (D.Control is TScreenGamepad) then
+      if Visual.ShowAssignments then
       begin
         D.Assignments := D.Template.LayoutPadAssignments;
         D.Assignments.Visible := True;
         D.AssignmentList := D.Template.LayoutPadAssignmentList;
         var Y: Single := 8;
-        for var B in CoreButtons(SettingsCoreIds[FPage], Device) do
+        for var Binding in D.Provider.Assignments(D.Context) do
         begin
-          AddDeviceAssignment(D, P, PadAction(Port, B), CoreButtonName(SettingsCoreIds[FPage], B));
+          AddDeviceAssignment(D, P, Binding.Action, Binding.Caption);
           Y := Y + 40;
         end;
-        if SettingsCoreIds[FPage] = ROM_SYSTEM_N64 then
-        begin
-          AddDeviceAssignment(D, P, N64LAction + Port, 'L');
-          Y := Y + 40;
-        end;
-        // A digital pad has only L2 beyond the logical pad.
-        if SettingsCoreIds[FPage] = ROM_SYSTEM_PS1 then
-          for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
-            if (Extra = TPS1Extra.L2) or (Device = 'pad-analog') then
-            begin
-              AddDeviceAssignment(D, P, PS1Action(Port, Extra), PS1ExtraName(Extra));
-              Y := Y + 40;
-            end;
-        if SettingsCoreIds[FPage] = ROM_SYSTEM_DC then
-          for var Extra := Low(TDCExtra) to High(TDCExtra) do
-          begin
-            AddDeviceAssignment(D, P, DCAction(Port, Extra), DCExtraName(Extra));
-            Y := Y + 40;
-          end;
         D.AssignmentList.Height := Y;
       end;
       Preview.Parent := D.Template.LayoutBindingPreview;
@@ -2608,92 +2632,15 @@ begin
 end;
 
 procedure TSettingsView.VirtualDeviceChange(Sender: TObject);
-const
-  Mapping: array[TNesButton] of TEmulatorButton = (TEmulatorButton.A,
-    TEmulatorButton.B, TEmulatorButton.Select, TEmulatorButton.Start,
-    TEmulatorButton.Up, TEmulatorButton.Down, TEmulatorButton.Left, TEmulatorButton.Right);
-  Notes: array[0..11] of string = ('C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B');
 begin
   if FBuilding or (FInput = nil) then
     Exit;
-
   for var D in FDevices do
     if D.Control = Sender then
     begin
-      var Action := -1;
-      var Caption := '';
-      if Sender is TScreenGamepad then
-      begin
-        if (SettingsCoreIds[FPage] = ROM_SYSTEM_N64) and
-          ((TScreenGamepad(Sender).AuxiliaryButtons and 1) <> 0) then
-        begin
-          Action := N64LAction + D.Port;
-          Caption := Translate('Button ') + 'L';
-        end;
-        if SettingsCoreIds[FPage] = ROM_SYSTEM_PS1 then
-          for var Extra := Low(TPS1Extra) to High(TPS1Extra) do
-            if (TScreenGamepad(Sender).AuxiliaryButtons and (1 shl Ord(Extra))) <> 0 then
-            begin
-              Action := PS1Action(D.Port, Extra);
-              Caption := Translate('Button ') + Translate(PS1ExtraName(Extra));
-            end;
-        for var B in TScreenGamepad(Sender).Buttons do
-          if B in CoreButtons(SettingsCoreIds[FPage], D.Device) then
-          begin
-            Action := PadAction(D.Port, B);
-            Caption := Translate('Button ') + Translate(CoreButtonName(SettingsCoreIds[FPage], B));
-            Break;
-          end;
-      end;
-
-      if Sender is TNesPowerPad then
-        for var B in TNesPowerPad(Sender).Buttons do
-        begin
-          Action := PowerPadAction + B - 1;
-          Caption := Translate('Pad ') + IntToStr(B);
-          Break;
-        end;
-
-      if Sender is TNesSuborKeyboard then
-        for var K in TNesSuborKeyboard(Sender).Keys do
-        begin
-          Action := SuborAction + Ord(K);
-          Caption := Translate('Key ') + Copy(GetEnumName(TypeInfo(TSuborKey), Ord(K)), 3, MaxInt);
-          Break;
-        end;
-
-      if Sender is TNesFamicomKeyboard then
-        for var K in TNesFamicomKeyboard(Sender).Keys do
-        begin
-          Action := FamicomAction + Ord(K);
-          Caption := Translate('Key ') + Copy(GetEnumName(TypeInfo(TFamicomKey), Ord(K)), 3, MaxInt);
-          Break;
-        end;
-
-      if Sender is TNesMiraclePiano then
-      begin
-        for var K in TNesMiraclePiano(Sender).Keys do
-        begin
-          Action := PianoAction + K;
-          if K < 49 then
-            Caption := Translate('Note ') + Notes[K mod 12] + IntToStr(2 + K div 12)
-          else
-            Caption := Translate('Piano button ') + IntToStr(K);
-          Break;
-        end;
-
-        if Action < 0 then
-          for var B in TNesMiraclePiano(Sender).Buttons do
-          begin
-            Action := PadAction(0, Mapping[B]);
-            Caption := Translate('Button ') + CoreButtonName(ROM_SYSTEM_NES, Mapping[B]);
-            Break;
-          end;
-      end;
-      if Action < 0 then
-        Exit;
-
-      SelectBinding(D, Action, Caption);
+      var Binding := D.Provider.Selection(D.Context, D.Control);
+      if Binding.Action >= 0 then
+        SelectBinding(D, Binding.Action, Binding.Caption);
       Exit;
     end;
 end;
@@ -2827,22 +2774,23 @@ begin
   if FBuilding then
     Exit;
   StorePage;
-  if (FPalette <> nil) and (FPreview is TSettingsPreview) then
-    TSettingsPreview(FPreview).PaletteIndex :=
-      FPalette.ItemIndex;
+  if (FPalette <> nil) and (FPaletteProvider <> nil) and (FPreview is TShaderBitmap) then
+    FPaletteProvider.UpdatePreview(TShaderBitmap(FPreview), PalettePreviewContext);
   UpdateShaderPreview;
 end;
 
 procedure TSettingsView.ResetClick(Sender: TObject);
 begin
+  if FPageBuildError <> '' then
+    Exit;
   CancelCapture;
   for var Field in FFields do
     Field.Definition.Reset;
   if (FCategory = SETTINGS_CATEGORY_CONTROLS) and (FInput <> nil) then
   begin
-    FDrafts[FPage].DeleteKey('FMXInput', 'Bindings');
-    LoadInputBindings(FInput, FDrafts[FPage], SettingsCoreIds[FPage]);
-    SaveInputBindings(FInput, FDrafts[FPage]);
+    FSession.Drafts[FPage].DeleteKey('FMXInput', 'Bindings');
+    LoadInputBindings(FInput, FSession.Drafts[FPage], CurrentCoreId);
+    SaveInputBindings(FInput, FSession.Drafts[FPage]);
   end;
   BuildPage;
   LabelStatus.Text := Translate('Section reset. Click Apply to save.');
@@ -2865,12 +2813,16 @@ begin
     begin
       Section := F.Section;
       Key := F.Key;
+      if F.Definition is TPathSetting then
+      begin
+        FPickingFilter := TPathSetting(F.Definition).FileFilter;
+        FPickingTitle := TPathSetting(F.Definition).PickerTitle;
+      end;
       Break;
     end;
 
   var Page := FPage;
   var Alive: TFunc<Boolean> := FAlive;
-  FPickingBootROM := Section = 'Boot';
   FPickingTranslation := (Section = 'General') and (Key = 'TranslationFile');
   PickLocation(Row.Folder, Edit.Text,
     procedure(const Selection: TStorageSelection)
@@ -2882,7 +2834,7 @@ begin
         LabelStatus.Text := Selection.Error
       else if not Selection.Cancelled then
       begin
-        FDrafts[Page].WriteString(Section, Key, Selection.Location);
+        FSession.Drafts[Page].WriteString(Section, Key, Selection.Location);
         if FPage = Page then
           for var F in FFields do
             if (F.Section = Section) and (F.Key = Key) then
@@ -2912,10 +2864,10 @@ begin
           var Folder := FStorage.DetectRomFolder(Selection.Location, platform.Id);
           if Folder = '' then
             Continue;
-          FDrafts[SETTINGS_PAGE_MAIN].WriteString('RomFolders', platform.Id, Folder);
+          FSession.Drafts['main'].WriteString('RomFolders', platform.Id, Folder);
           Inc(Count);
         end;
-        if (FPage = SETTINGS_PAGE_MAIN) and (FCategory = SETTINGS_CATEGORY_LIBRARY) then
+        if (FPage = 'main') and (FCategory = SETTINGS_CATEGORY_LIBRARY) then
           BuildPage(True);
         LabelStatus.Text := Format(Translate('Platform folders found: %d. Click Apply to save changes.'), [Count]);
       except
@@ -2947,15 +2899,10 @@ begin
         Dialog.Title := Translate('Choose translation file');
         Dialog.Filter := Translate('Translation files (*.txt;*.lng)|*.txt;*.lng|All files|*.*');
       end
-      else if FPickingBootROM then
-      begin
-        Dialog.Title := Translate('Choose boot ROM');
-        Dialog.Filter := 'Boot ROM (*.bin;*.rom;*.gb)|*.bin;*.rom;*.gb|All files|*.*';
-      end
       else
       begin
-        Dialog.Title := Translate('Choose cassette');
-        Dialog.Filter := Translate('Cassettes (*.tape)|*.tape|All files|*.*');
+        Dialog.Title := Translate(FPickingTitle);
+        Dialog.Filter := Translate(FPickingFilter);
       end;
       Dialog.FileMustExist := True;
     end;
@@ -3033,30 +2980,30 @@ end;
 
 procedure TSettingsView.ApplyClick(Sender: TObject);
 begin
+  if FPageBuildError <> '' then
+    Exit;
   try
     CancelCapture;
     StorePage;
     FContext.Validate;
     var Translation := FormStyles.LoadTranslation(FStorage,
-      FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'TranslationFile', '').Trim,
-      FDrafts[SETTINGS_PAGE_MAIN].ReadString('General', 'Language', 'en'));
+      FSession.Drafts['main'].ReadString('General', 'TranslationFile', '').Trim,
+      FSession.Drafts['main'].ReadString('General', 'Language', 'en'));
     Translation.Free; // Validate the file before writing any settings.
-    for var platform in TPlatformRegistry.All do
+    for var SettingsPlatform in TPlatformRegistry.All do
     begin
-      var Folder := FDrafts[SETTINGS_PAGE_MAIN].ReadString('RomFolders', platform.Id, '').Trim;
+      var Folder := FSession.Drafts['main'].ReadString('RomFolders', SettingsPlatform.Id, '').Trim;
       if (Folder <> '') and not FStorage.FolderExists(Folder) then
-        raise Exception.Create(platform.Name + ': ' + Translate('ROM folder not found. Choose an existing folder.'));
+        raise Exception.Create(SettingsPlatform.Name + ': ' + Translate('ROM folder not found. Choose an existing folder.'));
     end;
-    FDrafts[SETTINGS_PAGE_MAIN].DeleteKey('General', 'Path');
+    FSession.Drafts['main'].DeleteKey('General', 'Path');
 
-    for var platform in SettingsPlatforms.Items do
+    for var SettingsPlatform in SettingsPlatforms.Items do
     begin
-      var Draft := FDrafts[platform.PageId];
+      var Draft := FSession.Drafts[SettingsPlatform.PageId];
       Draft.DeleteKey('Audio', 'Enabled');
-      Draft.DeleteKey('Audio', 'FMEnabled');
-      Draft.DeleteKey('SegaCD', 'AudioEnabled');
-      Draft.DeleteKey('Sega32X', 'AudioEnabled');
-      platform.Validate(Draft);
+      SettingsPlatform.PrepareSave(Draft);
+      SettingsPlatform.Validate(Draft);
     end;
 
     // Config writes are per core and retain all settings that this UI does not expose.

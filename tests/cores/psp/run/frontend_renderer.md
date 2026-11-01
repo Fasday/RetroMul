@@ -22,7 +22,7 @@ it during play does not switch the active renderer. Reset/LoadExec of a running
 game retain the choice and the backend. Reset of an already faulted/finished
 worker already recreated the worker before this change, so that is a restart.
 
-`Core.PSP.Renderer.TPSPRendererSession` owns the backend inside
+`Core.Platforms.PSP.Renderer.TPSPRendererSession` owns the backend inside
 `TPSPWorker.Execute`, in a `try/finally`. It creates and destroys Vulkan on that
 worker thread, detaches the engine seam before destruction, and releases it
 before the console, GE and memory are destroyed. The existing memory reset
@@ -34,7 +34,7 @@ Sync fails, and the arithmetic self-test frees any partially created temporary
 resources on construction failure. Device-loss recovery/replay during rendering
 is still not implemented; real run failures use the existing worker error path.
 
-Audio queue pacing, `Core.PSP.Playback`, live JIT selection, system language,
+Audio queue pacing, `Core.Platforms.PSP.Playback`, live JIT selection, system language,
 confirm-button choice and nickname are unchanged. The timing anchors are set
 after renderer initialization so Vulkan startup time does not become guest time.
 No raster/texture arithmetic or GE-engine seam was changed for frontend wiring.

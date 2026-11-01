@@ -21,7 +21,8 @@ type
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
     procedure ButtonActivated; override;
   public
-    class var TouchHapticsEnabled: Boolean;
+    class var
+      TouchHapticsEnabled: Boolean;
     destructor Destroy; override;
     procedure AttachToForm(Form: TCommonCustomForm);
     class function PreferredHeight(AvailableWidth, AvailableHeight: Single): Single; static;
@@ -66,6 +67,8 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure ReleaseAll; override;
+    // Called when the UI language changes; input state and geometry stay intact.
+    procedure ApplyLanguage; virtual;
     function ButtonBounds(Button: TEmulatorButton): TRectF;
     function AuxiliaryButtonBounds(Index: Integer): TRectF;
     property AuxiliaryButtons: Cardinal read FAuxiliaryButtons;
@@ -223,6 +226,10 @@ begin
   inherited;
 end;
 
+procedure TPlatformGamepad.ApplyLanguage;
+begin
+end;
+
 procedure TPlatformGamepad.Bind(Element: TVirtualElement; Part: Integer; Button: TEmulatorButton);
 var
   B: TBinding;
@@ -374,7 +381,8 @@ begin
   for var B in FBindings do
     B.Element.PartEnabled[B.Part] := B.Button in Value;
   for var E in FAuxiliary do
-    if E <> nil then E.PartEnabled[0] := Value <> [];
+    if E <> nil then
+      E.PartEnabled[0] := Value <> [];
   for var Stick in [FStick, FRightStick] do
     if Stick <> nil then
       for var Part := 0 to Stick.PartCount - 1 do
@@ -417,3 +425,4 @@ initialization
   TVirtualGamepadControl.TouchHapticsEnabled := True;
 
 end.
+

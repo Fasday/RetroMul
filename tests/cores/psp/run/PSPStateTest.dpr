@@ -4,7 +4,7 @@ program PSPStateTest;
 
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, Core.Emulation.Types,
-  PSP.Console, PSP.Media, PSP.GE, PSP.IO, Core.PSP.Renderer;
+  PSP.Console, PSP.Media, PSP.GE, PSP.IO, Core.Platforms.PSP.Renderer;
 
 function FrameInput(Frame: Integer): TEmulatorInput;
   procedure Press(Button: TEmulatorButton; At: Integer);

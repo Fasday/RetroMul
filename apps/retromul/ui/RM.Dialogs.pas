@@ -9,6 +9,7 @@ uses
 
 type
   TRetroDialogKind = (Information, Warning, Error, Confirmation, Loading);
+
   TRetroDialogChoice = (Accept, Alternative, Cancel);
 
   TRetroDialog = class(TFrame)
@@ -32,9 +33,7 @@ type
     procedure Resize; override;
   public
     constructor Create(AOwner: TComponent); override;
-    procedure Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
-      const AcceptText: string = ''; const CancelText: string = '';
-      const AlternativeText: string = ''; const OnAlternative: TProc = nil);
+    procedure Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>; const AcceptText: string = ''; const CancelText: string = ''; const AlternativeText: string = ''; const OnAlternative: TProc = nil);
     procedure FocusDefault;
     procedure HandleKey(var Key: Word; var KeyChar: WideChar);
   end;
@@ -42,11 +41,13 @@ type
 // All dialogs are asynchronous and belong to the host form. Call on the UI thread.
 procedure ShowRetroMessage(Owner: TComponent; const Text: string; Kind: TRetroDialogKind = TRetroDialogKind.Error);
 
-procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>;
-  const AcceptText: string = ''; const CancelText: string = '');
+// Core messages remain language-neutral on the worker. Translate their
+// parameters on the UI thread, preserving filenames and side letters.
+function TranslateCoreMessage(const Text: string): string;
 
-procedure ShowRetroChoice(Owner: TComponent; const Text: string; const OnResult: TProc<TRetroDialogChoice>;
-  const AcceptText, AlternativeText, CancelText: string);
+procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>; const AcceptText: string = ''; const CancelText: string = '');
+
+procedure ShowRetroChoice(Owner: TComponent; const Text: string; const OnResult: TProc<TRetroDialogChoice>; const AcceptText, AlternativeText, CancelText: string);
 
 procedure ShowRetroLoading(Owner: TComponent; const Text: string; const OnCancel: TProc);
 
@@ -62,7 +63,7 @@ implementation
 
 uses
   System.Math, System.Generics.Collections, FMX.TextLayout, FMX.Graphics,
-  RM.Icons;
+  RM.Icons, RM.Styles, System.RegularExpressions;
 
 {$R *.fmx}
 
@@ -95,9 +96,7 @@ type
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
-    procedure Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
-      const AcceptText: string = ''; const CancelText: string = '';
-      const AlternativeText: string = ''; const OnAlternative: TProc = nil);
+    procedure Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>; const AcceptText: string = ''; const CancelText: string = ''; const AlternativeText: string = ''; const OnAlternative: TProc = nil);
   end;
 
 function FindHost(Form: TCustomForm; CreateIfMissing: Boolean): TRetroDialogHost;
@@ -131,36 +130,164 @@ begin
     Result := TCustomForm(Application.MainForm);
 end;
 
+// Match only complete dictionary templates. Substitutions are already formatted by
+// the core: keep their text verbatim (Unicode paths, hex addresses, large numbers).
+function TryTranslateCoreFormat(const Text, Key: string; out Value: string): Boolean;
+const
+  TokenPattern = '%(?:(\d+):)?[-]?[0-9]*(?:\.[0-9]+)?[sSdDuUxX]|%%';
+begin
+  Result := False;
+  var Tokens := TRegEx.Matches(Key, TokenPattern);
+  if Tokens.Count = 0 then
+    Exit;
+  var Pattern := '\A';
+  var Position := 0;
+  var Count := 0;
+  for var Token in Tokens do
+  begin
+    Pattern := Pattern + TRegEx.Escape(Key.Substring(Position, Token.Index - 1 - Position));
+    if Token.Value = '%%' then
+      Pattern := Pattern + '%'
+    else
+    begin
+      Inc(Count);
+      case UpCase(Token.Value[Length(Token.Value)]) of
+        'D', 'U': Pattern := Pattern + '( *[+-]?[0-9]+)';
+        'X': Pattern := Pattern + '( *[0-9A-Fa-f]+)';
+      else
+        Pattern := Pattern + '([^\r\n]*)';
+      end;
+    end;
+    Position := Token.Index - 1 + Token.Length;
+  end;
+  if Count = 0 then
+    Exit;
+  Pattern := Pattern + TRegEx.Escape(Key.Substring(Position)) + '\z';
+  var Match := TRegEx.Match(Text, Pattern);
+  if not Match.Success then
+    Exit;
+
+  var Arguments := TDictionary<Integer, string>.Create;
+  var Used := TDictionary<Integer, Boolean>.Create;
+  try
+    var Index := 0;
+    var Group := 1;
+    for var Token in Tokens do
+      if Token.Value <> '%%' then
+      begin
+        if (Token.Groups.Count > 1) and Token.Groups[1].Success then
+          if not TryStrToInt(Token.Groups[1].Value, Index) then
+            Exit;
+        var Argument := Match.Groups[Group].Value;
+        var Previous: string;
+        if Arguments.TryGetValue(Index, Previous) and (Previous <> Argument) then
+          Exit;
+        Arguments.AddOrSetValue(Index, Argument);
+        Inc(Index);
+        Inc(Group);
+      end;
+
+    var Localized := FormStyles.TranslateKey(Key);
+    Value := '';
+    Position := 0;
+    Index := 0;
+    for var Token in TRegEx.Matches(Localized, TokenPattern) do
+    begin
+      Value := Value + Localized.Substring(Position, Token.Index - 1 - Position);
+      if Token.Value = '%%' then
+        Value := Value + '%'
+      else
+      begin
+        if (Token.Groups.Count > 1) and Token.Groups[1].Success then
+          if not TryStrToInt(Token.Groups[1].Value, Index) then
+            Exit;
+        var Argument: string;
+        if not Arguments.TryGetValue(Index, Argument) then
+          Exit;
+        Used.AddOrSetValue(Index, True);
+        Value := Value + Argument;
+        Inc(Index);
+      end;
+      Position := Token.Index - 1 + Token.Length;
+    end;
+    Value := Value + Localized.Substring(Position);
+    // A malformed custom translation must not silently drop error details.
+    Result := Used.Count = Arguments.Count;
+  finally
+    Used.Free;
+    Arguments.Free;
+  end;
+end;
+
+function TranslateCoreMessage(const Text: string): string;
+begin
+  if FormStyles <> nil then
+    Result := FormStyles.TranslateKey(Text)
+  else
+    Result := Translate(Text);
+  if (Result <> Text) or (Text = '') then
+    Exit;
+  if FormStyles <> nil then
+    for var Key in FormStyles.Lang.Original do
+      if Key.Contains('%') and TryTranslateCoreFormat(Text, Key, Result) then
+        Exit;
+
+  // These prefixes wrap another error, rather than a filename or other data.
+  for var Prefix in TArray<string>.Create('Unable to open game: ', 'Autosave failed: ',
+    'Input error: ', 'Snapshot: ', 'CPS audio: ', 'CPS save: ', 'N64 save: ',
+    'PS1 audio: ', 'PS1 save: ', 'Dreamcast audio: ', 'Dreamcast save: ', 'NDS raster: ') do
+    if Text.StartsWith(Prefix) then
+      Exit(Translate(Prefix) + TranslateCoreMessage(Text.Substring(Prefix.Length)));
+
+  // Workers may preserve the exception class before the actual message.
+  var ExceptionText := TRegEx.Match(Text, '\A(E[A-Za-z][A-Za-z0-9_.]*): ([\s\S]+)\z');
+  if ExceptionText.Success then
+    Exit(ExceptionText.Groups[1].Value + ': ' + TranslateCoreMessage(ExceptionText.Groups[2].Value));
+
+  var BreakAt := Text.IndexOf(#10);
+  if BreakAt >= 0 then
+  begin
+    var LineEnd := BreakAt;
+    if (LineEnd > 0) and (Text[LineEnd] = #13) then
+      Dec(LineEnd);
+    Exit(TranslateCoreMessage(Text.Substring(0, LineEnd)) +
+      Text.Substring(LineEnd, BreakAt + 1 - LineEnd) + TranslateCoreMessage(Text.Substring(BreakAt + 1)));
+  end;
+  Result := Text;
+end;
+
 procedure ShowRetroMessage(Owner: TComponent; const Text: string; Kind: TRetroDialogKind);
 begin
   var Host := FindHost(OwnerForm(Owner), True);
   if Host <> nil then
-    Host.Enqueue(Owner, Text, Kind, nil);
+    Host.Enqueue(Owner, TranslateCoreMessage(Text), Kind, nil);
 end;
 
-procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>;
-  const AcceptText, CancelText: string);
+procedure ShowRetroConfirmation(Owner: TComponent; const Text: string; const OnResult: TProc<Boolean>; const AcceptText, CancelText: string);
 begin
   var Host := FindHost(OwnerForm(Owner), True);
   if Host <> nil then
     Host.Enqueue(Owner, Text, TRetroDialogKind.Confirmation, OnResult, AcceptText, CancelText);
 end;
 
-procedure ShowRetroChoice(Owner: TComponent; const Text: string; const OnResult: TProc<TRetroDialogChoice>;
-  const AcceptText, AlternativeText, CancelText: string);
+procedure ShowRetroChoice(Owner: TComponent; const Text: string; const OnResult: TProc<TRetroDialogChoice>; const AcceptText, AlternativeText, CancelText: string);
 begin
   var Host := FindHost(OwnerForm(Owner), True);
   if Host <> nil then
     Host.Enqueue(Owner, Text, TRetroDialogKind.Confirmation,
       procedure(Confirmed: Boolean)
       begin
-        if not Assigned(OnResult) then Exit;
-        if Confirmed then OnResult(TRetroDialogChoice.Accept)
-        else OnResult(TRetroDialogChoice.Cancel);
+        if not Assigned(OnResult) then
+          Exit;
+        if Confirmed then
+          OnResult(TRetroDialogChoice.Accept)
+        else
+          OnResult(TRetroDialogChoice.Cancel);
       end, AcceptText, CancelText, AlternativeText,
       procedure
       begin
-        if Assigned(OnResult) then OnResult(TRetroDialogChoice.Alternative);
+        if Assigned(OnResult) then
+          OnResult(TRetroDialogChoice.Alternative);
       end);
 end;
 
@@ -231,8 +358,7 @@ begin
   FReady := True;
 end;
 
-procedure TRetroDialog.Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
-  const AcceptText, CancelText, AlternativeText: string; const OnAlternative: TProc);
+procedure TRetroDialog.Configure(const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>; const AcceptText, CancelText, AlternativeText: string; const OnAlternative: TProc);
 const
   Titles: array[TRetroDialogKind] of string = ('Information', 'Warning', 'Error', 'Confirmation', 'Loading...');
   Symbols: array[TRetroDialogKind] of string = ('i', '!', '!', '?', '');
@@ -294,7 +420,8 @@ end;
 procedure TRetroDialog.AlternativeClick(Sender: TObject);
 begin
   var Callback := FOnAlternative;
-  if Assigned(Callback) then Callback();
+  if Assigned(Callback) then
+    Callback();
 end;
 
 procedure TRetroDialog.HandleKey(var Key: Word; var KeyChar: WideChar);
@@ -328,7 +455,8 @@ end;
 
 procedure TRetroDialog.Arrange;
 begin
-  if FArranging then Exit;
+  if FArranging then
+    Exit;
   FArranging := True;
   try
     var W := Max(1, Min(560, Width - 32));
@@ -396,7 +524,8 @@ begin
             Button.Position.Y := I * 56;
             Button.Height := 48;
             Button.Margins.Right := 0;
-            if I < High(Buttons) then Button.Margins.Bottom := 8;
+            if I < High(Buttons) then
+              Button.Margins.Bottom := 8;
           end
           else
           begin
@@ -563,7 +692,8 @@ begin
     if InvokeCallback then
       if Alternative then
       begin
-        if Assigned(AlternativeCallback) then AlternativeCallback();
+        if Assigned(AlternativeCallback) then
+          AlternativeCallback();
       end
       else if Assigned(Callback) then
         Callback(Confirmed);
@@ -573,8 +703,7 @@ begin
   end;
 end;
 
-procedure TRetroDialogHost.Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>;
-  const AcceptText, CancelText, AlternativeText: string; const OnAlternative: TProc);
+procedure TRetroDialogHost.Enqueue(Requester: TComponent; const Text: string; Kind: TRetroDialogKind; const OnResult: TProc<Boolean>; const AcceptText, CancelText, AlternativeText: string; const OnAlternative: TProc);
 begin
   if not Assigned(OnResult) then
   begin

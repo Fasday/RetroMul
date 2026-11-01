@@ -4,7 +4,7 @@ program PSPWorkerSnapshotTest;
 
 uses
   System.SysUtils, System.Classes, System.IOUtils, System.Diagnostics, Core.Emulation,
-  Core.Storage, Core.Adapter.PSP;
+  Core.Storage, Core.Platforms.PSP.Adapter;
 
 procedure Require(Value: Boolean; const Text: string);
 begin

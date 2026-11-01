@@ -43,7 +43,8 @@ function ARMSub(A, B: Cardinal): Cardinal; inline;
 
 implementation
 
-uses HW.ARM.Shifter;
+uses
+  HW.ARM;
 
 function ARMAdd(A, B: Cardinal): Cardinal;
 begin

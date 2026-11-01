@@ -3,7 +3,7 @@ unit PSPFrontendCompileUnit;
 interface
 
 uses
-  Core.Adapter.PSP, Core.PSP.Renderer, RM.Settings.PSP;
+  Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer, RM.Platforms.PSP.Settings;
 
 implementation
 

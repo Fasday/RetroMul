@@ -37,13 +37,17 @@ procedure RetireSettingsControl(Control: TControl);
 implementation
 
 uses
-  FMX.ListBox, FMX.SpinBox;
+  FMX.ListBox, FMX.SpinBox, RM.Controls.Lifetime;
 
 type
   TSettingsControlAccess = class(TControl);
 
 function AddSettingsControl(Page: TSettingsPageBuilder; const Id, Caption, Description: string; RowKind: TSettingsRowKind; const Factory: TSettingsControlFactory): TSettingsControlDefinition;
 begin
+  if Page = nil then
+    raise EArgumentNilException.Create('Page');
+  if not Assigned(Factory) then
+    raise EArgumentNilException.Create('Factory');
   Result := TSettingsControlDefinition.Create;
   Result.RowKind := RowKind;
   Result.Factory := Factory;
@@ -51,52 +55,10 @@ begin
 end;
 
 procedure DisconnectSettingsControl(Control: TControl);
-begin
-  // Clear FMX's reference as well as its native capture before detaching.
-  var Root := Control.Root;
-  if (Root <> nil) and (Root.Captured <> nil) then
-  begin
-    var Captured := Root.Captured.GetObject;
-    if (Captured = Control) or Control.IsChild(Captured) then
-      Root.SetCaptured(nil);
-  end;
-  var ControlAccess := TSettingsControlAccess(Control);
-  ControlAccess.OnClick := nil;
-  ControlAccess.OnDblClick := nil;
-  ControlAccess.OnMouseDown := nil;
-  ControlAccess.OnMouseUp := nil;
-  ControlAccess.OnMouseMove := nil;
-  ControlAccess.OnMouseWheel := nil;
-  ControlAccess.OnResize := nil;
-  ControlAccess.OnKeyDown := nil;
-  ControlAccess.OnKeyUp := nil;
-  ControlAccess.OnEnter := nil;
-  ControlAccess.OnExit := nil;
-  ControlAccess.TagObject := nil;
-  if Control is TComboBox then
-    TComboBox(ControlAccess).OnChange := nil;
-  if Control is TSwitch then
-    TSwitch(ControlAccess).OnSwitch := nil;
-  if Control is TSpinBox then
-    TSpinBox(ControlAccess).OnChange := nil;
-  if Control is TEdit then
-    TEdit(ControlAccess).OnChangeTracking := nil;
-  if Control is TTrackBar then
-    TTrackBar(ControlAccess).OnChange := nil;
-  if ControlAccess.ChildrenCount > 0 then
-    for var Child in ControlAccess.Children.ToArray do
-      if Child is TControl then
-        DisconnectSettingsControl(TControl(Child));
-  Control.Name := '';
-end;
+begin RM.Controls.Lifetime.DisconnectControl(Control); end;
 
 procedure RetireSettingsControl(Control: TControl);
-begin
-  DisconnectSettingsControl(Control);
-  Control.Visible := False;
-  Control.Parent := nil;
-  Control.Release;
-end;
+begin RM.Controls.Lifetime.RetireControl(Control); end;
 
 function CreateSettingsRow(Owner: TComponent; Kind: TSettingsRowKind; const Id, Caption, Description: string): TSettingsRowView;
 begin
