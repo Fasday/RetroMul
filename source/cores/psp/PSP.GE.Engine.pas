@@ -54,6 +54,11 @@ type
     On: Boolean;
     Kind, LType: Integer;
     Pos, SpotDir: TGEVec3;
+    // The spot direction as the lighting unit takes it: its components cut
+    // to 24-bit floats and RSqrt24 of their squared length.
+    SpotRaw: TGEVec3;
+    SpotRS: Single;
+    SpotFinite: Boolean;
     KA, KB, KC, Cutoff, Expo: Single;
     SpotPositive: Boolean;
     LA, LD, LS: TGERGB;
@@ -1346,6 +1351,94 @@ begin
 end;
 
 // A value as the GE's 24-bit floats hold it: 16 mantissa bits, truncated.
+const
+  // The lighting unit's 1/sqrt (recorded on a PSP-E1000, ge_dist: the light
+  // straight above at every 24-bit float height of [1, 2), the distance read
+  // from where linear attenuation steps along a sweep of KB): for
+  // V = (1 + G / 2^15) 2^E, segment (E and 1) * 128 + G shr 8 starts at
+  // GERSqrtNode (in 2^-23) and falls by GERSqrtSlope (in 2^-23) a step of G;
+  // the result keeps 16 bits, truncated (RSqrt24).
+  GERSqrtNode: array[0..255] of Integer = (
+    8388670, 8356031, 8323836, 8292030, 8260543, 8229432, 8198654, 8168254, 8138172, 8108412,
+    8078974, 8049844, 8021054, 7992574, 7964412, 7936511, 7908862, 7881599, 7854520, 7827775,
+    7801278, 7775039, 7749116, 7723391, 7697918, 7672766, 7647776, 7623103, 7598584, 7574391,
+    7550396, 7526588, 7503037, 7479676, 7456575, 7433656, 7410943, 7388479, 7366204, 7344127,
+    7322236, 7300537, 7279037, 7257663, 7236538, 7215615, 7194864, 7174269, 7153840, 7133630,
+    7113535, 7093631, 7073916, 7054335, 7034943, 7015678, 6996607, 6977663, 6958904, 6940280,
+    6921789, 6903416, 6885246, 6867199, 6849277, 6831544, 6813880, 6796414, 6779071, 6761791,
+    6744702, 6727741, 6710908, 6694172, 6677582, 6661119, 6644799, 6628542, 6612478, 6596478,
+    6580606, 6564861, 6549180, 6533628, 6518207, 6502911, 6487679, 6472574, 6457598, 6442686,
+    6427902, 6413176, 6398584, 6384120, 6369727, 6355455, 6341247, 6327102, 6313084, 6299194,
+    6285373, 6271615, 6257980, 6244412, 6230908, 6217535, 6204223, 6191038, 6177916, 6164858,
+    6151870, 6139004, 6126206, 6113471, 6100862, 6088240, 6075760, 6063344, 6051007, 6038783,
+    6026559, 6014462, 6002402, 5990462, 5978558, 5966719, 5955006, 5943295, 5931647, 5908606,
+    5885887, 5863358, 5841084, 5819132, 5797372, 5775871, 5754558, 5733503, 5712688, 5692159,
+    5671742, 5651646, 5631679, 5611964, 5592447, 5573118, 5553983, 5535103, 5516344, 5497791,
+    5479422, 5461246, 5443263, 5425468, 5407804, 5390334, 5373054, 5355902, 5338943, 5322111,
+    5305422, 5288959, 5272575, 5256382, 5240382, 5224447, 5208703, 5193084, 5177591, 5162239,
+    5147070, 5131966, 5117055, 5102207, 5087544, 5072953, 5058559, 5044223, 5030078, 5015998,
+    5002046, 4988223, 4974463, 4960830, 4947388, 4933947, 4920703, 4907519, 4894462, 4881470,
+    4868607, 4855868, 4843199, 4830640, 4818160, 4805820, 4793535, 4781311, 4769278, 4757246,
+    4745342, 4733502, 4721790, 4710143, 4698620, 4687100, 4675708, 4664447, 4653183, 4642046,
+    4630974, 4619966, 4609086, 4598270, 4587519, 4576830, 4566207, 4555647, 4545208, 4534840,
+    4524479, 4514239, 4504062, 4493951, 4483902, 4473982, 4464060, 4454206, 4444415, 4434687,
+    4425087, 4415487, 4405948, 4396476, 4387068, 4377724, 4368444, 4359231, 4350079, 4340926,
+    4331902, 4322876, 4313982, 4305086, 4296254, 4287486, 4278719, 4270079, 4261438, 4252863,
+    4244351, 4235874, 4227488, 4219104, 4210785, 4202520);
+  GERSqrtSlope: array[0..255] of Byte = (
+    127, 125, 124, 122, 121, 120, 118, 117, 116, 114, 113, 112, 111, 110, 108, 107,
+    106, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96, 95, 94, 93, 92, 92,
+    91, 90, 89, 88, 87, 87, 86, 85, 84, 83, 83, 82, 81, 81, 80, 79,
+    79, 78, 77, 77, 76, 75, 75, 74, 73, 73, 72, 72, 71, 71, 70, 69,
+    69, 68, 68, 67, 67, 66, 66, 65, 65, 64, 64, 63, 63, 62, 62, 62,
+    61, 61, 60, 60, 59, 59, 59, 58, 58, 57, 57, 56, 56, 56, 55, 55,
+    55, 54, 54, 54, 53, 53, 52, 52, 52, 51, 51, 51, 50, 50, 50, 50,
+    49, 49, 49, 48, 48, 48, 47, 47, 47, 47, 46, 46, 46, 45, 45, 45,
+    89, 88, 87, 86, 85, 84, 84, 83, 82, 81, 80, 79, 78, 77, 77, 76,
+    75, 74, 73, 73, 72, 71, 70, 70, 69, 68, 68, 67, 66, 66, 65, 65,
+    64, 63, 63, 62, 62, 61, 61, 60, 59, 59, 58, 58, 57, 57, 56, 56,
+    55, 55, 54, 54, 54, 53, 53, 52, 52, 51, 51, 51, 50, 50, 49, 49,
+    49, 48, 48, 47, 47, 47, 46, 46, 46, 45, 45, 45, 44, 44, 44, 43,
+    43, 43, 42, 42, 42, 42, 41, 41, 41, 40, 40, 40, 40, 39, 39, 39,
+    38, 38, 38, 38, 37, 37, 37, 37, 36, 36, 36, 36, 36, 35, 35, 35,
+    35, 34, 34, 34, 34, 34, 33, 33, 33, 33, 33, 32, 32, 32, 32, 32);
+
+function RSqrt24(V: Double): Double;
+var
+  M: Double;
+  E: Integer;
+begin
+  if not (V > 0) or IsInfinite(V) then
+    Exit(0);
+  Frexp(V, M, E);
+  M := M * 2;
+  Dec(E);
+  var G := Trunc((M - 1) * 32768);
+  var Odd := E and 1;
+  var I := Odd * 128 + (G shr 8);
+  Result := Ldexp((GERSqrtNode[I] - GERSqrtSlope[I] * (G and 255)) shr 7, -16 - (E - Odd) div 2);
+end;
+
+// The squared length of (X, Y, Z), 24-bit floats, as the vertex unit's sum
+// of products (Sum24).
+function Length2F24(X, Y, Z: Double): Double;
+begin
+  Result := Sum24(Product24(X, X), Product24(Y, Y), Product24(Z, Z), Term24(0));
+end;
+
+// A light's coordinate less the vertex's world one: the light's cut at the
+// larger one's 16th bit (as Add24), the vertex's whole, the difference cut
+// to a 24-bit float.
+function LightSub24(L, P: Double): Double;
+begin
+  if L = 0 then
+    Exit(T24(-P));
+  if P = 0 then
+    Exit(T24(L));
+  var Ulp := Ldexp(1, Max(Exp24(L), Exp24(P)) - 16);
+  Result := T24(Int(L / Ulp) * Ulp - P);
+end;
+
 function F24(V: Single): Single; inline;
 begin
   var Bits := PCardinal(@V)^ and $FFFFFF00;
@@ -1508,6 +1601,13 @@ begin
     U.KB := GEFloat(C[GE_LKA0 + L * 3 + 1]);
     U.KC := GEFloat(C[GE_LKA0 + L * 3 + 2]);
     U.SpotDir := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
+    var SD := CmdVec(C^, GE_LDX0 + L * 3);
+    U.SpotRaw := Vec3(T24(SD.X), T24(SD.Y), T24(SD.Z));
+    U.SpotFinite := not (IsNan(SD.X) or IsNan(SD.Y) or IsNan(SD.Z) or IsInfinite(SD.X) or IsInfinite(SD.Y) or
+      IsInfinite(SD.Z));
+    U.SpotRS := 0;
+    if U.SpotFinite then
+      U.SpotRS := RSqrt24(Length2F24(U.SpotRaw.X, U.SpotRaw.Y, U.SpotRaw.Z));
     U.Cutoff := GEFloat(C[GE_LKO0 + L]);
     // Like the shininess, the spot exponent keeps the top 4 bits of its
     // mantissa.
@@ -1578,15 +1678,35 @@ begin
     else
     begin
       D := U.Pos;
-      D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
-      // The squared distance in 24 bits, and its root (the quadratic term
-      // takes the square itself).
-      var Dist2 := F24(Dot(D, D));
-      Dist := SqrtF24(Dist2);
-      D := NormalizedF24(D);
+      var Finite := not (IsNan(D.X) or IsNan(D.Y) or IsNan(D.Z) or IsInfinite(D.X) or IsInfinite(D.Y) or
+        IsInfinite(D.Z) or IsNan(WP.X) or IsNan(WP.Y) or IsNan(WP.Z) or IsInfinite(WP.X) or IsInfinite(WP.Y) or
+        IsInfinite(WP.Z) or IsNan(U.KA) or IsNan(U.KB) or IsNan(U.KC) or IsInfinite(U.KA) or IsInfinite(U.KB) or
+        IsInfinite(U.KC));
+      if Finite then
+      begin
+        // The vector to the light (LightSub24), its squared length as a sum
+        // of products, the length and the unit vector through RSqrt24
+        // (ge_dist: every distance of the sweep, 99.3% of random offsets),
+        // and KA + KB d + KC d^2 as a sum of products.
+        var DX := LightSub24(D.X, WP.X);
+        var DY := LightSub24(D.Y, WP.Y);
+        var DZ := LightSub24(D.Z, WP.Z);
+        var Dist2 := Length2F24(DX, DY, DZ);
+        var RS := RSqrt24(Dist2);
+        Dist := T24(Dist2 * RS);
+        D := Vec3(T24(DX * RS), T24(DY * RS), T24(DZ * RS));
+        Den := Sum24(Term24(U.KA), Product24(U.KB, Dist), Product24(U.KC, Dist2), Term24(0));
+      end
+      else
+      begin
+        D := Vec3(D.X - WP.X, D.Y - WP.Y, D.Z - WP.Z);
+        var Dist2 := F24(Dot(D, D));
+        Dist := SqrtF24(Dist2);
+        D := NormalizedF24(D);
+        Den := U.KA + U.KB * Dist + U.KC * Dist2;
+      end;
       // 1 / Den by the vertex unit's reciprocal table (Recip24): every
       // recorded attenuation over KA alone and over KC alone.
-      Den := U.KA + U.KB * Dist + U.KC * Dist2;
       if Den <> 0 then
         Att := Recip24(Den)
       else
@@ -1596,7 +1716,13 @@ begin
     S8 := 255;
     if U.LType = 2 then
     begin
-      CosA := Dot(D, U.SpotDir);
+      // The dot product with the direction as it was given, a sum of
+      // products, times RSqrt24 of the direction's squared length (ge_spot).
+      if U.SpotFinite and not (IsNan(D.X) or IsNan(D.Y) or IsNan(D.Z)) then
+        CosA := T24(Sum24(Product24(T24(D.X), U.SpotRaw.X), Product24(T24(D.Y), U.SpotRaw.Y),
+          Product24(T24(D.Z), U.SpotRaw.Z), Term24(0)) * U.SpotRS)
+      else
+        CosA := Dot(D, U.SpotDir);
       // An infinite direction lights everything or nothing by its sign.
       if IsNan(CosA) then
         S8 := 255 * Ord(U.SpotPositive)

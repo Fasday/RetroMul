@@ -123,6 +123,14 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   texture's address must be VRAM's (0x04154000): 0x154000 hangs the GE.
   Under a second on the PSP.
 
+- `ge_dist`: the distance linear attenuation takes: a point light and KB
+  only, so the colour is floor(256 / (KB d)); every row its own light
+  offset (straight above, or (mx / 512, my / 512, z): exact differences)
+  and 480 consecutive 24-bit floats of KB, so where the colour steps shows
+  the distance to its last bit (`dist/f<n>.bin`, `_in.bin` per row the
+  offset and the first KB); and a sweep of every 24-bit float height of
+  [1, 2) straight above (`dist/s<n>.bin`). 28 s on the PSP.
+
 - `ge_spot`: the spot factor over random geometry: a spot light at a random
   offset from each pixel's point, a random direction of random length,
   cutoff -1, ambient white, so the colour is the factor; exponents 1, 2,
@@ -315,17 +323,26 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   over all recorded samples. The 8-bit attenuation is floor(256 r) with r
   the vertex unit's table reciprocal of den (see the perspective divide
   below): exact over the KA and KC sweeps (the exact 1 / den: 99.75-99.9%).
-  With KB the distance's root leaves 0.3% one step off. The distance is the
-  root of the squared distance (a 24-bit float) truncated to a 24-bit float;
-  the quadratic term uses the squared distance. pow is the piecewise-linear log2/exp2 the core
+  The vector to a positional light is its coordinates less the vertex's,
+  the light's cut at the larger one's 16th bit (as the vertex unit's add),
+  the vertex's whole, the difference cut to a 24-bit float. Its squared
+  length is the vertex unit's sum of products, and the length and the unit
+  vector come from a table 1/sqrt: 1/sqrt(v) for v = (1 + g / 2^15) 2^e is
+  (node - slope (g & 255)) >> 7 in 2^-16, node and slope by segment
+  (e & 1) * 128 + g >> 8 (`ge_dist`: 256 segments, each a node and slope
+  that fit every height of the sweep); the length is d^2 times it, the
+  vector each coordinate times it, both cut to 24-bit floats. KA + KB d +
+  KC d^2 is a sum of products. The core's root of the squared distance was
+  0.3% one step off (KB); now the sweep and `ge_light`'s KB sweeps match
+  and 15 of `ge_dist`'s 1,044,480 random-offset pixels are off (by one). pow is the piecewise-linear log2/exp2 the core
   already had, of its input as a 24-bit float (the spot sweeps: exponents
   0.5 to 10 exact but for one sample; the full mantissa left 36 off at 3.7);
   the spot exponent, like the shininess, keeps 4 mantissa bits. The core
-  does all this: `gpu/commands/light` passes. The spot cosine itself is not
-  exactly the core's: `ge_spot`'s random geometry leaves 0.14% (exponent 1)
-  to 2.3% (exponent 20, of the lit samples) one step off either way, and no
-  tried mix of the vertex unit's arithmetic for the light vector, the
-  direction's normalization and the dot product does better.
+  does all this: `gpu/commands/light` passes. The spot cosine is the sum of
+  products of that unit vector and the direction as given (24-bit floats),
+  times the table 1/sqrt of the direction's squared length, cut to a 24-bit
+  float (`ge_spot`: 4 of 163,840 random factors off, at exponents 3.7 and
+  20, where the normalized direction left 279).
 
 - The stored `cpu/vfpu/exact`, `cpu/vfpu/vector` and `gpu/exact/lighting`
   expectations match this PSP exactly.
