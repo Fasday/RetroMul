@@ -32,7 +32,7 @@ interface
 
 uses
   System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections, System.Generics.Defaults,
-  Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
+  System.UITypes, Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
   PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
 
 type
@@ -227,6 +227,8 @@ type
     FRun: Int64;
     FSetCount: Integer;
     FLine: TArray<TGEHLEVertex>;
+    // The shown frames' pixels (Present), reused once their reader let go.
+    FFrames: array[0..2] of TArray<TAlphaColor>;
     FFlushing: Boolean;
     FStats: TGEVulkanHLEStats;
     function CreateImage(Format: VkFormat; Width, Height, Levels: Integer; Usage, Aspect: Cardinal): TGEHLEImage;
@@ -315,6 +317,8 @@ uses
 const
   VRAMMask = PSPVRAMSize - 1;
   VertexCapacity = 1 shl 18;
+  // Release submits no fewer vertices.
+  ReleaseVertices = 6144;
   UploadCapacity = 16 shl 20;
   MaxTextures = 1024;
   MaxTargets = 32;
@@ -3191,6 +3195,21 @@ begin
   FlushAll;
 end;
 
+// The references to a dynamic array (System's header before its data).
+function DynArrayRefs(const A: TArray<TAlphaColor>): Integer;
+type
+  THeader = packed record
+    {$IFDEF CPU64BITS}Padding: Integer;{$ENDIF}
+    RefCount: Integer;
+    Length: NativeInt;
+  end;
+  PHeader = ^THeader;
+begin
+  if A = nil then
+    Exit(0);
+  Result := PHeader(PByte(Pointer(A)) - SizeOf(THeader))^.RefCount;
+end;
+
 // The display's framebuffer as the target image holds it, at the scale. The
 // image must be what the PSP would show: newer than guest memory (held), or
 // equal to it. Guest memory is left alone (nothing is read back).
@@ -3237,8 +3256,28 @@ begin
   FReadback.Invalidate(0, UInt64(W * H) * 4);
   Frame.Width := W;
   Frame.Height := H;
-  if Length(Frame.Pixels) <> W * H then
-    SetLength(Frame.Pixels, W * H);
+  // A buffer of the pool that only the pool holds (the frames before may
+  // still be read), else a new one: no allocation and clearing each frame.
+  var Pick := -1;
+  for var I := 0 to High(FFrames) do
+    if (Length(FFrames[I]) = W * H) and (DynArrayRefs(FFrames[I]) = 1) then
+    begin
+      Pick := I;
+      Break;
+    end;
+  if Pick < 0 then
+  begin
+    Pick := 0;
+    for var I := 0 to High(FFrames) do
+      if (FFrames[I] = nil) or (DynArrayRefs(FFrames[I]) = 1) then
+      begin
+        Pick := I;
+        Break;
+      end;
+    FFrames[Pick] := nil;
+    SetLength(FFrames[Pick], W * H);
+  end;
+  Frame.Pixels := FFrames[Pick];
   Move(FReadback.Data^, Frame.Pixels[0], W * H * 4);
   Inc(FStats.Presents);
   FStats.PresentSeconds := FStats.PresentSeconds + Watch.Elapsed.TotalSeconds;
@@ -3250,6 +3289,10 @@ end;
 procedure TGEVulkanHLEBackend.Release;
 begin
   if not Slot.Cmd.Recording or (FDrawCount = 0) and (Slot.VertexCount = 0) then
+    Exit;
+  // Small lists wait for more: a submission costs the driver more than it
+  // saves the GPU (Tekken 6: some 70 lists a frame).
+  if Slot.VertexCount < ReleaseVertices then
     Exit;
   if FSlots[(FSlot + 1) mod Length(FSlots)].Cmd.Done then
     Submit;

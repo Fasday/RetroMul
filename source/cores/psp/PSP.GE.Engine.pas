@@ -1102,6 +1102,37 @@ begin
   Result := Integer((PUInt64(@V)^ shr 52) and $7FF) - 1023;
 end;
 
+function TruncPow2Slow(V: Double; Q: Integer): Double;
+const
+  One: Double = 1;
+begin
+  var P := Ldexp(One, Q);
+  Result := Int(V / P) * P;
+end;
+
+// Int(V / 2^Q) * 2^Q: V cut toward zero to a multiple of 2^Q, in its bits
+// for a normal V and Q (zeros, infinities and NaNs are themselves;
+// subnormals and the rest as stated).
+function TruncPow2(V: Double; Q: Integer): Double; inline;
+begin
+  var Bits := PUInt64(@V)^;
+  var X := Integer((Bits shr 52) and $7FF);
+  if (X = 0) or (X = $7FF) or (Q < -1000) or (Q > 1000) then
+  begin
+    if (X = $7FF) or ((Bits shl 1) = 0) then
+      Exit(V);
+    Exit(TruncPow2Slow(V, Q));
+  end;
+  var Keep := X - 1023 - Q;
+  if Keep >= 52 then
+    Exit(V);
+  if Keep < 0 then
+    Bits := Bits and UInt64($8000000000000000)
+  else
+    Bits := Bits and not ((UInt64(1) shl (52 - Keep)) - 1);
+  Result := PDouble(@Bits)^;
+end;
+
 // One term of a row: its value (exact) and its quantum's exponent.
 type
   TGETerm24 = record
@@ -1118,8 +1149,7 @@ begin
     Exit;
   end;
   Result.Q := Exponent(A) + Exponent(B) - 15;
-  var Q := Pow2(Result.Q);
-  Result.V := Int(A * B / Q) * Q;
+  Result.V := TruncPow2(A * B, Result.Q);
 end;
 
 function Term24(A: Double): TGETerm24; inline;
@@ -1139,8 +1169,7 @@ begin
   if Abs(T3.V) > Abs(L.V) then L := T3;
   if L.V = 0 then
     Exit(0);
-  var Q := Pow2(L.Q);
-  Result := T24(Int(T0.V / Q) * Q + Int(T1.V / Q) * Q + Int(T2.V / Q) * Q + Int(T3.V / Q) * Q);
+  Result := T24(TruncPow2(T0.V, L.Q) + TruncPow2(T1.V, L.Q) + TruncPow2(T2.V, L.Q) + TruncPow2(T3.V, L.Q));
 end;
 
 function Row24(const Row: TGERow24; X, Y, Z: Double): Double; inline;
@@ -1410,6 +1439,17 @@ var
 begin
   if not (V > 0) or IsInfinite(V) then
     Exit(0);
+  // A normal V from its bits: the exponent and the top 15 mantissa bits.
+  var Bits := PUInt64(@V)^;
+  var X := Integer((Bits shr 52) and $7FF);
+  if X <> 0 then
+  begin
+    var EN := X - 1023;
+    var GN := Integer((Bits shr 37) and $7FFF);
+    var OddN := EN and 1;
+    var IN_ := OddN * 128 + (GN shr 8);
+    Exit(((GERSqrtNode[IN_] - GERSqrtSlope[IN_] * (GN and 255)) shr 7) * Pow2(-16 - (EN - OddN) div 2));
+  end;
   Frexp(V, M, E);
   M := M * 2;
   Dec(E);
@@ -1435,8 +1475,7 @@ begin
     Exit(T24(-P));
   if P = 0 then
     Exit(T24(L));
-  var Ulp := Ldexp(1, Max(Exp24(L), Exp24(P)) - 16);
-  Result := T24(Int(L / Ulp) * Ulp - P);
+  Result := T24(TruncPow2(L, Max(Exp24(L), Exp24(P)) - 16) - P);
 end;
 
 function F24(V: Single): Single; inline;
