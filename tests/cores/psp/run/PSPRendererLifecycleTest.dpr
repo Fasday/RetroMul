@@ -4,7 +4,7 @@ program PSPRendererLifecycleTest;
 
 uses
   System.SysUtils, System.Classes, System.IniFiles, Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer,
-  PSP.Types, PSP.Media, PSP.Console, PSP.GE, PSP.GE.Raster, Core.Emulation.Types;
+  PSP.Types, PSP.Media, PSP.Console, PSP.GE, PSP.GE.Raster, PSP.GE.TexScale, Core.Emulation.Types;
 
 type
   TConfigAccess = class(TPSPConfig)
@@ -90,7 +90,16 @@ begin
     Require(C.TextureScale = 3, 'Texture scaling not read');
     Ini.WriteInteger('Video', 'TextureScale', 9);
     C.ReadCore(Ini);
-    Require(C.TextureScale = 4, 'Texture scaling not limited');
+    Require(C.TextureScale = 6, 'Texture scaling not limited');
+    Require(C.TextureFilter = tfXBRZ, 'The texture filter must default to xBRZ');
+    Ini.WriteString('Video', 'TextureFilter', 'Hybrid');
+    C.ReadCore(Ini);
+    Require(C.TextureFilter = tfHybrid, 'Texture filter not read');
+    C.WriteCore(Ini);
+    Require(Ini.ReadString('Video', 'TextureFilter', '') = 'hybrid', 'Texture filter not saved');
+    Ini.WriteString('Video', 'TextureFilter', 'nonsense');
+    C.ReadCore(Ini);
+    Require(C.TextureFilter = tfXBRZ, 'Unknown texture filter must be xBRZ');
     Ini.WriteInteger('Video', 'TextureScale', 1);
     C.ReadCore(Ini);
     Require(C.TextureScale = 0, 'Texture scaling 1x must be off');
@@ -173,10 +182,10 @@ begin
     if Kind = prVulkanHLE then
     begin
       // At twice the resolution the shown frames come from the renderer.
-      R := TPSPRendererSession.Create(C, Kind, 2, 3);
+      R := TPSPRendererSession.Create(C, Kind, 2, 3, tfBicubic);
       try
         Require(R.Status.Contains('at 2x') and Assigned(C.OnPresent), 'Scaled HLE session not attached');
-        Require(R.Status.Contains('textures 3x'), 'Texture scaling not passed to the HLE renderer');
+        Require(R.Status.Contains('textures 3x bicubic'), 'Texture scaling not passed to the HLE renderer');
         C.Reset;
         C.Loader.OnLoadExec(P.BootPath, 0, 0);
         var Scaled := False;

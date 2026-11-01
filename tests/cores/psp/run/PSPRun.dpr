@@ -7,7 +7,8 @@ program PSPRun;
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
 // -gpu-hle [-scale N]: Vulkan graphics-pipeline rendering (fast, not bit exact), N times the PSP's resolution;
 // frames (-out, hashes) are then the renderer's at that resolution. -fixed-blend: no blending in the shader.
-// -texscale N: with -gpu-hle above 1x, textures made N times larger (2 to 4, texture scaling).
+// -texscale N [-texfilter xbrz|hybrid|bicubic]: with -gpu-hle above 1x, textures made N times larger
+// (2 to 6, texture scaling) with that filter.
 // -test: isolated pspautotests host0: tree, no display, stops at exit.
 // -hw: omit the emulator device and collect the program's host0: output and screenshot.
 // -wav file: saves the sound output (44.1 kHz stereo); with -every, prints its level per interval.
@@ -19,7 +20,7 @@ program PSPRun;
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.VulkanLLE,
-  PSP.GE.VulkanHLE;
+  PSP.GE.VulkanHLE, PSP.GE.TexScale;
 
 type
   TPress = record
@@ -317,6 +318,7 @@ begin
     var GPUMode := 0;
     var Scale := 1;
     var TexScale := 0;
+    var TexFilter := tfXBRZ;
     var FixedBlend := False;
     var VRAMFile := '';
     var WavFile := '';
@@ -348,6 +350,7 @@ begin
       else if A = '-gpu-hle' then GPUMode := 3
       else if A = '-scale' then begin Inc(I); Scale := StrToInt(ParamStr(I)); end
       else if A = '-texscale' then begin Inc(I); TexScale := StrToInt(ParamStr(I)); end
+      else if A = '-texfilter' then begin Inc(I); TexFilter := GETextureFilterFromName(ParamStr(I)); end
       else if A = '-fixed-blend' then FixedBlend := True
       else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end
@@ -476,6 +479,7 @@ begin
         if CreateGEVulkanHLEBackend(Console.Memory, HLE, Error, '', Scale, not FixedBlend) then
         begin
           HLE.TextureScale := TexScale;
+          HLE.TextureFilter := TexFilter;
           Console.OnPresent := HLE.Present;
           TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE;
           if not Quiet then

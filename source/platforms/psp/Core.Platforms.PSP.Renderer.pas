@@ -5,7 +5,7 @@ unit Core.Platforms.PSP.Renderer;
 interface
 
 uses
-  System.SysUtils, PSP.Console, PSP.GE.Backend;
+  System.SysUtils, PSP.Console, PSP.GE.Backend, PSP.GE.TexScale;
 
 type
   // CPU: PSP.GE.Raster, the reference. Vulkan LLE: the same pixel pipeline in
@@ -21,8 +21,10 @@ type
     FDescription: string;
   public
     // Scale: the Vulkan HLE renderer's internal resolution (1 to 8 times the PSP's);
-    // TextureScale: its texture scaling above 1x (0 none, else 2 to 4).
-    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer = 1; TextureScale: Integer = 0);
+    // TextureScale and TextureFilter: its texture scaling above 1x (0 none,
+    // else 2 to 6).
+    constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer = 1; TextureScale: Integer = 0;
+      TextureFilter: TGETextureFilter = tfXBRZ);
     destructor Destroy; override;
     function Status: string;
   end;
@@ -61,7 +63,8 @@ begin
     Result := prCPU;
 end;
 
-constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale, TextureScale: Integer);
+constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale, TextureScale: Integer;
+  TextureFilter: TGETextureFilter);
 begin
   inherited Create;
   FConsole := Console;
@@ -78,6 +81,7 @@ begin
       FBackend := Backend;
       FKind := prVulkanHLE;
       Backend.TextureScale := TextureScale;
+      Backend.TextureFilter := TextureFilter;
       TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
       // Frames come from its images, at its resolution.
       Console.OnPresent := Backend.Present;
@@ -86,7 +90,8 @@ begin
       begin
         FDescription := FDescription + Format(' at %dx', [Backend.Scale]);
         if Backend.TextureScale > 1 then
-          FDescription := FDescription + Format(', textures %dx', [Backend.TextureScale]);
+          FDescription := FDescription + Format(', textures %dx %s', [Backend.TextureScale,
+            GETextureFilterName(Backend.TextureFilter)]);
       end;
       Console.HLE.Log('gpu: ' + FDescription);
       Exit;

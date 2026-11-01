@@ -33,7 +33,7 @@ interface
 uses
   System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections, System.Generics.Defaults,
   System.UITypes, Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
-  PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
+  PSP.GE.Backend, PSP.GE.TexScale, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
 
 type
   TGEVulkanHLEStats = record
@@ -196,9 +196,10 @@ type
     // Textures replaced while the GPU may still read them: destroyed once it
     // has finished (DestroyRetired).
     FRetired: TList<TGEHLETexture>;
-    // The texture scaling option (0 or 1 none, else the factor), and the
-    // texels being scaled.
+    // The texture scaling option (0 or 1 none, else the factor) and filter,
+    // and the texels being scaled.
     FTextureScale: Integer;
+    FTextureFilter: TGETextureFilter;
     FScaleIn, FScaleOut: TArray<Cardinal>;
     FDummy: TGEHLETexture;
     FSlots: array[0..1] of TGEHLESlot;
@@ -328,9 +329,10 @@ type
     property Compute: TVulkanCompute read FCompute;
     property Scale: Integer read FScale;
     // Textures made larger by GEScaleTexture (2 to GETextureScaleMax; 0 or 1
-    // none) when the scale is above 1: an option that is not the GE's. Applies
-    // to textures uploaded from then on.
+    // none) with the filter when the scale is above 1: an option that is not
+    // the GE's. Applies to textures uploaded from then on.
     property TextureScale: Integer read FTextureScale write SetTextureScale;
+    property TextureFilter: TGETextureFilter read FTextureFilter write FTextureFilter;
     property ShaderBlend: Boolean read FShaderBlend;
     property Stats: TGEVulkanHLEStats read FStats;
   end;
@@ -344,7 +346,7 @@ function CreateGEVulkanHLEBackend(Memory: TPSPMemory; out Backend: TGEVulkanHLEB
 implementation
 
 uses
-  PSP.GE.TexScale, SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEBlendFrag, SPV.PSPGEHLEDown;
+  SPV.PSPGEHLEVert, SPV.PSPGEHLEFrag, SPV.PSPGEHLEBlendFrag, SPV.PSPGEHLEDown;
 
 const
   VRAMMask = PSPVRAMSize - 1;
@@ -2442,7 +2444,7 @@ begin
       var N := W * H * T.Scale * T.Scale;
       if Length(FScaleOut) < N then
         SetLength(FScaleOut, N);
-      GEScaleTexture(P, W, H, T.Scale, @FScaleOut[0]);
+      GEScaleTexture(P, W, H, T.Scale, @FScaleOut[0], FTextureFilter);
       Move(FScaleOut[0], StageUpload(Int64(N) * 4, Offset)^, N * 4);
       Inc(FStats.TextureScales);
       FStats.ScaleSeconds := FStats.ScaleSeconds + Watch.Elapsed.TotalSeconds;

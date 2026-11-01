@@ -3,7 +3,8 @@ unit Core.Platforms.PSP.Adapter;
 interface
 
 uses System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, Core.Platforms.PSP.Playback, Core.Platforms.PSP.Renderer;
+  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, PSP.GE.TexScale, Core.Platforms.PSP.Playback,
+  Core.Platforms.PSP.Renderer;
 
 type
   TPSPKeyMap = array[TEmulatorButton] of UInt32;
@@ -15,6 +16,7 @@ type
     FRenderer: TPSPRenderer;
     FResolution: Integer;
     FTextureScale: Integer;
+    FTextureFilter: TGETextureFilter;
     FLanguage, FButtonSwap: Integer;
     FNickname: string;
     FFontDirectory: string;
@@ -31,9 +33,11 @@ type
     // The Vulkan HLE renderer's internal resolution, 1 to 8 times the PSP's.
     // Applied by Start, as the renderer.
     property Resolution: Integer read FResolution write FResolution;
-    // The Vulkan HLE renderer's texture scaling above 1x: 0 none, else 2 to 4
-    // (Video/TextureScale). Applied by Start, as the renderer.
+    // The Vulkan HLE renderer's texture scaling above 1x: 0 none, else 2 to 6
+    // (Video/TextureScale), with the filter (Video/TextureFilter). Applied by
+    // Start, as the renderer.
     property TextureScale: Integer read FTextureScale write FTextureScale;
+    property TextureFilter: TGETextureFilter read FTextureFilter write FTextureFilter;
     property Language: Integer read FLanguage;
     property ButtonSwap: Integer read FButtonSwap;
     property Nickname: string read FNickname;
@@ -57,6 +61,7 @@ type
     FRenderer: TPSPRenderer;
     FResolution: Integer;
     FTextureScale: Integer;
+    FTextureFilter: TGETextureFilter;
     FRendererStatus: string;
     FRate: TEmulationFrameRate;
     FSnapshotDone: TEvent;
@@ -69,7 +74,7 @@ type
   public
     constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer = prCPU;
       const FontDirectory: string = ''; const SnapshotDirectory: string = ''; Resolution: Integer = 1;
-      TextureScale: Integer = 0);
+      TextureScale: Integer = 0; TextureFilter: TGETextureFilter = tfXBRZ);
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1;
       Recompiler: Boolean = True);
@@ -158,9 +163,10 @@ begin
   FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
   FRenderer := PSPRendererFromName(Ini.ReadString('Video', 'Renderer', 'cpu'));
   FResolution := EnsureRange(Ini.ReadInteger('Video', 'Resolution', FResolution), 1, 8);
-  FTextureScale := EnsureRange(Ini.ReadInteger('Video', 'TextureScale', FTextureScale), 0, 4);
+  FTextureScale := EnsureRange(Ini.ReadInteger('Video', 'TextureScale', FTextureScale), 0, GETextureScaleMax);
   if FTextureScale = 1 then
     FTextureScale := 0;
+  FTextureFilter := GETextureFilterFromName(Ini.ReadString('Video', 'TextureFilter', GETextureFilterName(FTextureFilter)));
   FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
   FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
   FNickname := Ini.ReadString('System', 'Nickname', FNickname);
@@ -178,6 +184,7 @@ begin
   Ini.WriteString('Video', 'Renderer', PSPRendererName(FRenderer));
   Ini.WriteInteger('Video', 'Resolution', FResolution);
   Ini.WriteInteger('Video', 'TextureScale', FTextureScale);
+  Ini.WriteString('Video', 'TextureFilter', GETextureFilterName(FTextureFilter));
   Ini.WriteInteger('System', 'Language', FLanguage);
   Ini.WriteInteger('System', 'ButtonSwap', FButtonSwap);
   Ini.WriteString('System', 'Nickname', FNickname);
@@ -185,13 +192,14 @@ begin
 end;
 
 constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer;
-  const FontDirectory, SnapshotDirectory: string; Resolution, TextureScale: Integer);
+  const FontDirectory, SnapshotDirectory: string; Resolution, TextureScale: Integer; TextureFilter: TGETextureFilter);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
   FRenderer := Renderer;
   FResolution := Resolution;
   FTextureScale := TextureScale;
+  FTextureFilter := TextureFilter;
   FStorage := Storage;
   FLock := TCriticalSection.Create;
   FWake := TEvent.Create(nil,False,False,'');
@@ -296,7 +304,7 @@ begin
           end;
         end);
       try
-        var NewRenderer := TPSPRendererSession.Create(Candidate, FRenderer, FResolution, FTextureScale);
+        var NewRenderer := TPSPRendererSession.Create(Candidate, FRenderer, FResolution, FTextureScale, FTextureFilter);
         try
           var Frame: TEmulatorFrame;
           Candidate.Display.Render(Frame);
@@ -404,7 +412,7 @@ begin
   {$ENDIF}
   try
     try
-      var Renderer := TPSPRendererSession.Create(FConsole, FRenderer, FResolution, FTextureScale);
+      var Renderer := TPSPRendererSession.Create(FConsole, FRenderer, FResolution, FTextureScale, FTextureFilter);
       try
         FLock.Acquire;
         try
@@ -628,7 +636,7 @@ begin
   PSPSettings.ButtonSwap := FConfigObject.ButtonSwap;
   PSPSettings.Nickname := FConfigObject.Nickname;
   FWorker := TPSPWorker.Create(FProgram,FStorage,FConfigObject.Renderer,FConfigObject.FontDirectory,FSnapshotDirectory,
-    FConfigObject.Resolution, FConfigObject.TextureScale);
+    FConfigObject.Resolution, FConfigObject.TextureScale, FConfigObject.TextureFilter);
   try
     Configure;
     FWorker.Start;
