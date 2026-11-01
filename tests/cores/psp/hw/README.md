@@ -107,6 +107,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   of 32 to 512 texels whose texels hold their own coordinates
   (`uv/frame_<n>.bin`, `tris_<n>.bin`). 2 s on the PSP.
 
+- `ge_alod`: the automatic level of detail (TEXLEVEL mode 0): a CLUT4
+  texture with a CLUT per level, each level its own red (32 L), linear
+  between levels, so red is 32 times the level plus twice its sixteenths;
+  16 random triangles a frame, through mode and perspective (each vertex
+  its own w), `alod/<set>_<n>.bin`, `_in.bin` the vertices. 3 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -155,10 +161,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   took log(slope * w), up to two sixteenths off; gpu/exact's mip slope job
   now matches. The automatic mode (gpu/exact's auto lod job) is likewise
   log(G) - log(Q/w): G the primitive's largest step of S/w or T/w per pixel
-  (level 0 texels, one value a triangle), Q/w the pixel's; 85% of its pixels
-  exact, the rest one sixteenth off (the vertex values, not recorded
-  exactly), where the core's per-pixel derivative of S and T was up to 38
-  sixteenths off. Levels narrower than 16 texels with a buffer width below 16
+  (level 0 texels, one value a triangle), Q/w taken once for 4 pixels of a
+  row (x aligned to 4), at the second of them (`ge_alod`: through mode every
+  pixel; perspective 85% exact, the rest one sixteenth either way, where
+  each pixel's own Q/w gave 75%; gpu/exact's auto lod job from 3,620
+  pixels off to 119). The core's per-pixel derivative of S and T was up to
+  38 sixteenths off. Levels narrower than 16 texels with a buffer width below 16
   read their lower rows elsewhere on the PSP (`ge_lod`'s random set, levels
   4 to 7): rows are at least 16 bytes (`ge_clut`, below).
 - Through-mode texture coordinates (`ge_uv`) are planes like the depth's:

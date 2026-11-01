@@ -1068,7 +1068,18 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
         float nsx = uintBitsToFloat(prims[p + 90u]), nsy = uintBitsToFloat(prims[p + 91u]);
         float ntx = uintBitsToFloat(prims[p + 92u]), nty = uintBitsToFloat(prims[p + 93u]);
         float lodG = delphiMax(delphiMax(abs(nsx), abs(nsy)), delphiMax(abs(ntx), abs(nty)));
-        f.lod = texLod(s, lodG, float(abs(q)), float(iw));
+        // One level of detail for 4 pixels of a row, at the second of them
+        // (PSP.GE.Raster's GEDrawTriangle).
+        int64_t lsx = int64_t((px & ~3) + 1) * 16l + 8l;
+        int64_t le0 = -((lsx - x1) * (y2 - y1) - (sy - y1) * (x2 - x1));
+        int64_t le1 = -((lsx - x2) * (y0 - y2) - (sy - y2) * (x0 - x2));
+        int64_t le2 = -((lsx - x0) * (y1 - y0) - (sy - y0) * (x1 - x0));
+        precise double lw0 = double(le0) * farea;
+        precise double lw1 = double(le1) * farea;
+        precise double lw2 = double(le2) * farea;
+        precise double lq = double(aq0) * lw0 + double(aq1) * lw1 + double(aq2) * lw2;
+        precise double liw = double(aw0) * lw0 + double(aw1) * lw1 + double(aw2) * lw2;
+        f.lod = texLod(s, lodG, float(abs(lq)), float(liw));
       }
     }
     else

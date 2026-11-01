@@ -13692,7 +13692,17 @@ begin
           end;
           if NeedLod then
           begin
-            F.Lod := GETexLod(S, LodG, Abs(Q), IW);
+            // One level of detail for 4 pixels of a row (x aligned to 4), at
+            // the second of them (recorded on a PSP-E1000,
+            // tests/cores/psp/hw/ge_alod: 85% of perspective pixels exact
+            // where each pixel's own was 75%; through mode all).
+            var Off: Int64 := (PX and not 3) + 1 - PX;
+            var WL0 := (E0 + Step0 * Off) * FArea;
+            var WL1 := (E1 + Step1 * Off) * FArea;
+            var WL2 := (E2 + Step2 * Off) * FArea;
+            var QL := QW0 * WL0 + QW1 * WL1 + QW2 * WL2;
+            var IWL := IW0 * WL0 + IW1 * WL1 + IW2 * WL2;
+            F.Lod := GETexLod(S, LodG, Abs(QL), IWL);
           end;
         end
         else
