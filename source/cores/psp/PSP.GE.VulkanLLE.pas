@@ -1710,6 +1710,22 @@ begin
   Anchor[1] := Cardinal(Integer(VP.AY));
 end;
 
+// Texture coordinate planes (GEUVPlanes) in a triangle's or a sprite's words:
+// 111..116 S, 117..122 T (start and steps), 123, 124 their vertex, 125 bit 0
+// whether they are used, bits 8.. and 16.. their fraction bits.
+procedure PutUVPlanes(P: PCardinal; const UV: TGEUVPlanes);
+begin
+  PInt64(P + 111)^ := UV.S.C0;
+  PInt64(P + 113)^ := UV.S.GX;
+  PInt64(P + 115)^ := UV.S.GY;
+  PInt64(P + 117)^ := UV.T.C0;
+  PInt64(P + 119)^ := UV.T.GX;
+  PInt64(P + 121)^ := UV.T.GY;
+  P[123] := Cardinal(Integer(UV.S.AX));
+  P[124] := Cardinal(Integer(UV.S.AY));
+  P[125] := 1 or (Cardinal(UV.KS) shl 8) or (Cardinal(UV.KT) shl 16);
+end;
+
 procedure TGEVulkanLLEBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 var
   Tex: TGEVulkanLLEReads;
@@ -1819,6 +1835,13 @@ begin
     PutPlane(P + 78, P + 64, V0, V1, V2, V0.B, V1.B, V2.B);
     PutPlane(P + 84, P + 64, V0, V1, V2, V0.A, V1.A, V2.A);
   end;
+  // Through mode: the texture coordinates' planes (GEUVPlanes): 111..116 S,
+  // 117..122 T (start and steps), 123, 124 their vertex, 125 bit 0 whether
+  // they are used, bits 8.. and 16.. their fraction bits.
+  var UV: TGEUVPlanes;
+  P[125] := 0;
+  if S.Textured and S.Through and GEUVPlanes(S, V0, V1, V2, UV) then
+    PutUVPlanes(P, UV);
   // The fog plane, from the vertices' 8-bit fog factors (GEFogByte).
   if S.FogEnabled then
     PutPlane(P + 96, P + 64, V0, V1, V2, GEFogByte(V0.Fog), GEFogByte(V1.Fog), GEFogByte(V2.Fog));
@@ -1944,6 +1967,11 @@ begin
     Lod := GETexLod(S, Max(Max(Abs(SX), Abs(SY)), Max(Abs(TX), Abs(TY))), 1, IW);
   end;
   P[42] := Cardinal(Lod);
+  // The texture coordinates' planes (GESpriteUVPlanes), as a triangle's.
+  var UV: TGEUVPlanes;
+  P[125] := 0;
+  if S.Textured and GESpriteUVPlanes(S, V0, V1, UV) then
+    PutUVPlanes(P, UV);
   Record_(KindSprite, S, V0, V1, V1);
 end;
 

@@ -123,6 +123,30 @@ procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
 // The same plane through three other values at the vertices (Gouraud
 // colours, recorded on a PSP-E1000: gpu/exact's Gouraud plane jobs).
 procedure GEMakeValuePlane(const V0, V1, V2: TGEVertex; C0, C1, C2: Int64; out P: TGEDepthPlane);
+
+type
+  // A through-mode triangle's texture coordinates as planes (GEUVPlanes).
+  TGEUVPlanes = record
+    S, T: TGEDepthPlane;
+    // The fraction bits of each, in texels.
+    KS, KT: Integer;
+  end;
+
+// Recorded on a PSP-E1000 (tests/cores/psp/hw/ge_uv: 730,000 pixels of
+// through-mode triangles over textures of 32 to 512 texels, 99.99%; the
+// rest a texel up where the plane lands within a few thousandths of the
+// next): S and T, over the level 0 width and height, truncated to 15
+// fraction bits, are planes like the depth's (GEMakeValuePlane). False
+// where the coordinates are beyond the range this is exact in.
+function GEUVPlanes(const S: TGERaster; const V0, V1, V2: TGEVertex; out P: TGEUVPlanes): Boolean;
+// A sprite's texture coordinates as the same planes (recorded on a
+// PSP-E1000, tests/cores/psp/hw/ge_sprite: every sample of integer spans,
+// 99.8% of fractional ones): a triangle of V0's corner and the corners beside
+// it along x and y, so the steps come from the reciprocal of width times
+// height. False where Q is not 1 or the planes are not exact.
+function GESpriteUVPlanes(const S: TGERaster; const V0, V1: TGEVertex; out P: TGEUVPlanes): Boolean;
+// A pixel's S and T (in texels, floored to 1/16) from GEUVPlanes'.
+procedure GEUVAt(const P: TGEUVPlanes; PX, PY: Integer; out SS, TT: Single); inline;
 // A colour plane's channel where N (P.C0 plus the steps) is, 0..255.
 function GEPlaneByte(N: Int64): Integer; inline;
 
@@ -13123,6 +13147,71 @@ begin
   GEMakeValuePlane(V0, V1, V2, V0.Z, V1.Z, V2.Z, P);
 end;
 
+function GEUVPlanes(const S: TGERaster; const V0, V1, V2: TGEVertex; out P: TGEUVPlanes): Boolean;
+
+  function Log2(N: Integer): Integer;
+  begin
+    Result := 0;
+    while (1 shl (Result + 1)) <= N do
+      Inc(Result);
+  end;
+
+  function Fixed(V: Single; K: Integer; out R: Int64): Boolean;
+  begin
+    var D := Double(V) * (Int64(1) shl K);
+    Result := (D > -(Int64(1) shl 24)) and (D < (Int64(1) shl 24));
+    if Result then
+      R := Trunc(D);
+  end;
+
+begin
+  // (Through mode: Q is 1.)
+  Result := (V0.Q = 1) and (V1.Q = 1) and (V2.Q = 1);
+  if not Result then
+    Exit;
+  P.KS := 15 - Log2(Max(S.Tex.Levels[0].Width, 1));
+  P.KT := 15 - Log2(Max(S.Tex.Levels[0].Height, 1));
+  var S0, S1, S2, T0, T1, T2: Int64;
+  Result := Fixed(V0.S, P.KS, S0) and Fixed(V1.S, P.KS, S1) and Fixed(V2.S, P.KS, S2) and
+    Fixed(V0.T, P.KT, T0) and Fixed(V1.T, P.KT, T1) and Fixed(V2.T, P.KT, T2);
+  if not Result then
+    Exit;
+  GEMakeValuePlane(V0, V1, V2, S0, S1, S2, P.S);
+  GEMakeValuePlane(V0, V1, V2, T0, T1, T2, P.T);
+  Result := P.S.Valid and P.T.Valid;
+end;
+
+function GESpriteUVPlanes(const S: TGERaster; const V0, V1: TGEVertex; out P: TGEUVPlanes): Boolean;
+begin
+  Result := (V0.Q = 1) and (V1.Q = 1) and (V0.X <> V1.X) and (V0.Y <> V1.Y);
+  if not Result then
+    Exit;
+  // A: V0's corner, B along x, C along y. S runs along x and T along y,
+  // except when the corners are flipped in one axis only (GEDrawSprite).
+  var A := V0; var B := V0; var C := V0;
+  B.X := V1.X;
+  C.Y := V1.Y;
+  if (V0.X > V1.X) <> (V0.Y > V1.Y) then
+  begin
+    B.T := V1.T;
+    C.S := V1.S;
+  end
+  else
+  begin
+    B.S := V1.S;
+    C.T := V1.T;
+  end;
+  Result := GEUVPlanes(S, A, B, C, P);
+end;
+
+procedure GEUVAt(const P: TGEUVPlanes; PX, PY: Integer; out SS, TT: Single);
+begin
+  var DX := Int64(PX) * 16 + 8 - P.S.AX;
+  var DY := Int64(PY) * 16 + 8 - P.S.AY;
+  SS := FloorShr(P.S.C0 + P.S.GX * DX + P.S.GY * DY, 10 + P.KS) / 16;
+  TT := FloorShr(P.T.C0 + P.T.GX * DX + P.T.GY * DY, 10 + P.KT) / 16;
+end;
+
 function GEPlaneByte(N: Int64): Integer;
 begin
   if N < 0 then
@@ -13398,6 +13487,9 @@ begin
   // The fog factor is a plane like the colours, of the vertices' 8-bit
   // factors (GEFogByte).
   var PF: TGEDepthPlane;
+  // Through mode: S and T as planes (GEUVPlanes).
+  var UV: TGEUVPlanes;
+  var UVPlanes := S.Textured and S.Through and GEUVPlanes(S, V0, V1, V2, UV);
   if S.FogEnabled then
     GEMakeValuePlane(V0, V1, V2, GEFogByte(V0.Fog), GEFogByte(V1.Fog), GEFogByte(V2.Fog), PF);
   // For the level of detail: the steps of S/w and T/w per pixel along x and
@@ -13548,8 +13640,13 @@ begin
         var IW := IW0 * W0 + IW1 * W1 + IW2 * W2;
         if (Q <> 0) and ((Q > 0) = (IW > 0)) then
         begin
-          F.S := (SW0 * W0 + SW1 * W1 + SW2 * W2) / Q;
-          F.T := (TW0 * W0 + TW1 * W1 + TW2 * W2) / Q;
+          if UVPlanes then
+            GEUVAt(UV, PX, PY, F.S, F.T)
+          else
+          begin
+            F.S := (SW0 * W0 + SW1 * W1 + SW2 * W2) / Q;
+            F.T := (TW0 * W0 + TW1 * W1 + TW2 * W2) / Q;
+          end;
           if NeedLod then
           begin
             F.Lod := GETexLod(S, LodG, Abs(Q), IW);
@@ -13637,6 +13734,8 @@ begin
   end;
   SetupFragment(F, V1);
   F.Lod := Lod;
+  var UV: TGEUVPlanes;
+  var UVPlanes := S.Textured and GESpriteUVPlanes(S, V0, V1, UV);
   for var PY := PY1 to PY2 do
   begin
     // The per row terms of S = V0.S + SX * FX + SY * FY (and T, Q), in the
@@ -13650,7 +13749,9 @@ begin
     begin
       // The pipelines change only the colour.
       F.R := V1.R; F.G := V1.G; F.B := V1.B; F.A := V1.A;
-      if S.Textured then
+      if UVPlanes then
+        GEUVAt(UV, PX, PY, F.S, F.T)
+      else if S.Textured then
       begin
         var FX: Extended := (PX * 16 + 8 - V0.X) * 0.0625;
         F.S := V0.S + SX * FX + SYFY;

@@ -102,6 +102,11 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   480 pixels wide, depth 2000 to 62000), 60 a frame, the depth buffer read
   back (`recip/frame_<n>.bin`, 272 rows of 480). 48 s on the PSP.
 
+- `ge_uv`: which texel a through-mode triangle samples: 16 random triangles
+  a frame with float UVs (random fractions, or whole texels) over textures
+  of 32 to 512 texels whose texels hold their own coordinates
+  (`uv/frame_<n>.bin`, `tris_<n>.bin`). 2 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -156,7 +161,18 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   sixteenths off. Levels narrower than 16 texels with a buffer width below 16
   read their lower rows elsewhere on the PSP (`ge_lod`'s random set, levels
   4 to 7): rows are at least 16 bytes (`ge_clut`, below).
-- Sprite sampling (`ge_sprite`): the core's positions (start plus the
+- Through-mode texture coordinates (`ge_uv`) are planes like the depth's:
+  S and T over the texture's width and height, truncated to 15 fraction
+  bits (so 15 - log2(size) bits of a texel), the steps from the area's
+  reciprocal. 99.98% of 368,000 pixels over textures of 32 to 512 texels;
+  the rest a texel up within a few thousandths of the next. gpu/exact's
+  quad as a strip now matches.
+- Sprites sample the same planes, through V0's corner and the corners
+  beside it along x and y, so their steps come from the reciprocal of width
+  times height: every sample of `ge_sprite`'s integer spans matches (the
+  hardware's one-sixteenth-lower samples below), 99.3% of its fractional
+  ones; gpu/exact's scaled sprites job now matches.
+- Sprite sampling (`ge_sprite`, before): the core's positions (start plus the
   truncated step times the distance to the pixel centre) match the random
   sets to 99.8% but are one sixteenth of a texel too high on most samples
   that land exactly on a sixteenth (integer spans: 1:1, 2:1 and so on). A

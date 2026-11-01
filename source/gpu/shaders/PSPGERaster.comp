@@ -968,6 +968,22 @@ int planeAt(uint o, int64_t dx, int64_t dy)
   return result > 255 ? 255 : result;
 }
 
+// Where a primitive has them (word 125 bit 0), S and T from the planes of
+// PSP.GE.Raster's GEUVPlanes, in texels floored to 1/16.
+void uvPlanes(uint p, int px, int py, inout float fs, inout float ft)
+{
+  uint uvf = prims[p + 125u];
+  if ((uvf & 1u) == 0u)
+    return;
+  int64_t udx = int64_t(px) * 16l + 8l - int64_t(int(prims[p + 123u]));
+  int64_t udy = int64_t(py) * 16l + 8l - int64_t(int(prims[p + 124u]));
+  int ks = int((uvf >> 8) & 0xFFu), kt = int((uvf >> 16) & 0xFFu);
+  int64_t us = (primInt64(p + 111u) + primInt64(p + 113u) * udx + primInt64(p + 115u) * udy) >> (10 + ks);
+  int64_t ut = (primInt64(p + 117u) + primInt64(p + 119u) * udx + primInt64(p + 121u) * udy) >> (10 + kt);
+  fs = float(us) / 16.0;
+  ft = float(ut) / 16.0;
+}
+
 bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
 {
   int64_t x0 = vInt(p, V0, 0u), y0 = vInt(p, V0, 1u);
@@ -1043,6 +1059,8 @@ bool triangleFragment(uint p, uint s, int px, int py, out Fragment f)
       }
       f.s = st[0];
       f.t = st[1];
+      // Through mode: the planes of PSP.GE.Raster's GEUVPlanes.
+      uvPlanes(p, px, py, f.s, f.t);
       if (stFlag(s, SF_NEEDLOD))
       {
         // The largest step of S/w and T/w per pixel (GETexLod's G) from the steps
@@ -1089,6 +1107,7 @@ void spriteFragment(uint p, uint s, int px, int py, out Fragment f)
       double(uintBitsToFloat(prims[p + 37u])) * v;
     f.s = float(ss);
     f.t = float(tt);
+    uvPlanes(p, px, py, f.s, f.t);
     if (prims[p + 41u] != 0u)
     {
       precise double q = double(uintBitsToFloat(prims[p + 40u])) + double(uintBitsToFloat(prims[p + 38u])) * u +
