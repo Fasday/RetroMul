@@ -957,9 +957,11 @@ int64_t primInt64(uint o)
   return int64_t(packUint2x32(uvec2(prims[o], prims[o + 1u])));
 }
 
+// A colour or fog plane (PSP.GE.Raster's GEMakeValuePlane) at (dx, dy) 1/16
+// pixels from its vertex.
 int planeAt(uint o, int64_t dx, int64_t dy)
 {
-  int64_t v = primInt64(o) + (primInt64(o + 2u) * dx + primInt64(o + 4u) * dy) / 16l;
+  int64_t v = primInt64(o) + primInt64(o + 2u) * dx + primInt64(o + 4u) * dy;
   if (v < 0l)
     return 0;
   int result = int(uint64_t(v) >> 14);

@@ -1695,16 +1695,19 @@ begin
   P[13] := PCardinal(@V.Fog)^;
 end;
 
-procedure PutPlane(P: PCardinal; C0, C1, C2: Integer; DX0, DY0, DX1, DY1, DX2, DY2, Area: Int64; Anchor: Integer);
+// A colour or fog plane (GEMakeValuePlane): the start, the steps per 1/16
+// pixel; its vertex (the same for every plane of the triangle) in
+// Anchor[0..1].
+procedure PutPlane(P, Anchor: PCardinal; const V0, V1, V2: TGEVertex; C0, C1, C2: Integer);
+var
+  VP: TGEDepthPlane;
 begin
-  var NX := -(C0 * DY0 + C1 * DY1 + C2 * DY2) * 16;
-  var NY := (C0 * DX0 + C1 * DX1 + C2 * DX2) * 16;
-  var C := C0;
-  if Anchor = 1 then C := C1;
-  if Anchor = 2 then C := C2;
-  PInt64(P)^ := Int64(C) shl 14;
-  PInt64(P + 2)^ := (NX shl 14) div Area;
-  PInt64(P + 4)^ := (NY shl 14) div Area;
+  GEMakeValuePlane(V0, V1, V2, C0, C1, C2, VP);
+  PInt64(P)^ := VP.C0;
+  PInt64(P + 2)^ := VP.GX;
+  PInt64(P + 4)^ := VP.GY;
+  Anchor[0] := Cardinal(Integer(VP.AX));
+  Anchor[1] := Cardinal(Integer(VP.AY));
 end;
 
 procedure TGEVulkanLLEBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
@@ -1808,28 +1811,17 @@ begin
   P[60] := PCardinal(@A0.Q)^;
   P[61] := PCardinal(@A1.Q)^;
   P[62] := PCardinal(@A2.Q)^;
-  var AI := 0;
-  var AX := X0; var AY := Y0;
-  if (Y1 > AY) or ((Y1 = AY) and (X1 > AX)) then
-  begin
-    AI := 1; AX := X1; AY := Y1;
-  end;
-  if (Y2 > AY) or ((Y2 = AY) and (X2 > AX)) then
-  begin
-    AI := 2; AX := X2; AY := Y2;
-  end;
-  P[64] := Cardinal(AX);
-  P[65] := Cardinal(AY);
+  // The colour and fog planes (64, 65 their vertex).
   if S.Gouraud and not S.Flat then
   begin
-    PutPlane(P + 66, A0.R, A1.R, A2.R, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-    PutPlane(P + 72, A0.G, A1.G, A2.G, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-    PutPlane(P + 78, A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-    PutPlane(P + 84, A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PutPlane(P + 66, P + 64, V0, V1, V2, V0.R, V1.R, V2.R);
+    PutPlane(P + 72, P + 64, V0, V1, V2, V0.G, V1.G, V2.G);
+    PutPlane(P + 78, P + 64, V0, V1, V2, V0.B, V1.B, V2.B);
+    PutPlane(P + 84, P + 64, V0, V1, V2, V0.A, V1.A, V2.A);
   end;
   // The fog plane, from the vertices' 8-bit fog factors (GEFogByte).
   if S.FogEnabled then
-    PutPlane(P + 96, GEFogByte(A0.Fog), GEFogByte(A1.Fog), GEFogByte(A2.Fog), DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    PutPlane(P + 96, P + 64, V0, V1, V2, GEFogByte(V0.Fog), GEFogByte(V1.Fog), GEFogByte(V2.Fog));
   // The depth plane (GEMakeDepthPlane) when the depths differ: 102, 103 its
   // vertex, 104..109 the start and the steps, 110 whether it is used.
   if (V0.Z <> V1.Z) or (V0.Z <> V2.Z) then

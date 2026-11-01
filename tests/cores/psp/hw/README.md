@@ -119,10 +119,15 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   truncated toward zero (12 texels over 7 pixels steps a hair under 12/7);
   rounding it moved 20% of a scaled-sprite job's pixels.
 - A triangle's fog factor is a plane like the Gouraud colours: each vertex's
-  factor clamped to [0, 1] and rounded to 8 bits, interpolated from the
-  lowest vertex. Interpolating the unclamped factor was up to 127 off where
-  vertex factors lie outside [0, 1]; what is left (±1) comes from the
-  projection.
+  factor clamped to [0, 1] and rounded to 8 bits. Interpolating the
+  unclamped factor was up to 127 off where vertex factors lie outside
+  [0, 1].
+- Gouraud colours and the fog factor are planes exactly like the depth
+  (below): the same starting vertex, steps floor(N R / 2^(e + 2)) per 1/16
+  pixel in 2^-14 from the same reciprocal of the area, floored at the pixel
+  centre and clamped to 0..255. gpu/exact's Gouraud plane jobs (planes
+  12-15) and fog jobs (transform 1-4) now match; planes from the lowest
+  vertex with an exact division left 0.4-8% of their pixels one off.
 - A triangle's depth is a plane from one of its vertices (`ge_zplane`): that
   vertex's depth plus steps per 1/16 pixel in x and y, fixed point with 14
   fraction bits, floored at the pixel centre. The vertex: of those at the

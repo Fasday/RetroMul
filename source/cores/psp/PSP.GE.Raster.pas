@@ -120,6 +120,11 @@ type
   end;
 
 procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
+// The same plane through three other values at the vertices (Gouraud
+// colours, recorded on a PSP-E1000: gpu/exact's Gouraud plane jobs).
+procedure GEMakeValuePlane(const V0, V1, V2: TGEVertex; C0, C1, C2: Int64; out P: TGEDepthPlane);
+// A colour plane's channel where N (P.C0 plus the steps) is, 0..255.
+function GEPlaneByte(N: Int64): Integer; inline;
 
 type
   // The pixels a line covers, in order from its first vertex (GELineStart,
@@ -13036,59 +13041,6 @@ begin
   F.Lod := 0;
 end;
 
-type
-  // A colour channel as a plane from the anchor vertex: its value and its
-  // steps per pixel in x and y, fixed point with GEPlaneBits fraction bits.
-  TGEPlane = record
-    C0, GX, GY: Int64;
-  end;
-
-const
-  GEPlaneBits = 14;
-
-// The colour planes start from the lowest vertex on screen (the rightmost
-// of a lowest pair): A0, A1 or A2.
-function PlaneAnchor(X0, Y0, X1, Y1, X2, Y2: Int64): Integer;
-begin
-  Result := 0;
-  var BX := X0;
-  var BY := Y0;
-  if (Y1 > BY) or ((Y1 = BY) and (X1 > BX)) then
-  begin
-    Result := 1;
-    BX := X1;
-    BY := Y1;
-  end;
-  if (Y2 > BY) or ((Y2 = BY) and (X2 > BX)) then
-    Result := 2;
-end;
-
-function MakePlane(C0, C1, C2: Integer; DX0, DY0, DX1, DY1, DX2, DY2, Area: Int64; Anchor: Integer): TGEPlane;
-begin
-  // dE_i/dx = -DY_i and dE_i/dy = DX_i per 1/16 pixel; per pixel times 16.
-  var NX := -(C0 * DY0 + C1 * DY1 + C2 * DY2) * 16;
-  var NY := (C0 * DX0 + C1 * DX1 + C2 * DX2) * 16;
-  case Anchor of
-    1: Result.C0 := Int64(C1) shl GEPlaneBits;
-    2: Result.C0 := Int64(C2) shl GEPlaneBits;
-  else
-    Result.C0 := Int64(C0) shl GEPlaneBits;
-  end;
-  Result.GX := (NX shl GEPlaneBits) div Area;
-  Result.GY := (NY shl GEPlaneBits) div Area;
-end;
-
-// The channel at (DX, DY) 1/16 pixels from the anchor.
-function PlaneAt(const P: TGEPlane; DX, DY: Int64): Integer; inline;
-begin
-  var V := P.C0 + (P.GX * DX + P.GY * DY) div 16;
-  if V < 0 then
-    Exit(0);
-  Result := V shr GEPlaneBits;
-  if Result > 255 then
-    Result := 255;
-end;
-
 // Intersect a row's x interval with E + Step * (x - Origin) >= 0.
 procedure EdgeSpan(E, Step: Int64; Origin: Integer; var Lo, Hi: Integer); inline;
 begin
@@ -13168,12 +13120,27 @@ end;
 
 procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
 begin
+  GEMakeValuePlane(V0, V1, V2, V0.Z, V1.Z, V2.Z, P);
+end;
+
+function GEPlaneByte(N: Int64): Integer;
+begin
+  if N < 0 then
+    Exit(0);
+  Result := N shr 14;
+  if Result > 255 then
+    Result := 255;
+end;
+
+procedure GEMakeValuePlane(const V0, V1, V2: TGEVertex; C0, C1, C2: Int64; out P: TGEDepthPlane);
+begin
+  P := Default(TGEDepthPlane);
   var X: array[0..2] of Int64;
   var Y: array[0..2] of Int64;
   var Z: array[0..2] of Int64;
-  X[0] := V0.X; Y[0] := V0.Y; Z[0] := V0.Z;
-  X[1] := V1.X; Y[1] := V1.Y; Z[1] := V1.Z;
-  X[2] := V2.X; Y[2] := V2.Y; Z[2] := V2.Z;
+  X[0] := V0.X; Y[0] := V0.Y; Z[0] := C0;
+  X[1] := V1.X; Y[1] := V1.Y; Z[1] := C1;
+  X[2] := V2.X; Y[2] := V2.Y; Z[2] := C2;
   var Area := (X[1] - X[0]) * (Y[2] - Y[0]) - (Y[1] - Y[0]) * (X[2] - X[0]);
   // dz/dx and dz/dy times the area.
   var NX := -(Z[0] * (Y[2] - Y[1]) + Z[1] * (Y[0] - Y[2]) + Z[2] * (Y[1] - Y[0]));
@@ -13372,14 +13339,6 @@ begin
   Result := Trunc(F * 255 + 0.5);
 end;
 
-function PlaneNumerator(C0, N: Int64): Integer; inline;
-begin
-  var V := C0 + N div 16;
-  if V < 0 then Exit(0);
-  Result := V shr GEPlaneBits;
-  if Result > 255 then Result := 255;
-end;
-
 procedure GEDrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
 var
   F: TGEFragment;
@@ -13427,30 +13386,20 @@ begin
   if not ((DY1 < 0) or ((DY1 = 0) and (DX1 > 0))) then Bias1 := -1;
   if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then Bias2 := -1;
   var FArea := 1.0 / Area;
-  var PR, PG, PB, PA: TGEPlane;
-  var AI := PlaneAnchor(X0, Y0, X1, Y1, X2, Y2);
-  var AX := X0; var AY := Y0;
-  if AI = 1 then
-  begin
-    AX := X1;
-    AY := Y1;
-  end
-  else if AI = 2 then
-  begin
-    AX := X2;
-    AY := Y2;
-  end;
+  var PR, PG, PB, PA: TGEDepthPlane;
+  // Gouraud colours: planes as the depth's (GEMakeValuePlane).
   if S.Gouraud and not S.Flat then
   begin
-    PR := MakePlane(A0.R, A1.R, A2.R, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-    PG := MakePlane(A0.G, A1.G, A2.G, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-    PB := MakePlane(A0.B, A1.B, A2.B, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
-    PA := MakePlane(A0.A, A1.A, A2.A, DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    GEMakeValuePlane(V0, V1, V2, V0.R, V1.R, V2.R, PR);
+    GEMakeValuePlane(V0, V1, V2, V0.G, V1.G, V2.G, PG);
+    GEMakeValuePlane(V0, V1, V2, V0.B, V1.B, V2.B, PB);
+    GEMakeValuePlane(V0, V1, V2, V0.A, V1.A, V2.A, PA);
   end;
-  // The fog factor is a plane like the colours.
-  var PF: TGEPlane;
+  // The fog factor is a plane like the colours, of the vertices' 8-bit
+  // factors (GEFogByte).
+  var PF: TGEDepthPlane;
   if S.FogEnabled then
-    PF := MakePlane(GEFogByte(A0.Fog), GEFogByte(A1.Fog), GEFogByte(A2.Fog), DX0, DY0, DX1, DY1, DX2, DY2, Area, AI);
+    GEMakeValuePlane(V0, V1, V2, GEFogByte(V0.Fog), GEFogByte(V1.Fog), GEFogByte(V2.Fog), PF);
   // For the level of detail: the steps of S/w and T/w per pixel along x and
   // y, from the steps of the weights, and the largest of them (GETexLod's G).
   var NeedLod := S.Textured and S.Tex.NeedLod;
@@ -13540,16 +13489,16 @@ begin
     NR := 0; NG := 0; NB := 0; NA := 0;
     if Gouraud then
     begin
-      var DX := Int64(Lo) * 16 + 8 - AX;
-      var DY := SY - AY;
-      NR := PR.GX * DX + PR.GY * DY;
-      NG := PG.GX * DX + PG.GY * DY;
-      NB := PB.GX * DX + PB.GY * DY;
-      NA := PA.GX * DX + PA.GY * DY;
+      var DX := Int64(Lo) * 16 + 8 - PR.AX;
+      var DY := SY - PR.AY;
+      NR := PR.C0 + PR.GX * DX + PR.GY * DY;
+      NG := PG.C0 + PG.GX * DX + PG.GY * DY;
+      NB := PB.C0 + PB.GX * DX + PB.GY * DY;
+      NA := PA.C0 + PA.GX * DX + PA.GY * DY;
     end;
     var NF: Int64 := 0;
     if Fog then
-      NF := PF.GX * (Int64(Lo) * 16 + 8 - AX) + PF.GY * (SY - AY);
+      NF := PF.C0 + PF.GX * (Int64(Lo) * 16 + 8 - PF.AX) + PF.GY * (SY - PF.AY);
     var NZ: Int64 := 0;
     if DP.Valid then
       NZ := DP.C0 + DP.GX * (Int64(Lo) * 16 + 8 - DP.AX) + DP.GY * (SY - DP.AY);
@@ -13569,13 +13518,13 @@ begin
       end
       else
       begin
-        F.R := PlaneNumerator(PR.C0, NR);
+        F.R := GEPlaneByte(NR);
         Inc(NR, PR.GX * 16);
-        F.G := PlaneNumerator(PG.C0, NG);
+        F.G := GEPlaneByte(NG);
         Inc(NG, PG.GX * 16);
-        F.B := PlaneNumerator(PB.C0, NB);
+        F.B := GEPlaneByte(NB);
         Inc(NB, PB.GX * 16);
-        F.A := PlaneNumerator(PA.C0, NA);
+        F.A := GEPlaneByte(NA);
         Inc(NA, PA.GX * 16);
         if Secondary then
         begin
@@ -13615,7 +13564,7 @@ begin
       if Fog then
       begin
         // The pixel pipelines take Trunc(Fog * 255): half a step above keeps it.
-        F.Fog := (PlaneNumerator(PF.C0, NF) + 0.5) / 255;
+        F.Fog := (GEPlaneByte(NF) + 0.5) / 255;
         Inc(NF, PF.GX * 16);
       end;
       Plot(S, PX, PY, F);
