@@ -4,6 +4,7 @@ program PSPRun;
 
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
+// -from N: with -every, frames (hashes, -out) from frame N on.
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
 // -gpu-hle [-scale N]: Vulkan graphics-pipeline rendering (fast, not bit exact), N times the PSP's resolution;
 // frames (-out, hashes) are then the renderer's at that resolution. -fixed-blend: no blending in the shader.
@@ -299,6 +300,7 @@ begin
     var Frames := 600;
     var OutDir := '';
     var Every := 0;
+    var FromFrame := 0;
     var MemstickOverride := '';
     var NoMemstick := False;
     var FontDirectory := '';
@@ -334,6 +336,7 @@ begin
       else if A = '-no-memstick' then NoMemstick := True
       else if A = '-fontdir' then begin Inc(I); FontDirectory := ParamStr(I); end
       else if A = '-every' then begin Inc(I); Every := StrToInt(ParamStr(I)); end
+      else if A = '-from' then begin Inc(I); FromFrame := StrToInt(ParamStr(I)); end
       else if A = '-log' then EchoLog := True
       else if A = '-test' then TestMode := True
       else if A = '-quiet' then Quiet := True
@@ -573,7 +576,7 @@ begin
             SumSq := SumSq + Sqr(Double(Smp));
             Inc(SumN);
           end;
-        if (Every > 0) and (F mod Every = 0) then
+        if (Every > 0) and (F >= FromFrame) and (F mod Every = 0) then
         begin
           var H := FrameHash(Frame);
           if not Quiet then
