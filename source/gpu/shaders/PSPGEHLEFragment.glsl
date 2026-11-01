@@ -57,9 +57,10 @@ bool testFunc(uint func, int a, int b) {
   return true;
 }
 
+// By the image's own pixels: above 1x the PSP's 4x4 pattern over its pixels
+// would show as a coarse checkerboard.
 int ditherAt() {
-  uint scale = max((pc.flags >> 24) & 15u, 1u);
-  uvec2 p = uvec2(gl_FragCoord.xy) / scale;
+  uvec2 p = uvec2(gl_FragCoord.xy);
   uint i = (p.y & 3u) * 4u + (p.x & 3u);
   uint word = i < 8u ? pc.dither0 : pc.dither1;
   int n = int((word >> ((i & 7u) * 4u)) & 15u);

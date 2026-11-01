@@ -3019,10 +3019,16 @@ begin
     PutVertex(V[1], V1, V2, V1.X / 16, V1.Y / 16, True);
   end;
   PutVertex(V[2], V2, V2, V2.X / 16, V2.Y / 16, True);
-  // Pixels whose centres can be inside.
-  Emit(KindTriangle, S, @V[0], 3,
-    FloorDiv16(Min(V0.X, Min(V1.X, V2.X)) + 7), FloorDiv16(Min(V0.Y, Min(V1.Y, V2.Y)) + 7),
-    FloorDiv16(Max(V0.X, Max(V1.X, V2.X)) - 8), FloorDiv16(Max(V0.Y, Max(V1.Y, V2.Y)) - 8));
+  var MinX := Min(V0.X, Min(V1.X, V2.X)); var MinY := Min(V0.Y, Min(V1.Y, V2.Y));
+  var MaxX := Max(V0.X, Max(V1.X, V2.X)); var MaxY := Max(V0.Y, Max(V1.Y, V2.Y));
+  // Pixels whose centres can be inside; above 1x those the triangle touches
+  // at all (a triangle between the PSP's pixel centres covers some of the
+  // image's: small ones, as in faces, would leave holes).
+  if FScale = 1 then
+    Emit(KindTriangle, S, @V[0], 3, FloorDiv16(MinX + 7), FloorDiv16(MinY + 7), FloorDiv16(MaxX - 8),
+      FloorDiv16(MaxY - 8))
+  else
+    Emit(KindTriangle, S, @V[0], 3, FloorDiv16(MinX), FloorDiv16(MinY), FloorDiv16(MaxX - 1), FloorDiv16(MaxY - 1));
 end;
 
 procedure TGEVulkanHLEBackend.DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
@@ -3067,9 +3073,14 @@ begin
   end;
   V[0] := C[0]; V[1] := C[1]; V[2] := C[2];
   V[3] := C[1]; V[4] := C[3]; V[5] := C[2];
-  // Pixels whose centres lie in [x1, x2) x [y1, y2).
-  Emit(KindTriangle, S, @V[0], 6, FloorDiv16(Min(V0.X, V1.X) + 7), FloorDiv16(Min(V0.Y, V1.Y) + 7),
-    FloorDiv16(Max(V0.X, V1.X) + 7) - 1, FloorDiv16(Max(V0.Y, V1.Y) + 7) - 1);
+  // Pixels whose centres lie in [x1, x2) x [y1, y2); above 1x those the
+  // sprite touches at all (as triangles).
+  if FScale = 1 then
+    Emit(KindTriangle, S, @V[0], 6, FloorDiv16(Min(V0.X, V1.X) + 7), FloorDiv16(Min(V0.Y, V1.Y) + 7),
+      FloorDiv16(Max(V0.X, V1.X) + 7) - 1, FloorDiv16(Max(V0.Y, V1.Y) + 7) - 1)
+  else
+    Emit(KindTriangle, S, @V[0], 6, FloorDiv16(Min(V0.X, V1.X)), FloorDiv16(Min(V0.Y, V1.Y)),
+      FloorDiv16(Max(V0.X, V1.X) - 1), FloorDiv16(Max(V0.Y, V1.Y) - 1));
 end;
 
 // The GE's lines differ from the GPU's in which pixels they cover: they are
