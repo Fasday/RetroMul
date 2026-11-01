@@ -123,6 +123,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   texture's address must be VRAM's (0x04154000): 0x154000 hangs the GE.
   Under a second on the PSP.
 
+- `ge_zclamp`: depth clamping (CLIPENABLE) of triangles whose vertex depths
+  after the viewport fall outside 0..65535: orthographic, 16 random
+  triangles a frame, "in" (every vertex inside the planes, depths -27232 to
+  92768) and "far" (vertices beyond the far plane); the depth buffer
+  (`zclamp/<set>_<n>.bin`) and the vertices (`_in.bin`). 1.4 s on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -261,6 +267,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   still drawn when its depth after the viewport lies in 0..65535, and one
   inside the planes whose depth falls outside that range is not; the near
   plane culls. Points beyond the far plane are not drawn.
+- With depth clamping, a triangle's vertex depths are clamped to 0..65535
+  before its depth plane is made (`ge_zclamp`: every pixel, inside the
+  planes and beyond the far one), and so are those of the points the near
+  plane cuts (gpu/exact's near clip depth jobs now match). The core
+  interpolated the depths as they were and clamped each pixel's: 70% of
+  the probe's pixels off, up to 14 in the near clip jobs.
 
 - The vertex unit (`ge_xform`) works on 16-bit significands: inputs are
   truncated to 16 bits; a product keeps its bits down to 2^(ea + eb - 15)

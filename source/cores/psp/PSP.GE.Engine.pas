@@ -2210,6 +2210,18 @@ begin
   Result := (A.V.Z < 0) or (A.V.Z > 65535);
 end;
 
+// With depth clamping a triangle's vertex depths are clamped to 0..65535
+// before its depth plane is made (recorded on a PSP-E1000, ge_zclamp: every
+// pixel of triangles with vertices inside the planes and beyond the far one;
+// clamping each pixel's depth instead was off in 70% of them).
+procedure ClampDepth(var V: TGEVertex); inline;
+begin
+  if V.Z < 0 then
+    V.Z := 0
+  else if V.Z > 65535 then
+    V.Z := 65535;
+end;
+
 // A triangle through the clipper. It is culled when all its vertices lie
 // beyond one plane, when without depth clamping any lies beyond the near
 // plane or outside the depth range (DepthOut), and when any vertex it is
@@ -2230,7 +2242,14 @@ begin
   if (Codes and GEOutNear) = 0 then
   begin
     if (Codes and GEOutScreen) = 0 then
-      EmitTriangle(A.V, B.V, C.V, Odd);
+      if FDepthClamp and (DepthOut(A) or DepthOut(B) or DepthOut(C)) then
+      begin
+        var CA := A.V; var CB := B.V; var CC := C.V;
+        ClampDepth(CA); ClampDepth(CB); ClampDepth(CC);
+        EmitTriangle(CA, CB, CC, Odd);
+      end
+      else
+        EmitTriangle(A.V, B.V, C.V, Odd);
     Exit;
   end;
   Src[0] := @A; Src[1] := @B; Src[2] := @C;
@@ -2274,6 +2293,7 @@ begin
       Exit;
     if FRaster.Flat then
       CopyColors(Poly[I].V, C.V);
+    ClampDepth(Poly[I].V);
   end;
   for var I := 1 to N - 2 do
     EmitTriangle(Poly[0].V, Poly[I].V, Poly[I + 1].V, Odd);
