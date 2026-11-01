@@ -186,15 +186,17 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   centre on x-major lines (|dx| > |dy|) or left of it on y-major ones. Every
   one of the probe's 8,192 lines and gpu/exact's line coverage jobs match
   (the core's centres-between rule missed about one line in ten).
-  Gouraud colours step along the major axis: (c1 - c0) * 16 / length per
-  pixel, floored to 12 fraction bits, from the first vertex, floored and
-  clamped (99.9% of gpu/exact's Gouraud line channels; that also settles
-  the curves jobs' patch lines).
+  Gouraud colours step along the major axis: (c1 - c0) * 16 times the
+  reciprocal of the length (the depth plane's table reciprocal, of the
+  length in 1/16 pixels) per pixel, floored to 10 fraction bits, from the
+  first vertex, floored and clamped: every one of gpu/exact's Gouraud line
+  channels.
   Antialiased lines replace the fragment's alpha with a coverage from the
   line's minor position in the pixel: ceil(256 f) for f in [0, 1/2], 256 -
-  that above, so 128 at the centre (the minor position from a slope
-  truncated to 2^-24; 98.9% of the probe's antialiased pixels, the rest one
-  off).
+  that above, so 128 at the centre, the minor position from the slope
+  (minor over the same reciprocal of the length) truncated to 2^-18: 99.5%
+  of the probe's antialiased pixels, the rest one off where the coverage
+  lands exactly on a step.
 - Patches (`ge_patch`, `ge_spline`) are evaluated in steps between
   neighbours: t = i / div in 8 bits, floored from the nearer end (so the
   weights are symmetric), first along v (each column), then along u. Bezier

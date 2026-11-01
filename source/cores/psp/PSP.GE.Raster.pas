@@ -123,6 +123,9 @@ procedure GEMakeDepthPlane(const V0, V1, V2: TGEVertex; out P: TGEDepthPlane);
 // The same plane through three other values at the vertices (Gouraud
 // colours, recorded on a PSP-E1000: gpu/exact's Gouraud plane jobs).
 procedure GEMakeValuePlane(const V0, V1, V2: TGEVertex; C0, C1, C2: Int64; out P: TGEDepthPlane);
+// The GE's reciprocal of an area's (or a length's) mantissa 1 + M16 / 2^16,
+// in 2^-16.
+function GEAreaRecip(M16: Integer): Int64;
 
 type
   // A through-mode triangle's texture coordinates as planes (GEUVPlanes).
@@ -13134,7 +13137,7 @@ end;
 // of M16, each from its node 2^27 / (256 + J) (in 2^-11) down by the slope
 // 2^24 / (256 + J)^2 a step of M16 (in 2^-8), both floored, the sum floored
 // to an integer. Floor(2^32 / (2^16 + M16)) is one off for a fifth of them.
-function GEAreaRecip(M16: Integer): Int64; inline;
+function GEAreaRecip(M16: Integer): Int64;
 begin
   var J := M16 shr 8;
   var Node := (Int64(1) shl 27) div (256 + J);
@@ -13374,14 +13377,26 @@ end;
 // below its leading one), floored to 12 fraction bits; a pixel's value is C0
 // plus the step times its centre's distance from the first vertex along the
 // line, floored, then clamped to 0..255.
-function GELineColor(const W: TGELineWalk; PX, PY, C0, C1: Integer): Integer;
+// The GE's reciprocal of a line's length L (1/16 pixels) as of an area
+// (GEAreaRecip): about 2^(16 + E) / L.
+function LineRecip(L: Int64; out E: Integer): Int64;
 begin
-  var L := Abs(W.DM);
-  var E := 0;
+  E := 0;
   while (L shr (E + 1)) <> 0 do
     Inc(E);
-  var R := (Int64(1) shl (24 + E)) div L;
-  var Step := FloorShr(Int64(C1 - C0) * 16 * R * 4096, 24 + E);
+  var M16: Int64;
+  if E >= 16 then
+    M16 := (L shr (E - 16)) - 65536
+  else
+    M16 := (L shl (16 - E)) - 65536;
+  Result := GEAreaRecip(Integer(M16));
+end;
+
+function GELineColor(const W: TGELineWalk; PX, PY, C0, C1: Integer): Integer;
+begin
+  var E: Integer;
+  var R := LineRecip(Abs(W.DM), E);
+  var Step := FloorShr(Int64(C1 - C0) * 16 * R * 1024, 16 + E);
   var C: Int64;
   if W.XMajor then
     C := Int64(PX) * 16 + 8
@@ -13389,7 +13404,7 @@ begin
     C := Int64(PY) * 16 + 8;
   // The distance in the direction of travel.
   var D := (C - W.M0) * W.Step;
-  Result := FloorShr(Int64(C0) * 4096 + FloorShr(Step * D, 4), 12);
+  Result := FloorShr(Int64(C0) * 1024 + FloorShr(Step * D, 4), 10);
   if Result < 0 then
     Result := 0;
   if Result > 255 then
@@ -13404,16 +13419,30 @@ end;
 // and 256 - X past it.
 function GELineCoverage(const W: TGELineWalk; PX, PY: Integer): Integer;
 begin
-  var CF := W.FirstP * 16 + 8;
-  var First := W.N0 * 16384 + (W.DN * (CF - W.M0) * 16384) div W.DM;
-  var Step := (W.DN * 16 * 16384 * W.Step) div W.DM;
-  var Pos := First + Step * W.K;
+  // The slope (minor per major 1/16 pixel) in 2^-18 from the length's
+  // reciprocal, truncated toward zero; the position at the pixel centre.
+  var E: Integer;
+  var R := LineRecip(Abs(W.DM), E);
+  var V := W.DN * R * (1 shl 18);
+  var Step: Int64;
+  if V >= 0 then
+    Step := V shr (16 + E)
+  else
+    Step := -((-V) shr (16 + E));
+  var C: Int64;
   var Q: Int64;
   if W.XMajor then
-    Q := PY
+  begin
+    C := Int64(PX) * 16 + 8;
+    Q := PY;
+  end
   else
+  begin
+    C := Int64(PY) * 16 + 8;
     Q := PX;
-  var X := -FloorShr(-(Pos - Q * 16 * 16384), 10);
+  end;
+  var Pos := (W.N0 shl 18) + Step * (C - W.M0) * W.Step;
+  var X := -FloorShr(-(Pos - Q * 16 * (1 shl 18)) * 16, 18);
   if X > 128 then
     X := 256 - X;
   Result := Max(0, Min(255, X));
@@ -13500,9 +13529,23 @@ begin
   F.Lod := 0;
   if NeedLod then
   begin
-    var BX0 := -16 * DY0 * FArea; var BY0 := 16 * DX0 * FArea;
-    var BX1 := -16 * DY1 * FArea; var BY1 := 16 * DX1 * FArea;
-    var BX2 := -16 * DY2 * FArea; var BY2 := 16 * DX2 * FArea;
+    var LA: Double := FArea;
+    var LV := StrToIntDef(GetEnvironmentVariable('PSP_LODR'), 0);
+    if LV = 1 then
+    begin
+      var E := 63;
+      while (Area shr E) = 0 do
+        Dec(E);
+      var M16: Int64;
+      if E >= 16 then
+        M16 := (Area shr (E - 16)) - 65536
+      else
+        M16 := (Area shl (16 - E)) - 65536;
+      LA := GEAreaRecip(Integer(M16)) / Power(2, 16 + E);
+    end;
+    var BX0 := -16 * DY0 * LA; var BY0 := 16 * DX0 * LA;
+    var BX1 := -16 * DY1 * LA; var BY1 := 16 * DX1 * LA;
+    var BX2 := -16 * DY2 * LA; var BY2 := 16 * DX2 * LA;
     NSX := A0.S * A0.W * BX0 + A1.S * A1.W * BX1 + A2.S * A2.W * BX2;
     NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
     NTX := A0.T * A0.W * BX0 + A1.T * A1.W * BX1 + A2.T * A2.W * BX2;
