@@ -1401,7 +1401,9 @@ begin
       Exit(1);
     Exit(0);
   end;
-  var Bits := PCardinal(@X)^;
+  // X as a 24-bit float (ge_light's spot sweeps: exponent 10 and 3.7 exact,
+  // where its full mantissa was off in 38 of 131,072).
+  var Bits := PCardinal(@X)^ and $FFFFFF00;
   var L2: Double := Integer((Bits shr 23) and $FF) - 127 + (Bits and $7FFFFF) / 8388608.0;
   var Y: Double := L2 * E;
   if IsNan(Y) then

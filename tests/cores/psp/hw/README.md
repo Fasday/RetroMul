@@ -123,6 +123,12 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   texture's address must be VRAM's (0x04154000): 0x154000 hangs the GE.
   Under a second on the PSP.
 
+- `ge_spot`: the spot factor over random geometry: a spot light at a random
+  offset from each pixel's point, a random direction of random length,
+  cutoff -1, ambient white, so the colour is the factor; exponents 1, 2,
+  3.7, 10, 20 (`spot/e<k>.bin`, `_in.bin` the light and direction bits).
+  1 s on the PSP.
+
 - `ge_zclamp`: depth clamping (CLIPENABLE) of triangles whose vertex depths
   after the viewport fall outside 0..65535: orthographic, 16 random
   triangles a frame, "in" (every vertex inside the planes, depths -27232 to
@@ -312,9 +318,14 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   With KB the distance's root leaves 0.3% one step off. The distance is the
   root of the squared distance (a 24-bit float) truncated to a 24-bit float;
   the quadratic term uses the squared distance. pow is the piecewise-linear log2/exp2 the core
-  already had (100% for exponents 0.5, 1, 2, 10); the spot exponent, like
-  the shininess, keeps 4 mantissa bits. The core does all this:
-  `gpu/commands/light` passes.
+  already had, of its input as a 24-bit float (the spot sweeps: exponents
+  0.5 to 10 exact but for one sample; the full mantissa left 36 off at 3.7);
+  the spot exponent, like the shininess, keeps 4 mantissa bits. The core
+  does all this: `gpu/commands/light` passes. The spot cosine itself is not
+  exactly the core's: `ge_spot`'s random geometry leaves 0.14% (exponent 1)
+  to 2.3% (exponent 20, of the lit samples) one step off either way, and no
+  tried mix of the vertex unit's arithmetic for the light vector, the
+  direction's normalization and the dot product does better.
 
 - The stored `cpu/vfpu/exact`, `cpu/vfpu/vector` and `gpu/exact/lighting`
   expectations match this PSP exactly.

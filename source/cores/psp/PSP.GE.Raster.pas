@@ -13556,19 +13556,6 @@ begin
   if NeedLod then
   begin
     var LA: Double := FArea;
-    var LV := StrToIntDef(GetEnvironmentVariable('PSP_LODR'), 0);
-    if LV = 1 then
-    begin
-      var E := 63;
-      while (Area shr E) = 0 do
-        Dec(E);
-      var M16: Int64;
-      if E >= 16 then
-        M16 := (Area shr (E - 16)) - 65536
-      else
-        M16 := (Area shl (16 - E)) - 65536;
-      LA := GEAreaRecip(Integer(M16)) / Power(2, 16 + E);
-    end;
     var BX0 := -16 * DY0 * LA; var BY0 := 16 * DX0 * LA;
     var BX1 := -16 * DY1 * LA; var BY1 := 16 * DX1 * LA;
     var BX2 := -16 * DY2 * LA; var BY2 := 16 * DX2 * LA;
