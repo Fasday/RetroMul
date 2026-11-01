@@ -138,6 +138,10 @@ type
     // the VRAM layout), while FRaster is as it built it.
     FRasterKey: array[0..81] of Cardinal;
     FRasterKeyValid: Boolean;
+    // The texture cache of textures read from the pixels drawn, and the
+    // TEXFLUSH count (TGETexture.CacheEpoch).
+    FTexCache: TGETexCache;
+    FTexEpoch: Cardinal;
     procedure PrepareLight;
     procedure PrepareGeometry;
     procedure PrepareBones(Count: Integer);
@@ -253,6 +257,8 @@ begin
   FRasterKeyValid := False;
   FRaster.Tex.PalValid := False;
   FRaster.Tex.Sampler := nil;
+  FRaster.Tex.Cache := nil;
+  Inc(FTexEpoch);
   FWorkers.ClutChanged;
 end;
 
@@ -274,6 +280,8 @@ begin
   FillChar(FClut, SizeOf(FClut), 0);
   FRaster.Tex.PalValid := False;
   FRaster.Tex.Sampler := nil;
+  FRaster.Tex.Cache := nil;
+  Inc(FTexEpoch);
 end;
 
 function TPSPGEEngine.Address(Param: Cardinal): Cardinal;
@@ -323,6 +331,11 @@ begin
       Regs.Offset := P shl 8;
     GE_ORIGIN:
       Regs.Offset := PC;
+    GE_TEXFLUSH:
+      begin
+        Inc(FTexEpoch);
+        FRaster.Tex.CacheEpoch := FTexEpoch;
+      end;
     GE_LOADCLUT:
       begin
         Regs.Cmd[Cmd] := Op;
@@ -2038,7 +2051,35 @@ begin
     S.EnvR := C[GE_TEXENVCOLOR] and $FF;
     S.EnvG := (C[GE_TEXENVCOLOR] shr 8) and $FF;
     S.EnvB := (C[GE_TEXENVCOLOR] shr 16) and $FF;
-  end;
+    // A texture in the pixels drawn reads through the texture cache, which
+    // starts empty when the textures before did not.
+    var Cached := False;
+    var Bpp: UInt64 := 2;
+    if S.FBFormat = 3 then
+      Bpp := 4;
+    if (T.Format <= 7) and (S.ScissorX1 <= S.ScissorX2) and (S.ScissorY1 <= S.ScissorY2) then
+    begin
+      var FLo := UInt64(S.FBAddr) + (UInt64(S.ScissorY1) * S.FBStride + UInt64(S.ScissorX1)) * Bpp;
+      var FHi := UInt64(S.FBAddr) + (UInt64(S.ScissorY2) * S.FBStride + UInt64(S.ScissorX2) + 1) * Bpp;
+      for var L := 0 to T.LevelCount - 1 do
+        if (T.Levels[L].Addr and $0F800000) = PSPVRAMBase then
+        begin
+          var TLo := UInt64(T.Levels[L].Addr and (PSPVRAMSize - 1));
+          if (TLo < FHi) and (FLo < TLo + GELevelReach(T^, T.Levels[L])) then
+            Cached := True;
+        end;
+    end;
+    if not Cached then
+      T.Cache := nil
+    else if T.Cache = nil then
+    begin
+      Inc(FTexEpoch);
+      T.CacheEpoch := FTexEpoch;
+      T.Cache := @FTexCache;
+    end;
+  end
+  else
+    S.Tex.Cache := nil;
   S.FogEnabled := ((C[GE_FOGENABLE] and 1) <> 0) and not S.ClearMode;
   S.FogR := C[GE_FOGCOLOR] and $FF;
   S.FogG := (C[GE_FOGCOLOR] shr 8) and $FF;

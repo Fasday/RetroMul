@@ -113,6 +113,16 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   16 random triangles a frame, through mode and perspective (each vertex
   its own w), `alod/<set>_<n>.bin`, `_in.bin` the vertices. 3 s on the PSP.
 
+- `ge_tcache`: a sprite textured from the 4444 buffer it draws into (64 x
+  64 at VRAM 0x154000, as gpu/exact's texture cache jobs), every pixel
+  holding its own index, so each pixel tells which texel it read and
+  whether that texel had been drawn yet: 80 cases of one sprite shifted
+  against its pixels (1 to 32 in x or y, 16 to 48 pixels), gpu/exact's
+  three sprites with and without TEXFLUSH or TEXSYNC between them, and two
+  sprites reading each other (`tcache/case_<n>.bin`, `cases.bin`). The
+  texture's address must be VRAM's (0x04154000): 0x154000 hangs the GE.
+  Under a second on the PSP.
+
 - `exact_dump.sh <test> <out>`: pspautotests' `gpu/exact/<test>` with a job
   runner that also writes every job's readback to `host0:/exact/`. All 131
   jobs of the nine tests give the stored CRCs on this PSP, so the readbacks
@@ -166,7 +176,16 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   pixel; perspective 85% exact, the rest one sixteenth either way, where
   each pixel's own Q/w gave 75%; gpu/exact's auto lod job from 3,620
   pixels off to 119). The core's per-pixel derivative of S and T was up to
-  38 sixteenths off. Levels narrower than 16 texels with a buffer width below 16
+  38 sixteenths off.
+- A texture read from the pixels being drawn (`ge_tcache`) goes through a
+  texture cache of blocks of 8 rows of 16 bytes (a swizzled block), each
+  loaded at its first texel after a TEXFLUSH (TEXSYNC does nothing to it)
+  and kept by the primitives after; the pixels' writes reach memory late.
+  A cycle model fits: a pixel a cycle, a block load 24, a write in memory
+  38 cycles after the last of its row's aligned 4 pixels. It gets 21,288
+  of 21,508 pixels the core read wrong (when it read every texel as
+  memory held it then), and gpu/exact's texture cache jobs exactly; the
+  model does not explain the other 220 (in 10 of the 80 cases). Levels narrower than 16 texels with a buffer width below 16
   read their lower rows elsewhere on the PSP (`ge_lod`'s random set, levels
   4 to 7): rows are at least 16 bytes (`ge_clut`, below).
 - Through-mode texture coordinates (`ge_uv`) are planes like the depth's:

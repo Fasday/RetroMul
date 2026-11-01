@@ -12962,6 +12962,32 @@ begin
     Result := PixelProcs[S.FBFormat, Kind];
 end;
 
+// A pixel through the texture cache's pipeline (S.Tex.Cache): the cache
+// sees the bytes it replaces, then the pipeline it runs around draws it.
+procedure CachedPixel(const S: TGERaster; X, Y: Integer; var F: TGEFragment);
+begin
+  var C := S.Tex.Cache;
+  var Bpp: Cardinal := 2;
+  if S.FBFormat = 3 then
+    Bpp := 4;
+  GETexCachePixel(C^, (S.FBAddr + (Cardinal(Y) * S.FBStride + Cardinal(X)) * Bpp) and (PSPVRAMSize - 1),
+    Integer(Bpp), X, Y);
+  TGEPlotProc(C.Plot)(S, X, Y, F);
+  Inc(C.Clock);
+end;
+
+// Plot, or CachedPixel around it when the texture reads through the cache.
+function CachePixels(const S: TGERaster; Plot: TGEPlotProc): TGEPlotProc;
+begin
+  Result := Plot;
+  if S.Textured and (S.Tex.Cache <> nil) then
+  begin
+    GETexCacheStart(S.Tex.Cache^, S.Tex.CacheEpoch, S.VRAM);
+    S.Tex.Cache.Plot := @Plot;
+    Result := CachedPixel;
+  end;
+end;
+
 
 // Clear-mode primitives of one colour and depth: the bits PlotPixel's clear
 // path writes, the same in every pixel but for the dither matrix's 4x4
@@ -13587,7 +13613,7 @@ begin
     end;
     Exit;
   end;
-  var Plot := SelectPixel(S, Secondary);
+  var Plot := CachePixels(S, SelectPixel(S, Secondary));
   // The vertices' values the per pixel sums weigh, as those sums take them:
   // S, T and Q times 1/w as their single products (exact in a Double, also
   // where the product is wider), 1/w, depth, fog and secondary colour.
@@ -13748,7 +13774,7 @@ begin
     ClearRect(S, PX1, PY1, PX2, PY2, V1);
     Exit;
   end;
-  var Plot := SelectPixel(S, (V1.SR or V1.SG or V1.SB) <> 0);
+  var Plot := CachePixels(S, SelectPixel(S, (V1.SR or V1.SG or V1.SB) <> 0));
   SetupFragment(F, V1);
   // S runs along x and T along y, except when the corners are flipped in
   // one axis only: then the texture is turned, S along y and T along x.

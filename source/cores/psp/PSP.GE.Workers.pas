@@ -694,6 +694,12 @@ begin
   end;
   if (Y1 > Y2) or (X1 > X2) then
     Exit;
+  // Texels through the texture cache: its pixels in order.
+  if S.Textured and (S.Tex.Cache <> nil) then
+  begin
+    DrawAlone(S, Kind, A, B, C, 6);
+    Exit;
+  end;
 
   // The buffers it draws into. Columns past the stride would write the next
   // row, which may be another band's.

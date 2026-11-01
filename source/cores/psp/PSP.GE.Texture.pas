@@ -29,6 +29,41 @@ type
 
   PGETexLevel = ^TGETexLevel;
   PGETexture = ^TGETexture;
+
+  // The texture cache while a primitive textures from the pixels it draws
+  // (TGETexture.Cache; recorded on a PSP-E1000, tests/cores/psp/hw/ge_tcache):
+  // texels come from blocks of 8 rows of 16 bytes (a swizzled texture's
+  // blocks), each loaded when first read after a TEXFLUSH, as memory held it
+  // then. A load holds the pixels up GETexCacheMiss cycles, a pixel takes
+  // one, and what the pixels write reaches memory GETexCacheDelay cycles
+  // after the last of each 4 pixels of a row.
+  TGETexCacheWrite = record
+    Addr: Cardinal;   // VRAM offset
+    Old: Cardinal;    // the bytes the pixel replaced
+    Bytes: Integer;
+    Visible: Int64;   // the cycle from which memory holds the pixel
+  end;
+
+  TGETexCacheBlock = array[0..127] of Byte;
+
+  TGETexCache = record
+    Epoch: Cardinal;
+    // Open addressing by block address: the address plus 1, 0 free.
+    Keys: array of Cardinal;
+    Blocks: array of TGETexCacheBlock;
+    Used: Integer;
+    Clock: Int64;
+    // The pixels memory may not hold yet, oldest first (a ring), the last
+    // Open of them those of the 4 pixels being drawn (GroupX, GroupY).
+    Log: array[0..127] of TGETexCacheWrite;
+    LogHead, LogCount, Open: Integer;
+    GroupX, GroupY: Integer;
+    VRAM: PByte;
+    // The pixel pipeline the cache's runs around (PSP.GE.Raster's).
+    Plot: Pointer;
+  end;
+  PGETexCache = ^TGETexCache;
+
   // A texture's level 0 sampled at (S, TT) in texels (GEPrepareSampler).
   TGESampler = function(T: PGETexture; S, TT: Single): Cardinal;
 
@@ -60,6 +95,11 @@ type
     // when its level 0 holds all its texels and no level of detail applies
     // (nil: GESampleTexture).
     Sampler: TGESampler;
+    // Set when the texture lies in the pixels drawn: formats 0-7 read
+    // through it (blocks loaded before the TEXFLUSH count CacheEpoch are
+    // gone).
+    Cache: PGETexCache;
+    CacheEpoch: Cardinal;
   end;
 
 function GESampleTexture(const T: TGETexture; S, TT: Single): Cardinal;
@@ -79,6 +119,16 @@ procedure GEFitLevel(const T: TGETexture; var L: TGETexLevel);
 procedure GEPreparePalette(var T: TGETexture);
 // Sets Sampler from the format, the filter, level 0's Fits and PalValid.
 procedure GEPrepareSampler(var T: TGETexture);
+// A primitive starts: blocks loaded before the TEXFLUSH count Epoch go, what
+// earlier ones wrote is in memory.
+procedure GETexCacheStart(var C: TGETexCache; Epoch: Cardinal; VRAM: PByte);
+// The pixel in row Y, column X, at VRAM offset Addr (Bytes long), is about
+// to be drawn; then the clock passes it (C.Clock goes up by one).
+procedure GETexCachePixel(var C: TGETexCache; Addr: Cardinal; Bytes, X, Y: Integer);
+
+const
+  GETexCacheMiss = 24;
+  GETexCacheDelay = 38;
 
 var
   // Tests: every texel through the general fetch, the reference for the
@@ -259,6 +309,160 @@ end;
 
 function FetchTexel(const T: TGETexture; L: PGETexLevel; X, Y: Integer): Cardinal; forward;
 
+procedure GETexCacheStart(var C: TGETexCache; Epoch: Cardinal; VRAM: PByte);
+begin
+  if (C.Epoch <> Epoch) and (C.Used > 0) then
+  begin
+    FillChar(C.Keys[0], Length(C.Keys) * SizeOf(Cardinal), 0);
+    C.Used := 0;
+  end;
+  C.Epoch := Epoch;
+  C.LogHead := 0;
+  C.LogCount := 0;
+  C.Open := 0;
+  C.VRAM := VRAM;
+end;
+
+procedure GETexCachePixel(var C: TGETexCache; Addr: Cardinal; Bytes, X, Y: Integer);
+begin
+  if (C.Open > 0) and ((Y <> C.GroupY) or ((X shr 2) <> C.GroupX)) then
+  begin
+    // The last pixel was a cycle ago.
+    for var K := 1 to C.Open do
+      C.Log[(C.LogHead + C.LogCount - K) and High(C.Log)].Visible := C.Clock - 1 + GETexCacheDelay;
+    C.Open := 0;
+  end;
+  while (C.LogCount > C.Open) and (C.Log[C.LogHead].Visible <= C.Clock) do
+  begin
+    C.LogHead := (C.LogHead + 1) and High(C.Log);
+    Dec(C.LogCount);
+  end;
+  if C.LogCount = Length(C.Log) then
+  begin
+    C.LogHead := (C.LogHead + 1) and High(C.Log);
+    Dec(C.LogCount);
+    if C.Open > C.LogCount then
+      C.Open := C.LogCount;
+  end;
+  var E: ^TGETexCacheWrite := @C.Log[(C.LogHead + C.LogCount) and High(C.Log)];
+  Inc(C.LogCount);
+  Inc(C.Open);
+  C.GroupX := X shr 2;
+  C.GroupY := Y;
+  E.Addr := Addr;
+  E.Bytes := Bytes;
+  if Bytes = 4 then
+    E.Old := PCardinal(C.VRAM + Addr)^
+  else
+    E.Old := PWord(C.VRAM + Addr)^;
+  E.Visible := High(Int64);
+end;
+
+// The block at BlockOff in level L (RowBytes a row), loaded if it is not:
+// from memory as it is, but for the pixels it does not hold yet.
+function CacheBlock(const T: TGETexture; L: PGETexLevel; BlockOff: Cardinal; RowBytes: Integer): PByte;
+begin
+  var C := T.Cache;
+  if C.Keys = nil then
+  begin
+    SetLength(C.Keys, 1024);
+    SetLength(C.Blocks, 1024);
+  end;
+  var Key := L.Addr + BlockOff;
+  var Mask := Length(C.Keys) - 1;
+  var H := Integer(((Key shr 4) * Cardinal(2654435761)) shr 22) and Mask;
+  while C.Keys[H] <> 0 do
+  begin
+    if C.Keys[H] = Key + 1 then
+      Exit(@C.Blocks[H][0]);
+    H := (H + 1) and Mask;
+  end;
+  if C.Used >= Length(C.Keys) * 3 div 4 then
+  begin
+    FillChar(C.Keys[0], Length(C.Keys) * SizeOf(Cardinal), 0);
+    C.Used := 0;
+    H := Integer(((Key shr 4) * Cardinal(2654435761)) shr 22) and Mask;
+  end;
+  C.Keys[H] := Key + 1;
+  Inc(C.Used);
+  Result := @C.Blocks[H][0];
+  for var R := 0 to 7 do
+  begin
+    var RowOff: Cardinal;
+    if T.Swizzle then
+      RowOff := BlockOff + Cardinal(R * 16)
+    else
+      RowOff := BlockOff + Cardinal(R * RowBytes);
+    for var B := 0 to 15 do
+    begin
+      var Off := RowOff + Cardinal(B);
+      if (L.Ptr <> nil) and (Off < L.Size) then
+        Result[R * 16 + B] := L.Ptr[Off]
+      else
+        Result[R * 16 + B] := T.Memory.Read8(L.Addr + Off);
+    end;
+  end;
+  // Pixels memory does not hold yet keep their old bytes, the oldest's.
+  if (Key and $0F800000) = PSPVRAMBase then
+  begin
+    var VBlock := Int64(Key and (PSPVRAMSize - 1));
+    for var I := C.LogCount - 1 downto 0 do
+    begin
+      var E: ^TGETexCacheWrite := @C.Log[(C.LogHead + I) and High(C.Log)];
+      if E.Visible <= C.Clock then
+        Continue;
+      for var K := 0 to E.Bytes - 1 do
+      begin
+        var D := Int64(E.Addr) + K - VBlock;
+        if D < 0 then
+          Continue;
+        var At := -1;
+        if T.Swizzle then
+        begin
+          if D < 128 then
+            At := Integer(D);
+        end
+        else if (D div RowBytes < 8) and (D mod RowBytes < 16) then
+          At := Integer(D div RowBytes) * 16 + Integer(D mod RowBytes);
+        if At >= 0 then
+          Result[At] := Byte(E.Old shr (8 * K));
+      end;
+    end;
+  end;
+  Inc(C.Clock, GETexCacheMiss);
+end;
+
+// FetchTexel through the texture cache (formats 0-7).
+function CacheTexel(const T: TGETexture; L: PGETexLevel; X, Y: Integer): Cardinal;
+begin
+  var Bits := TexBits[T.Format];
+  var RowBytes := (L.BufWidth * Bits) div 8;
+  var ByteX := (X * Bits) div 8;
+  var BlockOff: Cardinal;
+  if T.Swizzle then
+    BlockOff := Cardinal(((Y shr 3) * (RowBytes shr 4) + (ByteX shr 4)) shl 7)
+  else
+    BlockOff := Cardinal((Y and not 7) * RowBytes + (ByteX and not 15));
+  var P := CacheBlock(T, L, BlockOff, Max(RowBytes, 1)) + (Y and 7) * 16 + (ByteX and 15);
+  case T.Format of
+    0, 1, 2: Result := Decode16(T.Format, PWord(P)^);
+    3: Result := PCardinal(P)^;
+    4:
+      begin
+        var B := Cardinal(P^);
+        if (X and 1) <> 0 then
+          B := B shr 4
+        else
+          B := B and $F;
+        Result := ClutLookup(T, B, L.ClutAdd);
+      end;
+    5: Result := ClutLookup(T, P^, L.ClutAdd);
+    6: Result := ClutLookup(T, PWord(P)^, L.ClutAdd);
+  else
+    Result := ClutLookup(T, PCardinal(P)^, L.ClutAdd);
+  end;
+end;
+
 function GEFetchTexel(const T: TGETexture; Level, X, Y: Integer): Cardinal;
 begin
   Result := FetchTexel(T, @T.Levels[Level], X, Y);
@@ -300,6 +504,8 @@ end;
 
 function FetchTexel(const T: TGETexture; L: PGETexLevel; X, Y: Integer): Cardinal;
 begin
+  if (T.Cache <> nil) and (T.Format <= 7) then
+    Exit(CacheTexel(T, L, X, Y));
   var M := T.Memory;
   case T.Format of
     0, 1, 2:
@@ -579,7 +785,7 @@ end;
 function SampleLevel(const T: TGETexture; Level: Integer; S, TT: Single; Linear: Boolean): Cardinal;
 begin
   var L: PGETexLevel := @T.Levels[Level];
-  if GEGenericTexels then
+  if GEGenericTexels or (T.Cache <> nil) then
     Exit(SampleGeneric(T, L, S, TT, Linear));
   if L.Fits then
   begin
@@ -860,7 +1066,7 @@ end;
 procedure GEPrepareSampler(var T: TGETexture);
 begin
   T.Sampler := nil;
-  if (T.Level <> 0) or T.NeedLod or not T.Levels[0].Fits then
+  if (T.Level <> 0) or T.NeedLod or not T.Levels[0].Fits or (T.Cache <> nil) then
     Exit;
   case T.Format of
     0, 1, 2: if T.Linear then T.Sampler := SampleFit16L else T.Sampler := SampleFit16N;
