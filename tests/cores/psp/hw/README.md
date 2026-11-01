@@ -131,6 +131,17 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   offset and the first KB); and a sweep of every 24-bit float height of
   [1, 2) straight above (`dist/s<n>.bin`). 28 s on the PSP.
 
+- `ge_wpos`: spot factors under a random world matrix with entries up to
+  256 (as gpu/exact's light vector jobs) and its inverse as the view, a
+  point every second pixel, a spot light 1 to 64 from it; exponents 10 and
+  40 (`wpos/f<n>.bin`, `_in.bin` the matrix and per point the light and
+  direction). 6 s on the PSP.
+- `ge_wpos2`: the world position lighting takes, read through the distance
+  as `ge_dist` does: one vertex a row under a random world matrix, the light
+  1 to 4 from its world position along x, y or z, KB swept along the row;
+  the view moves the vertex onto each pixel (`wpos2/f<n>.bin`, `_in.bin`).
+  2 s on the PSP.
+
 - `ge_spot`: the spot factor over random geometry: a spot light at a random
   offset from each pixel's point, a random direction of random length,
   cutoff -1, ambient white, so the colour is the factor; exponents 1, 2,
@@ -342,7 +353,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   products of that unit vector and the direction as given (24-bit floats),
   times the table 1/sqrt of the direction's squared length, cut to a 24-bit
   float (`ge_spot`: 4 of 163,840 random factors off, at exponents 3.7 and
-  20, where the normalized direction left 279).
+  20, where the normalized direction left 279). Not modelled: the world
+  position under a matrix with large entries (`ge_wpos`: 3% of factors off
+  at exponent 10, 14% at 40, more the nearer the light; gpu/exact's light
+  vector job 12 pixels). `ge_wpos2` puts the hardware's position a few
+  16-bit steps either way of the exact one, more than the vertex unit's
+  sums of products (the best of the tried models) or any input or term
+  precision explain.
 
 - The stored `cpu/vfpu/exact`, `cpu/vfpu/vector` and `gpu/exact/lighting`
   expectations match this PSP exactly.
