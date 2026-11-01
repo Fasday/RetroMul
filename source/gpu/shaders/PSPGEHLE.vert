@@ -12,12 +12,14 @@ layout(location = 1) in vec4 aColor;
 layout(location = 2) in vec4 aSecondary;
 layout(location = 3) in vec4 aSTQW;
 layout(location = 4) in float aFog;
+layout(location = 5) in vec4 aBox;
 
 layout(location = 0) noperspective out vec4 vColor;
 layout(location = 1) noperspective out vec3 vSecondary;
 layout(location = 2) noperspective out vec4 vSTQW;
 layout(location = 3) noperspective out float vFog;
 layout(location = 4) noperspective out float vZ;
+layout(location = 5) flat out vec4 vBox;
 
 void main() {
   // The fragment shader writes the depth: nothing is clipped by it here.
@@ -28,4 +30,5 @@ void main() {
   vSTQW = aSTQW;
   vFog = aFog;
   vZ = aPos.z;
+  vBox = aBox;
 }

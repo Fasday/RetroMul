@@ -123,13 +123,19 @@ type
     destructor Destroy; override;
   end;
 
+  TGEHLEBox = array[0..3] of Single;
+
   // A vertex as the pipelines take it: position in target pixels with the raw
   // depth, colours, texture coordinates (times 1/w for perspective) and fog.
+  // Box: the coordinates (S / Q, T / Q) the primitive's samples keep within
+  // (low S, low T, high S, high T), for sprites above 1x; none when a low is
+  // above its high.
   TGEHLEVertex = packed record
     X, Y, Z: Single;
     Color, Secondary: Cardinal;
     S, T, Q, W: Single;
     Fog: Single;
+    Box: TGEHLEBox;
   end;
   PGEHLEVertex = ^TGEHLEVertex;
 
@@ -782,7 +788,7 @@ function TGEVulkanHLEBackend.Pipeline(Key: UInt64): VkPipeline;
 var
   Stages: array[0..1] of VkPipelineShaderStageCreateInfo;
   Binding: VkVertexInputBindingDescription;
-  Attributes: array[0..4] of VkVertexInputAttributeDescription;
+  Attributes: array[0..5] of VkVertexInputAttributeDescription;
   VertexInput: VkPipelineVertexInputStateCreateInfo;
   Assembly: VkPipelineInputAssemblyStateCreateInfo;
   Viewport: VkPipelineViewportStateCreateInfo;
@@ -824,11 +830,13 @@ begin
   Attributes[3].format := VK_FORMAT_R32G32B32A32_SFLOAT; Attributes[3].offset := 20;
   Attributes[4].location := 4; Attributes[4].binding := 0;
   Attributes[4].format := VK_FORMAT_R32_SFLOAT; Attributes[4].offset := 36;
+  Attributes[5].location := 5; Attributes[5].binding := 0;
+  Attributes[5].format := VK_FORMAT_R32G32B32A32_SFLOAT; Attributes[5].offset := 40;
   VertexInput := Default(VkPipelineVertexInputStateCreateInfo);
   VertexInput.sType := VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
   VertexInput.vertexBindingDescriptionCount := 1;
   VertexInput.pVertexBindingDescriptions := @Binding;
-  VertexInput.vertexAttributeDescriptionCount := 5;
+  VertexInput.vertexAttributeDescriptionCount := 6;
   VertexInput.pVertexAttributeDescriptions := @Attributes[0];
   Assembly := Default(VkPipelineInputAssemblyStateCreateInfo);
   Assembly.sType := VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -2979,12 +2987,16 @@ begin
   Inc(FStats.Prims);
 end;
 
+const
+  NoBox: TGEHLEBox = (1, 1, 0, 0);
+
 // A vertex at (X, Y) pixels with V's depth, coordinates and fog and C's
 // colours. Perspective: the coordinates go through 1/w (triangles).
 procedure PutVertex(out D: TGEHLEVertex; const V, C: TGEVertex; X, Y: Single; Perspective: Boolean); inline;
 begin
   D.X := X;
   D.Y := Y;
+  D.Box := NoBox;
   D.Z := V.Z;
   D.Color := PackColor(C.R, C.G, C.B, C.A);
   D.Secondary := PackColor(C.SR, C.SG, C.SB, 0);
@@ -3035,6 +3047,55 @@ begin
     Emit(KindTriangle, S, @V[0], 3, FloorDiv16(MinX), FloorDiv16(MinY), FloorDiv16(MaxX - 1), FloorDiv16(MaxY - 1));
 end;
 
+// The first and the last pixel centre a sprite from A to B (1/16 pixels)
+// covers, as fractions of the way from A; its middle when it covers none.
+procedure SpanCentres(A, B: Integer; out F0, F1: Single);
+begin
+  var P1 := FloorDiv16(Min(A, B) + 7);
+  var P2 := FloorDiv16(Max(A, B) + 7) - 1;
+  if P2 < P1 then
+  begin
+    F0 := 0.5;
+    F1 := 0.5;
+    Exit;
+  end;
+  F0 := (P1 * 16 + 8 - A) / (B - A);
+  F1 := (P2 * 16 + 8 - A) / (B - A);
+end;
+
+// A sprite's coordinate box (TGEHLEVertex.Box): the coordinates at the pixel
+// centres it covers, the extremes at its outermost ones (S, T and Q go along
+// an axis each). Corners C: (V0.X, V0.Y), (V1.X, V0.Y), (V0.X, V1.Y), (V1.X, V1.Y).
+procedure SpriteBox(const V0, V1: TGEVertex; var C: array of TGEHLEVertex);
+var
+  FX, FY: array[0..1] of Single;
+  Box: TGEHLEBox;
+begin
+  SpanCentres(V0.X, V1.X, FX[0], FX[1]);
+  SpanCentres(V0.Y, V1.Y, FY[0], FY[1]);
+  for var I := 0 to 3 do
+  begin
+    var U := FX[I and 1];
+    var W := FY[I shr 1];
+    var Q := C[0].Q + (C[1].Q - C[0].Q) * U + (C[2].Q - C[0].Q) * W;
+    if not (Q > 0) then
+      Exit;
+    var SV := (C[0].S + (C[1].S - C[0].S) * U + (C[2].S - C[0].S) * W) / Q;
+    var TV := (C[0].T + (C[1].T - C[0].T) * U + (C[2].T - C[0].T) * W) / Q;
+    if I = 0 then
+    begin
+      Box[0] := SV; Box[1] := TV; Box[2] := SV; Box[3] := TV;
+    end
+    else
+    begin
+      Box[0] := Min(Box[0], SV); Box[1] := Min(Box[1], TV);
+      Box[2] := Max(Box[2], SV); Box[3] := Max(Box[3], TV);
+    end;
+  end;
+  for var I := 0 to 3 do
+    C[I].Box := Box;
+end;
+
 procedure TGEVulkanHLEBackend.DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
 var
   V: array[0..5] of TGEHLEVertex;
@@ -3075,6 +3136,11 @@ begin
     end;
     if TFrom1 then C[I].T := V1.T else C[I].T := V0.T;
   end;
+  // Above 1x the samples keep to the coordinates of the PSP's pixel centres:
+  // past them, at the edges, a bilinear sample would take in texels the PSP
+  // never reads (lines along the edges of 2D images).
+  if FScale > 1 then
+    SpriteBox(V0, V1, C);
   V[0] := C[0]; V[1] := C[1]; V[2] := C[2];
   V[3] := C[1]; V[4] := C[3]; V[5] := C[2];
   // Pixels whose centres lie in [x1, x2) x [y1, y2); above 1x those the
@@ -3157,6 +3223,7 @@ begin
     Pt.Q := 1;
     Pt.W := 1;
     Pt.Fog := V0.Fog + (V1.Fog - V0.Fog) * T;
+    Pt.Box := NoBox;
     BX1 := Min(BX1, PX); BY1 := Min(BY1, PY);
     BX2 := Max(BX2, PX); BY2 := Max(BY2, PY);
   end;

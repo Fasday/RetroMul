@@ -12,6 +12,9 @@ layout(location = 1) noperspective in vec3 vSecondary;
 layout(location = 2) noperspective in vec4 vSTQW;
 layout(location = 3) noperspective in float vFog;
 layout(location = 4) noperspective in float vZ;
+// The coordinates the samples keep within (sprites above 1x; none where a
+// low is above its high).
+layout(location = 5) flat in vec4 vBox;
 
 #ifdef SHADER_BLEND
 // The target's colour, read and written in primitive order; its depth and
@@ -201,6 +204,10 @@ ivec4 shade(out float zr) {
   vec2 st = mix(pc.texSize - 0.5, vSTQW.xy / q, bvec2(ok));
   vec2 dx = dFdxFine(st);
   vec2 dy = dFdyFine(st);
+  if (vBox.x <= vBox.z)
+    st.x = clamp(st.x, vBox.x, vBox.z);
+  if (vBox.y <= vBox.w)
+    st.y = clamp(st.y, vBox.y, vBox.w);
   ivec4 t = ivec4(0);
   if ((flags & FLAG_TEXTURED) != 0u)
     t = sampleTexture(st, max(max(abs(dx.x), abs(dy.x)), max(abs(dx.y), abs(dy.y))), vSTQW.w);
