@@ -5,6 +5,7 @@ program PSPRun;
 // Runs a PSP program headless.
 // PSPRun <file> [-frames N] [-out dir] [-every N] [-press btn@frame:len] [-log] [-test] [-quiet] [-strict]
 // -from N: with -every, frames (hashes, -out) from frame N on.
+// -lang N: the system language games read (sceUtility's PSP_SYSTEMPARAM_LANGUAGE_*, 1 English, 8 Russian).
 // -gpu / -gpu-check: Vulkan compute rendering / CPU differential checking.
 // -gpu-hle [-scale N]: Vulkan graphics-pipeline rendering (fast, not bit exact), N times the PSP's resolution;
 // frames (-out, hashes) are then the renderer's at that resolution. -fixed-blend: no blending in the shader.
@@ -21,7 +22,7 @@ program PSPRun;
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.VulkanLLE,
-  PSP.GE.VulkanHLE, PSP.GE.TexScale;
+  PSP.GE.VulkanHLE, PSP.GE.TexScale, PSP.Settings;
 
 type
   TPress = record
@@ -301,6 +302,7 @@ begin
     var OutDir := '';
     var Every := 0;
     var FromFrame := 0;
+    var Lang := -1;
     var MemstickOverride := '';
     var NoMemstick := False;
     var FontDirectory := '';
@@ -337,6 +339,7 @@ begin
       else if A = '-fontdir' then begin Inc(I); FontDirectory := ParamStr(I); end
       else if A = '-every' then begin Inc(I); Every := StrToInt(ParamStr(I)); end
       else if A = '-from' then begin Inc(I); FromFrame := StrToInt(ParamStr(I)); end
+      else if A = '-lang' then begin Inc(I); Lang := StrToInt(ParamStr(I)); end
       else if A = '-log' then EchoLog := True
       else if A = '-test' then TestMode := True
       else if A = '-quiet' then Quiet := True
@@ -467,6 +470,9 @@ begin
     end;
     var Sink := TLogSink.Create;
     Sink.Echo := EchoLog;
+    // The console takes the system settings when it is made.
+    if Lang >= 0 then
+      PSPSettings.Language := Lang;
     var Console := TPSPConsole.Create(Prog, nil, HostRoot, Memstick, FontDirectory);
     Console.IO.MemstickInserted := not NoMemstick;
     var Watcher: TWatch := nil;

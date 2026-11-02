@@ -212,6 +212,23 @@ type
 
 const
   OskKeys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -._';
+  // The dialogs' own words in the languages that have them (the dialog's
+  // language, sceUtility's common parameters); English otherwise.
+  PSP_SYSTEMPARAM_LANGUAGE_RUSSIAN = 8;
+  DialogTexts: array[0..12] of record En, Ru: string; end = (
+    (En: 'Message'; Ru: #$0421#$043E#$043E#$0431#$0449#$0435#$043D#$0438#$0435),
+    (En: 'Enter'; Ru: #$0412#$0432#$043E#$0434),
+    (En: 'Back'; Ru: #$041D#$0430#$0437#$0430#$0434),
+    (En: 'Yes'; Ru: #$0414#$0430),
+    (En: 'No'; Ru: #$041D#$0435#$0442),
+    (En: 'An error has occurred.'; Ru: #$041F#$0440#$043E#$0438#$0437#$043E#$0448#$043B#$0430' '#$043E#$0448#$0438#$0431#$043A#$0430'.'),
+    (En: 'Saved Data'; Ru: #$0421#$043E#$0445#$0440#$0430#$043D#$0435#$043D#$043D#$044B#$0435' '#$0434#$0430#$043D#$043D#$044B#$0435),
+    (En: 'Up/Down Select'; Ru: #$0412#$0432#$0435#$0440#$0445'/'#$0432#$043D#$0438#$0437': '#$0432#$044B#$0431#$043E#$0440),
+    (En: 'On-Screen Keyboard'; Ru: #$042D#$043A#$0440#$0430#$043D#$043D#$0430#$044F' '#$043A#$043B#$0430#$0432#$0438#$0430#$0442#$0443#$0440#$0430),
+    (En: 'Type'; Ru: #$0412#$0432#$0435#$0441#$0442#$0438),
+    (En: 'Square Delete'; Ru: #$041A#$0432#$0430#$0434#$0440#$0430#$0442': '#$0443#$0434#$0430#$043B#$0438#$0442#$044C),
+    (En: 'Start Done'; Ru: 'Start: '#$0433#$043E#$0442#$043E#$0432#$043E),
+    (En: 'Cancel'; Ru: #$041E#$0442#$043C#$0435#$043D#$0430));
   DialogInk = $FFEFEFEF;
   DialogPanel = $FF382A24;
   DialogAccent = $FFF1BA73;
@@ -314,33 +331,57 @@ begin
   end;
 end;
 
+// S broken into rows of at most W pixels (at spaces where it can) over the
+// height of Lines rows of 17 pixels: rows closer together (down to 13
+// pixels) when there are more.
 procedure TSoftwareDialogView.Wrapped(X, Y, W, Lines: Integer; const S: string);
+var
+  Rows: TList<string>;
 begin
-  var Start := 1;
-  for var Row := 0 to Lines - 1 do
-  begin
-    if Start > Length(S) then
-      Exit;
-    var LastSpace := 0;
-    var N := Start;
-    var Width := 0;
-    while (N <= Length(S)) and (S[N] <> #10) do
+  Rows := TList<string>.Create;
+  try
+    var Start := 1;
+    while (Start <= Length(S)) and (Rows.Count < Lines * 17 div 13) do
     begin
-      var Advance := (Glyph(S[N]).Advance.X + 32) div 64;
-      if Width + Advance > W then
-        Break;
-      Inc(Width, Advance);
-      if S[N] = ' ' then
-        LastSpace := N;
-      Inc(N);
+      var N := Start;
+      var Width := 0;
+      var LastSpace := 0;
+      while (N <= Length(S)) and (S[N] <> #10) do
+      begin
+        var Advance := (Glyph(S[N]).Advance.X + 32) div 64;
+        if Width + Advance > W then
+          Break;
+        Inc(Width, Advance);
+        if S[N] = ' ' then
+          LastSpace := N;
+        Inc(N);
+      end;
+      if (N <= Length(S)) and (S[N] <> #10) and (LastSpace > Start) then
+        N := LastSpace;
+      Rows.Add(Copy(S, Start, N - Start).Replace(#13, ''));
+      Start := N;
+      if (Start <= Length(S)) and CharInSet(S[Start], [' ', #10]) then
+        Inc(Start);
     end;
-    if (N <= Length(S)) and (S[N] <> #10) and (LastSpace > Start) then
-      N := LastSpace;
-    Text(X, Y + Row * 17, Copy(S, Start, N - Start).Replace(#13, ''), DialogInk);
-    Start := N;
-    if (Start <= Length(S)) and CharInSet(S[Start], [' ', #10]) then
-      Inc(Start);
+    var Spacing := 17;
+    if Rows.Count > Lines then
+      Spacing := Max(13, Lines * 17 div Rows.Count);
+    for var Row := 0 to Min(Rows.Count, Lines * 17 div Spacing) - 1 do
+      Text(X, Y + Row * Spacing, Rows[Row], DialogInk);
+  finally
+    Rows.Free;
   end;
+end;
+
+// The dialog's word for En in Language.
+function DialogText(const En: string; Language: Cardinal): string;
+begin
+  Result := En;
+  if Language <> PSP_SYSTEMPARAM_LANGUAGE_RUSSIAN then
+    Exit;
+  for var I := 0 to High(DialogTexts) do
+    if DialogTexts[I].En = En then
+      Exit(DialogTexts[I].Ru);
 end;
 
 procedure TSoftwareDialogView.Paint(D: TPSPDialog; Address, Stride, PixelFormat: Cardinal);
@@ -362,7 +403,9 @@ begin
   Rect(24, 242, 432, 2, DialogAccent);
   var M := FSystem.Memory;
   var P := D.Params;
-  var Title := 'Message';
+  // pspUtilityDialogCommon's language.
+  var Lang := M.Read32(P + 4);
+  var Title := DialogText('Message', Lang);
   var Body := D.Text;
   var Confirm := 'X';
   var Cancel := 'O';
@@ -371,12 +414,12 @@ begin
     Confirm := 'O';
     Cancel := 'X';
   end;
-  var Footer := Confirm + ' Enter    ' + Cancel + ' Back';
+  var Footer := Confirm + ' ' + DialogText('Enter', Lang) + '    ' + Cancel + ' ' + DialogText('Back', Lang);
   case D.Kind of
     dtMsg:
       begin
         if M.Read32(P + $34) = 0 then
-          Body := 'An error has occurred.' + #10 + Format('(%s)', [IntToHex(M.Read32(P + $38), 8)])
+          Body := DialogText('An error has occurred.', Lang) + #10 + Format('(%s)', [IntToHex(M.Read32(P + $38), 8)])
         else
           Body := UTF8ToString(M.ReadAnsi(P + $3C, 512));
         var Options: Cardinal := 0;
@@ -384,17 +427,19 @@ begin
           Options := M.Read32(P + $23C);
         if (Options and $10) <> 0 then
         begin
+          var Yes := DialogText('Yes', Lang);
+          var No := DialogText('No', Lang);
           if D.Selection = 0 then
-            Text(170, 196, '[ Yes ]       No', DialogAccent)
+            Text(170, 196, '[ ' + Yes + ' ]       ' + No, DialogAccent)
           else
-            Text(170, 196, '  Yes       [ No ]', DialogAccent);
+            Text(170, 196, '  ' + Yes + '       [ ' + No + ' ]', DialogAccent);
         end;
         if (Options and $80) <> 0 then
-          Footer := Confirm + ' Enter';
+          Footer := Confirm + ' ' + DialogText('Enter', Lang);
       end;
     dtSavedata:
       begin
-        Title := 'Saved Data';
+        Title := DialogText('Saved Data', Lang);
         if Length(D.Choices) > 1 then
         begin
           var First := Max(0, D.Selection - 2);
@@ -409,12 +454,12 @@ begin
             end;
             Text(48, 116 + (I - First) * 19, Prefix + Copy(D.Choices[I], 1, 42), Ink);
           end;
-          Footer := 'Up/Down Select    ' + Footer;
+          Footer := DialogText('Up/Down Select', Lang) + '    ' + Footer;
         end;
       end;
     dtOsk:
       begin
-        Title := 'On-Screen Keyboard';
+        Title := DialogText('On-Screen Keyboard', Lang);
         Body := D.Text;
         Text(44, 76, Copy(D.Text, Max(1, Length(D.Text) - 47), 48), DialogAccent);
         Body := '';
@@ -429,7 +474,8 @@ begin
             C := '_';
           Text(X, Y, C, DialogInk);
         end;
-        Footer := Confirm + ' Type  Square Delete  Start Done  ' + Cancel + ' Cancel';
+        Footer := Confirm + ' ' + DialogText('Type', Lang) + '  ' + DialogText('Square Delete', Lang) + '  ' +
+          DialogText('Start Done', Lang) + '  ' + Cancel + ' ' + DialogText('Cancel', Lang);
       end;
   end;
   Text(42, 43, Title, DialogAccent);

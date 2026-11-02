@@ -618,7 +618,8 @@ begin
   DecodeBitmap(S, P + 48, Integer(Bits(P + 42, 6)) and 3);
 end;
 
-// The built-in stand-ins for flash0's fonts: ASCII, Latin-1 and fullwidth Latin drawn from
+// The built-in stand-ins for flash0's fonts: ASCII, Latin-1, Cyrillic, the trade mark sign and
+// fullwidth Latin drawn from
 // the Hershey strokes at the size and weight of the font they replace,
 // antialiased to the 4-bit levels PGF glyphs have.
 
@@ -730,6 +731,76 @@ const
     'DNOOOOOxOUUUUY  aaaaaa ceeeeiiiionooooo ouuuuypy';
   HersheyLatinMarks = '-!v-----:-------o---/--.,------!`/^~:o-,`/^:`/^:' +
     '-~`/^~:-|`/^:/--`/^~:o-,`/^:`/^:-~`/^~:-|`/^:/-:';
+  // U+0410..U+042F: a Latin capital to reuse, or the width and strokes as
+  // in HersheyStrokes.
+  HersheyCyrillicUpper: array[$410..$42F] of string = (
+    'A',
+    'gcgVgVR V]_]b\c[dYdVcTbS_RVR',
+    'B',
+    'cVRVgbg',
+    'gYgcgcR YgY]XWWTUR SNSReReN',
+    'E',
+    'h]g]R Tg]]fg SR[] gR_]',
+    'fVdXf[g_gbfcdcaa^]] Z]]]a\cZcVbT_R[RXSVU',
+    'gVgVRcgcR',
+    'gVgVRcgcR Yl[j^j`l',
+    'K',
+    'gSRUSWVX[YgcgcR',
+    'M',
+    'H',
+    'O',
+    'gVRVgcgcR',
+    'P',
+    'C',
+    'T',
+    'fTg\Y dg\YZUXSVRTR',
+    'h]g]R e^d`cb`d]dZdWbV`U^V\WZZX]X`XcZd\e^',
+    'X',
+    'fVgVRdRdN bgbR',
+    'fVgV`W^Y]b] bgbR',
+    'jUgURgRgg ^g^R',
+    'lUgURiRiN ^g^R gggR',
+    'gSgWgWR`RcSdTeVeYd[c\`]W]',
+    'jVgVR_RbScTdVdYc[b\_]V] gggR',
+    'gVgVR_RbScTdVdYc[b\_]V]',
+    'gUbVdXfZg^g`fbdcbd_dZcWbU`S^RZRXSVUUW []d]',
+    'kUgUR U]Z] h\h_gbeecfag_f]e[bZ_Z\ZY[V]S_RaQcReSgVhYh\',
+    'gcRcgZgWfVeUcUaV_W^Z]c] \]UR');
+  // U+0430..U+044F: a Latin small letter, the strokes, or empty for the
+  // capital at the x-height.
+  HersheyCyrillicLower: array[$430..$44F] of string = (
+    'a',
+    'eag^fZeXcW`V\ bYb[a]`_^`\`Z`X_W]V[VYVWWUXSZR\R^R`SaUbWbY',
+    '',
+    '',
+    '',
+    'e',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'o',
+    '',
+    'p',
+    'c',
+    '',
+    'y',
+    'h]g]K eYe[c]b__`]`[`X_W]U[UYUWWUXS[R]R_RbScUeWeY',
+    'x',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '');
 
 
 type
@@ -750,15 +821,11 @@ begin
   end;
 end;
 
-// The strokes of an ASCII character in Hershey units (y up from the
+// Strokes as HersheyStrokes holds them, in Hershey units (y up from the
 // baseline); DotlessI drops the dot of i and j.
-function HGlyph(C: Char; DotlessI: Boolean; out Width: Integer): TArray<THSegment>;
+function HStrokes(const Data: string; DotlessI: Boolean; out Width: Integer): TArray<THSegment>;
 begin
   Result := nil;
-  Width := 16;
-  if (Ord(C) < 33) or (Ord(C) > 126) then
-    Exit;
-  var Data := HersheyStrokes[Ord(C)];
   Width := Ord(Data[1]) - Ord('R');
   var HaveLast := False;
   var LX := 0;
@@ -783,6 +850,26 @@ begin
   end;
 end;
 
+// The strokes of an ASCII character.
+function HGlyph(C: Char; DotlessI: Boolean; out Width: Integer): TArray<THSegment>;
+begin
+  Result := nil;
+  Width := 16;
+  if (Ord(C) < 33) or (Ord(C) > 126) then
+    Exit;
+  Result := HStrokes(HersheyStrokes[Ord(C)], DotlessI, Width);
+end;
+
+// A capital Cyrillic letter: a Latin capital or its own strokes.
+function HCyrillicCapital(Code: Integer; out Width: Integer): TArray<THSegment>;
+begin
+  var Data := HersheyCyrillicUpper[Code];
+  if Length(Data) = 1 then
+    Result := HGlyph(Data[1], False, Width)
+  else
+    Result := HStrokes(Data, False, Width);
+end;
+
 function HMarks(Mark: Char; CX, Top: Single): TArray<THSegment>;
 begin
   Result := nil;
@@ -805,11 +892,97 @@ begin
   end;
 end;
 
-// Characters 20h..7Eh and A0h..FFh.
+// Segments scaled by SX, SY, then moved by DX, DY.
+function HMoved(const Segments: TArray<THSegment>; SX, SY, DX, DY: Single): TArray<THSegment>;
+begin
+  Result := Copy(Segments);
+  for var K := 0 to High(Result) do
+  begin
+    Result[K].X0 := Result[K].X0 * SX + DX;
+    Result[K].X1 := Result[K].X1 * SX + DX;
+    Result[K].Y0 := Result[K].Y0 * SY + DY;
+    Result[K].Y1 := Result[K].Y1 * SY + DY;
+  end;
+end;
+
+// The copyright and registered signs (a letter in a circle) and the trade
+// mark sign (raised small capitals).
+function HSign(Code: Integer; out Width: Integer): TArray<THSegment>;
+var
+  W1, W2: Integer;
+begin
+  Result := nil;
+  if Code = $2122 then
+  begin
+    var T := HGlyph('T', False, W1);
+    var M := HGlyph('M', False, W2);
+    Result := HMoved(T, 0.45, 0.45, 0, 12) + HMoved(M, 0.45, 0.45, W1 * 0.45 - 1, 12);
+    Width := Round((W1 + W2) * 0.45);
+    Exit;
+  end;
+  var L: Char := 'C';
+  if Code = $AE then
+    L := 'R';
+  Width := 24;
+  var Circle: array[0..33] of Single;
+  for var K := 0 to 16 do
+  begin
+    Circle[K * 2] := 12 + 10 * Cos(K * Pi / 8);
+    Circle[K * 2 + 1] := 10.5 + 10.5 * Sin(K * Pi / 8);
+  end;
+  HAdd(Result, Circle);
+  var G := HGlyph(L, False, W1);
+  Result := Result + HMoved(G, 0.45, 0.45, 12 - W1 * 0.45 / 2, 5.5);
+end;
+
+// Characters 20h..7Eh, A0h..FFh, 401h, 410h..44Fh, 451h and 2122h.
 function HCharacter(Code: Integer; out Width: Integer): TArray<THSegment>;
+const
+  // Small letters drawn as capitals: the x-height of the capitals' 21 units,
+  // and a little narrower.
+  SmallY = 14 / 21;
+  SmallX = 0.85;
 begin
   Result := nil;
   Width := 16;
+  case Code of
+    $A9, $AE, $2122:
+      Exit(HSign(Code, Width));
+    $401, $451:
+      begin
+        // Yo: E with a diaeresis.
+        var Small := Code = $451;
+        if Small then
+          Result := HGlyph('e', False, Width)
+        else
+          Result := HGlyph('E', False, Width);
+        var Top: Single := 21;
+        if Small then
+          Top := 14;
+        Result := Result + HMarks(':', Width / 2, Top);
+        Exit;
+      end;
+    $410..$42F:
+      Exit(HCyrillicCapital(Code, Width));
+    $430..$44F:
+      begin
+        var Data := HersheyCyrillicLower[Code];
+        if Length(Data) = 1 then
+          Exit(HGlyph(Data[1], False, Width));
+        if Data <> '' then
+          Exit(HStrokes(Data, False, Width));
+        Result := HCyrillicCapital(Code - $20, Width);
+        for var K := 0 to High(Result) do
+        begin
+          Result[K].X0 := Result[K].X0 * SmallX;
+          Result[K].X1 := Result[K].X1 * SmallX;
+          Result[K].Y0 := Result[K].Y0 * SmallY;
+          Result[K].Y1 := Result[K].Y1 * SmallY;
+        end;
+        Width := Round(Width * SmallX);
+        Exit;
+      end;
+  end;
   if Code < $A0 then
   begin
     if Code > $20 then
@@ -852,8 +1025,29 @@ begin
     $A0..$FF: Result := 95 + Code - $A0;
     $FF01..$FF5E: Result := 191 + Code - $FF01;
     $3000: Result := 285;
+    $410..$44F: Result := 286 + Code - $410;
+    $401: Result := 350;
+    $451: Result := 351;
+    $2122: Result := 352;
   else
     Result := PGFMissing;
+  end;
+end;
+
+// The character a glyph is drawn from (fullwidth forms from their ASCII
+// ones, the ideographic space as a space).
+function BuiltinCode(Index: Integer): Integer;
+begin
+  case Index of
+    0..94: Result := Index + $20;
+    95..190: Result := Index - 95 + $A0;
+    191..284: Result := Index - 191 + $21;
+    286..349: Result := Index - 286 + $410;
+    350: Result := $401;
+    351: Result := $451;
+    352: Result := $2122;
+  else
+    Result := $20;
   end;
 end;
 
@@ -881,24 +1075,18 @@ begin
   VRes := HRes;
   FirstCode := $20;
   LastCode := $FF5E;
-  GlyphCount := 286;
+  GlyphCount := 353;
   MaxAdvanceV := Round(EmPx * 64);
   MinCenterX := 0;
   MaxDescender := 0;
   for var Index := 0 to GlyphCount - 1 do
   begin
-    var Code := Index + $20;
-    if Index >= 285 then
-      Code := $20
-    else if Index >= 191 then
-      Code := $21 + Index - 191
-    else if Index >= 95 then
-      Code := Index - 95 + $A0;
     var Width: Integer;
-    var Segments := HCharacter(Code, Width);
+    var Segments := HCharacter(BuiltinCode(Index), Width);
     var G := BuiltinRasterize(Segments, Scale, XScale, Radius, Shear);
     G.Advance.X := Round(Width * Scale * XScale * 64);
-    if Index >= 191 then
+    // Fullwidth forms and the ideographic space.
+    if (Index >= 191) and (Index <= 285) then
     begin
       G.Left := G.Left + Round((EmPx - Width * Scale * XScale) / 2);
       G.Advance.X := MaxAdvanceV;
