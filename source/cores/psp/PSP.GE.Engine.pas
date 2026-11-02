@@ -12,8 +12,8 @@ unit PSP.GE.Engine;
 interface
 
 uses
-  System.SysUtils, System.Math, PSP.Types, PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster,
-  PSP.GE.Backend, PSP.GE.Workers;
+  System.SysUtils, System.Math, System.Classes, System.SyncObjs, PSP.Types, PSP.Memory, PSP.GE.Types,
+  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend, PSP.GE.Workers;
 
 type
   TGEVec3 = record
@@ -151,11 +151,20 @@ type
     // TEXFLUSH count (TGETexture.CacheEpoch).
     FTexCache: TGETexCache;
     FTexEpoch: Cardinal;
+    // Threads that decode and transform the vertices of large primitives
+    // (TGEVertexPool, Windows x64; nil elsewhere, on few cores or with
+    // PSP_GE_VERTEX_THREADS=0), the vertices' indices and the results.
+    FVertexPool: TObject;
+    FParIndex: TArray<Integer>;
+    FParOut: TArray<TGEAsmVertex>;
     procedure PrepareLight;
     procedure PrepareGeometry;
     procedure PrepareBones(Count: Integer);
     procedure SetupVertexFormat(VType: Cardinal);
     procedure DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
+    procedure DecodeVertexWith(Addr, VType: Cardinal; out V: TGEInVertex; var LastU, LastV: Single; var LastN: TGEVec3);
+    function TransformInParallel(Count: Integer; VType: Cardinal): Boolean;
+    procedure TransformRange(VType: Cardinal; First, Last: Integer; LastU, LastV: Single; const LastN: TGEVec3);
     function ReadVertex(Index: Integer; VType: Cardinal; out V: TGEInVertex): Boolean;
     procedure Skin(const V: TGEInVertex; VType: Cardinal; var P, N: TGEVec3);
     procedure Light(const V: TGEInVertex; const WP, WN: TGEVec3; var R, G, B, A, SR, SG, SB: Integer);
@@ -216,6 +225,141 @@ var
 
 implementation
 
+uses
+  HW.HostFPU;
+
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+type
+  // Workers that decode and transform ranges of a primitive's vertices
+  // (TPSPGEEngine.TransformRange) while the GE's thread does its own share.
+  // A job is written while FGen is odd and published when it turns even;
+  // FActive counts the workers inside the published job.
+  TGEVertexPool = class
+  private
+    FThreads: TArray<TThread>;
+    FWake: TEvent;
+    FGen, FActive, FNext: Integer;
+    FStop: Boolean;
+    FEngine: TPSPGEEngine;
+    FVType: Cardinal;
+    FCount: Integer;
+    FLastU, FLastV: Single;
+    FLastN: TGEVec3;
+    FMXCSR: Cardinal;
+    FFailed: Boolean;
+    procedure Work;
+    procedure Share;
+  public
+    constructor Create(Threads: Integer);
+    destructor Destroy; override;
+    // False when a range failed (then nothing of the results counts).
+    function Run(Engine: TPSPGEEngine; VType: Cardinal; Count: Integer; LastU, LastV: Single;
+      const LastN: TGEVec3): Boolean;
+  end;
+
+const
+  // Vertices a worker takes at a time.
+  VertexChunk = 32;
+
+constructor TGEVertexPool.Create(Threads: Integer);
+begin
+  inherited Create;
+  FWake := TEvent.Create(nil, True, False, '');
+  SetLength(FThreads, Threads);
+  for var I := 0 to Threads - 1 do
+  begin
+    FThreads[I] := TThread.CreateAnonymousThread(Work);
+    FThreads[I].FreeOnTerminate := False;
+    FThreads[I].Start;
+  end;
+end;
+
+destructor TGEVertexPool.Destroy;
+begin
+  FStop := True;
+  FWake.SetEvent;
+  for var T in FThreads do
+  begin
+    T.WaitFor;
+    T.Free;
+  end;
+  FWake.Free;
+  inherited;
+end;
+
+procedure TGEVertexPool.Share;
+begin
+  try
+    while True do
+    begin
+      var I := AtomicIncrement(FNext, VertexChunk) - VertexChunk;
+      if I >= FCount then
+        Break;
+      FEngine.TransformRange(FVType, I, Min(I + VertexChunk, FCount) - 1, FLastU, FLastV, FLastN);
+    end;
+  except
+    FFailed := True;
+  end;
+end;
+
+procedure TGEVertexPool.Work;
+begin
+  var Seen := AtomicCmpExchange(FGen, 0, 0);
+  var Idle := 0;
+  while not FStop do
+  begin
+    var G := AtomicCmpExchange(FGen, 0, 0);
+    if (G = Seen) or Odd(G) then
+    begin
+      // A while spinning (jobs come in bursts), then asleep until the next.
+      Inc(Idle);
+      if Idle < 4000 then
+        YieldProcessor
+      else
+      begin
+        FWake.WaitFor(2);
+        Idle := 4000;
+      end;
+      Continue;
+    end;
+    Seen := G;
+    Idle := 0;
+    AtomicIncrement(FActive);
+    if AtomicCmpExchange(FGen, 0, 0) = G then
+    begin
+      WriteHostMXCSR(FMXCSR);
+      Share;
+    end;
+    AtomicDecrement(FActive);
+  end;
+end;
+
+function TGEVertexPool.Run(Engine: TPSPGEEngine; VType: Cardinal; Count: Integer; LastU, LastV: Single;
+  const LastN: TGEVec3): Boolean;
+begin
+  AtomicIncrement(FGen);
+  while AtomicCmpExchange(FActive, 0, 0) <> 0 do
+    YieldProcessor;
+  FEngine := Engine;
+  FVType := VType;
+  FCount := Count;
+  FLastU := LastU;
+  FLastV := LastV;
+  FLastN := LastN;
+  // The workers compute in this thread's floating-point modes.
+  FMXCSR := ReadHostMXCSR;
+  FFailed := False;
+  FNext := 0;
+  AtomicIncrement(FGen);
+  FWake.SetEvent;
+  Share;
+  while AtomicCmpExchange(FActive, 0, 0) <> 0 do
+    YieldProcessor;
+  FWake.ResetEvent;
+  Result := not FFailed;
+end;
+{$ENDIF}
+
 constructor TPSPGEEngine.Create(Memory: TPSPMemory);
 begin
   inherited Create;
@@ -231,11 +375,22 @@ begin
       end;
   end;
   FWorkers := TGEWorkers.Create(FMemory);
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  // Up to three workers, leaving the emulation, its sound and the front end
+  // their cores.
+  var Threads := Min(TThread.ProcessorCount - 3, 3);
+  var Setting := GetEnvironmentVariable('PSP_GE_VERTEX_THREADS');
+  if Setting <> '' then
+    Threads := Min(StrToIntDef(Setting, 0), 15);
+  if Threads > 0 then
+    FVertexPool := TGEVertexPool.Create(Threads);
+  {$ENDIF}
   Reset;
 end;
 
 destructor TPSPGEEngine.Destroy;
 begin
+  FVertexPool.Free;
   FWorkers.Free;
   inherited;
 end;
@@ -506,6 +661,14 @@ const
   VInv32768: Double = 1 / 32768;
 
 procedure TPSPGEEngine.DecodeVertex(Addr, VType: Cardinal; out V: TGEInVertex);
+begin
+  DecodeVertexWith(Addr, VType, V, FLastU, FLastV, FLastN);
+end;
+
+// LastU, LastV and LastN: the texture coordinates and normal the last vertex
+// read had (formats without them take those).
+procedure TPSPGEEngine.DecodeVertexWith(Addr, VType: Cardinal; out V: TGEInVertex; var LastU, LastV: Single;
+  var LastN: TGEVec3);
 var
   M: TPSPMemory;
   Through: Boolean;
@@ -544,8 +707,8 @@ begin
     0:
       begin
         // Formats without texture coordinates or normals use the last ones read.
-        V.U := FLastU;
-        V.V := FLastV;
+        V.U := LastU;
+        V.V := LastV;
       end;
     1:
       begin
@@ -569,8 +732,8 @@ begin
         V.V := VF(P, M, Addr, TA + 4);
       end;
   end;
-  FLastU := V.U;
-  FLastV := V.V;
+  LastU := V.U;
+  LastV := V.V;
   if Col >= 4 then
   begin
     V.HasColor := True;
@@ -620,10 +783,10 @@ begin
           V.N.X := VF(P, M, Addr, NA); V.N.Y := VF(P, M, Addr, NA + 4); V.N.Z := VF(P, M, Addr, NA + 8);
         end;
     end;
-    FLastN := V.N;
+    LastN := V.N;
   end
   else
-    V.N := FLastN;
+    V.N := LastN;
   if Pos <> 0 then
   begin
     var PA := Cardinal(FOffP);
@@ -2953,6 +3116,8 @@ end;
 const
   // Texture setup of a textured primitive (the texture cache's fill).
   GETexPrimCost = 2000;
+  // Primitives of this many vertices or more are transformed in parallel.
+  ParallelVertices = 96;
 
 // Pixels of a 1/16 pixel box inside the scissor, for the drawing cost.
 function TPSPGEEngine.ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
@@ -3241,16 +3406,81 @@ begin
   FDepthClamp := (Regs.Cmd[GE_CLIPENABLE] and 1) <> 0;
   if FRaster.Textured then
     Inc(FPrimCost, GETexPrimCost);
+  if (Count >= ParallelVertices) and (FVertexPool <> nil) and TransformInParallel(Count, VType) then
+  begin
+    for var I := 0 to Count - 1 do
+    begin
+      if not HasPos then
+        FParOut[I].Code := GEOutNone;
+      Inc(FPrimCost, 40);
+      AddVertex(FParOut[I]);
+    end;
+    // The texture coordinates and normal carried on are the last vertex's.
+    if ((VType and 3) <> 0) or (((VType shr 5) and 3) <> 0) then
+      ReadVertex(FParIndex[Count - 1], VType, Raw);
+  end
+  else
+    for var I := 0 to Count - 1 do
+    begin
+      ReadVertex(VertexIndex(I, VType), VType, Raw);
+      TransformVertex(Raw, VType, V);
+      if not HasPos then
+        V.Code := GEOutNone;
+      Inc(FPrimCost, 40);
+      AddVertex(V);
+    end;
+  AdvanceVertices(Count, VType);
+end;
+
+// The vertices of a primitive decoded and transformed on the vertex pool's
+// threads into FParOut, when they are all in RAM (read through host memory,
+// no faults) and not morphed: what needs preparing is prepared here first,
+// so the threads only read the engine. False when it is not done.
+function TPSPGEEngine.TransformInParallel(Count: Integer; VType: Cardinal): Boolean;
+begin
+  Result := False;
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  if (FRAMBase = nil) or (((VType shr 18) and 7) <> 0) then
+    Exit;
+  if Length(FParIndex) < Count then
+  begin
+    SetLength(FParIndex, Count);
+    SetLength(FParOut, Count);
+  end;
   for var I := 0 to Count - 1 do
   begin
-    ReadVertex(VertexIndex(I, VType), VType, Raw);
-    TransformVertex(Raw, VType, V);
-    if not HasPos then
-      V.Code := GEOutNone;
-    Inc(FPrimCost, 40);
-    AddVertex(V);
+    var Index := VertexIndex(I, VType);
+    var Physical := (Regs.VAddr + Cardinal(Index * FVSize)) and $1FFFFFFF;
+    if (Physical < PSPRAMBase) or (Physical - PSPRAMBase > PSPRAMSize - Cardinal(FVSize)) then
+      Exit;
+    FParIndex[I] := Index;
   end;
-  AdvanceVertices(Count, VType);
+  if not FGeomValid then
+    PrepareGeometry;
+  if ((Regs.Cmd[GE_LIGHTINGENABLE] and 1) <> 0) and not FLightValid then
+    PrepareLight;
+  if ((VType shr 9) and 3) <> 0 then
+  begin
+    var Bones := (Integer((VType shr 14) and 7) + 1) * 12;
+    if FGeom.BoneCount < Bones then
+      PrepareBones(Bones);
+  end;
+  Result := TGEVertexPool(FVertexPool).Run(Self, VType, Count, FLastU, FLastV, FLastN);
+  {$ENDIF}
+end;
+
+// Vertices First..Last of TransformInParallel's primitive, on a pool thread.
+procedure TPSPGEEngine.TransformRange(VType: Cardinal; First, Last: Integer; LastU, LastV: Single;
+  const LastN: TGEVec3);
+var
+  Raw: TGEInVertex;
+begin
+  var N := LastN;
+  for var I := First to Last do
+  begin
+    DecodeVertexWith(Regs.VAddr + Cardinal(FParIndex[I] * FVSize), VType, Raw, LastU, LastV, N);
+    TransformVertex(Raw, VType, FParOut[I]);
+  end;
 end;
 
 function TPSPGEEngine.VertexIndex(I: Integer; VType: Cardinal): Integer;
