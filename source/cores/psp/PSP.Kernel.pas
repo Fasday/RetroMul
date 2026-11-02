@@ -1,4 +1,4 @@
-unit PSP.Kernel;
+﻿unit PSP.Kernel;
 
 // Kernel objects, threads and the scheduler. One guest thread owns the CPU at a
 // time; the others keep their context here. Waits are records on the thread
@@ -9,11 +9,13 @@ unit PSP.Kernel;
 
 interface
 
-{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic,
+  vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
-  System.SysUtils, System.Classes, System.Generics.Collections, System.Generics.Defaults,
-  PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Scheduler, PSP.SysMem, PSP.State.Action, PSP.State.Graph;
+  System.SysUtils, System.Classes, System.Generics.Collections,
+  System.Generics.Defaults, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE,
+  PSP.Scheduler, PSP.SysMem, PSP.State.Action, PSP.State.Graph;
 
 const
   PSPThreadRunning = 1;
@@ -566,7 +568,8 @@ type
     function EventFlagRetry(T: TPSPThread): Boolean;
     procedure EventFlagAbort(T: TPSPThread);
     function CheckCallbacksNow(KeepResult: Boolean = True): Boolean;
-    function AllocPartitionBlock(PartId: Integer; const Name: string; Kind: Integer; Size, Addr: Cardinal; out Err: Cardinal): Cardinal;
+    function AllocPartitionBlock(PartId: Integer; const Name: string; Kind: Integer; Size, Addr: Cardinal;
+      out Err: Cardinal): Cardinal;
   public
     // The kernel's own interrupt code holds the CPU until this time: no guest
     // thread runs (guest interrupt handlers still do).
@@ -580,7 +583,8 @@ type
     function GetObject(UID: Cardinal; Cls: TPSPKernelObjectClass): TPSPKernelObject;
     function ThreadById(UID: Cardinal): TPSPThread;
     // Threads
-    function CreateThread(const Name: string; Entry: Cardinal; Priority: Integer; StackSize, Attr, GP: Cardinal; ModuleId: Cardinal = 0): TPSPThread;
+    function CreateThread(const Name: string; Entry: Cardinal; Priority: Integer; StackSize, Attr, GP: Cardinal;
+      ModuleId: Cardinal = 0): TPSPThread;
     procedure StartThread(T: TPSPThread; ArgSize, ArgPtr: Cardinal; const ArgData: TBytes = nil);
     procedure ExitCurrent(Status: Cardinal);
     procedure TerminateThread(T: TPSPThread; Status: Cardinal);
@@ -617,16 +621,17 @@ type
     // Timers in guest ns. Returns a handle (sequence number) for CancelTimer.
     function AddTimer(At: Int64; Owner: TObject; const Event: TPSPTimerEvent): Int64;
     function AddStateTimer(At: Int64; Owner: TObject; const Action: IPSPStateAction): Int64;
-    function AddWakeTimer(At: Int64; Thread: TPSPThread; const Tag: string; Value: Cardinal;
-      DataSlot: Integer = -1; Owner: TObject = nil): Int64;
+    function AddWakeTimer(At: Int64; Thread: TPSPThread; const Tag: string; Value: Cardinal; DataSlot: Integer = -1;
+      Owner: TObject = nil): Int64;
     procedure CancelTimer(Handle: Int64);
     procedure CancelTimersOf(Owner: TObject);
     procedure OnTimerEvent;
     // Guest calls
-    procedure CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal = 0;
+    procedure CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn;
+      GP: Cardinal = 0; const ReturnState: IPSPStateAction = nil);
+    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal;
+      const OnReturn: TPSPGuestReturn = nil; EntryNs: Int64 = 0; OwnerUID: Cardinal = 0;
       const ReturnState: IPSPStateAction = nil);
-    procedure QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn = nil;
-      EntryNs: Int64 = 0; OwnerUID: Cardinal = 0; const ReturnState: IPSPStateAction = nil);
     procedure TriggerInterrupt(IntNo: Integer; SubNo: Integer = -1; Arg2: Cardinal = 0);
     // Queues the enabled sub-interrupt handlers of IntNo; Done runs after the
     // last one returns. Returns how many were queued (Done is not called for 0).
@@ -1067,7 +1072,8 @@ begin
   if (T = nil) or InInterrupt or (Ns <= PSPBusyChunkNs) then
   begin
     Spend(Ns);
-    if YieldEqual then YieldCurrent;
+    if YieldEqual then
+      YieldCurrent;
     Exit;
   end;
   // The call returns through a stub that spends the time a slice at a time.
@@ -1111,7 +1117,8 @@ begin
     FCPU.Ctx.NPC := T.BusyNPC;
     var Handoff := T.BusyYieldEqual;
     T.BusyYieldEqual := False;
-    if Handoff then YieldCurrent;
+    if Handoff then
+      YieldCurrent;
   end;
 end;
 
@@ -1174,8 +1181,8 @@ end;
 function TPSPKernel.ValidUserAddress(Address: Cardinal): Boolean;
 begin
   var A := Address and $3FFFFFFF;
-  Result := ((A >= $08800000) and (A < $0C000000)) or ((A >= $04000000) and (A < $04800000)) or
-    ((A >= $00010000) and (A < $00014000));
+  Result := ((A >= $08800000) and (A < $0C000000)) or ((A >= $04000000) and (A < $04800000)) or ((A >= $00010000) and
+    (A < $00014000));
   if (Address and $80000000) <> 0 then
     Result := False;
 end;
@@ -1225,8 +1232,8 @@ end;
 {$Q-}
 function LowestBit(X: Cardinal): Integer;
 const
-  DeBruijn: array[0..31] of Byte = (0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21,
-    19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9);
+  DeBruijn: array[0..31] of Byte = (0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 31, 27, 13, 23, 21, 19,
+    16, 7, 26, 12, 18, 6, 11, 5, 10, 9);
 begin
   Result := DeBruijn[((X and (not X + 1)) * $077CB531) shr 27];
 end;
@@ -1422,7 +1429,8 @@ begin
   if WasFresh then
     Check := PSPFreshCheckNs;
   T.Fresh := False;
-  if (TimeoutPtr <> 0) and ((FScheduler.Now + Check) div 1000 > FScheduler.Now div 1000 + Int64(FMemory.Read32(TimeoutPtr))) then
+  if (TimeoutPtr <> 0) and ((FScheduler.Now + Check) div 1000 > FScheduler.Now div 1000 +
+    Int64(FMemory.Read32(TimeoutPtr))) then
   begin
     // A timeout that has run out by the time the kernel looks at it ends the
     // wait at once, without writing the time left back.
@@ -1603,10 +1611,11 @@ begin
     end;
 end;
 
-function TPSPKernel.AddWakeTimer(At: Int64; Thread: TPSPThread; const Tag: string; Value: Cardinal;
-  DataSlot: Integer; Owner: TObject): Int64;
+function TPSPKernel.AddWakeTimer(At: Int64; Thread: TPSPThread; const Tag: string; Value: Cardinal; DataSlot: Integer;
+  Owner: TObject): Int64;
 begin
-  if Owner = nil then Owner := Thread;
+  if Owner = nil then
+    Owner := Thread;
   Result := AddStateTimer(At, Owner, TPSPStateAction.Create(StateWake, [Thread], [Value, DataSlot], Tag));
 end;
 
@@ -1618,10 +1627,12 @@ begin
     var Slot := Action.Arg(1);
     if Slot >= 0 then
     begin
-      if Slot > High(T.Wait.Data) then raise EReadError.Create('Invalid state wake data slot');
+      if Slot > High(T.Wait.Data) then
+        raise EReadError.Create('Invalid state wake data slot');
       EndWait(T, T.Wait.Data[Slot]);
     end
-    else EndWait(T, Cardinal(Action.Arg(0)));
+    else
+      EndWait(T, Cardinal(Action.Arg(0)));
   end;
 end;
 
@@ -1668,7 +1679,8 @@ begin
           end;
         end;
       tkCustom:
-        if E.Action <> nil then E.Action.Run
+        if E.Action <> nil then
+          E.Action.Run
         else if Assigned(E.Event) then
           E.Event();
     end;
@@ -1690,8 +1702,8 @@ begin
   FCPU.SetPC(Func);
 end;
 
-procedure TPSPKernel.CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn; GP: Cardinal;
-  const ReturnState: IPSPStateAction);
+procedure TPSPKernel.CallGuest(Func: Cardinal; const Args: array of Cardinal; const OnReturn: TPSPGuestReturn;
+  GP: Cardinal; const ReturnState: IPSPStateAction);
 begin
   if Assigned(OnReturn) then
     raise EInvalidOpException.Create('PSP guest returns require an explicit state action');
@@ -1888,7 +1900,8 @@ begin
     FCPU.Ctx := F.Saved;
     if Assigned(F.OnReturn) then
       F.OnReturn(Ret);
-    if F.ReturnState <> nil then F.ReturnState.Run(Ret);
+    if F.ReturnState <> nil then
+      F.ReturnState.Run(Ret);
     if FIntFrames.Count = 0 then
     begin
       DropStaleInterrupts;
@@ -1925,7 +1938,8 @@ begin
         FCPU.Ctx := F.Saved;
         if Assigned(F.OnReturn) then
           F.OnReturn(Ret);
-        if F.ReturnState <> nil then F.ReturnState.Run(Ret);
+        if F.ReturnState <> nil then
+          F.ReturnState.Run(Ret);
       end;
   else
     T.Frames.Delete(T.Frames.Count - 1);
@@ -1951,8 +1965,10 @@ end;
 procedure TPSPKernel.Trap(Code: Cardinal);
 begin
   case Code of
-    PSPTrapReturn: ReturnTrap;
-    PSPTrapThreadExit: ThreadExitTrap;
+    PSPTrapReturn:
+      ReturnTrap;
+    PSPTrapThreadExit:
+      ThreadExitTrap;
   else
     raise EPSPGuestFault.CreateFmt('PSP: unknown kernel trap %d', [Code]);
   end;
@@ -1960,17 +1976,21 @@ end;
 
 { Interrupts }
 
-procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal; const OnReturn: TPSPGuestReturn;
-  EntryNs: Int64; OwnerUID: Cardinal; const ReturnState: IPSPStateAction);
+procedure TPSPKernel.QueueInterrupt(Func: Cardinal; const Args: array of Cardinal; GP: Cardinal;
+  const OnReturn: TPSPGuestReturn; EntryNs: Int64; OwnerUID: Cardinal; const ReturnState: IPSPStateAction);
 begin
   if Assigned(OnReturn) then
     raise EInvalidOpException.Create('PSP interrupt returns require an explicit state action');
   var P := Default(TPSPPendingInterrupt);
   P.Func := Func;
-  if Length(Args) > 0 then P.A0 := Args[0];
-  if Length(Args) > 1 then P.A1 := Args[1];
-  if Length(Args) > 2 then P.A2 := Args[2];
-  if Length(Args) > 3 then P.A3 := Args[3];
+  if Length(Args) > 0 then
+    P.A0 := Args[0];
+  if Length(Args) > 1 then
+    P.A1 := Args[1];
+  if Length(Args) > 2 then
+    P.A2 := Args[2];
+  if Length(Args) > 3 then
+    P.A3 := Args[3];
   P.GP := GP;
   P.OnReturn := OnReturn;
   P.ReturnState := ReturnState;
@@ -2074,9 +2094,12 @@ end;
 function TPSPKernel.Partition(Id: Integer): TPSPPartition;
 begin
   case Id of
-    1, 3, 4: Result := FKernelPartition;
-    2, 6: Result := FUserPartition;
-    5: Result := FVolatilePartition;
+    1, 3, 4:
+      Result := FKernelPartition;
+    2, 6:
+      Result := FUserPartition;
+    5:
+      Result := FVolatilePartition;
   else
     Result := nil;
   end;
@@ -2103,7 +2126,8 @@ end;
 
 { PSP.Kernel: threads and callbacks. }
 
-function TPSPKernel.CreateThread(const Name: string; Entry: Cardinal; Priority: Integer; StackSize, Attr, GP, ModuleId: Cardinal): TPSPThread;
+function TPSPKernel.CreateThread(const Name: string; Entry: Cardinal; Priority: Integer;
+  StackSize, Attr, GP, ModuleId: Cardinal): TPSPThread;
 begin
   StackSize := AlignUp(StackSize, 256);
   var Part := FStackPartition;
@@ -2367,7 +2391,10 @@ end;
 procedure TPSPKernel.hCreateThread;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var NamePtr := FHLE.Arg(0);
   var Entry := FHLE.Arg(1);
   var Prio := FHLE.ArgInt(2);
@@ -2375,14 +2402,26 @@ begin
   var Attr := FHLE.Arg(4);
   var Name: string;
   if not ReadName(NamePtr, Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var KernelCaller := (FCurrent <> nil) and FCurrent.IsKernel;
   if (Entry <> 0) and not KernelCaller and not ValidUserAddress(Entry) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   if StackSize < $200 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_STACK_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_STACK_SIZE);
+    Exit;
+  end;
   if not ValidPriorityFor(Prio) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Exit;
+  end;
   if KernelCaller then
   begin
     if (Attr and $80000000) = 0 then
@@ -2391,17 +2430,27 @@ begin
   else
   begin
     if (Attr and $070F9F00) <> 0 then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+      Exit;
+    end;
     Attr := (Attr and $00706000) or $80000000;
   end;
   if StackSize > $1E00000 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var ModuleId: Cardinal := 0;
   if FCurrent <> nil then
     ModuleId := FCurrent.ModuleId;
   var T := CreateThread(Name, Entry, Prio, StackSize, Attr, FCPU.Ctx.GPR[28], ModuleId);
   if T = nil then
-    begin Spend(PSPCreateThreadNs); FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    Spend(PSPCreateThreadNs);
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   // Filling the stack is most of it, and other threads may run meanwhile.
   SpendPreemptible(PSPCreateThreadNs + MemoryFillTime(StackSize));
   FHLE.Result(T.UID);
@@ -2413,22 +2462,38 @@ end;
 procedure TPSPKernel.hStartThread;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Id := FHLE.Arg(0);
   if Id = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if not T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_DORMANT);
+    Exit;
+  end;
   var Size := FHLE.Arg(1);
   var Ptr := FHLE.Arg(2);
   if Ptr <> 0 then
   begin
     // Nothing is copied from an address with no size.
-    if (Integer(Size) < 0) or ((Size > 0) and not ValidUserAddress(Ptr) and not ((FCurrent <> nil) and FCurrent.IsKernel)) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+    if (Integer(Size) < 0) or ((Size > 0) and not ValidUserAddress(Ptr) and
+      not ((FCurrent <> nil) and FCurrent.IsKernel)) then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+      Exit;
+    end;
   end
   else
     Size := 0;
@@ -2451,7 +2516,10 @@ end;
 procedure TPSPKernel.hExitThread;
 begin
   if (FCurrent = nil) or InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   Spend(PSPExitThreadNs);
   var T := FCurrent;
   ExitCurrent(FHLE.Arg(0));
@@ -2468,7 +2536,10 @@ procedure TPSPKernel.hExitDeleteThread;
 begin
   var T := FCurrent;
   if (T = nil) or InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   Spend(PSPExitThreadNs);
   ExitCurrent(FHLE.Arg(0));
   T.Ctx := FCPU.Ctx;
@@ -2480,13 +2551,22 @@ end;
 procedure TPSPKernel.hDeleteThread;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Id := FHLE.Arg(0);
   var T := ThreadById(Id);
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if (T = FCurrent) or not T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_DORMANT);
+    Exit;
+  end;
   Spend(PSPDeleteThreadNs);
   DeleteThread(T);
   FHLE.Result(0);
@@ -2497,16 +2577,28 @@ begin
   // Interrupt handlers of programs built before 3.x may still terminate a
   // thread (recorded up to 2.08); starting one is refused regardless.
   if InInterrupt and (FCompiledSdkVersion >= $03000000) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   if T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_DORMANT);
+    Exit;
+  end;
   Spend(PSPTerminateThreadNs);
   TerminateThread(T, SCE_KERNEL_ERROR_THREAD_TERMINATED);
   FHLE.Result(0);
@@ -2515,13 +2607,22 @@ end;
 procedure TPSPKernel.hTerminateDeleteThread;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   Spend(PSPTerminateThreadNs + PSPDeleteThreadNs);
   if not T.IsDormant then
     TerminateThread(T, SCE_KERNEL_ERROR_THREAD_TERMINATED);
@@ -2532,7 +2633,10 @@ end;
 procedure TPSPKernel.hGetThreadId;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if FCurrent = nil then
     FHLE.Result(0)
   else
@@ -2551,18 +2655,30 @@ procedure TPSPKernel.hChangeThreadPriority;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   var P := FHLE.ArgInt(1);
   if P = 0 then
   begin
     if FCurrent = nil then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+      Exit;
+    end;
     P := FCurrent.Priority;
   end;
   if not ValidPriorityFor(P) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Exit;
+  end;
   if T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_DORMANT);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   if (T = FCurrent) and ((T.Status and PSPThreadRunning) <> 0) then
@@ -2594,11 +2710,17 @@ procedure TPSPKernel.hRotateThreadReadyQueue;
 begin
   var P := FHLE.ArgInt(0);
   if FCurrent = nil then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   if P = 0 then
     P := FCurrent.Priority;
   if not ValidPriorityFor(P) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Exit;
+  end;
   FHLE.Result(0);
   if P = FCurrent.Priority then
     // The current thread goes behind the others of its priority.
@@ -2623,17 +2745,26 @@ procedure TPSPKernel.hReferThreadStatus;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   var P := FHLE.Arg(1);
   if P = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var Size := FMemory.Read32(P);
   var StructSize: Cardinal := $68;
   if FCompiledSdkVersion > $02060010 then
   begin
     StructSize := $6C;
     if Size > StructSize then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE);
+      Exit;
+    end;
   end;
   var Buf: array[0..$6B] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
@@ -2669,10 +2800,16 @@ procedure TPSPKernel.hReferThreadRunStatus;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   var P := FHLE.Arg(1);
   if P = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var Buf: array[0..$2B] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   PCardinal(@Buf[4])^ := ThreadInfoStatus(Self, T);
@@ -2695,9 +2832,15 @@ procedure TPSPKernel.hGetThreadExitStatus;
 begin
   var T := TPSPThread(GetObject(FHLE.Arg(0), TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if not T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_DORMANT);
+    Exit;
+  end;
   FHLE.Result(T.ExitStatus);
 end;
 
@@ -2742,9 +2885,15 @@ procedure TPSPKernel.hWakeupThread;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_DORMANT);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   if T.IsWaiting and (T.Wait.Kind = PSPWaitSleep) then
@@ -2757,7 +2906,10 @@ procedure TPSPKernel.hCancelWakeupThread;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   FHLE.Result(Cardinal(T.WakeupCount));
   T.WakeupCount := 0;
 end;
@@ -2766,9 +2918,15 @@ procedure TPSPKernel.hDonateWakeupThread;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_DORMANT);
+    Exit;
+  end;
   FHLE.Result(0);
   if T.IsWaiting and (T.Wait.Kind = PSPWaitSleep) then
     EndWait(T, 0)
@@ -2780,14 +2938,26 @@ procedure TPSPKernel.hSuspendThread;
 begin
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if T.IsDormant then
-    begin FHLE.Result(SCE_KERNEL_ERROR_DORMANT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_DORMANT);
+    Exit;
+  end;
   if (T.Status and PSPThreadSuspended) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_SUSPEND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_SUSPEND);
+    Exit;
+  end;
   if (T.Status and PSPThreadReady) <> 0 then
   begin
     RemoveReady(T);
@@ -2801,12 +2971,21 @@ procedure TPSPKernel.hResumeThread;
 begin
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if (T.Status and PSPThreadSuspended) = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_SUSPEND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_SUSPEND);
+    Exit;
+  end;
   T.Status := T.Status and not PSPThreadSuspended;
   if (T.Status and (PSPThreadWaiting or PSPThreadDormant)) = 0 then
   begin
@@ -2835,10 +3014,16 @@ begin
   var H := K.FHLE;
   var Id := H.Arg(0);
   if (Id = 0) or ((K.FCurrent <> nil) and (Id = K.FCurrent.UID)) then
-    begin H.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    H.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(K.GetObject(Id, TPSPThread));
   if T = nil then
-    begin H.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    H.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   if K.RefuseWait then
     Exit;
   if T.IsDormant then
@@ -2949,14 +3134,23 @@ procedure TPSPKernel.hReleaseWaitThread;
 begin
   var Id := FHLE.Arg(0);
   if (Id = 0) or ((FCurrent <> nil) and (Id = FCurrent.UID)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_THID);
+    Exit;
+  end;
   var T := TPSPThread(GetObject(Id, TPSPThread));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   // A thread inside a driver or a module load waits on the kernel's own
   // terms; user code cannot cut that short.
   if not T.IsWaiting or InternalWait(T) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOT_WAIT);
+    Exit;
+  end;
   Inc(T.ReleaseCount);
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
@@ -2970,7 +3164,10 @@ procedure TPSPKernel.hGetThreadStackFreeSize;
 begin
   var T := ThreadById(FHLE.Arg(0));
   if T = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   // Counted from above the id word block at the bottom of the stack.
   var N: Cardinal := 0;
   while (N + $10 < T.StackSize) and (FMemory.Read8(T.StackBlock + $10 + N) = $FF) do
@@ -2981,7 +3178,10 @@ end;
 procedure TPSPKernel.hCheckThreadStack;
 begin
   if FCurrent = nil then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var SP := FCPU.Ctx.GPR[29];
   if (SP >= FCurrent.StackBlock) and (SP <= FCurrent.StackBlock + FCurrent.StackSize) then
     FHLE.Result(SP - FCurrent.StackBlock)
@@ -2996,15 +3196,27 @@ begin
   var Func := FHLE.Arg(1);
   var Arg := FHLE.Arg(2);
   if (T = nil) or InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if Size < $200 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_STACK_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_STACK_SIZE);
+    Exit;
+  end;
   if Size > $1E00000 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   Size := AlignUp(Size, 256);
   var Block := T.StackPartition.Alloc(Size, akHigh, 0, 256, 'stack ext:' + T.Name);
   if Block = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   FMemory.Fill(Block, $FF, Size);
   FMemory.Write32(Block, T.UID);
   var OldBlock := T.StackBlock;
@@ -3016,7 +3228,8 @@ begin
   var F := Default(TPSPFrame);
   F.Kind := fkHLE;
   F.Saved := FCPU.Ctx;
-  F.OnReturn := procedure(Value: Cardinal)
+  F.OnReturn :=
+    procedure(Value: Cardinal)
     begin
       T.StackBlock := OldBlock;
       T.StackSize := OldSize;
@@ -3031,11 +3244,17 @@ end;
 procedure TPSPKernel.hChangeCurrentThreadAttr;
 begin
   if (FCurrent = nil) or InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Clear := FHLE.Arg(0);
   var SetBits := FHLE.Arg(1);
   if ((Clear or SetBits) and not Cardinal($00004000)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   FCurrent.Attr := (FCurrent.Attr and not Clear) or SetBits;
   FHLE.Result(0);
 end;
@@ -3056,19 +3275,33 @@ begin
   var Size := FHLE.ArgInt(2);
   var CountPtr := FHLE.Arg(3);
   if not (((Kind >= 1) and (Kind <= 14)) or ((Kind >= $40) and (Kind <= $43))) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_TYPE);
+    Exit;
+  end;
   if Size < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var Ids := TList<Cardinal>.Create;
   try
     if Kind >= $40 then
     begin
       for var T in FThreads do
         case Kind of
-          $40: if T.IsWaiting and (T.Wait.Kind = PSPWaitSleep) then Ids.Add(T.UID);
-          $41: if T.IsWaiting and (T.Wait.Kind = PSPWaitDelay) then Ids.Add(T.UID);
-          $42: if (T.Status and PSPThreadSuspended) <> 0 then Ids.Add(T.UID);
-          $43: if T.IsDormant then Ids.Add(T.UID);
+          $40:
+            if T.IsWaiting and (T.Wait.Kind = PSPWaitSleep) then
+              Ids.Add(T.UID);
+          $41:
+            if T.IsWaiting and (T.Wait.Kind = PSPWaitDelay) then
+              Ids.Add(T.UID);
+          $42:
+            if (T.Status and PSPThreadSuspended) <> 0 then
+              Ids.Add(T.UID);
+          $43:
+            if T.IsDormant then
+              Ids.Add(T.UID);
         end;
     end
     else
@@ -3097,9 +3330,15 @@ end;
 procedure TPSPKernel.hSuspendDispatchThread;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if not FCPU.InterruptsEnabled then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CPUDI); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CPUDI);
+    Exit;
+  end;
   FHLE.Result(Ord(not FDispatchSuspended));
   FDispatchSuspended := True;
 end;
@@ -3107,9 +3346,15 @@ end;
 procedure TPSPKernel.hResumeDispatchThread;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if not FCPU.InterruptsEnabled then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CPUDI); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CPUDI);
+    Exit;
+  end;
   FDispatchSuspended := FHLE.Arg(0) = 0;
   FHLE.Result(0);
   if not FDispatchSuspended then
@@ -3135,14 +3380,23 @@ end;
 procedure TPSPKernel.hCreateCallback;
 begin
   if (FCurrent = nil) or InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Func := FHLE.Arg(1);
   // Only a kernel address is refused.
   if ((Func and $80000000) <> 0) and not FCurrent.IsKernel then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var CB := TPSPCallback.Create;
   CB.Name := Name;
   CB.Func := Func;
@@ -3158,7 +3412,10 @@ procedure TPSPKernel.hDeleteCallback;
 begin
   var CB := TPSPCallback(GetObject(FHLE.Arg(0), TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID);
+    Exit;
+  end;
   if CB.Thread <> nil then
     CB.Thread.Callbacks.Remove(CB);
   DeleteObject(CB);
@@ -3169,7 +3426,10 @@ procedure TPSPKernel.hNotifyCallback;
 begin
   var CB := TPSPCallback(GetObject(FHLE.Arg(0), TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID);
+    Exit;
+  end;
   FHLE.Result(0);
   // Getting a waiting thread to its callbacks takes the kernel a while.
   var T := CB.Thread;
@@ -3182,7 +3442,10 @@ procedure TPSPKernel.hCancelCallback;
 begin
   var CB := TPSPCallback(GetObject(FHLE.Arg(0), TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID);
+    Exit;
+  end;
   CB.NotifyCount := 0;
   CB.NotifyArg := 0;
   FHLE.Result(0);
@@ -3192,7 +3455,10 @@ procedure TPSPKernel.hGetCallbackCount;
 begin
   var CB := TPSPCallback(GetObject(FHLE.Arg(0), TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID);
+    Exit;
+  end;
   FHLE.Result(CB.NotifyCount);
 end;
 
@@ -3202,7 +3468,10 @@ begin
   if InInterrupt or (FCurrent = nil) then
     Exit;
   if FCurrent.InCallback then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   CheckCallbacksNow(False);
 end;
 
@@ -3210,7 +3479,10 @@ procedure TPSPKernel.hReferCallbackStatus;
 begin
   var CB := TPSPCallback(GetObject(FHLE.Arg(0), TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID);
+    Exit;
+  end;
   var Buf: array[0..$37] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(CB.Name);
@@ -3336,10 +3608,16 @@ procedure TPSPKernel.hCreateSema;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Attr := FHLE.Arg(1);
   if Attr >= $200 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var S := TPSPSema.Create;
   S.Name := Name;
   S.Attr := Attr;
@@ -3355,7 +3633,10 @@ procedure TPSPKernel.hDeleteSema;
 begin
   var S := TPSPSema(GetObject(FHLE.Arg(0), TPSPSema));
   if S = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID);
+    Exit;
+  end;
   FHLE.Result(0);
   while S.Waiters.Count > 0 do
     EndWait(S.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -3366,7 +3647,10 @@ procedure TPSPKernel.hSignalSema;
 begin
   var S := TPSPSema(GetObject(FHLE.Arg(0), TPSPSema));
   if S = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID);
+    Exit;
+  end;
   var N := FHLE.ArgInt(1);
   // What the waiters at the head take does not count against the maximum.
   var Left := Int64(S.Count) + N;
@@ -3378,7 +3662,10 @@ begin
     Dec(Left, Need);
   end;
   if Left > S.MaxCount then
-    begin FHLE.Result(SCE_KERNEL_ERROR_SEMA_OVF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_SEMA_OVF);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   Inc(S.Count, N);
   FHLE.Result(0);
@@ -3391,12 +3678,21 @@ begin
     Exit;
   var Need := FHLE.ArgInt(1);
   if Need <= 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   var S := TPSPSema(GetObject(FHLE.Arg(0), TPSPSema));
   if S = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID);
+    Exit;
+  end;
   if Need > S.MaxCount then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   if (S.Count >= Need) and (S.Waiters.Count = 0) then
@@ -3424,10 +3720,16 @@ procedure TPSPKernel.hPollSema;
 begin
   var Need := FHLE.ArgInt(1);
   if Need <= 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   var S := TPSPSema(GetObject(FHLE.Arg(0), TPSPSema));
   if S = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID);
+    Exit;
+  end;
   if (S.Count >= Need) and (S.Waiters.Count = 0) then
   begin
     Dec(S.Count, Need);
@@ -3441,10 +3743,16 @@ procedure TPSPKernel.hCancelSema;
 begin
   var S := TPSPSema(GetObject(FHLE.Arg(0), TPSPSema));
   if S = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID);
+    Exit;
+  end;
   var NewCount := FHLE.ArgInt(1);
   if NewCount > S.MaxCount then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   if FHLE.Arg(2) <> 0 then
     FMemory.Write32(FHLE.Arg(2), Cardinal(S.Waiters.Count));
   FHLE.Result(0);
@@ -3460,7 +3768,10 @@ procedure TPSPKernel.hReferSemaStatus;
 begin
   var S := TPSPSema(GetObject(FHLE.Arg(0), TPSPSema));
   if S = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_SEMID);
+    Exit;
+  end;
   var Buf: array[0..$37] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(S.Name);
@@ -3505,12 +3816,21 @@ procedure TPSPKernel.hCreateEventFlag;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Attr := FHLE.Arg(1);
   if (Attr and $100) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   if Attr >= $300 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var E := TPSPEventFlag.Create;
   E.Name := Name;
   E.Attr := Attr;
@@ -3524,7 +3844,10 @@ procedure TPSPKernel.hDeleteEventFlag;
 begin
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   FHLE.Result(0);
   E.Pattern := 0;
   while E.Waiters.Count > 0 do
@@ -3536,7 +3859,10 @@ procedure TPSPKernel.hSetEventFlag;
 begin
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   E.Pattern := E.Pattern or FHLE.Arg(1);
@@ -3547,7 +3873,10 @@ procedure TPSPKernel.hClearEventFlag;
 begin
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   E.Pattern := E.Pattern and FHLE.Arg(1);
   FHLE.Result(0);
 end;
@@ -3568,19 +3897,31 @@ begin
   var Mode := FHLE.Arg(2);
   var OutPtr := FHLE.Arg(3);
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Err := EventFlagModeError(Mode, Bits);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   if RefuseWait then
     Exit;
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   if ((E.Attr and $200) = 0) and (E.Waiters.Count > 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_EVF_MULTI); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_EVF_MULTI);
+    Exit;
+  end;
   if E.Matches(Bits, Mode) then
   begin
     if OutPtr <> 0 then
@@ -3594,7 +3935,8 @@ begin
     Exit;
   end;
   E.Waiters.Add(FCurrent);
-  if not BeginWaitData(PSPWaitEventFlag, E, E.UID, FHLE.Arg(4), AllowCB, EventFlagRetry, [Bits, Mode, OutPtr], EventFlagAbort) then
+  if not BeginWaitData(PSPWaitEventFlag, E, E.UID, FHLE.Arg(4), AllowCB, EventFlagRetry,
+    [Bits, Mode, OutPtr], EventFlagAbort) then
     Exit;
 end;
 
@@ -3615,12 +3957,21 @@ begin
   var OutPtr := FHLE.Arg(3);
   var Err := EventFlagModeError(Mode, Bits);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   if ((E.Attr and $200) = 0) and (E.Waiters.Count > 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_EVF_MULTI); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_EVF_MULTI);
+    Exit;
+  end;
   if OutPtr <> 0 then
     FMemory.Write32(OutPtr, E.Pattern);
   if E.Matches(Bits, Mode) then
@@ -3639,7 +3990,10 @@ procedure TPSPKernel.hCancelEventFlag;
 begin
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   if FHLE.Arg(2) <> 0 then
     FMemory.Write32(FHLE.Arg(2), Cardinal(E.Waiters.Count));
   FHLE.Result(0);
@@ -3652,7 +4006,10 @@ procedure TPSPKernel.hReferEventFlagStatus;
 begin
   var E := TPSPEventFlag(GetObject(FHLE.Arg(0), TPSPEventFlag));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_EVFID);
+    Exit;
+  end;
   var Buf: array[0..$33] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(E.Name);
@@ -3820,13 +4177,22 @@ procedure TPSPKernel.hCreateMutex;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Attr := FHLE.Arg(1);
   var Count := FHLE.ArgInt(2);
   if (Attr and not Cardinal($BFF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   if (Count < 0) or ((Count > 1) and ((Attr and PSPMutexRecursive) = 0)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   var M := TPSPMutex.Create;
   M.Name := Name;
   M.Attr := Attr;
@@ -3843,7 +4209,10 @@ procedure TPSPKernel.hDeleteMutex;
 begin
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND);
+    Exit;
+  end;
   FHLE.Result(0);
   while M.Waiters.Count > 0 do
     EndWait(M.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -3864,19 +4233,31 @@ begin
     Exit;
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Count := FHLE.ArgInt(1);
   var Err := MutexCountError(M, Count);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   if M.Owner = FCurrent then
   begin
     if not M.Recursive then
-      begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_RECURSIVE_NOT_ALLOWED); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_MUTEX_RECURSIVE_NOT_ALLOWED);
+      Exit;
+    end;
     if Int64(M.LockCount) + Count > High(Integer) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_LOCK_OVERFLOW); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_MUTEX_LOCK_OVERFLOW);
+      Exit;
+    end;
     Inc(M.LockCount, Count);
     if AllowCB then
       CheckCallbacksNow;
@@ -3891,7 +4272,10 @@ begin
     Exit;
   end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   M.Waiters.Add(FCurrent);
   BeginWaitData(PSPWaitMutex, M, M.UID, FHLE.Arg(2), AllowCB, M.Retry, [Cardinal(Count)]);
 end;
@@ -3910,18 +4294,30 @@ procedure TPSPKernel.hTryLockMutex;
 begin
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Count := FHLE.ArgInt(1);
   var Err := MutexCountError(M, Count);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FHLE.Result(0);
   if M.Owner = FCurrent then
   begin
     if not M.Recursive then
-      begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_RECURSIVE_NOT_ALLOWED); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_MUTEX_RECURSIVE_NOT_ALLOWED);
+      Exit;
+    end;
     if Int64(M.LockCount) + Count > High(Integer) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_LOCK_OVERFLOW); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_MUTEX_LOCK_OVERFLOW);
+      Exit;
+    end;
     Inc(M.LockCount, Count);
     Exit;
   end;
@@ -3938,15 +4334,27 @@ procedure TPSPKernel.hUnlockMutex;
 begin
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Count := FHLE.ArgInt(1);
   var Err := MutexCountError(M, Count);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   if (M.Owner = nil) or (M.Owner <> FCurrent) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_UNLOCKED); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_UNLOCKED);
+    Exit;
+  end;
   if Count > M.LockCount then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_UNLOCK_UNDERFLOW); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_UNLOCK_UNDERFLOW);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   Dec(M.LockCount, Count);
@@ -3961,10 +4369,16 @@ procedure TPSPKernel.hCancelMutex;
 begin
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Count := FHLE.ArgInt(1);
   if (Count > 1) and not M.Recursive then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   if FHLE.Arg(2) <> 0 then
     FMemory.Write32(FHLE.Arg(2), Cardinal(M.Waiters.Count));
   FHLE.Result(0);
@@ -3986,7 +4400,10 @@ procedure TPSPKernel.hReferMutexStatus;
 begin
   var M := TPSPMutex(GetObject(FHLE.Arg(0), TPSPMutex));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Buf: array[0..$37] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(M.Name);
@@ -4011,13 +4428,22 @@ begin
   var W := FHLE.Arg(0);
   var Name: string;
   if not ReadName(FHLE.Arg(1), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Attr := FHLE.Arg(2);
   var Count := FHLE.ArgInt(3);
   if (Attr and not Cardinal($3FF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   if (Count < 0) or ((Count > 1) and ((Attr and PSPMutexRecursive) = 0)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   var L := TPSPLwMutex.Create;
   L.Name := Name;
   L.Attr := Attr;
@@ -4043,10 +4469,16 @@ procedure TPSPKernel.hDeleteLwMutex;
 begin
   var W := FHLE.Arg(0);
   if (W = 0) or not ValidUserAddress(W) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var L := TPSPLwMutex(GetObject(FMemory.Read32(W + 16), TPSPLwMutex));
   if (L = nil) or (L.Workarea <> W) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND);
+    Exit;
+  end;
   FHLE.Result(0);
   while L.Waiters.Count > 0 do
     EndWait(L.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -4078,9 +4510,15 @@ begin
   var Attr := FMemory.Read32(W + 8);
   var Recursive := (Attr and PSPMutexRecursive) <> 0;
   if (Count <= 0) or ((Count > 1) and not Recursive) then
-    begin Fail(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    Fail(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   if FMemory.Read32(W + 16) = $FFFFFFFF then
-    begin Fail(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND); Exit; end;
+  begin
+    Fail(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Level := Integer(FMemory.Read32(W));
   var Me: Cardinal := 0;
   if FCurrent <> nil then
@@ -4095,21 +4533,36 @@ begin
   if FMemory.Read32(W + 4) = Me then
   begin
     if not Recursive then
-      begin Fail(SCE_KERNEL_ERROR_LWMUTEX_RECURSIVE_NOT_ALLOWED); Exit; end;
+    begin
+      Fail(SCE_KERNEL_ERROR_LWMUTEX_RECURSIVE_NOT_ALLOWED);
+      Exit;
+    end;
     if Int64(Level) + Count > High(Integer) then
-      begin Fail(SCE_KERNEL_ERROR_LWMUTEX_LOCK_OVERFLOW); Exit; end;
+    begin
+      Fail(SCE_KERNEL_ERROR_LWMUTEX_LOCK_OVERFLOW);
+      Exit;
+    end;
     FMemory.Write32(W, Cardinal(Level + Count));
     Exit;
   end;
   if IsTry then
-    begin Fail(SCE_KERNEL_ERROR_LWMUTEX_LOCKED); Exit; end;
+  begin
+    Fail(SCE_KERNEL_ERROR_LWMUTEX_LOCKED);
+    Exit;
+  end;
   // Held by another thread: the kernel side waits on the object.
   Spend(PSPSyncCallNs);
   var L := TPSPLwMutex(GetObject(FMemory.Read32(W + 16), TPSPLwMutex));
   if L = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND);
+    Exit;
+  end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   L.AddWaiter(FCurrent);
   BeginWaitData(PSPWaitLwMutex, L, L.UID, TimeoutPtr, AllowCB, L.Retry, [Cardinal(Count)]);
 end;
@@ -4141,17 +4594,29 @@ begin
   var Attr := FMemory.Read32(W + 8);
   var Recursive := (Attr and PSPMutexRecursive) <> 0;
   if (Count <= 0) or ((Count > 1) and not Recursive) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_COUNT);
+    Exit;
+  end;
   if FMemory.Read32(W + 16) = $FFFFFFFF then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND);
+    Exit;
+  end;
   var Level := Integer(FMemory.Read32(W));
   var Me: Cardinal := 0;
   if FCurrent <> nil then
     Me := FCurrent.UID;
   if (Level = 0) or (FMemory.Read32(W + 4) <> Me) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_UNLOCKED); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_UNLOCKED);
+    Exit;
+  end;
   if Count > Level then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_UNLOCK_UNDERFLOW); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_UNLOCK_UNDERFLOW);
+    Exit;
+  end;
   FHLE.Result(0);
   Dec(Level, Count);
   FMemory.Write32(W, Cardinal(Level));
@@ -4195,7 +4660,10 @@ begin
   var W := FHLE.Arg(0);
   var L := TPSPLwMutex(GetObject(FMemory.Read32(W + 16), TPSPLwMutex));
   if L = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND);
+    Exit;
+  end;
   ReferLwMutex(L, FHLE.Arg(1));
   FHLE.Result(0);
 end;
@@ -4204,7 +4672,10 @@ procedure TPSPKernel.hReferLwMutexStatusByID;
 begin
   var L := TPSPLwMutex(GetObject(FHLE.Arg(0), TPSPLwMutex));
   if L = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND);
+    Exit;
+  end;
   ReferLwMutex(L, FHLE.Arg(1));
   FHLE.Result(0);
 end;
@@ -4600,10 +5071,16 @@ procedure TPSPKernel.hCreateMbx;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Attr := FHLE.Arg(1);
   if (Attr and not Cardinal($5FF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var B := TPSPMbx.Create;
   B.Name := Name;
   B.Attr := Attr;
@@ -4616,7 +5093,10 @@ procedure TPSPKernel.hDeleteMbx;
 begin
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID);
+    Exit;
+  end;
   FHLE.Result(0);
   while B.Waiters.Count > 0 do
     EndWait(B.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -4627,7 +5107,10 @@ procedure TPSPKernel.hSendMbx;
 begin
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID);
+    Exit;
+  end;
   var Msg := FHLE.Arg(1);
   Spend(PSPSyncCallNs);
   if B.Waiters.Count > 0 then
@@ -4642,7 +5125,10 @@ begin
   end;
   var Err := B.CheckNew(Msg);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   B.Put(Msg);
   FHLE.Result(0);
 end;
@@ -4653,7 +5139,10 @@ begin
     Exit;
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID);
+    Exit;
+  end;
   var OutPtr := FHLE.Arg(1);
   Spend(PSPSyncCallNs);
   if B.Count > 0 then
@@ -4686,9 +5175,15 @@ procedure TPSPKernel.hPollMbx;
 begin
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID);
+    Exit;
+  end;
   if B.Count = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MBOX_NOMSG); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MBOX_NOMSG);
+    Exit;
+  end;
   var Msg: Cardinal;
   var Err := B.Take(Msg);
   if (Err = 0) and (FHLE.Arg(1) <> 0) then
@@ -4700,7 +5195,10 @@ procedure TPSPKernel.hCancelReceiveMbx;
 begin
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID);
+    Exit;
+  end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), Cardinal(B.Waiters.Count));
   FHLE.Result(0);
@@ -4712,7 +5210,10 @@ procedure TPSPKernel.hReferMbxStatus;
 begin
   var B := TPSPMbx(GetObject(FHLE.Arg(0), TPSPMbx));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MBXID);
+    Exit;
+  end;
   var Buf: array[0..$33] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(B.Name);
@@ -4732,8 +5233,13 @@ function TPSPKernel.UserPartitionCheck(PartId: Integer): Cardinal;
 begin
   // What a user module may create objects in.
   case PartId of
-    2, 5, 6: Result := 0;
-    1, 3, 4: if (FCurrent <> nil) and FCurrent.IsKernel then Result := 0 else Result := SCE_KERNEL_ERROR_ILLEGAL_PERM;
+    2, 5, 6:
+      Result := 0;
+    1, 3, 4:
+      if (FCurrent <> nil) and FCurrent.IsKernel then
+        Result := 0
+      else
+        Result := SCE_KERNEL_ERROR_ILLEGAL_PERM;
   else
     Result := SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT;
   end;
@@ -4743,14 +5249,23 @@ procedure TPSPKernel.hCreateMsgPipe;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var PartId := FHLE.ArgInt(1);
   var Err := UserPartitionCheck(PartId);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var Attr := FHLE.Arg(2);
   if (Attr and not Cardinal($51FF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var Size := FHLE.Arg(3);
   var P := Partition(PartId);
   if P = nil then
@@ -4759,13 +5274,19 @@ begin
   if Size > 0 then
   begin
     if Size > $7FFFFFFF then
-      begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+      Exit;
+    end;
     if (Attr and $4000) <> 0 then
       Block := P.Alloc(Size, akHigh, 0, 256, 'msgpipe:' + Name)
     else
       Block := P.Alloc(Size, akLow, 0, 256, 'msgpipe:' + Name);
     if Block = 0 then
-      begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+      Exit;
+    end;
   end;
   var MP := TPSPMsgPipe.Create;
   MP.Name := Name;
@@ -4784,7 +5305,10 @@ procedure TPSPKernel.hDeleteMsgPipe;
 begin
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID);
+    Exit;
+  end;
   FHLE.Result(0);
   while MP.Senders.Count > 0 do
     EndWait(MP.Senders.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -4806,23 +5330,38 @@ begin
   var Buf := FHLE.Arg(1);
   var Size := FHLE.Arg(2);
   if Integer(Size) < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   if (Mode <> 2) and RefuseWait then
     Exit;
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID);
+    Exit;
+  end;
   var WaitMode := FHLE.Arg(3);
   var ResultPtr := FHLE.Arg(4);
   var TimeoutPtr: Cardinal := 0;
   if Mode <> 2 then
     TimeoutPtr := FHLE.Arg(5);
   if Integer(Size) < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   if WaitMode > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MODE);
+    Exit;
+  end;
   if (MP.BufSize > 0) and (Size > MP.BufSize) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   var Done: Cardinal := 0;
   if MP.Senders.Count = 0 then
@@ -4879,7 +5418,10 @@ begin
     Exit;
   end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   FHLE.Result(0);
   MP.Senders.Add(FCurrent);
   FWaitCheckNs := PSPPipeCheckNs;
@@ -4907,23 +5449,38 @@ begin
   var Buf := FHLE.Arg(1);
   var Size := FHLE.Arg(2);
   if Integer(Size) < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   if (Mode <> 2) and RefuseWait then
     Exit;
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID);
+    Exit;
+  end;
   var WaitMode := FHLE.Arg(3);
   var ResultPtr := FHLE.Arg(4);
   var TimeoutPtr: Cardinal := 0;
   if Mode <> 2 then
     TimeoutPtr := FHLE.Arg(5);
   if Integer(Size) < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   if WaitMode > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MODE);
+    Exit;
+  end;
   if (MP.BufSize > 0) and (Size > MP.BufSize) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   var Done: Cardinal := 0;
   if MP.Receivers.Count = 0 then
@@ -4992,7 +5549,10 @@ begin
     Exit;
   end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   FHLE.Result(0);
   MP.Receivers.Add(FCurrent);
   FWaitCheckNs := PSPPipeCheckNs;
@@ -5019,7 +5579,10 @@ procedure TPSPKernel.hCancelMsgPipe;
 begin
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID);
+    Exit;
+  end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), Cardinal(MP.Senders.Count));
   if FHLE.Arg(2) <> 0 then
@@ -5036,7 +5599,10 @@ procedure TPSPKernel.hReferMsgPipeStatus;
 begin
   var MP := TPSPMsgPipe(GetObject(FHLE.Arg(0), TPSPMsgPipe));
   if MP = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MPPID);
+    Exit;
+  end;
   var Buf: array[0..$37] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(MP.Name);
@@ -5424,19 +5990,34 @@ procedure TPSPKernel.hCreateVpl;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var PartId := FHLE.ArgInt(1);
   var Err := UserPartitionCheck(PartId);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var Attr := FHLE.Arg(2);
   if (Attr and not Cardinal($43FF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var Size := FHLE.Arg(3);
   if Size = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE);
+    Exit;
+  end;
   if Size > $7FFFFFF0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   Size := AlignUp(Size, 8);
   if Size <= $30 then
     Size := $1000;
@@ -5447,7 +6028,10 @@ begin
   else
     Block := P.Alloc(Size, akLow, 0, 256, 'vpl:' + Name);
   if Block = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var V := TPSPVpl.Create;
   V.Name := Name;
   V.Attr := Attr;
@@ -5466,7 +6050,10 @@ procedure TPSPKernel.hDeleteVpl;
 begin
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID);
+    Exit;
+  end;
   FHLE.Result(0);
   while V.Waiters.Count > 0 do
     EndWait(V.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -5481,14 +6068,20 @@ begin
     Exit;
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID);
+    Exit;
+  end;
   var Bytes := FHLE.Arg(1);
   var OutPtr := FHLE.Arg(2);
   var TimeoutPtr: Cardinal := 0;
   if Mode <> 2 then
     TimeoutPtr := FHLE.Arg(3);
   if (Bytes = 0) or (Bytes > V.PoolSize) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   // Trying never minds the queue.
   if (Mode = 2) or V.MayAlloc(FCurrent) then
@@ -5505,9 +6098,15 @@ begin
     end;
   end;
   if Mode = 2 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   FHLE.Result(0);
   V.Waiters.Add(FCurrent);
   BeginWaitData(PSPWaitVpl, V, V.UID, TimeoutPtr, Mode = 1, V.Retry, [Bytes, OutPtr]);
@@ -5532,12 +6131,21 @@ procedure TPSPKernel.hFreeVpl;
 begin
   var Addr := FHLE.Arg(1);
   if (Addr and $80000000) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID);
+    Exit;
+  end;
   if not V.FreeBlock(Addr) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCK); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCK);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   V.WakeWaiters;
@@ -5547,7 +6155,10 @@ procedure TPSPKernel.hCancelVpl;
 begin
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID);
+    Exit;
+  end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), Cardinal(V.Waiters.Count));
   FHLE.Result(0);
@@ -5559,7 +6170,10 @@ procedure TPSPKernel.hReferVplStatus;
 begin
   var V := TPSPVpl(GetObject(FHLE.Arg(0), TPSPVpl));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VPLID);
+    Exit;
+  end;
   var Buf: array[0..$33] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(V.Name);
@@ -5584,25 +6198,40 @@ procedure TPSPKernel.hCreateFpl;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var PartId := FHLE.ArgInt(1);
   var Err := UserPartitionCheck(PartId);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var Attr := FHLE.Arg(2);
   if (Attr and not Cardinal($41FF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var BlockSize := FHLE.Arg(3);
   var Count := FHLE.Arg(4);
   if (BlockSize = 0) or (Integer(BlockSize) < 0) or (Count = 0) or (Integer(Count) < 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE);
+    Exit;
+  end;
   var Align: Cardinal := 4;
   var Opt := FHLE.Arg(5);
   if (Opt <> 0) and (FMemory.Read32(Opt) >= 8) then
   begin
     var A := FMemory.Read32(Opt + 4);
     if not ValidPoolAlignment(A) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+      Exit;
+    end;
     if A > Align then
       Align := A;
   end;
@@ -5610,7 +6239,10 @@ begin
   // The size is worked out in 32 bits: one that wraps to nothing is refused.
   var Total := Cardinal(UInt64(Stride) * Count);
   if Total = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE);
+    Exit;
+  end;
   var P := PoolPartition(PartId);
   var Block: Cardinal := 0;
   if UInt64(Stride) * Count <= $7FFFFFFF then
@@ -5619,7 +6251,10 @@ begin
     else
       Block := P.Alloc(Total, akLow, 0, 256, 'fpl:' + Name);
   if Block = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var F := TPSPFpl.Create;
   F.Name := Name;
   F.Attr := Attr;
@@ -5638,7 +6273,10 @@ procedure TPSPKernel.hDeleteFpl;
 begin
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID);
+    Exit;
+  end;
   FHLE.Result(0);
   while F.Waiters.Count > 0 do
     EndWait(F.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -5652,7 +6290,10 @@ begin
     Exit;
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID);
+    Exit;
+  end;
   var OutPtr := FHLE.Arg(1);
   var TimeoutPtr: Cardinal := 0;
   if Mode <> 2 then
@@ -5672,9 +6313,15 @@ begin
     end;
   end;
   if Mode = 2 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   FHLE.Result(0);
   F.Waiters.Add(FCurrent);
   BeginWaitData(PSPWaitFpl, F, F.UID, TimeoutPtr, Mode = 1, F.Retry, [OutPtr]);
@@ -5699,13 +6346,22 @@ procedure TPSPKernel.hFreeFpl;
 begin
   var Addr := FHLE.Arg(1);
   if (Addr and $80000000) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID);
+    Exit;
+  end;
   if (Addr < F.Block) or ((Addr - F.Block) mod F.Stride <> 0) or (Integer((Addr - F.Block) div F.Stride) >= F.Count) or
     not F.Used[(Addr - F.Block) div F.Stride] then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCK); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCK);
+    Exit;
+  end;
   Spend(PSPSyncCallNs);
   FHLE.Result(0);
   var Index := (Addr - F.Block) div F.Stride;
@@ -5725,7 +6381,10 @@ procedure TPSPKernel.hCancelFpl;
 begin
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID);
+    Exit;
+  end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), Cardinal(F.Waiters.Count));
   FHLE.Result(0);
@@ -5737,7 +6396,10 @@ procedure TPSPKernel.hReferFplStatus;
 begin
   var F := TPSPFpl(GetObject(FHLE.Arg(0), TPSPFpl));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_FPLID);
+    Exit;
+  end;
   var Buf: array[0..$37] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(F.Name);
@@ -5768,25 +6430,40 @@ procedure TPSPKernel.hCreateTlspl;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var PartId := FHLE.ArgInt(1);
   var Err := UserPartitionCheck(PartId);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var Attr := FHLE.Arg(2);
   if (Attr and not Cardinal($41FF)) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ATTR);
+    Exit;
+  end;
   var BlockSize := FHLE.Arg(3);
   var Count := FHLE.Arg(4);
   if (BlockSize = 0) or (Integer(BlockSize) < 0) or (Count = 0) or (Integer(Count) < 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE);
+    Exit;
+  end;
   var Align: Cardinal := 4;
   var Opt := FHLE.Arg(5);
   if (Opt <> 0) and (FMemory.Read32(Opt) >= 8) then
   begin
     var A := FMemory.Read32(Opt + 4);
     if not ValidPoolAlignment(A) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+      Exit;
+    end;
     if A > Align then
       Align := A;
   end;
@@ -5803,11 +6480,17 @@ begin
       Break;
     end;
   if Index < 0 then
-    begin FHLE.Result(PSPErrorTlsplFull); Exit; end;
+  begin
+    FHLE.Result(PSPErrorTlsplFull);
+    Exit;
+  end;
   var Stride := AlignUp(BlockSize, Align);
   var Total := UInt64(Stride) * Count;
   if Total > $7FFFFFFF then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMSIZE);
+    Exit;
+  end;
   var P := PoolPartition(PartId);
   var Block: Cardinal;
   if (Attr and $4000) <> 0 then
@@ -5815,7 +6498,10 @@ begin
   else
     Block := P.Alloc(Cardinal(Total), akLow, 0, 256, 'tlspl:' + Name);
   if Block = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var L := TPSPTlspl.Create;
   L.Name := Name;
   L.Attr := Attr;
@@ -5838,11 +6524,17 @@ procedure TPSPKernel.hDeleteTlspl;
 begin
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if L = nil then
-    begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
+  begin
+    FHLE.Result(PSPErrorUnknownTlsplId);
+    Exit;
+  end;
   // Blocks other threads still hold keep the pool alive.
   for var O in L.Owner do
     if (O <> nil) and (O <> FCurrent) then
-      begin FHLE.Result(PSPErrorTlsplBusy); Exit; end;
+    begin
+      FHLE.Result(PSPErrorTlsplBusy);
+      Exit;
+    end;
   FHLE.Result(0);
   while L.Waiters.Count > 0 do
     EndWait(L.Waiters.First, SCE_KERNEL_ERROR_WAIT_DELETE);
@@ -5871,16 +6563,28 @@ begin
   // The library keeps each thread's block by the pool's slot (bits 3..6 of
   // the id) and only asks the kernel when it has none.
   if (FCurrent = nil) or InInterrupt then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var Cached := FCurrent.TlsSlots[(FHLE.Arg(0) shr 3) and $F];
   if Cached <> 0 then
-    begin FHLE.Result(Cached); Exit; end;
+  begin
+    FHLE.Result(Cached);
+    Exit;
+  end;
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if (L = nil) or not CanWait then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var A: Cardinal;
   if TlsTake(L, A) then
-    begin FHLE.Result(A); Exit; end;
+  begin
+    FHLE.Result(A);
+    Exit;
+  end;
   FHLE.Result(0);
   L.Waiters.Add(FCurrent);
   if BeginWaitData(PSPWaitTlspl, L, L.UID, 0, False, L.Retry, [0, 1]) then
@@ -5894,10 +6598,16 @@ begin
   if RefuseWait then
     Exit;
   if ((OutPtr and $80000000) <> 0) or ((TimeoutPtr and $80000000) <> 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if L = nil then
-    begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
+  begin
+    FHLE.Result(PSPErrorUnknownTlsplId);
+    Exit;
+  end;
   var A: Cardinal;
   if TlsTake(L, A) then
   begin
@@ -5915,7 +6625,10 @@ procedure TPSPKernel.hFreeTlspl;
 begin
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if L = nil then
-    begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
+  begin
+    FHLE.Result(PSPErrorUnknownTlsplId);
+    Exit;
+  end;
   FHLE.Result(0);
   if FCurrent <> nil then
     L.Release(FCurrent);
@@ -5925,7 +6638,10 @@ procedure TPSPKernel.hReferTlsplStatus;
 begin
   var L := TPSPTlspl(GetObject(FHLE.Arg(0), TPSPTlspl));
   if L = nil then
-    begin FHLE.Result(PSPErrorUnknownTlsplId); Exit; end;
+  begin
+    FHLE.Result(PSPErrorUnknownTlsplId);
+    Exit;
+  end;
   var Buf: array[0..$3B] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(L.Name);
@@ -6033,23 +6749,28 @@ end;
 procedure TPSPKernel.StateAlarmFire(Action: TPSPStateAction; Value: Cardinal);
 begin
   var A := TPSPAlarm(GetObject(Cardinal(Action.Arg(0)), TPSPAlarm));
-  if A = nil then Exit;
+  if A = nil then
+    Exit;
   A.TimerHandle := 0;
-  QueueInterrupt(A.Handler, [A.Common], A.GP, nil, PSPAlarmLatencyNs, A.UID,
-    TPSPStateAction.Create(StateAlarmReturn, [], [A.UID]));
+  QueueInterrupt(A.Handler, [A.Common], A.GP, nil, PSPAlarmLatencyNs, A.UID, TPSPStateAction.Create(StateAlarmReturn,
+    [], [A.UID]));
 end;
 
 procedure TPSPKernel.StateAlarmReturn(Action: TPSPStateAction; Value: Cardinal);
 begin
   var A := TPSPAlarm(GetObject(Cardinal(Action.Arg(0)), TPSPAlarm));
-  if A = nil then Exit;
-  if Value = 0 then DeleteObject(A)
+  if A = nil then
+    Exit;
+  if Value = 0 then
+    DeleteObject(A)
   else
   begin
     var NowUs := UInt64(FScheduler.Now div 1000);
     A.Schedule := WrapAdd(A.Schedule, Value);
-    if A.Schedule <= NowUs then A.Schedule := NowUs + Value;
-    if A.Schedule < UInt64(High(Int64) div 4000) then ArmAlarm(A, Int64(A.Schedule) * 1000);
+    if A.Schedule <= NowUs then
+      A.Schedule := NowUs + Value;
+    if A.Schedule < UInt64(High(Int64) div 4000) then
+      ArmAlarm(A, Int64(A.Schedule) * 1000);
   end;
 end;
 
@@ -6057,7 +6778,10 @@ procedure TPSPKernel.SetAlarmCommon(Us: UInt64);
 begin
   var Handler := FHLE.Arg(1);
   if (Handler = 0) or not ValidUserAddress(Handler) and not ((FCurrent <> nil) and FCurrent.IsKernel) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var Start := FScheduler.Now;
   var A := TPSPAlarm.Create;
   A.Name := 'alarm';
@@ -6094,7 +6818,10 @@ procedure TPSPKernel.hCancelAlarm;
 begin
   var A := TPSPAlarm(GetObject(FHLE.Arg(0), TPSPAlarm));
   if A = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_ALMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_ALMID);
+    Exit;
+  end;
   DeleteObject(A);
   FHLE.Result(0);
 end;
@@ -6103,7 +6830,10 @@ procedure TPSPKernel.hReferAlarmStatus;
 begin
   var A := TPSPAlarm(GetObject(FHLE.Arg(0), TPSPAlarm));
   if A = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_ALMID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_ALMID);
+    Exit;
+  end;
   var Buf: array[0..$13] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   PUInt64(@Buf[4])^ := A.Schedule;
@@ -6142,9 +6872,11 @@ end;
 procedure TPSPKernel.StateVTimerFire(Action: TPSPStateAction; Value: Cardinal);
 begin
   var V := TPSPVTimer(GetObject(Cardinal(Action.Arg(0)), TPSPVTimer));
-  if V = nil then Exit;
+  if V = nil then
+    Exit;
   V.TimerHandle := 0;
-  if not V.Active or (V.Handler = 0) then Exit;
+  if not V.Active or (V.Handler = 0) then
+    Exit;
   var Args := FIntStack - $200;
   var Real := V.Current(UInt64(FScheduler.Now div 1000));
   FMemory.Write32(Args, Cardinal(V.Schedule));
@@ -6160,8 +6892,10 @@ procedure TPSPKernel.StateVTimerReturn(Action: TPSPStateAction; Value: Cardinal)
 begin
   FFiringVTimer := 0;
   var V := TPSPVTimer(GetObject(Cardinal(Action.Arg(0)), TPSPVTimer));
-  if V = nil then Exit;
-  if Value = 0 then V.Handler := 0
+  if V = nil then
+    Exit;
+  if Value = 0 then
+    V.Handler := 0
   else
   begin
     V.Schedule := WrapAdd(V.Schedule, Value);
@@ -6172,10 +6906,16 @@ end;
 procedure TPSPKernel.hCreateVTimer;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var V := TPSPVTimer.Create;
   V.Name := Name;
   FHLE.Result(AddObject(V));
@@ -6189,10 +6929,16 @@ end;
 procedure TPSPKernel.hDeleteVTimer;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   DeleteObject(V);
   FHLE.Result(0);
 end;
@@ -6201,7 +6947,10 @@ procedure TPSPKernel.hGetVTimerBase;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   var P := FHLE.Arg(1);
   var Base: UInt64 := 0;
   if V.Active then
@@ -6215,7 +6964,10 @@ procedure TPSPKernel.hGetVTimerBaseWide;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result64(UInt64(-1)); Exit; end;
+  begin
+    FHLE.Result64(UInt64(-1));
+    Exit;
+  end;
   if V.Active then
     FHLE.Result64(V.StartedAt)
   else
@@ -6226,7 +6978,10 @@ procedure TPSPKernel.hGetVTimerTime;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   var P := FHLE.Arg(1);
   var T := V.Current(UInt64(NowUs));
   FMemory.Write32(P, Cardinal(T));
@@ -6238,7 +6993,10 @@ procedure TPSPKernel.hGetVTimerTimeWide;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result64(UInt64(-1)); Exit; end;
+  begin
+    FHLE.Result64(UInt64(-1));
+    Exit;
+  end;
   FHLE.Result64(V.Current(UInt64(NowUs)));
 end;
 
@@ -6255,10 +7013,16 @@ end;
 procedure TPSPKernel.hSetVTimerTime;
 begin
   if InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   var P := FHLE.Arg(1);
   var Old := V.Current(UInt64(NowUs));
   var Value := UInt64(FMemory.Read32(P)) or (UInt64(FMemory.Read32(P + 4)) shl 32);
@@ -6271,10 +7035,16 @@ end;
 procedure TPSPKernel.hSetVTimerTimeWide;
 begin
   if InInterrupt then
-    begin FHLE.Result64(UInt64(-1)); Exit; end;
+  begin
+    FHLE.Result64(UInt64(-1));
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result64(UInt64(-1)); Exit; end;
+  begin
+    FHLE.Result64(UInt64(-1));
+    Exit;
+  end;
   var Old := V.Current(UInt64(NowUs));
   SetVTimerTimeTo(V, FHLE.Arg64(2));
   FHLE.Result64(Old);
@@ -6283,12 +7053,21 @@ end;
 procedure TPSPKernel.hStartVTimer;
 begin
   if FHLE.Arg(0) = 0 then
-    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
+  begin
+    FHLE.Result(PSPErrorIllegalVTimer);
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   if V.Active then
-    begin FHLE.Result(1); Exit; end;
+  begin
+    FHLE.Result(1);
+    Exit;
+  end;
   V.Active := True;
   V.StartedAt := UInt64(NowUs);
   ArmVTimer(V);
@@ -6298,12 +7077,21 @@ end;
 procedure TPSPKernel.hStopVTimer;
 begin
   if FHLE.Arg(0) = 0 then
-    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
+  begin
+    FHLE.Result(PSPErrorIllegalVTimer);
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   if not V.Active then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   V.Accumulated := V.Current(UInt64(NowUs));
   V.Active := False;
   ArmVTimer(V);
@@ -6313,10 +7101,16 @@ end;
 procedure TPSPKernel.SetVTimerHandlerCommon(Schedule: UInt64; Handler, Common: Cardinal);
 begin
   if FHLE.Arg(0) = 0 then
-    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
+  begin
+    FHLE.Result(PSPErrorIllegalVTimer);
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   FHLE.Result(0);
   // No handler only takes the old one away.
   if Handler = 0 then
@@ -6352,10 +7146,16 @@ begin
   // Outside a handler 0 is refused; inside one, the timer being handled is.
   var Id := FHLE.Arg(0);
   if (not InInterrupt and (Id = 0)) or (InInterrupt and (FFiringVTimer <> 0) and (Id = FFiringVTimer)) then
-    begin FHLE.Result(PSPErrorIllegalVTimer); Exit; end;
+  begin
+    FHLE.Result(PSPErrorIllegalVTimer);
+    Exit;
+  end;
   var V := TPSPVTimer(VTimerOf(Id));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   // The schedule and the common value stay.
   V.Handler := 0;
   ArmVTimer(V);
@@ -6366,7 +7166,10 @@ procedure TPSPKernel.hReferVTimerStatus;
 begin
   var V := TPSPVTimer(VTimerOf(FHLE.Arg(0)));
   if V = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_VTID);
+    Exit;
+  end;
   var Buf: array[0..$47] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(V.Name);
@@ -6395,10 +7198,16 @@ procedure TPSPKernel.hRegisterThreadEventHandler;
 begin
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Tid := FHLE.Arg(1);
   if (Tid <> 0) and (Tid <> $FFFFFFFF) and (Tid <> $FFFFFFFE) and (GetObject(Tid, TPSPThread) = nil) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_THID);
+    Exit;
+  end;
   var E := TPSPThreadEventHandler.Create;
   E.Name := Name;
   E.ThreadId := Tid;
@@ -6413,7 +7222,10 @@ procedure TPSPKernel.hReleaseThreadEventHandler;
 begin
   var E := TPSPThreadEventHandler(GetObject(FHLE.Arg(0), TPSPThreadEventHandler));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_TEID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_TEID);
+    Exit;
+  end;
   FEventHandlers.Remove(E);
   DeleteObject(E);
   FHLE.Result(0);
@@ -6423,7 +7235,10 @@ procedure TPSPKernel.hReferThreadEventHandlerStatus;
 begin
   var E := TPSPThreadEventHandler(GetObject(FHLE.Arg(0), TPSPThreadEventHandler));
   if E = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_TEID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_TEID);
+    Exit;
+  end;
   var Buf: array[0..$37] of Byte;
   FillChar(Buf, SizeOf(Buf), 0);
   var N := RawByteString(E.Name);
@@ -6585,12 +7400,21 @@ begin
   var S := FHLE.ArgInt(1);
   var Err := SubIntrCheck(I, S, True);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   if (FSubIntr[I, S].Handler <> 0) or ((I = 30) and (S in PSPVBlankFirmwareSubs)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER);
+    Exit;
+  end;
   // The upper half of the table is the firmware's.
   if S > 15 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+    Exit;
+  end;
   // A null handler is taken but leaves the slot free; an enable made before
   // the handler came stays.
   FSubIntr[I, S].Handler := FHLE.Arg(2);
@@ -6605,9 +7429,15 @@ begin
   var S := FHLE.ArgInt(1);
   var Err := SubIntrCheck(I, S, False);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   if FSubIntr[I, S].Handler = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOTFOUND_HANDLER);
+    Exit;
+  end;
   FSubIntr[I, S] := Default(TPSPInterruptHandler);
   FHLE.Result(0);
 end;
@@ -6618,7 +7448,10 @@ begin
   var S := FHLE.ArgInt(1);
   var Err := SubIntrCheck(I, S, False);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FSubIntr[I, S].Enabled := True;
   FHLE.Result(0);
 end;
@@ -6629,7 +7462,10 @@ begin
   var S := FHLE.ArgInt(1);
   var Err := SubIntrCheck(I, S, False);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FSubIntr[I, S].Enabled := False;
   FHLE.Result(0);
 end;
@@ -6640,7 +7476,10 @@ begin
   var S := FHLE.ArgInt(1);
   var Err := SubIntrCheck(I, S, False);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   if FHLE.Arg(2) <> 0 then
     FMemory.Write32(FHLE.Arg(2), Ord(FSubIntr[I, S].Enabled));
   FSubIntr[I, S].Enabled := False;
@@ -6653,7 +7492,10 @@ begin
   var S := FHLE.ArgInt(1);
   var Err := SubIntrCheck(I, S, False);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FSubIntr[I, S].Enabled := FHLE.Arg(2) <> 0;
   FHLE.Result(0);
 end;
@@ -6689,7 +7531,10 @@ begin
   var I := FHLE.ArgInt(0);
   var Err := IntrHandlerCheck(I);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FIntrHandlers[I].Enabled := True;
   FHLE.Result(0);
 end;
@@ -6699,7 +7544,10 @@ begin
   var I := FHLE.ArgInt(0);
   var Err := IntrHandlerCheck(I);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FIntrHandlers[I].Enabled := False;
   FHLE.Result(0);
 end;
@@ -6709,9 +7557,15 @@ begin
   // (intno, no, handler, arg1, arg2)
   var I := FHLE.ArgInt(0);
   if (I < 0) or (I > High(FIntrHandlers)) or (FHLE.Arg(2) = 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_INTRCODE);
+    Exit;
+  end;
   if FIntrHandlers[I].Handler <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_FOUND_HANDLER);
+    Exit;
+  end;
   FIntrHandlers[I].Handler := FHLE.Arg(2);
   FIntrHandlers[I].Arg := FHLE.Arg(3);
   FIntrHandlers[I].GP := FCPU.Ctx.GPR[28];
@@ -6724,37 +7578,58 @@ begin
   var I := FHLE.ArgInt(0);
   var Err := IntrHandlerCheck(I);
   if Err <> 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   FIntrHandlers[I] := Default(TPSPInterruptHandler);
   FHLE.Result(0);
 end;
 
 { System memory }
 
-function TPSPKernel.AllocPartitionBlock(PartId: Integer; const Name: string; Kind: Integer; Size, Addr: Cardinal; out Err: Cardinal): Cardinal;
+function TPSPKernel.AllocPartitionBlock(PartId: Integer; const Name: string; Kind: Integer; Size, Addr: Cardinal;
+  out Err: Cardinal): Cardinal;
 begin
   Result := 0;
   Err := 0;
   var P := Partition(PartId);
   if P = nil then
-    begin Err := SCE_KERNEL_ERROR_ILLEGAL_PARTITION; Exit; end;
+  begin
+    Err := SCE_KERNEL_ERROR_ILLEGAL_PARTITION;
+    Exit;
+  end;
   if (Kind < 0) or (Kind > 4) then
-    begin Err := SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE; Exit; end;
+  begin
+    Err := SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE;
+    Exit;
+  end;
   if (Size = 0) or (Size > $7FFFFFFF) then
-    begin Err := SCE_KERNEL_ERROR_MEMBLOCK_ALLOC_FAILED; Exit; end;
+  begin
+    Err := SCE_KERNEL_ERROR_MEMBLOCK_ALLOC_FAILED;
+    Exit;
+  end;
   case Kind of
-    0: Result := P.Alloc(Size, akLow, 0, 256, Name);
-    1: Result := P.Alloc(Size, akHigh, 0, 256, Name);
+    0:
+      Result := P.Alloc(Size, akLow, 0, 256, Name);
+    1:
+      Result := P.Alloc(Size, akHigh, 0, 256, Name);
     2:
       begin
         if (Addr < P.Base) or (Addr - P.Base >= P.Size) then
-          begin Err := SCE_KERNEL_ERROR_MEMBLOCK_ALLOC_FAILED; Exit; end;
+        begin
+          Err := SCE_KERNEL_ERROR_MEMBLOCK_ALLOC_FAILED;
+          Exit;
+        end;
         Result := P.Alloc(Size, akAddress, Addr, 256, Name);
       end;
     3, 4:
       begin
         if (Addr = 0) or ((Addr and (Addr - 1)) <> 0) then
-          begin Err := SCE_KERNEL_ERROR_ILLEGAL_ALIGNMENT_SIZE; Exit; end;
+        begin
+          Err := SCE_KERNEL_ERROR_ILLEGAL_ALIGNMENT_SIZE;
+          Exit;
+        end;
         if Kind = 3 then
           Result := P.Alloc(Size, akLow, 0, Addr, Name)
         else
@@ -6782,16 +7657,28 @@ begin
     Exit;
   end;
   if not KernelCaller and (PartId in [1, 3, 4]) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION);
+    Exit;
+  end;
   if (Kind < 0) or (Kind > 4) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE);
+    Exit;
+  end;
   var Name: string;
   if not ReadName(NamePtr, Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Err: Cardinal;
   var A := AllocPartitionBlock(PartId, Name, Kind, Size, Addr, Err);
   if A = 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var B := TPSPMemBlock.Create;
   B.Name := Name;
   B.PartitionId := PartId;
@@ -6804,7 +7691,10 @@ procedure TPSPKernel.hFreePartitionMemory;
 begin
   var B := TPSPMemBlock(GetObject(FHLE.Arg(0), TPSPMemBlock));
   if B = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID);
+    Exit;
+  end;
   Partition(B.PartitionId).FreeBlock(B.Address);
   DeleteObject(B);
   FHLE.Result(0);
@@ -6814,7 +7704,10 @@ procedure TPSPKernel.hGetBlockHeadAddr;
 begin
   var B := TPSPMemBlock(GetObject(FHLE.Arg(0), TPSPMemBlock));
   if B = nil then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   FHLE.Result(B.Address);
 end;
 
@@ -6837,7 +7730,10 @@ procedure TPSPKernel.hPartitionTotalFreeMemSize;
 begin
   var P := Partition(FHLE.ArgInt(0));
   if P = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION);
+    Exit;
+  end;
   FHLE.Result(P.FreeTotal);
 end;
 
@@ -6846,7 +7742,8 @@ begin
   // (address, partition id out, block id out)
   var Addr := FHLE.Arg(0);
   for var O in FObjects.Values do
-    if (O is TPSPMemBlock) and (Addr >= TPSPMemBlock(O).Address) and (Addr - TPSPMemBlock(O).Address < TPSPMemBlock(O).Size) then
+    if (O is TPSPMemBlock) and (Addr >= TPSPMemBlock(O).Address) and (Addr - TPSPMemBlock(O).Address <
+      TPSPMemBlock(O).Size) then
     begin
       if FHLE.Arg(1) <> 0 then
         FMemory.Write32(FHLE.Arg(1), Cardinal(TPSPMemBlock(O).PartitionId));
@@ -6863,16 +7760,28 @@ begin
   // (name, type, size, options): type 0 low, 1 high, in the user partition.
   var Name: string;
   if not ReadName(FHLE.Arg(0), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Kind := FHLE.ArgInt(1);
   if (Kind < 0) or (Kind > 1) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_MEMBLOCKTYPE);
+    Exit;
+  end;
   if (FHLE.Arg(3) <> 0) and (FMemory.Read32(FHLE.Arg(3)) <> 4) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+    Exit;
+  end;
   var Err: Cardinal;
   var A := AllocPartitionBlock(2, Name, Kind, FHLE.Arg(2), 0, Err);
   if A = 0 then
-    begin FHLE.Result(Err); Exit; end;
+  begin
+    FHLE.Result(Err);
+    Exit;
+  end;
   var B := TPSPMemBlock.Create;
   B.Name := Name;
   B.PartitionId := 2;
@@ -6891,7 +7800,10 @@ begin
   var B := TPSPMemBlock(GetObject(FHLE.Arg(0), TPSPMemBlock));
   // An unknown block is not reported.
   if B = nil then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), B.Address);
   FHLE.Result(0);
@@ -6904,15 +7816,27 @@ begin
   var Size := FHLE.Arg(1);
   var P := Partition(PartId);
   if P = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PARTITION);
+    Exit;
+  end;
   if Integer(Size) <= 0 then
-    begin FHLE.Result($800200DC); Exit; end;
+  begin
+    FHLE.Result($800200DC);
+    Exit;
+  end;
   var Name: string;
   if not ReadName(FHLE.Arg(3), Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ERROR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ERROR);
+    Exit;
+  end;
   var Block := P.Alloc(Size, akLow, 0, 256, 'heap:' + Name);
   if Block = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var H := TPSPHeap.Create;
   H.Name := Name;
   H.PartitionId := PartId;
@@ -6926,7 +7850,10 @@ procedure TPSPKernel.hDeleteHeap;
 begin
   var H := TPSPHeap(GetObject(FHLE.Arg(0), TPSPHeap));
   if H = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID);
+    Exit;
+  end;
   Partition(H.PartitionId).FreeBlock(H.Block);
   DeleteObject(H);
   FHLE.Result(0);
@@ -6936,10 +7863,16 @@ procedure TPSPKernel.hAllocHeapMemory;
 begin
   var H := TPSPHeap(GetObject(FHLE.Arg(0), TPSPHeap));
   if H = nil then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var Size := FHLE.Arg(1);
   if Size > $7FFFFFF0 then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   // Even nothing gets a block.
   if Size = 0 then
     Size := 1;
@@ -6959,7 +7892,10 @@ begin
   begin
     var Align := FMemory.Read32(Opt + 4);
     if (Align <> 0) and ((Align < 4) or (Align > $80) or ((Align and (Align - 1)) <> 0)) then
-      begin FHLE.Result(0); Exit; end;
+    begin
+      FHLE.Result(0);
+      Exit;
+    end;
   end;
   hAllocHeapMemory;
 end;
@@ -6968,7 +7904,10 @@ procedure TPSPKernel.hFreeHeapMemory;
 begin
   var H := TPSPHeap(GetObject(FHLE.Arg(0), TPSPHeap));
   if H = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_UID);
+    Exit;
+  end;
   var A := FHLE.Arg(1);
   if H.Area.FreeBlock(A) or Partition(H.PartitionId).FreeBlock(A) then
     FHLE.Result(0)
@@ -7004,7 +7943,8 @@ function GuestFormat(K: TPSPKernel; Fmt: RawByteString; FirstArg: Integer): RawB
 begin
   Result := '';
   var ArgIndex := FirstArg;
-  var NextArg := function: Cardinal
+  var NextArg :=
+    function: Cardinal
     begin
       if ArgIndex < 8 then
         Result := K.CPU.Ctx.GPR[4 + ArgIndex]
@@ -7049,14 +7989,22 @@ begin
     Inc(I);
     var S: RawByteString;
     case Conv of
-      'd', 'i': S := RawByteString(IntToStr(Integer(NextArg())));
-      'u': S := RawByteString(UIntToStr(NextArg()));
-      'x': S := RawByteString(LowerCase(IntToHex(NextArg(), 1)));
-      'X': S := RawByteString(IntToHex(NextArg(), 1));
-      'p': S := RawByteString(LowerCase(IntToHex(NextArg(), 8)));
-      'c': S := AnsiChar(Byte(NextArg()));
-      's': S := K.Memory.ReadAnsi(NextArg(), 4096);
-      '%': S := '%';
+      'd', 'i':
+        S := RawByteString(IntToStr(Integer(NextArg())));
+      'u':
+        S := RawByteString(UIntToStr(NextArg()));
+      'x':
+        S := RawByteString(LowerCase(IntToHex(NextArg(), 1)));
+      'X':
+        S := RawByteString(IntToHex(NextArg(), 1));
+      'p':
+        S := RawByteString(LowerCase(IntToHex(NextArg(), 8)));
+      'c':
+        S := AnsiChar(Byte(NextArg()));
+      's':
+        S := K.Memory.ReadAnsi(NextArg(), 4096);
+      '%':
+        S := '%';
     else
       S := '%' + Conv;
     end;
@@ -7103,7 +8051,10 @@ begin
   var Id := FHLE.Arg(0);
   // Programs built with SDK 3.95 or later have the id checked.
   if (FCompiledSdkVersion >= $03090500) and (GetObject(Id, TPSPCallback) = nil) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+    Exit;
+  end;
   FExitCallback := Id;
   FHLE.Result(0);
 end;
@@ -7115,17 +8066,32 @@ begin
   // last word, and fills in the params (size >= 12, then two words).
   var CB := TPSPCallback(GetObject(FExitCallback, TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_CBID);
+    Exit;
+  end;
   if (CB.Common = 0) or ((CB.Common and $80000000) <> 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var Arg := CB.Common - 8;
   if FMemory.Read32(Arg) > 3 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+    Exit;
+  end;
   var Params := FMemory.Read32(Arg + 4);
   if (Params = 0) or ((Params and $80000000) <> 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   if FMemory.Read32(Params) < 12 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_SIZE);
+    Exit;
+  end;
   FMemory.Write32(Params + 4, 0);
   FMemory.Write32(Params + 8, $FFFFFFFF);
   FHLE.Result(0);
@@ -7150,7 +8116,10 @@ end;
 procedure TPSPKernel.hVolatileMemLock;
 begin
   if FHLE.Arg(0) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   if RefuseWait then
     Exit;
   if not FVolatileLocked then
@@ -7164,7 +8133,10 @@ begin
     Exit;
   end;
   if not CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   FHLE.Result(0);
   FVolatileWaiters.Add(FCurrent);
   BeginWaitData(PSPWaitEventFlag, nil, 0, 0, False, VolatileRetry, [FHLE.Arg(1), FHLE.Arg(2)], nil, 'volatile');
@@ -7173,9 +8145,15 @@ end;
 procedure TPSPKernel.hVolatileMemTryLock;
 begin
   if FHLE.Arg(0) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   if FVolatileLocked then
-    begin FHLE.Result(Cardinal($802B0200)); Exit; end;
+  begin
+    FHLE.Result(Cardinal($802B0200));
+    Exit;
+  end;
   FVolatileLocked := True;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), $08400000);
@@ -7187,9 +8165,15 @@ end;
 procedure TPSPKernel.hVolatileMemUnlock;
 begin
   if FHLE.Arg(0) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   if not FVolatileLocked then
-    begin FHLE.Result(Cardinal($802B0201)); Exit; end;
+  begin
+    FHLE.Result(Cardinal($802B0201));
+    Exit;
+  end;
   FVolatileLocked := False;
   FHLE.Result(0);
   while FVolatileWaiters.Count > 0 do
@@ -7423,8 +8407,8 @@ begin
   H.Register(S, $FC114573, 'sceKernelGetCompiledSdkVersion', hGetCompiledSdkVersion);
   H.Register(S, $F77D77CB, 'sceKernelSetCompilerVersion', hSetCompilerVersion);
   H.Register(S, $13A5ABEF, 'sceKernelPrintf', hPrintf);
-  for var NID in [Cardinal($342061E5), $315AD3A0, $EBD5C3E6, $057E7380, $91DE343C, $7893F79A, $35669D4C,
-    $1B4217BC, $358CA1BB] do
+  for var NID in [Cardinal($342061E5), $315AD3A0, $EBD5C3E6, $057E7380, $91DE343C, $7893F79A, $35669D4C, $1B4217BC,
+    $358CA1BB] do
     H.Register(S, NID, Format('sceKernelSetCompiledSdkVersion_%.8X', [NID]), hSetCompiledSdkVersion);
   H.Register('LoadExecForUser', $05572A5F, 'sceKernelExitGame', hExitGame);
   H.Register('LoadExecForUser', $2AC9954B, 'sceKernelExitGameWithStatus', hExitGame);
@@ -7445,8 +8429,8 @@ const
     $63632449, $54F5FB11, $B29DDF9C, $E3EB004C, $EB092469, $F27A9C51, $06A70004, $1117C65F, $779103A0, $ACE946E8,
     $B8A740F4);
   PSPIoForwardNames: array[0..16] of string = ('sceIoOpen', 'sceIoClose', 'sceIoRead', 'sceIoWrite', 'sceIoLseek',
-    'sceIoLseek32', 'sceIoIoctl', 'sceIoDevctl', 'sceIoDopen', 'sceIoDread', 'sceIoDclose', 'sceIoRemove',
-    'sceIoMkdir', 'sceIoRmdir', 'sceIoRename', 'sceIoGetstat', 'sceIoChstat');
+    'sceIoLseek32', 'sceIoIoctl', 'sceIoDevctl', 'sceIoDopen', 'sceIoDread', 'sceIoDclose', 'sceIoRemove', 'sceIoMkdir',
+    'sceIoRmdir', 'sceIoRename', 'sceIoGetstat', 'sceIoChstat');
 
 // Kernel modules reach the file calls through IoFileMgrForKernel: the same
 // calls as the user library, looked up when made.
@@ -7511,7 +8495,6 @@ begin
   H.Register(IK, $F987B1F0, 'sceKernelReleaseIntrHandler', hReleaseIntrHandler);
 end;
 
-
 procedure RegisterPSPKernelStateTypes(Schema: TPSPGraphSchema);
 begin
   Schema.AddClass(TPSPMbx, []);
@@ -7535,10 +8518,10 @@ begin
     if Assigned(T.Event) then
     begin
       var Owner := 'none';
-      if T.Owner <> nil then Owner := T.Owner.ClassName;
+      if T.Owner <> nil then
+        Owner := T.Owner.ClassName;
       var Callback := T.Event as TObject;
-      Result := Result + Format(' [%s: %s, due %d ns]',
-        [Owner, Callback.ClassName, T.At - FScheduler.Now]);
+      Result := Result + Format(' [%s: %s, due %d ns]', [Owner, Callback.ClassName, T.At - FScheduler.Now]);
     end;
 end;
 

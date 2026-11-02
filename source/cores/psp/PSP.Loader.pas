@@ -1,4 +1,4 @@
-unit PSP.Loader;
+﻿unit PSP.Loader;
 
 // Module loader and ModuleMgrForUser. Fixed ELFs load at their addresses,
 // PRX modules are relocated into the user partition. Imports become HLE
@@ -10,10 +10,12 @@ unit PSP.Loader;
 
 interface
 
-{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic,
+  vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.IO, PSP.SysMem, PSP.State.Action;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.IO, PSP.SysMem, PSP.State.Action;
 
 const
   NID_MODULE_START = $D632ACDB;
@@ -75,7 +77,8 @@ type
     procedure RelinkLibrary(const Lib: string);
     function FindExport(const Lib: string; NID: Cardinal): Cardinal;
     function ModuleOfAddress(Address: Cardinal): TPSPModule;
-    procedure StartModuleThread(M: TPSPModule; ArgSize, ArgPtr, StatusPtr, OptPtr: Cardinal; const ArgData: TBytes; Wait: Boolean);
+    procedure StartModuleThread(M: TPSPModule; ArgSize, ArgPtr, StatusPtr, OptPtr: Cardinal; const ArgData: TBytes;
+      Wait: Boolean);
     procedure WaitForModuleThread(T: TPSPThread; Id, StatusPtr: Cardinal; Linger: Int64);
     function ThreadOptions(OptPtr: Cardinal; var Prio: Integer; var Stack, Attr: Cardinal): Cardinal;
     function NoRetry(T: TPSPThread): Boolean;
@@ -195,14 +198,16 @@ function TPSPLoader.Unwrap(const Data: TBytes; out Elf: TBytes; out Name: string
 begin
   Name := '';
   Elf := Data;
-  if (Length(Data) >= $160) and (Data[0] = Ord('~')) and (Data[1] = Ord('S')) and (Data[2] = Ord('C')) and (Data[3] = Ord('E')) then
+  if (Length(Data) >= $160) and (Data[0] = Ord('~')) and (Data[1] = Ord('S')) and (Data[2] = Ord('C')) and
+    (Data[3] = Ord('E')) then
   begin
     var Skip := LE32(Data, 4);
     if (Skip = 0) or (Skip >= Cardinal(Length(Data))) then
       Skip := $40;
     Elf := Copy(Data, Skip, Length(Data) - Integer(Skip));
   end;
-  if (Length(Elf) >= $150) and (Elf[0] = Ord('~')) and (Elf[1] = Ord('P')) and (Elf[2] = Ord('S')) and (Elf[3] = Ord('P')) then
+  if (Length(Elf) >= $150) and (Elf[0] = Ord('~')) and (Elf[1] = Ord('P')) and (Elf[2] = Ord('S')) and
+    (Elf[3] = Ord('P')) then
   begin
     var Raw: TBytes;
     SetLength(Raw, 28);
@@ -288,8 +293,10 @@ begin
       Continue;
     var VA := LE32(Elf, P + 8);
     var MemSz := LE32(Elf, P + 20);
-    if VA < Low then Low := VA;
-    if VA + MemSz > High then High := VA + MemSz;
+    if VA < Low then
+      Low := VA;
+    if VA + MemSz > High then
+      High := VA + MemSz;
   end;
   if High <= Low then
     Exit(SCE_KERNEL_ERROR_ILLEGAL_OBJECT);
@@ -452,7 +459,8 @@ begin
       Inc(DataEnd, Size)
     else if Stop > TextEnd then
       TextEnd := Stop;
-  end;  if not Found then
+  end;
+  if not Found then
     Exit;
   M.TextSize := TextEnd;
   M.DataSize := DataEnd;
@@ -506,11 +514,16 @@ begin
         var Delta := Base + SegVaddr[AddrBase];
         var W := FMemory.Read32(A);
         case Kind of
-          0: ;
-          1: FMemory.Write32(A, (W and $FFFF0000) or ((W + Delta) and $FFFF));
-          2: FMemory.Write32(A, W + Delta);
-          4: FMemory.Write32(A, (W and $FC000000) or ((((W and $03FFFFFF) shl 2) + Delta) shr 2 and $03FFFFFF));
-          5: HiList.Add(A or 0);
+          0:
+            ;
+          1:
+            FMemory.Write32(A, (W and $FFFF0000) or ((W + Delta) and $FFFF));
+          2:
+            FMemory.Write32(A, W + Delta);
+          4:
+            FMemory.Write32(A, (W and $FC000000) or ((((W and $03FFFFFF) shl 2) + Delta) shr 2 and $03FFFFFF));
+          5:
+            HiList.Add(A or 0);
           6:
             begin
               var Lo := Cardinal(Integer(SmallInt(Word(W))));
@@ -523,7 +536,8 @@ begin
               HiList.Clear;
               FMemory.Write32(A, (W and $FFFF0000) or ((Lo + Delta) and $FFFF));
             end;
-          7: ;
+          7:
+            ;
         else
           FHLE.Log('loader: relocation type %d at %.8x', [Kind, A]);
         end;
@@ -534,7 +548,8 @@ begin
   end;
 end;
 
-procedure TPSPLoader.RelocateTypeB(const Elf: TBytes; Offset, Size: Cardinal; M: TPSPModule; const SegVaddr: TArray<Cardinal>);
+procedure TPSPLoader.RelocateTypeB(const Elf: TBytes; Offset, Size: Cardinal; M: TPSPModule;
+  const SegVaddr: TArray<Cardinal>);
 begin
   // Compressed relocation stream of newer SDKs.
   var Base := M.Base - SegVaddr[0];
@@ -633,8 +648,10 @@ begin
     var Delta := Base + SegVaddr[AddrBase];
     var W := FMemory.Read32(A);
     case Kind of
-      2: FMemory.Write32(A, W + Delta);
-      0, 1: ;
+      2:
+        FMemory.Write32(A, W + Delta);
+      0, 1:
+        ;
       4, 7:
         FMemory.Write32(A, (W and $FC000000) or ((((W and $03FFFFFF) shl 2) + Delta) shr 2 and $03FFFFFF));
       6:
@@ -660,8 +677,10 @@ begin
     end;
     LastPart2 := T2;
   end;
-  if LastPart2 = 0 then;
-  if AddrSeg = 0 then;
+  if LastPart2 = 0 then
+    ;
+  if AddrSeg = 0 then
+    ;
 end;
 
 procedure TPSPLoader.ReadModuleInfo(M: TPSPModule; InfoAddr: Cardinal);
@@ -676,7 +695,8 @@ begin
   var StubTop := FMemory.Read32(InfoAddr + 44);
   var StubEnd := FMemory.Read32(InfoAddr + 48);
   var Delta := M.Base - (M.Base - (M.Block and 0));
-  if Delta = 0 then;
+  if Delta = 0 then
+    ;
   // For relocated modules the pointers were relocated with the module.
   // Exported
   var P := EntTop;
@@ -702,8 +722,10 @@ begin
     if Lib = '' then
     begin
       var V: Cardinal;
-      if D.TryGetValue(NID_MODULE_START, V) then M.Entry := V;
-      if D.TryGetValue(NID_MODULE_STOP, V) then M.StopEntry := V;
+      if D.TryGetValue(NID_MODULE_START, V) then
+        M.Entry := V;
+      if D.TryGetValue(NID_MODULE_STOP, V) then
+        M.StopEntry := V;
       if D.TryGetValue(NID_MODULE_START_THREAD_PARAMETER, V) and FMemory.Valid(V, 16) then
       begin
         M.StartPriority := FMemory.Read32(V + 4);
@@ -855,7 +877,8 @@ end;
 procedure TPSPLoader.StateThreadDelete(Action: TPSPStateAction; Value: Cardinal);
 begin
   var X := FKernel.ThreadById(Cardinal(Action.Arg(0)));
-  if (X <> nil) and ((X.Status and PSPThreadDormant) <> 0) then FKernel.DeleteThread(X);
+  if (X <> nil) and ((X.Status and PSPThreadDormant) <> 0) then
+    FKernel.DeleteThread(X);
 end;
 
 // A SceKernelSMOption's stack size, priority and attributes for a module's
@@ -893,7 +916,8 @@ begin
   Attr := Attr or OA;
 end;
 
-procedure TPSPLoader.StartModuleThread(M: TPSPModule; ArgSize, ArgPtr, StatusPtr, OptPtr: Cardinal; const ArgData: TBytes; Wait: Boolean);
+procedure TPSPLoader.StartModuleThread(M: TPSPModule; ArgSize, ArgPtr, StatusPtr, OptPtr: Cardinal;
+  const ArgData: TBytes; Wait: Boolean);
 begin
   var Prio: Integer := $20;
   var Stack: Cardinal := $40000;
@@ -943,16 +967,17 @@ end;
 procedure TPSPLoader.StateThreadExited(Action: TPSPStateAction; Value: Cardinal);
 begin
   var StatusPtr := Cardinal(Action.Arg(3));
-  if StatusPtr <> 0 then FMemory.Write32(StatusPtr, Value);
+  if StatusPtr <> 0 then
+    FMemory.Write32(StatusPtr, Value);
   var ThreadID := Cardinal(Action.Arg(0));
   ScheduleThreadDelete(ThreadID);
   var Caller := FKernel.ThreadById(Cardinal(Action.Arg(1)));
-  if (Caller <> nil) and Caller.IsWaiting and (Caller.Wait.HLETag = 'module') and
-    (Caller.Wait.Id = ThreadID) then
+  if (Caller <> nil) and Caller.IsWaiting and (Caller.Wait.HLETag = 'module') and (Caller.Wait.Id = ThreadID) then
   begin
     if Action.Arg(4) > 0 then
       FKernel.AddWakeTimer(FKernel.Scheduler.Now + Action.Arg(4), Caller, 'module', Cardinal(Action.Arg(2)))
-    else FKernel.EndWait(Caller, Cardinal(Action.Arg(2)));
+    else
+      FKernel.EndWait(Caller, Cardinal(Action.Arg(2)));
   end;
 end;
 
@@ -974,14 +999,16 @@ begin
   FHLE.Result(0);
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, NoRetry, nil, 'loadmodule');
   var A := TPSPStateAction.Create(StateLoad, [], [Caller.UID]);
-  A.Data := Data; A.Text := Path;
+  A.Data := Data;
+  A.Text := Path;
   FKernel.AddStateTimer(FKernel.Scheduler.Now + Latency, Caller, A);
 end;
 
 procedure TPSPLoader.StateLoad(Action: TPSPStateAction; Value: Cardinal);
 begin
   var Caller := FKernel.ThreadById(Cardinal(Action.Arg(0)));
-  if (Caller = nil) or not Caller.IsWaiting or (Caller.Wait.HLETag <> 'loadmodule') then Exit;
+  if (Caller = nil) or not Caller.IsWaiting or (Caller.Wait.HLETag <> 'loadmodule') then
+    Exit;
   var M: TPSPModule;
   var E := Load(Action.Data, Action.Text, M);
   if E <> 0 then
@@ -1036,7 +1063,8 @@ end;
 
 procedure TPSPLoader.hStartModule;
 begin
-  if FKernel.RefuseWait then Exit;
+  if FKernel.RefuseWait then
+    Exit;
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
   begin
@@ -1062,7 +1090,8 @@ end;
 
 procedure TPSPLoader.hStopModule;
 begin
-  if FKernel.RefuseWait then Exit;
+  if FKernel.RefuseWait then
+    Exit;
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
   begin
@@ -1229,7 +1258,10 @@ procedure TPSPLoader.hQueryModuleInfo;
 begin
   var M := TPSPModule(FKernel.GetObject(FHLE.Arg(0), TPSPModule));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE);
+    Exit;
+  end;
   var P := FHLE.Arg(1);
   var Size := FMemory.Read32(P);
   if Size > $60 then
@@ -1263,7 +1295,10 @@ procedure TPSPLoader.hGetModuleGPByAddress;
 begin
   var M := ModuleOfAddress(FHLE.Arg(0));
   if M = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNKNOWN_MODULE);
+    Exit;
+  end;
   if FHLE.Arg(1) <> 0 then
     FMemory.Write32(FHLE.Arg(1), M.GP);
   FHLE.Result(0);

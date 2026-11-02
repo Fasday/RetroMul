@@ -1,4 +1,4 @@
-unit PSP.SFO;
+﻿unit PSP.SFO;
 
 // PARAM.SFO: a key table and a data table behind a 20-byte header; keys are
 // kept sorted, values are UTF-8 strings (0x0204), raw bytes (0x0004) or
@@ -132,11 +132,8 @@ var
   end;
 
 begin
-  FEntries.Sort(TComparer<TPSPSFOEntry>.Construct(
-    function(const A, B: TPSPSFOEntry): Integer
-    begin
-      Result := CompareStr(A.Key, B.Key);
-    end));
+  FEntries.Sort(TComparer<TPSPSFOEntry>.Construct(function(const A,
+    B: TPSPSFOEntry): Integer begin Result := CompareStr(A.Key, B.Key); end));
   var KeyBytes := 0;
   for var E in FEntries do
     Inc(KeyBytes, Length(E.Key) + 1);

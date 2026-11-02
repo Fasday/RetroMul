@@ -1,11 +1,12 @@
-unit PSP.State.Action;
+﻿unit PSP.State.Action;
 
 // Explicit continuations: a named owner method and ordinary captured state.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 
 interface
 
-uses System.SysUtils, System.Classes, System.Generics.Collections;
+uses
+  System.SysUtils, System.Classes, System.Generics.Collections;
 
 type
   TPSPStateAction = class;
@@ -48,9 +49,11 @@ begin
   inherited Create;
   Handler := Callback;
   SetLength(Objects, Length(Captures));
-  for var I := 0 to High(Captures) do Objects[I] := Captures[I];
+  for var I := 0 to High(Captures) do
+    Objects[I] := Captures[I];
   SetLength(Values, Length(Args));
-  for var I := 0 to High(Args) do Values[I] := Args[I];
+  for var I := 0 to High(Args) do
+    Values[I] := Args[I];
   Text := Tag;
   Next := After;
 end;
@@ -63,30 +66,35 @@ end;
 
 procedure TPSPStateAction.Own(Instance: TObject);
 begin
-  if Owned = nil then Owned := TObjectList<TObject>.Create(True);
+  if Owned = nil then
+    Owned := TObjectList<TObject>.Create(True);
   Owned.Add(Instance);
 end;
 
 procedure TPSPStateAction.Disown(Instance: TObject);
 begin
-  if Owned <> nil then Owned.Extract(Instance);
+  if Owned <> nil then
+    Owned.Extract(Instance);
 end;
 
 function TPSPStateAction.Arg(Index: Integer): Int64;
 begin
-  if (Index < 0) or (Index >= Length(Values)) then raise EReadError.Create('Invalid state action argument');
+  if (Index < 0) or (Index >= Length(Values)) then
+    raise EReadError.Create('Invalid state action argument');
   Result := Values[Index];
 end;
 
 function TPSPStateAction.Obj(Index: Integer): TObject;
 begin
-  if (Index < 0) or (Index >= Length(Objects)) then raise EReadError.Create('Invalid state action capture');
+  if (Index < 0) or (Index >= Length(Objects)) then
+    raise EReadError.Create('Invalid state action capture');
   Result := Objects[Index];
 end;
 
 procedure TPSPStateAction.Run(Value: Cardinal);
 begin
-  if not Assigned(Handler) then raise EReadError.Create('Missing state action handler');
+  if not Assigned(Handler) then
+    raise EReadError.Create('Missing state action handler');
   Handler(Self, Value);
 end;
 

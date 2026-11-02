@@ -1,10 +1,11 @@
-unit Core.Platforms.PSP.Adapter;
+﻿unit Core.Platforms.PSP.Adapter;
 
 interface
 
-uses System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, RM.Vulkan.TexScale, Core.Platforms.PSP.Playback,
-  Core.Platforms.PSP.Renderer;
+uses
+  System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
+  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console,
+  RM.Vulkan.TexScale, Core.Platforms.PSP.Playback, Core.Platforms.PSP.Renderer;
 
 type
   TPSPKeyMap = array[TEmulatorButton] of UInt32;
@@ -135,16 +136,20 @@ type
 
 implementation
 
-uses {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF} Core.MediaArchive, System.UITypes, System.Diagnostics, System.Math, Core.Platforms, Core.Platforms.PSP.Archive,
-  PSP.Settings, Core.Snapshots, Core.SavePaths;
+uses
+{$IFDEF MSWINDOWS}
+  Winapi.MMSystem,
+{$ENDIF}
+    Core.MediaArchive, System.UITypes, System.Diagnostics, System.Math, Core.Platforms, Core.Platforms.PSP.Archive,
+    PSP.Settings, Core.Snapshots, Core.SavePaths;
 
 const
   KeyNames: array[TEmulatorButton] of string =
-    ('Up','Down','Left','Right','A','B','Select','Start','C','X','Y','Z','Mode');
+    ('Up', 'Down', 'Left', 'Right', 'A', 'B', 'Select', 'Start', 'C', 'X', 'Y', 'Z', 'Mode');
 
 constructor TPSPConfig.Create(const FileName: string; const Storage: IStorage);
 const
-  DefaultKeys: TPSPKeyMap = (vkUp,vkDown,vkLeft,vkRight,vkZ,vkX,vkShift,vkReturn,vkQ,vkA,vkS,vkW,0);
+  DefaultKeys: TPSPKeyMap = (vkUp, vkDown, vkLeft, vkRight, vkZ, vkX, vkShift, vkReturn, vkQ, vkA, vkS, vkW, 0);
 begin
   inherited Create(FileName, Storage);
   FKeys := DefaultKeys;
@@ -159,14 +164,15 @@ end;
 procedure TPSPConfig.LoadCoreSettings(Ini: TCustomIniFile);
 begin
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
-    FKeys[Button] := ReadEmulatorKey(Ini,'Keys',KeyNames[Button],FKeys[Button]);
+    FKeys[Button] := ReadEmulatorKey(Ini, 'Keys', KeyNames[Button], FKeys[Button]);
   FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
   FRenderer := PSPRendererFromName(Ini.ReadString('Video', 'Renderer', 'cpu'));
   FResolution := EnsureRange(Ini.ReadInteger('Video', 'Resolution', FResolution), 1, 8);
   FTextureScale := EnsureRange(Ini.ReadInteger('Video', 'TextureScale', FTextureScale), 0, TexScaleMax);
   if FTextureScale = 1 then
     FTextureScale := 0;
-  FTextureFilter := TexScaleFilterFromName(Ini.ReadString('Video', 'TextureFilter', TexScaleFilterName(FTextureFilter)));
+  FTextureFilter := TexScaleFilterFromName(Ini.ReadString('Video', 'TextureFilter',
+    TexScaleFilterName(FTextureFilter)));
   FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
   FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
   FNickname := Ini.ReadString('System', 'Nickname', FNickname);
@@ -176,7 +182,7 @@ end;
 procedure TPSPConfig.SaveCoreSettings(Ini: TCustomIniFile);
 begin
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
-    Ini.WriteInteger('Keys',KeyNames[Button],FKeys[Button]);
+    Ini.WriteInteger('Keys', KeyNames[Button], FKeys[Button]);
   if FRecompiler then
     Ini.WriteString('Emulation', 'Execution', 'jit')
   else
@@ -202,7 +208,7 @@ begin
   FTextureFilter := TextureFilter;
   FStorage := Storage;
   FLock := TCriticalSection.Create;
-  FWake := TEvent.Create(nil,False,False,'');
+  FWake := TEvent.Create(nil, False, False, '');
   FSnapshotDone := TEvent.Create(nil, True, False, '');
   FSnapshotDirectory := SnapshotDirectory;
   FConsole := TPSPConsole.Create(ProgramData, Storage, '', '', FontDirectory, True);
@@ -224,8 +230,10 @@ begin
   ValidateSnapshotName(Name);
   FLock.Acquire;
   try
-    if Suspended or Finished or Terminated then raise EInvalidOpException.Create('PSP worker is not running');
-    if FSnapshotBusy then raise EInvalidOpException.Create('A PSP snapshot operation is already running');
+    if Suspended or Finished or Terminated then
+      raise EInvalidOpException.Create('PSP worker is not running');
+    if FSnapshotBusy then
+      raise EInvalidOpException.Create('A PSP snapshot operation is already running');
     FSnapshotDone.ResetEvent;
     FSnapshotName := Name;
     FSnapshotLoading := Loading;
@@ -245,11 +253,13 @@ procedure TPSPWorker.Snapshot(const Name: string; Loading: Boolean);
 begin
   BeginSnapshot(Name, Loading);
   while FSnapshotDone.WaitFor(50) <> wrSignaled do
-    if Finished then raise EInvalidOpException.Create('PSP worker stopped during the snapshot');
+    if Finished then
+      raise EInvalidOpException.Create('PSP worker stopped during the snapshot');
   var Done, Total: UInt64;
   var Error: string;
   SnapshotStatus(Done, Total, Error);
-  if Error <> '' then raise EReadError.Create(Error);
+  if Error <> '' then
+    raise EReadError.Create(Error);
 end;
 
 function TPSPWorker.SnapshotStatus(out Done, Total: UInt64; out Error: string): Boolean;
@@ -268,7 +278,11 @@ end;
 procedure TPSPWorker.CancelSnapshot;
 begin
   FLock.Acquire;
-  try FSnapshotCancel := True; finally FLock.Release; end;
+  try
+    FSnapshotCancel := True;
+  finally
+    FLock.Release;
+  end;
   FWake.SetEvent;
 end;
 
@@ -279,7 +293,8 @@ begin
   var Loading: Boolean;
   try
     Result := FSnapshotPending;
-    if not Result then Exit;
+    if not Result then
+      Exit;
     Name := FSnapshotName;
     Loading := FSnapshotLoading;
     FSnapshotPending := False;
@@ -292,17 +307,17 @@ begin
     if Loading then
     begin
       var Candidate := FConsole.RestoreSnapshot(Path,
-        function(Done, Total: UInt64): Boolean
-        begin
-          FLock.Acquire;
-          try
-            FSnapshotProgress := Done;
-            FSnapshotTotal := Total;
-            Result := not Terminated and not FSnapshotCancel;
-          finally
-            FLock.Release;
-          end;
-        end);
+          function(Done, Total: UInt64): Boolean
+          begin
+            FLock.Acquire;
+            try
+              FSnapshotProgress := Done;
+              FSnapshotTotal := Total;
+              Result := not Terminated and not FSnapshotCancel;
+            finally
+              FLock.Release;
+            end;
+          end);
       try
         var NewRenderer := TPSPRendererSession.Create(Candidate, FRenderer, FResolution, FTextureScale, FTextureFilter);
         try
@@ -312,7 +327,8 @@ begin
           Frame.FramesPerSecond := 0;
           FLock.Acquire;
           try
-            if Terminated or FSnapshotCancel then raise EAbort.Create('PSP snapshot loading cancelled');
+            if Terminated or FSnapshotCancel then
+              raise EAbort.Create('PSP snapshot loading cancelled');
           finally
             FLock.Release;
           end;
@@ -322,7 +338,11 @@ begin
           Candidate := nil;
           Renderer := NewRenderer;
           NewRenderer := nil;
-          try PreviousRenderer.Free; finally Previous.Free; end;
+          try
+            PreviousRenderer.Free;
+          finally
+            Previous.Free;
+          end;
           FLock.Acquire;
           try
             FFrame := Frame;
@@ -344,7 +364,11 @@ begin
         function(Done, Total: UInt64): Boolean
         begin
           FLock.Acquire;
-          try Result := not Terminated and not FSnapshotCancel; finally FLock.Release; end;
+          try
+            Result := not Terminated and not FSnapshotCancel;
+          finally
+            FLock.Release;
+          end;
         end);
       try
         if Length(FFrame.Pixels) > 0 then
@@ -354,8 +378,10 @@ begin
       end;
     end;
   except
-    on E: EAbort do;
-    on E: Exception do Error := E.Message;
+    on E: EAbort do
+      ;
+    on E: Exception do
+      Error := E.Message;
   end;
   FLock.Acquire;
   try
@@ -370,8 +396,10 @@ end;
 procedure TPSPWorker.Join;
 begin
   Terminate;
-  if FWake <> nil then FWake.SetEvent;
-  if Suspended then Start;
+  if FWake <> nil then
+    FWake.SetEvent;
+  if Suspended then
+    Start;
   WaitFor;
 end;
 
@@ -384,7 +412,7 @@ begin
     FRecompiler := Recompiler;
     FPaused := Paused;
     FAudioEnabled := AudioEnabled;
-    FVolume := EnsureRange(Volume,0.0,1.0);
+    FVolume := EnsureRange(Volume, 0.0, 1.0);
   finally
     FLock.Release;
   end;
@@ -407,9 +435,9 @@ procedure TPSPWorker.Execute;
 begin
   if Terminated then
     Exit;
-  {$IFDEF MSWINDOWS}
+{$IFDEF MSWINDOWS}
   var TimerSet := timeBeginPeriod(1) = TIMERR_NOERROR;
-  {$ENDIF}
+{$ENDIF}
   try
     try
       var Renderer := TPSPRendererSession.Create(FConsole, FRenderer, FResolution, FTextureScale, FTextureFilter);
@@ -450,11 +478,11 @@ begin
           if Reset then
             FConsole.Reset;
           if Restart and (FAudio <> nil) and not AudioFailed then
-          try
-            FAudio.Clear;
-          except
-            AudioFailed := True;
-          end;
+            try
+              FAudio.Clear;
+            except
+              AudioFailed := True;
+            end;
           WasEnabled := AudioEnabled;
           if Restart then
           begin
@@ -464,7 +492,8 @@ begin
           end;
           // A dialog can pause the worker while reconstruction runs. Re-read
           // frontend controls before advancing the just-restored machine.
-          if Snapshot then Continue;
+          if Snapshot then
+            Continue;
           if Paused then
           begin
             FWake.WaitFor(20);
@@ -473,15 +502,15 @@ begin
           // The sound queue is the real-time clock: a frame runs only when the
           // device has room for its samples.
           if AudioEnabled and not AudioFailed and (FAudio <> nil) then
-          try
-            if not FAudio.CanAdvance then
-            begin
-              FWake.WaitFor(1);
-              Continue;
+            try
+              if not FAudio.CanAdvance then
+              begin
+                FWake.WaitFor(1);
+                Continue;
+              end;
+            except
+              AudioFailed := True;
             end;
-          except
-            AudioFailed := True;
-          end;
           if FConsole.Recompiler <> nil then
             FConsole.Recompiler.Enabled := Recompiler;
           FConsole.Input := Input;
@@ -490,13 +519,13 @@ begin
           // Frames emulated per host second, not the PSP's nominal refresh rate.
           Frame.FramesPerSecond := FRate.Update(Frame.FrameNumber, TStopwatch.GetTimeStamp, TStopwatch.Frequency);
           if AudioEnabled and not AudioFailed then
-          try
-            if FAudio = nil then
-              FAudio := TPSPAudioPlayback.Create;
-            FAudio.Enqueue(FConsole.AudioSamples, Volume);
-          except
-            AudioFailed := True;
-          end;
+            try
+              if FAudio = nil then
+                FAudio := TPSPAudioPlayback.Create;
+              FAudio.Enqueue(FConsole.AudioSamples, Volume);
+            except
+              AudioFailed := True;
+            end;
           FLock.Acquire;
           try
             FFrame := Frame;
@@ -552,10 +581,10 @@ begin
     finally
       FLock.Release;
     end;
-    {$IFDEF MSWINDOWS}
+{$IFDEF MSWINDOWS}
     if TimerSet then
       timeEndPeriod(1);
-    {$ENDIF}
+{$ENDIF}
   end;
 end;
 
@@ -589,25 +618,28 @@ constructor TPSPCoreAdapter.Create(Stream: TStream; const Storage: IStorage; con
 begin
   inherited Create;
   var ActualStorage := Storage;
-  if ActualStorage = nil then ActualStorage := TStorage.Default;
+  if ActualStorage = nil then
+    ActualStorage := TStorage.Default;
   FStorage := ActualStorage;
   var SourceName := ImageName;
   if SourceName = '' then
   begin
     SourceName := RomName;
-    if SourceName.StartsWith('content://',True) then SourceName := ActualStorage.Describe(RomName).Name;
+    if SourceName.StartsWith('content://', True) then
+      SourceName := ActualStorage.Describe(RomName).Name;
   end;
   if IsMediaArchive(SourceName) then
     FProgram := ReadPSPArchive(OpenMediaArchive(Stream, SourceName, ActualStorage), ActualStorage, True)
   else
   begin
     FProgram := TPSPProgram.Read(Stream);
-    if (FProgram.BootPath<>'') and (RomName<>'') then FProgram.MediaPath := RomName;
+    if (FProgram.BootPath <> '') and (RomName <> '') then
+      FProgram.MediaPath := RomName;
   end;
   // Reject unsupported executables during loading, before starting a worker.
-  var Probe := TPSPConsole.Create(FProgram,FStorage);
+  var Probe := TPSPConsole.Create(FProgram, FStorage);
   Probe.Free;
-  FConfigObject := TPSPConfig.Create(ActualStorage.ConfigFile('psp'),ActualStorage);
+  FConfigObject := TPSPConfig.Create(ActualStorage.ConfigFile('psp'), ActualStorage);
   FConfig := FConfigObject;
   FConfig.Load;
   FSnapshotDirectory := ActualStorage.GameSnapshots('psp', RomName, SnapshotIdentity(FProgram.Executable));
@@ -616,7 +648,7 @@ end;
 destructor TPSPCoreAdapter.Destroy;
 begin
   Stop;
-  if FProgram.TemporaryMedia and (FStorage<>nil) and FStorage.Exists(FProgram.MediaPath) then
+  if FProgram.TemporaryMedia and (FStorage <> nil) and FStorage.Exists(FProgram.MediaPath) then
     FStorage.Delete(FProgram.MediaPath);
   inherited;
 end;
@@ -624,19 +656,20 @@ end;
 procedure TPSPCoreAdapter.Configure;
 begin
   if FWorker <> nil then
-    FWorker.Configure(GetInputState,FPaused,FConfig.AudioEnabled,FConfig.AudioVolume,FConfigObject.Recompiler);
+    FWorker.Configure(GetInputState, FPaused, FConfig.AudioEnabled, FConfig.AudioVolume, FConfigObject.Recompiler);
 end;
 
 procedure TPSPCoreAdapter.Start;
 begin
-  if FWorker <> nil then Exit;
+  if FWorker <> nil then
+    Exit;
   FError := '';
   // The system settings the game reads (sceUtility, sceReg, sceImpose).
   PSPSettings.Language := FConfigObject.Language;
   PSPSettings.ButtonSwap := FConfigObject.ButtonSwap;
   PSPSettings.Nickname := FConfigObject.Nickname;
-  FWorker := TPSPWorker.Create(FProgram,FStorage,FConfigObject.Renderer,FConfigObject.FontDirectory,FSnapshotDirectory,
-    FConfigObject.Resolution, FConfigObject.TextureScale, FConfigObject.TextureFilter);
+  FWorker := TPSPWorker.Create(FProgram, FStorage, FConfigObject.Renderer, FConfigObject.FontDirectory,
+    FSnapshotDirectory, FConfigObject.Resolution, FConfigObject.TextureScale, FConfigObject.TextureFilter);
   try
     Configure;
     FWorker.Start;
@@ -648,11 +681,13 @@ end;
 
 procedure TPSPCoreAdapter.Stop;
 begin
-  if FWorker = nil then Exit;
+  if FWorker = nil then
+    Exit;
   FWorker.Join;
   FRendererStatus := FWorker.RendererStatus;
   var Error := FWorker.TakeError;
-  if Error <> '' then FError := Error;
+  if Error <> '' then
+    FError := Error;
   FreeAndNil(FWorker);
 end;
 
@@ -690,10 +725,14 @@ end;
 
 procedure TPSPCoreAdapter.SetKeyState(Code: UInt32; Pressed: Boolean);
 begin
-  if Code = 0 then Exit;
+  if Code = 0 then
+    Exit;
   for var Button := Low(TEmulatorButton) to High(TEmulatorButton) do
     if FConfigObject.Keys[Button] = Code then
-      if Pressed then Include(FKeyboard.Buttons,Button) else Exclude(FKeyboard.Buttons,Button);
+      if Pressed then
+        Include(FKeyboard.Buttons, Button)
+      else
+        Exclude(FKeyboard.Buttons, Button);
   Configure;
 end;
 
@@ -720,7 +759,8 @@ function TPSPCoreAdapter.TakeError: string;
 begin
   Result := FError;
   FError := '';
-  if (Result = '') and (FWorker <> nil) then Result := FWorker.TakeError;
+  if (Result = '') and (FWorker <> nil) then
+    Result := FWorker.TakeError;
 end;
 
 function TPSPWorker.RendererStatus: string;
@@ -771,13 +811,15 @@ end;
 
 procedure TPSPCoreAdapter.SaveSnapshot(const Name: string);
 begin
-  if FWorker = nil then raise EInvalidOpException.Create('PSP is not running');
+  if FWorker = nil then
+    raise EInvalidOpException.Create('PSP is not running');
   FWorker.Snapshot(Name, False);
 end;
 
 procedure TPSPCoreAdapter.LoadSnapshot(const Name: string);
 begin
-  if FWorker = nil then raise EInvalidOpException.Create('PSP is not running');
+  if FWorker = nil then
+    raise EInvalidOpException.Create('PSP is not running');
   FWorker.Snapshot(Name, True);
 end;
 
@@ -788,7 +830,8 @@ end;
 
 procedure TPSPCoreAdapter.BeginSnapshot(const Name: string; Loading: Boolean);
 begin
-  if FWorker = nil then raise EInvalidOpException.Create('PSP is not running');
+  if FWorker = nil then
+    raise EInvalidOpException.Create('PSP is not running');
   FWorker.BeginSnapshot(Name, Loading);
 end;
 
@@ -802,7 +845,8 @@ end;
 
 procedure TPSPCoreAdapter.CancelSnapshot;
 begin
-  if FWorker <> nil then FWorker.CancelSnapshot;
+  if FWorker <> nil then
+    FWorker.CancelSnapshot;
 end;
 
 function TPSPCoreAdapter.GetConfig: IEmulatorConfig;

@@ -1,4 +1,4 @@
-unit PSP.Crypto.Keys;
+﻿unit PSP.Crypto.Keys;
 
 // Numeric device data, kept separate from implementation: published values
 // of the PSP Developer Wiki's Keys and Kirk pages (KIRK slots, PRX seeds,
@@ -6,7 +6,8 @@ unit PSP.Crypto.Keys;
 // those pages (their SHA-256 below), not discovered here.
 interface
 
-uses System.SysUtils;
+uses
+  System.SysUtils;
 
 function PSPHex(const S: string): TBytes;
 function PSPKirkSlot(Index: Integer): TBytes;
@@ -207,10 +208,10 @@ const
     (Name: 'pauthXorKey'; Hex: 'A91EDD7B09BB22B59DA33069136E0ED8'));
 // END GENERATED PSP_CRYPTO_KEY_DATA
 
-
 function PSPHex(const S: string): TBytes;
 begin
-  if Length(S) and 1 <> 0 then raise EArgumentException.Create('Odd hex length');
+  if Length(S) and 1 <> 0 then
+    raise EArgumentException.Create('Odd hex length');
   SetLength(Result, Length(S) div 2);
   for var I := 0 to High(Result) do
     Result[I] := StrToInt('$' + Copy(S, I * 2 + 1, 2));
@@ -218,14 +219,16 @@ end;
 
 function PSPKirkSlot(Index: Integer): TBytes;
 begin
-  if (Index < 0) or (Index > 127) then raise EArgumentOutOfRangeException.Create('KIRK AES slot');
+  if (Index < 0) or (Index > 127) then
+    raise EArgumentOutOfRangeException.Create('KIRK AES slot');
   Result := PSPHex(KirkSlotHex[Index]);
 end;
 
 function PSPPrxSeed(const Name: string): TBytes;
 begin
   for var Entry in PrxSeeds do
-    if SameText(Entry.Name, Name) then Exit(PSPHex(Entry.Hex));
+    if SameText(Entry.Name, Name) then
+      Exit(PSPHex(Entry.Hex));
   Result := nil;
 end;
 

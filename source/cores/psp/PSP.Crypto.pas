@@ -1,9 +1,10 @@
-unit PSP.Crypto;
+﻿unit PSP.Crypto;
 
 // Guest crypto services; executable decoding is independently usable in PSP.PRX.
 interface
 
-uses PSP.Service;
+uses
+  PSP.Service;
 
 type
   TPSPCrypto = class(TPSPService)
@@ -17,7 +18,8 @@ type
 
 implementation
 
-uses System.SysUtils, PSP.PRX, PSP.Types, PSP.HLE;
+uses
+  System.SysUtils, PSP.PRX, PSP.Types, PSP.HLE;
 
 procedure TPSPCrypto.Pauth(SecondEntry: Boolean);
 begin
@@ -25,8 +27,8 @@ begin
   var Size := FHLE.Arg(1);
   var OutSize := FHLE.Arg(2);
   var KeyAddr := FHLE.Arg(3);
-  if (Size < $150) or (Size > 64 * 1024 * 1024) or not FMemory.Valid(Address, Size) or
-    not FMemory.Valid(OutSize, 4) or not FMemory.Valid(KeyAddr, 16) or (OutSize = 0) or (KeyAddr = 0) then
+  if (Size < $150) or (Size > 64 * 1024 * 1024) or not FMemory.Valid(Address, Size) or not FMemory.Valid(OutSize, 4) or
+    not FMemory.Valid(KeyAddr, 16) or (OutSize = 0) or (KeyAddr = 0) then
   begin
     FHLE.Result($800001FF);
     Exit;

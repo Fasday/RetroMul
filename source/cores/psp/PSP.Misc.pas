@@ -1,4 +1,4 @@
-unit PSP.Misc;
+﻿unit PSP.Misc;
 
 // Small libraries: sceCcc and sceReg.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
@@ -6,8 +6,8 @@ unit PSP.Misc;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service;
 
 type
   TRegKey = class
@@ -113,8 +113,10 @@ uses
 function PSPFontFileName(Index: Integer): string;
 begin
   case Index of
-    0..15: Result := Format('ltn%d.pgf', [Index]);
-    16: Result := 'jpn0.pgf';
+    0..15:
+      Result := Format('ltn%d.pgf', [Index]);
+    16:
+      Result := 'jpn0.pgf';
   else
     Result := 'kr0.pgf';
   end;
@@ -888,7 +890,6 @@ const
     $7C7A2179, $7C7BFFE2, $7C7CFFE4, $7C7DFF07, $7C7EFF02);
 // END GENERATED PSP_CCC_DATA
 
-
 var
   CccJisToUcs, CccUcsToJis: TDictionary<Cardinal, Cardinal>;
 
@@ -986,10 +987,23 @@ begin
   end;
   var N: Integer;
   var C: Cardinal;
-  if (B and $E0) = $C0 then begin N := 1; C := B and $1F; end
-  else if (B and $F0) = $E0 then begin N := 2; C := B and $0F; end
-  else if (B and $F8) = $F0 then begin N := 3; C := B and $07; end
-  else Exit($FFFFFFFF);
+  if (B and $E0) = $C0 then
+  begin
+    N := 1;
+    C := B and $1F;
+  end
+  else if (B and $F0) = $E0 then
+  begin
+    N := 2;
+    C := B and $0F;
+  end
+  else if (B and $F8) = $F0 then
+  begin
+    N := 3;
+    C := B and $07;
+  end
+  else
+    Exit($FFFFFFFF);
   for var I := 1 to N do
   begin
     var T := FMemory.Read8(P + Cardinal(I));
@@ -1051,10 +1065,14 @@ end;
 
 function CccUtf8Length(C: Cardinal): Integer;
 begin
-  if C < $80 then Result := 1
-  else if C < $800 then Result := 2
-  else if C < $10000 then Result := 3
-  else Result := 4;
+  if C < $80 then
+    Result := 1
+  else if C < $800 then
+    Result := 2
+  else if C < $10000 then
+    Result := 3
+  else
+    Result := 4;
 end;
 
 function TPSPMisc.EncodeTo(Kind: Integer; Dst: Cardinal; C: Cardinal; Room: Integer): Integer;
@@ -1069,7 +1087,8 @@ begin
           Exit(-1);
         if Dst <> 0 then
           case N of
-            1: FMemory.Write8(Dst, C);
+            1:
+              FMemory.Write8(Dst, C);
             2:
               begin
                 FMemory.Write8(Dst, $C0 or (C shr 6));
@@ -1133,8 +1152,10 @@ end;
 function TPSPMisc.Decode(Kind: Integer; var P: Cardinal): Cardinal;
 begin
   case Kind of
-    0: Result := DecodeUtf8(P);
-    1: Result := DecodeUtf16(P);
+    0:
+      Result := DecodeUtf8(P);
+    1:
+      Result := DecodeUtf16(P);
   else
     Result := DecodeSjis(P);
   end;
@@ -1146,14 +1167,20 @@ begin
   var Size := FHLE.Arg(1);
   var Src := FHLE.Arg(2);
   if Dst = 0 then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var Unit_ := 1;
   if ToKind = 1 then
     Unit_ := 2;
   // Room in bytes, whole units only, one unit kept for the terminator.
   var Room := Integer(Size div Cardinal(Unit_)) * Unit_ - Unit_;
   if Room < 0 then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var Count := 0;
   var Pos: Cardinal := 0;
   while True do
@@ -1181,12 +1208,30 @@ begin
   FHLE.Result(0);
 end;
 
-procedure TPSPMisc.hCccUtf8ToUtf16; begin Convert(0, 1); end;
-procedure TPSPMisc.hCccUtf8ToSjis; begin Convert(0, 2); end;
-procedure TPSPMisc.hCccUtf16ToUtf8; begin Convert(1, 0); end;
-procedure TPSPMisc.hCccUtf16ToSjis; begin Convert(1, 2); end;
-procedure TPSPMisc.hCccSjisToUtf8; begin Convert(2, 0); end;
-procedure TPSPMisc.hCccSjisToUtf16; begin Convert(2, 1); end;
+procedure TPSPMisc.hCccUtf8ToUtf16;
+begin
+  Convert(0, 1);
+end;
+procedure TPSPMisc.hCccUtf8ToSjis;
+begin
+  Convert(0, 2);
+end;
+procedure TPSPMisc.hCccUtf16ToUtf8;
+begin
+  Convert(1, 0);
+end;
+procedure TPSPMisc.hCccUtf16ToSjis;
+begin
+  Convert(1, 2);
+end;
+procedure TPSPMisc.hCccSjisToUtf8;
+begin
+  Convert(2, 0);
+end;
+procedure TPSPMisc.hCccSjisToUtf16;
+begin
+  Convert(2, 1);
+end;
 
 procedure TPSPMisc.Strlen(Kind: Integer);
 begin
@@ -1202,9 +1247,18 @@ begin
   FHLE.Result(Cardinal(N));
 end;
 
-procedure TPSPMisc.hCccStrlenUtf8; begin Strlen(0); end;
-procedure TPSPMisc.hCccStrlenUtf16; begin Strlen(1); end;
-procedure TPSPMisc.hCccStrlenSjis; begin Strlen(2); end;
+procedure TPSPMisc.hCccStrlenUtf8;
+begin
+  Strlen(0);
+end;
+procedure TPSPMisc.hCccStrlenUtf16;
+begin
+  Strlen(1);
+end;
+procedure TPSPMisc.hCccStrlenSjis;
+begin
+  Strlen(2);
+end;
 
 procedure TPSPMisc.Encode(Kind: Integer);
 begin
@@ -1219,9 +1273,18 @@ begin
   FHLE.Result(Dst + Cardinal(Max(N, 0)));
 end;
 
-procedure TPSPMisc.hCccEncodeUtf8; begin Encode(0); end;
-procedure TPSPMisc.hCccEncodeUtf16; begin Encode(1); end;
-procedure TPSPMisc.hCccEncodeSjis; begin Encode(2); end;
+procedure TPSPMisc.hCccEncodeUtf8;
+begin
+  Encode(0);
+end;
+procedure TPSPMisc.hCccEncodeUtf16;
+begin
+  Encode(1);
+end;
+procedure TPSPMisc.hCccEncodeSjis;
+begin
+  Encode(2);
+end;
 
 procedure TPSPMisc.DecodeCall(Kind: Integer);
 begin
@@ -1242,9 +1305,18 @@ begin
   FHLE.Result(C);
 end;
 
-procedure TPSPMisc.hCccDecodeUtf8; begin DecodeCall(0); end;
-procedure TPSPMisc.hCccDecodeUtf16; begin DecodeCall(1); end;
-procedure TPSPMisc.hCccDecodeSjis; begin DecodeCall(2); end;
+procedure TPSPMisc.hCccDecodeUtf8;
+begin
+  DecodeCall(0);
+end;
+procedure TPSPMisc.hCccDecodeUtf16;
+begin
+  DecodeCall(1);
+end;
+procedure TPSPMisc.hCccDecodeSjis;
+begin
+  DecodeCall(2);
+end;
 
 procedure TPSPMisc.SetErrorChar(Kind: Integer);
 begin
@@ -1253,9 +1325,18 @@ begin
   FHLE.Result(Old);
 end;
 
-procedure TPSPMisc.hCccSetErrorCharUtf8; begin SetErrorChar(0); end;
-procedure TPSPMisc.hCccSetErrorCharUtf16; begin SetErrorChar(1); end;
-procedure TPSPMisc.hCccSetErrorCharSjis; begin SetErrorChar(2); end;
+procedure TPSPMisc.hCccSetErrorCharUtf8;
+begin
+  SetErrorChar(0);
+end;
+procedure TPSPMisc.hCccSetErrorCharUtf16;
+begin
+  SetErrorChar(1);
+end;
+procedure TPSPMisc.hCccSetErrorCharSjis;
+begin
+  SetErrorChar(2);
+end;
 
 procedure TPSPMisc.hCccIsValidUcs4;
 begin
@@ -1396,8 +1477,10 @@ end;
 function TRegKey.Size: Cardinal;
 begin
   case Kind of
-    REG_TYPE_DIR: Result := 0;
-    REG_TYPE_INT: Result := 4;
+    REG_TYPE_DIR:
+      Result := 0;
+    REG_TYPE_INT:
+      Result := 4;
   else
     Result := Length(Data);
   end;
@@ -1533,20 +1616,30 @@ end;
 procedure TPSPMisc.hRegOpenCategory;
 begin
   var Out_ := FHLE.Arg(3);
-  var Fail := procedure(Code: Cardinal)
+  var Fail :=
+    procedure(Code: Cardinal)
     begin
       if Out_ <> 0 then
         FMemory.Write32(Out_, $FFFFFFFF);
       FHLE.Result(Code);
     end;
   if FHLE.Arg(0) <> 0 then
-    begin Fail(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    Fail(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var Path := FMemory.ReadString(FHLE.Arg(1), 256);
   if (Path = '') or (Path = '/') then
-    begin Fail(REG_ERROR_BAD_PATH); Exit; end;
+  begin
+    Fail(REG_ERROR_BAD_PATH);
+    Exit;
+  end;
   var K := RegPath(Path);
   if K = nil then
-    begin Fail(REG_ERROR_NO_CATEGORY); Exit; end;
+  begin
+    Fail(REG_ERROR_NO_CATEGORY);
+    Exit;
+  end;
   Inc(FRegNextHandle);
   FRegHandles.AddOrSetValue(FRegNextHandle, K);
   if Out_ <> 0 then
@@ -1557,7 +1650,10 @@ end;
 procedure TPSPMisc.hRegCloseCategory;
 begin
   if not FRegHandles.ContainsKey(FHLE.Arg(0)) then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   FRegHandles.Remove(FHLE.Arg(0));
   FHLE.Result(0);
 end;
@@ -1571,7 +1667,10 @@ procedure TPSPMisc.hRegGetKeysNum;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   FMemory.Write32(FHLE.Arg(1), Cardinal(C.Children.Count));
   FHLE.Result(0);
 end;
@@ -1580,7 +1679,10 @@ procedure TPSPMisc.hRegGetKeys;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var Buf := FHLE.Arg(1);
   var N := Min(FHLE.ArgInt(2), C.Children.Count);
   for var I := 0 to N - 1 do
@@ -1592,24 +1694,39 @@ procedure TPSPMisc.hRegGetKeyInfo;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var Name := FMemory.ReadString(FHLE.Arg(1), RegKeyNameSize);
   var K := C.Find(Name);
   if K = nil then
-    begin FHLE.Result(REG_ERROR_NOT_FOUND); Exit; end;
-  if FHLE.Arg(2) <> 0 then FMemory.Write32(FHLE.Arg(2), Cardinal(C.Children.IndexOf(K)) + 1);
-  if FHLE.Arg(3) <> 0 then FMemory.Write32(FHLE.Arg(3), Cardinal(K.Kind));
-  if FHLE.Arg(4) <> 0 then FMemory.Write32(FHLE.Arg(4), K.Size);
+  begin
+    FHLE.Result(REG_ERROR_NOT_FOUND);
+    Exit;
+  end;
+  if FHLE.Arg(2) <> 0 then
+    FMemory.Write32(FHLE.Arg(2), Cardinal(C.Children.IndexOf(K)) + 1);
+  if FHLE.Arg(3) <> 0 then
+    FMemory.Write32(FHLE.Arg(3), Cardinal(K.Kind));
+  if FHLE.Arg(4) <> 0 then
+    FMemory.Write32(FHLE.Arg(4), K.Size);
   FHLE.Result(0);
 end;
 
 procedure TPSPMisc.RegWriteValue(K: TRegKey; Buf, Size: Cardinal);
 begin
   if K.Kind = REG_TYPE_DIR then
-    begin FHLE.Result(REG_ERROR_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_NOT_FOUND);
+    Exit;
+  end;
   var V := K.Value;
   if Size < Cardinal(Length(V)) then
-    begin FHLE.Result(REG_ERROR_SIZE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_SIZE);
+    Exit;
+  end;
   if Length(V) > 0 then
     FMemory.WriteBytes(Buf, V[0], Length(V));
   FHLE.Result(0);
@@ -1619,10 +1736,16 @@ procedure TPSPMisc.hRegGetKeyValue;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var Index := Integer(FHLE.Arg(1)) - 1;
   if (Index < 0) or (Index >= C.Children.Count) then
-    begin FHLE.Result(REG_ERROR_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_NOT_FOUND);
+    Exit;
+  end;
   RegWriteValue(C.Children[Index], FHLE.Arg(2), FHLE.Arg(3));
 end;
 
@@ -1630,12 +1753,20 @@ procedure TPSPMisc.hRegGetKeyInfoByName;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var K := C.Find(FMemory.ReadString(FHLE.Arg(1), RegKeyNameSize));
   if K = nil then
-    begin FHLE.Result(REG_ERROR_NOT_FOUND); Exit; end;
-  if FHLE.Arg(2) <> 0 then FMemory.Write32(FHLE.Arg(2), Cardinal(K.Kind));
-  if FHLE.Arg(3) <> 0 then FMemory.Write32(FHLE.Arg(3), K.Size);
+  begin
+    FHLE.Result(REG_ERROR_NOT_FOUND);
+    Exit;
+  end;
+  if FHLE.Arg(2) <> 0 then
+    FMemory.Write32(FHLE.Arg(2), Cardinal(K.Kind));
+  if FHLE.Arg(3) <> 0 then
+    FMemory.Write32(FHLE.Arg(3), K.Size);
   FHLE.Result(0);
 end;
 
@@ -1643,10 +1774,16 @@ procedure TPSPMisc.hRegGetKeyValueByName;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var K := C.Find(FMemory.ReadString(FHLE.Arg(1), RegKeyNameSize));
   if K = nil then
-    begin FHLE.Result(REG_ERROR_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_NOT_FOUND);
+    Exit;
+  end;
   RegWriteValue(K, FHLE.Arg(2), FHLE.Arg(3));
 end;
 
@@ -1654,10 +1791,16 @@ procedure TPSPMisc.hRegSetKeyValue;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var K := C.Find(FMemory.ReadString(FHLE.Arg(1), RegKeyNameSize));
   if (K = nil) or (K.Kind = REG_TYPE_DIR) then
-    begin FHLE.Result(REG_ERROR_NOT_FOUND); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_NOT_FOUND);
+    Exit;
+  end;
   var Size := FHLE.Arg(3);
   var V: TBytes;
   SetLength(V, Size);
@@ -1677,7 +1820,10 @@ procedure TPSPMisc.hRegCreateKey;
 begin
   var C := RegCategory(FHLE.Arg(0));
   if C = nil then
-    begin FHLE.Result(REG_ERROR_BAD_HANDLE); Exit; end;
+  begin
+    FHLE.Result(REG_ERROR_BAD_HANDLE);
+    Exit;
+  end;
   var Name := FMemory.ReadString(FHLE.Arg(1), RegKeyNameSize);
   if C.Find(Name) = nil then
   begin
@@ -1705,7 +1851,6 @@ begin
     FMemory.WriteString(Buf + Cardinal(I) * RegKeyNameSize, RawByteString(FRegRoot.Children[I].Name), RegKeyNameSize);
   FHLE.Result(0);
 end;
-
 
 constructor TPSPMisc.Create(System: TPSPSystem);
 begin

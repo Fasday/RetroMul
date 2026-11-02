@@ -1,4 +1,4 @@
-unit PSP.Crypto.ECDSA;
+﻿unit PSP.Crypto.ECDSA;
 
 // Verification only, on KIRK command 1's published 160-bit curve.
 // Affine group arithmetic and binary modular inversion: no signing, RNG,
@@ -7,13 +7,15 @@ unit PSP.Crypto.ECDSA;
 
 interface
 
-uses System.SysUtils;
+uses
+  System.SysUtils;
 
 function PSPVerifyKirkSignature(const Hash, Signature: TBytes): Boolean;
 
 implementation
 
-uses PSP.Crypto.Keys;
+uses
+  PSP.Crypto.Keys;
 
 type
   TNumber = array[0..4] of Cardinal;
@@ -31,8 +33,8 @@ begin
   for var I := 0 to 4 do
   begin
     var P := Offset + (4 - I) * 4;
-    Result[I] := (Cardinal(Bytes[P]) shl 24) or (Cardinal(Bytes[P + 1]) shl 16) or
-      (Cardinal(Bytes[P + 2]) shl 8) or Bytes[P + 3];
+    Result[I] := (Cardinal(Bytes[P]) shl 24) or (Cardinal(Bytes[P + 1]) shl 16) or (Cardinal(Bytes[P + 2]) shl 8) or
+      Bytes[P + 3];
   end;
 end;
 
@@ -40,8 +42,10 @@ function Compare(const A, B: TNumber): Integer; inline;
 begin
   for var I := 4 downto 0 do
   begin
-    if A[I] < B[I] then Exit(-1);
-    if A[I] > B[I] then Exit(1);
+    if A[I] < B[I] then
+      Exit(-1);
+    if A[I] > B[I] then
+      Exit(1);
   end;
   Result := 0;
 end;
@@ -76,13 +80,16 @@ begin
     Result[I] := Cardinal(V and $FFFFFFFF);
     Carry := V shr 32;
   end;
-  if (Carry <> 0) or (Compare(Result, M) >= 0) then Result := Minus(Result, M);
+  if (Carry <> 0) or (Compare(Result, M) >= 0) then
+    Result := Minus(Result, M);
 end;
 
 function MinusMod(const A, B, M: TNumber): TNumber;
 begin
-  if Compare(A, B) >= 0 then Result := Minus(A, B)
-  else Result := Minus(M, Minus(B, A));
+  if Compare(A, B) >= 0 then
+    Result := Minus(A, B)
+  else
+    Result := Minus(M, Minus(B, A));
 end;
 
 function TimesMod(const A, B, M: TNumber): TNumber;
@@ -91,7 +98,8 @@ begin
   var V := A;
   for var I := 0 to 159 do
   begin
-    if (B[I shr 5] and (Cardinal(1) shl (I and 31))) <> 0 then Result := PlusMod(Result, V, M);
+    if (B[I shr 5] and (Cardinal(1) shl (I and 31))) <> 0 then
+      Result := PlusMod(Result, V, M);
     V := PlusMod(V, V, M);
   end;
 end;
@@ -123,13 +131,23 @@ function Inverse(const A, M: TNumber): TNumber;
 begin
   var U := A;
   var V := M;
-  var X := Default(TNumber); X[0] := 1;
+  var X := Default(TNumber);
+  X[0] := 1;
   var Y := Default(TNumber);
   while not IsOne(U) and not IsOne(V) do
   begin
-    if IsZero(U) or IsZero(V) then raise EArgumentException.Create('ECDSA inverse of zero');
-    while U[0] and 1 = 0 do begin Half(U); HalfMod(X, M); end;
-    while V[0] and 1 = 0 do begin Half(V); HalfMod(Y, M); end;
+    if IsZero(U) or IsZero(V) then
+      raise EArgumentException.Create('ECDSA inverse of zero');
+    while U[0] and 1 = 0 do
+    begin
+      Half(U);
+      HalfMod(X, M);
+    end;
+    while V[0] and 1 = 0 do
+    begin
+      Half(V);
+      HalfMod(Y, M);
+    end;
     if Compare(U, V) >= 0 then
     begin
       U := Minus(U, V);
@@ -141,15 +159,20 @@ begin
       Y := MinusMod(Y, X, M);
     end;
   end;
-  if IsOne(U) then Result := X else Result := Y;
+  if IsOne(U) then
+    Result := X
+  else
+    Result := Y;
 end;
 
 function AddPoint(const A, B: TPoint): TPoint;
 var
   Top, Bottom: TNumber;
 begin
-  if A.Infinity then Exit(B);
-  if B.Infinity then Exit(A);
+  if A.Infinity then
+    Exit(B);
+  if B.Infinity then
+    Exit(A);
   Result := Default(TPoint);
   if Compare(A.X, B.X) = 0 then
   begin
@@ -159,7 +182,8 @@ begin
       Exit;
     end;
     var XX := TimesMod(A.X, A.X, Field);
-    var Three := Default(TNumber); Three[0] := 3;
+    var Three := Default(TNumber);
+    Three[0] := 3;
     Top := MinusMod(PlusMod(PlusMod(XX, XX, Field), XX, Field), Three, Field);
     Bottom := PlusMod(A.Y, A.Y, Field);
   end
@@ -180,23 +204,29 @@ begin
   for var I := 159 downto 0 do
   begin
     Result := AddPoint(Result, Result);
-    if (K[I shr 5] and (Cardinal(1) shl (I and 31))) <> 0 then Result := AddPoint(Result, P);
+    if (K[I shr 5] and (Cardinal(1) shl (I and 31))) <> 0 then
+      Result := AddPoint(Result, P);
   end;
 end;
 
 function PSPVerifyKirkSignature(const Hash, Signature: TBytes): Boolean;
 begin
   Result := False;
-  if (Length(Hash) <> 20) or (Length(Signature) <> 40) then Exit;
+  if (Length(Hash) <> 20) or (Length(Signature) <> 40) then
+    Exit;
   var R := Number(Signature, 0);
   var S := Number(Signature, 20);
-  if IsZero(R) or IsZero(S) or (Compare(R, Order) >= 0) or (Compare(S, Order) >= 0) then Exit;
+  if IsZero(R) or IsZero(S) or (Compare(R, Order) >= 0) or (Compare(S, Order) >= 0) then
+    Exit;
   var Z := Number(Hash, 0);
-  if Compare(Z, Order) >= 0 then Z := Minus(Z, Order);
+  if Compare(Z, Order) >= 0 then
+    Z := Minus(Z, Order);
   var W := Inverse(S, Order);
   var P := AddPoint(Scale(Generator, TimesMod(Z, W, Order)), Scale(PublicKey, TimesMod(R, W, Order)));
-  if P.Infinity then Exit;
-  if Compare(P.X, Order) >= 0 then P.X := Minus(P.X, Order);
+  if P.Infinity then
+    Exit;
+  if Compare(P.X, Order) >= 0 then
+    P.X := Minus(P.X, Order);
   Result := Compare(P.X, R) = 0;
 end;
 

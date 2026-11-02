@@ -1,4 +1,4 @@
-unit PSP.Font;
+﻿unit PSP.Font;
 
 // sceLibFont: PGF fonts. A library lives in memory the program hands out
 // through its own allocator callbacks, and so does what it keeps of each
@@ -12,8 +12,9 @@ unit PSP.Font;
 interface
 
 uses
-  System.SysUtils, System.Math, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE,
-  PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.State.Action;
+  System.SysUtils, System.Math, System.Generics.Collections, PSP.Types,
+  PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service,
+  PSP.State.Action;
 
 const
   // Lookups that find no glyph: below the font's first character (drawn and
@@ -179,10 +180,10 @@ type
     procedure AllocStep(AllocF, FreeF, UserData: Cardinal; const Sizes, Addrs: TArray<Cardinal>; I: Integer;
       const Done: IPSPStateAction);
     procedure AllocBlocks(Lib: TPSPFontLib; const Sizes: TArray<Cardinal>; const Done: IPSPStateAction);
-    procedure FreeStep(FreeF, UserData: Cardinal; const Addrs: TArray<Cardinal>; I: Integer; const Done: IPSPStateAction);
+    procedure FreeStep(FreeF, UserData: Cardinal; const Addrs: TArray<Cardinal>; I: Integer;
+      const Done: IPSPStateAction);
     procedure FreeBlocks(Lib: TPSPFontLib; const Addrs: TArray<Cardinal>; const Done: IPSPStateAction);
-    procedure RunIO(const IO: TFontIO; const Ops: TArray<TFontIOOp>; I: Integer;
-      const Done, Fail: IPSPStateAction);
+    procedure RunIO(const IO: TFontIO; const Ops: TArray<TFontIOOp>; I: Integer; const Done, Fail: IPSPStateAction);
     procedure AllocNext(Action: TPSPStateAction);
     procedure StateAlloc(Action: TPSPStateAction; Value: Cardinal);
     procedure StateAllocFailed(Action: TPSPStateAction; Value: Cardinal);
@@ -581,10 +582,14 @@ begin
       Inc(Q, 64);
     end;
     case K of
-      0: G.Dim := M;
-      1: G.BearingX := M;
-      2: G.BearingY := M;
-      3: G.Advance := M;
+      0:
+        G.Dim := M;
+      1:
+        G.BearingX := M;
+      2:
+        G.BearingY := M;
+      3:
+        G.Advance := M;
     end;
   end;
   G.ShadowFlags := $40 or Max(G.W, G.H);
@@ -802,7 +807,6 @@ const
     '',
     '');
 
-
 type
   THSegment = record
     X0, Y0, X1, Y1: Single;
@@ -874,21 +878,31 @@ function HMarks(Mark: Char; CX, Top: Single): TArray<THSegment>;
 begin
   Result := nil;
   case Mark of
-    '`': HAdd(Result, [CX - 2, Top + 4, CX + 1, Top + 1]);
-    '/': HAdd(Result, [CX + 2, Top + 4, CX - 1, Top + 1]);
-    '^': HAdd(Result, [CX - 3, Top + 1, CX, Top + 4, CX + 3, Top + 1]);
-    '~': HAdd(Result, [CX - 4, Top + 2, CX - 2, Top + 4, CX + 2, Top + 2, CX + 4, Top + 4]);
+    '`':
+      HAdd(Result, [CX - 2, Top + 4, CX + 1, Top + 1]);
+    '/':
+      HAdd(Result, [CX + 2, Top + 4, CX - 1, Top + 1]);
+    '^':
+      HAdd(Result, [CX - 3, Top + 1, CX, Top + 4, CX + 3, Top + 1]);
+    '~':
+      HAdd(Result, [CX - 4, Top + 2, CX - 2, Top + 4, CX + 2, Top + 2, CX + 4, Top + 4]);
     ':':
       begin
         HAdd(Result, [CX - 3, Top + 2, CX - 3, Top + 3]);
         HAdd(Result, [CX + 3, Top + 2, CX + 3, Top + 3]);
       end;
-    'o': HAdd(Result, [CX, Top + 1.5, CX + 1.5, Top + 2.5, CX + 1.5, Top + 3.5, CX, Top + 4.5,
-      CX - 1.5, Top + 3.5, CX - 1.5, Top + 2.5, CX, Top + 1.5]);
-    ',': HAdd(Result, [CX, 0, CX, -2, CX + 2, -3, CX - 1, -5]);
-    '|': HAdd(Result, [CX - 6, -1, CX + 6, Top + 1]);
-    'v': HAdd(Result, [CX, Top + 3, CX, -3]);
-    '.': HAdd(Result, [CX, 9, CX, 10]);
+    'o':
+      HAdd(Result,
+        [ CX, Top + 1.5, CX + 1.5, Top + 2.5, CX + 1.5, Top + 3.5, CX, Top + 4.5, CX - 1.5, Top + 3.5, CX - 1.5,
+        Top + 2.5, CX, Top + 1.5]);
+    ',':
+      HAdd(Result, [CX, 0, CX, -2, CX + 2, -3, CX - 1, -5]);
+    '|':
+      HAdd(Result, [CX - 6, -1, CX + 6, Top + 1]);
+    'v':
+      HAdd(Result, [CX, Top + 3, CX, -3]);
+    '.':
+      HAdd(Result, [CX, 9, CX, 10]);
   end;
 end;
 
@@ -1021,14 +1035,22 @@ const
 function BuiltinIndex(Code: Integer): Integer;
 begin
   case Code of
-    $20..$7E: Result := Code - $20;
-    $A0..$FF: Result := 95 + Code - $A0;
-    $FF01..$FF5E: Result := 191 + Code - $FF01;
-    $3000: Result := 285;
-    $410..$44F: Result := 286 + Code - $410;
-    $401: Result := 350;
-    $451: Result := 351;
-    $2122: Result := 352;
+    $20..$7E:
+      Result := Code - $20;
+    $A0..$FF:
+      Result := 95 + Code - $A0;
+    $FF01..$FF5E:
+      Result := 191 + Code - $FF01;
+    $3000:
+      Result := 285;
+    $410..$44F:
+      Result := 286 + Code - $410;
+    $401:
+      Result := 350;
+    $451:
+      Result := 351;
+    $2122:
+      Result := 352;
   else
     Result := PGFMissing;
   end;
@@ -1039,13 +1061,20 @@ end;
 function BuiltinCode(Index: Integer): Integer;
 begin
   case Index of
-    0..94: Result := Index + $20;
-    95..190: Result := Index - 95 + $A0;
-    191..284: Result := Index - 191 + $21;
-    286..349: Result := Index - 286 + $410;
-    350: Result := $401;
-    351: Result := $451;
-    352: Result := $2122;
+    0..94:
+      Result := Index + $20;
+    95..190:
+      Result := Index - 95 + $A0;
+    191..284:
+      Result := Index - 191 + $21;
+    286..349:
+      Result := Index - 286 + $410;
+    350:
+      Result := $401;
+    351:
+      Result := $451;
+    352:
+      Result := $2122;
   else
     Result := $20;
   end;
@@ -1453,9 +1482,10 @@ begin
   begin
     var Back: TArray<Cardinal>;
     SetLength(Back, I);
-    for var K := 0 to I - 1 do Back[K] := Action.Arrays[1][I - 1 - K];
-    FreeStep(Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)), Back, 0,
-      TPSPStateAction.Create(StateAllocFailed, [], [], '', Action.Next));
+    for var K := 0 to I - 1 do
+      Back[K] := Action.Arrays[1][I - 1 - K];
+    FreeStep(Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)), Back, 0, TPSPStateAction.Create(StateAllocFailed, [], [],
+      '', Action.Next));
     Exit;
   end;
   Action.Arrays[1][I] := Value;
@@ -1464,7 +1494,9 @@ begin
 end;
 
 procedure TPSPFont.StateAllocFailed(Action: TPSPStateAction; Value: Cardinal);
-begin AllocDone(Action.Next, nil, False); end;
+begin
+  AllocDone(Action.Next, nil, False);
+end;
 
 procedure TPSPFont.AllocBlocks(Lib: TPSPFontLib; const Sizes: TArray<Cardinal>; const Done: IPSPStateAction);
 begin
@@ -1480,7 +1512,8 @@ begin
   AllocStep(AllocF, FreeF, FMemory.Read32(Lib.Addr), Sizes, Addrs, 0, Done);
 end;
 
-procedure TPSPFont.FreeStep(FreeF, UserData: Cardinal; const Addrs: TArray<Cardinal>; I: Integer; const Done: IPSPStateAction);
+procedure TPSPFont.FreeStep(FreeF, UserData: Cardinal; const Addrs: TArray<Cardinal>; I: Integer;
+  const Done: IPSPStateAction);
 begin
   var A := TPSPStateAction.Create(StateFree, [], [FreeF, UserData, I], '', Done);
   A.Arrays := [Addrs];
@@ -1504,16 +1537,25 @@ begin
 end;
 
 procedure TPSPFont.StateFree(Action: TPSPStateAction; Value: Cardinal);
-begin Inc(Action.Values[2]); FreeNext(Action); end;
+begin
+  Inc(Action.Values[2]);
+  FreeNext(Action);
+end;
 
 procedure TPSPFont.StateResult(Action: TPSPStateAction; Value: Cardinal);
-begin FHLE.Result(Cardinal(Action.Arg(0))); end;
+begin
+  FHLE.Result(Cardinal(Action.Arg(0)));
+end;
 
 procedure TPSPFont.StateLibAllocated(Action: TPSPStateAction; Value: Cardinal);
 begin
   var ErrPtr := Cardinal(Action.Arg(1));
   if Value = 0 then
-    begin SetError(ErrPtr, SCE_FONT_ERROR_NOMEMORY); FHLE.Result(0); Exit; end;
+  begin
+    SetError(ErrPtr, SCE_FONT_ERROR_NOMEMORY);
+    FHLE.Result(0);
+    Exit;
+  end;
   var Lib := CreateLib(Action.Results, Integer(Action.Arg(0)), Action.Data);
   SetError(ErrPtr, 0);
   Finish(Lib.Addr, NewLibYieldUs);
@@ -1527,8 +1569,8 @@ end;
 procedure TPSPFont.RunIO(const IO: TFontIO; const Ops: TArray<TFontIOOp>; I: Integer;
   const Done, Fail: IPSPStateAction);
 begin
-  var A := TPSPStateAction.Create(StateIO, [], [IO.UserData, IO.OpenF, IO.CloseF, IO.ReadF,
-    IO.SeekF, IO.FH, IO.ErrAddr, I], '', Done);
+  var A := TPSPStateAction.Create(StateIO, [],
+    [IO.UserData, IO.OpenF, IO.CloseF, IO.ReadF, IO.SeekF, IO.FH, IO.ErrAddr, I], '', Done);
   A.Failure := Fail;
   SetLength(A.Arrays, 1);
   SetLength(A.Arrays[0], Length(Ops) * 4);
@@ -1552,7 +1594,8 @@ begin
     Exit;
   end;
   var Op := Action.Arrays[0];
-  var U := Cardinal(Action.Arg(0)); var FH := Cardinal(Action.Arg(5));
+  var U := Cardinal(Action.Arg(0));
+  var FH := Cardinal(Action.Arg(5));
   case TFontIOKind(Op[I * 4]) of
     fiSeek:
       FKernel.CallGuest(Cardinal(Action.Arg(4)), [U, FH, Op[I * 4 + 1]], nil, 0, Action);
@@ -1560,8 +1603,8 @@ begin
       begin
         var Err := Cardinal(Action.Arg(6));
         FMemory.Write32(Err, 0);
-        FKernel.CallGuest(Cardinal(Action.Arg(3)), [U, FH, Op[I * 4 + 1], Op[I * 4 + 2],
-          Op[I * 4 + 3], Err], nil, 0, Action);
+        FKernel.CallGuest(Cardinal(Action.Arg(3)), [U, FH, Op[I * 4 + 1], Op[I * 4 + 2], Op[I * 4 + 3], Err], nil,
+          0, Action);
       end;
     fiClose:
       FKernel.CallGuest(Cardinal(Action.Arg(2)), [U, FH], nil, 0, Action);
@@ -1573,11 +1616,17 @@ begin
   var I := Integer(Action.Arg(7));
   var Kind := TFontIOKind(Action.Arrays[0][I * 4]);
   if (Kind = fiSeek) and (Value <> 0) then
-    begin Action.Failure.Run(SCE_FONT_ERROR_FILESEEK); Exit; end;
-  if (Kind = fiRead) and ((Value <> Action.Arrays[0][I * 4 + 3]) or
-    (FMemory.Read32(Cardinal(Action.Arg(6))) <> 0)) then
-    begin Action.Failure.Run(SCE_FONT_ERROR_FILEREAD); Exit; end;
-  Inc(Action.Values[7]); IONext(Action);
+  begin
+    Action.Failure.Run(SCE_FONT_ERROR_FILESEEK);
+    Exit;
+  end;
+  if (Kind = fiRead) and ((Value <> Action.Arrays[0][I * 4 + 3]) or (FMemory.Read32(Cardinal(Action.Arg(6))) <> 0)) then
+  begin
+    Action.Failure.Run(SCE_FONT_ERROR_FILEREAD);
+    Exit;
+  end;
+  Inc(Action.Values[7]);
+  IONext(Action);
 end;
 
 function IOOp(Kind: TFontIOKind; A: Cardinal = 0; B: Cardinal = 0; C: Cardinal = 0): TFontIOOp;
@@ -1770,15 +1819,15 @@ begin
   begin
     var Path := TPath.Combine(FSystem.FontDirectory, E.FileName);
     if TFile.Exists(Path) and (TFile.GetSize(Path) <= 16 * 1024 * 1024) then
-    try
-      Data := TFile.ReadAllBytes(Path);
-      Result := TPGFFile.Parse(Data);
-    except
-      on X: Exception do FHLE.Log('font: cannot read %s (%s)', [E.FileName, X.Message]);
-    end;
+      try
+        Data := TFile.ReadAllBytes(Path);
+        Result := TPGFFile.Parse(Data);
+      except
+        on X: Exception do
+          FHLE.Log('font: cannot read %s (%s)', [E.FileName, X.Message]);
+      end;
   end;
-  if (Result = nil) and (FSystem.FlashRoot <> '') and
-    (FSystem.IO.ReadAll('flash0:/font/' + E.FileName, Data) = 0) then
+  if (Result = nil) and (FSystem.FlashRoot <> '') and (FSystem.IO.ReadAll('flash0:/font/' + E.FileName, Data) = 0) then
     Result := TPGFFile.Parse(Data);
   if Result = nil then
   begin
@@ -1787,10 +1836,12 @@ begin
     Result := TPGFBuiltin.Create(E.Points, Bold, Italic);
     Result.FileSize := E.FileSize;
     case Index of
-      0: Result.Parts := TArray<Cardinal>.Create(Jpn0Parts[0], Jpn0Parts[1], Jpn0Parts[2], Jpn0Parts[3],
-        Jpn0Parts[4], Jpn0Parts[5], Jpn0Parts[6], Jpn0Parts[7], Jpn0Parts[8]);
-      1: Result.Parts := TArray<Cardinal>.Create(Ltn0Parts[0], Ltn0Parts[1], Ltn0Parts[2], Ltn0Parts[3],
-        Ltn0Parts[4], Ltn0Parts[5], Ltn0Parts[6], Ltn0Parts[7], Ltn0Parts[8]);
+      0:
+        Result.Parts := TArray<Cardinal>.Create(Jpn0Parts[0], Jpn0Parts[1], Jpn0Parts[2], Jpn0Parts[3], Jpn0Parts[4],
+          Jpn0Parts[5], Jpn0Parts[6], Jpn0Parts[7], Jpn0Parts[8]);
+      1:
+        Result.Parts := TArray<Cardinal>.Create(Ltn0Parts[0], Ltn0Parts[1], Ltn0Parts[2], Ltn0Parts[3], Ltn0Parts[4],
+          Ltn0Parts[5], Ltn0Parts[6], Ltn0Parts[7], Ltn0Parts[8]);
     else
       Result.Parts := [E.Mode0Size];
     end;
@@ -1991,18 +2042,26 @@ begin
   var Mode := Integer(Action.Arg(1));
   if Value = 0 then
   begin
-    Slot.Busy := False; SetError(ErrPtr, SCE_FONT_ERROR_NOMEMORY); FHLE.Result(0);
+    Slot.Busy := False;
+    SetError(ErrPtr, SCE_FONT_ERROR_NOMEMORY);
+    FHLE.Result(0);
     Exit;
   end;
   var Blocks := Action.Results;
-  if Mode < 2 then Blocks := PartsFreeOrder(Blocks)
-  else if Mode = 3 then Blocks := [Blocks[1], Blocks[0]];
+  if Mode < 2 then
+    Blocks := PartsFreeOrder(Blocks)
+  else if Mode = 3 then
+    Blocks := [Blocks[1], Blocks[0]];
   var D := AddData(Lib, Action.Text, Font, Mode >= 2, Blocks);
-  if Mode >= 2 then Action.Disown(Font);
+  if Mode >= 2 then
+    Action.Disown(Font);
   D.Streamed := Mode = 0;
   Attach(Slot, D);
   SetError(ErrPtr, 0);
-  if Mode = 2 then FHLE.Result(Slot.Handle) else Finish(Slot.Handle, FileYieldUs);
+  if Mode = 2 then
+    FHLE.Result(Slot.Handle)
+  else
+    Finish(Slot.Handle, FileYieldUs);
 end;
 
 procedure TPSPFont.OpenStreamed(Lib: TPSPFontLib; NamePtr: Cardinal; const Name: string; ErrPtr: Cardinal);
@@ -2041,8 +2100,7 @@ begin
   var Mem := Slot.Memory;
   IO.ErrAddr := Mem + RecordErrorWord;
   var A := TPSPStateAction.Create(StateStreamOpened, [Lib, Slot],
-    [IO.UserData, IO.OpenF, IO.CloseF, IO.ReadF, IO.SeekF, 0, IO.ErrAddr,
-     NamePtr, ErrPtr, Mem, 0, 0, 0, 0]);
+    [IO.UserData, IO.OpenF, IO.CloseF, IO.ReadF, IO.SeekF, 0, IO.ErrAddr, NamePtr, ErrPtr, Mem, 0, 0, 0, 0]);
   A.Texts := [Name, Key];
   FMemory.Write32(IO.ErrAddr, 0);
   FKernel.CallGuest(IO.OpenF, [IO.UserData, NamePtr, IO.ErrAddr], nil, 0, A);
@@ -2050,48 +2108,62 @@ end;
 
 function TPSPFont.StreamIO(Action: TPSPStateAction): TFontIO;
 begin
-  Result.UserData := Cardinal(Action.Arg(0)); Result.OpenF := Cardinal(Action.Arg(1));
-  Result.CloseF := Cardinal(Action.Arg(2)); Result.ReadF := Cardinal(Action.Arg(3));
-  Result.SeekF := Cardinal(Action.Arg(4)); Result.FH := Cardinal(Action.Arg(5));
+  Result.UserData := Cardinal(Action.Arg(0));
+  Result.OpenF := Cardinal(Action.Arg(1));
+  Result.CloseF := Cardinal(Action.Arg(2));
+  Result.ReadF := Cardinal(Action.Arg(3));
+  Result.SeekF := Cardinal(Action.Arg(4));
+  Result.FH := Cardinal(Action.Arg(5));
   Result.ErrAddr := Cardinal(Action.Arg(6));
 end;
 
 procedure TPSPFont.StreamFail(Action: TPSPStateAction; Error: Cardinal; Close: Boolean);
 begin
-  Action.Values[11] := Error; Action.Values[12] := Ord(Close);
+  Action.Values[11] := Error;
+  Action.Values[12] := Ord(Close);
   Action.Handler := StateStreamFailClose;
   if Action.Arg(13) <> 0 then
   begin
     Action.Values[13] := 0;
     FreeBlocks(TPSPFontLib(Action.Obj(0)), PartsFreeOrder(Action.Results), Action);
   end
-  else StateStreamFailClose(Action, 0);
+  else
+    StateStreamFailClose(Action, 0);
 end;
 
 procedure TPSPFont.StateStreamFailClose(Action: TPSPStateAction; Value: Cardinal);
 begin
   Action.Handler := StateStreamError;
-  if Action.Arg(12) <> 0 then RunIO(StreamIO(Action), [IOOp(fiClose)], 0, Action, Action)
-  else StateStreamError(Action, 0);
+  if Action.Arg(12) <> 0 then
+    RunIO(StreamIO(Action), [IOOp(fiClose)], 0, Action, Action)
+  else
+    StateStreamError(Action, 0);
 end;
 
 procedure TPSPFont.StateStreamError(Action: TPSPStateAction; Value: Cardinal);
 begin
   TPSPFontSlot(Action.Obj(1)).Busy := False;
-  if Value = 0 then Value := Cardinal(Action.Arg(11));
+  if Value = 0 then
+    Value := Cardinal(Action.Arg(11));
   SetError(Cardinal(Action.Arg(8)), Value);
   FHLE.Result(0);
 end;
 
 procedure TPSPFont.StateStreamIOFailed(Action: TPSPStateAction; Value: Cardinal);
-begin StreamFail(TPSPStateAction(Action.Next as TObject), Value, True); end;
+begin
+  StreamFail(TPSPStateAction(Action.Next as TObject), Value, True);
+end;
 
 procedure TPSPFont.StateStreamOpened(Action: TPSPStateAction; Value: Cardinal);
 begin
   var IO := StreamIO(Action);
   if FMemory.Read32(IO.ErrAddr) <> 0 then
-    begin StreamFail(Action, SCE_FONT_ERROR_FILEOPEN, False); Exit; end;
-  Action.Values[5] := Value; IO.FH := Value;
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_FILEOPEN, False);
+    Exit;
+  end;
+  Action.Values[5] := Value;
+  IO.FH := Value;
   Action.Handler := StateStreamShortRead;
   RunIO(IO, [IOOp(fiSeek, 0), IOOp(fiRead, Cardinal(Action.Arg(9)), $C, 1)], 0, Action,
     TPSPStateAction.Create(StateStreamIOFailed, [], [], '', Action));
@@ -2102,7 +2174,10 @@ begin
   var Mem := Cardinal(Action.Arg(9));
   var HeaderSize := FMemory.Read16(Mem + 2);
   if (HeaderSize < $188) or (HeaderSize > RecordErrorWord) then
-    begin StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, True); Exit; end;
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, True);
+    Exit;
+  end;
   Action.Values[10] := HeaderSize;
   Action.Handler := StateStreamHeaderRead;
   RunIO(StreamIO(Action), [IOOp(fiRead, Mem + $C, HeaderSize - $C, 1)], 0, Action,
@@ -2115,60 +2190,86 @@ begin
   FMemory.ReadBytes(Cardinal(Action.Arg(9)), Action.Data[0], Length(Action.Data));
   var L: TPGFLayout;
   if not L.Read(Action.Data) then
-    begin StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, True); Exit; end;
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, True);
+    Exit;
+  end;
   var Sizes: TArray<Cardinal>;
   SetLength(Sizes, 9);
-  for var K := 0 to 8 do Sizes[K] := L.Parts[K];
+  for var K := 0 to 8 do
+    Sizes[K] := L.Parts[K];
   Action.Handler := StateStreamAllocated;
   AllocBlocks(TPSPFontLib(Action.Obj(0)), Sizes, Action);
 end;
 
 procedure TPSPFont.StateStreamAllocated(Action: TPSPStateAction; Value: Cardinal);
 begin
-  if Value = 0 then begin StreamFail(Action, SCE_FONT_ERROR_NOMEMORY, True); Exit; end;
+  if Value = 0 then
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_NOMEMORY, True);
+    Exit;
+  end;
   Action.Values[13] := 1;
   var L: TPGFLayout;
   if not L.Read(Action.Data) then
-    begin StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, True); Exit; end;
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, True);
+    Exit;
+  end;
   var Addrs := Action.Results;
   var Ops: TArray<TFontIOOp> := [IOOp(fiSeek, L.HeaderSize), IOOp(fiSeek, L.HeaderSize)];
   for var K := 0 to 3 do
-    if L.TableLength[K] > 0 then Ops := Ops + [IOOp(fiRead, Addrs[K], 8, L.TableLength[K])];
+    if L.TableLength[K] > 0 then
+      Ops := Ops + [IOOp(fiRead, Addrs[K], 8, L.TableLength[K])];
   Ops := Ops + [IOOp(fiSeek, Cardinal(L.ShadowMapPos))];
-  for var K := 4 to 8 do if L.Parts[K] > 0 then Ops := Ops + [IOOp(fiRead, Addrs[K], L.Parts[K], 1)];
+  for var K := 4 to 8 do
+    if L.Parts[K] > 0 then
+      Ops := Ops + [IOOp(fiRead, Addrs[K], L.Parts[K], 1)];
   Ops := Ops + [IOOp(fiClose)];
   Action.Handler := StateStreamTablesRead;
-  RunIO(StreamIO(Action), Ops, 0, Action,
-    TPSPStateAction.Create(StateStreamIOFailed, [], [], '', Action));
+  RunIO(StreamIO(Action), Ops, 0, Action, TPSPStateAction.Create(StateStreamIOFailed, [], [], '', Action));
 end;
 
 procedure TPSPFont.StateStreamTablesRead(Action: TPSPStateAction; Value: Cardinal);
 begin
   var L: TPGFLayout;
   if not L.Read(Action.Data) then
-    begin StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, False); Exit; end;
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, False);
+    Exit;
+  end;
   var Addrs := Action.Results;
   var Font: TPGFFile := nil;
   var Data: TBytes;
-  if FSystem.IO.ReadAll(Action.Texts[0], Data) = 0 then Font := TPGFFile.Parse(Data);
+  if FSystem.IO.ReadAll(Action.Texts[0], Data) = 0 then
+    Font := TPGFFile.Parse(Data);
   if Font = nil then
   begin
-    SetLength(Data, L.GlyphPos); FillChar(Data[0], Length(Data), 0);
+    SetLength(Data, L.GlyphPos);
+    FillChar(Data[0], Length(Data), 0);
     Move(Action.Data[0], Data[0], Length(Action.Data));
     var Pos := L.HeaderSize;
     for var K := 0 to 3 do
-    begin FMemory.ReadBytes(Addrs[K], Data[Pos], L.Parts[K]); Inc(Pos, L.Parts[K]); end;
+    begin
+      FMemory.ReadBytes(Addrs[K], Data[Pos], L.Parts[K]);
+      Inc(Pos, L.Parts[K]);
+    end;
     FMemory.ReadBytes(Addrs[4], Data[L.ShadowMapPos], L.Parts[4]);
     FMemory.ReadBytes(Addrs[7], Data[L.CharMapPos], L.Parts[7]);
     FMemory.ReadBytes(Addrs[8], Data[L.CharPtrPos], L.Parts[8]);
     Font := TPGFFile.Parse(Data);
   end;
-  if Font = nil then begin StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, False); Exit; end;
+  if Font = nil then
+  begin
+    StreamFail(Action, SCE_FONT_ERROR_DATAINCONSISTENT, False);
+    Exit;
+  end;
   var Lib := TPSPFontLib(Action.Obj(0));
   var Slot := TPSPFontSlot(Action.Obj(1));
   var D := AddData(Lib, Action.Texts[1], Font, True, PartsFreeOrder(Addrs));
   Action.Values[13] := 0;
-  D.Streamed := True; Attach(Slot, D);
+  D.Streamed := True;
+  Attach(Slot, D);
   SetError(Cardinal(Action.Arg(8)), 0);
   FHLE.Result(Slot.Handle);
 end;
@@ -2219,8 +2320,8 @@ begin
     Exit;
   end;
   var F := Slot.Data.Font;
-  var Ints: TArray<Integer> := [F.MaxSizeH, F.MaxSizeV, F.MaxAscender, F.MaxDescender, F.MaxLeftX,
-    F.MaxBaseY, F.MinCenterX, F.MaxTopY, F.MaxAdvanceH, F.MaxAdvanceV];
+  var Ints: TArray<Integer> := [ F.MaxSizeH, F.MaxSizeV, F.MaxAscender, F.MaxDescender, F.MaxLeftX, F.MaxBaseY,
+    F.MinCenterX, F.MaxTopY, F.MaxAdvanceH, F.MaxAdvanceV];
   for var I := 0 to 9 do
   begin
     FMemory.Write32(Info + Cardinal(I * 4), Cardinal(Ints[I]));
@@ -2449,7 +2550,8 @@ begin
   D.CacheKey := -1;
   var Lib := Slot.Lib;
   var CacheSize := G.DataSize;
-  if G.CacheDataSize > 0 then CacheSize := G.CacheDataSize;
+  if G.CacheDataSize > 0 then
+    CacheSize := G.CacheDataSize;
   FreeBlocks(Lib, Old, TPSPStateAction.Create(StateDrawFreed, [D, G, Lib],
     [Key, Image, ClipX, ClipY, ClipW, ClipH, CacheSize]));
 end;
@@ -2463,12 +2565,16 @@ end;
 
 procedure TPSPFont.StateDrawAllocated(Action: TPSPStateAction; Value: Cardinal);
 begin
-  if Value = 0 then begin FHLE.Result(SCE_FONT_ERROR_NOMEMORY); Exit; end;
+  if Value = 0 then
+  begin
+    FHLE.Result(SCE_FONT_ERROR_NOMEMORY);
+    Exit;
+  end;
   var D := TPSPFontData(Action.Obj(0));
   D.Cache := Copy(Action.Results);
   D.CacheKey := Integer(Action.Arg(0));
-  Draw(TPGFGlyph(Action.Obj(1)), Cardinal(Action.Arg(1)), Integer(Action.Arg(2)),
-    Integer(Action.Arg(3)), Integer(Action.Arg(4)), Integer(Action.Arg(5)));
+  Draw(TPGFGlyph(Action.Obj(1)), Cardinal(Action.Arg(1)), Integer(Action.Arg(2)), Integer(Action.Arg(3)),
+    Integer(Action.Arg(4)), Integer(Action.Arg(5)));
   Finish(0, FileYieldUs);
 end;
 
@@ -2579,8 +2685,7 @@ begin
   var UseV := V > 0;
   var TargetH: Single := H * ResH / 128;
   var TargetV: Single := H * ResV / 128;
-  var AnyAttr := (Family <> 0) or (Kind <> 0) or (Language <> 0) or (Country <> 0) or (Name <> '') or
-    (FileName <> '');
+  var AnyAttr := (Family <> 0) or (Kind <> 0) or (Language <> 0) or (Country <> 0) or (Name <> '') or (FileName <> '');
   if Optimum then
     Result := 0
   else
@@ -2589,9 +2694,9 @@ begin
   for var I := 0 to High(InternalFonts) do
   begin
     var E := InternalFonts[I];
-    if ((Family <> 0) and (E.Family <> Family)) or ((Kind <> 0) and (E.Style <> Kind)) or
-      ((Language <> 0) and (E.Language <> Language)) or ((Country <> 0) and (E.Country <> Country)) or
-      ((Name <> '') and (E.Name <> Name)) or ((FileName <> '') and (E.FileName <> FileName)) then
+    if ((Family <> 0) and (E.Family <> Family)) or ((Kind <> 0) and (E.Style <> Kind)) or ((Language <> 0) and
+      (E.Language <> Language)) or ((Country <> 0) and (E.Country <> Country)) or ((Name <> '') and (E.Name <> Name)) or
+      ((FileName <> '') and (E.FileName <> FileName)) then
       Continue;
     var Size: Single := E.Points;
     if not Optimum then
@@ -2771,7 +2876,6 @@ begin
   H.Register(L, $3C4B7E82, 'sceFontPointToPixelV', hPointToPixelV);
   H.Register(L, $02D7F94B, 'sceFontFlush', hFlush);
 end;
-
 
 initialization
   RegisterPSPService(TPSPFont);

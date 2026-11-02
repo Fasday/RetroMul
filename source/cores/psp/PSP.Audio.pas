@@ -1,4 +1,4 @@
-unit PSP.Audio;
+﻿unit PSP.Audio;
 
 // sceAudio, sceVaudio and sceAudioRouting on the master clock.
 // The eight PCM channels are mixed by the driver in blocks of 64 samples: a
@@ -14,7 +14,8 @@ unit PSP.Audio;
 interface
 
 uses
-  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service;
+  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
+  PSP.Scheduler, PSP.Service;
 
 const
   PSPAudioChannelCount = 8;
@@ -198,7 +199,8 @@ end;
 function ValidSRCFrequency(F: Integer): Boolean;
 begin
   case F of
-    0, 8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000: Result := True;
+    0, 8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000:
+      Result := True;
   else
     Result := False;
   end;
@@ -1162,9 +1164,15 @@ begin
     Exit;
   end;
   if FKernel.InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if (FO2Armed >= Length(FO2Desc)) or (FO2Waiter <> nil) then
-    begin FHLE.Result(SCE_AUDIO_ERROR_OUTPUT_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_AUDIO_ERROR_OUTPUT_BUSY);
+    Exit;
+  end;
   var Buffer := FHLE.Arg(1);
   if (Buffer <> 0) and not FKernel.CanWait then
   begin

@@ -1,4 +1,4 @@
-unit PSP.SysLibs;
+﻿unit PSP.SysLibs;
 
 // Small system libraries: UtilsForUser, scePower (and the power and
 // volatile memory locks of sceSuspendForUser), sceUmdUser, sceRtc,
@@ -10,8 +10,8 @@ unit PSP.SysLibs;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler,
-  PSP.Service, PSP.State.Action;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.State.Action;
 
 type
   // The UMD drive state as the threads waiting on it see it (an event flag in the firmware).
@@ -255,8 +255,8 @@ begin
   begin
     var X: array[0..15] of Cardinal;
     for var I := 0 to 15 do
-      X[I] := P[I * 4] or (Cardinal(P[I * 4 + 1]) shl 8) or (Cardinal(P[I * 4 + 2]) shl 16) or
-        (Cardinal(P[I * 4 + 3]) shl 24);
+      X[I] := P[I * 4] or (Cardinal(P[I * 4 + 1]) shl 8) or (Cardinal(P[I * 4 + 2]) shl 16) or (Cardinal(P[I * 4 +
+        3]) shl 24);
     var A := H[0];
     var B := H[1];
     var C := H[2];
@@ -266,11 +266,26 @@ begin
       var F: Cardinal;
       var G: Integer;
       case I shr 4 of
-        0: begin F := (B and C) or (not B and D); G := I; end;
-        1: begin F := (D and B) or (not D and C); G := (5 * I + 1) and 15; end;
-        2: begin F := B xor C xor D; G := (3 * I + 5) and 15; end;
+        0:
+          begin
+            F := (B and C) or (not B and D);
+            G := I;
+          end;
+        1:
+          begin
+            F := (D and B) or (not D and C);
+            G := (5 * I + 1) and 15;
+          end;
+        2:
+          begin
+            F := B xor C xor D;
+            G := (3 * I + 5) and 15;
+          end;
       else
-        begin F := C xor (B or not D); G := (7 * I) and 15; end;
+        begin
+          F := C xor (B or not D);
+          G := (7 * I) and 15;
+        end;
       end;
       var T := D;
       D := C;
@@ -300,11 +315,26 @@ begin
     begin
       var F, K: Cardinal;
       case I div 20 of
-        0: begin F := (B and C) or (not B and D); K := $5A827999; end;
-        1: begin F := B xor C xor D; K := $6ED9EBA1; end;
-        2: begin F := (B and C) or (B and D) or (C and D); K := $8F1BBCDC; end;
+        0:
+          begin
+            F := (B and C) or (not B and D);
+            K := $5A827999;
+          end;
+        1:
+          begin
+            F := B xor C xor D;
+            K := $6ED9EBA1;
+          end;
+        2:
+          begin
+            F := (B and C) or (B and D) or (C and D);
+            K := $8F1BBCDC;
+          end;
       else
-        begin F := B xor C xor D; K := $CA62C1D6; end;
+        begin
+          F := B xor C xor D;
+          K := $CA62C1D6;
+        end;
       end;
       var T := RotL(A, 5) + F + E + K + W[I];
       E := D;
@@ -440,7 +470,10 @@ begin
   var M := S.System.Memory;
   var P := H.Arg(0);
   if P = 0 then
-    begin H.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    H.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var N := 4;
   if Kind = hkSha1 then
     N := 5;
@@ -459,7 +492,10 @@ begin
   var M := S.System.Memory;
   var P := H.Arg(0);
   if P = 0 then
-    begin H.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    H.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var C: THashCtx;
   C.Load(M, P, Kind);
   var Data := GuestBytes(M, H.Arg(1), H.Arg(2));
@@ -475,7 +511,10 @@ begin
   var M := S.System.Memory;
   var P := H.Arg(0);
   if (P = 0) or (H.Arg(1) = 0) then
-    begin H.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR); Exit; end;
+  begin
+    H.Result(SCE_KERNEL_ERROR_ILLEGAL_ADDR);
+    Exit;
+  end;
   var C: THashCtx;
   C.Load(M, P, Kind);
   var D := C.Final;
@@ -576,7 +615,8 @@ const
   TicksPerSec = 1000000;
   WeekDayNames: array[0..6] of string = ('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat');
   WeekDayLong: array[0..6] of string = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday');
-  MonthNames: array[1..12] of string = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec');
+  MonthNames: array[1..12] of string = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct',
+    'Nov', 'Dec');
 
 function PSPDaysFromCivil(Y, M, D: Int64): Int64;
 begin
@@ -633,20 +673,27 @@ end;
 
 function PSPCheckDate(const D: TPSPDate): Integer;
 begin
-  if (D.Year < 1) or (D.Year > 9999) then Exit(-1);
-  if (D.Month < 1) or (D.Month > 12) then Exit(-2);
-  if (D.Day < 1) or (Integer(D.Day) > PSPDaysInMonth(D.Year, D.Month)) then Exit(-3);
-  if D.Hour > 23 then Exit(-4);
-  if D.Minute > 59 then Exit(-5);
-  if D.Second > 59 then Exit(-6);
-  if D.Microsecond >= 1000000 then Exit(-7);
+  if (D.Year < 1) or (D.Year > 9999) then
+    Exit(-1);
+  if (D.Month < 1) or (D.Month > 12) then
+    Exit(-2);
+  if (D.Day < 1) or (Integer(D.Day) > PSPDaysInMonth(D.Year, D.Month)) then
+    Exit(-3);
+  if D.Hour > 23 then
+    Exit(-4);
+  if D.Minute > 59 then
+    Exit(-5);
+  if D.Second > 59 then
+    Exit(-6);
+  if D.Microsecond >= 1000000 then
+    Exit(-7);
   Result := 0;
 end;
 
 function PSPDateToTicks(const D: TPSPDate): UInt64;
 begin
-  Result := UInt64(PSPDaysFromCivil(D.Year, D.Month, D.Day)) * PSPTicksPerDay +
-    UInt64(D.Hour) * 3600000000 + UInt64(D.Minute) * 60000000 + UInt64(D.Second) * TicksPerSec + D.Microsecond;
+  Result := UInt64(PSPDaysFromCivil(D.Year, D.Month, D.Day)) * PSPTicksPerDay + UInt64(D.Hour) * 3600000000 +
+    UInt64(D.Minute) * 60000000 + UInt64(D.Second) * TicksPerSec + D.Microsecond;
 end;
 
 function PSPTicksToDate(Ticks: UInt64): TPSPDate;
@@ -760,7 +807,10 @@ begin
   // The microseconds are added as they are, without a range check.
   var V := PSPCheckDate(D);
   if (V <> 0) and (V <> -7) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   WriteTick(FHLE.Arg(1), PSPDateToTicks(D));
   FHLE.Result(0);
 end;
@@ -852,9 +902,12 @@ procedure TPSPSysLibs.hRtcCompareTick;
 begin
   var A := ReadTick(FHLE.Arg(0));
   var B := ReadTick(FHLE.Arg(1));
-  if A < B then FHLE.Result($FFFFFFFF)
-  else if A > B then FHLE.Result(1)
-  else FHLE.Result(0);
+  if A < B then
+    FHLE.Result($FFFFFFFF)
+  else if A > B then
+    FHLE.Result(1)
+  else
+    FHLE.Result(0);
 end;
 
 procedure TPSPSysLibs.hRtcGetDaysInMonth;
@@ -862,7 +915,10 @@ begin
   var Y := FHLE.ArgInt(0);
   var M := FHLE.ArgInt(1);
   if (M < 1) or (M > 12) or (Y < 1) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX);
+    Exit;
+  end;
   FHLE.Result(Cardinal(PSPDaysInMonth(Y, M)));
 end;
 
@@ -880,10 +936,14 @@ begin
     Off := T[M]
   else
     case M of
-      0: Off := 1;
-      573: Off := 0;
-      1024: Off := 4;
-      4587: Off := 6;
+      0:
+        Off := 1;
+      573:
+        Off := 0;
+      1024:
+        Off := 4;
+      4587:
+        Off := 6;
     else
       Off := 0;
     end;
@@ -935,7 +995,10 @@ procedure TPSPSysLibs.hRtcGetDosTime;
 begin
   var D := ReadDate(FHLE.Arg(0));
   if (D.Year < 1980) or (D.Year > 2107) then
-    begin FHLE.Result($FFFFFFFF); Exit; end;
+  begin
+    FHLE.Result($FFFFFFFF);
+    Exit;
+  end;
   var V := ((D.Year - 1980) shl 25) or ((D.Month and 15) shl 21) or ((D.Day and 31) shl 16) or
     ((D.Hour and 31) shl 11) or ((D.Minute and 63) shl 5) or ((D.Second shr 1) and 31);
   FMemory.Write32(FHLE.Arg(1), V);
@@ -961,7 +1024,10 @@ begin
   var D := ReadDate(FHLE.Arg(0));
   var P := FHLE.Arg(1);
   if P = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   // Only the year is checked: a day past the month's end runs into the next.
   if (D.Year < 1601) or (D.Year > 9999) then
   begin
@@ -1000,16 +1066,16 @@ begin
   var Mon := 'Jan';
   if (D.Month >= 1) and (D.Month <= 12) then
     Mon := MonthNames[D.Month];
-  Result := Format('%s, %.2d %s %.4d %.2d:%.2d:%.2d %s%.2d%.2d', [WeekDayNames[TicksWeekDay(T)], D.Day, Mon, D.Year,
-    D.Hour, D.Minute, D.Second, Sign, Tz div 60, Tz mod 60]);
+  Result := Format('%s, %.2d %s %.4d %.2d:%.2d:%.2d %s%.2d%.2d',
+    [WeekDayNames[TicksWeekDay(T)], D.Day, Mon, D.Year, D.Hour, D.Minute, D.Second, Sign, Tz div 60, Tz mod 60]);
 end;
 
 function FormatRFC3339(Ticks: UInt64; TzMinutes: Integer): string;
 begin
   var T := UInt64(Int64(Ticks) + Int64(TzMinutes) * 60000000);
   var D := PSPTicksToDate(T);
-  Result := Format('%.4d-%.2d-%.2dT%.2d:%.2d:%.2d.%.2d', [D.Year, D.Month, D.Day, D.Hour, D.Minute, D.Second,
-    D.Microsecond div 10000]);
+  Result := Format('%.4d-%.2d-%.2dT%.2d:%.2d:%.2d.%.2d',
+    [D.Year, D.Month, D.Day, D.Hour, D.Minute, D.Second, D.Microsecond div 10000]);
   if TzMinutes = 0 then
     Result := Result + 'Z'
   else
@@ -1033,8 +1099,8 @@ end;
 
 procedure TPSPSysLibs.hRtcFormatRFC2822Local;
 begin
-  FMemory.WriteString(FHLE.Arg(0), RawByteString(FormatRFC2822(ReadTick(FHLE.Arg(1)),
-    LocalOffsetTicks div 60000000)), 64);
+  FMemory.WriteString(FHLE.Arg(0),
+    RawByteString(FormatRFC2822(ReadTick(FHLE.Arg(1)), LocalOffsetTicks div 60000000)), 64);
   FHLE.Result(0);
 end;
 
@@ -1046,8 +1112,8 @@ end;
 
 procedure TPSPSysLibs.hRtcFormatRFC3339Local;
 begin
-  FMemory.WriteString(FHLE.Arg(0), RawByteString(FormatRFC3339(ReadTick(FHLE.Arg(1)),
-    LocalOffsetTicks div 60000000)), 64);
+  FMemory.WriteString(FHLE.Arg(0),
+    RawByteString(FormatRFC3339(ReadTick(FHLE.Arg(1)), LocalOffsetTicks div 60000000)), 64);
   FHLE.Result(0);
 end;
 
@@ -1305,7 +1371,10 @@ begin
   var Cpu := FHLE.ArgInt(1);
   var Bus := FHLE.ArgInt(2);
   if (Pll < 19) or (Pll > 333) or (Cpu < 1) or (Cpu > 333) or (Bus < 1) or (Bus > 166) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   // The slowest PLL step that reaches the requested frequency.
   var N := 7;
   while (N > 4) and (1332 < Pll * N) do
@@ -1320,7 +1389,10 @@ procedure TPSPSysLibs.hPowerSetCpu;
 begin
   var Cpu := FHLE.ArgInt(0);
   if (Cpu < 1) or (Cpu > Trunc(PllFloat)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   FCpuK := Min(511, (Cpu * 511 * FPllN) div 1332);
   ApplyCpuClock;
   FHLE.Result(0);
@@ -1341,12 +1413,21 @@ begin
   var Slot := FHLE.ArgInt(0);
   var CBId := FHLE.Arg(1);
   if (Slot < -1) or (Slot >= 32) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX);
+    Exit;
+  end;
   if Slot >= 16 then
-    begin FHLE.Result(SCE_POWER_ERROR_KERNEL_SLOT); Exit; end;
+  begin
+    FHLE.Result(SCE_POWER_ERROR_KERNEL_SLOT);
+    Exit;
+  end;
   var CB := TPSPCallback(FKernel.GetObject(CBId, TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID);
+    Exit;
+  end;
   if Slot = -1 then
   begin
     for var I := 0 to High(FPowerCallbacks) do
@@ -1356,10 +1437,16 @@ begin
         Break;
       end;
     if Slot = -1 then
-      begin FHLE.Result(SCE_POWER_ERROR_NO_SLOT); Exit; end;
+    begin
+      FHLE.Result(SCE_POWER_ERROR_NO_SLOT);
+      Exit;
+    end;
   end
   else if FPowerCallbacks[Slot] <> 0 then
-    begin FHLE.Result(SCE_POWER_ERROR_SLOT_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_POWER_ERROR_SLOT_BUSY);
+    Exit;
+  end;
   FPowerCallbacks[Slot] := CBId;
   FKernel.NotifyCallback(CB, PowerCallbackInfo);
   FHLE.Result(Cardinal(Slot));
@@ -1369,11 +1456,20 @@ procedure TPSPSysLibs.hPowerUnregisterCallback;
 begin
   var Slot := FHLE.ArgInt(0);
   if (Slot < 0) or (Slot >= 32) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX);
+    Exit;
+  end;
   if Slot >= 16 then
-    begin FHLE.Result(SCE_POWER_ERROR_KERNEL_SLOT); Exit; end;
+  begin
+    FHLE.Result(SCE_POWER_ERROR_KERNEL_SLOT);
+    Exit;
+  end;
   if FPowerCallbacks[Slot] = 0 then
-    begin FHLE.Result(SCE_POWER_ERROR_NOT_REGISTERED); Exit; end;
+  begin
+    FHLE.Result(SCE_POWER_ERROR_NOT_REGISTERED);
+    Exit;
+  end;
   FPowerCallbacks[Slot] := 0;
   FHLE.Result(0);
 end;
@@ -1539,7 +1635,6 @@ begin
   FHLE.Result(0);
 end;
 
-
 { TPSPUmdDrive }
 
 constructor TPSPUmdDrive.Create;
@@ -1645,7 +1740,10 @@ procedure TPSPSysLibs.hLibcTime;
 begin
   var P := FHLE.Arg(0);
   if (P <> 0) and ((P >= $80000000) or not FMemory.Valid(P, 4)) then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var T := Cardinal((NowTicks - PSPUnixEpochTicks) div 1000000);
   if P <> 0 then
     FMemory.Write32(P, T);
@@ -1703,15 +1801,19 @@ end;
 
 procedure TPSPSysLibs.hImposeGetLanguageMode;
 begin
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), Cardinal(PSPSettings.Language));
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), Cardinal(PSPSettings.ButtonSwap));
+  if FHLE.Arg(0) <> 0 then
+    FMemory.Write32(FHLE.Arg(0), Cardinal(PSPSettings.Language));
+  if FHLE.Arg(1) <> 0 then
+    FMemory.Write32(FHLE.Arg(1), Cardinal(PSPSettings.ButtonSwap));
   FHLE.Result(0);
 end;
 
 procedure TPSPSysLibs.hImposeGetBatteryIconStatus;
 begin
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), 0);
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), 3);
+  if FHLE.Arg(0) <> 0 then
+    FMemory.Write32(FHLE.Arg(0), 0);
+  if FHLE.Arg(1) <> 0 then
+    FMemory.Write32(FHLE.Arg(1), 3);
   FHLE.Result(0);
 end;
 
@@ -1748,12 +1850,21 @@ begin
   var Src := FHLE.Arg(1);
   var Size := FHLE.Arg(2);
   if Size = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+    Exit;
+  end;
   if (Dst = 0) or (Src = 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER);
+    Exit;
+  end;
   var Now := FKernel.Scheduler.Now;
   if TryOnly and (FDmacUntil > Now) then
-    begin FHLE.Result($80000021); Exit; end;
+  begin
+    FHLE.Result($80000021);
+    Exit;
+  end;
   if ((Size < 272) and (FDmacUntil <= Now)) or not FKernel.CanWait then
   begin
     FMemory.Copy(Dst, Src, Size);
@@ -1772,7 +1883,8 @@ procedure TPSPSysLibs.StateDmacDone(Action: TPSPStateAction; Value: Cardinal);
 begin
   FMemory.Copy(Cardinal(Action.Arg(0)), Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
   var T := TPSPThread(Action.Obj(0));
-  if T.IsWaiting and (T.Wait.HLETag = 'dmac') then FKernel.EndWait(T, 0);
+  if T.IsWaiting and (T.Wait.HLETag = 'dmac') then
+    FKernel.EndWait(T, 0);
 end;
 
 procedure TPSPSysLibs.hGetPSID;
@@ -1844,7 +1956,10 @@ end;
 procedure TPSPSysLibs.hUmdActivate;
 begin
   if not UmdDriveArgs(FHLE.Arg(0), FHLE.Arg(1)) then
-    begin FHLE.Result(UMD_ERROR_INVALID); Exit; end;
+  begin
+    FHLE.Result(UMD_ERROR_INVALID);
+    Exit;
+  end;
   FUmdActivated := True;
   FHLE.Result(0);
   // Programs built for newer firmware hear the full state.
@@ -1857,7 +1972,10 @@ end;
 procedure TPSPSysLibs.hUmdDeactivate;
 begin
   if not UmdDriveArgs(FHLE.Arg(0), FHLE.Arg(1)) then
-    begin FHLE.Result(UMD_ERROR_INVALID); Exit; end;
+  begin
+    FHLE.Result(UMD_ERROR_INVALID);
+    Exit;
+  end;
   FUmdActivated := False;
   FHLE.Result(0);
   UmdChanged(UmdStat);
@@ -1877,11 +1995,20 @@ procedure TPSPSysLibs.UmdWait(AllowCB, HasTimer: Boolean);
 begin
   var Want := FHLE.Arg(0);
   if (Want and UMD_WAITABLE) = 0 then
-    begin FHLE.Result(UMD_ERROR_INVALID); Exit; end;
+  begin
+    FHLE.Result(UMD_ERROR_INVALID);
+    Exit;
+  end;
   if FKernel.InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if not FKernel.CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   var T := FKernel.Current;
   FHLE.Result(0);
   if (Want and UmdStat) <> 0 then
@@ -1935,7 +2062,10 @@ procedure TPSPSysLibs.hUmdRegisterCallback;
 begin
   var CB := TPSPCallback(FKernel.GetObject(FHLE.Arg(0), TPSPCallback));
   if CB = nil then
-    begin FHLE.Result(UMD_ERROR_INVALID); Exit; end;
+  begin
+    FHLE.Result(UMD_ERROR_INVALID);
+    Exit;
+  end;
   FUmdCallback := FHLE.Arg(0);
   FHLE.Result(0);
 end;
@@ -1944,7 +2074,10 @@ procedure TPSPSysLibs.hUmdUnregisterCallback;
 begin
   var Id := FHLE.Arg(0);
   if Id <> FUmdCallback then
-    begin FHLE.Result(UMD_ERROR_INVALID); Exit; end;
+  begin
+    FHLE.Result(UMD_ERROR_INVALID);
+    Exit;
+  end;
   FUmdCallback := 0;
   // Before 3.00 the id comes back.
   if FKernel.CompiledSdkVersion > $3000000 then
@@ -1957,7 +2090,10 @@ procedure TPSPSysLibs.hUmdGetDiscInfo;
 begin
   var P := FHLE.Arg(0);
   if (P = 0) or (P >= $80000000) or (FMemory.Read32(P) <> 8) then
-    begin FHLE.Result(UMD_ERROR_INVALID); Exit; end;
+  begin
+    FHLE.Result(UMD_ERROR_INVALID);
+    Exit;
+  end;
   FMemory.Write32(P + 4, $10);
   FHLE.Result(0);
 end;
@@ -1979,8 +2115,7 @@ const
   S = 'sceSuspendForUser';
 begin
   var H := FHLE;
-  for var NID in [Cardinal($79D1C3FA), $B435DEC5, $920F104A, $C2DF770E, $80001C4C, $16641D70, $4FD31C9D,
-    $FB05FAD0] do
+  for var NID in [Cardinal($79D1C3FA), $B435DEC5, $920F104A, $C2DF770E, $80001C4C, $16641D70, $4FD31C9D, $FB05FAD0] do
     H.Register(U, NID, Format('sceKernelCache_%.8X', [NID]), hDcacheNop);
   H.Register(U, $3EE30821, 'sceKernelDcacheWritebackRange', hDcacheWritebackRange);
   H.Register(U, $34B9FA9E, 'sceKernelDcacheWritebackInvalidateRange', hDcacheWritebackRange);
@@ -2144,7 +2279,6 @@ begin
   H.Register('sceDmac', $D97F94D8, 'sceDmacTryMemcpy', hDmacTryMemcpy);
   H.Register('sceOpenPSID', $C69BEBCE, 'sceOpenPSIDGetOpenPSID', hGetPSID);
 end;
-
 
 initialization
   RegisterPSPService(TPSPSysLibs);

@@ -1,4 +1,4 @@
-unit PSP.Scheduler;
+﻿unit PSP.Scheduler;
 
 // The master clock: guest nanoseconds since power-on. Devices own one event
 // slot each; ties are broken by declaration order. The CPU converts cycles at

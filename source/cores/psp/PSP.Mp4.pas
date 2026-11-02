@@ -1,4 +1,4 @@
-unit PSP.Mp4;
+﻿unit PSP.Mp4;
 
 // sceMp4: MP4 movies for the ME. The library reads the file through the
 // guest's tell/seek/read callbacks, keeps the sample tables and hands out the
@@ -9,8 +9,8 @@ unit PSP.Mp4;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, PSP.State.Action;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.State.Action;
 
 type
   TPSPMp4Sample = record
@@ -451,8 +451,8 @@ begin
     Exit;
   end;
   var Chunk := Min(Int64(BufSize), Total - Done);
-  FKernel.CallGuest(ReadFn, [Param, Buf, Cardinal(Chunk)], nil, GP,
-    TPSPStateAction.Create(StateRead, [F], [Param, ReadFn, Buf, BufSize, Total, Done, GP, Chunk]));
+  FKernel.CallGuest(ReadFn, [Param, Buf, Cardinal(Chunk)], nil, GP, TPSPStateAction.Create(StateRead, [F],
+    [Param, ReadFn, Buf, BufSize, Total, Done, GP, Chunk]));
 end;
 
 procedure TPSPMp4.StateRead(Action: TPSPStateAction; Value: Cardinal);
@@ -462,13 +462,16 @@ begin
   var N := Integer(Value);
   if N <= 0 then
   begin
-    SetLength(F.Data, Done); F.Parse; FHLE.CPU.Ctx.GPR[2] := 0;
+    SetLength(F.Data, Done);
+    F.Parse;
+    FHLE.CPU.Ctx.GPR[2] := 0;
     Exit;
   end;
-  if N > Action.Arg(7) then N := Integer(Action.Arg(7));
+  if N > Action.Arg(7) then
+    N := Integer(Action.Arg(7));
   FMemory.ReadBytes(Cardinal(Action.Arg(2)), F.Data[Done], N);
-  ReadStep(F, Cardinal(Action.Arg(0)), Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)),
-    Cardinal(Action.Arg(3)), Action.Arg(4), Done + N, Cardinal(Action.Arg(6)));
+  ReadStep(F, Cardinal(Action.Arg(0)), Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)), Cardinal(Action.Arg(3)),
+    Action.Arg(4), Done + N, Cardinal(Action.Arg(6)));
 end;
 
 procedure TPSPMp4.hCreate;
@@ -495,15 +498,18 @@ begin
   var GP := FHLE.CPU.Ctx.GPR[28];
   FHLE.Result(0);
   // The file's size from seek(0, SEEK_END), then everything from the start.
-  FKernel.CallGuest(SeekFn, [Param, 0, 0, 0, 2], nil, GP,
-    TPSPStateAction.Create(StateSeekEnd, [F], [Param, SeekFn, ReadFn, Buf, BufSize, GP]));
+  FKernel.CallGuest(SeekFn, [Param, 0, 0, 0, 2], nil, GP, TPSPStateAction.Create(StateSeekEnd, [F],
+    [Param, SeekFn, ReadFn, Buf, BufSize, GP]));
 end;
 
 procedure TPSPMp4.StateSeekEnd(Action: TPSPStateAction; Value: Cardinal);
 begin
   var Total := Int64(Value);
   if (Total <= 0) or (Total > 256 * 1024 * 1024) then
-    begin FHLE.CPU.Ctx.GPR[2] := ERROR_MP4_INVALID_VALUE; Exit; end;
+  begin
+    FHLE.CPU.Ctx.GPR[2] := ERROR_MP4_INVALID_VALUE;
+    Exit;
+  end;
   var F := TPSPMp4File(Action.Obj(0));
   SetLength(F.Data, Total);
   Action.Values := Action.Values + [Total];
@@ -514,8 +520,8 @@ end;
 
 procedure TPSPMp4.StateSeekStart(Action: TPSPStateAction; Value: Cardinal);
 begin
-  ReadStep(TPSPMp4File(Action.Obj(0)), Cardinal(Action.Arg(0)), Cardinal(Action.Arg(2)),
-    Cardinal(Action.Arg(3)), Cardinal(Action.Arg(4)), Action.Arg(6), 0, Cardinal(Action.Arg(5)));
+  ReadStep(TPSPMp4File(Action.Obj(0)), Cardinal(Action.Arg(0)), Cardinal(Action.Arg(2)), Cardinal(Action.Arg(3)),
+    Cardinal(Action.Arg(4)), Action.Arg(6), 0, Cardinal(Action.Arg(5)));
 end;
 
 procedure TPSPMp4.hDelete;

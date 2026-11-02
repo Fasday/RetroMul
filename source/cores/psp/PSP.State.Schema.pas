@@ -1,10 +1,11 @@
-unit PSP.State.Schema;
+﻿unit PSP.State.Schema;
 
 // Only explicitly described POD records may bypass field traversal. Native
 // render/cache fields are omitted and rebuilt against the new memory objects.
 interface
 
-{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic,
+  vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
   PSP.State.Graph;
@@ -14,12 +15,14 @@ function NewPSPStateSchema: TPSPGraphSchema;
 implementation
 
 uses
-  System.SysUtils, System.Classes, System.TypInfo, System.Generics.Collections, Core.Emulation.Types,
-  PSP.CPU, PSP.Memory, PSP.Kernel, PSP.Scheduler, PSP.HLE, PSP.IO, PSP.Loader,
-  PSP.Display, PSP.Service, PSP.Audio, PSP.Font, PSP.GE, PSP.GE.Types, PSP.GE.Engine,
-  PSP.SAS, PSP.SysLibs, PSP.Misc, PSP.MP3, PSP.Atrac, PSP.Mpeg, PSP.MpegDemux, PSP.MpegVideo,
-  PSP.Jpeg, PSP.Net, PSP.Utility, PSP.Videocodec, Audio.MP3.Layer3, Core.Snapshots, PSP.State.Action,
-  Video.AVC.H264, Video.AVC.H264.Syntax, Video.AVC.Types, FMXAudio.Transform;
+  System.SysUtils, System.Classes, System.TypInfo, System.Generics.Collections,
+  Core.Emulation.Types, PSP.CPU, PSP.Memory, PSP.Kernel, PSP.Scheduler, PSP.HLE,
+  PSP.IO, PSP.Loader, PSP.Display, PSP.Service, PSP.Audio, PSP.Font, PSP.GE,
+  PSP.GE.Types, PSP.GE.Engine, PSP.SAS, PSP.SysLibs, PSP.Misc, PSP.MP3,
+  PSP.Atrac, PSP.Mpeg, PSP.MpegDemux, PSP.MpegVideo, PSP.Jpeg, PSP.Net,
+  PSP.Utility, PSP.Videocodec, Audio.MP3.Layer3, Core.Snapshots,
+  PSP.State.Action, Video.AVC.H264, Video.AVC.H264.Syntax, Video.AVC.Types,
+  FMXAudio.Transform;
 
 type
   TU32x2 = array[0..1] of Cardinal;
@@ -79,22 +82,31 @@ begin
     Result.AddClass(TInverseMDCT, []);
     Result.AddClass(TObjectDictionary<string, TDictionary<Cardinal, Cardinal>>, []);
     Result.Native(TMP3Layer3Decoder,
-      function: TObject begin Result := TMP3Layer3Decoder.Create; end,
+      function: TObject
+      begin
+        Result := TMP3Layer3Decoder.Create;
+      end,
       procedure(Instance: TObject; State: TStateArchive)
-      begin TMP3Layer3Decoder(Instance).SerializeState(State); end);
+      begin
+        TMP3Layer3Decoder(Instance).SerializeState(State);
+      end);
     Result.AddClass(TPSPCPU, ['FDecoded', 'FPages', 'FOnSyscall', 'FOnBreak', 'Runner']);
     Result.AddClass(TPSPHLE, ['FOnLog']);
     Result.AddClass(TPSPKernel, ['FOnExit', 'FOnSyncTime']);
-    Result.AddClass(TPSPIO, ['FOnOutput', 'FOnScreenshot', 'FOnHostChange',
-      'FMemstickRoot', 'FFlashRoot', 'FHostRoot', 'FDisc']);
+    Result.AddClass(TPSPIO,
+      ['FOnOutput', 'FOnScreenshot', 'FOnHostChange', 'FMemstickRoot', 'FFlashRoot', 'FHostRoot', 'FDisc']);
     Result.AddClass(TPSPLoader, ['FOnLoadExec']);
     Result.AddClass(TPSPSystem, ['FlashRoot', 'FontDirectory', 'Services']);
     Result.AddClass(TPSPUtility, ['FView', 'FSoftwareView']);
     // Slice-local readers and reference-list workspaces can retain sentinels
     // or removed pictures. The next access unit builds them from the DPB.
-    Result.AddClass(TH264Decoder, ['FBits', 'FCABAC', 'FRemoveRefs', 'FPromoteRefs',
-      'FPromoteIndexes', 'FRefList', 'FRefList1']);
-    Result.Factory(TH264Decoder, function: TObject begin Result := TH264Decoder.Create; end);
+    Result.AddClass(TH264Decoder,
+      ['FBits', 'FCABAC', 'FRemoveRefs', 'FPromoteRefs', 'FPromoteIndexes', 'FRefList', 'FRefList1']);
+    Result.Factory(TH264Decoder,
+      function: TObject
+      begin
+        Result := TH264Decoder.Create;
+      end);
     Result.Plain(TypeInfo(TH264SPS));
     Result.Plain(TypeInfo(TH264PPS));
 

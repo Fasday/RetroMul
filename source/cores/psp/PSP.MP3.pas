@@ -1,4 +1,4 @@
-unit PSP.MP3;
+﻿unit PSP.MP3;
 
 // sceMp3: MP3 playback from a stream the program feeds. Two handles; each has
 // a ring of two halves inside its stream buffer (after a 1472-byte head that
@@ -11,8 +11,9 @@ unit PSP.MP3;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, Audio.MP3.Types, Audio.MP3.Layer3;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service, Audio.MP3.Types,
+  Audio.MP3.Layer3;
 
 type
   // One MPEG audio layer III frame at a time, keeping the bit reservoir.
@@ -222,7 +223,7 @@ begin
     var Header: TMP3FrameHeader;
     if not TMP3FrameParser.ParseHeader(Stream, Header) or (Stream.Position <> 4) then
       Exit;
-    if HDR_IS_CRC(Header.hdr) then
+    if HDR_IS_CRC(Header.Hdr) then
       Stream.Position := Stream.Position + 2;
     var SideSize := TMP3FrameParser.SideInfoSize(Header);
     if Stream.Position + SideSize > Length(Bytes) then
@@ -241,8 +242,8 @@ begin
     var Main := Copy(Bytes, Integer(Stream.Position), Length(Bytes) - Integer(Stream.Position));
     if Valid then
     begin
-      if (FLastHeader[0] <> 0) and (((FLastHeader[1] xor Header.hdr[1]) and $FE <> 0) or
-        ((FLastHeader[2] xor Header.hdr[2]) and $0C <> 0)) then
+      if (FLastHeader[0] <> 0) and (((FLastHeader[1] xor Header.hdr[1]) and $FE <> 0) or ((FLastHeader[2] xor
+        Header.hdr[2]) and $0C <> 0)) then
       begin
         FReservoir := nil;
         FDecoder.Free;

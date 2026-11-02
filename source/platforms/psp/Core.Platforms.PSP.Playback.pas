@@ -1,4 +1,4 @@
-unit Core.Platforms.PSP.Playback;
+﻿unit Core.Platforms.PSP.Playback;
 
 interface
 
@@ -10,11 +10,12 @@ type
   // device's native rate, so samples pass through unchanged; the queue is the
   // real-time clock: the worker runs the next frame only while CanAdvance.
   TPSPAudioPlayback = class
-  public const
-    SampleRate = 44100;
-    BlockFrames = 1024;
-    BlockCount = 16;
-    TargetBlocks = 6; // About 140 ms queued.
+  public
+    const
+      SampleRate = 44100;
+      BlockFrames = 1024;
+      BlockCount = 16;
+      TargetBlocks = 6; // About 140 ms queued.
   private
     FAudio: TPCMAudio;
     FPending: TArray<SmallInt>;

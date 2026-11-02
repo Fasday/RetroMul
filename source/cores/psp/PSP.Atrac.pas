@@ -1,4 +1,4 @@
-unit PSP.Atrac;
+﻿unit PSP.Atrac;
 
 // sceAtrac3plus: ATRAC3 / ATRAC3+ playback from a buffer the program fills,
 // decoded with source/hardware/audio. Each ID has a 256-byte context in
@@ -22,8 +22,8 @@ unit PSP.Atrac;
 interface
 
 uses
-  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service,
-  PSP.SAS, Audio.ATRAC3, Audio.ATRAC3Plus;
+  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
+  PSP.Scheduler, PSP.Service, PSP.SAS, Audio.ATRAC3, Audio.ATRAC3Plus;
 
 type
   TPSPAtracFrameDecoder = class
@@ -481,9 +481,12 @@ end;
 function TPSPAtrac.DataError(S: TPSPAtracSlot): Cardinal;
 begin
   case S.State of
-    2..6: Result := 0;
-    8: Result := ERROR_ATRAC_IS_LOW_LEVEL;
-    16: Result := ERROR_ATRAC_IS_FOR_SCESAS;
+    2..6:
+      Result := 0;
+    8:
+      Result := ERROR_ATRAC_IS_LOW_LEVEL;
+    16:
+      Result := ERROR_ATRAC_IS_FOR_SCESAS;
   else
     Result := ERROR_ATRAC_NO_DATA;
   end;
@@ -667,12 +670,16 @@ function TPSPAtrac.FrameAvailable(S: TPSPAtracSlot; Count: Integer): Boolean;
 begin
   var Need := Int64(Count) * S.FrameSize;
   case S.State of
-    2: Result := S.CurFile + Need <= Min(S.FileEnd, S.BufSize);
-    3: Result := S.CurFile + Need <= S.W;
+    2:
+      Result := S.CurFile + Need <= Min(S.FileEnd, S.BufSize);
+    3:
+      Result := S.CurFile + Need <= S.W;
     4..6:
       case S.CurBuffer of
-        0: Result := S.RV + Need <= S.WV;
-        1: Result := S.SecondSet and (S.SecondOff + Need <= S.SecondSize);
+        0:
+          Result := S.RV + Need <= S.WV;
+        1:
+          Result := S.SecondSet and (S.SecondOff + Need <= S.SecondSize);
       else
         Result := False;
       end;
@@ -763,10 +770,11 @@ begin
   S.HasLoop := False;
   if ReadSize < 10 then
     Exit(ERROR_ATRAC_SIZE_TOO_SMALL);
-  if (FMemory.Read8(Buf) <> Ord('e')) or (FMemory.Read8(Buf + 1) <> Ord('a')) or (FMemory.Read8(Buf + 2) <> Ord('3')) then
+  if (FMemory.Read8(Buf) <> Ord('e')) or (FMemory.Read8(Buf + 1) <> Ord('a')) or (FMemory.Read8(Buf + 2) <>
+    Ord('3')) then
     Exit(ERROR_ATRAC_UNKNOWN_FORMAT);
-  var TagSize := Int64(10) + Int64((FMemory.Read8(Buf + 6) and $7F) shl 21) or Int64((FMemory.Read8(Buf + 7) and $7F) shl 14) or
-    Int64((FMemory.Read8(Buf + 8) and $7F) shl 7) or Int64(FMemory.Read8(Buf + 9) and $7F);
+  var TagSize := Int64(10) + Int64((FMemory.Read8(Buf + 6) and $7F) shl 21) or Int64((FMemory.Read8(Buf + 7) and
+    $7F) shl 14) or Int64((FMemory.Read8(Buf + 8) and $7F) shl 7) or Int64(FMemory.Read8(Buf + 9) and $7F);
   if TagSize + 96 > ReadSize then
     Exit(ERROR_ATRAC_SIZE_TOO_SMALL);
   var H := Buf + Cardinal(TagSize);
@@ -1062,7 +1070,10 @@ begin
   var At3 := FHLE.ArgInt(0);
   var At3Plus := FHLE.ArgInt(1);
   if FKernel.InInterrupt and ((At3 > 0) or (At3Plus > 0)) then
-    begin FHLE.Result($807F00FD); Exit; end;
+  begin
+    FHLE.Result($807F00FD);
+    Exit;
+  end;
   for var S in FSlots do
     if S.InUse then
     begin
@@ -1267,7 +1278,8 @@ begin
         Finish := 1;
     end;
   end;
-  if (R = 0) or (R = ERROR_ATRAC_ALL_DATA_DECODED) or (R = ERROR_ATRAC_BUFFER_IS_EMPTY) or (R = ERROR_ATRAC_API_FAIL) then
+  if (R = 0) or (R = ERROR_ATRAC_ALL_DATA_DECODED) or (R = ERROR_ATRAC_BUFFER_IS_EMPTY) or
+    (R = ERROR_ATRAC_API_FAIL) then
   begin
     if SamplesPtr <> 0 then
       FMemory.Write32(SamplesPtr, Cardinal(Samples));

@@ -1,4 +1,4 @@
-unit PSP.VFPU.Math;
+﻿unit PSP.VFPU.Math;
 
 // VFPU arithmetic on raw single bit patterns, as the hardware rounds it:
 // denormal operands and results are flushed to signed zero, NaNs come out as
@@ -178,11 +178,28 @@ end;
 {$ELSE}
 begin
   Result := 0;
-  if X >= $10000 then begin X := X shr 16; Inc(Result, 16); end;
-  if X >= $100 then begin X := X shr 8; Inc(Result, 8); end;
-  if X >= $10 then begin X := X shr 4; Inc(Result, 4); end;
-  if X >= 4 then begin X := X shr 2; Inc(Result, 2); end;
-  if X >= 2 then Inc(Result);
+  if X >= $10000 then
+  begin
+    X := X shr 16;
+    Inc(Result, 16);
+  end;
+  if X >= $100 then
+  begin
+    X := X shr 8;
+    Inc(Result, 8);
+  end;
+  if X >= $10 then
+  begin
+    X := X shr 4;
+    Inc(Result, 4);
+  end;
+  if X >= 4 then
+  begin
+    X := X shr 2;
+    Inc(Result, 2);
+  end;
+  if X >= 2 then
+    Inc(Result);
 end;
 {$ENDIF}
 
@@ -216,8 +233,7 @@ begin
     var EY := Integer((Y shr 23) and $FF);
     if (EX = $FF) or (EY = $FF) then
     begin
-      if ((EX = $FF) and ((X and $7FFFFF) <> 0)) or ((EY = $FF) and ((Y and $7FFFFF) <> 0)) or
-        (EX = 0) or (EY = 0) then
+      if ((EX = $FF) and ((X and $7FFFFF) <> 0)) or ((EY = $FF) and ((Y and $7FFFFF) <> 0)) or (EX = 0) or (EY = 0) then
         Exit(VF_NAN);
       if Neg then
         InfSigns := InfSigns or 2
@@ -430,9 +446,12 @@ begin
   if Fr = 0 then
   begin
     case Q of
-      0: Result := 0;
-      1: Result := VF_ONE;
-      2: Result := $80000000;
+      0:
+        Result := 0;
+      1:
+        Result := VF_ONE;
+      2:
+        Result := $80000000;
     else
       Result := $BF800000;
     end;

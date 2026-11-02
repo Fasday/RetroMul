@@ -1,4 +1,4 @@
-unit PSP.GE.VulkanLLE;
+﻿unit PSP.GE.VulkanLLE;
 
 // The GE's rasterizer and pixel pipeline on a Vulkan compute device, with the
 // arithmetic of PSP.GE.Raster bit for bit (source/gpu/shaders/PSPGERaster.comp).
@@ -32,9 +32,10 @@ unit PSP.GE.VulkanLLE;
 interface
 
 uses
-  System.SysUtils, System.Types, System.Math, System.Diagnostics, System.Generics.Collections, PSP.Types, PSP.Memory,
-  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend, PSP.GE.Workers, RM.Vulkan.Bindings, RM.Vulkan.Loader,
-  RM.Vulkan.Compute;
+  System.SysUtils, System.Types, System.Math, System.Diagnostics,
+  System.Generics.Collections, PSP.Types, PSP.Memory, PSP.GE.Texture,
+  PSP.GE.Raster, PSP.GE.Backend, PSP.GE.Workers, RM.Vulkan.Bindings,
+  RM.Vulkan.Loader, RM.Vulkan.Compute;
 
 const
   VRAMPageCount = PSPVRAMSize div PSPPageSize;
@@ -189,8 +190,7 @@ type
     function AddData(Bytes: Integer): Integer;
     function NewPrim: PCardinal;
     function PackState(const S: TGERaster; out Tex: TGEVulkanLLEReads; out Ok: Boolean): Integer;
-    function Place(const S: TGERaster; State: Integer; const Tex: TGEVulkanLLEReads;
-      X1, Y1, X2, Y2: Integer): Boolean;
+    function Place(const S: TGERaster; State: Integer; const Tex: TGEVulkanLLEReads; X1, Y1, X2, Y2: Integer): Boolean;
     procedure Record_(Kind: Integer; const S: TGERaster; const V0, V1, V2: TGEVertex);
     procedure Fallback;
     procedure CheckBatch(const Held: array of Boolean; Readback: TVulkanBuffer);
@@ -216,12 +216,13 @@ type
   end;
 
 // A GPU backend, or False with the reason when there is no suitable device.
-function CreateGEVulkanLLEBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEVulkanLLEBackend; out Error: string;
-  const DeviceName: string = ''): Boolean;
+function CreateGEVulkanLLEBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEVulkanLLEBackend;
+  out Error: string; const DeviceName: string = ''): Boolean;
 
 implementation
 
-uses SPV.PSPGERaster, SPV.PSPGESelfTest;
+uses
+  SPV.PSPGERaster, SPV.PSPGESelfTest;
 
 const
   PrimWords = 128;
@@ -284,8 +285,8 @@ begin
     Result := ((A and $7FF0000000000000) = $7FF0000000000000) and ((A and $FFFFFFFFFFFFF) <> 0) and
       ((B and $7FF0000000000000) = $7FF0000000000000) and ((B and $FFFFFFFFFFFFF) <> 0)
   else
-    Result := ((A and $7F800000) = $7F800000) and ((A and $7FFFFF) <> 0) and
-      ((B and $7F800000) = $7F800000) and ((B and $7FFFFF) <> 0);
+    Result := ((A and $7F800000) = $7F800000) and ((A and $7FFFFF) <> 0) and ((B and $7F800000) = $7F800000) and
+      ((B and $7FFFFF) <> 0);
 end;
 
 // The device's float arithmetic against the CPU's on operands of all kinds.
@@ -310,9 +311,12 @@ var
   function Operand: Cardinal;
   begin
     case Rand mod 6 of
-      0: Result := Special[Rand mod 16];
-      1: Result := Rand and $807FFFFF;
-      2: Result := (Rand and $80FFFFFF) or (Cardinal(110 + Rand mod 40) shl 23);
+      0:
+        Result := Special[Rand mod 16];
+      1:
+        Result := Rand and $807FFFFF;
+      2:
+        Result := (Rand and $80FFFFFF) or (Cardinal(110 + Rand mod 40) shl 23);
     else
       Result := Rand;
     end;
@@ -329,8 +333,10 @@ begin
     Inputs[I * 4 + 2] := Operand;
     Inputs[I * 4 + 3] := Operand;
     case Rand mod 4 of
-      0: Inputs[I * 4 + 3] := (Inputs[I * 4 + 1] and $800FFFFF) or (Cardinal(1000 + Rand mod 47) shl 20);
-      1: Inputs[I * 4 + 3] := Inputs[I * 4 + 1] and $800FFFFF;
+      0:
+        Inputs[I * 4 + 3] := (Inputs[I * 4 + 1] and $800FFFFF) or (Cardinal(1000 + Rand mod 47) shl 20);
+      1:
+        Inputs[I * 4 + 3] := Inputs[I * 4 + 1] and $800FFFFF;
     end;
   end;
   var Src: TVulkanBuffer := nil;
@@ -354,9 +360,14 @@ begin
     Cmd.Run;
     Dst.Invalidate;
     var Names: array[0..7] of string;
-    Names[0] := 'single multiply'; Names[1] := 'double add'; Names[2] := 'double multiply';
-    Names[3] := 'double conversion'; Names[4] := 'single conversion'; Names[5] := 'integer conversion';
-    Names[6] := 'roundEven'; Names[7] := 'division';
+    Names[0] := 'single multiply';
+    Names[1] := 'double add';
+    Names[2] := 'double multiply';
+    Names[3] := 'double conversion';
+    Names[4] := 'single conversion';
+    Names[5] := 'integer conversion';
+    Names[6] := 'roundEven';
+    Names[7] := 'division';
     var Bad: array[0..7] of Integer;
     FillChar(Bad, SizeOf(Bad), 0);
     for var I := 0 to N - 1 do
@@ -371,18 +382,24 @@ begin
       var DA := PDouble(@DAb)^;
       var DB := PDouble(@DBb)^;
       var S: Single := FA * FB;
-      if not SameBits(R[0], PCardinal(@S)^, False) then Inc(Bad[0]);
+      if not SameBits(R[0], PCardinal(@S)^, False) then
+        Inc(Bad[0]);
       var D: Double := DA + DB;
-      if not SameBits(PUInt64(@R[1])^, PUInt64(@D)^, True) then Inc(Bad[1]);
+      if not SameBits(PUInt64(@R[1])^, PUInt64(@D)^, True) then
+        Inc(Bad[1]);
       D := DA * DB;
-      if not SameBits(PUInt64(@R[3])^, PUInt64(@D)^, True) then Inc(Bad[2]);
+      if not SameBits(PUInt64(@R[3])^, PUInt64(@D)^, True) then
+        Inc(Bad[2]);
       var DFA: Double := FA;
       D := DFA * DB;
-      if not SameBits(PUInt64(@R[5])^, PUInt64(@D)^, True) then Inc(Bad[3]);
+      if not SameBits(PUInt64(@R[5])^, PUInt64(@D)^, True) then
+        Inc(Bad[3]);
       S := DA;
-      if not SameBits(R[7], PCardinal(@S)^, False) then Inc(Bad[4]);
+      if not SameBits(R[7], PCardinal(@S)^, False) then
+        Inc(Bad[4]);
       D := Int64(DBb);
-      if not SameBits(PUInt64(@R[8])^, PUInt64(@D)^, True) then Inc(Bad[5]);
+      if not SameBits(PUInt64(@R[8])^, PUInt64(@D)^, True) then
+        Inc(Bad[5]);
       D := DA;
       if not (IsNan(DA) or IsInfinite(DA) or (Abs(DA) >= 4503599627370496.0)) then
       begin
@@ -391,13 +408,16 @@ begin
         if (D = 0) and (DAb shr 63 <> 0) then
           PUInt64(@D)^ := UInt64($8000000000000000);
       end;
-      if not SameBits(PUInt64(@R[10])^, PUInt64(@D)^, True) then Inc(Bad[6]);
+      if not SameBits(PUInt64(@R[10])^, PUInt64(@D)^, True) then
+        Inc(Bad[6]);
       D := DA / DB;
-      if not SameBits(PUInt64(@R[12])^, PUInt64(@D)^, True) then Inc(Bad[7]);
+      if not SameBits(PUInt64(@R[12])^, PUInt64(@D)^, True) then
+        Inc(Bad[7]);
       var T: Cardinal := 0;
       if Abs(DA) < 2147483648.0 then
         T := Cardinal(Trunc(DA));
-      if R[14] <> T then Inc(Bad[5]);
+      if R[14] <> T then
+        Inc(Bad[5]);
     end;
     for var J := 0 to 7 do
       if Bad[J] > 0 then
@@ -411,8 +431,8 @@ begin
   end;
 end;
 
-function CreateGEVulkanLLEBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEVulkanLLEBackend; out Error: string;
-  const DeviceName: string): Boolean;
+function CreateGEVulkanLLEBackend(Memory: TPSPMemory; Check: Boolean; out Backend: TGEVulkanLLEBackend;
+  out Error: string; const DeviceName: string): Boolean;
 var
   Compute: TVulkanCompute;
   Taken: Boolean;
@@ -424,10 +444,10 @@ begin
     Error := 'This memory already has a VRAM device.';
     Exit(False);
   end;
-  {$IFDEF CPUX86}
+{$IFDEF CPUX86}
   Error := 'The Win32/x87 raster reference is not qualified for GPU rendering; use Win64.';
   Exit(False);
-  {$ENDIF}
+{$ENDIF}
   if not TryCreateVulkanCompute(Compute, Error, DeviceName) then
     Exit(False);
   var F := Compute.Features;
@@ -465,8 +485,9 @@ function SameBytes(A, B: PByte; Size: NativeInt): Boolean;
 begin
   while Size >= 32 do
   begin
-    if ((PUInt64(A)^ xor PUInt64(B)^) or (PUInt64(A + 8)^ xor PUInt64(B + 8)^) or
-      (PUInt64(A + 16)^ xor PUInt64(B + 16)^) or (PUInt64(A + 24)^ xor PUInt64(B + 24)^)) <> 0 then
+    if ((PUInt64(A)^ xor PUInt64(B)^) or (PUInt64(A + 8)^ xor PUInt64(B + 8)^) or (PUInt64(A + 16)^ xor
+      PUInt64(B + 16)^) or (PUInt64(A + 24)^ xor PUInt64(B + 24)^)) <>
+      0 then
       Exit(False);
     Inc(A, 32);
     Inc(B, 32);
@@ -553,8 +574,8 @@ begin
         // Row offsets K = Q + J - I between B's row J and A's row I.
         var KMin := Q - (A.Rows - 1);
         var KMax := Q + (B.Rows - 1);
-        if ((KMin <= 0) and (KMax >= 0) and (R < A.Width)) or
-          ((KMin <= -1) and (KMax >= -1) and (R > A.Stride - B.Width)) then
+        if ((KMin <= 0) and (KMax >= 0) and (R < A.Width)) or ((KMin <= -1) and (KMax >= -1) and
+          (R > A.Stride - B.Width)) then
           Exit(True);
       end
       else
@@ -615,7 +636,8 @@ end;
 // The guest bytes the texture unit can read for the current level: Size from
 // Addr, and when unswizzled, only the first Width bytes of each of Rows rows
 // of Stride bytes (texel coordinates are wrapped or clamped into the level).
-function TextureBytes(const T: TGETexture; Level: Integer; out Addr, Size: Cardinal; out Stride, Width, Rows: Int64): Boolean;
+function TextureBytes(const T: TGETexture; Level: Integer; out Addr, Size: Cardinal;
+  out Stride, Width, Rows: Int64): Boolean;
 begin
   var L := T.Levels[Level];
   Addr := L.Addr;
@@ -627,10 +649,14 @@ begin
   var H := L.Height;
   var Bits := 0;
   case T.Format of
-    0, 1, 2, 6: Bits := 16;
-    3, 7: Bits := 32;
-    4: Bits := 4;
-    5: Bits := 8;
+    0, 1, 2, 6:
+      Bits := 16;
+    3, 7:
+      Bits := 32;
+    4:
+      Bits := 4;
+    5:
+      Bits := 8;
     8, 9, 10:
       begin
         var BlockBytes := 16;
@@ -691,16 +717,21 @@ const
 // that coordinates within MinS..MaxS, MinT..MaxT computed with rounding errors
 // can sample: two texels more either way for those and the bilinear
 // neighbours, and more for large coordinates.
-function TexelWindow(const S: TGERaster; MinS, MaxS, MinT, MaxT: Double; const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
+function TexelWindow(const S: TGERaster; MinS, MaxS, MinT, MaxT: Double;
+  const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
 begin
   Result := Full;
   var L: PGETexLevel := @S.Tex.Levels[S.Tex.Level];
   var Bits := 0;
   case S.Tex.Format of
-    0, 1, 2, 6: Bits := 16;
-    3, 7: Bits := 32;
-    4: Bits := 4;
-    5: Bits := 8;
+    0, 1, 2, 6:
+      Bits := 16;
+    3, 7:
+      Bits := 32;
+    4:
+      Bits := 4;
+    5:
+      Bits := 8;
   else
     Exit;
   end;
@@ -726,15 +757,21 @@ end;
 // The texels a triangle can sample. Its pixels' S and T (GEDrawTriangle) are
 // combinations of the vertices' S/Q and T/Q with non-negative weights when
 // every vertex has positive Q and W.
-function TriangleTexels(const S: TGERaster; const V0, V1, V2: TGEVertex; const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
+function TriangleTexels(const S: TGERaster; const V0, V1, V2: TGEVertex;
+  const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
 begin
   Result := Full;
-  var MinS: Double := 0; var MaxS: Double := 0; var MinT: Double := 0; var MaxT: Double := 0;
+  var MinS: Double := 0;
+  var MaxS: Double := 0;
+  var MinT: Double := 0;
+  var MaxT: Double := 0;
   for var I := 0 to 2 do
   begin
     var V: PGEVertex := @V0;
-    if I = 1 then V := @V1;
-    if I = 2 then V := @V2;
+    if I = 1 then
+      V := @V1;
+    if I = 2 then
+      V := @V2;
     if not ((V.Q >= 1E-15) and (V.W >= 1E-15)) then
       Exit;
     var CS: Double := V.S / V.Q;
@@ -743,12 +780,17 @@ begin
       Exit;
     if I = 0 then
     begin
-      MinS := CS; MaxS := CS; MinT := CT; MaxT := CT;
+      MinS := CS;
+      MaxS := CS;
+      MinT := CT;
+      MaxT := CT;
     end
     else
     begin
-      MinS := Min(MinS, CS); MaxS := Max(MaxS, CS);
-      MinT := Min(MinT, CT); MaxT := Max(MaxT, CT);
+      MinS := Min(MinS, CS);
+      MaxS := Max(MaxS, CS);
+      MinT := Min(MinT, CT);
+      MaxT := Max(MaxT, CT);
     end;
   end;
   Result := TexelWindow(S, MinS, MaxS, MinT, MaxT, Full);
@@ -757,10 +799,13 @@ end;
 // The texels an unprojected sprite (box PX1..PX2, PY1..PY2) can sample. S
 // and T are linear across the box, so every pixel's lie between their values
 // at the corner pixels (GEDrawSprite).
-function SpriteTexels(const S: TGERaster; const V0: TGEVertex; SX, SY, TX, TY: Single;
-  PX1, PY1, PX2, PY2: Integer; const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
+function SpriteTexels(const S: TGERaster; const V0: TGEVertex; SX, SY, TX, TY: Single; PX1, PY1, PX2, PY2: Integer;
+  const Full: TGEVulkanLLESpan): TGEVulkanLLESpan;
 begin
-  var MinS: Double := 0; var MaxS: Double := 0; var MinT: Double := 0; var MaxT: Double := 0;
+  var MinS: Double := 0;
+  var MaxS: Double := 0;
+  var MinT: Double := 0;
+  var MaxT: Double := 0;
   for var Corner := 0 to 3 do
   begin
     var PX := PX1;
@@ -778,12 +823,17 @@ begin
       Exit(Full);
     if Corner = 0 then
     begin
-      MinS := CS; MaxS := CS; MinT := CT; MaxT := CT;
+      MinS := CS;
+      MaxS := CS;
+      MinT := CT;
+      MaxT := CT;
     end
     else
     begin
-      MinS := Min(MinS, CS); MaxS := Max(MaxS, CS);
-      MinT := Min(MinT, CT); MaxT := Max(MaxT, CT);
+      MinS := Min(MinS, CS);
+      MaxS := Max(MaxS, CS);
+      MinT := Min(MinT, CT);
+      MaxT := Max(MaxT, CT);
     end;
   end;
   Result := TexelWindow(S, MinS, MaxS, MinT, MaxT, Full);
@@ -801,8 +851,8 @@ function TouchesVRAM(Address, Size: Cardinal): Boolean;
 begin
   var Lo := Int64(Address and $1FFFFFFF);
   var Hi := Lo + Max(Int64(Size), 1);
-  Result := ((Hi > PSPVRAMBase) and (Lo < PSPVRAMBase + 4 * PSPVRAMSize)) or
-    ((Hi > $20000000) and (Hi - $20000000 > PSPVRAMBase));
+  Result := ((Hi > PSPVRAMBase) and (Lo < PSPVRAMBase + 4 * PSPVRAMSize)) or ((Hi > $20000000) and
+    (Hi - $20000000 > PSPVRAMBase));
 end;
 
 { TGEVulkanLLEBackend }
@@ -1080,7 +1130,8 @@ begin
   for var I := P.First to P.First + P.Count - 1 do
   begin
     var W := PCardinal(@FPrims[I * PrimWords]);
-    Inc(Total, ((Integer(W[4]) shr 4) - (Integer(W[2]) shr 4) + 1) * ((Integer(W[5]) shr 4) - (Integer(W[3]) shr 4) + 1));
+    Inc(Total,
+      ((Integer(W[4]) shr 4) - (Integer(W[2]) shr 4) + 1) * ((Integer(W[5]) shr 4) - (Integer(W[3]) shr 4) + 1));
   end;
   Result := FBinCount;
   Inc(FStats.Tiles, Tiles);
@@ -1233,8 +1284,10 @@ begin
           R := BlockSpan(R, Block);
           var Alignment := 1;
           case S.Tex.Format of
-            0, 1, 2, 6: Alignment := 2;
-            3, 7, 8, 9, 10: Alignment := 4;
+            0, 1, 2, 6:
+              Alignment := 2;
+            3, 7, 8, 9, 10:
+              Alignment := 4;
           end;
           // An unaligned native read can cross the mapped block's upper edge.
           if Addr and Cardinal(Alignment - 1) <> 0 then
@@ -1300,27 +1353,48 @@ begin
   W[9] := Cardinal(S.BandY1);
   W[10] := Cardinal(S.BandY2);
   var Flags: Cardinal := 0;
-  if S.Through then Flags := Flags or (1 shl 0);
-  if S.ClearMode then Flags := Flags or (1 shl 1);
-  if S.ClearColor then Flags := Flags or (1 shl 2);
-  if S.ClearStencil then Flags := Flags or (1 shl 3);
-  if S.ClearDepth then Flags := Flags or (1 shl 4);
-  if S.Flat then Flags := Flags or (1 shl 5);
-  if S.Gouraud then Flags := Flags or (1 shl 6);
-  if S.Textured then Flags := Flags or (1 shl 7);
-  if S.TexAlpha then Flags := Flags or (1 shl 8);
-  if S.ColorDouble then Flags := Flags or (1 shl 9);
-  if S.FogEnabled then Flags := Flags or (1 shl 10);
-  if S.ColorTest then Flags := Flags or (1 shl 11);
-  if S.AlphaTest then Flags := Flags or (1 shl 12);
-  if S.StencilTest then Flags := Flags or (1 shl 13);
-  if S.DepthTest then Flags := Flags or (1 shl 14);
-  if S.DepthWrite then Flags := Flags or (1 shl 15);
-  if S.Blend then Flags := Flags or (1 shl 16);
-  if S.Dither then Flags := Flags or (1 shl 17);
-  if S.LogicOp then Flags := Flags or (1 shl 18);
-  if S.DepthClamp then Flags := Flags or (1 shl 19);
-  if S.Textured and S.Tex.NeedLod then Flags := Flags or (1 shl 20);
+  if S.Through then
+    Flags := Flags or (1 shl 0);
+  if S.ClearMode then
+    Flags := Flags or (1 shl 1);
+  if S.ClearColor then
+    Flags := Flags or (1 shl 2);
+  if S.ClearStencil then
+    Flags := Flags or (1 shl 3);
+  if S.ClearDepth then
+    Flags := Flags or (1 shl 4);
+  if S.Flat then
+    Flags := Flags or (1 shl 5);
+  if S.Gouraud then
+    Flags := Flags or (1 shl 6);
+  if S.Textured then
+    Flags := Flags or (1 shl 7);
+  if S.TexAlpha then
+    Flags := Flags or (1 shl 8);
+  if S.ColorDouble then
+    Flags := Flags or (1 shl 9);
+  if S.FogEnabled then
+    Flags := Flags or (1 shl 10);
+  if S.ColorTest then
+    Flags := Flags or (1 shl 11);
+  if S.AlphaTest then
+    Flags := Flags or (1 shl 12);
+  if S.StencilTest then
+    Flags := Flags or (1 shl 13);
+  if S.DepthTest then
+    Flags := Flags or (1 shl 14);
+  if S.DepthWrite then
+    Flags := Flags or (1 shl 15);
+  if S.Blend then
+    Flags := Flags or (1 shl 16);
+  if S.Dither then
+    Flags := Flags or (1 shl 17);
+  if S.LogicOp then
+    Flags := Flags or (1 shl 18);
+  if S.DepthClamp then
+    Flags := Flags or (1 shl 19);
+  if S.Textured and S.Tex.NeedLod then
+    Flags := Flags or (1 shl 20);
   W[104] := S.KeepMask;
   W[105] := Cardinal(S.ZPermutation);
   W[106] := Cardinal(FMemory.VRAMShift);
@@ -1416,9 +1490,8 @@ begin
   begin
     var P: PGEVulkanLLEPass := @FPasses[FPassCount - 1];
     if (X1 >= P.X1) and (Y1 >= P.Y1) and (X2 <= P.X2) and (Y2 <= P.Y2) and (P.FBAddr = S.FBAddr) and
-      (P.FBStride = S.FBStride) and (P.FBFormat = S.FBFormat) and
-      (not UsesZ or (P.UsesZ and (P.ZAddr = S.ZAddr) and (P.ZStride = S.ZStride) and
-        (P.ZPermutation = S.ZPermutation))) then
+      (P.FBStride = S.FBStride) and (P.FBFormat = S.FBFormat) and (not UsesZ or (P.UsesZ and (P.ZAddr = S.ZAddr) and
+      (P.ZStride = S.ZStride) and (P.ZPermutation = S.ZPermutation))) then
     begin
       var Known := True;
       for var I := 0 to Tex.Count - 1 do
@@ -1440,21 +1513,33 @@ begin
     Bpp := 4;
   // Distinct pixels must not share memory.
   if (X2 - X1 + 1 > Integer(S.FBStride)) or ((Int64(Y2 - Y1) * S.FBStride + X2 - X1 + 1) * Bpp > PSPVRAMSize) then
-  begin FWhy := 'pixels share colour memory'; Exit(False); end;
+  begin
+    FWhy := 'pixels share colour memory';
+    Exit(False);
+  end;
   var FB := TargetSpan(S.FBAddr, S.FBStride, Bpp, X1, Y1, X2, Y2);
   var Z := Default(TGEVulkanLLESpan);
   if UsesZ then
   begin
     if (X2 - X1 + 1 > Integer(S.ZStride)) or ((Int64(Y2 - Y1) * S.ZStride + X2 - X1 + 1) * 2 > PSPVRAMSize) then
-    begin FWhy := 'pixels share depth memory'; Exit(False); end;
+    begin
+      FWhy := 'pixels share depth memory';
+      Exit(False);
+    end;
     Z := BlockSpan(TargetSpan(S.ZAddr, S.ZStride, 2, X1, Y1, X2, Y2), PermutationBlock(S.ZPermutation));
     if Overlap(FB, Z) then
-    begin FWhy := 'colour and depth share memory'; Exit(False); end;
+    begin
+      FWhy := 'colour and depth share memory';
+      Exit(False);
+    end;
   end;
   // A texture read from the pixels being drawn depends on the drawing order.
   for var I := 0 to Tex.Count - 1 do
     if Overlap(Tex.Spans[I], FB) or Overlap(Tex.Spans[I], Z) then
-    begin FWhy := 'texture from the pixels drawn'; Exit(False); end;
+    begin
+      FWhy := 'texture from the pixels drawn';
+      Exit(False);
+    end;
 
   var NewPass := FPassCount = 0;
   var PFB := FB;
@@ -1463,9 +1548,8 @@ begin
   begin
     var P: PGEVulkanLLEPass := @FPasses[FPassCount - 1];
     // Primitives without depth go with any depth buffer.
-    if (P.FBAddr <> S.FBAddr) or (P.FBStride <> S.FBStride) or (P.FBFormat <> S.FBFormat) or
-      (UsesZ and P.UsesZ and ((P.ZAddr <> S.ZAddr) or (P.ZStride <> S.ZStride) or
-        (P.ZPermutation <> S.ZPermutation))) then
+    if (P.FBAddr <> S.FBAddr) or (P.FBStride <> S.FBStride) or (P.FBFormat <> S.FBFormat) or (UsesZ and P.UsesZ and
+      ((P.ZAddr <> S.ZAddr) or (P.ZStride <> S.ZStride) or (P.ZPermutation <> S.ZPermutation))) then
     begin
       NewPass := True;
       Split('render target');
@@ -1482,8 +1566,10 @@ begin
         ZStride := S.ZStride;
         ZPermutation := S.ZPermutation;
       end;
-      var UX1 := Min(P.X1, X1); var UY1 := Min(P.Y1, Y1);
-      var UX2 := Max(P.X2, X2); var UY2 := Max(P.Y2, Y2);
+      var UX1 := Min(P.X1, X1);
+      var UY1 := Min(P.Y1, Y1);
+      var UX2 := Max(P.X2, X2);
+      var UY2 := Max(P.Y2, Y2);
       var Changed := (UX1 <> P.X1) or (UY1 <> P.Y1) or (UX2 <> P.X2) or (UY2 <> P.Y2) or (PassZ <> P.UsesZ);
       PFB := P.FB;
       PZ := P.Z;
@@ -1497,10 +1583,9 @@ begin
       for var I := 0 to Tex.Count - 1 do
         if Overlap(Tex.Spans[I], PFB) or Overlap(Tex.Spans[I], PZ) then
           TexReadsPass := True;
-      if Changed and ((UX2 - UX1 + 1 > Integer(S.FBStride)) or
-        ((Int64(UY2 - UY1) * S.FBStride + UX2 - UX1 + 1) * Bpp > PSPVRAMSize) or
-        (PassZ and ((UX2 - UX1 + 1 > Integer(ZStride)) or ((Int64(UY2 - UY1) * ZStride + UX2 - UX1 + 1) * 2 > PSPVRAMSize) or
-        Overlap(PFB, PZ)))) then
+      if Changed and ((UX2 - UX1 + 1 > Integer(S.FBStride)) or ((Int64(UY2 - UY1) * S.FBStride + UX2 - UX1 + 1) * Bpp >
+        PSPVRAMSize) or (PassZ and ((UX2 - UX1 + 1 > Integer(ZStride)) or ((Int64(UY2 - UY1) * ZStride + UX2 - UX1 +
+        1) * 2 > PSPVRAMSize) or Overlap(PFB, PZ)))) then
       begin
         NewPass := True;
         Split('memory span');
@@ -1535,7 +1620,10 @@ begin
     P^ := Default(TGEVulkanLLEPass);
     P.Reads := Reads;
     P.First := FPrimCount;
-    P.X1 := X1; P.Y1 := Y1; P.X2 := X2; P.Y2 := Y2;
+    P.X1 := X1;
+    P.Y1 := Y1;
+    P.X2 := X2;
+    P.Y2 := Y2;
     P.FBAddr := S.FBAddr;
     P.FBStride := S.FBStride;
     P.FBFormat := S.FBFormat;
@@ -1549,8 +1637,10 @@ begin
     P.ZPermutation := S.ZPermutation;
   end;
   Inc(P.Count);
-  P.X1 := Min(P.X1, X1); P.Y1 := Min(P.Y1, Y1);
-  P.X2 := Max(P.X2, X2); P.Y2 := Max(P.Y2, Y2);
+  P.X1 := Min(P.X1, X1);
+  P.Y1 := Min(P.Y1, Y1);
+  P.X2 := Max(P.X2, X2);
+  P.Y2 := Max(P.Y2, Y2);
   // The whole box's buffers are held, so primitives within it need nothing.
   if (PFB.Lo <> P.FB.Lo) or (PFB.Len <> P.FB.Len) then
   begin
@@ -1617,17 +1707,20 @@ begin
   if FCheck or (FQueue = nil) then
   begin
     case Kind of
-      KindTriangle: GEDrawTriangle(S, V0, V1, V2);
-      KindSprite: GEDrawSprite(S, V0, V1);
-      KindLine: GEDrawLine(S, V0, V1);
+      KindTriangle:
+        GEDrawTriangle(S, V0, V1, V2);
+      KindSprite:
+        GEDrawSprite(S, V0, V1);
+      KindLine:
+        GEDrawLine(S, V0, V1);
     else
       GEDrawPoint(S, V0);
     end;
     Exit;
   end;
   FQueued := True;
-  if S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7) and
-    (not FQueueClutValid or not SameBytes(S.Tex.Clut, @FQueueClut[0], SizeOf(FQueueClut))) then
+  if S.Textured and (S.Tex.Format >= 4) and (S.Tex.Format <= 7) and (not FQueueClutValid or
+    not SameBytes(S.Tex.Clut, @FQueueClut[0], SizeOf(FQueueClut))) then
   begin
     Move(S.Tex.Clut^, FQueueClut[0], SizeOf(FQueueClut));
     FQueueClutValid := True;
@@ -1635,9 +1728,12 @@ begin
   end;
   FQueue.StateChanged;
   case Kind of
-    KindTriangle: FQueue.Triangle(S, V0, V1, V2);
-    KindSprite: FQueue.Sprite(S, V0, V1);
-    KindLine: FQueue.Line(S, V0, V1);
+    KindTriangle:
+      FQueue.Triangle(S, V0, V1, V2);
+    KindSprite:
+      FQueue.Sprite(S, V0, V1);
+    KindLine:
+      FQueue.Line(S, V0, V1);
   else
     FQueue.Point(S, V0);
   end;
@@ -1733,18 +1829,27 @@ var
 begin
   BeginPrim;
   // The set-up of GEDrawTriangle.
-  var X0 := Int64(V0.X); var Y0 := Int64(V0.Y);
-  var X1 := Int64(V1.X); var Y1 := Int64(V1.Y);
-  var X2 := Int64(V2.X); var Y2 := Int64(V2.Y);
+  var X0 := Int64(V0.X);
+  var Y0 := Int64(V0.Y);
+  var X1 := Int64(V1.X);
+  var Y1 := Int64(V1.Y);
+  var X2 := Int64(V2.X);
+  var Y2 := Int64(V2.Y);
   var Area := (X1 - X0) * (Y2 - Y0) - (Y1 - Y0) * (X2 - X0);
   if Area = 0 then
     Exit;
   var A0, A1, A2: PGEVertex;
-  A0 := @V0; A1 := @V1; A2 := @V2;
+  A0 := @V0;
+  A1 := @V1;
+  A2 := @V2;
   if Area < 0 then
   begin
-    A1 := @V2; A2 := @V1;
-    X1 := V2.X; Y1 := V2.Y; X2 := V1.X; Y2 := V1.Y;
+    A1 := @V2;
+    A2 := @V1;
+    X1 := V2.X;
+    Y1 := V2.Y;
+    X2 := V1.X;
+    Y2 := V1.Y;
     Area := -Area;
   end;
   var MinX := Min(X0, Min(X1, X2));
@@ -1766,13 +1871,19 @@ begin
     Enqueue(KindTriangle, S, V0, V1, V2);
     Exit;
   end;
-  var DX0 := X2 - X1; var DY0 := Y2 - Y1;
-  var DX1 := X0 - X2; var DY1 := Y0 - Y2;
-  var DX2 := X1 - X0; var DY2 := Y1 - Y0;
+  var DX0 := X2 - X1;
+  var DY0 := Y2 - Y1;
+  var DX1 := X0 - X2;
+  var DY1 := Y0 - Y2;
+  var DX2 := X1 - X0;
+  var DY2 := Y1 - Y0;
   var Bias: Cardinal := 0;
-  if not ((DY0 < 0) or ((DY0 = 0) and (DX0 > 0))) then Bias := Bias or 1;
-  if not ((DY1 < 0) or ((DY1 = 0) and (DX1 > 0))) then Bias := Bias or 2;
-  if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then Bias := Bias or 4;
+  if not ((DY0 < 0) or ((DY0 = 0) and (DX0 > 0))) then
+    Bias := Bias or 1;
+  if not ((DY1 < 0) or ((DY1 = 0) and (DX1 > 0))) then
+    Bias := Bias or 2;
+  if not ((DY2 < 0) or ((DY2 = 0) and (DX2 > 0))) then
+    Bias := Bias or 4;
   var FArea := 1.0 / Area;
 
   var State := PackState(S, Tex, Ok);
@@ -1864,9 +1975,12 @@ begin
   if NeedLod then
   begin
     // GEDrawTriangle's steps of S/w and T/w along x and y, as it rounds them.
-    var BX0 := -16 * DY0 * FArea; var BY0 := 16 * DX0 * FArea;
-    var BX1 := -16 * DY1 * FArea; var BY1 := 16 * DX1 * FArea;
-    var BX2 := -16 * DY2 * FArea; var BY2 := 16 * DX2 * FArea;
+    var BX0 := -16 * DY0 * FArea;
+    var BY0 := 16 * DX0 * FArea;
+    var BX1 := -16 * DY1 * FArea;
+    var BY1 := 16 * DX1 * FArea;
+    var BX2 := -16 * DY2 * FArea;
+    var BY2 := 16 * DX2 * FArea;
     var NSX, NSY, NTX, NTY: Single;
     NSX := A0.S * A0.W * BX0 + A1.S * A1.W * BX1 + A2.S * A2.W * BX2;
     NSY := A0.S * A0.W * BY0 + A1.S * A1.W * BY1 + A2.S * A2.W * BY2;
@@ -1907,8 +2021,12 @@ begin
     Exit;
   end;
   var Turned := (V0.X > V1.X) <> (V0.Y > V1.Y);
-  var SX: Single := 0; var SY: Single := 0; var TX: Single := 0; var TY: Single := 0;
-  var QX: Single := 0; var QY: Single := 0;
+  var SX: Single := 0;
+  var SY: Single := 0;
+  var TX: Single := 0;
+  var TY: Single := 0;
+  var QX: Single := 0;
+  var QY: Single := 0;
   if V1.X <> V0.X then
   begin
     if Turned then
@@ -1975,7 +2093,12 @@ begin
   Record_(KindSprite, S, V0, V1, V1);
 end;
 
-function RasterRound(X: Double): Integer; {$IF Defined(CPUX64) and Defined(MSWINDOWS)}assembler;{$ELSE}inline;{$ENDIF}
+function RasterRound(X: Double): Integer;
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  assembler;
+{$ELSE}
+  inline;
+{$ENDIF}
 {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
 asm
   .NOFRAME
@@ -2020,14 +2143,23 @@ begin
     Exit;
   SetLength(Frags, Count);
   SetLength(Pos, Count);
-  var BX1 := MaxInt; var BY1 := MaxInt; var BX2 := -MaxInt; var BY2 := -MaxInt;
+  var BX1 := MaxInt;
+  var BY1 := MaxInt;
+  var BX2 := -MaxInt;
+  var BY2 := -MaxInt;
   var N := 0;
   while GELineNext(LW, PX, PY, T) do
   begin
-    F.R := V1.R; F.G := V1.G; F.B := V1.B; F.A := V1.A;
-    F.SR := V1.SR; F.SG := V1.SG; F.SB := V1.SB;
+    F.R := V1.R;
+    F.G := V1.G;
+    F.B := V1.B;
+    F.A := V1.A;
+    F.SR := V1.SR;
+    F.SG := V1.SG;
+    F.SB := V1.SB;
     F.Z := V1.Z;
-    F.S := V1.S; F.T := V1.T;
+    F.S := V1.S;
+    F.T := V1.T;
     F.Fog := V1.Fog;
     if not S.Flat and S.Gouraud then
     begin
@@ -2054,8 +2186,10 @@ begin
     Frags[Slot] := F;
     Pos[Slot] := TPoint.Create(PX, PY);
     Inc(N);
-    BX1 := Min(BX1, PX); BY1 := Min(BY1, PY);
-    BX2 := Max(BX2, PX); BY2 := Max(BY2, PY);
+    BX1 := Min(BX1, PX);
+    BY1 := Min(BY1, PY);
+    BX2 := Max(BX2, PX);
+    BY2 := Max(BY2, PY);
   end;
   BX1 := Max(BX1, S.ScissorX1);
   BY1 := Max(BY1, Max(S.ScissorY1, S.BandY1));
@@ -2231,9 +2365,9 @@ begin
           Run := -1;
         end;
       end;
-      Cmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT);
+      Cmd.Barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or
+        VK_ACCESS_TRANSFER_READ_BIT);
     end;
     Cmd.Timestamp(1);
     FKernel.ActiveSet := Index;
@@ -2248,8 +2382,8 @@ begin
       Push.Y2 := P.Y2;
       Cmd.Dispatch(FKernel, Grid[I].X, Grid[I].Y, 1, Push, SizeOf(Push));
       Cmd.Barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT);
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT or
+        VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT);
     end;
     Cmd.Timestamp(2);
     // Everything drawn since the last read back: only those pages can differ.
@@ -2385,10 +2519,14 @@ begin
     if C.Clut <> nil then
       C.S.Tex.Clut := @C.Clut[0];
     case C.Kind of
-      KindTriangle: GEDrawTriangle(C.S, C.V[0], C.V[1], C.V[2]);
-      KindSprite: GEDrawSprite(C.S, C.V[0], C.V[1]);
-      KindLine: GEDrawLine(C.S, C.V[0], C.V[1]);
-      KindPoint: GEDrawPoint(C.S, C.V[0]);
+      KindTriangle:
+        GEDrawTriangle(C.S, C.V[0], C.V[1], C.V[2]);
+      KindSprite:
+        GEDrawSprite(C.S, C.V[0], C.V[1]);
+      KindLine:
+        GEDrawLine(C.S, C.V[0], C.V[1]);
+      KindPoint:
+        GEDrawPoint(C.S, C.V[0]);
     end;
   end;
   var CPU := PByte(@FMemory.VRAM[0]);

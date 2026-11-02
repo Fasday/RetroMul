@@ -1,4 +1,4 @@
-unit PSP.HLE;
+﻿unit PSP.HLE;
 
 // HLE function registry. Every (library, NID) the core implements is one entry;
 // its index is the syscall code written into an import stub (`jr ra; syscall N`).
@@ -197,10 +197,13 @@ begin
   if Lib = 'ModuleMgrForKernel' then
   begin
     case NID of
-      $939E4270: Result := Find('ModuleMgrForUser', $977DE386);
-      $387E3CA9: Result := Find('ModuleMgrForUser', $2E0911AA);
+      $939E4270:
+        Result := Find('ModuleMgrForUser', $977DE386);
+      $387E3CA9:
+        Result := Find('ModuleMgrForUser', $2E0911AA);
     end;
-    if Result >= 0 then Exit;
+    if Result >= 0 then
+      Exit;
   end;
   var Alias := UserLibrary(Lib);
   if Alias <> '' then
@@ -243,7 +246,8 @@ begin
   FCurrent := Index;
   FCPU.AddCycles(FCycleCost);
   if TraceCalls then
-    Log('call %s(%x, %x, %x, %x) ra=%.8x', [F.Name, FCPU.Ctx.GPR[4], FCPU.Ctx.GPR[5], FCPU.Ctx.GPR[6], FCPU.Ctx.GPR[7], FCPU.Ctx.GPR[31]]);
+    Log('call %s(%x, %x, %x, %x) ra=%.8x',
+      [F.Name, FCPU.Ctx.GPR[4], FCPU.Ctx.GPR[5], FCPU.Ctx.GPR[6], FCPU.Ctx.GPR[7], FCPU.Ctx.GPR[31]]);
   var ReturnPC := FCPU.Ctx.PC;
   if Assigned(F.Handler) then
   begin
@@ -263,8 +267,10 @@ begin
     end;
     if FStrict then
       raise EPSPUnimplemented.CreateFmt('PSP: unimplemented %s', [F.Name]);
-    if F.Known then FCPU.Ctx.GPR[2] := 0
-    else FCPU.Ctx.GPR[2] := SCE_KERNEL_ERROR_LIBRARY_NOT_YET_LINKED;
+    if F.Known then
+      FCPU.Ctx.GPR[2] := 0
+    else
+      FCPU.Ctx.GPR[2] := SCE_KERNEL_ERROR_LIBRARY_NOT_YET_LINKED;
   end;
   Result := True;
 end;

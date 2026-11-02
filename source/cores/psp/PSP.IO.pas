@@ -1,4 +1,4 @@
-unit PSP.IO;
+﻿unit PSP.IO;
 
 // IoFileMgrForUser. Devices: the UMD (disc0:, umd0:, umd1:, isofs0:), host
 // folders (ms0:/fatms0: memory stick, flash0:, host0:) and the emulator
@@ -8,11 +8,13 @@ unit PSP.IO;
 
 interface
 
-{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic,
+  vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
   System.SysUtils, System.Classes, System.Generics.Collections, System.IOUtils,
-  PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media, PSP.State.Action;
+  PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Media,
+  PSP.State.Action;
 
 type
   TPSPIoDriver = record
@@ -240,7 +242,10 @@ end;
 destructor TPSPIO.Destroy;
 begin
   for var F in FFiles.Values do
-  begin StopAsyncWorker(F); F.Free; end;
+  begin
+    StopAsyncWorker(F);
+    F.Free;
+  end;
   FFiles.Free;
   FDrivers.Free;
   FFatNames.Free;
@@ -251,7 +256,10 @@ end;
 procedure TPSPIO.Reset;
 begin
   for var F in FFiles.Values do
-  begin StopAsyncWorker(F); F.Free; end;
+  begin
+    StopAsyncWorker(F);
+    F.Free;
+  end;
   FFiles.Clear;
   FDrivers.Clear;
   FFatNames.Clear;
@@ -306,7 +314,8 @@ end;
 
 function TPSPIO.MissingMemstick(const Path: string): Boolean;
 begin
-  if FMemstickInserted then Exit(False);
+  if FMemstickInserted then
+    Exit(False);
   var Dev, Rest: string;
   Result := Split(Resolve(Path), Dev, Rest) and IsMemstick(Dev);
 end;
@@ -314,17 +323,22 @@ end;
 function TPSPIO.RejectMissingMemstick(const Path: string): Boolean;
 begin
   Result := MissingMemstick(Path);
-  if Result then FHLE.Result(SCE_KERNEL_ERROR_NODEV);
+  if Result then
+    FHLE.Result(SCE_KERNEL_ERROR_NODEV);
 end;
 
 procedure TPSPIO.SetMemstickInserted(Value: Boolean);
 begin
-  if FMemstickInserted = Value then Exit;
+  if FMemstickInserted = Value then
+    Exit;
   FMemstickInserted := Value;
   for var Id in FMemstickCallbacks.ToArray do
   begin
     var CB := TPSPCallback(FKernel.GetObject(Id, TPSPCallback));
-    if CB <> nil then FKernel.NotifyCallback(CB, Ord(Value)) else FMemstickCallbacks.Remove(Id);
+    if CB <> nil then
+      FKernel.NotifyCallback(CB, Ord(Value))
+    else
+      FMemstickCallbacks.Remove(Id);
   end;
 end;
 
@@ -373,8 +387,8 @@ begin
   if Root = '' then
     Exit('');
   Result := TPath.Combine(Root, NormalizeRest(Rest).Substring(1).Replace('/', PathDelim));
-  if not ((Device = 'ms0') or (Device = 'ms') or (Device = 'fatms0') or
-    (Device = 'fatms') or (Device = 'ef0')) then Exit;
+  if not ((Device = 'ms0') or (Device = 'ms') or (Device = 'fatms0') or (Device = 'fatms') or (Device = 'ef0')) then
+    Exit;
   Result := Root;
   var Dir := '';
   for var Part in NormalizeRest(Rest).Split(['/'], TStringSplitOptions.ExcludeEmpty) do
@@ -382,10 +396,16 @@ begin
     SeedFatDirectory(Result, Dir);
     var Item: TPSPFatName;
     var Actual := Part;
-    if FFatNames.TryGetValue((Dir + '/' + Part).ToLower, Item) then Actual := Item.LongName
-    else for var Pair in FFatNames do
-      if (Pair.Key.Substring(0, Pair.Key.LastIndexOf('/')) = Dir.ToLower) and
-        SameText(Pair.Value.ShortName, Part) then begin Actual := Pair.Value.LongName; Break; end;
+    if FFatNames.TryGetValue((Dir + '/' + Part).ToLower, Item) then
+      Actual := Item.LongName
+    else
+      for var Pair in FFatNames do
+        if (Pair.Key.Substring(0, Pair.Key.LastIndexOf('/')) = Dir.ToLower) and
+          SameText(Pair.Value.ShortName, Part) then
+        begin
+          Actual := Pair.Value.LongName;
+          Break;
+        end;
     Result := TPath.Combine(Result, Actual);
     Dir := Dir + '/' + Actual;
   end;
@@ -397,24 +417,39 @@ function TPSPIO.FatName(const Rest, Name: string): string;
     Result := '';
     for var C in S.ToUpper do
       if (C <> ' ') and (C <> '.') then
-        if CharInSet(C, ['A'..'Z', '0'..'9', '$', '%', #39, '-', '_', '@', '~', '`', '!', '(', ')', '{', '}', '^', '#', '&']) then
+        if CharInSet(C,
+          ['A'..'Z', '0'..'9', '$', '%', #39, '-', '_', '@', '~', '`', '!', '(', ')', '{', '}', '^', '#', '&']) then
           Result := Result + C
-        else Result := Result + '_';
+        else
+          Result := Result + '_';
   end;
 begin
-  if (Name = '.') or (Name = '..') then Exit(Name);
+  if (Name = '.') or (Name = '..') then
+    Exit(Name);
   var Key := NormalizeRest(Rest).ToLower;
   var Item: TPSPFatName;
-  if FFatNames.TryGetValue(Key, Item) then Exit(Item.ShortName);
+  if FFatNames.TryGetValue(Key, Item) then
+    Exit(Item.ShortName);
   var Dot := Name.LastIndexOf('.');
-  var Base := Name; var Ext := '';
-  if Dot >= 0 then begin Base := Name.Substring(0, Dot); Ext := Name.Substring(Dot + 1); end;
-  if Dot = 0 then begin Base := Ext; Ext := ''; end;
-  var Stem := Clean(Base); var Suffix := Clean(Ext);
+  var Base := Name;
+  var Ext := '';
+  if Dot >= 0 then
+  begin
+    Base := Name.Substring(0, Dot);
+    Ext := Name.Substring(Dot + 1);
+  end;
+  if Dot = 0 then
+  begin
+    Base := Ext;
+    Ext := '';
+  end;
+  var Stem := Clean(Base);
+  var Suffix := Clean(Ext);
   Suffix := Suffix.Substring(0, Min(3, Length(Suffix)));
-  if Stem = '' then Stem := '_';
-  var Direct := (Length(Stem) <= 8) and (Length(Ext) <= 3) and
-    (Stem = Base.ToUpper) and ((Dot < 0) or (Name = Name.ToUpper));
+  if Stem = '' then
+    Stem := '_';
+  var Direct := (Length(Stem) <= 8) and (Length(Ext) <= 3) and (Stem = Base.ToUpper) and
+    ((Dot < 0) or (Name = Name.ToUpper));
   var Parent := Key.Substring(0, Key.LastIndexOf('/') + 1);
   var Used := TDictionary<string, Boolean>.Create;
   try
@@ -422,19 +457,24 @@ begin
       if Pair.Key.Substring(0, Pair.Key.LastIndexOf('/') + 1) = Parent then
         Used.AddOrSetValue(Pair.Value.ShortName, True);
     Result := Stem;
-    if Suffix <> '' then Result := Result + '.' + Suffix;
+    if Suffix <> '' then
+      Result := Result + '.' + Suffix;
     if not Direct or Used.ContainsKey(Result) then
     begin
       var N := 1;
       repeat
         var Tail := '~' + IntToStr(N);
         Result := Stem.Substring(0, Min(Length(Stem), Max(1, 8 - Length(Tail)))) + Tail;
-        if Suffix <> '' then Result := Result + '.' + Suffix;
+        if Suffix <> '' then
+          Result := Result + '.' + Suffix;
         Inc(N);
       until not Used.ContainsKey(Result);
     end;
-  finally Used.Free; end;
-  Item.LongName := Name; Item.ShortName := Result;
+  finally
+    Used.Free;
+  end;
+  Item.LongName := Name;
+  Item.ShortName := Result;
   FFatNames.Add(Key, Item);
 end;
 
@@ -443,7 +483,8 @@ begin
   // A folder mount has no on-disk FAT entries. Seed it once; subsequent guest
   // creations reserve aliases immediately, not in the host's listing order.
   var Key := Rest.ToLower + '/';
-  if FFatNames.ContainsKey(Key) or not DirectoryExists(Host) then Exit;
+  if FFatNames.ContainsKey(Key) or not DirectoryExists(Host) then
+    Exit;
   FFatNames.Add(Key, Default(TPSPFatName));
   for var Name in TDirectory.GetFileSystemEntries(Host) do
     FatName(Rest + '/' + ExtractFileName(Name), ExtractFileName(Name));
@@ -452,7 +493,8 @@ end;
 procedure TPSPIO.RememberFatPath(const Host: string);
 begin
   var Root := IncludeTrailingPathDelimiter(FMemstickRoot);
-  if (FMemstickRoot = '') or not Host.StartsWith(Root, True) then Exit;
+  if (FMemstickRoot = '') or not Host.StartsWith(Root, True) then
+    Exit;
   var Rest := '/' + Host.Substring(Root.Length).Replace(PathDelim, '/');
   FatName(Rest, ExtractFileName(Host));
 end;
@@ -460,10 +502,12 @@ end;
 procedure TPSPIO.ForgetFatPath(const Host, Destination: string);
 begin
   var Root := IncludeTrailingPathDelimiter(FMemstickRoot);
-  if (FMemstickRoot = '') or not Host.StartsWith(Root, True) then Exit;
+  if (FMemstickRoot = '') or not Host.StartsWith(Root, True) then
+    Exit;
   var Key := '/' + Host.Substring(Root.Length).Replace(PathDelim, '/').ToLower;
   var NewKey := '';
-  if Destination <> '' then NewKey := '/' + Destination.Substring(Root.Length).Replace(PathDelim, '/').ToLower;
+  if Destination <> '' then
+    NewKey := '/' + Destination.Substring(Root.Length).Replace(PathDelim, '/').ToLower;
   for var Pair in FFatNames.ToArray do
     if (Pair.Key = Key) or Pair.Key.StartsWith(Key + '/') then
     begin
@@ -471,7 +515,8 @@ begin
       if (NewKey <> '') and (Pair.Key <> Key) then
         FFatNames.AddOrSetValue(NewKey + Pair.Key.Substring(Key.Length), Pair.Value);
     end;
-  if Destination <> '' then RememberFatPath(Destination);
+  if Destination <> '' then
+    RememberFatPath(Destination);
 end;
 
 function TPSPIO.OnHostDevice(const Path: string): Boolean;
@@ -520,7 +565,8 @@ end;
 
 function TPSPIO.HostFileName(const Path: string): string;
 begin
-  if MissingMemstick(Path) then Exit('');
+  if MissingMemstick(Path) then
+    Exit('');
   var Dev, Rest: string;
   if not Split(Resolve(Path), Dev, Rest) or (DeviceKind(Dev) <> dkHost) then
     Exit('');
@@ -529,7 +575,8 @@ end;
 
 procedure TPSPIO.HostChanged(const Name: string; Created, Tree: Boolean);
 begin
-  if Assigned(FOnHostChange) then FOnHostChange(Name, Created, Tree);
+  if Assigned(FOnHostChange) then
+    FOnHostChange(Name, Created, Tree);
 end;
 
 function TPSPIO.AllocTTYFd: Integer;
@@ -567,8 +614,10 @@ begin
     Exit;
   var A := S.Substring(0, Q);
   var B := S.Substring(Q + 5);
-  if A.StartsWith('0x') then A := A.Substring(2);
-  if B.StartsWith('0x') then B := B.Substring(2);
+  if A.StartsWith('0x') then
+    A := A.Substring(2);
+  if B.StartsWith('0x') then
+    B := B.Substring(2);
   var N := 0;
   while (N < B.Length) and CharInSet(B.Chars[N], ['0'..'9', 'a'..'f']) do
     Inc(N);
@@ -588,7 +637,8 @@ begin
   var Canonical := Resolve(Path);
   if not Split(Canonical, Dev, Rest) then
     Exit(SCE_ERROR_ERRNO_ENOENT);
-  if not FMemstickInserted and IsMemstick(Dev) then Exit(SCE_KERNEL_ERROR_NODEV);
+  if not FMemstickInserted and IsMemstick(Dev) then
+    Exit(SCE_KERNEL_ERROR_NODEV);
   case DeviceKind(Dev) of
     dkUMD:
       begin
@@ -658,7 +708,8 @@ begin
         F.Kind := dkHost;
         F.Path := Canonical;
         F.Stream := S;
-        if not Exists then RememberFatPath(Name);
+        if not Exists then
+          RememberFatPath(Name);
         if ((Flags and PSP_O_WRONLY) <> 0) and (not Exists or ((Flags and PSP_O_TRUNC) <> 0)) then
           HostChanged(Name, not Exists);
         if (Flags and PSP_O_APPEND) <> 0 then
@@ -711,7 +762,8 @@ begin
   var F := GetFile(Fd);
   if (F = nil) or F.IsDirectory then
     Exit(SCE_KERNEL_ERROR_BADF);
-  if MissingMemstick(F.Path) then Exit(SCE_KERNEL_ERROR_NODEV);
+  if MissingMemstick(F.Path) then
+    Exit(SCE_KERNEL_ERROR_NODEV);
   Path := F.Path;
   case F.Kind of
     dkUMD:
@@ -748,7 +800,8 @@ end;
 
 function TPSPIO.DoRead(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
 begin
-  if MissingMemstick(F.Path) then Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
+  if MissingMemstick(F.Path) then
+    Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
   if (F.Flags and PSP_O_RDONLY) = 0 then
     Exit(Int64(Integer(SCE_KERNEL_ERROR_BADF)));
   case F.Kind of
@@ -800,7 +853,8 @@ end;
 
 function TPSPIO.DoWrite(F: TPSPOpenFile; Address, Size: Cardinal): Int64;
 begin
-  if MissingMemstick(F.Path) then Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
+  if MissingMemstick(F.Path) then
+    Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
   case F.Kind of
     dkHost:
       begin
@@ -838,7 +892,8 @@ end;
 
 function TPSPIO.DoSeek(F: TPSPOpenFile; Offset: Int64; Whence: Integer): Int64;
 begin
-  if MissingMemstick(F.Path) then Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
+  if MissingMemstick(F.Path) then
+    Exit(Int64(Integer(SCE_KERNEL_ERROR_NODEV)));
   case F.Kind of
     dkUMD:
       begin
@@ -847,9 +902,12 @@ begin
           Size := F.DiscSize div 2048;
         var NewPos: Int64;
         case Whence of
-          0: NewPos := Offset;
-          1: NewPos := F.Position + Offset;
-          2: NewPos := Size + Offset;
+          0:
+            NewPos := Offset;
+          1:
+            NewPos := F.Position + Offset;
+          2:
+            NewPos := Size + Offset;
         else
           Exit(Int64(Integer(SCE_KERNEL_ERROR_INVAL)));
         end;
@@ -862,16 +920,21 @@ begin
       begin
         var Origin: TSeekOrigin;
         case Whence of
-          0: Origin := soBeginning;
-          1: Origin := soCurrent;
-          2: Origin := soEnd;
+          0:
+            Origin := soBeginning;
+          1:
+            Origin := soCurrent;
+          2:
+            Origin := soEnd;
         else
           Exit(Int64(Integer(SCE_KERNEL_ERROR_INVAL)));
         end;
         var Target: Int64;
         case Whence of
-          0: Target := Offset;
-          1: Target := F.Stream.Position + Offset;
+          0:
+            Target := Offset;
+          1:
+            Target := F.Stream.Position + Offset;
         else
           Target := F.Stream.Size + Offset;
         end;
@@ -899,15 +962,21 @@ begin
   if not Writing and (F.Kind = dkUMD) then
   begin
     var Position := F.Position;
-    if F.RawSectors then begin Bytes := Bytes * 2048; Position := Position * 2048; end;
+    if F.RawSectors then
+    begin
+      Bytes := Bytes * 2048;
+      Position := Position * 2048;
+    end;
     Bytes := Max(Int64(0), Min(Bytes, F.DiscSize - Position));
-    if (Bytes > High(Cardinal)) or not FMemory.Valid(Address, Cardinal(Bytes)) then Bytes := 0;
+    if (Bytes > High(Cardinal)) or not FMemory.Valid(Address, Cardinal(Bytes)) then
+      Bytes := 0;
   end
-  else if not FMemory.Valid(Address, Size) then Bytes := 0
+  else if not FMemory.Valid(Address, Size) then
+    Bytes := 0
   else if not Writing and (F.Stream <> nil) then
     Bytes := Max(Int64(0), Min(Bytes, F.Stream.Size - F.Stream.Position));
-  if (Writing and ((F.Flags and PSP_O_WRONLY) = 0)) or
-    (not Writing and ((F.Flags and PSP_O_RDONLY) = 0)) then Bytes := 0;
+  if (Writing and ((F.Flags and PSP_O_WRONLY) = 0)) or (not Writing and ((F.Flags and PSP_O_RDONLY) = 0)) then
+    Bytes := 0;
   Result := ReadLatency(F, Bytes);
 end;
 
@@ -919,7 +988,8 @@ begin
     var Dev, Rest: string;
     // USB host-file calls report the host bridge's failure, whereas the FAT
     // and UMD drivers retain the kernel's cannot-wait error.
-    if Split(F.Path, Dev, Rest) and ((Dev = 'host0') or (Dev = 'host')) then FHLE.Result($FFFFFFFF);
+    if Split(F.Path, Dev, Rest) and ((Dev = 'host0') or (Dev = 'host')) then
+      FHLE.Result($FFFFFFFF);
   end;
 end;
 
@@ -929,15 +999,25 @@ begin
   if F.AsyncWorker <> 0 then
   begin
     var Existing := FKernel.ThreadById(F.AsyncWorker);
-    if (Existing <> nil) and not Existing.IsDormant then Exit(True);
-    if Existing <> nil then FKernel.DeleteThread(Existing);
+    if (Existing <> nil) and not Existing.IsDormant then
+      Exit(True);
+    if Existing <> nil then
+      FKernel.DeleteThread(Existing);
     F.AsyncWorker := 0;
   end;
-  if FKernel.Current = nil then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.Current = nil then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   if FAsyncStub = 0 then
   begin
     FAsyncStub := FKernel.AllocKernel(16, 'async IO stub');
-    if FAsyncStub = 0 then begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+    if FAsyncStub = 0 then
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+      Exit;
+    end;
     FHLE.Register('PSPInternalIO', 1, 'async IO worker', hAsyncWorker);
     var Index := FHLE.Find('PSPInternalIO', 1);
     FMemory.Write32(FAsyncStub, (Cardinal(Index) shl 6) or $0C);
@@ -945,14 +1025,21 @@ begin
     FMemory.Write32(FAsyncStub + 8, 0);
   end;
   var Priority := F.AsyncPriority;
-  if Priority = 0 then Priority := FAsyncPriority;
-  if Priority = 0 then Priority := FKernel.Current.Priority;
+  if Priority = 0 then
+    Priority := FAsyncPriority;
+  if Priority = 0 then
+    Priority := FKernel.Current.Priority;
   // Firmware thread metadata (not its implementation): a 2-KiB system worker
   // retains whether the creating thread originated in user mode.
   var Attr: Cardinal := $00100000;
-  if not FKernel.Current.IsKernel then Attr := $08100000;
+  if not FKernel.Current.IsKernel then
+    Attr := $08100000;
   var T := FKernel.CreateThread('SceIofileAsync', FAsyncStub, Priority, $800, Attr, 0);
-  if T = nil then begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  if T = nil then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   F.AsyncWorker := T.UID;
   FKernel.StartThread(T, 0, 0);
   // Like creating a thread through ThreadMan, creating the asynchronous worker
@@ -963,7 +1050,8 @@ end;
 
 procedure TPSPIO.StopAsyncWorker(F: TPSPOpenFile);
 begin
-  if F.AsyncWorker = 0 then Exit;
+  if F.AsyncWorker = 0 then
+    Exit;
   var T := FKernel.ThreadById(F.AsyncWorker);
   F.AsyncWorker := 0;
   FKernel.CancelTimersOf(F);
@@ -984,23 +1072,34 @@ end;
 function TPSPIO.StartAsync(F: TPSPOpenFile; const Task: IPSPStateAction; Latency: Int64): Boolean;
 begin
   Result := EnsureAsyncWorker(F);
-  if not Result then Exit;
+  if not Result then
+    Exit;
   F.AsyncPending := True;
   F.AsyncTask := Task;
   F.AsyncDone := 0;
   F.AsyncLatency := Latency;
   F.AsyncTimer := 0;
   var T := FKernel.ThreadById(F.AsyncWorker);
-  if T.IsWaiting and (T.Wait.HLETag = 'ioasync') then FKernel.EndWait(T, 0);
+  if T.IsWaiting and (T.Wait.HLETag = 'ioasync') then
+    FKernel.EndWait(T, 0);
 end;
 
 procedure TPSPIO.hAsyncWorker;
 begin
   var T := FKernel.Current;
   var F: TPSPOpenFile := nil;
-  for var Entry in FFiles.Values do if Entry.AsyncWorker = T.UID then begin F := Entry; Break; end;
+  for var Entry in FFiles.Values do
+    if Entry.AsyncWorker = T.UID then
+    begin
+      F := Entry;
+      Break;
+    end;
   if F = nil then
-  begin FKernel.ExitCurrent(0); FKernel.DeleteThread(T); Exit; end;
+  begin
+    FKernel.ExitCurrent(0);
+    FKernel.DeleteThread(T);
+    Exit;
+  end;
   if F.AsyncPending and (F.AsyncDone = 0) then
   begin
     F.AsyncDone := FKernel.Scheduler.Now + F.AsyncLatency;
@@ -1010,9 +1109,11 @@ begin
   end;
   var Task := F.AsyncTask;
   F.AsyncTask := nil;
-  if F.AsyncPending and (Task <> nil) then Task.Run;
+  if F.AsyncPending and (Task <> nil) then
+    Task.Run;
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, False, nil, nil, 'ioasync');
-  if F.AsyncPending then FinishAsync(F);
+  if F.AsyncPending then
+    FinishAsync(F);
 end;
 
 procedure TPSPIO.StatePerformAsync(Action: TPSPStateAction; Value: Cardinal);
@@ -1025,31 +1126,54 @@ begin
         var Err := OpenPath(Action.Text, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)), Opened);
         F.AsyncResult := Integer(Err);
         if Err = 0 then
-        try
-          F.Kind := Opened.Kind; F.Path := Opened.Path; F.Flags := Opened.Flags;
-          F.DiscStart := Opened.DiscStart; F.DiscSize := Opened.DiscSize;
-          F.Position := Opened.Position; F.RawSectors := Opened.RawSectors;
-          F.Stream := Opened.Stream; Opened.Stream := nil;
-          F.AsyncResult := F.Id;
-        finally Opened.Free; end;
+          try
+            F.Kind := Opened.Kind;
+            F.Path := Opened.Path;
+            F.Flags := Opened.Flags;
+            F.DiscStart := Opened.DiscStart;
+            F.DiscSize := Opened.DiscSize;
+            F.Position := Opened.Position;
+            F.RawSectors := Opened.RawSectors;
+            F.Stream := Opened.Stream;
+            Opened.Stream := nil;
+            F.AsyncResult := F.Id;
+          finally
+            Opened.Free;
+          end;
       end;
-    1: begin FreeAndNil(F.Stream); F.Kind := dkNone; F.Flags := 0; F.AsyncResult := 0; end;
-    2: F.AsyncResult := DoRead(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
-    3: F.AsyncResult := DoWrite(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
-    4: F.AsyncResult := DoSeek(F, Action.Arg(1), Integer(Action.Arg(2)));
-    5: F.AsyncResult := Integer(IoctlCommon(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)),
-      Cardinal(Action.Arg(3)), Cardinal(Action.Arg(4)), Cardinal(Action.Arg(5))));
-  else raise EReadError.Create('Invalid asynchronous IO operation');
+    1:
+      begin
+        FreeAndNil(F.Stream);
+        F.Kind := dkNone;
+        F.Flags := 0;
+        F.AsyncResult := 0;
+      end;
+    2:
+      F.AsyncResult := DoRead(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
+    3:
+      F.AsyncResult := DoWrite(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)));
+    4:
+      F.AsyncResult := DoSeek(F, Action.Arg(1), Integer(Action.Arg(2)));
+    5:
+      F.AsyncResult := Integer(IoctlCommon(F, Cardinal(Action.Arg(1)), Cardinal(Action.Arg(2)), Cardinal(Action.Arg(3)),
+        Cardinal(Action.Arg(4)), Cardinal(Action.Arg(5))));
+  else
+    raise EReadError.Create('Invalid asynchronous IO operation');
   end;
 end;
 
 procedure TPSPIO.StateAsyncDone(Action: TPSPStateAction; Value: Cardinal);
 begin
   var F := TPSPOpenFile(Action.Obj(0));
-  if F.AsyncWorker = 0 then begin FinishAsync(F); Exit; end; // Earlier direct states.
+  if F.AsyncWorker = 0 then
+  begin
+    FinishAsync(F);
+    Exit;
+  end; // Earlier direct states.
   F.AsyncTimer := 0;
   var T := FKernel.ThreadById(F.AsyncWorker);
-  if (T <> nil) and T.IsWaiting and (T.Wait.HLETag = 'ioasyncdelay') then FKernel.EndWait(T, 0);
+  if (T <> nil) and T.IsWaiting and (T.Wait.HLETag = 'ioasyncdelay') then
+    FKernel.EndWait(T, 0);
 end;
 
 function TPSPIO.StateStreamMode(Stream: TStream): Word;
@@ -1057,7 +1181,10 @@ begin
   for var F in FFiles.Values do
     if F.Stream = Stream then
     begin
-      if (F.Flags and PSP_O_WRONLY) <> 0 then Exit(fmOpenReadWrite) else Exit(fmOpenRead);
+      if (F.Flags and PSP_O_WRONLY) <> 0 then
+        Exit(fmOpenReadWrite)
+      else
+        Exit(fmOpenRead);
     end;
   raise EInvalidOpException.Create('PSP state stream is not owned by an open file');
 end;
@@ -1081,7 +1208,8 @@ begin
       Collected := True;
     end;
   end;
-  if Collected then F.AsyncDone := 0;
+  if Collected then
+    F.AsyncDone := 0;
   if F.AsyncCallback <> 0 then
   begin
     var CB := TPSPCallback(FKernel.GetObject(F.AsyncCallback, TPSPCallback));
@@ -1105,7 +1233,11 @@ begin
   end;
   F.AsyncDone := 0;
   if (F.Kind = dkNone) and (F.Flags = 0) then
-  begin FFiles.Remove(F.Id); StopAsyncWorker(F); F.Free; end;
+  begin
+    FFiles.Remove(F.Id);
+    StopAsyncWorker(F);
+    F.Free;
+  end;
 end;
 
 function TPSPIO.AsyncRetry(T: TPSPThread): Boolean;
@@ -1117,7 +1249,10 @@ begin
     if F = nil then
       T.SetResult(SCE_KERNEL_ERROR_BADF)
     else
-    begin CollectAsync(F, T.Wait.Data[1]); T.SetResult(0); end;
+    begin
+      CollectAsync(F, T.Wait.Data[1]);
+      T.SetResult(0);
+    end;
   end
   else if not F.Waiters.Contains(T) then
     F.Waiters.Add(T);
@@ -1134,12 +1269,22 @@ begin
   var F := GetFile(FHLE.Arg(0));
   var ResPtr := FHLE.Arg(1);
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if FKernel.InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
-  if not AllowCB and FKernel.RefuseWait then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
+  if not AllowCB and FKernel.RefuseWait then
+    Exit;
   if not F.AsyncPending and (F.AsyncDone = 0) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOASYNC); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOASYNC);
+    Exit;
+  end;
   FHLE.Result(0);
   if not F.AsyncPending then
   begin
@@ -1149,7 +1294,10 @@ begin
     Exit;
   end;
   if not FKernel.CanWait then
-    begin FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_CAN_NOT_WAIT);
+    Exit;
+  end;
   F.Waiters.Add(FKernel.Current);
   FKernel.BeginWait(PSPWaitEventFlag, nil, Cardinal(F.Id), 0, AllowCB, AsyncRetry, AsyncAbort, 'io');
   var T := FKernel.Current;
@@ -1240,14 +1388,23 @@ end;
 procedure TPSPIO.hAddDrv;
 begin
   if FKernel.InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Table := FHLE.Arg(0);
   var Name := FMemory.ReadString(FMemory.Read32(Table), 32).ToLower;
   if (Name = '') or FDrivers.ContainsKey(Name) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
+    Exit;
+  end;
   var Arg := FKernel.AllocKernel(8, 'io driver:' + Name);
   if Arg = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   var D := Default(TPSPIoDriver);
   D.Arg := Arg;
   D.Funcs := FMemory.Read32(Table + 16);
@@ -1265,21 +1422,29 @@ end;
 procedure TPSPIO.hDelDrv;
 begin
   if FKernel.InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Name := FMemory.ReadString(FHLE.Arg(0), 32).ToLower;
   var D: TPSPIoDriver;
   if not FDrivers.TryGetValue(Name, D) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NODEV); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NODEV);
+    Exit;
+  end;
   for var F in FFiles.Values do
     if (F.GuestArg <> 0) and (FMemory.Read32(F.GuestArg + 8) = D.Arg) then
-      begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+      Exit;
+    end;
   FDrivers.Remove(Name);
   var K := FKernel;
   var ExitFunc := FMemory.Read32(D.Funcs + 4);
   FHLE.Result(0);
   if ExitFunc <> 0 then
-    K.CallGuest(ExitFunc, [D.Arg], nil, D.GP,
-      TPSPStateAction.Create(StateDriverDeleted, [], [D.Arg]))
+    K.CallGuest(ExitFunc, [D.Arg], nil, D.GP, TPSPStateAction.Create(StateDriverDeleted, [], [D.Arg]))
   else
     K.KernelPartition.FreeBlock(D.Arg);
 end;
@@ -1314,11 +1479,17 @@ begin
     Exit;
   var OpenFunc := FMemory.Read32(D.Funcs + 8);
   if OpenFunc = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
   var FileName := RawByteString(Rest.TrimStart(['/']));
   var Arg := FKernel.AllocKernel($20 + Cardinal(Length(FileName)) + 1, 'io file:' + Device);
   if Arg = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NO_MEMORY);
+    Exit;
+  end;
   FMemory.Fill(Arg, 0, $20);
   FMemory.Write32(Arg, Flags);
   FMemory.Write32(Arg + 4, Number);
@@ -1337,14 +1508,18 @@ begin
   var Access := Flags and 3;
   if (Flags and PSP_O_CREAT) <> 0 then
     Access := Access or 5;
-  FKernel.CallGuest(OpenFunc, [Arg, Arg + $20, Access, Mode], nil, D.GP,
-    TPSPStateAction.Create(StateDriverOpened, [], [F.Id, Arg]));
+  FKernel.CallGuest(OpenFunc, [Arg, Arg + $20, Access, Mode], nil, D.GP, TPSPStateAction.Create(StateDriverOpened, [],
+    [F.Id, Arg]));
 end;
 
 procedure TPSPIO.StateDriverOpened(Action: TPSPStateAction; Value: Cardinal);
 begin
   var F := GetFile(Cardinal(Action.Arg(0)));
-  if F = nil then begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if F = nil then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if Integer(Value) < 0 then
   begin
     FFiles.Remove(F.Id);
@@ -1352,7 +1527,8 @@ begin
     F.Free;
     FHLE.Result(Value);
   end
-  else FHLE.Result(Cardinal(F.Id));
+  else
+    FHLE.Result(Cardinal(F.Id));
 end;
 
 function TPSPIO.CallFileDriver(F: TPSPOpenFile; Slot: Integer; const Args: array of Cardinal): Boolean;
@@ -1362,7 +1538,10 @@ begin
     Exit;
   var Func := FMemory.Read32(F.GuestFuncs + Cardinal(Slot) * 4);
   if Func = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
   if FKernel.RefuseWait then
     Exit;
   var Data: TArray<Cardinal>;
@@ -1370,8 +1549,7 @@ begin
   Data[0] := F.GuestArg;
   for var I := 0 to High(Args) do
     Data[I + 1] := Args[I];
-  FKernel.CallGuest(Func, Data, nil, F.GuestGP,
-    TPSPStateAction.Create(StateDriverReturned, [], [F.Id, Slot]));
+  FKernel.CallGuest(Func, Data, nil, F.GuestGP, TPSPStateAction.Create(StateDriverReturned, [], [F.Id, Slot]));
 end;
 
 procedure TPSPIO.StateDriverReturned(Action: TPSPStateAction; Value: Cardinal);
@@ -1386,12 +1564,18 @@ begin
   end;
 end;
 
-
 procedure TPSPIO.hOpen;
 begin
   if FKernel.InInterrupt then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
-  if not FKernel.CanWait then begin FHLE.Result($FFFFFFFF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
+  if not FKernel.CanWait then
+  begin
+    FHLE.Result($FFFFFFFF);
+    Exit;
+  end;
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
   if OpenGuestDriver(Path, FHLE.Arg(1), FHLE.Arg(2)) then
     Exit;
@@ -1422,15 +1606,22 @@ end;
 
 procedure TPSPIO.hOpenAsync;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
   var F := TPSPOpenFile.Create;
   F.Path := Path;
   F.Id := AllocFd;
   FFiles.Add(F.Id, F);
-  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
-    [0, FHLE.Arg(1), FHLE.Arg(2)], Path), 100000) then
-  begin FFiles.Remove(F.Id); F.Free; Exit; end;
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [0, FHLE.Arg(1), FHLE.Arg(2)], Path), 100000) then
+  begin
+    FFiles.Remove(F.Id);
+    F.Free;
+    Exit;
+  end;
   FHLE.Result(Cardinal(F.Id));
 end;
 
@@ -1438,12 +1629,18 @@ procedure TPSPIO.hClose;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if CallFileDriver(F, 3, []) then
     Exit;
   // Programs built after 2.60 cannot close past an uncollected result.
   if F.AsyncPending or ((F.AsyncDone <> 0) and (FKernel.CompiledSdkVersion > $02060010)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
   FKernel.CancelTimersOf(F);
   StopAsyncWorker(F);
   FFiles.Remove(F.Id);
@@ -1457,14 +1654,25 @@ end;
 
 procedure TPSPIO.hCloseAsync;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if AsyncSlotHeld(F) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
   // The descriptor closes when its async result is collected.
-  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [1]), 20000) then Exit;
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [1]), 20000) then
+    Exit;
   FHLE.Result(0);
 end;
 
@@ -1472,12 +1680,19 @@ procedure TPSPIO.hRead;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if CallFileDriver(F, 4, [FHLE.Arg(1), FHLE.Arg(2)]) then
     Exit;
   if F.AsyncPending then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if RefuseFileWait(F) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
+  if RefuseFileWait(F) then
+    Exit;
   var R := DoRead(F, FHLE.Arg(1), FHLE.Arg(2));
   // The caller waits for the drive, the UMD's as the memory stick's (GTA
   // Liberty City Stories streams the city only when its reads take time).
@@ -1489,14 +1704,25 @@ end;
 
 procedure TPSPIO.hReadAsync;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if AsyncSlotHeld(F) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [2, FHLE.Arg(1), FHLE.Arg(2)]),
-    TransferLatency(F, FHLE.Arg(1), FHLE.Arg(2), False)) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [2, FHLE.Arg(1), FHLE.Arg(2)]), TransferLatency(F,
+    FHLE.Arg(1), FHLE.Arg(2), False)) then
+    Exit;
   FHLE.Result(0);
 end;
 
@@ -1507,33 +1733,55 @@ begin
   begin
     if Assigned(FOnOutput) then
       FOnOutput(FMemory.ReadAnsi(FHLE.Arg(1), FHLE.Arg(2)));
-    begin FHLE.Result(FHLE.Arg(2)); Exit; end;
+    begin
+      FHLE.Result(FHLE.Arg(2));
+      Exit;
+    end;
   end;
   var F := GetFile(Fd);
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if CallFileDriver(F, 5, [FHLE.Arg(1), FHLE.Arg(2)]) then
     Exit;
   if F.AsyncPending then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if RefuseFileWait(F) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
+  if RefuseFileWait(F) then
+    Exit;
   var R := DoWrite(F, FHLE.Arg(1), FHLE.Arg(2));
   if (F.Kind = dkHost) and (R > 0) then
     DeviceYield(Cardinal(R), ReadLatency(F, R))
-  else FHLE.Result(Cardinal(R));
+  else
+    FHLE.Result(Cardinal(R));
 end;
 
 procedure TPSPIO.hWriteAsync;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Fd := FHLE.Arg(0);
   var F := GetFile(Fd);
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if AsyncSlotHeld(F) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [3, FHLE.Arg(1), FHLE.Arg(2)]),
-    TransferLatency(F, FHLE.Arg(1), FHLE.Arg(2), True)) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [3, FHLE.Arg(1), FHLE.Arg(2)]), TransferLatency(F,
+    FHLE.Arg(1), FHLE.Arg(2), True)) then
+    Exit;
   FHLE.Result(0);
 end;
 
@@ -1541,9 +1789,15 @@ procedure TPSPIO.hLseek;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_BADF)))); Exit; end;
+  begin
+    FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_BADF))));
+    Exit;
+  end;
   if F.AsyncPending then
-    begin FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_ASYNC_BUSY)))); Exit; end;
+  begin
+    FHLE.Result64(UInt64(Int64(Integer(SCE_KERNEL_ERROR_ASYNC_BUSY))));
+    Exit;
+  end;
   // (fd, pad, offset64 in a2/a3, whence in t0)
   var Offset := Int64(FHLE.Arg64(2));
   var R := DoSeek(F, Offset, FHLE.ArgInt(4));
@@ -1554,14 +1808,25 @@ end;
 
 procedure TPSPIO.hLseekAsync;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if AsyncSlotHeld(F) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
-    [4, Int64(FHLE.Arg64(2)), FHLE.ArgInt(4)]), 20000) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [4, Int64(FHLE.Arg64(2)), FHLE.ArgInt(4)]),
+    20000) then
+    Exit;
   FHLE.Result(0);
 end;
 
@@ -1569,9 +1834,15 @@ procedure TPSPIO.hLseek32;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if F.AsyncPending then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
   var R := Cardinal(DoSeek(F, FHLE.ArgInt(1), FHLE.ArgInt(2)));
   if F.Kind = dkHost then
     DeviceYield(R, 20000)
@@ -1581,14 +1852,24 @@ end;
 
 procedure TPSPIO.hLseek32Async;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if AsyncSlotHeld(F) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
-  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
-    [4, FHLE.ArgInt(1), FHLE.ArgInt(2)]), 20000) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
+  if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F], [4, FHLE.ArgInt(1), FHLE.ArgInt(2)]), 20000) then
+    Exit;
   FHLE.Result(0);
 end;
 
@@ -1637,20 +1918,34 @@ procedure TPSPIO.hIoctl;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   FHLE.Result(IoctlCommon(F, FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3), FHLE.Arg(4), FHLE.Arg(5)));
 end;
 
 procedure TPSPIO.hIoctlAsync;
 begin
-  if FKernel.InInterrupt then begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  if FKernel.InInterrupt then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if AsyncSlotHeld(F) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ASYNC_BUSY);
+    Exit;
+  end;
   if not StartAsync(F, TPSPStateAction.Create(StatePerformAsync, [F],
-    [5, FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3), FHLE.Arg(4), FHLE.Arg(5)]), 20000) then Exit;
+    [5, FHLE.Arg(1), FHLE.Arg(2), FHLE.Arg(3), FHLE.Arg(4), FHLE.Arg(5)]), 20000) then
+    Exit;
   FHLE.Result(0);
 end;
 
@@ -1675,7 +1970,8 @@ begin
         2:
           if Assigned(FOnOutput) then
             FOnOutput(FMemory.ReadAnsi(InPtr, InLen));
-        3: ;
+        3:
+          ;
         $20:
           if Assigned(FOnScreenshot) then
             FOnScreenshot();
@@ -1684,7 +1980,10 @@ begin
       case Cmd of
         $02025806:
           if (OutPtr <> 0) and (OutLen >= 4) then
-            if FMemstickInserted then FMemory.Write32(OutPtr, 1) else FMemory.Write32(OutPtr, 2)
+            if FMemstickInserted then
+              FMemory.Write32(OutPtr, 1)
+            else
+              FMemory.Write32(OutPtr, 2)
           else
             FHLE.Result($80220183);
         $02125802:
@@ -1725,15 +2024,18 @@ begin
               var CB := TPSPCallback(FKernel.GetObject(FMemory.Read32(InPtr), TPSPCallback));
               if CB <> nil then
               begin
-                if not FMemstickCallbacks.Contains(CB.UID) then FMemstickCallbacks.Add(CB.UID);
+                if not FMemstickCallbacks.Contains(CB.UID) then
+                  FMemstickCallbacks.Add(CB.UID);
                 FKernel.NotifyCallback(CB, Ord(FMemstickInserted));
               end;
             end;
           end;
         $02415822:
-          if (InPtr <> 0) and (InLen >= 4) then FMemstickCallbacks.Remove(FMemory.Read32(InPtr));
+          if (InPtr <> 0) and (InLen >= 4) then
+            FMemstickCallbacks.Remove(FMemory.Read32(InPtr));
         $02425818:
-          if not FMemstickInserted then FHLE.Result(SCE_KERNEL_ERROR_NODEV)
+          if not FMemstickInserted then
+            FHLE.Result(SCE_KERNEL_ERROR_NODEV)
           else if InPtr <> 0 then
           begin
             // Free space: 1 GB in 32 KB clusters.
@@ -1760,19 +2062,29 @@ end;
 procedure TPSPIO.hGetstat;
 begin
   var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   var StatPtr := FHLE.Arg(1);
   var Dev, Rest: string;
   if not Split(Path, Dev, Rest) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+    Exit;
+  end;
   case DeviceKind(Dev) of
     dkUMD:
       begin
         if FDisc = nil then
-          begin FHLE.Result(SCE_KERNEL_ERROR_NODEV); Exit; end;
+        begin
+          FHLE.Result(SCE_KERNEL_ERROR_NODEV);
+          Exit;
+        end;
         var E: TPSPDiscEntry;
         if not FDisc.Entry(Rest, E) then
-          begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
+        begin
+          FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+          Exit;
+        end;
         // UMD files keep their sector number in st_private[0].
         WriteStat(StatPtr, E.Directory, E.Size, E.Modified, True, True, E.LBA);
         FHLE.Result(0);
@@ -1813,7 +2125,8 @@ end;
 procedure TPSPIO.hChstat;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   var Name := HostFileName(Path);
   var StatPtr := FHLE.Arg(1);
   var Bits := FHLE.Arg(2);
@@ -1840,12 +2153,16 @@ end;
 procedure TPSPIO.hDopen;
 begin
   var Path := Resolve(FMemory.ReadString(FHLE.Arg(0), 1024));
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   if FKernel.Trace then
     FHLE.Log('dopen %s', [Path]);
   var Dev, Rest: string;
   if not Split(Path, Dev, Rest) then
-    begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+    Exit;
+  end;
   var F := TPSPOpenFile.Create;
   F.IsDirectory := True;
   F.Path := Path;
@@ -1855,13 +2172,19 @@ begin
         if FDisc = nil then
         begin
           F.Free;
-          begin FHLE.Result(SCE_KERNEL_ERROR_NODEV); Exit; end;
+          begin
+            FHLE.Result(SCE_KERNEL_ERROR_NODEV);
+            Exit;
+          end;
         end;
         var E: TPSPDiscEntry;
         if not FDisc.Entry(Rest, E) or not E.Directory then
         begin
           F.Free;
-          begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
+          begin
+            FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+            Exit;
+          end;
         end;
         F.Kind := dkUMD;
         // The UMD file system lists no '.' or '..'.
@@ -1877,7 +2200,10 @@ begin
         if not Exists and ((Name = '') or (NormalizeRest(Rest) <> '/')) then
         begin
           F.Free;
-          begin FHLE.Result(SCE_ERROR_ERRNO_ENOENT); Exit; end;
+          begin
+            FHLE.Result(SCE_ERROR_ERRNO_ENOENT);
+            Exit;
+          end;
         end;
         F.Kind := dkHost;
         var Dot := Default(TPSPDiscEntry);
@@ -1930,7 +2256,10 @@ begin
       end;
   else
     F.Free;
-    begin FHLE.Result(SCE_KERNEL_ERROR_NODEV); Exit; end;
+    begin
+      FHLE.Result(SCE_KERNEL_ERROR_NODEV);
+      Exit;
+    end;
   end;
   F.Id := AllocFd;
   FFiles.Add(F.Id, F);
@@ -1941,11 +2270,18 @@ procedure TPSPIO.hDread;
 begin
   var F := GetFile(FHLE.Arg(0));
   if (F = nil) or not F.IsDirectory then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
-  if RejectMissingMemstick(F.Path) then Exit;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
+  if RejectMissingMemstick(F.Path) then
+    Exit;
   var P := FHLE.Arg(1);
   if F.EntryIndex >= Length(F.Entries) then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var E := F.Entries[F.EntryIndex];
   Inc(F.EntryIndex);
   if F.Kind = dkUMD then
@@ -1983,7 +2319,10 @@ procedure TPSPIO.hDclose;
 begin
   var F := GetFile(FHLE.Arg(0));
   if (F = nil) or not F.IsDirectory then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   FFiles.Remove(F.Id);
   F.Free;
   FHLE.Result(0);
@@ -1992,42 +2331,84 @@ end;
 procedure TPSPIO.hMkdir;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   var Name := HostFileName(Path);
   if Name = '' then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
   if DirectoryExists(Name) or FileExists(Name) then
-    begin DeviceYield(SCE_ERROR_ERRNO_EEXIST, 20000); Exit; end;
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_EEXIST, 20000);
+    Exit;
+  end;
   if not DirectoryExists(ExtractFileDir(Name)) then
-    begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if CreateDir(Name) then begin RememberFatPath(Name); HostChanged(Name, True); DeviceYield(0, 30000); end
-  else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000);
+    Exit;
+  end;
+  if CreateDir(Name) then
+  begin
+    RememberFatPath(Name);
+    HostChanged(Name, True);
+    DeviceYield(0, 30000);
+  end
+  else
+    DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hRmdir;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   var Name := HostFileName(Path);
   if Name = '' then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
   if not DirectoryExists(Name) then
-    begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if RemoveDir(Name) then begin ForgetFatPath(Name); HostChanged(Name); DeviceYield(0, 30000); end
-  else DeviceYield(SCE_ERROR_ERRNO_ENOTEMPTY, 30000);
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000);
+    Exit;
+  end;
+  if RemoveDir(Name) then
+  begin
+    ForgetFatPath(Name);
+    HostChanged(Name);
+    DeviceYield(0, 30000);
+  end
+  else
+    DeviceYield(SCE_ERROR_ERRNO_ENOTEMPTY, 30000);
 end;
 
 procedure TPSPIO.hRemove;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   var Name := HostFileName(Path);
   if Name = '' then
-    begin FHLE.Result(SCE_KERNEL_ERROR_UNSUP); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
+    Exit;
+  end;
   if not FileExists(Name) then
-    begin DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000); Exit; end;
-  if DeleteFile(Name) then begin ForgetFatPath(Name); HostChanged(Name); DeviceYield(0, 30000); end
-  else DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
+  begin
+    DeviceYield(SCE_ERROR_ERRNO_ENOENT, 20000);
+    Exit;
+  end;
+  if DeleteFile(Name) then
+  begin
+    ForgetFatPath(Name);
+    HostChanged(Name);
+    DeviceYield(0, 30000);
+  end
+  else
+    DeviceYield(SCE_ERROR_ERRNO_EACCES, 30000);
 end;
 
 procedure TPSPIO.hRename;
@@ -2035,7 +2416,8 @@ begin
   // The FAT driver renames in place: only the new name's last part counts.
   var SrcPath := FMemory.ReadString(FHLE.Arg(0), 1024);
   var DstPath := FMemory.ReadString(FHLE.Arg(1), 1024);
-  if RejectMissingMemstick(SrcPath) or RejectMissingMemstick(DstPath) then Exit;
+  if RejectMissingMemstick(SrcPath) or RejectMissingMemstick(DstPath) then
+    Exit;
   if (SrcPath.IndexOfAny(['*', '?']) >= 0) or (DstPath.IndexOfAny(['*', '?']) >= 0) then
   begin
     DeviceYield(SCE_ERROR_ERRNO_EINVAL, 20000);
@@ -2098,7 +2480,8 @@ end;
 procedure TPSPIO.hChdir;
 begin
   var Path := FMemory.ReadString(FHLE.Arg(0), 1024);
-  if RejectMissingMemstick(Path) then Exit;
+  if RejectMissingMemstick(Path) then
+    Exit;
   FCwd := Resolve(Path);
   FHLE.Result(0);
 end;
@@ -2122,9 +2505,13 @@ procedure TPSPIO.hGetDevType;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   case F.Kind of
-    dkUMD: FHLE.Result($10);
+    dkUMD:
+      FHLE.Result($10);
   else
     FHLE.Result($20);
   end;
@@ -2134,7 +2521,10 @@ procedure TPSPIO.hCancel;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   FHLE.Result(SCE_KERNEL_ERROR_UNSUP);
 end;
 
@@ -2153,11 +2543,20 @@ begin
   var F := GetFile(FHLE.Arg(0));
   var ResPtr := FHLE.Arg(1);
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if F.AsyncPending then
-    begin FHLE.Result(1); Exit; end;
+  begin
+    FHLE.Result(1);
+    Exit;
+  end;
   if F.AsyncDone = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_NOASYNC); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_NOASYNC);
+    Exit;
+  end;
   CollectAsync(F, ResPtr);
   FHLE.Result(0);
 end;
@@ -2165,7 +2564,10 @@ end;
 procedure TPSPIO.hGetAsyncStat;
 begin
   if FKernel.InInterrupt and (GetFile(FHLE.Arg(0)) <> nil) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_CONTEXT);
+    Exit;
+  end;
   var Poll := FHLE.Arg(1) <> 0;
   if Poll then
   begin
@@ -2187,18 +2589,33 @@ begin
   var KernelCaller := (FKernel.Current <> nil) and FKernel.Current.IsKernel;
   if (Priority <> -1) and (((Priority < 1) or (Priority > 126)) or
     (not KernelCaller and ((Priority < 8) or (Priority > 119)))) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Exit;
+  end;
   if Integer(FHLE.Arg(0)) = -1 then
-  begin FAsyncPriority := Max(0, Priority); FHLE.Result(0); Exit; end;
+  begin
+    FAsyncPriority := Max(0, Priority);
+    FHLE.Result(0);
+    Exit;
+  end;
   var F := GetFile(FHLE.Arg(0));
-  if F = nil then begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  if F = nil then
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   if (Priority = -1) and (FKernel.Current = nil) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_ILLEGAL_PRIORITY);
+    Exit;
+  end;
   F.AsyncPriority := Max(0, Priority);
   var T := FKernel.ThreadById(F.AsyncWorker);
   if (F.AsyncWorker <> 0) and (T <> nil) then
   begin
-    if Priority = -1 then Priority := FKernel.Current.Priority;
+    if Priority = -1 then
+      Priority := FKernel.Current.Priority;
     FKernel.ChangePriority(T, Priority);
   end;
   FHLE.Result(0);
@@ -2208,7 +2625,10 @@ procedure TPSPIO.hSetAsyncCallback;
 begin
   var F := GetFile(FHLE.Arg(0));
   if F = nil then
-    begin FHLE.Result(SCE_KERNEL_ERROR_BADF); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_BADF);
+    Exit;
+  end;
   F.AsyncCallback := FHLE.Arg(1);
   F.AsyncArg := FHLE.Arg(2);
   FHLE.Result(0);

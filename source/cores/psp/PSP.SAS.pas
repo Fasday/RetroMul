@@ -1,4 +1,4 @@
-unit PSP.SAS;
+﻿unit PSP.SAS;
 
 // sceSasCore: the SAS voice synthesizer the Media Engine runs for games. Up to
 // 32 voices of VAG ADPCM, 16-bit PCM, noise or simple waves, each with a
@@ -11,7 +11,8 @@ unit PSP.SAS;
 interface
 
 uses
-  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service;
+  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
+  PSP.Scheduler, PSP.Service;
 
 const
   PSPSasVoices = 32;
@@ -341,11 +342,16 @@ begin
   end;
   FMemory.Write32(A + 40, Cardinal(P.SustainLevel));
   case P.Phase of
-    spOff: FMemory.Write8(A + 51, $FF);
-    spAttack: FMemory.Write8(A + 51, 0);
-    spDecay: FMemory.Write8(A + 51, 1);
-    spSustain: FMemory.Write8(A + 51, 2);
-    spRelease: FMemory.Write8(A + 51, 3);
+    spOff:
+      FMemory.Write8(A + 51, $FF);
+    spAttack:
+      FMemory.Write8(A + 51, 0);
+    spDecay:
+      FMemory.Write8(A + 51, 1);
+    spSustain:
+      FMemory.Write8(A + 51, 2);
+    spRelease:
+      FMemory.Write8(A + 51, 3);
   end;
   FMemory.Write32(A + 52, Cardinal(P.Height));
 end;
@@ -502,8 +508,10 @@ end;
 function TPSPSasCore.Fetch(var V: TPSPSasVoice; out S: Integer): Boolean;
 begin
   case V.Kind of
-    svVAG: Result := FetchVag(V, S);
-    svPCM: Result := FetchPcm(V, S);
+    svVAG:
+      Result := FetchVag(V, S);
+    svPCM:
+      Result := FetchPcm(V, S);
     svNoise:
       begin
         S := FetchNoise(V);
@@ -597,8 +605,10 @@ procedure TPSPSasCore.StepEnvelope(var V: TPSPSasVoice);
   function Apply(Curve, Rate, H: Integer): Int64;
   begin
     case Curve of
-      CurveLinearIncrease: Result := Int64(H) + Rate;
-      CurveLinearDecrease: Result := Int64(H) - Rate;
+      CurveLinearIncrease:
+        Result := Int64(H) + Rate;
+      CurveLinearDecrease:
+        Result := Int64(H) - Rate;
       CurveLinearBent:
         if H <= $30000000 then
           Result := Int64(H) + Rate
@@ -608,7 +618,8 @@ procedure TPSPSasCore.StepEnvelope(var V: TPSPSasVoice);
         Result := Int64(H) - Int64((UInt64(H) * UInt64(Cardinal(Rate)) + $FFFFFFFF) shr 32);
       CurveExponentIncrease:
         Result := Int64(H) + $4000 + Int64((UInt64(Cardinal(Rate)) * UInt64(PSPSasEnvelopeMax - H)) shr 32);
-      CurveDirect: Result := Rate;
+      CurveDirect:
+        Result := Rate;
     else
       Result := H;
     end;
@@ -1007,7 +1018,8 @@ end;
 
 procedure TPSPSasCore.hCore;
 begin
-  if FKernel.RefuseWait then Exit;
+  if FKernel.RefuseWait then
+    Exit;
   FHLE.Result(0);
   MixGrain(FHLE.Arg(1), False, 0, 0);
   CoreWait;
@@ -1015,7 +1027,8 @@ end;
 
 procedure TPSPSasCore.hCoreWithMix;
 begin
-  if FKernel.RefuseWait then Exit;
+  if FKernel.RefuseWait then
+    Exit;
   if FOutputMode = 1 then
   begin
     FHLE.Result(PSP_SAS_ERROR_NOT_SUPPORTED);

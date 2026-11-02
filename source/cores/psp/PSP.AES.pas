@@ -1,4 +1,4 @@
-unit PSP.AES;
+﻿unit PSP.AES;
 
 // AES-128 (FIPS 197), CBC without padding (SP 800-38A) and CMAC
 // (SP 800-38B). Tables are derived from GF(2^8), not imported code/data.
@@ -6,7 +6,8 @@ unit PSP.AES;
 
 interface
 
-uses System.SysUtils;
+uses
+  System.SysUtils;
 
 type
   TPSPAESBlock = array[0..15] of Byte;
@@ -33,7 +34,8 @@ var
 function Times2(X: Byte): Byte; inline;
 begin
   Result := Byte((Cardinal(X) shl 1) and $FF);
-  if X and $80 <> 0 then Result := Result xor $1B;
+  if X and $80 <> 0 then
+    Result := Result xor $1B;
 end;
 
 function Product(A, B: Byte): Byte;
@@ -41,7 +43,8 @@ begin
   Result := 0;
   for var I := 0 to 7 do
   begin
-    if B and 1 <> 0 then Result := Result xor A;
+    if B and 1 <> 0 then
+      Result := Result xor A;
     B := B shr 1;
     A := Times2(A);
   end;
@@ -62,7 +65,8 @@ begin
     var Power := 254;
     while Power > 0 do
     begin
-      if Power and 1 <> 0 then V := Product(V, Base);
+      if Power and 1 <> 0 then
+        V := Product(V, Base);
       Base := Product(Base, Base);
       Power := Power shr 1;
     end;
@@ -78,7 +82,8 @@ end;
 
 procedure TPSPAES.Init(const Key: TBytes);
 begin
-  if Length(Key) <> 16 then raise EArgumentException.Create('AES-128 requires a 16-byte key');
+  if Length(Key) <> 16 then
+    raise EArgumentException.Create('AES-128 requires a 16-byte key');
   Move(Key[0], FSchedule[0], 16);
   var Rcon: Byte := 1;
   for var WordIndex := 4 to 43 do
@@ -103,7 +108,8 @@ procedure TPSPAES.Encrypt(var Block: TPSPAESBlock);
 var
   Next: TPSPAESBlock;
 begin
-  for var I := 0 to 15 do Block[I] := Block[I] xor FSchedule[I];
+  for var I := 0 to 15 do
+    Block[I] := Block[I] xor FSchedule[I];
   for var Round := 1 to 10 do
   begin
     for var C := 0 to 3 do
@@ -124,10 +130,14 @@ begin
       end
       else
       begin
-        Next[P] := A; Next[P + 1] := B; Next[P + 2] := D; Next[P + 3] := E;
+        Next[P] := A;
+        Next[P + 1] := B;
+        Next[P + 2] := D;
+        Next[P + 3] := E;
       end;
     end;
-    for var I := 0 to 15 do Block[I] := Next[I] xor FSchedule[Round * 16 + I];
+    for var I := 0 to 15 do
+      Block[I] := Next[I] xor FSchedule[Round * 16 + I];
   end;
 end;
 
@@ -135,7 +145,8 @@ procedure TPSPAES.Decrypt(var Block: TPSPAESBlock);
 var
   Next: TPSPAESBlock;
 begin
-  for var I := 0 to 15 do Block[I] := Block[I] xor FSchedule[160 + I];
+  for var I := 0 to 15 do
+    Block[I] := Block[I] xor FSchedule[160 + I];
   for var Round := 9 downto 0 do
   begin
     for var C := 0 to 3 do
@@ -147,7 +158,10 @@ begin
       for var C := 0 to 3 do
       begin
         var P := C * 4;
-        var A := Next[P]; var B := Next[P + 1]; var D := Next[P + 2]; var E := Next[P + 3];
+        var A := Next[P];
+        var B := Next[P + 1];
+        var D := Next[P + 2];
+        var E := Next[P + 3];
         Block[P] := M14[A] xor M11[B] xor M13[D] xor M9[E];
         Block[P + 1] := M9[A] xor M14[B] xor M11[D] xor M13[E];
         Block[P + 2] := M13[A] xor M9[B] xor M14[D] xor M11[E];
@@ -160,7 +174,8 @@ function TPSPAES.CBC(const Data: TBytes; Decrypting: Boolean): TBytes;
 var
   Chain, Block, Cipher: TPSPAESBlock;
 begin
-  if Length(Data) and 15 <> 0 then raise EArgumentException.Create('AES-CBC data is not block aligned');
+  if Length(Data) and 15 <> 0 then
+    raise EArgumentException.Create('AES-CBC data is not block aligned');
   SetLength(Result, Length(Data));
   FillChar(Chain, SizeOf(Chain), 0);
   for var N := 0 to Length(Data) div 16 - 1 do
@@ -170,12 +185,14 @@ begin
     begin
       Cipher := Block;
       Decrypt(Block);
-      for var I := 0 to 15 do Block[I] := Block[I] xor Chain[I];
+      for var I := 0 to 15 do
+        Block[I] := Block[I] xor Chain[I];
       Chain := Cipher;
     end
     else
     begin
-      for var I := 0 to 15 do Block[I] := Block[I] xor Chain[I];
+      for var I := 0 to 15 do
+        Block[I] := Block[I] xor Chain[I];
       Encrypt(Block);
       Chain := Block;
     end;
@@ -186,9 +203,11 @@ end;
 procedure DoubleKey(var K: TPSPAESBlock);
 begin
   var Carry := K[0] and $80;
-  for var I := 0 to 14 do K[I] := Byte(((Cardinal(K[I]) shl 1) or (K[I + 1] shr 7)) and $FF);
+  for var I := 0 to 14 do
+    K[I] := Byte(((Cardinal(K[I]) shl 1) or (K[I + 1] shr 7)) and $FF);
   K[15] := Byte((Cardinal(K[15]) shl 1) and $FF);
-  if Carry <> 0 then K[15] := K[15] xor $87;
+  if Carry <> 0 then
+    K[15] := K[15] xor $87;
 end;
 
 function TPSPAES.CMAC(const Data: TBytes): TBytes;
@@ -199,18 +218,23 @@ begin
   Encrypt(SubKey);
   DoubleKey(SubKey);
   var Full := (Length(Data) > 0) and (Length(Data) and 15 = 0);
-  if not Full then DoubleKey(SubKey);
+  if not Full then
+    DoubleKey(SubKey);
   FillChar(State, 16, 0);
   var Blocks := (Length(Data) + 15) div 16;
-  if Blocks = 0 then Blocks := 1;
+  if Blocks = 0 then
+    Blocks := 1;
   for var N := 0 to Blocks - 1 do
   begin
     for var I := 0 to 15 do
     begin
       var Pos := N * 16 + I;
-      if Pos < Length(Data) then State[I] := State[I] xor Data[Pos]
-      else if Pos = Length(Data) then State[I] := State[I] xor $80;
-      if N = Blocks - 1 then State[I] := State[I] xor SubKey[I];
+      if Pos < Length(Data) then
+        State[I] := State[I] xor Data[Pos]
+      else if Pos = Length(Data) then
+        State[I] := State[I] xor $80;
+      if N = Blocks - 1 then
+        State[I] := State[I] xor SubKey[I];
     end;
     Encrypt(State);
   end;

@@ -1,4 +1,4 @@
-unit PSP.AudioCodec;
+﻿unit PSP.AudioCodec;
 
 // sceAudiocodec: the Media Engine's frame decoders driven through a 128-byte
 // context the caller owns. CheckNeedMem, GetEDRAM and Init fill the context
@@ -11,8 +11,9 @@ unit PSP.AudioCodec;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, Audio.ATRAC3, Audio.ATRAC3Plus, FMXAudio.Types, FMXAudio.AAC, PSP.MP3;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service, Audio.ATRAC3,
+  Audio.ATRAC3Plus, FMXAudio.Types, FMXAudio.AAC, PSP.MP3;
 
 type
   TPSPAudioCodecState = class
@@ -458,8 +459,10 @@ begin
     Exit;
   var Version := (H[1] shr 3) and 3;
   case Version of
-    3: W32(Ctx, $38, 1);
-    2: W32(Ctx, $38, 0);
+    3:
+      W32(Ctx, $38, 1);
+    2:
+      W32(Ctx, $38, 0);
   else
     W32(Ctx, $38, 2);
   end;
@@ -646,8 +649,10 @@ begin
   var Ctx := FHLE.Arg(0);
   var Codec := FHLE.ArgInt(1);
   case Codec of
-    CODEC_AT3PLUS: ShortWait(InitAt3Plus(Ctx, False));
-    CODEC_AT3: ShortWait(InitAt3(Ctx, False));
+    CODEC_AT3PLUS:
+      ShortWait(InitAt3Plus(Ctx, False));
+    CODEC_AT3:
+      ShortWait(InitAt3(Ctx, False));
     CODEC_MP3:
       begin
         // The version stays unknown until a header is read.
@@ -690,8 +695,10 @@ begin
   var Ctx := FHLE.Arg(0);
   var Codec := FHLE.ArgInt(1);
   case Codec of
-    CODEC_AT3PLUS: ShortWait(InitAt3Plus(Ctx, True));
-    CODEC_AT3: ShortWait(InitAt3(Ctx, True));
+    CODEC_AT3PLUS:
+      ShortWait(InitAt3Plus(Ctx, True));
+    CODEC_AT3:
+      ShortWait(InitAt3(Ctx, True));
     CODEC_MP3:
       begin
         W32(Ctx, $38, 9999);
@@ -707,10 +714,14 @@ begin
   var Ctx := FHLE.Arg(0);
   var Codec := FHLE.ArgInt(1);
   case Codec of
-    CODEC_AT3PLUS: ShortWait(DecodeAt3Plus(Ctx));
-    CODEC_AT3: ShortWait(DecodeAt3(Ctx));
-    CODEC_MP3: ShortWait(DecodeMp3(Ctx));
-    CODEC_AAC: ShortWait(DecodeAac(Ctx));
+    CODEC_AT3PLUS:
+      ShortWait(DecodeAt3Plus(Ctx));
+    CODEC_AT3:
+      ShortWait(DecodeAt3(Ctx));
+    CODEC_MP3:
+      ShortWait(DecodeMp3(Ctx));
+    CODEC_AAC:
+      ShortWait(DecodeAac(Ctx));
   else
     FHLE.Result(SCE_ERROR_NOT_SUPPORTED_4);
   end;
@@ -750,13 +761,15 @@ begin
   var OutPtr := FHLE.Arg(2);
   var N: Cardinal := 0;
   case Codec of
-    CODEC_AT3PLUS: N := 2048 * 2 * R32(Ctx, $48);
+    CODEC_AT3PLUS:
+      N := 2048 * 2 * R32(Ctx, $48);
     CODEC_AT3:
       begin
         N := $1000;
         var Bytes, Channels: Integer;
         var Joint: Boolean;
-        if PSPAtrac3Param(Integer(R32(Ctx, $28)), Bytes, Channels, Joint) and (Channels = 1) and (R32(Ctx, $34) <> 2) then
+        if PSPAtrac3Param(Integer(R32(Ctx, $28)), Bytes, Channels, Joint) and (Channels = 1) and
+          (R32(Ctx, $34) <> 2) then
           N := $800;
       end;
     CODEC_MP3:

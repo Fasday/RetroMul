@@ -1,4 +1,4 @@
-unit PSP.Videocodec;
+﻿unit PSP.Videocodec;
 
 // sceVideocodec as a guest libmpeg drives it: one H.264 decoder per codec
 // block, from sceVideocodecOpen to sceVideocodecDelete. The block carries the
@@ -14,8 +14,8 @@ unit PSP.Videocodec;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.HLE, PSP.Kernel, PSP.Service,
-  PSP.MpegVideo;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.HLE,
+  PSP.Kernel, PSP.Service, PSP.MpegVideo;
 
 type
   TPSPVideoDecoder = class

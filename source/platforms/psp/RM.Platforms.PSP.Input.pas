@@ -7,7 +7,8 @@
 interface
 
 uses
-  Core.Emulation, Core.Emulation.Types, RM.Input.Runtime, RM.Settings.Devices, RM.ControlsHelp.Content;
+  Core.Emulation, Core.Emulation.Types, RM.Input.Runtime, RM.Settings.Devices,
+  RM.ControlsHelp.Content;
 
 const
   PSPStickAction = 4224;

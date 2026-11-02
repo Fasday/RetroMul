@@ -1,4 +1,4 @@
-unit PSP.GE.Engine;
+﻿unit PSP.GE.Engine;
 
 // The GE's command processor below list control: register writes, matrix
 // uploads, vertex processing (decode, morph, skinning, transform, lighting,
@@ -12,8 +12,9 @@ unit PSP.GE.Engine;
 interface
 
 uses
-  System.SysUtils, System.Math, System.Classes, System.SyncObjs, PSP.Types, PSP.Memory, PSP.GE.Types,
-  PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend, PSP.GE.Workers;
+  System.SysUtils, System.Math, System.Classes, System.SyncObjs, PSP.Types,
+  PSP.Memory, PSP.GE.Types, PSP.GE.Texture, PSP.GE.Raster, PSP.GE.Backend,
+  PSP.GE.Workers;
 
 type
   TGEVec3 = record
@@ -375,7 +376,7 @@ begin
       end;
   end;
   FWorkers := TGEWorkers.Create(FMemory);
-  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   // Up to three workers, leaving the emulation, its sound and the front end
   // their cores.
   var Threads := Min(TThread.ProcessorCount - 3, 3);
@@ -384,7 +385,7 @@ begin
     Threads := Min(StrToIntDef(Setting, 0), 15);
   if Threads > 0 then
     FVertexPool := TGEVertexPool.Create(Threads);
-  {$ENDIF}
+{$ENDIF}
   Reset;
 end;
 
@@ -410,7 +411,8 @@ end;
 procedure TPSPGEEngine.Synchronize;
 begin
   FWorkers.Sync;
-  if Backend <> nil then Backend.Sync;
+  if Backend <> nil then
+    Backend.Sync;
 end;
 
 procedure TPSPGEEngine.Restored;
@@ -698,9 +700,12 @@ begin
   if Wgt <> 0 then
     for var I := 0 to WCount - 1 do
       case Wgt of
-        1: V.Weights[I] := VB(P, M, Addr, Cardinal(I)) * VInv128;
-        2: V.Weights[I] := VH(P, M, Addr, Cardinal(I * 2)) * VInv32768;
-        3: V.Weights[I] := VF(P, M, Addr, Cardinal(I * 4));
+        1:
+          V.Weights[I] := VB(P, M, Addr, Cardinal(I)) * VInv128;
+        2:
+          V.Weights[I] := VH(P, M, Addr, Cardinal(I * 2)) * VInv32768;
+        3:
+          V.Weights[I] := VF(P, M, Addr, Cardinal(I * 4));
       end;
   var TA := Cardinal(FOffTC);
   case Tc of
@@ -742,25 +747,40 @@ begin
       4:
         begin
           var C := VH(P, M, Addr, CA);
-          var R := C and $1F; var G := (C shr 5) and $3F; var B := (C shr 11) and $1F;
-          V.R := (R shl 3) or (R shr 2); V.G := (G shl 2) or (G shr 4); V.B := (B shl 3) or (B shr 2); V.A := 255;
+          var R := C and $1F;
+          var G := (C shr 5) and $3F;
+          var B := (C shr 11) and $1F;
+          V.R := (R shl 3) or (R shr 2);
+          V.G := (G shl 2) or (G shr 4);
+          V.B := (B shl 3) or (B shr 2);
+          V.A := 255;
         end;
       5:
         begin
           var C := VH(P, M, Addr, CA);
-          var R := C and $1F; var G := (C shr 5) and $1F; var B := (C shr 10) and $1F;
-          V.R := (R shl 3) or (R shr 2); V.G := (G shl 3) or (G shr 2); V.B := (B shl 3) or (B shr 2);
+          var R := C and $1F;
+          var G := (C shr 5) and $1F;
+          var B := (C shr 10) and $1F;
+          V.R := (R shl 3) or (R shr 2);
+          V.G := (G shl 3) or (G shr 2);
+          V.B := (B shl 3) or (B shr 2);
           V.A := Ord((C and $8000) <> 0) * 255;
         end;
       6:
         begin
           var C := VH(P, M, Addr, CA);
-          V.R := (C and $F) * 17; V.G := ((C shr 4) and $F) * 17; V.B := ((C shr 8) and $F) * 17; V.A := ((C shr 12) and $F) * 17;
+          V.R := (C and $F) * 17;
+          V.G := ((C shr 4) and $F) * 17;
+          V.B := ((C shr 8) and $F) * 17;
+          V.A := ((C shr 12) and $F) * 17;
         end;
       7:
         begin
           var C := VW(P, M, Addr, CA);
-          V.R := C and $FF; V.G := (C shr 8) and $FF; V.B := (C shr 16) and $FF; V.A := C shr 24;
+          V.R := C and $FF;
+          V.G := (C shr 8) and $FF;
+          V.B := (C shr 16) and $FF;
+          V.A := C shr 24;
         end;
     end;
   end;
@@ -770,17 +790,21 @@ begin
     case Nrm of
       1:
         begin
-          V.N.X := ShortInt(VB(P, M, Addr, NA)) * VInv128; V.N.Y := ShortInt(VB(P, M, Addr, NA + 1)) * VInv128;
+          V.N.X := ShortInt(VB(P, M, Addr, NA)) * VInv128;
+          V.N.Y := ShortInt(VB(P, M, Addr, NA + 1)) * VInv128;
           V.N.Z := ShortInt(VB(P, M, Addr, NA + 2)) * VInv128;
         end;
       2:
         begin
-          V.N.X := SmallInt(VH(P, M, Addr, NA)) * VInv32768; V.N.Y := SmallInt(VH(P, M, Addr, NA + 2)) * VInv32768;
+          V.N.X := SmallInt(VH(P, M, Addr, NA)) * VInv32768;
+          V.N.Y := SmallInt(VH(P, M, Addr, NA + 2)) * VInv32768;
           V.N.Z := SmallInt(VH(P, M, Addr, NA + 4)) * VInv32768;
         end;
       3:
         begin
-          V.N.X := VF(P, M, Addr, NA); V.N.Y := VF(P, M, Addr, NA + 4); V.N.Z := VF(P, M, Addr, NA + 8);
+          V.N.X := VF(P, M, Addr, NA);
+          V.N.Y := VF(P, M, Addr, NA + 4);
+          V.N.Z := VF(P, M, Addr, NA + 8);
         end;
     end;
     LastN := V.N;
@@ -795,22 +819,28 @@ begin
         // Through mode has no 8-bit positions: they read as the origin.
         if not Through then
         begin
-          V.P.X := ShortInt(VB(P, M, Addr, PA)) * VInv128; V.P.Y := ShortInt(VB(P, M, Addr, PA + 1)) * VInv128;
+          V.P.X := ShortInt(VB(P, M, Addr, PA)) * VInv128;
+          V.P.Y := ShortInt(VB(P, M, Addr, PA + 1)) * VInv128;
           V.P.Z := ShortInt(VB(P, M, Addr, PA + 2)) * VInv128;
         end;
       2:
         if Through then
         begin
-          V.P.X := SmallInt(VH(P, M, Addr, PA)); V.P.Y := SmallInt(VH(P, M, Addr, PA + 2)); V.P.Z := VH(P, M, Addr, PA + 4);
+          V.P.X := SmallInt(VH(P, M, Addr, PA));
+          V.P.Y := SmallInt(VH(P, M, Addr, PA + 2));
+          V.P.Z := VH(P, M, Addr, PA + 4);
         end
         else
         begin
-          V.P.X := SmallInt(VH(P, M, Addr, PA)) * VInv32768; V.P.Y := SmallInt(VH(P, M, Addr, PA + 2)) * VInv32768;
+          V.P.X := SmallInt(VH(P, M, Addr, PA)) * VInv32768;
+          V.P.Y := SmallInt(VH(P, M, Addr, PA + 2)) * VInv32768;
           V.P.Z := SmallInt(VH(P, M, Addr, PA + 4)) * VInv32768;
         end;
       3:
         begin
-          V.P.X := VF(P, M, Addr, PA); V.P.Y := VF(P, M, Addr, PA + 4); V.P.Z := VF(P, M, Addr, PA + 8);
+          V.P.X := VF(P, M, Addr, PA);
+          V.P.Y := VF(P, M, Addr, PA + 4);
+          V.P.Z := VF(P, M, Addr, PA + 8);
         end;
     end;
   end;
@@ -827,7 +857,10 @@ begin
   end;
   V := Default(TGEInVertex);
   var CR, CG, CB, CA: Single;
-  CR := 0; CG := 0; CB := 0; CA := 0;
+  CR := 0;
+  CG := 0;
+  CB := 0;
+  CA := 0;
   for var M := 0 to Morphs - 1 do
   begin
     var W := GEFloat(Regs.Cmd[GE_MORPHWEIGHT0 + M]);
@@ -835,9 +868,16 @@ begin
     DecodeVertex(Base + Cardinal(M * FVSize), VType, T);
     V.U := V.U + T.U * W;
     V.V := V.V + T.V * W;
-    V.N.X := V.N.X + T.N.X * W; V.N.Y := V.N.Y + T.N.Y * W; V.N.Z := V.N.Z + T.N.Z * W;
-    V.P.X := V.P.X + T.P.X * W; V.P.Y := V.P.Y + T.P.Y * W; V.P.Z := V.P.Z + T.P.Z * W;
-    CR := CR + T.R * W; CG := CG + T.G * W; CB := CB + T.B * W; CA := CA + T.A * W;
+    V.N.X := V.N.X + T.N.X * W;
+    V.N.Y := V.N.Y + T.N.Y * W;
+    V.N.Z := V.N.Z + T.N.Z * W;
+    V.P.X := V.P.X + T.P.X * W;
+    V.P.Y := V.P.Y + T.P.Y * W;
+    V.P.Z := V.P.Z + T.P.Z * W;
+    CR := CR + T.R * W;
+    CG := CG + T.G * W;
+    CB := CB + T.B * W;
+    CA := CA + T.A * W;
     V.HasColor := T.HasColor;
     for var I := 0 to 7 do
       V.Weights[I] := V.Weights[I] + T.Weights[I] * W;
@@ -869,7 +909,12 @@ begin
     PrepareGeometry;
   if FGeom.BoneCount < WCount * 12 then
     PrepareBones(WCount * 12);
-  KX := 0; KY := 0; KZ := 0; TX := 0; TY := 0; TZ := 0;
+  KX := 0;
+  KY := 0;
+  KZ := 0;
+  TX := 0;
+  TY := 0;
+  TZ := 0;
   for I := 0 to WCount - 1 do
   begin
     W := V.Weights[I];
@@ -882,8 +927,12 @@ begin
     TY := TY + W * (M[1] * N.X + M[4] * N.Y + M[7] * N.Z);
     TZ := TZ + W * (M[2] * N.X + M[5] * N.Y + M[8] * N.Z);
   end;
-  P.X := KX; P.Y := KY; P.Z := KZ;
-  N.X := TX; N.Y := TY; N.Z := TZ;
+  P.X := KX;
+  P.Y := KY;
+  P.Z := KZ;
+  N.X := TX;
+  N.Y := TY;
+  N.Z := TZ;
 end;
 
 // (M: a matrix's GEFloats.)
@@ -908,7 +957,9 @@ begin
   L := Sqrt(P.X * P.X + P.Y * P.Y + P.Z * P.Z);
   if L > 0 then
   begin
-    Result.X := P.X / L; Result.Y := P.Y / L; Result.Z := P.Z / L;
+    Result.X := P.X / L;
+    Result.Y := P.Y / L;
+    Result.Z := P.Z / L;
   end
   else
     Result := P;
@@ -1242,9 +1293,9 @@ end;
 // term added with Add24), kept for values outside Rows24's normal range.
 procedure Rows24Old(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer); inline;
 begin
-  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   if not Rows24Fast(Rows, X, Y, Z, Res, Count) then
-  {$ENDIF}
+{$ENDIF}
     Rows24Pascal(Rows, X, Y, Z, Res, Count);
 end;
 
@@ -1335,9 +1386,12 @@ end;
 function Sum24(const T0, T1, T2, T3: TGETerm24): Double;
 begin
   var L := T0;
-  if Abs(T1.V) > Abs(L.V) then L := T1;
-  if Abs(T2.V) > Abs(L.V) then L := T2;
-  if Abs(T3.V) > Abs(L.V) then L := T3;
+  if Abs(T1.V) > Abs(L.V) then
+    L := T1;
+  if Abs(T2.V) > Abs(L.V) then
+    L := T2;
+  if Abs(T3.V) > Abs(L.V) then
+    L := T3;
   if L.V = 0 then
     Exit(0);
   Result := T24(TruncPow2(T0.V, L.Q) + TruncPow2(T1.V, L.Q) + TruncPow2(T2.V, L.Q) + TruncPow2(T3.V, L.Q));
@@ -1951,20 +2005,20 @@ procedure Rows24(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer; 
 begin
   if Small and Small24(X) and Small24(Y) and Small24(Z) then
   begin
-    {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
     var XYZ: array[0..2] of Double;
     XYZ[0] := X;
     XYZ[1] := Y;
     XYZ[2] := Z;
     Rows24Asm(Rows, Res, Count, @XYZ[0]);
-    {$ELSE}
+{$ELSE}
     for var I := 0 to Count - 1 do
     begin
       Res^ := Dot24Bits(Rows[0], X, Rows[1], Y, Rows[2], Z, Rows[3]);
       Inc(Rows);
       Inc(Res);
     end;
-    {$ENDIF}
+{$ENDIF}
     Exit;
   end;
   var Exact := Exact24(X) and Exact24(Y) and Exact24(Z);
@@ -2001,10 +2055,10 @@ begin
   for var R := 0 to 2 do
   begin
     for var J := 0 to 2 do
-      Rows[J] := Sum24(Product24(View[R], World[3 * J]), Product24(View[3 + R], World[3 * J + 1]),
-        Product24(View[6 + R], World[3 * J + 2]), Term24(0));
-    Rows[3] := Sum24(Product24(View[R], World[9]), Product24(View[3 + R], World[10]),
-      Product24(View[6 + R], World[11]), Term24(View[9 + R]));
+      Rows[J] := Sum24(Product24(View[R], World[3 * J]), Product24(View[3 + R], World[3 * J + 1]), Product24(View[6 +
+        R], World[3 * J + 2]), Term24(0));
+    Rows[3] := Sum24(Product24(View[R], World[9]), Product24(View[3 + R], World[10]), Product24(View[6 + R], World[11]),
+      Term24(View[9 + R]));
     Inc(Rows);
   end;
 end;
@@ -2161,9 +2215,9 @@ end;
 
 procedure Port24(V: PDouble; RW: Double; Port: PDouble; Res: PDouble); inline;
 begin
-  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   if not Port24Fast(V, RW, Port, Res) then
-  {$ENDIF}
+{$ENDIF}
     Port24Pascal(V, RW, Port, Res);
 end;
 
@@ -2300,7 +2354,9 @@ begin
   if L > 0 then
   begin
     L := 1 / Sqrt(L);
-    Result.X := P.X * L; Result.Y := P.Y * L; Result.Z := P.Z * L;
+    Result.X := P.X * L;
+    Result.Y := P.Y * L;
+    Result.Z := P.Z * L;
   end
   else
     Result := P;
@@ -2313,7 +2369,9 @@ end;
 
 function Vec3(X, Y, Z: Single): TGEVec3; inline;
 begin
-  Result.X := X; Result.Y := Y; Result.Z := Z;
+  Result.X := X;
+  Result.Y := Y;
+  Result.Z := Z;
 end;
 
 function CmdVec(const C: TGECmds; Index: Integer): TGEVec3;
@@ -2393,18 +2451,18 @@ begin
   Now[75] := Regs.View[2];
   Now[76] := Regs.View[5];
   Now[77] := Regs.View[8];
-  {$IF Defined(MSWINDOWS)}
+{$IF Defined(MSWINDOWS)}
   {$WARN SYMBOL_PLATFORM OFF}
   Now[78] := GetMXCSR;
   {$WARN SYMBOL_PLATFORM ON}
-  {$ELSE}
+{$ELSE}
   Now[78] := Ord(GetRoundMode);
-  {$ENDIF}
-  {$IFDEF CPUX86}
+{$ENDIF}
+{$IFDEF CPUX86}
   Now[79] := Get8087CW;
-  {$ELSE}
+{$ELSE}
   Now[79] := 0;
-  {$ENDIF}
+{$ENDIF}
   if FLightRegsValid and CompareMem(@Now, @FLightRegs, SizeOf(Now)) then
   begin
     FLightValid := True;
@@ -2438,8 +2496,8 @@ begin
     U.KA := GEFloat(C[GE_LKA0 + L * 3]);
     U.KB := GEFloat(C[GE_LKA0 + L * 3 + 1]);
     U.KC := GEFloat(C[GE_LKA0 + L * 3 + 2]);
-    U.PosFinite := FiniteS(U.Pos.X) and FiniteS(U.Pos.Y) and FiniteS(U.Pos.Z) and FiniteS(U.KA) and
-      FiniteS(U.KB) and FiniteS(U.KC);
+    U.PosFinite := FiniteS(U.Pos.X) and FiniteS(U.Pos.Y) and FiniteS(U.Pos.Z) and FiniteS(U.KA) and FiniteS(U.KB) and
+      FiniteS(U.KC);
     U.SpotDir := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
     var SD := CmdVec(C^, GE_LDX0 + L * 3);
     U.SpotRaw := Vec3(T24(SD.X), T24(SD.Y), T24(SD.Z));
@@ -2490,15 +2548,22 @@ begin
   begin
     if (Upd and 1) <> 0 then
     begin
-      MA[0] := V.R; MA[1] := V.G; MA[2] := V.B; MAA := V.A;
+      MA[0] := V.R;
+      MA[1] := V.G;
+      MA[2] := V.B;
+      MAA := V.A;
     end;
     if (Upd and 2) <> 0 then
     begin
-      MD[0] := V.R; MD[1] := V.G; MD[2] := V.B;
+      MD[0] := V.R;
+      MD[1] := V.G;
+      MD[2] := V.B;
     end;
     if (Upd and 4) <> 0 then
     begin
-      MS[0] := V.R; MS[1] := V.G; MS[2] := V.B;
+      MS[0] := V.R;
+      MS[1] := V.G;
+      MS[2] := V.B;
     end;
   end;
   for Ch := 0 to 2 do
@@ -2643,9 +2708,12 @@ begin
     1:
       begin
         case (C[GE_TEXMAPMODE] shr 8) and 3 of
-          0: Src := P;
-          1: Src := Vec3(V.U, V.V, 0);
-          2: Src := Normalized(N);
+          0:
+            Src := P;
+          1:
+            Src := Vec3(V.U, V.V, 0);
+          2:
+            Src := Normalized(N);
         else
           Src := N;
         end;
@@ -2703,9 +2771,8 @@ begin
   // same values as last time decode the same.
   var G: ^TGEGeometry := @FGeom;
   var C: PGECmds := @Regs.Cmd;
-  if FGeomCached and CompareMem(@Regs.World, @FGeomMats, SizeOf(FGeomMats)) and
-    CompareMem(@C[GE_VIEWPORTXSCALE], @FGeomPort, 6 * SizeOf(Cardinal)) and
-    (C[GE_OFFSETX] = FGeomPort[6]) and (C[GE_OFFSETY] = FGeomPort[7]) then
+  if FGeomCached and CompareMem(@Regs.World, @FGeomMats, SizeOf(FGeomMats)) and CompareMem(@C[GE_VIEWPORTXSCALE],
+    @FGeomPort, 6 * SizeOf(Cardinal)) and (C[GE_OFFSETX] = FGeomPort[6]) and (C[GE_OFFSETY] = FGeomPort[7]) then
   begin
     if (G.BoneCount > 0) and not CompareMem(@Regs.Bone, @FGeomBones, G.BoneCount * SizeOf(Cardinal)) then
       G.BoneCount := 0;
@@ -2730,14 +2797,20 @@ begin
     G.ProjW[I] := T24(G.Proj[12 + I]);
   for var R := 0 to 2 do
   begin
-    G.Rows[R, 0] := G.World[R]; G.Rows[R, 1] := G.World[R + 3]; G.Rows[R, 2] := G.World[R + 6];
+    G.Rows[R, 0] := G.World[R];
+    G.Rows[R, 1] := G.World[R + 3];
+    G.Rows[R, 2] := G.World[R + 6];
     G.Rows[R, 3] := G.World[R + 9];
-    G.Rows[3 + R, 0] := G.View[R]; G.Rows[3 + R, 1] := G.View[R + 3]; G.Rows[3 + R, 2] := G.View[R + 6];
+    G.Rows[3 + R, 0] := G.View[R];
+    G.Rows[3 + R, 1] := G.View[R + 3];
+    G.Rows[3 + R, 2] := G.View[R + 6];
     G.Rows[3 + R, 3] := G.View[R + 9];
   end;
   for var R := 0 to 3 do
   begin
-    G.Rows[6 + R, 0] := G.Proj[R]; G.Rows[6 + R, 1] := G.Proj[R + 4]; G.Rows[6 + R, 2] := G.Proj[R + 8];
+    G.Rows[6 + R, 0] := G.Proj[R];
+    G.Rows[6 + R, 1] := G.Proj[R + 4];
+    G.Rows[6 + R, 2] := G.Proj[R + 8];
     G.Rows[6 + R, 3] := G.ProjW[R];
   end;
   G.Combined := True;
@@ -2805,7 +2878,8 @@ begin
   if not ((SX >= 0) and (SX <= 4096) and (SY >= 0) and (SY <= 4096)) then
   begin
     A.Code := A.Code or GEOutScreen;
-    SX := 0; SY := 0;
+    SX := 0;
+    SY := 0;
   end;
   // (SX and SY in 0..4096 here: Floor is Trunc.)
   A.V.X := Integer(Trunc(SX * 16)) - G.OffX;
@@ -2830,7 +2904,10 @@ begin
   C := @Regs.Cmd;
   if V.HasColor then
   begin
-    R := V.R; G := V.G; B := V.B; A := V.A;
+    R := V.R;
+    G := V.G;
+    B := V.B;
+    A := V.A;
   end
   else
   begin
@@ -2845,7 +2922,10 @@ begin
     O.V.Y := Trunc(V.P.Y * 16);
     O.V.Z := Trunc(V.P.Z);
     O.V.W := 1;
-    O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
+    O.V.R := R;
+    O.V.G := G;
+    O.V.B := B;
+    O.V.A := A;
     O.V.S := V.U;
     O.V.T := V.V;
     O.V.Q := 1;
@@ -2863,20 +2943,36 @@ begin
   WP := MulPoint(FGeom.WorldS, P);
   WN := MulDir(FGeom.WorldS, N);
   ClipPosition(P, CX, CY, CZ, CW, VP);
-  O.CX := CX; O.CY := CY; O.CZ := CZ; O.CW := CW;
-  if CX < -CW then O.Code := GEOutXNeg;
-  if CX > CW then O.Code := O.Code or GEOutXPos;
-  if CY < -CW then O.Code := O.Code or GEOutYNeg;
-  if CY > CW then O.Code := O.Code or GEOutYPos;
-  if CZ < -CW then O.Code := O.Code or GEOutNear;
-  if CZ > CW then O.Code := O.Code or GEOutFar;
+  O.CX := CX;
+  O.CY := CY;
+  O.CZ := CZ;
+  O.CW := CW;
+  if CX < -CW then
+    O.Code := GEOutXNeg;
+  if CX > CW then
+    O.Code := O.Code or GEOutXPos;
+  if CY < -CW then
+    O.Code := O.Code or GEOutYNeg;
+  if CY > CW then
+    O.Code := O.Code or GEOutYPos;
+  if CZ < -CW then
+    O.Code := O.Code or GEOutNear;
+  if CZ > CW then
+    O.Code := O.Code or GEOutFar;
   Project(O);
 
-  SR := 0; SG := 0; SB := 0;
+  SR := 0;
+  SG := 0;
+  SB := 0;
   if (C[GE_LIGHTINGENABLE] and 1) <> 0 then
     Light(V, WP, WN, R, G, B, A, SR, SG, SB);
-  O.V.R := R; O.V.G := G; O.V.B := B; O.V.A := A;
-  O.V.SR := SR; O.V.SG := SG; O.V.SB := SB;
+  O.V.R := R;
+  O.V.G := G;
+  O.V.B := B;
+  O.V.A := A;
+  O.V.SR := SR;
+  O.V.SG := SG;
+  O.V.SB := SB;
   TexGen(V, P, N, WP, WN, S, T, Q);
   O.V.Q := Q;
   O.V.S := S * (1 shl (C[GE_TEXSIZE0] and $F));
@@ -2929,8 +3025,8 @@ begin
   var Same := FRasterKeyValid and (Diff = 0);
   if Same and S.Textured then
     for var L := 0 to S.Tex.LevelCount - 1 do
-      if (S.Tex.Levels[L].Size > 0) and
-        (FMemory.HostPtr(S.Tex.Levels[L].Addr, S.Tex.Levels[L].Size) <> S.Tex.Levels[L].Ptr) then
+      if (S.Tex.Levels[L].Size > 0) and (FMemory.HostPtr(S.Tex.Levels[L].Addr, S.Tex.Levels[L].Size) <>
+        S.Tex.Levels[L].Ptr) then
       begin
         Same := False;
         Break;
@@ -2975,8 +3071,10 @@ begin
     var ClutStep := 0;
     if (C[GE_TEXMODE] and $100) <> 0 then
       case T.Format of
-        4: ClutStep := 16;
-        5: ClutStep := 256;
+        4:
+          ClutStep := 16;
+        5:
+          ClutStep := 256;
       end;
     for var L := 0 to 7 do
     begin
@@ -3142,9 +3240,14 @@ begin
     if CW <> FCullCW then
       Exit;
   end;
-  if Backend <> nil then Backend.DrawTriangle(FRaster, A, B, C) else FWorkers.Triangle(FRaster, A, B, C);
+  if Backend <> nil then
+    Backend.DrawTriangle(FRaster, A, B, C)
+  else
+    FWorkers.Triangle(FRaster, A, B, C);
   Inc(FPrimCost, 100 + Min(Abs(Int64(B.X - A.X) * (C.Y - A.Y) - Int64(B.Y - A.Y) * (C.X - A.X)) div 512,
-    ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)), Max(A.Y, Max(B.Y, C.Y)))) * 3);
+    ScissoredArea(Min(A.X, Min(B.X, C.X)), Min(A.Y, Min(B.Y, C.Y)), Max(A.X, Max(B.X, C.X)),
+    Max(A.Y, Max(B.Y, C.Y)))) *
+    3);
 end;
 
 type
@@ -3182,8 +3285,13 @@ end;
 
 procedure CopyColors(var D: TGEVertex; const S: TGEVertex); inline;
 begin
-  D.R := S.R; D.G := S.G; D.B := S.B; D.A := S.A;
-  D.SR := S.SR; D.SG := S.SG; D.SB := S.SB;
+  D.R := S.R;
+  D.G := S.G;
+  D.B := S.B;
+  D.A := S.A;
+  D.SR := S.SR;
+  D.SG := S.SG;
+  D.SB := S.SB;
 end;
 
 // Without depth clamping a primitive with a vertex whose depth after the
@@ -3229,15 +3337,21 @@ begin
     if (Codes and GEOutScreen) = 0 then
       if FDepthClamp and (DepthOut(A) or DepthOut(B) or DepthOut(C)) then
       begin
-        var CA := A.V; var CB := B.V; var CC := C.V;
-        ClampDepth(CA); ClampDepth(CB); ClampDepth(CC);
+        var CA := A.V;
+        var CB := B.V;
+        var CC := C.V;
+        ClampDepth(CA);
+        ClampDepth(CB);
+        ClampDepth(CC);
         EmitTriangle(CA, CB, CC, Odd);
       end
       else
         EmitTriangle(A.V, B.V, C.V, Odd);
     Exit;
   end;
-  Src[0] := @A; Src[1] := @B; Src[2] := @C;
+  Src[0] := @A;
+  Src[1] := @B;
+  Src[2] := @C;
   var N := 0;
   var Entry := 0;
   for var I := 0 to 2 do
@@ -3308,7 +3422,10 @@ begin
       CopyColors(Q.V, B.V);
   end;
   if ((P.Code or Q.Code) and GEOutScreen) = 0 then
-    if Backend <> nil then Backend.DrawLine(FRaster, P.V, Q.V) else FWorkers.Line(FRaster, P.V, Q.V);
+    if Backend <> nil then
+      Backend.DrawLine(FRaster, P.V, Q.V)
+    else
+      FWorkers.Line(FRaster, P.V, Q.V);
 end;
 
 procedure TPSPGEEngine.EmitSprite(const A, B: TGEAsmVertex);
@@ -3318,7 +3435,10 @@ begin
     Exit;
   if not FDepthClamp and (DepthOut(A) or DepthOut(B)) then
     Exit;
-  if Backend <> nil then Backend.DrawSprite(FRaster, A.V, B.V) else FWorkers.Sprite(FRaster, A.V, B.V);
+  if Backend <> nil then
+    Backend.DrawSprite(FRaster, A.V, B.V)
+  else
+    FWorkers.Sprite(FRaster, A.V, B.V);
   Inc(FPrimCost, 100 + ScissoredArea(Min(A.V.X, B.V.X), Min(A.V.Y, B.V.Y), Max(A.V.X, B.V.X), Max(A.V.Y, B.V.Y)) * 3);
 end;
 
@@ -3329,7 +3449,10 @@ begin
   case FAsmType of
     0:
       if (A.Code and (GEOutNone or GEOutPlanes or GEOutScreen)) = 0 then
-        if Backend <> nil then Backend.DrawPoint(FRaster, A.V) else FWorkers.Point(FRaster, A.V);
+        if Backend <> nil then
+          Backend.DrawPoint(FRaster, A.V)
+        else
+          FWorkers.Point(FRaster, A.V);
     1:
       begin
         FAsm[N and 1] := A;
@@ -3439,7 +3562,7 @@ end;
 function TPSPGEEngine.TransformInParallel(Count: Integer; VType: Cardinal): Boolean;
 begin
   Result := False;
-  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   if (FRAMBase = nil) or (((VType shr 18) and 7) <> 0) then
     Exit;
   if Length(FParIndex) < Count then
@@ -3466,7 +3589,7 @@ begin
       PrepareBones(Bones);
   end;
   Result := TGEVertexPool(FVertexPool).Run(Self, VType, Count, FLastU, FLastV, FLastN);
-  {$ENDIF}
+{$ENDIF}
 end;
 
 // Vertices First..Last of TransformInParallel's primitive, on a pool thread.
@@ -3486,9 +3609,12 @@ end;
 function TPSPGEEngine.VertexIndex(I: Integer; VType: Cardinal): Integer;
 begin
   case (VType shr 11) and 3 of
-    1: Result := FMemory.Read8(Regs.IAddr + Cardinal(I));
-    2: Result := FMemory.Read16(Regs.IAddr + Cardinal(I * 2));
-    3: Result := Integer(FMemory.Read32(Regs.IAddr + Cardinal(I * 4)) and $FFFF);
+    1:
+      Result := FMemory.Read8(Regs.IAddr + Cardinal(I));
+    2:
+      Result := FMemory.Read16(Regs.IAddr + Cardinal(I * 2));
+    3:
+      Result := Integer(FMemory.Read32(Regs.IAddr + Cardinal(I * 4)) and $FFFF);
   else
     Result := I;
   end;
@@ -3498,10 +3624,14 @@ end;
 procedure TPSPGEEngine.AdvanceVertices(Count: Integer; VType: Cardinal);
 begin
   case (VType shr 11) and 3 of
-    0: Regs.VAddr := Regs.VAddr + Cardinal(Count * FVSize * (Integer((VType shr 18) and 7) + 1));
-    1: Regs.IAddr := Regs.IAddr + Cardinal(Count);
-    2: Regs.IAddr := Regs.IAddr + Cardinal(Count) * 2;
-    3: Regs.IAddr := Regs.IAddr + Cardinal(Count) * 4;
+    0:
+      Regs.VAddr := Regs.VAddr + Cardinal(Count * FVSize * (Integer((VType shr 18) and 7) + 1));
+    1:
+      Regs.IAddr := Regs.IAddr + Cardinal(Count);
+    2:
+      Regs.IAddr := Regs.IAddr + Cardinal(Count) * 2;
+    3:
+      Regs.IAddr := Regs.IAddr + Cardinal(Count) * 4;
   end;
 end;
 
@@ -3579,17 +3709,25 @@ begin
       end;
       if Clamp then
       begin
-        if CZ < -CW then M := M or 32;
-        if CZ > CW then M := M or 64;
+        if CZ < -CW then
+          M := M or 32;
+        if CZ > CW then
+          M := M or 64;
       end;
       var RW := Recip24(CW);
-      SX := ScreenCoord(Add24(T24(T24(CX * RW) * GEFloat(C[GE_VIEWPORTXSCALE])), GEFloat(C[GE_VIEWPORTXCENTER]))) - OffX;
-      SY := ScreenCoord(Add24(T24(T24(CY * RW) * GEFloat(C[GE_VIEWPORTYSCALE])), GEFloat(C[GE_VIEWPORTYCENTER]))) - OffY;
+      SX := ScreenCoord(Add24(T24(T24(CX * RW) * GEFloat(C[GE_VIEWPORTXSCALE])),
+        GEFloat(C[GE_VIEWPORTXCENTER]))) - OffX;
+      SY := ScreenCoord(Add24(T24(T24(CY * RW) * GEFloat(C[GE_VIEWPORTYSCALE])),
+        GEFloat(C[GE_VIEWPORTYCENTER]))) - OffY;
     end;
-    if SX < X1 then M := M or 1;
-    if SX > X2 then M := M or 2;
-    if SY < Y1 then M := M or 4;
-    if SY > Y2 then M := M or 8;
+    if SX < X1 then
+      M := M or 1;
+    if SX > X2 then
+      M := M or 2;
+    if SY < Y1 then
+      M := M or 4;
+    if SY > Y2 then
+      M := M or 8;
     OutMask := OutMask and M;
   end;
   BoxVisible := OutMask = 0;
@@ -3750,12 +3888,20 @@ begin
   begin
     var P: ^TGEInVertex := @FPatchCP[I];
     var Q: ^TGEPatchValues := @FPatchVal[I];
-    Q.F[0] := P.P.X; Q.F[1] := P.P.Y; Q.F[2] := P.P.Z;
-    Q.F[3] := P.N.X; Q.F[4] := P.N.Y; Q.F[5] := P.N.Z;
-    Q.F[6] := P.U; Q.F[7] := P.V;
+    Q.F[0] := P.P.X;
+    Q.F[1] := P.P.Y;
+    Q.F[2] := P.P.Z;
+    Q.F[3] := P.N.X;
+    Q.F[4] := P.N.Y;
+    Q.F[5] := P.N.Z;
+    Q.F[6] := P.U;
+    Q.F[7] := P.V;
     for var K := 0 to 7 do
       Q.F[8 + K] := P.Weights[K];
-    Q.C[0] := P.R shl 7; Q.C[1] := P.G shl 7; Q.C[2] := P.B shl 7; Q.C[3] := P.A shl 7;
+    Q.C[0] := P.R shl 7;
+    Q.C[1] := P.G shl 7;
+    Q.C[2] := P.B shl 7;
+    Q.C[3] := P.A shl 7;
   end;
 
   var UDiv := Max(Integer(C[GE_PATCHDIVISION] and $FF), 1);
@@ -3823,8 +3969,10 @@ begin
     Inc(FPrimCost, GETexPrimCost);
   var PrimType := 4;
   case C[GE_PATCHPRIMITIVE] and 3 of
-    1: PrimType := 2;
-    2, 3: PrimType := 0;
+    1:
+      PrimType := 2;
+    2, 3:
+      PrimType := 0;
   end;
   var Cols := UDiv + 1;
   if Length(FPatchGrid) < Cols * (VDiv + 1) then
@@ -3913,9 +4061,14 @@ begin
               for var X := 3 to 5 do
                 Pt.F[X] := -Pt.F[X];
           end;
-          Ev.P.X := Pt.F[0]; Ev.P.Y := Pt.F[1]; Ev.P.Z := Pt.F[2];
-          Ev.N.X := Pt.F[3]; Ev.N.Y := Pt.F[4]; Ev.N.Z := Pt.F[5];
-          Ev.U := Pt.F[6]; Ev.V := Pt.F[7];
+          Ev.P.X := Pt.F[0];
+          Ev.P.Y := Pt.F[1];
+          Ev.P.Z := Pt.F[2];
+          Ev.N.X := Pt.F[3];
+          Ev.N.Y := Pt.F[4];
+          Ev.N.Z := Pt.F[5];
+          Ev.U := Pt.F[6];
+          Ev.V := Pt.F[7];
           for var K := 0 to 7 do
             Ev.Weights[K] := Pt.F[8 + K];
           Ev.R := Min(255, (PatchCurveC(PCol[0].C[0], PCol[1].C[0], PCol[2].C[0], PCol[3].C[0], SU) + 127) shr 7);
@@ -4011,7 +4164,8 @@ end;
 procedure TPSPGEEngine.LoadClut(Op: Cardinal);
 begin
   // The CLUT address loses its low 4 bits.
-  var Addr := (((Regs.Cmd[GE_CLUTADDRUPPER] and $0F0000) shl 8) or (Regs.Cmd[GE_CLUTADDR] and $FFFFFF)) and not Cardinal($F);
+  var Addr := (((Regs.Cmd[GE_CLUTADDRUPPER] and $0F0000) shl 8) or (Regs.Cmd[GE_CLUTADDR] and $FFFFFF)) and
+    not Cardinal($F);
   var Bytes := Integer(Op and $3F) * 32;
   if Bytes > Length(FClut) then
     Bytes := Length(FClut);
@@ -4118,11 +4272,31 @@ begin
     W[N] := Regs.Cmd[C];
     Inc(N);
   end;
-  for var I := 0 to 95 do begin W[N] := Regs.Bone[I]; Inc(N); end;
-  for var I := 0 to 11 do begin W[N] := Regs.World[I]; Inc(N); end;
-  for var I := 0 to 11 do begin W[N] := Regs.View[I]; Inc(N); end;
-  for var I := 0 to 15 do begin W[N] := Regs.Proj[I]; Inc(N); end;
-  for var I := 0 to 11 do begin W[N] := Regs.TGen[I]; Inc(N); end;
+  for var I := 0 to 95 do
+  begin
+    W[N] := Regs.Bone[I];
+    Inc(N);
+  end;
+  for var I := 0 to 11 do
+  begin
+    W[N] := Regs.World[I];
+    Inc(N);
+  end;
+  for var I := 0 to 11 do
+  begin
+    W[N] := Regs.View[I];
+    Inc(N);
+  end;
+  for var I := 0 to 15 do
+  begin
+    W[N] := Regs.Proj[I];
+    Inc(N);
+  end;
+  for var I := 0 to 11 do
+  begin
+    W[N] := Regs.TGen[I];
+    Inc(N);
+  end;
   FMemory.WriteBytes(Address, W[0], N * 4);
 end;
 
@@ -4145,11 +4319,31 @@ begin
     Regs.Cmd[C] := (Cardinal(C) shl 24) or (W[N] and $FFFFFF);
     Inc(N);
   end;
-  for var I := 0 to 95 do begin Regs.Bone[I] := W[N] and $FFFFFF; Inc(N); end;
-  for var I := 0 to 11 do begin Regs.World[I] := W[N] and $FFFFFF; Inc(N); end;
-  for var I := 0 to 11 do begin Regs.View[I] := W[N] and $FFFFFF; Inc(N); end;
-  for var I := 0 to 15 do begin Regs.Proj[I] := W[N] and $FFFFFF; Inc(N); end;
-  for var I := 0 to 11 do begin Regs.TGen[I] := W[N] and $FFFFFF; Inc(N); end;
+  for var I := 0 to 95 do
+  begin
+    Regs.Bone[I] := W[N] and $FFFFFF;
+    Inc(N);
+  end;
+  for var I := 0 to 11 do
+  begin
+    Regs.World[I] := W[N] and $FFFFFF;
+    Inc(N);
+  end;
+  for var I := 0 to 11 do
+  begin
+    Regs.View[I] := W[N] and $FFFFFF;
+    Inc(N);
+  end;
+  for var I := 0 to 15 do
+  begin
+    Regs.Proj[I] := W[N] and $FFFFFF;
+    Inc(N);
+  end;
+  for var I := 0 to 11 do
+  begin
+    Regs.TGen[I] := W[N] and $FFFFFF;
+    Inc(N);
+  end;
 end;
 
 procedure InitContextCmds;

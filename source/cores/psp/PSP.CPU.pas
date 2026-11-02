@@ -1,4 +1,4 @@
-unit PSP.CPU;
+﻿unit PSP.CPU;
 
 // Allegrex interpreter. Instructions are decoded once per address into a page
 // of (handler, opcode) pairs; stores into a decoded page re-decode the touched
@@ -338,11 +338,28 @@ begin
   if V = 0 then
     Exit(32);
   Result := 31;
-  if V >= $10000 then begin V := V shr 16; Dec(Result, 16); end;
-  if V >= $100 then begin V := V shr 8; Dec(Result, 8); end;
-  if V >= $10 then begin V := V shr 4; Dec(Result, 4); end;
-  if V >= 4 then begin V := V shr 2; Dec(Result, 2); end;
-  if V >= 2 then Dec(Result);
+  if V >= $10000 then
+  begin
+    V := V shr 16;
+    Dec(Result, 16);
+  end;
+  if V >= $100 then
+  begin
+    V := V shr 8;
+    Dec(Result, 8);
+  end;
+  if V >= $10 then
+  begin
+    V := V shr 4;
+    Dec(Result, 4);
+  end;
+  if V >= 4 then
+  begin
+    V := V shr 2;
+    Dec(Result, 2);
+  end;
+  if V >= 2 then
+    Dec(Result);
 end;
 {$ENDIF}
 
@@ -1459,8 +1476,10 @@ end;
 procedure OpCFC1(C: TPSPCPU; Op: Cardinal);
 begin
   case FS(Op) of
-    0: C.Ctx.GPR[RT(Op)] := $00003351;
-    31: C.Ctx.GPR[RT(Op)] := C.Ctx.FCR31;
+    0:
+      C.Ctx.GPR[RT(Op)] := $00003351;
+    31:
+      C.Ctx.GPR[RT(Op)] := C.Ctx.FCR31;
   else
     C.Ctx.GPR[RT(Op)] := 0;
   end;
@@ -1500,7 +1519,6 @@ begin
   BranchLikely(C, Op, FpuCond(C));
 end;
 
-
 procedure OpCACHE(C: TPSPCPU; Op: Cardinal);
 begin
 end;
@@ -1511,49 +1529,150 @@ function DecodeSpecial(Op: Cardinal): TPSPOpHandler;
 begin
   var D := RD(Op);
   case Op and $3F of
-    $00: if D = 0 then Result := OpNop else Result := OpSLL;
+    $00:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSLL;
     $02:
-      if D = 0 then Result := OpNop
-      else if (RS(Op) and 1) <> 0 then Result := OpROTR
-      else Result := OpSRL;
-    $03: if D = 0 then Result := OpNop else Result := OpSRA;
-    $04: if D = 0 then Result := OpNop else Result := OpSLLV;
+      if D = 0 then
+        Result := OpNop
+      else if (RS(Op) and 1) <> 0 then
+        Result := OpROTR
+      else
+        Result := OpSRL;
+    $03:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSRA;
+    $04:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSLLV;
     $06:
-      if D = 0 then Result := OpNop
-      else if (SA(Op) and 1) <> 0 then Result := OpROTRV
-      else Result := OpSRLV;
-    $07: if D = 0 then Result := OpNop else Result := OpSRAV;
-    $08: Result := OpJR;
-    $09: Result := OpJALR;
-    $0A: if D = 0 then Result := OpNop else Result := OpMOVZ;
-    $0B: if D = 0 then Result := OpNop else Result := OpMOVN;
-    $0C: Result := OpSYSCALL;
-    $0D: Result := OpBREAK;
-    $0F: Result := OpNop;
-    $10: if D = 0 then Result := OpNop else Result := OpMFHI;
-    $11: Result := OpMTHI;
-    $12: if D = 0 then Result := OpNop else Result := OpMFLO;
-    $13: Result := OpMTLO;
-    $16: if D = 0 then Result := OpNop else Result := OpCLZ;
-    $17: if D = 0 then Result := OpNop else Result := OpCLO;
-    $18: Result := OpMULT;
-    $19: Result := OpMULTU;
-    $1A: Result := OpDIV;
-    $1B: Result := OpDIVU;
-    $1C: Result := OpMADD;
-    $1D: Result := OpMADDU;
-    $20, $21: if D = 0 then Result := OpNop else Result := OpADDU;
-    $22, $23: if D = 0 then Result := OpNop else Result := OpSUBU;
-    $24: if D = 0 then Result := OpNop else Result := OpAND;
-    $25: if D = 0 then Result := OpNop else Result := OpOR;
-    $26: if D = 0 then Result := OpNop else Result := OpXOR;
-    $27: if D = 0 then Result := OpNop else Result := OpNOR;
-    $2A: if D = 0 then Result := OpNop else Result := OpSLT;
-    $2B: if D = 0 then Result := OpNop else Result := OpSLTU;
-    $2C: if D = 0 then Result := OpNop else Result := OpMAX;
-    $2D: if D = 0 then Result := OpNop else Result := OpMIN;
-    $2E: Result := OpMSUB;
-    $2F: Result := OpMSUBU;
+      if D = 0 then
+        Result := OpNop
+      else if (SA(Op) and 1) <> 0 then
+        Result := OpROTRV
+      else
+        Result := OpSRLV;
+    $07:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSRAV;
+    $08:
+      Result := OpJR;
+    $09:
+      Result := OpJALR;
+    $0A:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpMOVZ;
+    $0B:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpMOVN;
+    $0C:
+      Result := OpSYSCALL;
+    $0D:
+      Result := OpBREAK;
+    $0F:
+      Result := OpNop;
+    $10:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpMFHI;
+    $11:
+      Result := OpMTHI;
+    $12:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpMFLO;
+    $13:
+      Result := OpMTLO;
+    $16:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpCLZ;
+    $17:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpCLO;
+    $18:
+      Result := OpMULT;
+    $19:
+      Result := OpMULTU;
+    $1A:
+      Result := OpDIV;
+    $1B:
+      Result := OpDIVU;
+    $1C:
+      Result := OpMADD;
+    $1D:
+      Result := OpMADDU;
+    $20, $21:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpADDU;
+    $22, $23:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSUBU;
+    $24:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpAND;
+    $25:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpOR;
+    $26:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpXOR;
+    $27:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpNOR;
+    $2A:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSLT;
+    $2B:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpSLTU;
+    $2C:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpMAX;
+    $2D:
+      if D = 0 then
+        Result := OpNop
+      else
+        Result := OpMIN;
+    $2E:
+      Result := OpMSUB;
+    $2F:
+      Result := OpMSUBU;
   else
     Result := OpReserved;
   end;
@@ -1562,14 +1681,22 @@ end;
 function DecodeRegImm(Op: Cardinal): TPSPOpHandler;
 begin
   case RT(Op) of
-    $00: Result := OpBLTZ;
-    $01: Result := OpBGEZ;
-    $02: Result := OpBLTZL;
-    $03: Result := OpBGEZL;
-    $10: Result := OpBLTZAL;
-    $11: Result := OpBGEZAL;
-    $12: Result := OpBLTZALL;
-    $13: Result := OpBGEZALL;
+    $00:
+      Result := OpBLTZ;
+    $01:
+      Result := OpBGEZ;
+    $02:
+      Result := OpBLTZL;
+    $03:
+      Result := OpBGEZL;
+    $10:
+      Result := OpBLTZAL;
+    $11:
+      Result := OpBGEZAL;
+    $12:
+      Result := OpBLTZALL;
+    $13:
+      Result := OpBGEZALL;
   else
     Result := OpReserved;
   end;
@@ -1579,8 +1706,16 @@ function DecodeSpecial3(Op: Cardinal): TPSPOpHandler;
 begin
   var Dest := RT(Op);
   case Op and $3F of
-    $00: if Dest = 0 then Result := OpNop else Result := OpEXT;
-    $04: if Dest = 0 then Result := OpNop else Result := OpINS;
+    $00:
+      if Dest = 0 then
+        Result := OpNop
+      else
+        Result := OpEXT;
+    $04:
+      if Dest = 0 then
+        Result := OpNop
+      else
+        Result := OpINS;
     $20:
       begin
         if RD(Op) = 0 then
@@ -1599,13 +1734,16 @@ begin
         end
         else
           case (S shr 2) and 3 of
-            0: Result := OpSEB;
-            2: Result := OpSEH;
+            0:
+              Result := OpSEB;
+            2:
+              Result := OpSEH;
           else
             Result := OpBITREV;
           end;
       end;
-    $18: Result := OpNop;
+    $18:
+      Result := OpNop;
   else
     Result := OpReserved;
   end;
@@ -1614,34 +1752,61 @@ end;
 function DecodeCOP1(Op: Cardinal): TPSPOpHandler;
 begin
   case RS(Op) of
-    $00: if RT(Op) = 0 then Result := OpNop else Result := OpMFC1;
-    $02: if RT(Op) = 0 then Result := OpNop else Result := OpCFC1;
-    $04: Result := OpMTC1;
-    $06: Result := OpCTC1;
+    $00:
+      if RT(Op) = 0 then
+        Result := OpNop
+      else
+        Result := OpMFC1;
+    $02:
+      if RT(Op) = 0 then
+        Result := OpNop
+      else
+        Result := OpCFC1;
+    $04:
+      Result := OpMTC1;
+    $06:
+      Result := OpCTC1;
     $08:
       case RT(Op) and 3 of
-        0: Result := OpBC1F;
-        1: Result := OpBC1T;
-        2: Result := OpBC1FL;
+        0:
+          Result := OpBC1F;
+        1:
+          Result := OpBC1T;
+        2:
+          Result := OpBC1FL;
       else
         Result := OpBC1TL;
       end;
     $10:
       case Op and $3F of
-        $00: Result := OpADDS;
-        $01: Result := OpSUBS;
-        $02: Result := OpMULS;
-        $03: Result := OpDIVS;
-        $04: Result := OpSQRTS;
-        $05: Result := OpABSS;
-        $06: Result := OpMOVS;
-        $07: Result := OpNEGS;
-        $0C: Result := OpROUNDWS;
-        $0D: Result := OpTRUNCWS;
-        $0E: Result := OpCEILWS;
-        $0F: Result := OpFLOORWS;
-        $24: Result := OpCVTWS;
-        $30..$3F: Result := OpCCOND;
+        $00:
+          Result := OpADDS;
+        $01:
+          Result := OpSUBS;
+        $02:
+          Result := OpMULS;
+        $03:
+          Result := OpDIVS;
+        $04:
+          Result := OpSQRTS;
+        $05:
+          Result := OpABSS;
+        $06:
+          Result := OpMOVS;
+        $07:
+          Result := OpNEGS;
+        $0C:
+          Result := OpROUNDWS;
+        $0D:
+          Result := OpTRUNCWS;
+        $0E:
+          Result := OpCEILWS;
+        $0F:
+          Result := OpFLOORWS;
+        $24:
+          Result := OpCVTWS;
+        $30..$3F:
+          Result := OpCCOND;
       else
         Result := OpReserved;
       end;
@@ -1667,61 +1832,160 @@ function DecodeOp(Op: Cardinal): TPSPOpHandler;
 begin
   var T := RT(Op);
   case Op shr 26 of
-    $00: Result := DecodeSpecial(Op);
-    $01: Result := DecodeRegImm(Op);
-    $02: Result := OpJ;
-    $03: Result := OpJAL;
-    $04: if (RS(Op) = 0) and (T = 0) then Result := OpB else Result := OpBEQ;
-    $05: Result := OpBNE;
-    $06: Result := OpBLEZ;
-    $07: Result := OpBGTZ;
-    $08, $09: if T = 0 then Result := OpNop else Result := OpADDIU;
-    $0A: if T = 0 then Result := OpNop else Result := OpSLTI;
-    $0B: if T = 0 then Result := OpNop else Result := OpSLTIU;
-    $0C: if T = 0 then Result := OpNop else Result := OpANDI;
-    $0D: if T = 0 then Result := OpNop else Result := OpORI;
-    $0E: if T = 0 then Result := OpNop else Result := OpXORI;
-    $0F: if T = 0 then Result := OpNop else Result := OpLUI;
+    $00:
+      Result := DecodeSpecial(Op);
+    $01:
+      Result := DecodeRegImm(Op);
+    $02:
+      Result := OpJ;
+    $03:
+      Result := OpJAL;
+    $04:
+      if (RS(Op) = 0) and (T = 0) then
+        Result := OpB
+      else
+        Result := OpBEQ;
+    $05:
+      Result := OpBNE;
+    $06:
+      Result := OpBLEZ;
+    $07:
+      Result := OpBGTZ;
+    $08, $09:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpADDIU;
+    $0A:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpSLTI;
+    $0B:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpSLTIU;
+    $0C:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpANDI;
+    $0D:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpORI;
+    $0E:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpXORI;
+    $0F:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLUI;
     $10:
       case RS(Op) of
-        $00: if T = 0 then Result := OpNop else Result := OpMFC0;
-        $04: Result := OpMTC0;
-        $10: if (Op and $3F) = $18 then Result := OpERET else Result := OpNop;
+        $00:
+          if T = 0 then
+            Result := OpNop
+          else
+            Result := OpMFC0;
+        $04:
+          Result := OpMTC0;
+        $10:
+          if (Op and $3F) = $18 then
+            Result := OpERET
+          else
+            Result := OpNop;
       else
         Result := OpNop;
       end;
-    $11: Result := DecodeCOP1(Op);
-    $12, $18, $19, $1B, $32, $34, $35, $36, $37, $3A, $3C, $3D, $3E, $3F: Result := DecodeVFPU(Op);
-    $14: Result := OpBEQL;
-    $15: Result := OpBNEL;
-    $16: Result := OpBLEZL;
-    $17: Result := OpBGTZL;
+    $11:
+      Result := DecodeCOP1(Op);
+    $12, $18, $19, $1B, $32, $34, $35, $36, $37, $3A, $3C, $3D, $3E, $3F:
+      Result := DecodeVFPU(Op);
+    $14:
+      Result := OpBEQL;
+    $15:
+      Result := OpBNEL;
+    $16:
+      Result := OpBLEZL;
+    $17:
+      Result := OpBGTZL;
     $1C:
       case Op and $3F of
-        $00: Result := OpHALT;
-        $24: if T = 0 then Result := OpNop else Result := OpMFIC;
-        $26: Result := OpMTIC;
+        $00:
+          Result := OpHALT;
+        $24:
+          if T = 0 then
+            Result := OpNop
+          else
+            Result := OpMFIC;
+        $26:
+          Result := OpMTIC;
       else
         Result := OpReserved;
       end;
-    $1F: Result := DecodeSpecial3(Op);
-    $20: if T = 0 then Result := OpNop else Result := OpLB;
-    $21: if T = 0 then Result := OpNop else Result := OpLH;
-    $22: if T = 0 then Result := OpNop else Result := OpLWL;
-    $23: if T = 0 then Result := OpNop else Result := OpLW;
-    $24: if T = 0 then Result := OpNop else Result := OpLBU;
-    $25: if T = 0 then Result := OpNop else Result := OpLHU;
-    $26: if T = 0 then Result := OpNop else Result := OpLWR;
-    $28: Result := OpSB;
-    $29: Result := OpSH;
-    $2A: Result := OpSWL;
-    $2B: Result := OpSW;
-    $2E: Result := OpSWR;
-    $2F: Result := OpCACHE;
-    $30: Result := OpLL;
-    $31: Result := OpLWC1;
-    $38: Result := OpSC;
-    $39: Result := OpSWC1;
+    $1F:
+      Result := DecodeSpecial3(Op);
+    $20:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLB;
+    $21:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLH;
+    $22:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLWL;
+    $23:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLW;
+    $24:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLBU;
+    $25:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLHU;
+    $26:
+      if T = 0 then
+        Result := OpNop
+      else
+        Result := OpLWR;
+    $28:
+      Result := OpSB;
+    $29:
+      Result := OpSH;
+    $2A:
+      Result := OpSWL;
+    $2B:
+      Result := OpSW;
+    $2E:
+      Result := OpSWR;
+    $2F:
+      Result := OpCACHE;
+    $30:
+      Result := OpLL;
+    $31:
+      Result := OpLWC1;
+    $38:
+      Result := OpSC;
+    $39:
+      Result := OpSWC1;
   else
     Result := OpReserved;
   end;

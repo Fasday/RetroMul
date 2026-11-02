@@ -1,4 +1,4 @@
-unit PSP.CPU.JIT;
+﻿unit PSP.CPU.JIT;
 
 // Allegrex blocks as generated code (HW.JIT), run in place of the
 // interpreter's loop (TPSPCPU.Runner) with its accounting exactly.
@@ -35,7 +35,8 @@ unit PSP.CPU.JIT;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, HW.JIT, PSP.Types, PSP.Memory, PSP.CPU;
+  System.SysUtils, System.Generics.Collections, HW.JIT, PSP.Types, PSP.Memory,
+  PSP.CPU;
 
 const
   PSPJitMaxBlock = 128;
@@ -195,15 +196,12 @@ uses
   System.Math, PSP.VFPU;
 
 type
-  TJitKind = (jkNop, jkHandler, jkPure, jkEnd, jkHBranch,
-    jkLVS, jkSVS, jkLVQ, jkSVQ, jkMFV, jkMTV,
-    jkSLL, jkSRL, jkSRA, jkROTR, jkMOVZ, jkMOVN, jkMFHI, jkMTHI, jkMFLO, jkMTLO,
-    jkADDU, jkSUBU, jkAND, jkOR, jkXOR, jkNOR, jkSLT, jkSLTU, jkMAX, jkMIN,
-    jkADDIU, jkSLTI, jkSLTIU, jkANDI, jkORI, jkXORI, jkLUI, jkMFC0,
-    jkEXT, jkINS, jkWSBH, jkWSBW, jkSEB, jkSEH,
-    jkLB, jkLH, jkLW, jkLBU, jkLHU, jkSB, jkSH, jkSW, jkLWC1, jkSWC1, jkMFC1, jkMTC1,
-    jkJR, jkJALR, jkJ, jkJAL, jkB, jkBEQ, jkBNE, jkBLEZ, jkBGTZ, jkBLTZ, jkBGEZ, jkBLTZAL, jkBGEZAL,
-    jkBEQL, jkBNEL, jkBLEZL, jkBGTZL, jkBLTZL, jkBGEZL, jkBLTZALL, jkBGEZALL);
+  TJitKind = (jkNop, jkHandler, jkPure, jkEnd, jkHBranch, jkLVS, jkSVS, jkLVQ, jkSVQ, jkMFV, jkMTV, jkSLL, jkSRL, jkSRA,
+    jkROTR, jkMOVZ, jkMOVN, jkMFHI, jkMTHI, jkMFLO, jkMTLO, jkADDU, jkSUBU, jkAND, jkOR, jkXOR, jkNOR, jkSLT, jkSLTU,
+    jkMAX, jkMIN, jkADDIU, jkSLTI, jkSLTIU, jkANDI, jkORI, jkXORI, jkLUI, jkMFC0, jkEXT, jkINS, jkWSBH, jkWSBW, jkSEB,
+    jkSEH, jkLB, jkLH, jkLW, jkLBU, jkLHU, jkSB, jkSH, jkSW, jkLWC1, jkSWC1, jkMFC1, jkMTC1, jkJR, jkJALR, jkJ, jkJAL,
+    jkB, jkBEQ, jkBNE, jkBLEZ, jkBGTZ, jkBLTZ, jkBGEZ, jkBLTZAL, jkBGEZAL, jkBEQL, jkBNEL, jkBLEZL, jkBGTZL, jkBLTZL,
+    jkBGEZL, jkBLTZALL, jkBGEZALL);
 
 const
   // An instruction of each kind the code writes out: its handler (DecodeOp)
@@ -233,13 +231,13 @@ const
   MaxChanges = 8;
 
   // A host pointer's width (the model runs on 32-bit hosts too).
-  {$IFDEF CPU64BITS}
+{$IFDEF CPU64BITS}
   JPtr = jw64;
   PtrShift = 3;
-  {$ELSE}
+{$ELSE}
   JPtr = jw32;
   PtrShift = 2;
-  {$ENDIF}
+{$ENDIF}
 
   jrPages = jrS0;
   jrMarks = jrS1;
@@ -255,8 +253,8 @@ var
   EndHandler: array[0..2] of Pointer;
   PureHandler: array[0..High(PureSample)] of Pointer;
   KindsReady: Boolean;
-  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffCOP0, OffStopping, OffRemaining, OffHit, OffLastExit, OffBlockPC, OffBlockCode,
-    OffSlotPC, OffSlotBlock, OffV: Integer;
+  OffGPR, OffFPR, OffHI, OffLO, OffPC, OffNPC, OffCurPC, OffCOP0, OffStopping, OffRemaining, OffHit, OffLastExit,
+    OffBlockPC, OffBlockCode, OffSlotPC, OffSlotBlock, OffV: Integer;
 
 function HandlerOf(Op: Cardinal): Pointer;
 begin
@@ -318,15 +316,21 @@ begin
   var Decoder: TPSPVFPUDecoder := PSPVFPUDecoder;
   if @Decoder = @PSP.VFPU.DecodeVFPU then
     case Op shr 26 of
-      $32: Exit(jkLVS);
-      $3A: Exit(jkSVS);
-      $36: Exit(jkLVQ);
-      $3E: Exit(jkSVQ);
+      $32:
+        Exit(jkLVS);
+      $3A:
+        Exit(jkSVS);
+      $36:
+        Exit(jkLVQ);
+      $3E:
+        Exit(jkSVQ);
       $12:
         if (Op and $80) = 0 then
           case (Op shr 21) and 31 of
-            3: Exit(jkMFV);
-            7: Exit(jkMTV);
+            3:
+              Exit(jkMFV);
+            7:
+              Exit(jkMTV);
           end;
     end;
   Result := jkHandler;
@@ -676,8 +680,10 @@ begin
   S.Reg := Reg;
   S.Hit := -1;
   case K of
-    jkLB, jkLBU: S.Routine := @JitRead8;
-    jkLH, jkLHU: S.Routine := @JitRead16;
+    jkLB, jkLBU:
+      S.Routine := @JitRead8;
+    jkLH, jkLHU:
+      S.Routine := @JitRead16;
   else
     S.Routine := @JitRead32;
   end;
@@ -706,8 +712,10 @@ begin
   S.Reg := Reg;
   S.Hit := HitExit(At);
   case K of
-    jkSB: S.Routine := @JitWrite8;
-    jkSH: S.Routine := @JitWrite16;
+    jkSB:
+      S.Routine := @JitWrite8;
+    jkSH:
+      S.Routine := @JitWrite16;
   else
     S.Routine := @JitWrite32;
   end;
@@ -1568,7 +1576,8 @@ begin
   FInCode := True;
   Inc(FInvokes);
   try
-    FJ.Invoke(FJ.Base + FEnter, NativeUInt(FCPU), NativeUInt(Self), NativeUInt(FJ.Base + FPrologue), NativeUInt(B.Code));
+    FJ.Invoke(FJ.Base + FEnter, NativeUInt(FCPU), NativeUInt(Self), NativeUInt(FJ.Base + FPrologue),
+      NativeUInt(B.Code));
   finally
     FInCode := False;
   end;
@@ -1649,8 +1658,8 @@ begin
           Interpret(MaxInt);
           Break;
         end;
-        if (Pending <> nil) and (Pending.Target = PC) and (Pending.Linked = nil) and
-          (Pending.Block.State = bsCompiled) then
+        if (Pending <> nil) and (Pending.Target = PC) and (Pending.Linked = nil) and (Pending.Block.State =
+          bsCompiled) then
           Link(Pending, B);
         Execute(B);
         Pending := FLastExit;
@@ -1728,7 +1737,8 @@ begin
     FCPU.Runner := nil;
   if (joStats in FOptions) and IsConsole then
     Writeln(ErrOutput, Format('PSP JIT: %d blocks compiled, %d runs of code, %d instructions interpreted, ' +
-      '%d links, %d blocks dropped, %d resets', [FCompiled, FInvokes, FInterpreted, FLinks, FKills, FResets]));
+      '%d links, %d blocks dropped, %d resets',
+      [FCompiled, FInvokes, FInterpreted, FLinks, FKills, FResets]));
   FInCode := False;
   ResetCode;
   FAll.Free;
@@ -1764,6 +1774,5 @@ begin
   if Result.FJ = nil then
     FreeAndNil(Result);
 end;
-
 
 end.

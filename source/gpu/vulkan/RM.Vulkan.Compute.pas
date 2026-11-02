@@ -1,4 +1,4 @@
-unit RM.Vulkan.Compute;
+﻿unit RM.Vulkan.Compute;
 
 // A headless Vulkan compute context: its own instance and device (no window,
 // no FMX), one compute queue, buffers in device-local or host-visible memory,
@@ -80,7 +80,8 @@ type
     destructor Destroy; override;
     // Not while a command buffer using the set is pending.
     procedure Bind(Binding: Integer; Buffer: TVulkanBuffer; Offset: UInt64 = 0; Size: UInt64 = VK_WHOLE_SIZE); overload;
-    procedure Bind(SetIndex, Binding: Integer; Buffer: TVulkanBuffer; Offset: UInt64 = 0; Size: UInt64 = VK_WHOLE_SIZE); overload;
+    procedure Bind(SetIndex, Binding: Integer; Buffer: TVulkanBuffer; Offset: UInt64 = 0;
+      Size: UInt64 = VK_WHOLE_SIZE); overload;
     property Pipeline: VkPipeline read FPipeline;
     property Layout: VkPipelineLayout read FLayout;
     property PushSize: Cardinal read FPushSize;
@@ -153,12 +154,15 @@ type
     destructor Destroy; override;
     // A memory type index with all Required flags, trying each preference in order; -1 if none.
     function FindMemory(TypeBits, Required: Cardinal; const Preferred: array of Cardinal): Integer;
-    function CreateBuffer(Size: UInt64; Kind: TVulkanBufferKind;
-      Usage: Cardinal = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT or VK_BUFFER_USAGE_TRANSFER_SRC_BIT or VK_BUFFER_USAGE_TRANSFER_DST_BIT): TVulkanBuffer;
+    function CreateBuffer(Size: UInt64;
+      Kind: TVulkanBufferKind;
+      Usage: Cardinal = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT or VK_BUFFER_USAGE_TRANSFER_SRC_BIT or
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT): TVulkanBuffer;
     function CreateShaderModule(const Code: array of Cardinal): VkShaderModule;
-    function CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal = 0): TVulkanKernel; overload;
-    function CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal; const Spec: array of Cardinal;
-      Sets: Integer = 1): TVulkanKernel; overload;
+    function CreateKernel(const Code: array of Cardinal; Buffers: Integer;
+      PushSize: Cardinal = 0): TVulkanKernel; overload;
+    function CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal;
+      const Spec: array of Cardinal; Sets: Integer = 1): TVulkanKernel; overload;
     function CreateCommands(Timestamps: Cardinal = 0): TVulkanCommands;
     function CreateTimeline(Initial: UInt64 = 0): VkSemaphore;
     procedure DestroyTimeline(Semaphore: VkSemaphore);
@@ -345,7 +349,8 @@ begin
   if FAPI.vkEnumerateDeviceExtensionProperties(FPhysicalDevice, nil, @Count, nil) <> VK_SUCCESS then
     Exit(False);
   SetLength(List, Count);
-  if (Count > 0) and (FAPI.vkEnumerateDeviceExtensionProperties(FPhysicalDevice, nil, @Count, @List[0]) <> VK_SUCCESS) then
+  if (Count > 0) and (FAPI.vkEnumerateDeviceExtensionProperties(FPhysicalDevice, nil, @Count, @List[0]) <>
+    VK_SUCCESS) then
     Exit(False);
   for var I := 0 to Integer(Count) - 1 do
     if AnsiString(PAnsiChar(@List[I].extensionName[0])) = Name then
@@ -403,7 +408,8 @@ begin
   FFeatures.Float64 := Features.features.shaderFloat64 <> 0;
   FFeatures.Int8 := Int8.shaderInt8 <> 0;
   FFeatures.Storage8 := (Storage8.storageBuffer8BitAccess <> 0) and (Storage8.uniformAndStorageBuffer8BitAccess <> 0);
-  FFeatures.Storage16 := (Storage16.storageBuffer16BitAccess <> 0) and (Storage16.uniformAndStorageBuffer16BitAccess <> 0);
+  FFeatures.Storage16 := (Storage16.storageBuffer16BitAccess <> 0) and
+    (Storage16.uniformAndStorageBuffer16BitAccess <> 0);
   FFeatures.Timeline := Timeline.timelineSemaphore <> 0;
   FFeatures.DenormPreserve32 := Controls.shaderDenormPreserveFloat32 <> 0;
   FFeatures.DenormPreserve64 := Controls.shaderDenormPreserveFloat64 <> 0;
@@ -466,7 +472,8 @@ begin
   CheckVulkan(FAPI.vkCreateDevice(FPhysicalDevice, @DeviceInfo, nil, @FDevice), 'vkCreateDevice');
   FAPI.LoadDevice(FDevice);
   FAPI.vkGetDeviceQueue(FDevice, FQueueFamily, 0, @FQueue);
-  FFeatures.Timeline := FFeatures.Timeline and Assigned(FAPI.vkWaitSemaphores) and Assigned(FAPI.vkGetSemaphoreCounterValue);
+  FFeatures.Timeline := FFeatures.Timeline and Assigned(FAPI.vkWaitSemaphores) and
+    Assigned(FAPI.vkGetSemaphoreCounterValue);
 
   PoolInfo := Default(VkCommandPoolCreateInfo);
   PoolInfo.sType := VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -479,8 +486,8 @@ function TVulkanCompute.FindMemory(TypeBits, Required: Cardinal; const Preferred
 begin
   for var Want in Preferred do
     for var I := 0 to Integer(FMemory.memoryTypeCount) - 1 do
-      if (TypeBits and (Cardinal(1) shl I) <> 0) and
-        (FMemory.memoryTypes[I].propertyFlags and (Required or Want) = Required or Want) then
+      if (TypeBits and (Cardinal(1) shl I) <> 0) and (FMemory.memoryTypes[I].propertyFlags and (Required or Want) =
+        Required or Want) then
         Exit(I);
   for var I := 0 to Integer(FMemory.memoryTypeCount) - 1 do
     if (TypeBits and (Cardinal(1) shl I) <> 0) and (FMemory.memoryTypes[I].propertyFlags and Required = Required) then
@@ -506,7 +513,8 @@ begin
   CheckVulkan(FAPI.vkCreateShaderModule(FDevice, @Info, nil, @Result), 'vkCreateShaderModule');
 end;
 
-function TVulkanCompute.CreateKernel(const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal): TVulkanKernel;
+function TVulkanCompute.CreateKernel(const Code: array of Cardinal; Buffers: Integer;
+  PushSize: Cardinal): TVulkanKernel;
 begin
   Result := TVulkanKernel.Create(Self, Code, Buffers, PushSize, []);
 end;
@@ -594,9 +602,12 @@ begin
   API.vkGetBufferMemoryRequirements(Owner.Device, FHandle, @Requirements);
   var MemoryType: Integer;
   case Kind of
-    vbkDevice: MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Local, []);
-    vbkUpload: MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Visible, [Coherent]);
-    vbkReadback: MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Visible, [Cached or Coherent, Cached, Coherent]);
+    vbkDevice:
+      MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Local, []);
+    vbkUpload:
+      MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Visible, [Coherent]);
+    vbkReadback:
+      MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Visible, [Cached or Coherent, Cached, Coherent]);
   else
     MemoryType := Owner.FindMemory(Requirements.memoryTypeBits, Visible, [Local or Coherent, Local, Coherent]);
   end;
@@ -697,8 +708,8 @@ end;
 
 { TVulkanKernel }
 
-constructor TVulkanKernel.Create(Owner: TVulkanCompute; const Code: array of Cardinal; Buffers: Integer; PushSize: Cardinal;
-  const Spec: array of Cardinal; Sets: Integer);
+constructor TVulkanKernel.Create(Owner: TVulkanCompute; const Code: array of Cardinal; Buffers: Integer;
+  PushSize: Cardinal; const Spec: array of Cardinal; Sets: Integer);
 var
   Layouts: TArray<VkDescriptorSetLayout>;
   Bindings: TArray<VkDescriptorSetLayoutBinding>;
@@ -935,7 +946,8 @@ begin
     API.vkCmdDispatch(FHandle, X, Y, Z);
 end;
 
-procedure TVulkanCommands.DispatchIndirect(Kernel: TVulkanKernel; Args: TVulkanBuffer; Offset: UInt64; const Push; Size: Cardinal);
+procedure TVulkanCommands.DispatchIndirect(Kernel: TVulkanKernel; Args: TVulkanBuffer; Offset: UInt64; const Push;
+  Size: Cardinal);
 begin
   Dispatch(Kernel, 0, 0, 0, Push, Size);
   FOwner.API.vkCmdDispatchIndirect(FHandle, Args.Handle, Offset);
@@ -976,11 +988,11 @@ end;
 
 procedure TVulkanCommands.FullBarrier;
 begin
-  Barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT,
-    VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_WRITE_BIT,
-    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT or VK_PIPELINE_STAGE_HOST_BIT or VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
-    VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT or VK_ACCESS_TRANSFER_WRITE_BIT or
-    VK_ACCESS_HOST_READ_BIT or VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+  Barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT or
+    VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT or VK_PIPELINE_STAGE_TRANSFER_BIT or
+    VK_PIPELINE_STAGE_HOST_BIT or VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+    VK_ACCESS_SHADER_READ_BIT or VK_ACCESS_SHADER_WRITE_BIT or VK_ACCESS_TRANSFER_READ_BIT or
+    VK_ACCESS_TRANSFER_WRITE_BIT or VK_ACCESS_HOST_READ_BIT or VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 end;
 
 procedure TVulkanCommands.Timestamp(Index: Cardinal);
@@ -1029,8 +1041,8 @@ begin
   if FSpin > 0 then
   begin
     var Watch := TStopwatch.StartNew;
-    while (FOwner.API.vkGetFenceStatus(FOwner.Device, FFence) = VK_NOT_READY) and
-      (Watch.ElapsedTicks < FSpin * TStopwatch.Frequency div 1000000) do
+    while (FOwner.API.vkGetFenceStatus(FOwner.Device, FFence) = VK_NOT_READY) and (Watch.ElapsedTicks < FSpin *
+      TStopwatch.Frequency div 1000000) do
       ;
   end;
   CheckVulkan(FOwner.API.vkWaitForFences(FOwner.Device, 1, @FFence, 1, UInt64($FFFFFFFFFFFFFFFF)), 'vkWaitForFences');
@@ -1064,9 +1076,11 @@ begin
   if (First >= FQueryCount) or (Last >= FQueryCount) then
     Exit;
   var API := FOwner.API;
-  if API.vkGetQueryPoolResults(FOwner.Device, FQueries, First, 1, 8, @Stamps[0], 8, VK_QUERY_RESULT_64_BIT) <> VK_SUCCESS then
+  if API.vkGetQueryPoolResults(FOwner.Device, FQueries, First, 1, 8, @Stamps[0], 8, VK_QUERY_RESULT_64_BIT) <>
+    VK_SUCCESS then
     Exit;
-  if API.vkGetQueryPoolResults(FOwner.Device, FQueries, Last, 1, 8, @Stamps[1], 8, VK_QUERY_RESULT_64_BIT) <> VK_SUCCESS then
+  if API.vkGetQueryPoolResults(FOwner.Device, FQueries, Last, 1, 8, @Stamps[1], 8, VK_QUERY_RESULT_64_BIT) <>
+    VK_SUCCESS then
     Exit;
   Result := (Stamps[1] - Stamps[0]) * Double(FOwner.Properties.limits.timestampPeriod);
 end;

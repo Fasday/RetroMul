@@ -1,4 +1,4 @@
-unit RM.Vulkan.HLE;
+﻿unit RM.Vulkan.HLE;
 
 // The common part of the Vulkan HLE renderers: a console's GPU drawn with
 // Vulkan graphics pipelines in the host GPU's own arithmetic (fast, not bit
@@ -56,9 +56,9 @@ unit RM.Vulkan.HLE;
 interface
 
 uses
-  System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections, System.Generics.Defaults,
-  System.UITypes, Core.Emulation.Types, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute,
-  RM.Vulkan.TexScale;
+  System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections,
+  System.Generics.Defaults, System.UITypes, Core.Emulation.Types,
+  RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute, RM.Vulkan.TexScale;
 
 const
   // Vertices a slot's buffer holds.
@@ -404,8 +404,8 @@ end;
 
 { TVulkanHLERenderer }
 
-constructor TVulkanHLERenderer.Create(Compute: TVulkanCompute; Scale, VertexSize, PushSize, FrameWidth,
-  FrameHeight: Integer);
+constructor TVulkanHLERenderer.Create(Compute: TVulkanCompute;
+  Scale, VertexSize, PushSize, FrameWidth, FrameHeight: Integer);
 var
   Props: VkFormatProperties;
 begin
@@ -445,8 +445,8 @@ begin
     FSlots[I].Upload := Compute.CreateBuffer(HLEUploadCapacity, vbkUpload, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
   end;
   // Also the frames shown at the scale.
-  FReadback := Compute.CreateBuffer(Max(HLEUploadCapacity, FrameWidth * FrameHeight * 4 * FScale * FScale),
-    vbkReadback, VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  FReadback := Compute.CreateBuffer(Max(HLEUploadCapacity, FrameWidth * FrameHeight * 4 * FScale * FScale), vbkReadback,
+    VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   FBlank := TVulkanHLETexture.Create;
   FBlank.Width := 1;
   FBlank.Height := 1;
@@ -503,10 +503,14 @@ begin
     FSlots[I].Upload.Free;
   end;
   FReadback.Free;
-  if FPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FPool, nil);
-  if FLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FLayout, nil);
-  if FSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FSetLayout, nil);
-  if FRenderPass <> 0 then FAPI.vkDestroyRenderPass(FDevice, FRenderPass, nil);
+  if FPool <> 0 then
+    FAPI.vkDestroyDescriptorPool(FDevice, FPool, nil);
+  if FLayout <> 0 then
+    FAPI.vkDestroyPipelineLayout(FDevice, FLayout, nil);
+  if FSetLayout <> 0 then
+    FAPI.vkDestroyDescriptorSetLayout(FDevice, FSetLayout, nil);
+  if FRenderPass <> 0 then
+    FAPI.vkDestroyRenderPass(FDevice, FRenderPass, nil);
 end;
 
 function TVulkanHLERenderer.CreateImage(Format: VkFormat; Width, Height, Levels: Integer;
@@ -567,15 +571,18 @@ begin
   B.subresourceRange.aspectMask := Aspect;
   B.subresourceRange.levelCount := Levels;
   B.subresourceRange.layerCount := 1;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-    0, 0, nil, 0, nil, 1, @B);
+  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+    0, nil, 0, nil, 1, @B);
 end;
 
 procedure TVulkanHLERenderer.DestroyImage(var Image: TVulkanHLEImage);
 begin
-  if Image.View <> 0 then FAPI.vkDestroyImageView(FDevice, Image.View, nil);
-  if Image.Image <> 0 then FAPI.vkDestroyImage(FDevice, Image.Image, nil);
-  if Image.Memory <> 0 then FAPI.vkFreeMemory(FDevice, Image.Memory, nil);
+  if Image.View <> 0 then
+    FAPI.vkDestroyImageView(FDevice, Image.View, nil);
+  if Image.Image <> 0 then
+    FAPI.vkDestroyImage(FDevice, Image.Image, nil);
+  if Image.Memory <> 0 then
+    FAPI.vkFreeMemory(FDevice, Image.Memory, nil);
   Image := Default(TVulkanHLEImage);
 end;
 
@@ -815,8 +822,8 @@ begin
   B.sType := VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   B.srcAccessMask := VK_ACCESS_MEMORY_WRITE_BIT;
   B.dstAccessMask := VK_ACCESS_MEMORY_READ_BIT or VK_ACCESS_MEMORY_WRITE_BIT;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-    0, 1, @B, 0, nil, 0, nil);
+  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+    1, @B, 0, nil, 0, nil);
 end;
 
 procedure TVulkanHLERenderer.HostReadBarrier;
@@ -1016,9 +1023,10 @@ begin
   Result.Width := W;
   Result.Height := H;
   Result.MaxHeight := MaxHeight;
-  Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1, FColorUsage, VK_IMAGE_ASPECT_COLOR_BIT);
-  Result.Depth := CreateImage(FDepthFormat, W * FScale, H * FScale, 1, FDepthUsage,
-    VK_IMAGE_ASPECT_DEPTH_BIT or VK_IMAGE_ASPECT_STENCIL_BIT);
+  Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1, FColorUsage,
+    VK_IMAGE_ASPECT_COLOR_BIT);
+  Result.Depth := CreateImage(FDepthFormat, W * FScale, H * FScale, 1, FDepthUsage, VK_IMAGE_ASPECT_DEPTH_BIT or
+    VK_IMAGE_ASPECT_STENCIL_BIT);
   Views[0] := Result.Color.View;
   Views[1] := Result.Depth.View;
   Info := Default(VkFramebufferCreateInfo);
@@ -1092,8 +1100,12 @@ begin
   if not T.Dirty then
   begin
     T.Dirty := True;
-    T.X1 := MaxInt; T.Y1 := MaxInt; T.X2 := -1; T.Y2 := -1;
-    T.HeldY1 := MaxInt; T.HeldY2 := -1;
+    T.X1 := MaxInt;
+    T.Y1 := MaxInt;
+    T.X2 := -1;
+    T.Y2 := -1;
+    T.HeldY1 := MaxInt;
+    T.HeldY2 := -1;
     T.Stale := False;
     WatchTarget(T);
   end;
@@ -1108,8 +1120,10 @@ end;
 procedure TVulkanHLERenderer.Drawn(T: TVulkanHLETarget; X1, Y1, X2, Y2: Integer);
 begin
   Changed(T);
-  T.X1 := Min(T.X1, X1); T.Y1 := Min(T.Y1, Y1);
-  T.X2 := Max(T.X2, X2); T.Y2 := Max(T.Y2, Y2);
+  T.X1 := Min(T.X1, X1);
+  T.Y1 := Min(T.Y1, Y1);
+  T.X2 := Max(T.X2, X2);
+  T.Y2 := Max(T.Y2, Y2);
 end;
 
 procedure TVulkanHLERenderer.HoldNewRows(T: TVulkanHLETarget; Y1, Y2: Integer);
@@ -1243,7 +1257,8 @@ begin
   var Off := 0;
   for var B in Bytes do
   begin
-    if (B.Data = nil) or (Off + B.Size > Length(T.Source)) or ((B.Size > 0) and not CompareMem(B.Data, @T.Source[Off], B.Size)) then
+    if (B.Data = nil) or (Off + B.Size > Length(T.Source)) or ((B.Size > 0) and
+      not CompareMem(B.Data, @T.Source[Off], B.Size)) then
       Exit(False);
     Inc(Off, B.Size);
   end;
@@ -1389,10 +1404,7 @@ begin
     begin
       var List := FTextures.Values.ToArray;
       TArray.Sort<TVulkanHLETexture>(List, TComparer<TVulkanHLETexture>.Construct(
-        function(const A, B: TVulkanHLETexture): Integer
-        begin
-          Result := CompareValue(A.LastUse, B.LastUse);
-        end));
+          function(const A, B: TVulkanHLETexture): Integer begin Result := CompareValue(A.LastUse, B.LastUse); end));
       for var I := 0 to Length(List) - MaxTextures * 3 div 4 - 1 do
       begin
         FTextures.Remove(List[I].Key);
@@ -1432,7 +1444,9 @@ end;
 function DynArrayRefs(const A: TArray<TAlphaColor>): Integer;
 type
   THeader = packed record
-    {$IFDEF CPU64BITS}Padding: Integer;{$ENDIF}
+{$IFDEF CPU64BITS}
+    Padding: Integer;
+{$ENDIF}
     RefCount: Integer;
     Length: NativeInt;
   end;

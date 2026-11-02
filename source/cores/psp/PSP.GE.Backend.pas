@@ -1,4 +1,4 @@
-unit PSP.GE.Backend;
+﻿unit PSP.GE.Backend;
 
 // Where the GE's primitives are drawn. The engine hands every primitive with
 // its complete raster state (a TGERaster snapshot and the vertices) to its

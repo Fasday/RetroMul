@@ -1,4 +1,4 @@
-unit PSP.Service;
+﻿unit PSP.Service;
 
 // HLE services: each library implementation is a TPSPService registered by
 // its unit's initialization section. The console creates them all, resets
@@ -7,11 +7,12 @@ unit PSP.Service;
 
 interface
 
-{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic,
+  vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.IO, PSP.Loader, PSP.Display;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.IO, PSP.Loader, PSP.Display;
 
 type
   TPSPService = class;

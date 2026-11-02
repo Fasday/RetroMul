@@ -1,4 +1,4 @@
-unit PSP.SysMem;
+﻿unit PSP.SysMem;
 
 // Memory partitions: an ordered list of free and used blocks. Allocation from
 // the low end, the high end or at a fixed address, with alignment.
@@ -29,7 +29,8 @@ type
     destructor Destroy; override;
     procedure Reset;
     // Returns 0 when there is no room.
-    function Alloc(Size: Cardinal; Kind: TPSPAllocKind; Address: Cardinal = 0; Alignment: Cardinal = 256; const Tag: string = ''): Cardinal;
+    function Alloc(Size: Cardinal; Kind: TPSPAllocKind; Address: Cardinal = 0; Alignment: Cardinal = 256;
+      const Tag: string = ''): Cardinal;
     function FreeBlock(Address: Cardinal): Boolean;
     function BlockSize(Address: Cardinal): Cardinal;
     function Contains(Address: Cardinal): Boolean;
@@ -91,7 +92,8 @@ begin
       Inc(I);
 end;
 
-function TPSPPartition.Alloc(Size: Cardinal; Kind: TPSPAllocKind; Address, Alignment: Cardinal; const Tag: string): Cardinal;
+function TPSPPartition.Alloc(Size: Cardinal; Kind: TPSPAllocKind; Address, Alignment: Cardinal;
+  const Tag: string): Cardinal;
 
   function Split(Index: Integer; Start, Count: Cardinal): Cardinal;
   begin

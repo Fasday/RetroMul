@@ -1,4 +1,4 @@
-unit PSP.MpegVideo;
+﻿unit PSP.MpegVideo;
 
 // The Media Engine's H.264 decoder as sceMpeg sees it: access units in,
 // pictures out after the delay the hardware applies (the picture timing SEI's
@@ -10,7 +10,8 @@ unit PSP.MpegVideo;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, Core.Bitstream, Video.AVC.Types, Video.AVC.H264;
+  System.SysUtils, System.Generics.Collections, Core.Bitstream, Video.AVC.Types,
+  Video.AVC.H264;
 
 const
   PSPPixel5650 = 0;
@@ -171,9 +172,12 @@ end;
 function PSPPackPixel(R, G, B, Format: Integer): Cardinal;
 begin
   case Format of
-    PSPPixel5650: Result := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
-    PSPPixel5551: Result := Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
-    PSPPixel4444: Result := Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
+    PSPPixel5650:
+      Result := Cardinal(R shr 3) or (Cardinal(G shr 2) shl 5) or (Cardinal(B shr 3) shl 11);
+    PSPPixel5551:
+      Result := Cardinal(R shr 3) or (Cardinal(G shr 3) shl 5) or (Cardinal(B shr 3) shl 10);
+    PSPPixel4444:
+      Result := Cardinal(R shr 4) or (Cardinal(G shr 4) shl 4) or (Cardinal(B shr 4) shl 8);
   else
     Result := Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16);
   end;
@@ -557,7 +561,8 @@ begin
     FPpsBottom[Id] := B.ReadBit;
     FPpsSps[Id] := SpsId;
   except
-    on EBitstreamError do ;
+    on EBitstreamError do
+      ;
   end;
 end;
 
@@ -704,7 +709,8 @@ begin
             end;
         end;
       except
-        on EBitstreamError do ;
+        on EBitstreamError do
+          ;
       end;
     end;
     Inc(P, Size);
@@ -776,7 +782,8 @@ begin
         end;
     end;
   except
-    on EBitstreamError do ;
+    on EBitstreamError do
+      ;
   end;
 end;
 
@@ -791,8 +798,8 @@ begin
       var Best := -1;
       for var I := 0 to FHeld.Count - 1 do
         if FHeld[I].OutAt <= FCount then
-          if (Best < 0) or (FHeld[I].OutAt < FHeld[Best].OutAt) or
-            ((FHeld[I].OutAt = FHeld[Best].OutAt) and (FHeld[I].Index < FHeld[Best].Index)) then
+          if (Best < 0) or (FHeld[I].OutAt < FHeld[Best].OutAt) or ((FHeld[I].OutAt = FHeld[Best].OutAt) and
+            (FHeld[I].Index < FHeld[Best].Index)) then
             Best := I;
       if Best < 0 then
         Break;
@@ -833,9 +840,12 @@ begin
     var T := Nal[0] and $1F;
     var RefIdc := (Nal[0] shr 5) and 3;
     case T of
-      7: ParseSps(UnescapeNAL(Copy(Nal, 1, Length(Nal) - 1), True));
-      8: ParsePps(UnescapeNAL(Copy(Nal, 1, Length(Nal) - 1), True));
-      6: ParseSei(UnescapeNAL(Copy(Nal, 1, Length(Nal) - 1), True), Sei);
+      7:
+        ParseSps(UnescapeNAL(Copy(Nal, 1, Length(Nal) - 1), True));
+      8:
+        ParsePps(UnescapeNAL(Copy(Nal, 1, Length(Nal) - 1), True));
+      6:
+        ParseSei(UnescapeNAL(Copy(Nal, 1, Length(Nal) - 1), True), Sei);
       1, 5:
         if not HasSlice then
         begin
@@ -911,7 +921,8 @@ begin
     for var I := 1 to FHeld.Count - 1 do
       if ActiveSps.Hrd then
       begin
-        if (FHeld[I].OutAt < FHeld[Best].OutAt) or ((FHeld[I].OutAt = FHeld[Best].OutAt) and (FHeld[I].Index < FHeld[Best].Index)) then
+        if (FHeld[I].OutAt < FHeld[Best].OutAt) or ((FHeld[I].OutAt = FHeld[Best].OutAt) and
+          (FHeld[I].Index < FHeld[Best].Index)) then
           Best := I;
       end
       else if FHeld[I].Poc < FHeld[Best].Poc then

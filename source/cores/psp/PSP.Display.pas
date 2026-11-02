@@ -1,4 +1,4 @@
-unit PSP.Display;
+﻿unit PSP.Display;
 
 // sceDisplay and sceCtrl. A field is 286 lines at 59.94 Hz. The vblank
 // interrupt comes at the end of line 285: hcount wraps to 0, vcount steps and
@@ -12,11 +12,13 @@ unit PSP.Display;
 
 interface
 
-{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic, vcPublished]) PROPERTIES([vcPublic, vcPublished])}
+{$RTTI EXPLICIT FIELDS([vcPrivate, vcProtected, vcPublic, vcPublished]) METHODS([vcPrivate, vcProtected, vcPublic,
+  vcPublished]) PROPERTIES([vcPublic, vcPublished])}
 
 uses
-  System.SysUtils, System.Generics.Collections, System.UITypes, Core.Emulation.Types,
-  PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.State.Action;
+  System.SysUtils, System.Generics.Collections, System.UITypes,
+  Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
+  PSP.Scheduler, PSP.State.Action;
 
 const
   PSPLineNs = PSPFrameNs div PSPLinesPerFrame;
@@ -156,8 +158,8 @@ uses
   System.Math;
 
 const
-  ButtonBits: array[TEmulatorButton] of Cardinal =
-    ($10, $40, $80, $20, $4000, $2000, $1, $8, $100, $8000, $1000, $200, 0);
+  ButtonBits: array[TEmulatorButton] of Cardinal = ($10, $40, $80, $20, $4000, $2000, $1, $8, $100, $8000,
+    $1000, $200, 0);
 
 constructor TPSPDisplay.Create(Kernel: TPSPKernel);
 begin
@@ -247,7 +249,8 @@ end;
 procedure TPSPDisplay.OnEvent;
 begin
   case FPhase of
-    dpInterrupt: Interrupt;
+    dpInterrupt:
+      Interrupt;
     dpHandlers:
       begin
         var N := FKernel.QueueSubInterrupts(PSPInterruptVBlank, 0, nil,
@@ -255,7 +258,8 @@ begin
         if N = 0 then
           InterruptDone;
       end;
-    dpWake: ReleaseNext;
+    dpWake:
+      ReleaseNext;
     dpSample:
       begin
         if FSamplingCycle = 0 then
@@ -366,7 +370,8 @@ end;
 procedure TPSPDisplay.WaitFields(Count: Integer; AllowCB: Boolean);
 begin
   FHLE.Result(0);
-  if FKernel.RefuseWait then Exit;
+  if FKernel.RefuseWait then
+    Exit;
   var T := FKernel.Current;
   FWaiters.Add(T);
   FKernel.BeginWait(PSPWaitEventFlag, nil, 0, 0, AllowCB, VBlankRetry, VBlankAbort, 'vblank');
@@ -597,12 +602,9 @@ end;
 
 function TPSPDisplay.ScreenshotBMP: TBytes;
 const
-  Header: array[0..53] of Byte = (
-    $42, $4D, $38, $80, $08, $00, $00, $00, $00, $00, $36, $00,
-    $00, $00, $28, $00, $00, $00, $00, $02, $00, $00, $10, $01,
-    $00, $00, $01, $00, $20, $00, $00, $00, $00, $00, $02, $80,
-    $08, $00, $12, $0B, $00, $00, $12, $0B, $00, $00, $00, $00,
-    $00, $00, $00, $00, $00, $00);
+  Header: array[0..53] of Byte = ($42, $4D, $38, $80, $08, $00, $00, $00, $00, $00, $36, $00, $00, $00, $28, $00, $00,
+    $00, $00, $02, $00, $00, $10, $01, $00, $00, $01, $00, $20, $00, $00, $00, $00, $00, $02, $80, $08, $00, $12, $0B,
+    $00, $00, $12, $0B, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00);
 
   function E4(V: Cardinal): Cardinal; inline;
   begin
@@ -658,7 +660,10 @@ begin
               R := E5(C and $1F);
               G := E5((C shr 5) and $1F);
               B := E5((C shr 10) and $1F);
-              if (C and $8000) <> 0 then A := $FF else A := 0;
+              if (C and $8000) <> 0 then
+                A := $FF
+              else
+                A := 0;
             end;
         else
           R := E4(C and $F);
@@ -698,14 +703,20 @@ begin
   FModeWidth := W;
   FModeHeight := H;
   // Changing the mode waits for the next vblank.
-  if FKernel.CanWait then WaitFields(1, False) else FHLE.Result(0);
+  if FKernel.CanWait then
+    WaitFields(1, False)
+  else
+    FHLE.Result(0);
 end;
 
 procedure TPSPDisplay.hGetMode;
 begin
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), FMode);
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), FModeWidth);
-  if FHLE.Arg(2) <> 0 then FMemory.Write32(FHLE.Arg(2), FModeHeight);
+  if FHLE.Arg(0) <> 0 then
+    FMemory.Write32(FHLE.Arg(0), FMode);
+  if FHLE.Arg(1) <> 0 then
+    FMemory.Write32(FHLE.Arg(1), FModeWidth);
+  if FHLE.Arg(2) <> 0 then
+    FMemory.Write32(FHLE.Arg(2), FModeHeight);
   FHLE.Result(0);
 end;
 
@@ -778,9 +789,12 @@ begin
   var A := FCurrentAddr;
   if (FHLE.Arg(3) = 1) and FHasPending then
     A := FLatchedAddr;
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), A);
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), FWidth);
-  if FHLE.Arg(2) <> 0 then FMemory.Write32(FHLE.Arg(2), FFormat);
+  if FHLE.Arg(0) <> 0 then
+    FMemory.Write32(FHLE.Arg(0), A);
+  if FHLE.Arg(1) <> 0 then
+    FMemory.Write32(FHLE.Arg(1), FWidth);
+  if FHLE.Arg(2) <> 0 then
+    FMemory.Write32(FHLE.Arg(2), FFormat);
   FHLE.Result(0);
 end;
 
@@ -921,8 +935,10 @@ end;
 
 procedure TPSPDisplay.hGetBrightness;
 begin
-  if FHLE.Arg(0) <> 0 then FMemory.Write32(FHLE.Arg(0), 84);
-  if FHLE.Arg(1) <> 0 then FMemory.Write32(FHLE.Arg(1), 0);
+  if FHLE.Arg(0) <> 0 then
+    FMemory.Write32(FHLE.Arg(0), 84);
+  if FHLE.Arg(1) <> 0 then
+    FMemory.Write32(FHLE.Arg(1), 0);
   FHLE.Result(0);
 end;
 
@@ -1008,7 +1024,8 @@ begin
     FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
     Exit;
   end;
-  if FKernel.RefuseWait then Exit;
+  if FKernel.RefuseWait then
+    Exit;
   var Unread := FSampleIndex - FReadIndex;
   if (Unread > 0) or not FKernel.CanWait then
   begin
@@ -1086,8 +1103,10 @@ begin
     FHLE.Result($80000023);
     Exit;
   end;
-  if A <> 0 then FMemory.Write32(A, Cardinal(FIdleReset));
-  if B <> 0 then FMemory.Write32(B, Cardinal(FIdleBack));
+  if A <> 0 then
+    FMemory.Write32(A, Cardinal(FIdleReset));
+  if B <> 0 then
+    FMemory.Write32(B, Cardinal(FIdleBack));
   FHLE.Result(0);
 end;
 

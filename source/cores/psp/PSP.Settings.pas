@@ -1,4 +1,4 @@
-unit PSP.Settings;
+﻿unit PSP.Settings;
 
 // The console's system settings (what the XMB would store in the registry):
 // read by sceUtility system parameters, sceReg, sceImpose and sceRtc local time.

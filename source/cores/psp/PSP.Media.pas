@@ -1,4 +1,4 @@
-unit PSP.Media;
+﻿unit PSP.Media;
 
 // UMD images (ISO9660 and CISO v1), PBP packages and PARAM.SFO. The disc reads
 // sectors on demand from a borrowed stream.
@@ -211,9 +211,12 @@ end;
 function TPSPDiscStream.Seek(const Offset: Int64; Origin: TSeekOrigin): Int64;
 begin
   case Origin of
-    soBeginning: FPosition := Offset;
-    soCurrent: FPosition := FPosition + Offset;
-    soEnd: FPosition := FLength + Offset;
+    soBeginning:
+      FPosition := Offset;
+    soCurrent:
+      FPosition := FPosition + Offset;
+    soEnd:
+      FPosition := FLength + Offset;
   end;
   if FPosition < 0 then
     FPosition := 0;
@@ -253,7 +256,8 @@ begin
   FSectors := FSize div 2048;
   var PVD: array[0..2047] of Byte;
   ReadSector(16, PVD);
-  if (PVD[1] <> Ord('C')) or (PVD[2] <> Ord('D')) or (PVD[3] <> Ord('0')) or (PVD[4] <> Ord('0')) or (PVD[5] <> Ord('1')) then
+  if (PVD[1] <> Ord('C')) or (PVD[2] <> Ord('D')) or (PVD[3] <> Ord('0')) or (PVD[4] <> Ord('0')) or
+    (PVD[5] <> Ord('1')) then
     raise EPSPFormat.Create('PSP: not an ISO9660 image');
   FRootLBA := PCardinal(@PVD[156 + 2])^;
   FRootSize := PCardinal(@PVD[156 + 10])^;
@@ -282,7 +286,8 @@ begin
     Stream.Position := 16 * 2048;
     if Stream.Read(Id, 6) <> 6 then
       Exit(False);
-    Result := (Id[1] = Ord('C')) and (Id[2] = Ord('D')) and (Id[3] = Ord('0')) and (Id[4] = Ord('0')) and (Id[5] = Ord('1'));
+    Result := (Id[1] = Ord('C')) and (Id[2] = Ord('D')) and (Id[3] = Ord('0')) and (Id[4] = Ord('0')) and
+      (Id[5] = Ord('1'));
   finally
     Stream.Position := Saved;
   end;
@@ -421,7 +426,10 @@ begin
     E.Accessed := E.Created;
     if (NameLen = 1) and (Data[P + 33] <= 1) then
     begin
-      if Data[P + 33] = 0 then E.Name := '.' else E.Name := '..';
+      if Data[P + 33] = 0 then
+        E.Name := '.'
+      else
+        E.Name := '..';
     end
     else
     begin
@@ -552,10 +560,10 @@ end;
 
 function IsExecutable(const Data: TBytes): Boolean;
 begin
-  Result := (Length(Data) >= 4) and (
-    ((Data[0] = $7F) and (Data[1] = Ord('E')) and (Data[2] = Ord('L')) and (Data[3] = Ord('F'))) or
-    ((Data[0] = Ord('~')) and (Data[1] = Ord('P')) and (Data[2] = Ord('S')) and (Data[3] = Ord('P'))) or
-    ((Data[0] = Ord('~')) and (Data[1] = Ord('S')) and (Data[2] = Ord('C')) and (Data[3] = Ord('E'))));
+  Result := (Length(Data) >= 4) and (((Data[0] = $7F) and (Data[1] = Ord('E')) and (Data[2] = Ord('L')) and
+    (Data[3] = Ord('F'))) or ((Data[0] = Ord('~')) and (Data[1] = Ord('P')) and (Data[2] = Ord('S')) and
+    (Data[3] = Ord('P'))) or ((Data[0] = Ord('~')) and (Data[1] = Ord('S')) and (Data[2] = Ord('C')) and
+    (Data[3] = Ord('E'))));
 end;
 
 class function TPSPProgram.Read(Stream: TStream): TPSPProgram;

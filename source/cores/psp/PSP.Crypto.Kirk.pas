@@ -1,10 +1,11 @@
-unit PSP.Crypto.Kirk;
+﻿unit PSP.Crypto.Kirk;
 
 // The KIRK operations the PRX envelope needs. Command 1 authenticates the
 // complete envelope BEFORE releasing plaintext; command 7 is slot-key CBC.
 interface
 
-uses System.SysUtils, System.Classes;
+uses
+  System.SysUtils, System.Classes;
 
 type
   EPSPCrypto = class(EReadError);
@@ -16,29 +17,33 @@ function PSPDigestEqual(const A, B: TBytes): Boolean;
 
 implementation
 
-uses System.Hash, PSP.AES, PSP.Crypto.Keys, PSP.Crypto.ECDSA;
+uses
+  System.Hash, PSP.AES, PSP.Crypto.Keys, PSP.Crypto.ECDSA;
 
 function PSPSHA1(const Data: TBytes; Offset, Count: Integer): TBytes;
 begin
   if (Offset < 0) or (Count < 0) or (Int64(Offset) + Count > Length(Data)) then
     raise EPSPCrypto.Create('SHA-1 extent outside input');
   var Hash := THashSHA1.Create;
-  if Count > 0 then Hash.Update(Data[Offset], Count);
+  if Count > 0 then
+    Hash.Update(Data[Offset], Count);
   Result := Hash.HashAsBytes;
 end;
 
 function PSPDigestEqual(const A, B: TBytes): Boolean;
 begin
-  if Length(A) <> Length(B) then Exit(False);
+  if Length(A) <> Length(B) then
+    Exit(False);
   var Diff: Cardinal := 0;
-  for var I := 0 to High(A) do Diff := Diff or (A[I] xor B[I]);
+  for var I := 0 to High(A) do
+    Diff := Diff or (A[I] xor B[I]);
   Result := Diff = 0;
 end;
 
 function WordAt(const Data: TBytes; Offset: Integer): Cardinal;
 begin
-  Result := Data[Offset] or (Cardinal(Data[Offset + 1]) shl 8) or
-    (Cardinal(Data[Offset + 2]) shl 16) or (Cardinal(Data[Offset + 3]) shl 24);
+  Result := Data[Offset] or (Cardinal(Data[Offset + 1]) shl 8) or (Cardinal(Data[Offset + 2]) shl 16) or
+    (Cardinal(Data[Offset + 3]) shl 24);
 end;
 
 function PSPKirk7(const Data: TBytes; Slot: Integer): TBytes;
@@ -51,7 +56,8 @@ begin
   if (Length(Envelope) < $90) or (WordAt(Envelope, $60) <> 1) then
     raise EPSPCrypto.Create('KIRK1: invalid metadata');
   var Mode := WordAt(Envelope, $64);
-  if Mode > 1 then raise EPSPCrypto.Create('KIRK1: unsupported signature mode');
+  if Mode > 1 then
+    raise EPSPCrypto.Create('KIRK1: unsupported signature mode');
   var Size := UInt64(WordAt(Envelope, $70));
   var Offset := UInt64(WordAt(Envelope, $74));
   var Aligned := (Size + 15) and not UInt64(15);

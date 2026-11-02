@@ -1,4 +1,4 @@
-unit PSP.Utility;
+﻿unit PSP.Utility;
 
 // sceUtility: savedata, dialogs, on-screen keyboard, system parameters, modules.
 // One dialog type is current at a time (the last one started); its status runs
@@ -11,8 +11,9 @@ unit PSP.Utility;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE,
-  PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.State.Action;
+  System.SysUtils, System.Classes, System.Generics.Collections, PSP.Types,
+  PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service,
+  PSP.State.Action;
 
 const
   PSPDialogNone = 0;
@@ -22,8 +23,8 @@ const
   PSPDialogShutdown = 4;
 
 type
-  TPSPDialogType = (dtNone, dtMsg, dtSavedata, dtOsk, dtNetconf, dtGameSharing, dtScreenshot, dtInstall, dtNpSignin,
-    dtHtml);
+  TPSPDialogType = (dtNone, dtMsg, dtSavedata, dtOsk, dtNetconf, dtGameSharing, dtScreenshot, dtInstall,
+    dtNpSignin, dtHtml);
 
   TPSPDialog = class
   public
@@ -161,8 +162,8 @@ const
 implementation
 
 uses
-  System.Math, System.IOUtils, System.Hash, PSP.SysMem, PSP.IO, PSP.SFO, PSP.Settings,
-  PSP.Font, PSP.Display, PSP.GE, PSP.GE.Types;
+  System.Math, System.IOUtils, System.Hash, PSP.SysMem, PSP.IO, PSP.SFO,
+  PSP.Settings, PSP.Font, PSP.Display, PSP.GE, PSP.GE.Types;
 
 const
   // A message dialog leaves INIT this long after InitStart, or sooner when the
@@ -290,10 +291,14 @@ begin
     B := (B * Cardinal(Alpha) + OBlue * Cardinal(15 - Alpha) + 7) div 15;
   end;
   case FFormat of
-    0: PWord(P)^ := (R shr 3) or ((G shr 2) shl 5) or ((B shr 3) shl 11);
-    1: PWord(P)^ := (R shr 3) or ((G shr 3) shl 5) or ((B shr 3) shl 10) or $8000;
-    2: PWord(P)^ := (R shr 4) or ((G shr 4) shl 4) or ((B shr 4) shl 8) or $F000;
-    3: PCardinal(P)^ := R or (G shl 8) or (B shl 16) or $FF000000;
+    0:
+      PWord(P)^ := (R shr 3) or ((G shr 2) shl 5) or ((B shr 3) shl 11);
+    1:
+      PWord(P)^ := (R shr 3) or ((G shr 3) shl 5) or ((B shr 3) shl 10) or $8000;
+    2:
+      PWord(P)^ := (R shr 4) or ((G shr 4) shl 4) or ((B shr 4) shl 8) or $F000;
+    3:
+      PCardinal(P)^ := R or (G shl 8) or (B shl 16) or $FF000000;
   end;
 end;
 
@@ -709,10 +714,16 @@ end;
 procedure TPSPUtility.hMsgAbort;
 begin
   if FCurrent <> dtMsg then
-    begin FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE);
+    Exit;
+  end;
   var D := FDialogs[dtMsg];
   if D.Status <> PSPDialogRunning then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   D.Aborted := True;
   FHLE.Result(0);
 end;
@@ -830,7 +841,10 @@ end;
 procedure TPSPUtility.hScreenshotContStart;
 begin
   if FCurrent <> dtScreenshot then
-    begin FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE);
+    Exit;
+  end;
   FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
 end;
 
@@ -876,15 +890,24 @@ begin
   var D := FDialogs[dtHtml];
   var P := FHLE.Arg(0);
   if FHtmlStarted and (D.Status <> PSPDialogNone) then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   var Size: Cardinal := 0;
   if P <> 0 then
     Size := FMemory.Read32(P);
   if not ((Size = $70) or (Size = $78) or (Size = $80) or (Size = $98) or (Size = $A4) or (Size = $A8)) then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_PARAM_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_PARAM_SIZE);
+    Exit;
+  end;
   var Block := FKernel.UserPartition.Alloc(HtmlMemorySize, akHigh, 0, 256, 'htmlviewer');
   if Block = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_MEMBLOCK_ALLOC_FAILED); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_MEMBLOCK_ALLOC_FAILED);
+    Exit;
+  end;
   FHtmlMemory := Block;
   FHtmlStarted := True;
   FKernel.CancelTimersOf(D);
@@ -908,9 +931,15 @@ procedure TPSPUtility.hHtmlUpdate;
 begin
   var D := FDialogs[dtHtml];
   if not FHtmlStarted then
-    begin FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE);
+    Exit;
+  end;
   if D.Status <> PSPDialogRunning then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   FHLE.Result(0);
   // No network: the browser can only be closed.
   FMemory.Write32(D.Params + DialogResult, 0);
@@ -922,9 +951,15 @@ procedure TPSPUtility.hHtmlShutdownStart;
 begin
   var D := FDialogs[dtHtml];
   if not FHtmlStarted then
-    begin FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE);
+    Exit;
+  end;
   if D.Status <> PSPDialogFinished then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   FHLE.Result(0);
   D.Status := PSPDialogShutdown;
   At(DialogShutdownNs, D, 4);
@@ -936,17 +971,29 @@ procedure TPSPUtility.hGetSystemParamInt;
 begin
   var V: Integer;
   case FHLE.ArgInt(0) of
-    2: V := PSPSettings.AdhocChannel;
-    3: V := PSPSettings.WlanPowerSave;
-    4: V := PSPSettings.DateFormat;
-    5: V := PSPSettings.TimeFormat;
-    6: V := PSPSettings.Timezone;
-    7: V := PSPSettings.DaylightSaving;
-    8: V := PSPSettings.Language;
-    9: V := PSPSettings.ButtonSwap;
-    10: V := PSPSettings.ParentalLevel;
+    2:
+      V := PSPSettings.AdhocChannel;
+    3:
+      V := PSPSettings.WlanPowerSave;
+    4:
+      V := PSPSettings.DateFormat;
+    5:
+      V := PSPSettings.TimeFormat;
+    6:
+      V := PSPSettings.Timezone;
+    7:
+      V := PSPSettings.DaylightSaving;
+    8:
+      V := PSPSettings.Language;
+    9:
+      V := PSPSettings.ButtonSwap;
+    10:
+      V := PSPSettings.ParentalLevel;
   else
-    begin FHLE.Result(SYSTEMPARAM_FAIL); Exit; end;
+    begin
+      FHLE.Result(SYSTEMPARAM_FAIL);
+      Exit;
+    end;
   end;
   FMemory.Write32(FHLE.Arg(1), Cardinal(V));
   FHLE.Result(0);
@@ -955,11 +1002,17 @@ end;
 procedure TPSPUtility.hGetSystemParamString;
 begin
   if FHLE.ArgInt(0) <> 1 then
-    begin FHLE.Result(SYSTEMPARAM_FAIL); Exit; end;
+  begin
+    FHLE.Result(SYSTEMPARAM_FAIL);
+    Exit;
+  end;
   var S := UTF8Encode(PSPSettings.Nickname);
   var Len := FHLE.ArgInt(2);
   if Len <= Length(S) then
-    begin FHLE.Result(SYSTEMPARAM_TOO_SHORT); Exit; end;
+  begin
+    FHLE.Result(SYSTEMPARAM_TOO_SHORT);
+    Exit;
+  end;
   FMemory.WriteString(FHLE.Arg(1), S, Len);
   FHLE.Result(0);
 end;
@@ -968,17 +1021,29 @@ procedure TPSPUtility.hSetSystemParamInt;
 begin
   var V := FHLE.ArgInt(1);
   case FHLE.ArgInt(0) of
-    2: PSPSettings.AdhocChannel := V;
-    3: PSPSettings.WlanPowerSave := V;
-    4: PSPSettings.DateFormat := V;
-    5: PSPSettings.TimeFormat := V;
-    6: PSPSettings.Timezone := V;
-    7: PSPSettings.DaylightSaving := V;
-    8: PSPSettings.Language := V;
-    9: PSPSettings.ButtonSwap := V;
-    10: PSPSettings.ParentalLevel := V;
+    2:
+      PSPSettings.AdhocChannel := V;
+    3:
+      PSPSettings.WlanPowerSave := V;
+    4:
+      PSPSettings.DateFormat := V;
+    5:
+      PSPSettings.TimeFormat := V;
+    6:
+      PSPSettings.Timezone := V;
+    7:
+      PSPSettings.DaylightSaving := V;
+    8:
+      PSPSettings.Language := V;
+    9:
+      PSPSettings.ButtonSwap := V;
+    10:
+      PSPSettings.ParentalLevel := V;
   else
-    begin FHLE.Result(SYSTEMPARAM_FAIL); Exit; end;
+    begin
+      FHLE.Result(SYSTEMPARAM_FAIL);
+      Exit;
+    end;
   end;
   FHLE.Result(0);
 end;
@@ -986,7 +1051,10 @@ end;
 procedure TPSPUtility.hSetSystemParamString;
 begin
   if FHLE.ArgInt(0) <> 1 then
-    begin FHLE.Result(SYSTEMPARAM_FAIL); Exit; end;
+  begin
+    FHLE.Result(SYSTEMPARAM_FAIL);
+    Exit;
+  end;
   PSPSettings.Nickname := UTF8ToString(FMemory.ReadAnsi(FHLE.Arg(1), 128));
   FHLE.Result(0);
 end;
@@ -1008,9 +1076,15 @@ end;
 procedure TPSPUtility.ModuleLoad(Id: Cardinal; Valid: Boolean; ErrBase: Cardinal);
 begin
   if not Valid then
-    begin FHLE.Result(ErrBase + 1); Exit; end;
+  begin
+    FHLE.Result(ErrBase + 1);
+    Exit;
+  end;
   if FModules.Contains(Id) then
-    begin FHLE.Result(ErrBase + 2); Exit; end;
+  begin
+    FHLE.Result(ErrBase + 2);
+    Exit;
+  end;
   FModules.Add(Id);
   FHLE.Result(0);
   Yield(ModuleLoadUs);
@@ -1019,9 +1093,15 @@ end;
 procedure TPSPUtility.ModuleUnload(Id: Cardinal; Valid: Boolean; ErrBase: Cardinal);
 begin
   if not Valid then
-    begin FHLE.Result(ErrBase + 1); Exit; end;
+  begin
+    FHLE.Result(ErrBase + 1);
+    Exit;
+  end;
   if not FModules.Contains(Id) then
-    begin FHLE.Result(ErrBase + 3); Exit; end;
+  begin
+    FHLE.Result(ErrBase + 3);
+    Exit;
+  end;
   FModules.Remove(Id);
   FHLE.Result(0);
   Yield(ModuleLoadUs);
@@ -1030,12 +1110,18 @@ end;
 function ValidUtilityModule(Id: Cardinal): Boolean;
 begin
   case Id shr 8 of
-    1: Result := (Id and $FF) <= 6;
-    2: Result := (Id and $FF) <= 3;
-    3: Result := (Id and $FF) <= 8;
-    4: Result := (Id and $FF) <= 2;
-    5: Result := (Id and $FF) <= 1;
-    6: Result := (Id and $FF) = 0;
+    1:
+      Result := (Id and $FF) <= 6;
+    2:
+      Result := (Id and $FF) <= 3;
+    3:
+      Result := (Id and $FF) <= 8;
+    4:
+      Result := (Id and $FF) <= 2;
+    5:
+      Result := (Id and $FF) <= 1;
+    6:
+      Result := (Id and $FF) = 0;
   else
     Result := False;
   end;
@@ -1364,10 +1450,12 @@ end;
 
 function TSavedataRunner.Dir(const Name: string): string;
 begin
-  if Root = '' then raise ESaveName.Create('No memory stick');
+  if Root = '' then
+    raise ESaveName.Create('No memory stick');
   // The SDK's <> save-name marker names the game directory without a suffix.
   var Suffix := Name;
-  if Suffix = '<>' then Suffix := '';
+  if Suffix = '<>' then
+    Suffix := '';
   // A name the memory stick cannot hold names no save.
   for var C in GameName + Suffix do
     if CharInSet(C, ['<', '>', ':', '"', '|', '?', '*', '\', '/']) or (C < ' ') then
@@ -1380,11 +1468,20 @@ begin
   // Programs built for 3.00 and later get the newer protection by default.
   var Newer := Kernel.CompiledSdkVersion >= $03000000;
   case V of
-    1: Result := $01;
-    2: Result := $21;
-    3: if Newer then Result := $41 else Result := $01;
+    1:
+      Result := $01;
+    2:
+      Result := $21;
+    3:
+      if Newer then
+        Result := $41
+      else
+        Result := $01;
   else
-    if Newer then Result := $41 else Result := $21;
+    if Newer then
+      Result := $41
+    else
+      Result := $21;
   end;
 end;
 
@@ -1423,7 +1520,8 @@ begin
         Exit(True);
       end;
     except
-      on ESaveName do;
+      on ESaveName do
+        ;
     end;
   Name := SaveName;
   Result := False;
@@ -1432,8 +1530,8 @@ end;
 function TSavedataRunner.NowTime: TDateTime;
 begin
   // The wall clock the RTC shows: 2026-01-01 plus guest time, local.
-  Result := EncodeDate(2026, 1, 1) + (Kernel.Scheduler.Now / 86400e9) +
-    (PSPSettings.Timezone + 60 * PSPSettings.DaylightSaving) / 1440;
+  Result := EncodeDate(2026, 1, 1) + (Kernel.Scheduler.Now / 86400e9) + (PSPSettings.Timezone + 60 *
+    PSPSettings.DaylightSaving) / 1440;
 end;
 
 procedure TSavedataRunner.Stamp(const Path: string);
@@ -1451,7 +1549,8 @@ begin
       TFile.SetLastWriteTime(Path, T);
     end;
   except
-    on E: EInOutError do;
+    on E: EInOutError do
+      ;
   end;
   IO.HostChanged(Path);
 end;
@@ -1516,9 +1615,15 @@ begin
     if NeedExisting then
     begin
       if not TDirectory.Exists(D) then
-        begin Res := SD_RW_NO_DATA; Exit(False); end;
+      begin
+        Res := SD_RW_NO_DATA;
+        Exit(False);
+      end;
       if not HadSfo then
-        begin Res := SD_RW_BROKEN; Exit(False); end;
+      begin
+        Res := SD_RW_BROKEN;
+        Exit(False);
+      end;
     end;
     if not TDirectory.Exists(D) then
     begin
@@ -1738,7 +1843,8 @@ begin
       if TDirectory.Exists(D) then
         Clusters := SdUsedClusters(D);
     except
-      on ESaveName do;
+      on ESaveName do
+        ;
     end;
     GameName := Saved;
     var KB := Clusters * (SdClusterSize div 1024);
@@ -1902,10 +2008,14 @@ begin
   except
     on ESaveName do
       case Mode of
-        0, 2, 4: Result := SD_LOAD_NO_DATA;
-        1, 3, 5: Result := SD_SAVE_PARAM;
-        6, 7, 9, 10, 21: Result := SD_DELETE_NO_DATA;
-        8, 11, 22: Result := 0;
+        0, 2, 4:
+          Result := SD_LOAD_NO_DATA;
+        1, 3, 5:
+          Result := SD_SAVE_PARAM;
+        6, 7, 9, 10, 21:
+          Result := SD_DELETE_NO_DATA;
+        8, 11, 22:
+          Result := 0;
       else
         Result := SD_RW_NO_DATA;
       end;
@@ -1916,16 +2026,22 @@ function TSavedataRunner.RunMode: Cardinal;
 begin
   if Root = '' then
     case Mode of
-      0, 2, 4: Exit(SD_LOAD_NO_MS);
-      1, 3, 5: Exit(SD_SAVE_NO_MS);
-      6, 7, 9, 10: Exit(SD_DELETE_NO_MS);
-      8: Exit(SD_SIZES_NO_MS);
+      0, 2, 4:
+        Exit(SD_LOAD_NO_MS);
+      1, 3, 5:
+        Exit(SD_SAVE_NO_MS);
+      6, 7, 9, 10:
+        Exit(SD_DELETE_NO_MS);
+      8:
+        Exit(SD_SIZES_NO_MS);
     else
       Exit(SD_RW_NO_MS);
     end;
   case Mode of
-    0, 2, 4: Result := Load;
-    1, 3, 5: Result := Save;
+    0, 2, 4:
+      Result := Load;
+    1, 3, 5:
+      Result := Save;
     6:
       begin
         if Selected then
@@ -1949,25 +2065,37 @@ begin
             if DeleteSave(Name) then
               Inc(Result);
           except
-            on ESaveName do;
+            on ESaveName do
+              ;
           end;
       end;
-    8: Result := Sizes;
+    8:
+      Result := Sizes;
     9, 10, 21:
       if DeleteSave(SaveName) then
         Result := 0
       else
         Result := SD_DELETE_NO_DATA;
-    11: Result := List;
-    12: Result := Files;
-    13: Result := Make(True);
-    14: Result := Make(False);
-    15: Result := Read(True);
-    16: Result := Read(False);
-    17: Result := Write(True);
-    18: Result := Write(False);
-    19, 20: Result := Erase;
-    22: Result := GetSize;
+    11:
+      Result := List;
+    12:
+      Result := Files;
+    13:
+      Result := Make(True);
+    14:
+      Result := Make(False);
+    15:
+      Result := Read(True);
+    16:
+      Result := Read(False);
+    17:
+      Result := Write(True);
+    18:
+      Result := Write(False);
+    19, 20:
+      Result := Erase;
+    22:
+      Result := GetSize;
   else
     Result := SD_LOAD_PARAM;
   end;
@@ -2018,12 +2146,16 @@ begin
             if (R.Mode in [3, 5]) or TDirectory.Exists(R.Dir(Name)) then
               D.Choices := D.Choices + [Name];
           except
-            on ESaveName do;
+            on ESaveName do
+              ;
           end;
         case R.Mode of
-          2, 4: D.Text := 'Select saved data to load.';
-          3, 5: D.Text := 'Select where to save this data.';
-          6: D.Text := 'Select saved data to delete.';
+          2, 4:
+            D.Text := 'Select saved data to load.';
+          3, 5:
+            D.Text := 'Select where to save this data.';
+          6:
+            D.Text := 'Select saved data to delete.';
         end;
         if Length(D.Choices) = 0 then
           D.Text := 'There is no saved data.';
@@ -2066,7 +2198,8 @@ begin
           try
             Overwrite := TDirectory.Exists(R.Dir(R.SaveName));
           except
-            on ESaveName do;
+            on ESaveName do
+              ;
           end;
         if Overwrite or (R.Mode = 6) then
         begin
@@ -2097,7 +2230,6 @@ begin
   end;
   Finish(D);
 end;
-
 
 constructor TPSPUtility.Create(System: TPSPSystem);
 begin
@@ -2210,17 +2342,27 @@ procedure TPSPUtility.StateDialog(Action: TPSPStateAction; Value: Cardinal);
 begin
   var D := TPSPDialog(Action.Obj(0));
   case Action.Arg(0) of
-    0: EnterRunning(D);
-    1: if D.Pumped then EnterRunning(D);
-    2: if D.Status = PSPDialogShutdown then D.Status := PSPDialogNone;
-    3: if D.Status = PSPDialogInit then D.Status := PSPDialogRunning;
-    4: if D.Status = PSPDialogShutdown then
+    0:
+      EnterRunning(D);
+    1:
+      if D.Pumped then
+        EnterRunning(D);
+    2:
+      if D.Status = PSPDialogShutdown then
+        D.Status := PSPDialogNone;
+    3:
+      if D.Status = PSPDialogInit then
+        D.Status := PSPDialogRunning;
+    4:
+      if D.Status = PSPDialogShutdown then
       begin
         D.Status := PSPDialogNone;
-        if FHtmlMemory <> 0 then FKernel.UserPartition.FreeBlock(FHtmlMemory);
+        if FHtmlMemory <> 0 then
+          FKernel.UserPartition.FreeBlock(FHtmlMemory);
         FHtmlMemory := 0;
       end;
-  else raise EReadError.Create('Invalid utility state phase');
+  else
+    raise EReadError.Create('Invalid utility state phase');
   end;
 end;
 
@@ -2242,7 +2384,10 @@ procedure TPSPUtility.InitStart(Kind: TPSPDialogType; const Sizes: array of Card
 begin
   var P := FHLE.Arg(0);
   if Busy then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   var Size: Cardinal := 0;
   if P <> 0 then
     Size := FMemory.Read32(P);
@@ -2251,7 +2396,10 @@ begin
     if S = Size then
       Ok := True;
   if not Ok then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_PARAM_SIZE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_PARAM_SIZE);
+    Exit;
+  end;
   FCurrent := Kind;
   var D := FDialogs[Kind];
   FKernel.CancelTimersOf(D);
@@ -2298,12 +2446,18 @@ end;
 procedure TPSPUtility.Update(Kind: TPSPDialogType);
 begin
   if FCurrent <> Kind then
-    begin FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE);
+    Exit;
+  end;
   var D := FDialogs[Kind];
   if D.Status = PSPDialogInit then
     D.Pumped := True;
   if D.Status <> PSPDialogRunning then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   Inc(D.Updates);
   FHLE.Result(0);
   Step(D);
@@ -2314,10 +2468,16 @@ end;
 procedure TPSPUtility.ShutdownStart(Kind: TPSPDialogType);
 begin
   if FCurrent <> Kind then
-    begin FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_WRONG_TYPE);
+    Exit;
+  end;
   var D := FDialogs[Kind];
   if D.Status <> PSPDialogFinished then
-    begin FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS); Exit; end;
+  begin
+    FHLE.Result(SCE_UTILITY_ERROR_INVALID_STATUS);
+    Exit;
+  end;
   FHLE.Result(0);
   D.Status := PSPDialogShutdown;
   var Delay: Int64 := DialogShutdownNs;
@@ -2340,9 +2500,12 @@ end;
 procedure TPSPUtility.Step(D: TPSPDialog);
 begin
   case D.Kind of
-    dtMsg: StepMsg(D);
-    dtSavedata: StepSavedata(D);
-    dtOsk: StepOsk(D);
+    dtMsg:
+      StepMsg(D);
+    dtSavedata:
+      StepSavedata(D);
+    dtOsk:
+      StepOsk(D);
   else
     StepOther(D);
   end;
@@ -2353,12 +2516,13 @@ begin
   var P := D.Params;
   case D.Kind of
     dtMsg:
-      FHLE.Log('utility: message dialog mode %d error %.8x options %x "%s"', [FMemory.Read32(P + $34),
-        FMemory.Read32(P + $38), FMemory.Read32(P + $23C),
-        UTF8ToString(FMemory.ReadAnsi(P + $3C, 512)).Replace(#10, '|')]);
+      FHLE.Log('utility: message dialog mode %d error %.8x options %x "%s"',
+        [ FMemory.Read32(P + $34), FMemory.Read32(P + $38), FMemory.Read32(P + $23C), UTF8ToString(FMemory.ReadAnsi(P +
+        $3C, 512)).Replace(#10, '|')]);
     dtSavedata:
-      FHLE.Log('utility: savedata mode %d game "%s" save "%s" file "%s"', [FMemory.Read32(P + $30),
-        FMemory.ReadString(P + $3C, 13), FMemory.ReadString(P + $4C, 20), FMemory.ReadString(P + $64, 13)]);
+      FHLE.Log('utility: savedata mode %d game "%s" save "%s" file "%s"',
+        [ FMemory.Read32(P + $30), FMemory.ReadString(P + $3C, 13), FMemory.ReadString(P + $4C, 20),
+        FMemory.ReadString(P + $64, 13)]);
   else
     FHLE.Log('utility: dialog %d size %x', [Ord(D.Kind), D.Size]);
   end;

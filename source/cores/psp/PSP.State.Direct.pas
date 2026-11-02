@@ -1,4 +1,4 @@
-unit PSP.State.Direct;
+﻿unit PSP.State.Direct;
 
 interface
 
@@ -22,7 +22,8 @@ function PSPUnpackState(const Data: TBytes): TMemoryStream;
 
 implementation
 
-uses System.ZLib;
+uses
+  System.ZLib;
 
 const
   MaxRawState = Int64(256) * 1024 * 1024;
@@ -44,7 +45,8 @@ procedure TPSPStateFile.Transfer(State: TStateArchive);
 begin
   State.Field(Kind, SizeOf(Kind));
   case Kind of
-    1: Seed.Transfer(State, True);
+    1:
+      Seed.Transfer(State, True);
     2:
       begin
         State.Field(HasHistory, SizeOf(HasHistory));
@@ -52,13 +54,15 @@ begin
         PSPStateBytes(State, CurrentFiles, 48 * 1024 * 1024 + 65536);
         PSPStateBytes(State, Core, 64 * 1024 * 1024);
       end;
-  else raise EReadError.Create('Unsupported PSP snapshot format');
+  else
+    raise EReadError.Create('Unsupported PSP snapshot format');
   end;
 end;
 
 function PSPPackState(Stream: TMemoryStream): TBytes;
 begin
-  if Stream.Size > MaxRawState then raise EWriteError.Create('PSP direct state exceeds its uncompressed limit');
+  if Stream.Size > MaxRawState then
+    raise EWriteError.Create('PSP direct state exceeds its uncompressed limit');
   var Output := TMemoryStream.Create;
   try
     var Compressed := TZCompressionStream.Create(Output);
@@ -69,8 +73,11 @@ begin
       Compressed.Free;
     end;
     SetLength(Result, Output.Size);
-    if Length(Result) > 0 then Move(Output.Memory^, Result[0], Length(Result));
-  finally Output.Free; end;
+    if Length(Result) > 0 then
+      Move(Output.Memory^, Result[0], Length(Result));
+  finally
+    Output.Free;
+  end;
 end;
 
 function PSPUnpackState(const Data: TBytes): TMemoryStream;
@@ -85,17 +92,23 @@ begin
         while True do
         begin
           var N := Reader.Read(Buffer, SizeOf(Buffer));
-          if N = 0 then Break;
-          if Result.Size + N > MaxRawState then raise EReadError.Create('PSP direct state exceeds its uncompressed limit');
+          if N = 0 then
+            Break;
+          if Result.Size + N > MaxRawState then
+            raise EReadError.Create('PSP direct state exceeds its uncompressed limit');
           Result.WriteBuffer(Buffer, N);
         end;
-      finally Reader.Free; end;
+      finally
+        Reader.Free;
+      end;
       Result.Position := 0;
     except
       Result.Free;
       raise;
     end;
-  finally Input.Free; end;
+  finally
+    Input.Free;
+  end;
 end;
 
 end.

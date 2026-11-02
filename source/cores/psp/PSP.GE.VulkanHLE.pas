@@ -1,4 +1,4 @@
-unit PSP.GE.VulkanHLE;
+﻿unit PSP.GE.VulkanHLE;
 
 // The GE's primitives drawn by a Vulkan graphics pipeline (HLE): fast, not bit
 // exact. PSP.GE.VulkanLLE is the bit-exact compute renderer; PSP.GE.Raster the
@@ -36,7 +36,8 @@ interface
 uses
   System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
-  PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute, RM.Vulkan.HLE;
+  PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute,
+  RM.Vulkan.HLE;
 
 type
   // A target with what is the PSP's: its depth buffer, the stencil's mirror
@@ -103,7 +104,6 @@ type
     Blended: Boolean;
     TargetSet: VkDescriptorSet;
   end;
-
 
   TGEVulkanHLEBackend = class;
 
@@ -300,12 +300,20 @@ type
 
 function Bpp(Format: Cardinal): Cardinal; inline;
 begin
-  if Format = 3 then Result := 4 else Result := 2;
+  if Format = 3 then
+    Result := 4
+  else
+    Result := 2;
 end;
 
 function ClampByte(V: Integer): Cardinal; inline;
 begin
-  if V < 0 then Result := 0 else if V > 255 then Result := 255 else Result := V;
+  if V < 0 then
+    Result := 0
+  else if V > 255 then
+    Result := 255
+  else
+    Result := V;
 end;
 
 function PackColor(R, G, B, A: Integer): Cardinal; inline;
@@ -317,9 +325,12 @@ end;
 function Stencil8(Format, Pixel: Cardinal): Cardinal; inline;
 begin
   case Format of
-    1: Result := Ord((Pixel and $8000) <> 0) * 255;
-    2: Result := (Pixel shr 12) * 17;
-    3: Result := Pixel shr 24;
+    1:
+      Result := Ord((Pixel and $8000) <> 0) * 255;
+    2:
+      Result := (Pixel shr 12) * 17;
+    3:
+      Result := Pixel shr 24;
   else
     Result := 0;
   end;
@@ -328,9 +339,12 @@ end;
 function StencilBitsOf(Format, S8: Cardinal): Cardinal; inline;
 begin
   case Format of
-    1: Result := Cardinal(Ord(S8 >= 128)) shl 15;
-    2: Result := (S8 shr 4) shl 12;
-    3: Result := S8 shl 24;
+    1:
+      Result := Cardinal(Ord(S8 >= 128)) shl 15;
+    2:
+      Result := (S8 shr 4) shl 12;
+    3:
+      Result := S8 shl 24;
   else
     Result := 0;
   end;
@@ -341,15 +355,21 @@ begin
   case Format of
     0:
       begin
-        R := P and $1F; R := (R shl 3) or (R shr 2);
-        G := (P shr 5) and $3F; G := (G shl 2) or (G shr 4);
-        B := (P shr 11) and $1F; B := (B shl 3) or (B shr 2);
+        R := P and $1F;
+        R := (R shl 3) or (R shr 2);
+        G := (P shr 5) and $3F;
+        G := (G shl 2) or (G shr 4);
+        B := (P shr 11) and $1F;
+        B := (B shl 3) or (B shr 2);
       end;
     1:
       begin
-        R := P and $1F; R := (R shl 3) or (R shr 2);
-        G := (P shr 5) and $1F; G := (G shl 3) or (G shr 2);
-        B := (P shr 10) and $1F; B := (B shl 3) or (B shr 2);
+        R := P and $1F;
+        R := (R shl 3) or (R shr 2);
+        G := (P shr 5) and $1F;
+        G := (G shl 3) or (G shr 2);
+        B := (P shr 10) and $1F;
+        B := (B shl 3) or (B shr 2);
       end;
     2:
       begin
@@ -367,9 +387,12 @@ end;
 function EncodeColorOf(Format, R, G, B: Cardinal): Cardinal; inline;
 begin
   case Format of
-    0: Result := (R shr 3) or ((G shr 2) shl 5) or ((B shr 3) shl 11);
-    1: Result := (R shr 3) or ((G shr 3) shl 5) or ((B shr 3) shl 10);
-    2: Result := (R shr 4) or ((G shr 4) shl 4) or ((B shr 4) shl 8);
+    0:
+      Result := (R shr 3) or ((G shr 2) shl 5) or ((B shr 3) shl 11);
+    1:
+      Result := (R shr 3) or ((G shr 3) shl 5) or ((B shr 3) shl 10);
+    2:
+      Result := (R shr 4) or ((G shr 4) shl 4) or ((B shr 4) shl 8);
   else
     Result := R or (G shl 8) or (B shl 16);
   end;
@@ -480,8 +503,8 @@ begin
   FFragmentModule := Compute.CreateShaderModule(PSPGEHLEFragSPV);
   CreateDown;
   FAPI.vkGetPhysicalDeviceFormatProperties(Compute.PhysicalDevice, VK_FORMAT_R8G8B8A8_UNORM, @Props);
-  FShaderBlend := ShaderBlend and Compute.Features.PixelInterlock and
-    ((Props.optimalTilingFeatures and VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) <> 0);
+  FShaderBlend := ShaderBlend and Compute.Features.PixelInterlock and ((Props.optimalTilingFeatures and
+    VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) <> 0);
   if FShaderBlend then
     CreateBlend;
   FMemory.OnVRAMFault := VRAMFault;
@@ -504,18 +527,30 @@ end;
 
 procedure TGEVulkanHLEBackend.FreeDevice;
 begin
-  if FDownPipeline <> 0 then FAPI.vkDestroyPipeline(FDevice, FDownPipeline, nil);
-  if FDownModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FDownModule, nil);
-  if FDownPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FDownPool, nil);
-  if FDownLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FDownLayout, nil);
-  if FDownSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FDownSetLayout, nil);
-  if FBlendModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FBlendModule, nil);
-  if FBlendPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FBlendPool, nil);
-  if FBlendLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FBlendLayout, nil);
-  if FBlendSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FBlendSetLayout, nil);
-  if FBlendPass <> 0 then FAPI.vkDestroyRenderPass(FDevice, FBlendPass, nil);
-  if FVertexModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FVertexModule, nil);
-  if FFragmentModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FFragmentModule, nil);
+  if FDownPipeline <> 0 then
+    FAPI.vkDestroyPipeline(FDevice, FDownPipeline, nil);
+  if FDownModule <> 0 then
+    FAPI.vkDestroyShaderModule(FDevice, FDownModule, nil);
+  if FDownPool <> 0 then
+    FAPI.vkDestroyDescriptorPool(FDevice, FDownPool, nil);
+  if FDownLayout <> 0 then
+    FAPI.vkDestroyPipelineLayout(FDevice, FDownLayout, nil);
+  if FDownSetLayout <> 0 then
+    FAPI.vkDestroyDescriptorSetLayout(FDevice, FDownSetLayout, nil);
+  if FBlendModule <> 0 then
+    FAPI.vkDestroyShaderModule(FDevice, FBlendModule, nil);
+  if FBlendPool <> 0 then
+    FAPI.vkDestroyDescriptorPool(FDevice, FBlendPool, nil);
+  if FBlendLayout <> 0 then
+    FAPI.vkDestroyPipelineLayout(FDevice, FBlendLayout, nil);
+  if FBlendSetLayout <> 0 then
+    FAPI.vkDestroyDescriptorSetLayout(FDevice, FBlendSetLayout, nil);
+  if FBlendPass <> 0 then
+    FAPI.vkDestroyRenderPass(FDevice, FBlendPass, nil);
+  if FVertexModule <> 0 then
+    FAPI.vkDestroyShaderModule(FDevice, FVertexModule, nil);
+  if FFragmentModule <> 0 then
+    FAPI.vkDestroyShaderModule(FDevice, FFragmentModule, nil);
   inherited;
 end;
 
@@ -592,18 +627,30 @@ begin
   Binding.binding := 0;
   Binding.stride := SizeOf(TGEHLEVertex);
   Binding.inputRate := VK_VERTEX_INPUT_RATE_VERTEX;
-  Attributes[0].location := 0; Attributes[0].binding := 0;
-  Attributes[0].format := VK_FORMAT_R32G32B32_SFLOAT; Attributes[0].offset := 0;
-  Attributes[1].location := 1; Attributes[1].binding := 0;
-  Attributes[1].format := VK_FORMAT_R8G8B8A8_UNORM; Attributes[1].offset := 12;
-  Attributes[2].location := 2; Attributes[2].binding := 0;
-  Attributes[2].format := VK_FORMAT_R8G8B8A8_UNORM; Attributes[2].offset := 16;
-  Attributes[3].location := 3; Attributes[3].binding := 0;
-  Attributes[3].format := VK_FORMAT_R32G32B32A32_SFLOAT; Attributes[3].offset := 20;
-  Attributes[4].location := 4; Attributes[4].binding := 0;
-  Attributes[4].format := VK_FORMAT_R32_SFLOAT; Attributes[4].offset := 36;
-  Attributes[5].location := 5; Attributes[5].binding := 0;
-  Attributes[5].format := VK_FORMAT_R32G32B32A32_SFLOAT; Attributes[5].offset := 40;
+  Attributes[0].location := 0;
+  Attributes[0].binding := 0;
+  Attributes[0].format := VK_FORMAT_R32G32B32_SFLOAT;
+  Attributes[0].offset := 0;
+  Attributes[1].location := 1;
+  Attributes[1].binding := 0;
+  Attributes[1].format := VK_FORMAT_R8G8B8A8_UNORM;
+  Attributes[1].offset := 12;
+  Attributes[2].location := 2;
+  Attributes[2].binding := 0;
+  Attributes[2].format := VK_FORMAT_R8G8B8A8_UNORM;
+  Attributes[2].offset := 16;
+  Attributes[3].location := 3;
+  Attributes[3].binding := 0;
+  Attributes[3].format := VK_FORMAT_R32G32B32A32_SFLOAT;
+  Attributes[3].offset := 20;
+  Attributes[4].location := 4;
+  Attributes[4].binding := 0;
+  Attributes[4].format := VK_FORMAT_R32_SFLOAT;
+  Attributes[4].offset := 36;
+  Attributes[5].location := 5;
+  Attributes[5].binding := 0;
+  Attributes[5].format := VK_FORMAT_R32G32B32A32_SFLOAT;
+  Attributes[5].offset := 40;
   VertexInput := Default(VkPipelineVertexInputStateCreateInfo);
   VertexInput.sType := VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
   VertexInput.vertexBindingDescriptionCount := 1;
@@ -613,8 +660,10 @@ begin
   Assembly := Default(VkPipelineInputAssemblyStateCreateInfo);
   Assembly.sType := VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
   case Key and 3 of
-    KindLine: Assembly.topology := VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    KindPoint: Assembly.topology := VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    KindLine:
+      Assembly.topology := VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    KindPoint:
+      Assembly.topology := VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
   else
     Assembly.topology := VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   end;
@@ -706,8 +755,10 @@ begin
     FAPI.vkFreeDescriptorSets(FDevice, FBlendPool, 1, @G.BlendSet);
   if G.BlendFramebuffer <> 0 then
     FAPI.vkDestroyFramebuffer(FDevice, G.BlendFramebuffer, nil);
-  if G.ZView <> 0 then FAPI.vkDestroyImageView(FDevice, G.ZView, nil);
-  if G.SView <> 0 then FAPI.vkDestroyImageView(FDevice, G.SView, nil);
+  if G.ZView <> 0 then
+    FAPI.vkDestroyImageView(FDevice, G.ZView, nil);
+  if G.SView <> 0 then
+    FAPI.vkDestroyImageView(FDevice, G.SView, nil);
   inherited;
 end;
 
@@ -803,7 +854,8 @@ begin
   SetInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   SetInfo.bindingCount := 3;
   SetInfo.pBindings := @Bindings[0];
-  CheckVulkan(FAPI.vkCreateDescriptorSetLayout(FDevice, @SetInfo, nil, @FBlendSetLayout), 'vkCreateDescriptorSetLayout');
+  CheckVulkan(FAPI.vkCreateDescriptorSetLayout(FDevice, @SetInfo, nil, @FBlendSetLayout),
+    'vkCreateDescriptorSetLayout');
   Layouts[0] := FSetLayout;
   Layouts[1] := FBlendSetLayout;
   Push.stageFlags := VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -863,9 +915,15 @@ begin
   Alloc.pSetLayouts := @FBlendSetLayout;
   CheckVulkan(FAPI.vkAllocateDescriptorSets(FDevice, @Alloc, @T.BlendSet), 'vkAllocateDescriptorSets');
   var Nearest := Sampler(0);
-  Images[0].sampler := Nearest; Images[0].imageView := T.Color.View; Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Images[1].sampler := Nearest; Images[1].imageView := T.ZView; Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Images[2].sampler := Nearest; Images[2].imageView := T.SView; Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[0].sampler := Nearest;
+  Images[0].imageView := T.Color.View;
+  Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[1].sampler := Nearest;
+  Images[1].imageView := T.ZView;
+  Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[2].sampler := Nearest;
+  Images[2].imageView := T.SView;
+  Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
   for var I := 0 to 2 do
   begin
     Writes[I] := Default(VkWriteDescriptorSet);
@@ -909,10 +967,16 @@ begin
   var Cmd := Slot.Cmd.Handle;
   FAPI.vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_COMPUTE, FDownPipeline);
   FAPI.vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_COMPUTE, FDownLayout, 0, 1, @T.DownSet, 0, nil);
-  Push[0] := X; Push[1] := Y; Push[2] := W; Push[3] := H;
+  Push[0] := X;
+  Push[1] := Y;
+  Push[2] := W;
+  Push[3] := H;
   if Step = 0 then
     Step := FScale;
-  Push[4] := Step; Push[5] := Integer(Offset); Push[6] := Integer(What); Push[7] := Integer(T.Format);
+  Push[4] := Step;
+  Push[5] := Integer(Offset);
+  Push[6] := Integer(What);
+  Push[7] := Integer(T.Format);
   FAPI.vkCmdPushConstants(Cmd, FDownLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SizeOf(Push), @Push[0]);
   FAPI.vkCmdDispatch(Cmd, (W + 7) div 8, (H + 7) div 8, 1);
   // The draws' pipeline, texture and push constants are bound again.
@@ -1015,10 +1079,18 @@ begin
   Alloc.pSetLayouts := @FDownSetLayout;
   CheckVulkan(FAPI.vkAllocateDescriptorSets(FDevice, @Alloc, @T.DownSet), 'vkAllocateDescriptorSets');
   var Nearest := Sampler(0);
-  Images[0].sampler := Nearest; Images[0].imageView := T.Color.View; Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Images[1].sampler := Nearest; Images[1].imageView := T.ZView; Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Images[2].sampler := Nearest; Images[2].imageView := T.SView; Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Images[3].sampler := Nearest; Images[3].imageView := T.Color.View; Images[3].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[0].sampler := Nearest;
+  Images[0].imageView := T.Color.View;
+  Images[0].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[1].sampler := Nearest;
+  Images[1].imageView := T.ZView;
+  Images[1].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[2].sampler := Nearest;
+  Images[2].imageView := T.SView;
+  Images[2].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
+  Images[3].sampler := Nearest;
+  Images[3].imageView := T.Color.View;
+  Images[3].imageLayout := VK_IMAGE_LAYOUT_GENERAL;
   Buffer.buffer := FReadback.Handle;
   Buffer.offset := 0;
   Buffer.range := VK_WHOLE_SIZE;
@@ -1078,7 +1150,10 @@ begin
       begin
         var A := (T.Addr + (Cardinal(Y) * T.Stride + Cardinal(X)) * B) and VRAMMask;
         var Px: Cardinal;
-        if B = 4 then Px := PCardinal(V + A)^ else Px := PWord(V + A)^;
+        if B = 4 then
+          Px := PCardinal(V + A)^
+        else
+          Px := PWord(V + A)^;
         var R, G, BB: Cardinal;
         DecodeColor(T.Format, Px, R, G, BB);
         var S8 := Stencil8(T.Format, Px);
@@ -1211,19 +1286,27 @@ begin
         Break;
       end;
       CopyDepth(U, T);
-      T.ZAddr := ZA; T.ZStride := ZS; T.ZPerm := ZP;
+      T.ZAddr := ZA;
+      T.ZStride := ZS;
+      T.ZPerm := ZP;
       T.ZLoaded := True;
       T.ZShadow := Copy(U.ZShadow);
       T.ZDirty := True;
-      T.ZX1 := U.ZX1; T.ZY1 := U.ZY1; T.ZX2 := Min(U.ZX2, T.Width - 1); T.ZY2 := Min(U.ZY2, T.Height - 1);
+      T.ZX1 := U.ZX1;
+      T.ZY1 := U.ZY1;
+      T.ZX2 := Min(U.ZX2, T.Width - 1);
+      T.ZY2 := Min(U.ZY2, T.Height - 1);
       // The same pages stay held and watched.
-      T.ZHeldY1 := U.ZHeldY1; T.ZHeldY2 := U.ZHeldY2;
+      T.ZHeldY1 := U.ZHeldY1;
+      T.ZHeldY2 := U.ZHeldY2;
       T.ZStale := U.ZStale;
       U.ZDirty := False;
       Exit;
     end;
   end;
-  T.ZAddr := ZA; T.ZStride := ZS; T.ZPerm := ZP;
+  T.ZAddr := ZA;
+  T.ZStride := ZS;
+  T.ZPerm := ZP;
   // Compared in this run already: its pages are watched since.
   if Same and (T.ZVerified = FRun) then
     Exit;
@@ -1240,8 +1323,7 @@ begin
   begin
     var U := TGEHLETarget(V);
     if (U <> T) and U.ZLoaded and not U.ZDirty and (U.ZAddr = ZA) and (U.ZStride = ZS) and (U.ZPerm = ZP) and
-      (U.Width = T.Width) and (U.Height >= T.Height) and
-      ((U.ZVerified = FRun) or SameDepth(FMemory, U)) then
+      (U.Width = T.Width) and (U.Height >= T.Height) and ((U.ZVerified = FRun) or SameDepth(FMemory, U)) then
     begin
       U.ZVerified := FRun;
       CopyDepth(U, T);
@@ -1294,18 +1376,27 @@ procedure TGEVulkanHLEBackend.Store(T: TGEHLETarget);
 var
   Regions: array[0..2] of VkBufferImageCopy;
 begin
-  var CW := 0; var CH := 0; var ZW := 0; var ZH := 0;
+  var CW := 0;
+  var CH := 0;
+  var ZW := 0;
+  var ZH := 0;
   if T.Dirty then
   begin
-    T.X1 := Max(T.X1, 0); T.Y1 := Max(T.Y1, 0);
-    T.X2 := Min(T.X2, T.Width - 1); T.Y2 := Min(T.Y2, T.Height - 1);
-    CW := Max(T.X2 - T.X1 + 1, 0); CH := Max(T.Y2 - T.Y1 + 1, 0);
+    T.X1 := Max(T.X1, 0);
+    T.Y1 := Max(T.Y1, 0);
+    T.X2 := Min(T.X2, T.Width - 1);
+    T.Y2 := Min(T.Y2, T.Height - 1);
+    CW := Max(T.X2 - T.X1 + 1, 0);
+    CH := Max(T.Y2 - T.Y1 + 1, 0);
   end;
   if T.ZDirty then
   begin
-    T.ZX1 := Max(T.ZX1, 0); T.ZY1 := Max(T.ZY1, 0);
-    T.ZX2 := Min(T.ZX2, T.Width - 1); T.ZY2 := Min(T.ZY2, T.Height - 1);
-    ZW := Max(T.ZX2 - T.ZX1 + 1, 0); ZH := Max(T.ZY2 - T.ZY1 + 1, 0);
+    T.ZX1 := Max(T.ZX1, 0);
+    T.ZY1 := Max(T.ZY1, 0);
+    T.ZX2 := Min(T.ZX2, T.Width - 1);
+    T.ZY2 := Min(T.ZY2, T.Height - 1);
+    ZW := Max(T.ZX2 - T.ZX1 + 1, 0);
+    ZH := Max(T.ZY2 - T.ZY1 + 1, 0);
   end;
   var ColorBytes := (Int64(CW) * CH * 4 + 15) and not Int64(15);
   var StencilBytes := (Int64(CW) * CH + 15) and not Int64(15);
@@ -1406,7 +1497,10 @@ begin
           StencilBitsOf(T.Format, S8);
         Inc(St);
         A := (T.Addr + (Cardinal(Y) * T.Stride + Cardinal(X)) * B) and VRAMMask;
-        if B = 4 then PCardinal(V + A)^ := P else PWord(V + A)^ := Word(P);
+        if B = 4 then
+          PCardinal(V + A)^ := P
+        else
+          PWord(V + A)^ := Word(P);
       end;
     end;
   end;
@@ -1586,8 +1680,8 @@ function TGEVulkanHLEBackend.MemoryEquals(Addr: Cardinal; Data: PByte; Size: Car
 begin
   var A := Addr and VRAMMask;
   var First := Min(Size, PSPVRAMSize - A);
-  Result := CompareMem(@FMemory.VRAM[A], Data, First) and
-    ((First = Size) or CompareMem(@FMemory.VRAM[0], Data + First, Size - First));
+  Result := CompareMem(@FMemory.VRAM[A], Data, First) and ((First = Size) or
+    CompareMem(@FMemory.VRAM[0], Data + First, Size - First));
 end;
 
 procedure TGEVulkanHLEBackend.ReadMemory(Addr: Cardinal; Data: PByte; Size: Cardinal);
@@ -1813,8 +1907,8 @@ begin
     for var I := First to First + Count - 1 do
     begin
       var A := X.Levels[I].Addr and $1FFFFFFF;
-      if (A >= PSPVRAMBase) and (A < PSPVRAMBase + 4 * PSPVRAMSize) and (((A and PSPVRAMSize) <> 0) or
-        MemoryHeld(A and VRAMMask, Cardinal(Min(GELevelReach(X^, X.Levels[I]), UInt64(PSPVRAMSize))))) then
+      if (A >= PSPVRAMBase) and (A < PSPVRAMBase + 4 * PSPVRAMSize) and (((A and PSPVRAMSize) <> 0) or MemoryHeld(A and
+        VRAMMask, Cardinal(Min(GELevelReach(X^, X.Levels[I]), UInt64(PSPVRAMSize))))) then
       begin
         FlushAll;
         Break;
@@ -1890,13 +1984,18 @@ end;
 function StencilWriteMask(Format, Keep: Cardinal): Cardinal;
 begin
   case Format of
-    1: if (Keep and $8000) <> 0 then Result := 0 else Result := $FF;
+    1:
+      if (Keep and $8000) <> 0 then
+        Result := 0
+      else
+        Result := $FF;
     2:
       begin
         var M := not (Keep shr 12) and $F;
         Result := M or (M shl 4);
       end;
-    3: Result := not (Keep shr 24) and $FF;
+    3:
+      Result := not (Keep shr 24) and $FF;
   else
     Result := 0;
   end;
@@ -1910,12 +2009,18 @@ function SourceFactor(const S: TGERaster; out Premultiply: Cardinal): Integer;
 begin
   Premultiply := 0;
   case S.BlendSrc of
-    0: Result := VK_BLEND_FACTOR_DST_COLOR;
-    1: Result := VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
-    2: Result := VK_BLEND_FACTOR_SRC_ALPHA;
-    3: Result := VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    4, 8: Result := VK_BLEND_FACTOR_DST_ALPHA;
-    5, 9: Result := VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    0:
+      Result := VK_BLEND_FACTOR_DST_COLOR;
+    1:
+      Result := VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    2:
+      Result := VK_BLEND_FACTOR_SRC_ALPHA;
+    3:
+      Result := VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    4, 8:
+      Result := VK_BLEND_FACTOR_DST_ALPHA;
+    5, 9:
+      Result := VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
     6:
       begin
         Premultiply := 2;
@@ -1949,7 +2054,8 @@ end;
 function PartialMask(Format, Keep: Cardinal): Boolean;
 begin
   Result := False;
-  for var Bits in [EncodeColorOf(Format, 255, 0, 0), EncodeColorOf(Format, 0, 255, 0), EncodeColorOf(Format, 0, 0, 255)] do
+  for var Bits in [EncodeColorOf(Format, 255, 0, 0), EncodeColorOf(Format, 0, 255, 0),
+    EncodeColorOf(Format, 0, 0, 255)] do
     if ((Keep and Bits) <> 0) and ((Keep and Bits) <> Bits) then
       Exit(True);
 end;
@@ -1957,12 +2063,18 @@ end;
 function DestFactor(const S: TGERaster): Integer;
 begin
   case S.BlendDst of
-    0: Result := VK_BLEND_FACTOR_SRC_COLOR;
-    1: Result := VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-    2, 6: Result := VK_BLEND_FACTOR_SRC_ALPHA;
-    3, 7: Result := VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    4, 8: Result := VK_BLEND_FACTOR_DST_ALPHA;
-    5, 9: Result := VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    0:
+      Result := VK_BLEND_FACTOR_SRC_COLOR;
+    1:
+      Result := VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    2, 6:
+      Result := VK_BLEND_FACTOR_SRC_ALPHA;
+    3, 7:
+      Result := VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    4, 8:
+      Result := VK_BLEND_FACTOR_DST_ALPHA;
+    5, 9:
+      Result := VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
   else
     if (S.FixB and $FFFFFF) = 0 then
       Result := VK_BLEND_FACTOR_ZERO
@@ -2011,8 +2123,12 @@ begin
   if FDepthWrites and not T.ZDirty then
   begin
     T.ZDirty := True;
-    T.ZX1 := MaxInt; T.ZY1 := MaxInt; T.ZX2 := -1; T.ZY2 := -1;
-    T.ZHeldY1 := MaxInt; T.ZHeldY2 := -1;
+    T.ZX1 := MaxInt;
+    T.ZY1 := MaxInt;
+    T.ZX2 := -1;
+    T.ZY2 := -1;
+    T.ZHeldY1 := MaxInt;
+    T.ZHeldY2 := -1;
     T.ZStale := False;
     WatchDepth(T);
   end
@@ -2028,9 +2144,12 @@ begin
   var Flags := (Fmt shl 16) or (Cardinal(FScale) shl 24);
   var Keep := S.KeepMask;
   var WriteMask: Cardinal := 0;
-  if not ChannelKept(Keep, EncodeColorOf(Fmt, 255, 0, 0)) then WriteMask := WriteMask or 1;
-  if not ChannelKept(Keep, EncodeColorOf(Fmt, 0, 255, 0)) then WriteMask := WriteMask or 2;
-  if not ChannelKept(Keep, EncodeColorOf(Fmt, 0, 0, 255)) then WriteMask := WriteMask or 4;
+  if not ChannelKept(Keep, EncodeColorOf(Fmt, 255, 0, 0)) then
+    WriteMask := WriteMask or 1;
+  if not ChannelKept(Keep, EncodeColorOf(Fmt, 0, 255, 0)) then
+    WriteMask := WriteMask or 2;
+  if not ChannelKept(Keep, EncodeColorOf(Fmt, 0, 0, 255)) then
+    WriteMask := WriteMask or 4;
   var StencilWrite := StencilWriteMask(Fmt, Keep);
   var StencilRef := Cardinal(S.StencilRef and $FF);
   var StencilCompare := Cardinal(S.StencilMask and $FF);
@@ -2064,8 +2183,10 @@ begin
       if S.Tex.NeedLod then
         // Automatic, the bias alone (also for the undefined mode 3), slope.
         case S.Tex.LevelMode of
-          0: LodMode := 1;
-          2: LodMode := 3;
+          0:
+            LodMode := 1;
+          2:
+            LodMode := 3;
         else
           LodMode := 2;
         end;
@@ -2074,8 +2195,7 @@ begin
         (Cardinal(S.Tex.MinFilter and 7) shl 8) or (Cardinal(Ord(S.Tex.ClampU)) shl 11) or
         (Cardinal(Ord(S.Tex.ClampV)) shl 12) or (Cardinal(Tex.Levels - 1) shl 13);
       if Tex.Target <> nil then
-        Push.TexFunc := Push.TexFunc or (Cardinal(1) shl 16) or (Cardinal(FScale) shl 17) or
-          (Tex.Target.Format shl 21)
+        Push.TexFunc := Push.TexFunc or (Cardinal(1) shl 16) or (Cardinal(FScale) shl 17) or (Tex.Target.Format shl 21)
       else if Tex.Scale > 1 then
         Push.TexFunc := Push.TexFunc or (Cardinal(Tex.Scale) shl 17);
       Push.Env := PackColor(S.EnvR, S.EnvG, S.EnvB, 0);
@@ -2119,11 +2239,11 @@ begin
     if Blended then
     begin
       Key := Cardinal(Kind) or (UInt64(1) shl 43);
-      Push.Blend := Cardinal(S.BlendSrc and 15) or (Cardinal(S.BlendDst and 15) shl 4) or
-        (Cardinal(S.BlendOp and 7) shl 8) or (Cardinal(Ord(S.Blend)) shl 11) or
-        (Cardinal(S.LogicFunc and 15) shl 12) or (Cardinal(Ord(S.LogicOp)) shl 16) or
-        (Cardinal(S.DepthFunc and 7) shl 20) or (Cardinal(Ord(DepthTest)) shl 23) or
-        (Cardinal(S.StencilFunc and 7) shl 24) or (Cardinal(Ord(StencilTest)) shl 27);
+      Push.Blend := Cardinal(S.BlendSrc and 15) or (Cardinal(S.BlendDst and 15) shl 4) or (Cardinal(S.BlendOp and
+        7) shl 8) or (Cardinal(Ord(S.Blend)) shl 11) or (Cardinal(S.LogicFunc and 15) shl 12) or
+        (Cardinal(Ord(S.LogicOp)) shl 16) or (Cardinal(S.DepthFunc and 7) shl 20) or
+        (Cardinal(Ord(DepthTest)) shl 23) or (Cardinal(S.StencilFunc and 7) shl 24) or
+        (Cardinal(Ord(StencilTest)) shl 27);
       Push.FixB := S.FixB and $FFFFFF;
       Push.Keep := Keep;
       Push.Stencil := Cardinal(S.StencilRef and $FF) or (Cardinal(S.StencilMask and $FF) shl 8);
@@ -2147,8 +2267,8 @@ begin
     if Logic then
       Key := Key or (UInt64(1) shl 20) or (UInt64(S.LogicFunc and 15) shl 21);
     if DepthTest and not Blended then
-      Key := Key or (UInt64(1) shl 25) or (UInt64(Ord(S.DepthWrite)) shl 26) or
-        (UInt64(CompareOps[S.DepthFunc and 7]) shl 27);
+      Key := Key or (UInt64(1) shl 25) or (UInt64(Ord(S.DepthWrite)) shl 26) or (UInt64(CompareOps[S.DepthFunc and
+        7]) shl 27);
     if StencilTest and not Blended then
       Key := Key or (UInt64(1) shl 30) or (UInt64(CompareOps[S.StencilFunc and 7]) shl 31) or
         (UInt64(StencilOps[S.StencilFail and 7]) shl 34) or (UInt64(StencilOps[S.StencilZFail and 7]) shl 37) or
@@ -2291,8 +2411,8 @@ begin
     Exit;
   // Guest memory changed outside the rows drawn so far: the image there is
   // brought back to it before drawing there.
-  if (T.Stale and ((Y1 < T.HeldY1) or (Y2 > T.HeldY2))) or
-    (T.ZStale and FDepthUsed and ((Y1 < T.ZHeldY1) or (Y2 > T.ZHeldY2))) then
+  if (T.Stale and ((Y1 < T.HeldY1) or (Y2 > T.HeldY2))) or (T.ZStale and FDepthUsed and
+    ((Y1 < T.ZHeldY1) or (Y2 > T.ZHeldY2))) then
   begin
     FlushAll;
     FNeedY := Y2;
@@ -2306,8 +2426,10 @@ begin
   begin
     var A := V[Count - 1].Color shr 24;
     case T.Format of
-      1: A := (A shr 7) * 255;
-      2: A := (A shr 4) * 17;
+      1:
+        A := (A shr 7) * 255;
+      2:
+        A := (A shr 4) * 17;
     end;
     if FBoundStencil[2] <> A then
     begin
@@ -2320,8 +2442,10 @@ begin
   Drawn(T, X1, Y1, X2, Y2);
   if FDepthWrites then
   begin
-    T.ZX1 := Min(T.ZX1, X1); T.ZY1 := Min(T.ZY1, Y1);
-    T.ZX2 := Max(T.ZX2, X2); T.ZY2 := Max(T.ZY2, Y2);
+    T.ZX1 := Min(T.ZX1, X1);
+    T.ZY1 := Min(T.ZY1, Y1);
+    T.ZX2 := Max(T.ZX2, X2);
+    T.ZY2 := Max(T.ZY2, Y2);
   end;
   Inc(FStats.Prims);
 end;
@@ -2374,8 +2498,10 @@ begin
     PutVertex(V[1], V1, V2, V1.X / 16, V1.Y / 16, True);
   end;
   PutVertex(V[2], V2, V2, V2.X / 16, V2.Y / 16, True);
-  var MinX := Min(V0.X, Min(V1.X, V2.X)); var MinY := Min(V0.Y, Min(V1.Y, V2.Y));
-  var MaxX := Max(V0.X, Max(V1.X, V2.X)); var MaxY := Max(V0.Y, Max(V1.Y, V2.Y));
+  var MinX := Min(V0.X, Min(V1.X, V2.X));
+  var MinY := Min(V0.Y, Min(V1.Y, V2.Y));
+  var MaxX := Max(V0.X, Max(V1.X, V2.X));
+  var MaxY := Max(V0.Y, Max(V1.Y, V2.Y));
   // Pixels whose centres can be inside; above 1x those the triangle touches
   // at all (a triangle between the PSP's pixel centres covers some of the
   // image's: small ones, as in faces, would leave holes).
@@ -2423,12 +2549,17 @@ begin
     var TV := (C[0].T + (C[1].T - C[0].T) * U + (C[2].T - C[0].T) * W) / Q;
     if I = 0 then
     begin
-      Box[0] := SV; Box[1] := TV; Box[2] := SV; Box[3] := TV;
+      Box[0] := SV;
+      Box[1] := TV;
+      Box[2] := SV;
+      Box[3] := TV;
     end
     else
     begin
-      Box[0] := Min(Box[0], SV); Box[1] := Min(Box[1], TV);
-      Box[2] := Max(Box[2], SV); Box[3] := Max(Box[3], TV);
+      Box[0] := Min(Box[0], SV);
+      Box[1] := Min(Box[1], TV);
+      Box[2] := Max(Box[2], SV);
+      Box[3] := Max(Box[3], TV);
     end;
   end;
   for var I := 0 to 3 do
@@ -2450,8 +2581,12 @@ begin
   begin
     var AtX1 := (I and 1) <> 0;
     var AtY1 := (I and 2) <> 0;
-    var PX := V0.X; if AtX1 then PX := V1.X;
-    var PY := V0.Y; if AtY1 then PY := V1.Y;
+    var PX := V0.X;
+    if AtX1 then
+      PX := V1.X;
+    var PY := V0.Y;
+    if AtY1 then
+      PY := V1.Y;
     PutVertex(C[I], V1, V1, PX / 16, PY / 16, False);
     // The slope's level of detail takes the second vertex's w.
     if V1.W > 0 then
@@ -2473,31 +2608,40 @@ begin
       C[I].S := V0.S;
       C[I].Q := V0.Q;
     end;
-    if TFrom1 then C[I].T := V1.T else C[I].T := V0.T;
+    if TFrom1 then
+      C[I].T := V1.T
+    else
+      C[I].T := V0.T;
   end;
   // Above 1x the samples keep to the coordinates of the PSP's pixel centres:
   // past them, at the edges, a bilinear sample would take in texels the PSP
   // never reads (lines along the edges of 2D images).
   if FScale > 1 then
     SpriteBox(V0, V1, C);
-  V[0] := C[0]; V[1] := C[1]; V[2] := C[2];
-  V[3] := C[1]; V[4] := C[3]; V[5] := C[2];
+  V[0] := C[0];
+  V[1] := C[1];
+  V[2] := C[2];
+  V[3] := C[1];
+  V[4] := C[3];
+  V[5] := C[2];
   // Pixels whose centres lie in [x1, x2) x [y1, y2); above 1x those the
   // sprite touches at all (as triangles).
   if FScale = 1 then
     Emit(KindTriangle, S, @V[0], 6, FloorDiv16(Min(V0.X, V1.X) + 7), FloorDiv16(Min(V0.Y, V1.Y) + 7),
       FloorDiv16(Max(V0.X, V1.X) + 7) - 1, FloorDiv16(Max(V0.Y, V1.Y) + 7) - 1)
   else
-    Emit(KindTriangle, S, @V[0], 6, FloorDiv16(Min(V0.X, V1.X)), FloorDiv16(Min(V0.Y, V1.Y)),
-      FloorDiv16(Max(V0.X, V1.X) - 1), FloorDiv16(Max(V0.Y, V1.Y) - 1));
+    Emit(KindTriangle, S, @V[0], 6, FloorDiv16(Min(V0.X, V1.X)), FloorDiv16(Min(V0.Y, V1.Y)), FloorDiv16(Max(V0.X,
+      V1.X) - 1), FloorDiv16(Max(V0.Y, V1.Y) - 1));
 end;
 
 // The GE's lines differ from the GPU's in which pixels they cover: they are
 // drawn as a point per pixel, where and with what the GE gives each.
 procedure TGEVulkanHLEBackend.DrawLine(const S: TGERaster; const V0, V1: TGEVertex);
 begin
-  var X0 := V0.X; var Y0 := V0.Y;
-  var DX := V1.X - X0; var DY := V1.Y - Y0;
+  var X0 := V0.X;
+  var Y0 := V0.Y;
+  var DX := V1.X - X0;
+  var DY := V1.Y - Y0;
   if (DX = 0) and (DY = 0) then
     Exit;
   // Pixels whose centre on the major axis lies between the end points; the
@@ -2506,13 +2650,19 @@ begin
   var A0, A1, D, Lo, Hi: Integer;
   if XMajor then
   begin
-    A0 := Min(V0.X, V1.X); A1 := Max(V0.X, V1.X); D := DX;
-    Lo := S.ScissorX1; Hi := S.ScissorX2;
+    A0 := Min(V0.X, V1.X);
+    A1 := Max(V0.X, V1.X);
+    D := DX;
+    Lo := S.ScissorX1;
+    Hi := S.ScissorX2;
   end
   else
   begin
-    A0 := Min(V0.Y, V1.Y); A1 := Max(V0.Y, V1.Y); D := DY;
-    Lo := S.ScissorY1; Hi := S.ScissorY2;
+    A0 := Min(V0.Y, V1.Y);
+    A1 := Max(V0.Y, V1.Y);
+    D := DY;
+    Lo := S.ScissorY1;
+    Hi := S.ScissorY2;
   end;
   var P1 := Max(FloorDiv16(A0 + 7), Lo);
   var P2 := Min(FloorDiv16(A1 + 7) - 1, Hi);
@@ -2522,7 +2672,10 @@ begin
   if Length(FLine) < N then
     SetLength(FLine, N);
   var Gouraud := S.Gouraud and not S.Flat;
-  var BX1 := MaxInt; var BY1 := MaxInt; var BX2 := -MaxInt; var BY2 := -MaxInt;
+  var BX1 := MaxInt;
+  var BY1 := MaxInt;
+  var BX2 := -MaxInt;
+  var BY2 := -MaxInt;
   for var I := 0 to N - 1 do
   begin
     var P := P1 + I;
@@ -2563,8 +2716,10 @@ begin
     Pt.W := 1;
     Pt.Fog := V0.Fog + (V1.Fog - V0.Fog) * T;
     Pt.Box := NoBox;
-    BX1 := Min(BX1, PX); BY1 := Min(BY1, PY);
-    BX2 := Max(BX2, PX); BY2 := Max(BY2, PY);
+    BX1 := Min(BX1, PX);
+    BY1 := Min(BY1, PY);
+    BX2 := Max(BX2, PX);
+    BY2 := Max(BY2, PY);
   end;
   Emit(KindPoint, S, @FLine[0], N, BX1, BY1, BX2, BY2);
 end;
@@ -2591,8 +2746,8 @@ begin
   if FMemory.HeldVRAMPages = 0 then
     Exit;
   var A := Address and $1FFFFFFF;
-  if (A >= PSPVRAMBase) and (A < PSPVRAMBase + 4 * PSPVRAMSize) and
-    (((A and PSPVRAMSize) <> 0) or MemoryHeld(A and VRAMMask, Size)) then
+  if (A >= PSPVRAMBase) and (A < PSPVRAMBase + 4 * PSPVRAMSize) and (((A and PSPVRAMSize) <> 0) or
+    MemoryHeld(A and VRAMMask, Size)) then
     FlushAll;
 end;
 

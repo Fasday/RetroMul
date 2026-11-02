@@ -1,4 +1,4 @@
-unit PSP.Memory;
+﻿unit PSP.Memory;
 
 // Guest address space. Every segment (KUSEG, the uncached 0x40000000 mirror,
 // KSEG0, KSEG1) folds to one physical map through `and $1FFFFFFF`; the map is a
@@ -129,13 +129,14 @@ function PSPDepthOffset(I: Cardinal; Shift: Integer): Cardinal;
 begin
   if Shift = 0 then
   begin
-    if (I and $600 = 0) or (I and $600 = $600) then I := I xor $600;
+    if (I and $600 = 0) or (I and $600 = $600) then
+      I := I xor $600;
   end
   else
   begin
     var Mask := (Cardinal(1) shl Shift) - $20;
-    var Bits := ((I and (Mask shr 1) and not Cardinal($3F)) shl 1) or
-      (((not I) and $20) shl 1) or ((I shr (Shift - 6)) and $20);
+    var Bits := ((I and (Mask shr 1) and not Cardinal($3F)) shl 1) or (((not I) and $20) shl 1) or
+      ((I shr (Shift - 6)) and $20);
     I := ((I xor (Cardinal(1) shl (Shift + 3))) and not Mask) or Bits;
   end;
   Result := I and (PSPVRAMSize - 1);
@@ -196,7 +197,8 @@ end;
 function TPSPMemory.VRAMOffset(Address: Cardinal): Cardinal;
 begin
   Result := Address and (PSPVRAMSize - 1);
-  if (Address and $1FA00000) <> $04200000 then Exit;
+  if (Address and $1FA00000) <> $04200000 then
+    Exit;
   if (Address and $400000) <> 0 then
     Result := PSPDepthOffset(Result, FVRAMShift)
   else if FVRAMShift = 0 then
@@ -208,7 +210,8 @@ end;
 function TPSPMemory.MirrorPtr(Address: Cardinal): PByte;
 begin
   Result := nil;
-  if (Address and $1FA00000) <> $04200000 then Exit;
+  if (Address and $1FA00000) <> $04200000 then
+    Exit;
   var I := VRAMOffset(Address);
   if FHeld[I shr PSPPageShift] then
     FOnVRAMFault();
@@ -308,7 +311,8 @@ begin
   if P = nil then
   begin
     P := MirrorPtr(Address);
-    if P <> nil then Exit(PByte(P)^);
+    if P <> nil then
+      Exit(PByte(P)^);
     P := Fault(Address);
   end;
   if P <> nil then
@@ -323,7 +327,8 @@ begin
   if P = nil then
   begin
     P := MirrorPtr(Address);
-    if P <> nil then Exit(PWord(P)^);
+    if P <> nil then
+      Exit(PWord(P)^);
     P := Fault(Address);
   end;
   if P <> nil then
@@ -338,7 +343,8 @@ begin
   if P = nil then
   begin
     P := MirrorPtr(Address);
-    if P <> nil then Exit(PCardinal(P)^);
+    if P <> nil then
+      Exit(PCardinal(P)^);
     P := Fault(Address);
   end;
   if P <> nil then
@@ -350,7 +356,8 @@ end;
 procedure TPSPMemory.Write8(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
-  if (FCodePages[Page] and PSPPageWatched) <> 0 then WatchFault(Address, 1);
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then
+    WatchFault(Address, 1);
   var P := FPages[Page];
   if P = nil then
   begin
@@ -358,7 +365,8 @@ begin
     if P <> nil then
     begin
       PByte(P)^ := Byte(Value);
-      if (FCodePages[Page] and PSPPageCode) <> 0 then CodeWrite(Address, 1);
+      if (FCodePages[Page] and PSPPageCode) <> 0 then
+        CodeWrite(Address, 1);
       Exit;
     end;
     P := Fault(Address);
@@ -376,7 +384,8 @@ end;
 procedure TPSPMemory.Write16(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
-  if (FCodePages[Page] and PSPPageWatched) <> 0 then WatchFault(Address, 2);
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then
+    WatchFault(Address, 2);
   var P := FPages[Page];
   if P = nil then
   begin
@@ -384,7 +393,8 @@ begin
     if P <> nil then
     begin
       PWord(P)^ := Word(Value);
-      if (FCodePages[Page] and PSPPageCode) <> 0 then CodeWrite(Address, 2);
+      if (FCodePages[Page] and PSPPageCode) <> 0 then
+        CodeWrite(Address, 2);
       Exit;
     end;
     P := Fault(Address);
@@ -402,7 +412,8 @@ end;
 procedure TPSPMemory.Write32(Address, Value: Cardinal);
 begin
   var Page := (Address and $1FFFFFFF) shr PSPPageShift;
-  if (FCodePages[Page] and PSPPageWatched) <> 0 then WatchFault(Address, 4);
+  if (FCodePages[Page] and PSPPageWatched) <> 0 then
+    WatchFault(Address, 4);
   var P := FPages[Page];
   if P = nil then
   begin
@@ -410,7 +421,8 @@ begin
     if P <> nil then
     begin
       PCardinal(P)^ := Value;
-      if (FCodePages[Page] and PSPPageCode) <> 0 then CodeWrite(Address, 4);
+      if (FCodePages[Page] and PSPPageCode) <> 0 then
+        CodeWrite(Address, 4);
       Exit;
     end;
     P := Fault(Address);
@@ -508,7 +520,8 @@ begin
   // Regions are contiguous in host memory; verify the last page belongs to the
   // same buffer at the expected distance.
   var Q := FPages[Last shr PSPPageShift];
-  if (Q = nil) or (NativeUInt(Q) - NativeUInt(P) <> NativeUInt((Last shr PSPPageShift) - (Physical shr PSPPageShift)) * PSPPageSize) then
+  if (Q = nil) or (NativeUInt(Q) - NativeUInt(P) <> NativeUInt((Last shr PSPPageShift) - (Physical shr PSPPageShift)) *
+    PSPPageSize) then
     Exit(nil);
   Result := P + (Physical and PSPPageMask);
 end;

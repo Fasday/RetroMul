@@ -1,4 +1,4 @@
-unit PSP.GE;
+﻿unit PSP.GE;
 
 // sceGe_user: the display list queue of the GE driver and the GE command
 // processor's control flow.
@@ -19,8 +19,9 @@ unit PSP.GE;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, PSP.GE.Types, PSP.GE.Engine, PSP.State.Action;
+  System.SysUtils, System.Classes, System.Generics.Collections, PSP.Types,
+  PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service,
+  PSP.GE.Types, PSP.GE.Engine, PSP.State.Action;
 
 const
   GEListCount = 64;
@@ -267,9 +268,12 @@ function TPSPGE.StateCode(Slot: Integer): Cardinal;
 begin
   var L: PGEList := @FLists[Slot];
   case L.State of
-    glsCompleted: Result := 0;
-    glsQueued: Result := 1;
-    glsPaused: Result := 4;
+    glsCompleted:
+      Result := 0;
+    glsQueued:
+      Result := 1;
+    glsPaused:
+      Result := 4;
     glsRunning:
       begin
         var PC := L.PC;
@@ -366,8 +370,7 @@ begin
   if FHWIntQueued then
     Exit;
   FHWIntQueued := True;
-  FKernel.QueueInterrupt(FKernel.TrapReturnAddress, [], 0, nil, 0, 0,
-    TPSPStateAction.Create(StateInterrupt, [], []));
+  FKernel.QueueInterrupt(FKernel.TrapReturnAddress, [], 0, nil, 0, 0, TPSPStateAction.Create(StateInterrupt, [], []));
 end;
 
 procedure TPSPGE.StateInterrupt(Action: TPSPStateAction; Value: Cardinal);
@@ -484,8 +487,10 @@ begin
   if MHz <= 0 then
     MHz := 222;
   case FContext of
-    gcEvent: Result := 0;
-    gcISR: Result := GEISRCycles * 1000 div MHz;
+    gcEvent:
+      Result := 0;
+    gcISR:
+      Result := GEISRCycles * 1000 div MHz;
   else
     Result := Int64(FHLE.CycleCost) * 1000 div MHz;
   end;
@@ -513,8 +518,10 @@ begin
   FContext := gcISR;
   try
     case Kind of
-      gikSignal: HandleSignal(FHWList);
-      gikFinish: HandleFinish(FHWList);
+      gikSignal:
+        HandleSignal(FHWList);
+      gikFinish:
+        HandleFinish(FHWList);
     end;
   finally
     FContext := Saved;
@@ -526,7 +533,8 @@ begin
   var CB := FLists[Slot].CBID;
   if (CB < 0) or (CB >= GECallbackCount) or not FCallbacks[CB].Used or (FCallbacks[CB].SignalFunc = 0) then
   begin
-    if Done <> nil then Done.Run;
+    if Done <> nil then
+      Done.Run;
     Exit;
   end;
   var PC: Cardinal := 0;
@@ -541,7 +549,8 @@ begin
   var CB := FLists[Slot].CBID;
   if (CB < 0) or (CB >= GECallbackCount) or not FCallbacks[CB].Used or (FCallbacks[CB].FinishFunc = 0) then
   begin
-    if Done <> nil then Done.Run;
+    if Done <> nil then
+      Done.Run;
     Exit;
   end;
   var PC: Cardinal := 0;
@@ -589,8 +598,10 @@ begin
       begin
         var Addr := Target;
         case Behaviour of
-          GE_SIG_RJUMP, GE_SIG_RCALL: Addr := FSignalPC + Target;
-          GE_SIG_OJUMP, GE_SIG_OCALL: Addr := FEngine.Regs.Offset + Target;
+          GE_SIG_RJUMP, GE_SIG_RCALL:
+            Addr := FSignalPC + Target;
+          GE_SIG_OJUMP, GE_SIG_OCALL:
+            Addr := FEngine.Regs.Offset + Target;
         end;
         Addr := Addr and not Cardinal(3);
         if Behaviour in [GE_SIG_CALL, GE_SIG_RCALL, GE_SIG_OCALL] then
@@ -630,26 +641,27 @@ begin
         ResumeHW;
       end;
     GE_SIG_RTBP0..GE_SIG_RTBP0 + 15, GE_SIG_RCBP, GE_SIG_OCBP:
+    begin
+      var Addr: Cardinal;
+      if (Behaviour and $08) <> 0 then
+        Addr := FEngine.Regs.Offset + Target
+      else
+        Addr := FSignalPC + Target;
+      if Behaviour < GE_SIG_RCBP then
       begin
-        var Addr: Cardinal;
-        if (Behaviour and $08) <> 0 then
-          Addr := FEngine.Regs.Offset + Target
-        else
-          Addr := FSignalPC + Target;
-        if Behaviour < GE_SIG_RCBP then
-        begin
-          var N := Behaviour and 7;
-          var R := FEngine.Regs.Cmd[GE_TEXBUFWIDTH0 + N];
-          FEngine.Execute((Cardinal(GE_TEXADDR0 + N) shl 24) or (Addr and $FFFFFF), FSignalPC);
-          FEngine.Execute((Cardinal(GE_TEXBUFWIDTH0 + N) shl 24) or ((Addr shr 8) and $0F0000) or (R and $FFFF), FSignalPC);
-        end
-        else
-        begin
-          FEngine.Execute((Cardinal(GE_CLUTADDR) shl 24) or (Addr and $FFFFFF), FSignalPC);
-          FEngine.Execute((Cardinal(GE_CLUTADDRUPPER) shl 24) or ((Addr shr 8) and $0F0000), FSignalPC);
-        end;
-        ResumeHW;
+        var N := Behaviour and 7;
+        var R := FEngine.Regs.Cmd[GE_TEXBUFWIDTH0 + N];
+        FEngine.Execute((Cardinal(GE_TEXADDR0 + N) shl 24) or (Addr and $FFFFFF), FSignalPC);
+        FEngine.Execute((Cardinal(GE_TEXBUFWIDTH0 + N) shl 24) or ((Addr shr 8) and $0F0000) or (R and $FFFF),
+          FSignalPC);
+      end
+      else
+      begin
+        FEngine.Execute((Cardinal(GE_CLUTADDR) shl 24) or (Addr and $FFFFFF), FSignalPC);
+        FEngine.Execute((Cardinal(GE_CLUTADDRUPPER) shl 24) or ((Addr shr 8) and $0F0000), FSignalPC);
       end;
+      ResumeHW;
+    end;
     GE_SIG_BREAK1, GE_SIG_BREAK2:
       ResumeHW;
   end;
@@ -684,21 +696,26 @@ end;
 procedure TPSPGE.StateSignalReturned(Action: TPSPStateAction; Value: Cardinal);
 begin
   var Slot := Integer(Action.Arg(0));
-  if (Slot < 0) or (Slot >= GEListCount) then raise EReadError.Create('Invalid GE state list');
+  if (Slot < 0) or (Slot >= GEListCount) then
+    raise EReadError.Create('Invalid GE state list');
   var L: PGEList := @FLists[Slot];
-  if L.Gen <> Cardinal(Action.Arg(1)) then Exit;
+  if L.Gen <> Cardinal(Action.Arg(1)) then
+    Exit;
   if L.SuspendPaused then
   begin
     L.SuspendPaused := False;
-    if L.State = glsPaused then L.State := glsRunning;
+    if L.State = glsPaused then
+      L.State := glsRunning;
   end;
-  if (FHWList = Slot) and FHWHalted then ResumeHW;
+  if (FHWList = Slot) and FHWHalted then
+    ResumeHW;
 end;
 
 procedure TPSPGE.StateFinishReturned(Action: TPSPStateAction; Value: Cardinal);
 begin
   var Slot := Integer(Action.Arg(0));
-  if (Slot < 0) or (Slot >= GEListCount) then raise EReadError.Create('Invalid GE state list');
+  if (Slot < 0) or (Slot >= GEListCount) then
+    raise EReadError.Create('Invalid GE state list');
   CompleteList(Slot, Cardinal(Action.Arg(1)));
 end;
 
@@ -834,7 +851,10 @@ procedure TPSPGE.hEdramSetAddrTranslation;
 begin
   var W := FHLE.Arg(0);
   if not ((W = 0) or (W = $200) or (W = $400) or (W = $800) or (W = $1000)) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   FHLE.Result(FEdramTranslation);
   FEdramTranslation := W;
   FMemory.SetVRAMTranslation(W);
@@ -847,7 +867,10 @@ begin
   var CBID := FHLE.ArgInt(2);
   var Args := FHLE.Arg(3);
   if (List and 3) <> 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER);
+    Exit;
+  end;
   var Context: Cardinal := 0;
   var Stacks: Cardinal := 0;
   var NumStacks := 0;
@@ -859,7 +882,10 @@ begin
     begin
       var N := FMemory.Read32(Args + 8);
       if N > 255 then
-        begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE); Exit; end;
+      begin
+        FHLE.Result(SCE_KERNEL_ERROR_INVALID_SIZE);
+        Exit;
+      end;
       NumStacks := N;
       Stacks := FMemory.Read32(Args + 12);
     end;
@@ -868,17 +894,29 @@ begin
   begin
     for var S in FQueue do
       if SameAddr(FLists[S].PC, List) then
-        begin FHLE.Result(SCE_ERROR_BUSY); Exit; end;
+      begin
+        FHLE.Result(SCE_ERROR_BUSY);
+        Exit;
+      end;
     if Stacks <> 0 then
       for var S in FQueue do
         if FLists[S].Started and (FLists[S].State <> glsCompleted) and (FLists[S].Stacks = Stacks) then
-          begin FHLE.Result(SCE_ERROR_BUSY); Exit; end;
+        begin
+          FHLE.Result(SCE_ERROR_BUSY);
+          Exit;
+        end;
   end;
   var Active := ActiveHead;
   if Head and (Active >= 0) and (FLists[Active].State <> glsPaused) then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_VALUE);
+    Exit;
+  end;
   if FFree.Count = 0 then
-    begin FHLE.Result(SCE_ERROR_OUT_OF_MEMORY); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_OUT_OF_MEMORY);
+    Exit;
+  end;
   var Slot := FFree[0];
   FFree.Delete(0);
   var G := FLists[Slot].Gen + 1;
@@ -923,7 +961,10 @@ procedure TPSPGE.hListDeQueue;
 begin
   var Slot := SlotOf(FHLE.Arg(0));
   if Slot < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID);
+    Exit;
+  end;
   var L: PGEList := @FLists[Slot];
   if (L.State = glsQueued) or ((L.State = glsPaused) and not L.Started) then
   begin
@@ -938,10 +979,16 @@ procedure TPSPGE.hListUpdateStallAddr;
 begin
   var Slot := SlotOf(FHLE.Arg(0));
   if Slot < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID);
+    Exit;
+  end;
   var L: PGEList := @FLists[Slot];
   if L.State = glsCompleted then
-    begin FHLE.Result(SCE_ERROR_ALREADY); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_ALREADY);
+    Exit;
+  end;
   L.Stall := FHLE.Arg(1);
   FHLE.Result(0);
   if (L.State = glsRunning) and (FHWList = Slot) then
@@ -956,14 +1003,26 @@ begin
   var Slot := SlotOf(FHLE.Arg(0));
   var Mode := FHLE.Arg(1);
   if Slot < 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID);
+    Exit;
+  end;
   if Mode > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   if Mode = 1 then
-    begin FHLE.Result(StateCode(Slot)); Exit; end;
+  begin
+    FHLE.Result(StateCode(Slot));
+    Exit;
+  end;
   var E := CheckWaitContext;
   if E <> 0 then
-    begin FHLE.Result(E); Exit; end;
+  begin
+    FHLE.Result(E);
+    Exit;
+  end;
   FHLE.Result(0);
   if FLists[Slot].State = glsCompleted then
   begin
@@ -981,7 +1040,10 @@ procedure TPSPGE.hDrawSync;
 begin
   var Mode := FHLE.Arg(0);
   if Mode > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   var Head := ActiveHead;
   if Mode = 1 then
   begin
@@ -995,7 +1057,10 @@ begin
   end;
   var E := CheckWaitContext;
   if E <> 0 then
-    begin FHLE.Result(E); Exit; end;
+  begin
+    FHLE.Result(E);
+    Exit;
+  end;
   FHLE.Result(0);
   if Head < 0 then
   begin
@@ -1014,12 +1079,21 @@ begin
   var Mode := FHLE.Arg(0);
   var Param := FHLE.Arg(1);
   if Mode > 1 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_MODE);
+    Exit;
+  end;
   if ((Param or (Param + 16)) and $80000000) <> 0 then
-    begin FHLE.Result(SCE_ERROR_PRIV_REQUIRED); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_PRIV_REQUIRED);
+    Exit;
+  end;
   var Head := ActiveHead;
   if Head < 0 then
-    begin FHLE.Result(SCE_ERROR_ALREADY); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_ALREADY);
+    Exit;
+  end;
   if Mode = 1 then
   begin
     ResetAll;
@@ -1028,7 +1102,10 @@ begin
   end;
   var L: PGEList := @FLists[Head];
   if L.State = glsPaused then
-    begin FHLE.Result(SCE_ERROR_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_BUSY);
+    Exit;
+  end;
   if FHWList = Head then
   begin
     DetachHW(Head);
@@ -1042,13 +1119,19 @@ procedure TPSPGE.hContinue;
 begin
   var Head := ActiveHead;
   if Head < 0 then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var L: PGEList := @FLists[Head];
   case L.State of
     glsPaused:
       begin
         if L.PausePending then
-          begin FHLE.Result(SCE_ERROR_BUSY); Exit; end;
+        begin
+          FHLE.Result(SCE_ERROR_BUSY);
+          Exit;
+        end;
         FHLE.Result(0);
         if FHWList = Head then
         begin
@@ -1077,7 +1160,10 @@ procedure TPSPGE.hSetCallback;
 begin
   var P := FHLE.Arg(0);
   if P = 0 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_POINTER);
+    Exit;
+  end;
   for var I := 0 to GECallbackCount - 1 do
     if not FCallbacks[I].Used then
     begin
@@ -1097,7 +1183,10 @@ procedure TPSPGE.hUnsetCallback;
 begin
   var I := FHLE.ArgInt(0);
   if (I < 0) or (I >= GECallbackCount) or not FCallbacks[I].Used then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_ID);
+    Exit;
+  end;
   FCallbacks[I] := Default(TGECallback);
   FHLE.Result(0);
 end;
@@ -1106,7 +1195,10 @@ procedure TPSPGE.hGetCmd;
 begin
   var C := FHLE.Arg(0);
   if C > 255 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX);
+    Exit;
+  end;
   FHLE.Result(FEngine.Regs.Cmd[C]);
 end;
 
@@ -1115,14 +1207,22 @@ begin
   var Kind := FHLE.Arg(0);
   var P := FHLE.Arg(1);
   if Kind > 11 then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX);
+    Exit;
+  end;
   var R: ^TPSPGERegs := @FEngine.Regs;
   case Kind of
-    0..7: FMemory.WriteBytes(P, R.Bone[Kind * 12], 48);
-    8: FMemory.WriteBytes(P, R.World[0], 48);
-    9: FMemory.WriteBytes(P, R.View[0], 48);
-    10: FMemory.WriteBytes(P, R.Proj[0], 64);
-    11: FMemory.WriteBytes(P, R.TGen[0], 48);
+    0..7:
+      FMemory.WriteBytes(P, R.Bone[Kind * 12], 48);
+    8:
+      FMemory.WriteBytes(P, R.World[0], 48);
+    9:
+      FMemory.WriteBytes(P, R.View[0], 48);
+    10:
+      FMemory.WriteBytes(P, R.Proj[0], 64);
+    11:
+      FMemory.WriteBytes(P, R.TGen[0], 48);
   end;
   FHLE.Result(0);
 end;
@@ -1132,10 +1232,16 @@ begin
   var Index := FHLE.ArgInt(0);
   var P := FHLE.Arg(1);
   if FHWList < 0 then
-    begin FHLE.Result(0); Exit; end;
+  begin
+    FHLE.Result(0);
+    Exit;
+  end;
   var L: PGEList := @FLists[FHWList];
   if Index >= L.SigDepth then
-    begin FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX); Exit; end;
+  begin
+    FHLE.Result(SCE_KERNEL_ERROR_INVALID_INDEX);
+    Exit;
+  end;
   if (Index >= 0) and (P <> 0) then
   begin
     var F := L.SigStack[Index];
@@ -1156,7 +1262,10 @@ end;
 procedure TPSPGE.hSaveContext;
 begin
   if FHWRunning and not FHWHalted then
-    begin FHLE.Result($FFFFFFFF); Exit; end;
+  begin
+    FHLE.Result($FFFFFFFF);
+    Exit;
+  end;
   FEngine.SaveContext(FHLE.Arg(0));
   FHLE.Result(0);
 end;
@@ -1164,7 +1273,10 @@ end;
 procedure TPSPGE.hRestoreContext;
 begin
   if FHWRunning and not FHWHalted then
-    begin FHLE.Result(SCE_ERROR_BUSY); Exit; end;
+  begin
+    FHLE.Result(SCE_ERROR_BUSY);
+    Exit;
+  end;
   FEngine.RestoreContext(FHLE.Arg(0));
   FHLE.Result(0);
 end;

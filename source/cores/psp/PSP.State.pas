@@ -1,4 +1,4 @@
-unit PSP.State;
+﻿unit PSP.State;
 
 // Portable reconstruction states. The input history and the initial host data
 // rebuild guest operations; no host pointers, closures or decoder handles persist.
@@ -68,22 +68,26 @@ begin
   State.Field(N, SizeOf(N));
   if (N < 0) or (N > Limit) then
     raise EReadError.Create('PSP snapshot field exceeds its size limit');
-  if State.Loading then SetLength(Data, N);
-  if N > 0 then State.Field(Data[0], N);
+  if State.Loading then
+    SetLength(Data, N);
+  if N > 0 then
+    State.Field(Data[0], N);
 end;
 
 procedure StateString(State: TStateArchive; var Text: string);
 begin
   var Data := TEncoding.UTF8.GetBytes(Text);
   PSPStateBytes(State, Data, 4096);
-  if State.Loading then Text := TEncoding.UTF8.GetString(Data);
+  if State.Loading then
+    Text := TEncoding.UTF8.GetString(Data);
 end;
 
 function TPSPStateInput.Expand: TEmulatorInput;
 begin
   Result := Default(TEmulatorInput);
   for var B := Low(TEmulatorButton) to High(TEmulatorButton) do
-    if (Buttons and (1 shl Ord(B))) <> 0 then Include(Result.Buttons, B);
+    if (Buttons and (1 shl Ord(B))) <> 0 then
+      Include(Result.Buttons, B);
   Result.Analog[0].Valid := Analog <> 0;
   Result.Analog[0].X := X;
   Result.Analog[0].Y := Y;
@@ -99,26 +103,34 @@ destructor TPSPReplayState.Destroy;
   procedure Writable(const Path: string; IsDirectory: Boolean);
   begin
     var Attr: TFileAttributes;
-    if IsDirectory then Attr := TDirectory.GetAttributes(Path) else Attr := TFile.GetAttributes(Path);
-    {$IFDEF MSWINDOWS}
+    if IsDirectory then
+      Attr := TDirectory.GetAttributes(Path)
+    else
+      Attr := TFile.GetAttributes(Path);
+{$IFDEF MSWINDOWS}
     Exclude(Attr, TFileAttribute.faReadOnly);
-    {$ELSE}
+{$ELSE}
     Include(Attr, TFileAttribute.faOwnerWrite);
-    {$ENDIF}
-    if IsDirectory then TDirectory.SetAttributes(Path, Attr) else TFile.SetAttributes(Path, Attr);
+{$ENDIF}
+    if IsDirectory then
+      TDirectory.SetAttributes(Path, Attr)
+    else
+      TFile.SetAttributes(Path, Attr);
   end;
 begin
   Inputs.Free;
   // Only our uniquely created directory, never a path read from a state file.
   if (FSandbox <> '') and TDirectory.Exists(FSandbox) then
-  try
-    Writable(FSandbox, True);
-    for var Dir in TDirectory.GetDirectories(FSandbox, '*', TSearchOption.soAllDirectories) do Writable(Dir, True);
-    for var FileName in TDirectory.GetFiles(FSandbox, '*', TSearchOption.soAllDirectories) do Writable(FileName, False);
-    TDirectory.Delete(FSandbox, True);
-  except
-    // Cleanup must not replace a load/cancellation error.
-  end;
+    try
+      Writable(FSandbox, True);
+      for var Dir in TDirectory.GetDirectories(FSandbox, '*', TSearchOption.soAllDirectories) do
+        Writable(Dir, True);
+      for var FileName in TDirectory.GetFiles(FSandbox, '*', TSearchOption.soAllDirectories) do
+        Writable(FileName, False);
+      TDirectory.Delete(FSandbox, True);
+    except
+      // Cleanup must not replace a load/cancellation error.
+    end;
   inherited;
 end;
 
@@ -132,14 +144,24 @@ var
   begin
     var IsDir := TDirectory.Exists(Name);
     var Attr: TFileAttributes;
-    if IsDir then Attr := TDirectory.GetAttributes(Name, False) else Attr := TFile.GetAttributes(Name, False);
+    if IsDir then
+      Attr := TDirectory.GetAttributes(Name, False)
+    else
+      Attr := TFile.GetAttributes(Name, False);
     if TFileAttribute.faSymLink in Attr then
       raise EReadError.Create('PSP snapshot host folders must not contain symbolic links');
     Inc(Entries);
-    if Entries > MaxEntries then raise EReadError.Create('Too many files for a PSP snapshot');
+    if Entries > MaxEntries then
+      raise EReadError.Create('Too many files for a PSP snapshot');
     var Path := Relative;
     var Created, Modified: TDateTime;
-    var ReadOnly := {$IFDEF MSWINDOWS}TFileAttribute.faReadOnly in Attr{$ELSE}not (TFileAttribute.faOwnerWrite in Attr){$ENDIF};
+    var ReadOnly :=
+{$IFDEF MSWINDOWS}
+      TFileAttribute.faReadOnly in Attr
+{$ELSE}
+      not (TFileAttribute.faOwnerWrite in Attr)
+{$ENDIF}
+      ;
     var Data: TBytes := nil;
     if IsDir then
     begin
@@ -155,7 +177,8 @@ var
       var FileStream := TFileStream.Create(Name, fmOpenRead or fmShareDenyNone);
       try
         SetLength(Data, FileStream.Size);
-        if Length(Data) > 0 then FileStream.ReadBuffer(Data[0], Length(Data));
+        if Length(Data) > 0 then
+          FileStream.ReadBuffer(Data[0], Length(Data));
       finally
         FileStream.Free;
       end;
@@ -212,7 +235,8 @@ begin
         PackedData.Free;
       end;
     except
-      on E: Exception do CaptureError := E.Message;
+      on E: Exception do
+        CaptureError := E.Message;
     end;
   finally
     Archive.Free;
@@ -250,8 +274,10 @@ begin
       while True do
       begin
         var N := Decompressor.Read(Buffer, SizeOf(Buffer));
-        if N = 0 then Break;
-        if Raw.Size + N > MaxFilesSize then raise EReadError.Create('PSP snapshot host data is too large');
+        if N = 0 then
+          Break;
+        if Raw.Size + N > MaxFilesSize then
+          raise EReadError.Create('PSP snapshot host data is too large');
         Raw.WriteBuffer(Buffer, N);
       end;
     finally
@@ -264,23 +290,29 @@ begin
       begin
         var Present := False;
         Archive.Field(Present, SizeOf(Present));
-        if Present then FRoots[I] := TPath.Combine(FSandbox, IntToStr(I)) else FRoots[I] := '';
+        if Present then
+          FRoots[I] := TPath.Combine(FSandbox, IntToStr(I))
+        else
+          FRoots[I] := '';
       end;
       var Entries := 0;
       while True do
       begin
         var Root := 0;
         Archive.Field(Root, SizeOf(Root));
-        if Root = -1 then Break;
+        if Root = -1 then
+          Break;
         if (Root < 0) or (Root > High(FRoots)) or (FRoots[Root] = '') then
           raise EReadError.Create('Invalid PSP snapshot root');
         Inc(Entries);
-        if Entries > MaxEntries then raise EReadError.Create('Too many snapshot files');
+        if Entries > MaxEntries then
+          raise EReadError.Create('Too many snapshot files');
         var Relative := '';
         StateString(Archive, Relative);
         if (Relative <> '') and not Relative.StartsWith('/') then
           raise EReadError.Create('Invalid PSP snapshot path');
-        if Relative.Contains('\') or Relative.Contains(':') then raise EReadError.Create('Invalid PSP snapshot path');
+        if Relative.Contains('\') or Relative.Contains(':') then
+          raise EReadError.Create('Invalid PSP snapshot path');
         for var Part in Relative.Split(['/']) do
         begin
           if (Part = '.') or (Part = '..') or Part.EndsWith('.') or Part.EndsWith(' ') then
@@ -297,7 +329,8 @@ begin
         var Data: TBytes := nil;
         PSPStateBytes(Archive, Data, MaxFilesSize);
         S.Path := FRoots[Root] + Relative.Replace('/', PathDelim);
-        if S.Directory then TDirectory.CreateDirectory(S.Path)
+        if S.Directory then
+          TDirectory.CreateDirectory(S.Path)
         else
         begin
           TDirectory.CreateDirectory(ExtractFileDir(S.Path));
@@ -305,7 +338,8 @@ begin
         end;
         Stamps.Add(S);
       end;
-      if Raw.Position <> Raw.Size then raise EReadError.Create('Unexpected PSP snapshot files');
+      if Raw.Position <> Raw.Size then
+        raise EReadError.Create('Unexpected PSP snapshot files');
       for var I := Stamps.Count - 1 downto 0 do
       begin
         var S := Stamps[I];
@@ -322,13 +356,19 @@ begin
         if S.ReadOnly then
         begin
           var Attr: TFileAttributes;
-          if S.Directory then Attr := TDirectory.GetAttributes(S.Path) else Attr := TFile.GetAttributes(S.Path);
-          {$IFDEF MSWINDOWS}
+          if S.Directory then
+            Attr := TDirectory.GetAttributes(S.Path)
+          else
+            Attr := TFile.GetAttributes(S.Path);
+{$IFDEF MSWINDOWS}
           Include(Attr, TFileAttribute.faReadOnly);
-          {$ELSE}
+{$ELSE}
           Attr := Attr - [TFileAttribute.faOwnerWrite, TFileAttribute.faGroupWrite, TFileAttribute.faOthersWrite];
-          {$ENDIF}
-          if S.Directory then TDirectory.SetAttributes(S.Path, Attr) else TFile.SetAttributes(S.Path, Attr);
+{$ENDIF}
+          if S.Directory then
+            TDirectory.SetAttributes(S.Path, Attr)
+          else
+            TFile.SetAttributes(S.Path, Attr);
         end;
       end;
     finally
@@ -347,17 +387,21 @@ procedure TPSPReplayState.HostChanged(const Name: string; Time: TDateTime; Creat
     if TFile.Exists(Target) then
     begin
       var Attr := TFile.GetAttributes(Target);
-      {$IFDEF MSWINDOWS}
+{$IFDEF MSWINDOWS}
       Exclude(Attr, TFileAttribute.faReadOnly);
-      {$ELSE}
+{$ELSE}
       Include(Attr, TFileAttribute.faOwnerWrite);
-      {$ENDIF}
+{$ENDIF}
       TFile.SetAttributes(Target, Attr);
     end;
     var Input := TFileStream.Create(Source, fmOpenRead or fmShareDenyNone);
     try
       var Output := TFileStream.Create(Target, fmCreate or fmShareDenyNone);
-      try Output.CopyFrom(Input, Input.Size); finally Output.Free; end;
+      try
+        Output.CopyFrom(Input, Input.Size);
+      finally
+        Output.Free;
+      end;
     finally
       Input.Free;
     end;
@@ -377,28 +421,38 @@ procedure TPSPReplayState.HostChanged(const Name: string; Time: TDateTime; Creat
 begin
   for var I := 0 to High(FRoots) do
   begin
-    if FRoots[I] = '' then Continue;
+    if FRoots[I] = '' then
+      Continue;
     var Prefix := IncludeTrailingPathDelimiter(TPath.GetFullPath(FRoots[I]));
     var Full := TPath.GetFullPath(Name);
-    if not Full.StartsWith(Prefix, {$IFDEF MSWINDOWS}True{$ELSE}False{$ENDIF}) then Continue;
+    if not Full.StartsWith(Prefix, {$IFDEF MSWINDOWS} True {$ELSE} False {$ENDIF}) then
+      Continue;
     if Created then
     begin
-      if TDirectory.Exists(Full) then TDirectory.SetCreationTime(Full, Time)
-      else if TFile.Exists(Full) then TFile.SetCreationTime(Full, Time);
+      if TDirectory.Exists(Full) then
+        TDirectory.SetCreationTime(Full, Time)
+      else if TFile.Exists(Full) then
+        TFile.SetCreationTime(Full, Time);
     end;
     // Stamp guest mutations with the guest RTC, including parent directory changes.
     var P := Full;
     while P.Length >= Prefix.Length do
     begin
-      if TDirectory.Exists(P) then TDirectory.SetLastWriteTime(P, Time)
-      else if TFile.Exists(P) then TFile.SetLastWriteTime(P, Time);
+      if TDirectory.Exists(P) then
+        TDirectory.SetLastWriteTime(P, Time)
+      else if TFile.Exists(P) then
+        TFile.SetLastWriteTime(P, Time);
       P := ExtractFileDir(P);
     end;
-    if not FPublishing or (FOriginalRoots[I] = '') then Exit;
+    if not FPublishing or (FOriginalRoots[I] = '') then
+      Exit;
     var Target := TPath.Combine(FOriginalRoots[I], Full.Substring(Prefix.Length));
     if TDirectory.Exists(Full) then
     begin
-      if Tree then PublishDirectory(Full, Target) else TDirectory.CreateDirectory(Target);
+      if Tree then
+        PublishDirectory(Full, Target)
+      else
+        TDirectory.CreateDirectory(Target);
       TDirectory.SetCreationTime(Target, TDirectory.GetCreationTime(Full));
       TDirectory.SetLastWriteTime(Target, Time);
       TDirectory.SetAttributes(Target, TDirectory.GetAttributes(Full));
@@ -409,30 +463,36 @@ begin
       PublishFile(Full, Target);
       TFile.SetLastWriteTime(Target, Time);
     end
-    else if TFile.Exists(Target) then TFile.Delete(Target)
-    else if TDirectory.Exists(Target) then TDirectory.Delete(Target, True);
+    else if TFile.Exists(Target) then
+      TFile.Delete(Target)
+    else if TDirectory.Exists(Target) then
+      TDirectory.Delete(Target, True);
     Exit;
   end;
 end;
 
 function TPSPReplayState.LiveRoots: TPSPStateRoots;
 begin
-  if FSandbox <> '' then Result := FOriginalRoots else Result := FRoots;
+  if FSandbox <> '' then
+    Result := FOriginalRoots
+  else
+    Result := FRoots;
 end;
 
 procedure TPSPReplayState.RecordInput(const Input: TEmulatorInput);
 begin
   var R := Default(TPSPStateInput);
   R.Count := 1;
-  for var B in Input.Buttons do R.Buttons := R.Buttons or (1 shl Ord(B));
+  for var B in Input.Buttons do
+    R.Buttons := R.Buttons or (1 shl Ord(B));
   R.Analog := Ord(Input.Analog[0].Valid);
   R.X := Input.Analog[0].X;
   R.Y := Input.Analog[0].Y;
   if Inputs.Count > 0 then
   begin
     var Last := Inputs.Last;
-    if (Last.Buttons = R.Buttons) and (Last.Analog = R.Analog) and (Last.X = R.X) and
-      (Last.Y = R.Y) and (Last.Count < High(Cardinal)) then
+    if (Last.Buttons = R.Buttons) and (Last.Analog = R.Analog) and (Last.X = R.X) and (Last.Y = R.Y) and
+      (Last.Count < High(Cardinal)) then
     begin
       Inc(Last.Count);
       Inputs[Inputs.Count - 1] := Last;
@@ -447,8 +507,10 @@ end;
 procedure TPSPReplayState.Transfer(State: TStateArchive; VersionRead: Boolean);
 begin
   var Version := StateVersion;
-  if not VersionRead then State.Field(Version, SizeOf(Version));
-  if Version <> StateVersion then raise EReadError.Create('Unsupported PSP reconstruction state version');
+  if not VersionRead then
+    State.Field(Version, SizeOf(Version));
+  if Version <> StateVersion then
+    raise EReadError.Create('Unsupported PSP reconstruction state version');
   PSPStateBytes(State, InitialFiles, MaxFilesSize + 65536);
   PSPStateBytes(State, Digest, 32);
   PSPStateBytes(State, MediaDigest, 32);
@@ -468,18 +530,22 @@ begin
   State.Field(Settings.ParentalLevel, SizeOf(Settings.ParentalLevel));
   var Count: Integer := Inputs.Count;
   State.Field(Count, SizeOf(Count));
-  if (Count < 0) or (Count > 1000000) then raise EReadError.Create('Too many PSP input runs');
+  if (Count < 0) or (Count > 1000000) then
+    raise EReadError.Create('Too many PSP input runs');
   var Total: UInt64 := 0;
-  if State.Loading then Inputs.Clear;
+  if State.Loading then
+    Inputs.Clear;
   for var I := 0 to Count - 1 do
   begin
     var R := Default(TPSPStateInput);
-    if not State.Loading then R := Inputs[I];
+    if not State.Loading then
+      R := Inputs[I];
     State.Field(R, SizeOf(R));
     if (R.Count = 0) or (R.Analog > 1) or (R.Buttons >= (1 shl 13)) then
       raise EReadError.Create('Invalid PSP input run');
     Inc(Total, R.Count);
-    if State.Loading then Inputs.Add(R);
+    if State.Loading then
+      Inputs.Add(R);
   end;
   if (Total <> Frames) or (Frames > UInt64(60) * 60 * 60 * 24 * 7) then
     raise EReadError.Create('Invalid PSP snapshot duration');

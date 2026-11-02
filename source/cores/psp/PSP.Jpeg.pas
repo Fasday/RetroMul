@@ -1,4 +1,4 @@
-unit PSP.Jpeg;
+﻿unit PSP.Jpeg;
 
 // sceJpeg: the Media Engine's Motion JPEG decoder and its colour conversion.
 // The decoder is a baseline (ITU T.81 sequential DCT, Huffman) one that
@@ -9,7 +9,8 @@ unit PSP.Jpeg;
 interface
 
 uses
-  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service;
+  System.SysUtils, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
+  PSP.Scheduler, PSP.Service;
 
 const
   ERROR_JPEG_BAD_MARKER_LENGTH = Cardinal($80650004);
@@ -33,8 +34,8 @@ type
     PlaneWidth, PlaneHeight: array[0..2] of Integer;
   end;
 
-  // Baseline JPEG. Returns 0 or an sceJpeg error.
-  function PSPDecodeJpeg(const Data: TBytes; HeaderOnly: Boolean; out Image: TPSPJpegImage): Cardinal;
+// Baseline JPEG. Returns 0 or an sceJpeg error.
+function PSPDecodeJpeg(const Data: TBytes; HeaderOnly: Boolean; out Image: TPSPJpegImage): Cardinal;
 
 type
   TPSPJpeg = class(TPSPService)
@@ -181,20 +182,34 @@ end;
 // Integer inverse DCT (scaled, separable, 13-bit constants).
 procedure Idct(var Blk: array of Integer; Dest: PByte; Stride: Integer);
 const
-  C1 = 4017; C2 = 3784; C3 = 3406; C5 = 2276; C6 = 1567; C7 = 799;
+  C1 = 4017;
+  C2 = 3784;
+  C3 = 3406;
+  C5 = 2276;
+  C6 = 1567;
+  C7 = 799;
   S = 2896;
 var
   W: array[0..63] of Integer;
 begin
   for var I := 0 to 7 do
   begin
-    var X0 := Blk[I * 8 + 0]; var X1 := Blk[I * 8 + 1]; var X2 := Blk[I * 8 + 2]; var X3 := Blk[I * 8 + 3];
-    var X4 := Blk[I * 8 + 4]; var X5 := Blk[I * 8 + 5]; var X6 := Blk[I * 8 + 6]; var X7 := Blk[I * 8 + 7];
+    var X0 := Blk[I * 8 + 0];
+    var X1 := Blk[I * 8 + 1];
+    var X2 := Blk[I * 8 + 2];
+    var X3 := Blk[I * 8 + 3];
+    var X4 := Blk[I * 8 + 4];
+    var X5 := Blk[I * 8 + 5];
+    var X6 := Blk[I * 8 + 6];
+    var X7 := Blk[I * 8 + 7];
     var A0 := (X0 + X4) * S;
     var A1 := (X0 - X4) * S;
     var A2 := X2 * C6 - X6 * C2;
     var A3 := X2 * C2 + X6 * C6;
-    var E0 := A0 + A3; var E3 := A0 - A3; var E1 := A1 + A2; var E2 := A1 - A2;
+    var E0 := A0 + A3;
+    var E3 := A0 - A3;
+    var E1 := A1 + A2;
+    var E2 := A1 - A2;
     var O0 := X1 * C1 + X3 * C3 + X5 * C5 + X7 * C7;
     var O1 := X1 * C3 - X3 * C7 - X5 * C1 - X7 * C5;
     var O2 := X1 * C5 - X3 * C1 + X5 * C7 + X7 * C3;
@@ -210,20 +225,35 @@ begin
   end;
   for var I := 0 to 7 do
   begin
-    var X0 := W[0 * 8 + I]; var X1 := W[1 * 8 + I]; var X2 := W[2 * 8 + I]; var X3 := W[3 * 8 + I];
-    var X4 := W[4 * 8 + I]; var X5 := W[5 * 8 + I]; var X6 := W[6 * 8 + I]; var X7 := W[7 * 8 + I];
+    var X0 := W[0 * 8 + I];
+    var X1 := W[1 * 8 + I];
+    var X2 := W[2 * 8 + I];
+    var X3 := W[3 * 8 + I];
+    var X4 := W[4 * 8 + I];
+    var X5 := W[5 * 8 + I];
+    var X6 := W[6 * 8 + I];
+    var X7 := W[7 * 8 + I];
     var A0 := (X0 + X4) * S;
     var A1 := (X0 - X4) * S;
     var A2 := X2 * C6 - X6 * C2;
     var A3 := X2 * C2 + X6 * C6;
-    var E0 := A0 + A3; var E3 := A0 - A3; var E1 := A1 + A2; var E2 := A1 - A2;
+    var E0 := A0 + A3;
+    var E3 := A0 - A3;
+    var E1 := A1 + A2;
+    var E2 := A1 - A2;
     var O0 := X1 * C1 + X3 * C3 + X5 * C5 + X7 * C7;
     var O1 := X1 * C3 - X3 * C7 - X5 * C1 - X7 * C5;
     var O2 := X1 * C5 - X3 * C1 + X5 * C7 + X7 * C3;
     var O3 := X1 * C7 - X3 * C5 + X5 * C3 - X7 * C1;
     var R: array[0..7] of Integer;
-    R[0] := E0 + O0; R[7] := E0 - O0; R[1] := E1 + O1; R[6] := E1 - O1;
-    R[2] := E2 + O2; R[5] := E2 - O2; R[3] := E3 + O3; R[4] := E3 - O3;
+    R[0] := E0 + O0;
+    R[7] := E0 - O0;
+    R[1] := E1 + O1;
+    R[6] := E1 - O1;
+    R[2] := E2 + O2;
+    R[5] := E2 - O2;
+    R[3] := E3 + O3;
+    R[4] := E3 - O3;
     for var Y := 0 to 7 do
     begin
       // Rows were scaled by 4096/2048, columns by 4096 and 8 for the DCT's normalisation.
@@ -424,7 +454,8 @@ begin
       begin
         // Skip to the RSTn marker and start over.
         B.Reset;
-        while (B.Pos + 1 < Length(Data)) and not ((Data[B.Pos] = $FF) and (Data[B.Pos + 1] >= $D0) and (Data[B.Pos + 1] <= $D7)) do
+        while (B.Pos + 1 < Length(Data)) and not ((Data[B.Pos] = $FF) and (Data[B.Pos + 1] >= $D0) and
+          (Data[B.Pos + 1] <= $D7)) do
           Inc(B.Pos);
         Inc(B.Pos, 2);
         for var C := 0 to NComp - 1 do
@@ -801,7 +832,8 @@ begin
       R := EnsureRange(Yv + SarFloor(359 * V + 128), 0, 255);
       G := EnsureRange(Yv - SarFloor(88 * U + 183 * V + 128), 0, 255);
       B := EnsureRange(Yv + SarFloor(454 * U + 128), 0, 255);
-      FMemory.Write32(Cardinal(UInt64(Line) + UInt64(X) * 4), Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16));
+      FMemory.Write32(Cardinal(UInt64(Line) + UInt64(X) * 4),
+        Cardinal(R) or (Cardinal(G) shl 8) or (Cardinal(B) shl 16));
     end;
   end;
 end;
@@ -820,7 +852,8 @@ begin
   end;
   var Hs := (Info shr 8) and $FF;
   var Vs := Info and $FF;
-  if ((Info shr 16) and $F <> 2) or not (((Hs = 2) and (Vs = 2)) or ((Hs = 2) and (Vs = 1)) or ((Hs = 1) and (Vs = 1))) then
+  if ((Info shr 16) and $F <> 2) or not (((Hs = 2) and (Vs = 2)) or ((Hs = 2) and (Vs = 1)) or
+    ((Hs = 1) and (Vs = 1))) then
   begin
     FHLE.Result(ERROR_JPEG_UNSUPPORT_COLORSPACE);
     Exit;

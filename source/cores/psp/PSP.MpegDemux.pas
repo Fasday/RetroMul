@@ -1,4 +1,4 @@
-unit PSP.MpegDemux;
+﻿unit PSP.MpegDemux;
 
 // PSMF headers and the MPEG-2 program stream inside them: 2048-byte packs
 // carrying H.264 (0xE0..), ATRAC3+/PCM (private stream 1, sub-stream id) and
@@ -133,7 +133,8 @@ type
   end;
 
 // Whether the packs from Start on carry data for a stream (looks at the first MaxPacks).
-function PSMFStreamPresent(const Data: TBytes; Start: Integer; StreamId, PrivateId: Byte; MaxPacks: Integer = 512): Boolean;
+function PSMFStreamPresent(const Data: TBytes; Start: Integer; StreamId, PrivateId: Byte;
+  MaxPacks: Integer = 512): Boolean;
 function PSMFBE16(const P: PByte): Cardinal; inline;
 function PSMFBE32(const P: PByte): Cardinal; inline;
 function PSMFReadTimestamp(const P: PByte): Int64;
@@ -255,8 +256,8 @@ begin
       S.Number := Numbers[S.Kind];
       Inc(Numbers[S.Kind]);
     end;
-    if (S.EPMapCount > 0) and (S.EPMapCount < $10000) and
-      (Int64(S.EPMapOffset) + Int64(S.EPMapCount) * 10 <= Length(Data)) then
+    if (S.EPMapCount > 0) and (S.EPMapCount < $10000) and (Int64(S.EPMapOffset) + Int64(S.EPMapCount) * 10 <=
+      Length(Data)) then
     begin
       SetLength(S.EP, S.EPMapCount);
       for var E := 0 to Integer(S.EPMapCount) - 1 do
@@ -539,8 +540,10 @@ begin
     if Len > Avail then
       Len := Avail;
     case Id of
-      $BF: ParseTable(Pack + P + 6, Len);
-      $BD, $E0..$EF: ParsePes(Pack + P + 6, Len, Id);
+      $BF:
+        ParseTable(Pack + P + 6, Len);
+      $BD, $E0..$EF:
+        ParsePes(Pack + P + 6, Len, Id);
     end;
     Inc(P, 6 + Len);
   end;

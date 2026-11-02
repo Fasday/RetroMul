@@ -1,4 +1,4 @@
-unit PSP.Psmf;
+﻿unit PSP.Psmf;
 
 // scePsmf / scePsmfPlayer: PSMF headers and the movie player.
 // The player reads the whole movie when it is set, decodes pictures as they
@@ -10,8 +10,9 @@ unit PSP.Psmf;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, PSP.MpegDemux, PSP.MpegVideo, Audio.ATRAC3Plus;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.MpegDemux, PSP.MpegVideo,
+  Audio.ATRAC3Plus;
 
 const
   ERROR_PSMFPLAYER_INVALID_STATUS = Cardinal($80616001);
@@ -492,8 +493,8 @@ begin
   var Data: TBytes;
   var Err := FSystem.IO.ReadAll(Path, Data);
   var Header: TPSPPsmfHeader;
-  if (Err <> 0) or (Offset < 0) or (Offset + PSMFPacketSize > Length(Data)) or
-    (Header.Parse(Copy(Data, Offset, PSMFPacketSize)) <> 0) then
+  if (Err <> 0) or (Offset < 0) or (Offset + PSMFPacketSize > Length(Data)) or (Header.Parse(Copy(Data, Offset,
+    PSMFPacketSize)) <> 0) then
   begin
     Delay(2000, SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT);
     Exit;
@@ -823,8 +824,10 @@ begin
     P.NextDue := 8
   else
     case P.Mode of
-      0, 4, 5: Inc(P.NextDue, 2);
-      1: Inc(P.NextDue, 6);
+      0, 4, 5:
+        Inc(P.NextDue, 2);
+      1:
+        Inc(P.NextDue, 6);
     else
       P.NextDue := MaxInt;
     end;
@@ -888,8 +891,8 @@ begin
     Exit;
   end;
   // Audio runs a few frames ahead of the video clock (2048 samples = 4180 ticks).
-  if (P.Status <> PsmfStatusPlaying) or P.Starved or (P.AudioQ = nil) or (P.Updates < 5) or
-    (Int64(P.AudioFrames) * 4180 > Int64(P.Updates - 5) * 1502 + 4 * 4180) then
+  if (P.Status <> PsmfStatusPlaying) or P.Starved or (P.AudioQ = nil) or (P.Updates < 5) or (Int64(P.AudioFrames) *
+    4180 > Int64(P.Updates - 5) * 1502 + 4 * 4180) then
   begin
     FHLE.Result(ERROR_PSMFPLAYER_NO_MORE_DATA);
     Exit;
@@ -1026,15 +1029,15 @@ begin
     function(Num: Integer): Boolean
     begin
       var I := P.Header.Find(Kind, Num);
-      Result := (I >= 0) and (Num <> Current) and
-        PSMFStreamPresent(P.Data, P.StreamStart, P.Header.Streams[I].StreamId, P.Header.Streams[I].PrivateId);
+      Result := (I >= 0) and (Num <> Current) and PSMFStreamPresent(P.Data, P.StreamStart, P.Header.Streams[I].StreamId,
+        P.Header.Streams[I].PrivateId);
     end;
   var Num := -1;
   if Specific then
   begin
     var Codec := FHLE.ArgInt(1);
-    var Ok := ((Kind = PSMFKindAvc) and ((Codec = 0) or (Codec = $0E))) or
-      ((Kind <> PSMFKindAvc) and ((Codec = 1) or (Codec = $0F)));
+    var Ok := ((Kind = PSMFKindAvc) and ((Codec = 0) or (Codec = $0E))) or ((Kind <> PSMFKindAvc) and
+      ((Codec = 1) or (Codec = $0F)));
     if Ok and Usable(FHLE.ArgInt(2)) then
       Num := FHLE.ArgInt(2);
   end
@@ -1291,9 +1294,12 @@ end;
 function PsmfTypeKind(T: Integer): Integer;
 begin
   case T of
-    0: Result := PSMFKindAvc;
-    1: Result := PSMFKindAtrac;
-    2: Result := PSMFKindPcm;
+    0:
+      Result := PSMFKindAvc;
+    1:
+      Result := PSMFKindAtrac;
+    2:
+      Result := PSMFKindPcm;
   else
     Result := -1;
   end;

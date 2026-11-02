@@ -1,4 +1,4 @@
-unit PSP.Mpeg;
+﻿unit PSP.Mpeg;
 
 // sceMpeg / sceMpegbase / sceVideocodec: PSMF streams, H.264 video and its audio.
 // The guest owns the ring buffer of 2048-byte packs and fills it through its
@@ -10,8 +10,9 @@ unit PSP.Mpeg;
 interface
 
 uses
-  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU, PSP.HLE, PSP.Kernel,
-  PSP.Scheduler, PSP.Service, PSP.MpegDemux, PSP.MpegVideo, Audio.ATRAC3Plus, PSP.State.Action;
+  System.SysUtils, System.Generics.Collections, PSP.Types, PSP.Memory, PSP.CPU,
+  PSP.HLE, PSP.Kernel, PSP.Scheduler, PSP.Service, PSP.MpegDemux, PSP.MpegVideo,
+  Audio.ATRAC3Plus, PSP.State.Action;
 
 const
   ERROR_MPEG_NO_DATA = Cardinal($80618001);
@@ -403,7 +404,11 @@ end;
 
 procedure TPSPMpeg.hCreate;
 begin
-  if not FKernel.CanWait then begin FHLE.Result(ERROR_MPEG_INVALID_CONTEXT); Exit; end;
+  if not FKernel.CanWait then
+  begin
+    FHLE.Result(ERROR_MPEG_INVALID_CONTEXT);
+    Exit;
+  end;
   var MpegPtr := FHLE.Arg(0);
   var Data := FHLE.Arg(1);
   var Size := FHLE.Arg(2);
@@ -512,16 +517,24 @@ begin
   var Data := Cardinal(Int64(FMemory.Read32(Rb + $14)) + Int64(Write) * PSMFPacketSize);
   var Arg := FMemory.Read32(Rb + $1C);
   var GP := FMemory.Read32(Rb + $2C);
-  FKernel.CallGuest(Callback, [Data, Cardinal(Chunk), Arg], nil, GP,
-    TPSPStateAction.Create(StateRingRead, [], [Rb, Remaining, Done, Write, Total, Chunk]));
+  FKernel.CallGuest(Callback, [Data, Cardinal(Chunk), Arg], nil, GP, TPSPStateAction.Create(StateRingRead, [],
+    [Rb, Remaining, Done, Write, Total, Chunk]));
 end;
 
 procedure TPSPMpeg.StateRingRead(Action: TPSPStateAction; Value: Cardinal);
 begin
   var R := Integer(Value);
-  if R < 0 then begin FHLE.CPU.Ctx.GPR[2] := Value; Exit; end;
+  if R < 0 then
+  begin
+    FHLE.CPU.Ctx.GPR[2] := Value;
+    Exit;
+  end;
   var Done := Cardinal(Action.Arg(2));
-  if R = 0 then begin FHLE.CPU.Ctx.GPR[2] := Done; Exit; end;
+  if R = 0 then
+  begin
+    FHLE.CPU.Ctx.GPR[2] := Done;
+    Exit;
+  end;
   R := Min(R, Integer(Action.Arg(5)));
   var Rb := Cardinal(Action.Arg(0));
   var W := (Integer(Action.Arg(3)) + R) mod Integer(Action.Arg(4));
@@ -633,9 +646,12 @@ begin
   S.Number := Num;
   S.Address := Inst.Handle + MpegStreamBase + Cardinal(Inst.Streams.Count) * MpegStreamStride;
   case Kind of
-    PSMFKindAvc: S.Queue := Inst.Demux.AddStream(PSMFKindAvc, $E0 + Byte(Num and 15), 0);
-    PSMFKindAtrac: S.Queue := Inst.Demux.AddStream(PSMFKindAtrac, $BD, Byte(Num and 15));
-    PSMFKindPcm: S.Queue := Inst.Demux.AddStream(PSMFKindPcm, $BD, $40 + Byte(Num and 15));
+    PSMFKindAvc:
+      S.Queue := Inst.Demux.AddStream(PSMFKindAvc, $E0 + Byte(Num and 15), 0);
+    PSMFKindAtrac:
+      S.Queue := Inst.Demux.AddStream(PSMFKindAtrac, $BD, Byte(Num and 15));
+    PSMFKindPcm:
+      S.Queue := Inst.Demux.AddStream(PSMFKindPcm, $BD, $40 + Byte(Num and 15));
   end;
   Inst.Streams.Add(S);
   FHLE.Result(S.Address);
@@ -977,7 +993,8 @@ begin
     Inst.EsBufs[Es].Data := nil;
   end;
   var Size := FMemory.Read32(AuPtr + 20);
-  if (Data = nil) and (Es > Cardinal(High(Inst.EsBufs))) and (Size > 0) and (Size < $100000) and FMemory.Valid(Es, Size) then
+  if (Data = nil) and (Es > Cardinal(High(Inst.EsBufs))) and (Size > 0) and (Size < $100000) and
+    FMemory.Valid(Es, Size) then
   begin
     SetLength(Data, Size);
     FMemory.ReadBytes(Es, Data[0], Size);
@@ -1589,8 +1606,8 @@ begin
         begin
           var X := X0 + I;
           var Mb := X div 16;
-          var Yv := FMemory.Read8(FMemory.Read32(Desc + 16 + Cardinal(F * 2 + (Mb and 1)) * 4) +
-            Cardinal(((Mb div 2) * FieldRows + R) * 16 + (X and 15)));
+          var Yv := FMemory.Read8(FMemory.Read32(Desc + 16 + Cardinal(F * 2 + (Mb and 1)) * 4) + Cardinal(((Mb div 2) *
+            FieldRows + R) * 16 + (X and 15)));
           var C := Cardinal((R div 2) * (MbW * 8) + X div 2);
           var Rv, Gv, Bv: Integer;
           PSPYCbCrToRGB(Yv, FMemory.Read8(FMemory.Read32(Desc + 16 + Cardinal(4 + F * 2) * 4) + C),
@@ -1611,9 +1628,12 @@ function BaseCscFormat(Mode: Integer): Integer;
 begin
   // sceMpegbase numbers the formats 8888, 5650, 5551, 4444.
   case Mode of
-    1: Result := PSPPixel5650;
-    2: Result := PSPPixel5551;
-    3: Result := PSPPixel4444;
+    1:
+      Result := PSPPixel5650;
+    2:
+      Result := PSPPixel5551;
+    3:
+      Result := PSPPixel4444;
   else
     Result := PSPPixel8888;
   end;
@@ -1641,7 +1661,8 @@ begin
     FHLE.Result(ERROR_MPEG_INVALID_VALUE);
     Exit;
   end;
-  CscAvc(FHLE.Arg(0), FHLE.Arg(1), FHLE.ArgInt(3), Desc, X0 * 16, Y0 * 16, W * 16, H * 16, BaseCscFormat(FCscMode), True);
+  CscAvc(FHLE.Arg(0), FHLE.Arg(1), FHLE.ArgInt(3), Desc, X0 * 16, Y0 * 16, W * 16, H * 16, BaseCscFormat(FCscMode),
+    True);
   FHLE.Result(0);
 end;
 
@@ -1683,8 +1704,8 @@ begin
     for var X := 0 to W - 1 do
     begin
       var Mb := X div 16;
-      FMemory.Write8(Dst + Cardinal(Y * W + X),
-        FMemory.Read8(Bufs[(Y and 1) * 2 + (Mb and 1)] + Cardinal(((Mb div 2) * FieldRows + Y div 2) * 16 + (X and 15))));
+      FMemory.Write8(Dst + Cardinal(Y * W + X), FMemory.Read8(Bufs[(Y and 1) * 2 + (Mb and 1)] +
+        Cardinal(((Mb div 2) * FieldRows + Y div 2) * 16 + (X and 15))));
     end;
   var CW := W div 2;
   var CH := H div 2;

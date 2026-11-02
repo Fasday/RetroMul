@@ -1,4 +1,4 @@
-unit PSP.GE.Texture;
+﻿unit PSP.GE.Texture;
 
 // Texture fetch and filtering as the GE samples: all pixel formats, CLUT
 // lookups through the CLUT cache (shift, mask, offset), DXT1/3/5, swizzled
@@ -150,7 +150,8 @@ begin
   if T.Format >= 8 then
   begin
     var BlockBytes: UInt64 := 16;
-    if T.Format = 8 then BlockBytes := 8;
+    if T.Format = 8 then
+      BlockBytes := 8;
     Result := (((H - 1) shr 2) * (BW div 4) + ((W - 1) shr 2)) * BlockBytes + BlockBytes;
   end
   else
@@ -177,19 +178,27 @@ begin
   case Format of
     0:
       begin
-        var R := P and $1F; var G := (P shr 5) and $3F; var B := (P shr 11) and $1F;
-        Result := $FF000000 or ((R shl 3) or (R shr 2)) or (((G shl 2) or (G shr 4)) shl 8) or (((B shl 3) or (B shr 2)) shl 16);
+        var R := P and $1F;
+        var G := (P shr 5) and $3F;
+        var B := (P shr 11) and $1F;
+        Result := $FF000000 or ((R shl 3) or (R shr 2)) or (((G shl 2) or (G shr 4)) shl 8) or
+          (((B shl 3) or (B shr 2)) shl 16);
       end;
     1:
       begin
-        var R := P and $1F; var G := (P shr 5) and $1F; var B := (P shr 10) and $1F;
+        var R := P and $1F;
+        var G := (P shr 5) and $1F;
+        var B := (P shr 10) and $1F;
         Result := ((R shl 3) or (R shr 2)) or (((G shl 3) or (G shr 2)) shl 8) or (((B shl 3) or (B shr 2)) shl 16);
         if (P and $8000) <> 0 then
           Result := Result or $FF000000;
       end;
   else
     begin
-      var R := P and $F; var G := (P shr 4) and $F; var B := (P shr 8) and $F; var A := (P shr 12) and $F;
+      var R := P and $F;
+      var G := (P shr 4) and $F;
+      var B := (P shr 8) and $F;
+      var A := (P shr 12) and $F;
       Result := (R * 17) or ((G * 17) shl 8) or ((B * 17) shl 16) or ((A * 17) shl 24);
     end;
   end;
@@ -214,8 +223,10 @@ begin
   T.PalValid := False;
   var N := 0;
   case T.Format of
-    4: N := 16;
-    5: N := 256;
+    4:
+      N := 16;
+    5:
+      N := 256;
   end;
   if (N = 0) or (T.Clut = nil) then
     Exit;
@@ -268,16 +279,21 @@ begin
   Split(C0, R0, G0, B0);
   Split(C1, R1, G1, B1);
   case Index of
-    0: Result := Cardinal(R0) or (Cardinal(G0) shl 8) or (Cardinal(B0) shl 16) or $FF000000;
-    1: Result := Cardinal(R1) or (Cardinal(G1) shl 8) or (Cardinal(B1) shl 16) or $FF000000;
+    0:
+      Result := Cardinal(R0) or (Cardinal(G0) shl 8) or (Cardinal(B0) shl 16) or $FF000000;
+    1:
+      Result := Cardinal(R1) or (Cardinal(G1) shl 8) or (Cardinal(B1) shl 16) or $FF000000;
     2:
       if C0 > C1 then
-        Result := Cardinal((2 * R0 + R1) div 3) or (Cardinal((2 * G0 + G1) div 3) shl 8) or (Cardinal((2 * B0 + B1) div 3) shl 16) or $FF000000
+        Result := Cardinal((2 * R0 + R1) div 3) or (Cardinal((2 * G0 + G1) div 3) shl 8) or (Cardinal((2 * B0 + B1) div
+          3) shl 16) or $FF000000
       else
-        Result := Cardinal((R0 + R1) div 2) or (Cardinal((G0 + G1) div 2) shl 8) or (Cardinal((B0 + B1) div 2) shl 16) or $FF000000;
+        Result := Cardinal((R0 + R1) div 2) or (Cardinal((G0 + G1) div 2) shl 8) or (Cardinal((B0 + B1) div
+          2) shl 16) or $FF000000;
   else
     if C0 > C1 then
-      Result := Cardinal((R0 + 2 * R1) div 3) or (Cardinal((G0 + 2 * G1) div 3) shl 8) or (Cardinal((B0 + 2 * B1) div 3) shl 16) or $FF000000
+      Result := Cardinal((R0 + 2 * R1) div 3) or (Cardinal((G0 + 2 * G1) div 3) shl 8) or (Cardinal((B0 + 2 * B1) div
+        3) shl 16) or $FF000000
     else
       Result := 0;
   end;
@@ -445,8 +461,10 @@ begin
     BlockOff := Cardinal((Y and not 7) * RowBytes + (ByteX and not 15));
   var P := CacheBlock(T, L, BlockOff, Max(RowBytes, 1)) + (Y and 7) * 16 + (ByteX and 15);
   case T.Format of
-    0, 1, 2: Result := Decode16(T.Format, PWord(P)^);
-    3: Result := PCardinal(P)^;
+    0, 1, 2:
+      Result := Decode16(T.Format, PWord(P)^);
+    3:
+      Result := PCardinal(P)^;
     4:
       begin
         var B := Cardinal(P^);
@@ -456,8 +474,10 @@ begin
           B := B and $F;
         Result := ClutLookup(T, B, L.ClutAdd);
       end;
-    5: Result := ClutLookup(T, P^, L.ClutAdd);
-    6: Result := ClutLookup(T, PWord(P)^, L.ClutAdd);
+    5:
+      Result := ClutLookup(T, P^, L.ClutAdd);
+    6:
+      Result := ClutLookup(T, PWord(P)^, L.ClutAdd);
   else
     Result := ClutLookup(T, PCardinal(P)^, L.ClutAdd);
   end;
@@ -475,15 +495,20 @@ begin
   begin
     var Bits := 16;
     case T.Format of
-      3, 7: Bits := 32;
-      4: Bits := 4;
-      5: Bits := 8;
+      3, 7:
+        Bits := 32;
+      4:
+        Bits := 4;
+      5:
+        Bits := 8;
     end;
     var Off := TexelOffset(T, L^, X, Y, Bits);
     if Off + Cardinal(Max(1, Bits shr 3)) <= L.Size then
       case T.Format of
-        0, 1, 2: Exit(Decode16(T.Format, PWord(L.Ptr + Off)^));
-        3: Exit(PCardinal(L.Ptr + Off)^);
+        0, 1, 2:
+          Exit(Decode16(T.Format, PWord(L.Ptr + Off)^));
+        3:
+          Exit(PCardinal(L.Ptr + Off)^);
         4:
           begin
             var B := Cardinal(L.Ptr[Off]);
@@ -493,8 +518,10 @@ begin
               B := B and $F;
             Exit(PalLookup(T, B, L.ClutAdd));
           end;
-        5: Exit(PalLookup(T, L.Ptr[Off], L.ClutAdd));
-        6: Exit(ClutLookup(T, PWord(L.Ptr + Off)^, L.ClutAdd));
+        5:
+          Exit(PalLookup(T, L.Ptr[Off], L.ClutAdd));
+        6:
+          Exit(ClutLookup(T, PWord(L.Ptr + Off)^, L.ClutAdd));
       else
         Exit(ClutLookup(T, PCardinal(L.Ptr + Off)^, L.ClutAdd));
       end;
@@ -558,17 +585,23 @@ begin
           var A: Cardinal;
           if A0 > A1 then
             case AI of
-              0: A := A0;
-              1: A := A1;
+              0:
+                A := A0;
+              1:
+                A := A1;
             else
               A := ((8 - AI) * A0 + (AI - 1) * A1) div 7;
             end
           else
             case AI of
-              0: A := A0;
-              1: A := A1;
-              6: A := 0;
-              7: A := 255;
+              0:
+                A := A0;
+              1:
+                A := A1;
+              6:
+                A := 0;
+              7:
+                A := 255;
             else
               A := ((6 - AI) * A0 + (AI - 1) * A1) div 5;
             end;
@@ -587,7 +620,8 @@ begin
   if (PCardinal(@X)^ and $7F800000) >= $4F000000 then
     Exit(Floor(X));
   Result := Trunc(X);
-  if X < Result then Dec(Result);
+  if X < Result then
+    Dec(Result);
 end;
 
 function WrapCoord(V, Size: Integer; Clamp: Boolean): Integer; inline;
@@ -673,8 +707,10 @@ end;
 function FitTexel(const T: TGETexture; P: PByte; Off: Cardinal; X, Add: Integer): Cardinal; inline;
 begin
   case T.Format of
-    0, 1, 2: Result := Decode16(T.Format, PWord(P + Off)^);
-    3: Result := PCardinal(P + Off)^;
+    0, 1, 2:
+      Result := Decode16(T.Format, PWord(P + Off)^);
+    3:
+      Result := PCardinal(P + Off)^;
     4:
       begin
         var B := Cardinal(P[Off]);
@@ -684,8 +720,10 @@ begin
           B := B and $F;
         Result := PalLookup(T, B, Add);
       end;
-    5: Result := PalLookup(T, P[Off], Add);
-    6: Result := ClutLookup(T, PWord(P + Off)^, Add);
+    5:
+      Result := PalLookup(T, P[Off], Add);
+    6:
+      Result := ClutLookup(T, PWord(P + Off)^, Add);
   else
     Result := ClutLookup(T, PCardinal(P + Off)^, Add);
   end;
@@ -708,7 +746,10 @@ end;
 // give the per channel result exactly.
 function BilerpPacked(T00, T10, T01, T11, FracX, FracY: Cardinal): Cardinal; inline;
 begin
-  var C00 := T00; var C10 := T10; var C01 := T01; var C11 := T11;
+  var C00 := T00;
+  var C10 := T10;
+  var C01 := T01;
+  var C11 := T11;
   var FX := FracX;
   var IX := 16 - FX;
   var FY := FracY;
@@ -722,7 +763,10 @@ end;
 
 function Bilerp(T00, T10, T01, T11: Cardinal; FracX, FracY: Int64): Cardinal; inline;
 begin
-  var C00 := T00; var C10 := T10; var C01 := T01; var C11 := T11;
+  var C00 := T00;
+  var C10 := T10;
+  var C01 := T01;
+  var C11 := T11;
   if (UInt64(FracX) <= 16) and (UInt64(FracY) <= 16) then
     Exit(BilerpPacked(C00, C10, C01, C11, Cardinal(FracX), Cardinal(FracY)));
   Result := 0;
@@ -801,9 +845,14 @@ begin
       var Y := WrapCoord(NearestCoord(TT), L.Height, T.ClampV);
       var Off := FitOffset(Sw, RowBytes, Bits, X, Y);
       case T.Format of
-        3: Exit(PCardinal(P + Off)^);
-        4: if Pal then Exit(T.Pal[Nibble(P[Off], X)]);
-        5: if Pal then Exit(T.Pal[P[Off]]);
+        3:
+          Exit(PCardinal(P + Off)^);
+        4:
+          if Pal then
+            Exit(T.Pal[Nibble(P[Off], X)]);
+        5:
+          if Pal then
+            Exit(T.Pal[P[Off]]);
       end;
       Exit(FitTexel(T, P, Off, X, L.ClutAdd));
     end;
@@ -1069,10 +1118,28 @@ begin
   if (T.Level <> 0) or T.NeedLod or not T.Levels[0].Fits or (T.Cache <> nil) then
     Exit;
   case T.Format of
-    0, 1, 2: if T.Linear then T.Sampler := SampleFit16L else T.Sampler := SampleFit16N;
-    3: if T.Linear then T.Sampler := SampleFit3L else T.Sampler := SampleFit3N;
-    4: if T.PalValid then if T.Linear then T.Sampler := SampleFit4L else T.Sampler := SampleFit4N;
-    5: if T.PalValid then if T.Linear then T.Sampler := SampleFit5L else T.Sampler := SampleFit5N;
+    0, 1, 2:
+      if T.Linear then
+        T.Sampler := SampleFit16L
+      else
+        T.Sampler := SampleFit16N;
+    3:
+      if T.Linear then
+        T.Sampler := SampleFit3L
+      else
+        T.Sampler := SampleFit3N;
+    4:
+      if T.PalValid then
+        if T.Linear then
+          T.Sampler := SampleFit4L
+        else
+          T.Sampler := SampleFit4N;
+    5:
+      if T.PalValid then
+        if T.Linear then
+          T.Sampler := SampleFit5L
+        else
+          T.Sampler := SampleFit5N;
   end;
 end;
 

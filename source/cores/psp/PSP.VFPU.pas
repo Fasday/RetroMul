@@ -1,4 +1,4 @@
-unit PSP.VFPU;
+﻿unit PSP.VFPU;
 
 // The VFPU (COP2): 128 single-precision registers in 8 4x4 matrices, prefixes,
 // and its load/store instructions. Installs its decoder into PSP.CPU.
@@ -46,8 +46,10 @@ begin
     begin
       var B: Integer;
       case N of
-        1: B := (R shr 5) and 3;
-        3: B := (R shr 6) and 1;
+        1:
+          B := (R shr 5) and 3;
+        3:
+          B := (R shr 6) and 1;
       else
         B := (R shr 5) and 2;
       end;
@@ -239,8 +241,10 @@ end;
 function SatLane(V, Mode: Cardinal): Cardinal; inline;
 begin
   case Mode of
-    1: Result := VSat0(V);
-    3: Result := VSat1(V);
+    1:
+      Result := VSat0(V);
+    3:
+      Result := VSat1(V);
   else
     Result := V;
   end;
@@ -463,8 +467,8 @@ procedure OpVCRS(C: TPSPCPU; Op: Cardinal);
 begin
   var N := VSz(Op);
   var S, T, D: TV4;
-  var Z := ReadPfx(C, RegS(Op), N, (C.Ctx.VC[VFPU_PFXS] and not Cardinal($3F)) or $09, S) or
-    ReadPfx(C, RegT(Op), N, (C.Ctx.VC[VFPU_PFXT] and not Cardinal($3F)) or $12, T);
+  var Z := ReadPfx(C, RegS(Op), N, (C.Ctx.VC[VFPU_PFXS] and not Cardinal($3F)) or $09, S) or ReadPfx(C, RegT(Op), N,
+    (C.Ctx.VC[VFPU_PFXT] and not Cardinal($3F)) or $12, T);
   for var I := 0 to N - 1 do
     D[I] := VMul(S[I], T[I]);
   WriteD(C, Op, N, D, Z);
@@ -500,8 +504,8 @@ procedure OpVDET(C: TPSPCPU; Op: Cardinal);
 begin
   var N := VSz(Op);
   var S, T, D: TV4;
-  var Z := ReadPfx(C, RegS(Op), N, C.Ctx.VC[VFPU_PFXS] xor $20000, S) or
-    ReadPfx(C, RegT(Op), N, (C.Ctx.VC[VFPU_PFXT] and not Cardinal($F)) or $1, T);
+  var Z := ReadPfx(C, RegS(Op), N, C.Ctx.VC[VFPU_PFXS] xor $20000, S) or ReadPfx(C, RegT(Op), N,
+    (C.Ctx.VC[VFPU_PFXT] and not Cardinal($F)) or $1, T);
   D[0] := VSum4(S, T, 4, Z);
   WriteD(C, Op, 1, D, 0);
   EatPfx(C);
@@ -545,21 +549,36 @@ begin
   A := VFlush(A);
   B := VFlush(B);
   case Cond of
-    0: Result := False;
-    1: Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) = VKey(B));
-    2: Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) < VKey(B));
-    3: Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) <= VKey(B));
-    4: Result := True;
-    5: Result := VIsNaN(A) or VIsNaN(B) or (VKey(A) <> VKey(B));
-    6: Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) >= VKey(B));
-    7: Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) > VKey(B));
-    8: Result := (A and $7FFFFFFF) = 0;
-    9: Result := VIsNaN(A);
-    10: Result := (A and $7FFFFFFF) = $7F800000;
-    11: Result := (A and $7F800000) = $7F800000;
-    12: Result := (A and $7FFFFFFF) <> 0;
-    13: Result := not VIsNaN(A);
-    14: Result := (A and $7FFFFFFF) <> $7F800000;
+    0:
+      Result := False;
+    1:
+      Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) = VKey(B));
+    2:
+      Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) < VKey(B));
+    3:
+      Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) <= VKey(B));
+    4:
+      Result := True;
+    5:
+      Result := VIsNaN(A) or VIsNaN(B) or (VKey(A) <> VKey(B));
+    6:
+      Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) >= VKey(B));
+    7:
+      Result := not VIsNaN(A) and not VIsNaN(B) and (VKey(A) > VKey(B));
+    8:
+      Result := (A and $7FFFFFFF) = 0;
+    9:
+      Result := VIsNaN(A);
+    10:
+      Result := (A and $7FFFFFFF) = $7F800000;
+    11:
+      Result := (A and $7F800000) = $7F800000;
+    12:
+      Result := (A and $7FFFFFFF) <> 0;
+    13:
+      Result := not VIsNaN(A);
+    14:
+      Result := (A and $7FFFFFFF) <> $7F800000;
   else
     Result := (A and $7F800000) <> $7F800000;
   end;
@@ -899,13 +918,15 @@ end;
 
 procedure FloatBinary(C: TPSPCPU; Op: Cardinal; N, Kind: Integer); inline;
 begin
-  if (C.Ctx.VC[VFPU_PFXS] <> PFX_NONE) or (C.Ctx.VC[VFPU_PFXT] <> PFX_NONE) or
-    (C.Ctx.VC[VFPU_PFXD] <> 0) then
+  if (C.Ctx.VC[VFPU_PFXS] <> PFX_NONE) or (C.Ctx.VC[VFPU_PFXT] <> PFX_NONE) or (C.Ctx.VC[VFPU_PFXD] <> 0) then
   begin
     case Kind of
-      0: OpVADD(C, Op);
-      1: OpVSUB(C, Op);
-      2: OpVMUL(C, Op);
+      0:
+        OpVADD(C, Op);
+      1:
+        OpVSUB(C, Op);
+      2:
+        OpVMUL(C, Op);
     end;
     Exit;
   end;
@@ -915,9 +936,12 @@ begin
   var R: TV4;
   for var I := 0 to N - 1 do
     case Kind of
-      0: R[I] := VAdd(C.Ctx.V[S[I]], C.Ctx.V[T[I]]);
-      1: R[I] := VSub(C.Ctx.V[S[I]], C.Ctx.V[T[I]]);
-      2: R[I] := VMul(C.Ctx.V[S[I]], C.Ctx.V[T[I]]);
+      0:
+        R[I] := VAdd(C.Ctx.V[S[I]], C.Ctx.V[T[I]]);
+      1:
+        R[I] := VSub(C.Ctx.V[S[I]], C.Ctx.V[T[I]]);
+      2:
+        R[I] := VMul(C.Ctx.V[S[I]], C.Ctx.V[T[I]]);
     end;
   for var I := 0 to N - 1 do
     C.Ctx.V[D[I]] := R[I];
@@ -1311,8 +1335,10 @@ begin
   var M := N div 2;
   for var I := 0 to M - 1 do
     case Kind of
-      0: D[I] := Pack4444(S[I * 2]) or (Pack4444(S[I * 2 + 1]) shl 16);
-      1: D[I] := Pack5551(S[I * 2]) or (Pack5551(S[I * 2 + 1]) shl 16);
+      0:
+        D[I] := Pack4444(S[I * 2]) or (Pack4444(S[I * 2 + 1]) shl 16);
+      1:
+        D[I] := Pack5551(S[I * 2]) or (Pack5551(S[I * 2 + 1]) shl 16);
     else
       D[I] := Pack5650(S[I * 2]) or (Pack5650(S[I * 2 + 1]) shl 16);
     end;
@@ -1502,8 +1528,10 @@ begin
   begin
     var X := RndNext(C);
     case Kind of
-      0: D[I] := X;
-      1: D[I] := $3F800000 or (X and $7FFFFF);
+      0:
+        D[I] := X;
+      1:
+        D[I] := $3F800000 or (X and $7FFFFF);
     else
       D[I] := $40000000 or (X and $7FFFFF);
     end;
@@ -1540,11 +1568,16 @@ end;
 procedure WriteCtrl(C: TPSPCPU; Index, Value: Cardinal);
 begin
   case Index of
-    0, 1: C.Ctx.VC[Index] := Value and $FFFFF;
-    2: C.Ctx.VC[Index] := Value and $FFF;
-    3: C.Ctx.VC[Index] := Value and $3F;
-    4..6: C.Ctx.VC[Index] := Value;
-    8..15: C.Ctx.VC[Index] := $3F800000 or (Value and $FFFFF);
+    0, 1:
+      C.Ctx.VC[Index] := Value and $FFFFF;
+    2:
+      C.Ctx.VC[Index] := Value and $FFF;
+    3:
+      C.Ctx.VC[Index] := Value and $3F;
+    4..6:
+      C.Ctx.VC[Index] := Value;
+    8..15:
+      C.Ctx.VC[Index] := $3F800000 or (Value and $FFFFF);
   end;
 end;
 
@@ -1701,17 +1734,41 @@ begin
     4:
       begin
         var P, Q: TV4;
-        P[0] := S[0]; P[1] := S[1]; P[2] := S[2] xor $80000000; P[3] := S[3];
-        Q[0] := T[3]; Q[1] := T[2]; Q[2] := T[1]; Q[3] := T[0];
+        P[0] := S[0];
+        P[1] := S[1];
+        P[2] := S[2] xor $80000000;
+        P[3] := S[3];
+        Q[0] := T[3];
+        Q[1] := T[2];
+        Q[2] := T[1];
+        Q[3] := T[0];
         D[0] := VSum4(P, Q, 4, 0);
-        P[0] := S[0] xor $80000000; P[1] := S[1]; P[2] := S[2]; P[3] := S[3];
-        Q[0] := T[2]; Q[1] := T[3]; Q[2] := T[0]; Q[3] := T[1];
+        P[0] := S[0] xor $80000000;
+        P[1] := S[1];
+        P[2] := S[2];
+        P[3] := S[3];
+        Q[0] := T[2];
+        Q[1] := T[3];
+        Q[2] := T[0];
+        Q[3] := T[1];
         D[1] := VSum4(P, Q, 4, 0);
-        P[0] := S[0]; P[1] := S[1] xor $80000000; P[2] := S[2]; P[3] := S[3];
-        Q[0] := T[1]; Q[1] := T[0]; Q[2] := T[3]; Q[3] := T[2];
+        P[0] := S[0];
+        P[1] := S[1] xor $80000000;
+        P[2] := S[2];
+        P[3] := S[3];
+        Q[0] := T[1];
+        Q[1] := T[0];
+        Q[2] := T[3];
+        Q[3] := T[2];
         D[2] := VSum4(P, Q, 4, 0);
-        P[0] := S[0] xor $80000000; P[1] := S[1] xor $80000000; P[2] := S[2] xor $80000000; P[3] := S[3];
-        Q[0] := T[0]; Q[1] := T[1]; Q[2] := T[2]; Q[3] := T[3];
+        P[0] := S[0] xor $80000000;
+        P[1] := S[1] xor $80000000;
+        P[2] := S[2] xor $80000000;
+        P[3] := S[3];
+        Q[0] := T[0];
+        Q[1] := T[1];
+        Q[2] := T[2];
+        Q[3] := T[3];
         D[3] := VSum4(P, Q, 4, 0);
       end;
   else
@@ -1738,8 +1795,10 @@ begin
   for var K := 0 to 3 do
     for var I := 0 to 3 do
       case Kind of
-        0: D[K][I] := 0;
-        1: D[K][I] := VF_ONE;
+        0:
+          D[K][I] := 0;
+        1:
+          D[K][I] := VF_ONE;
       else
         if K = I then
           D[K][I] := VF_ONE
@@ -1946,91 +2005,158 @@ begin
   case (Op shr 21) and 31 of
     0:
       case Sub of
-        $00: Result := OpVMOV;
-        $01: Result := OpVABS;
-        $02: Result := OpVNEG;
-        $03: Result := OpVIDT;
-        $04: Result := OpVSAT0;
-        $05: Result := OpVSAT1;
-        $06: Result := OpVZERO;
-        $07: Result := OpVONE;
-        $10: Result := OpVRCP;
-        $11: Result := OpVRSQ;
-        $12: Result := OpVSIN;
-        $13: Result := OpVCOS;
-        $14: Result := OpVEXP2;
-        $15: Result := OpVLOG2;
-        $16: Result := OpVSQRT;
-        $17: Result := OpVASIN;
-        $18: Result := OpVNRCP;
-        $1A: Result := OpVNSIN;
-        $1C: Result := OpVREXP2;
+        $00:
+          Result := OpVMOV;
+        $01:
+          Result := OpVABS;
+        $02:
+          Result := OpVNEG;
+        $03:
+          Result := OpVIDT;
+        $04:
+          Result := OpVSAT0;
+        $05:
+          Result := OpVSAT1;
+        $06:
+          Result := OpVZERO;
+        $07:
+          Result := OpVONE;
+        $10:
+          Result := OpVRCP;
+        $11:
+          Result := OpVRSQ;
+        $12:
+          Result := OpVSIN;
+        $13:
+          Result := OpVCOS;
+        $14:
+          Result := OpVEXP2;
+        $15:
+          Result := OpVLOG2;
+        $16:
+          Result := OpVSQRT;
+        $17:
+          Result := OpVASIN;
+        $18:
+          Result := OpVNRCP;
+        $1A:
+          Result := OpVNSIN;
+        $1C:
+          Result := OpVREXP2;
       end;
     1:
       case Sub of
-        $00: Result := OpVRNDS;
-        $01: Result := OpVRNDI;
-        $02: Result := OpVRNDF1;
-        $03: Result := OpVRNDF2;
-        $12: Result := OpVF2H;
-        $13: Result := OpVH2F;
-        $16: Result := OpVSBZ;
-        $17: Result := OpVLGB;
-        $18: Result := OpVUC2I;
-        $19: Result := OpVC2I;
-        $1A: Result := OpVUS2I;
-        $1B: Result := OpVS2I;
-        $1C: Result := OpVI2UC;
-        $1D: Result := OpVI2C;
-        $1E: Result := OpVI2US;
-        $1F: Result := OpVI2S;
+        $00:
+          Result := OpVRNDS;
+        $01:
+          Result := OpVRNDI;
+        $02:
+          Result := OpVRNDF1;
+        $03:
+          Result := OpVRNDF2;
+        $12:
+          Result := OpVF2H;
+        $13:
+          Result := OpVH2F;
+        $16:
+          Result := OpVSBZ;
+        $17:
+          Result := OpVLGB;
+        $18:
+          Result := OpVUC2I;
+        $19:
+          Result := OpVC2I;
+        $1A:
+          Result := OpVUS2I;
+        $1B:
+          Result := OpVS2I;
+        $1C:
+          Result := OpVI2UC;
+        $1D:
+          Result := OpVI2C;
+        $1E:
+          Result := OpVI2US;
+        $1F:
+          Result := OpVI2S;
       end;
     2:
       case Sub of
-        $00: Result := OpVSRT1;
-        $01: Result := OpVSRT2;
-        $02: Result := OpVBFY1;
-        $03: Result := OpVBFY2;
-        $04: Result := OpVOCP;
-        $05: Result := OpVSOCP;
-        $06: Result := OpVFAD;
-        $07: Result := OpVAVG;
-        $08: Result := OpVSRT3;
-        $09: Result := OpVSRT4;
-        $0A: Result := OpVSGN;
-        $10: Result := OpVMFVC;
-        $11: Result := OpVMTVC;
-        $19: Result := OpVT4444;
-        $1A: Result := OpVT5551;
-        $1B: Result := OpVT5650;
+        $00:
+          Result := OpVSRT1;
+        $01:
+          Result := OpVSRT2;
+        $02:
+          Result := OpVBFY1;
+        $03:
+          Result := OpVBFY2;
+        $04:
+          Result := OpVOCP;
+        $05:
+          Result := OpVSOCP;
+        $06:
+          Result := OpVFAD;
+        $07:
+          Result := OpVAVG;
+        $08:
+          Result := OpVSRT3;
+        $09:
+          Result := OpVSRT4;
+        $0A:
+          Result := OpVSGN;
+        $10:
+          Result := OpVMFVC;
+        $11:
+          Result := OpVMTVC;
+        $19:
+          Result := OpVT4444;
+        $1A:
+          Result := OpVT5551;
+        $1B:
+          Result := OpVT5650;
       end;
-    3: Result := OpVCST;
-    $10: Result := OpVF2IN;
-    $11: Result := OpVF2IZ;
-    $12: Result := OpVF2IU;
-    $13: Result := OpVF2ID;
-    $14: Result := OpVI2F;
-    $15: Result := OpVCMOV;
-    $18..$1F: Result := OpVWBN;
+    3:
+      Result := OpVCST;
+    $10:
+      Result := OpVF2IN;
+    $11:
+      Result := OpVF2IZ;
+    $12:
+      Result := OpVF2IU;
+    $13:
+      Result := OpVF2ID;
+    $14:
+      Result := OpVI2F;
+    $15:
+      Result := OpVCMOV;
+    $18..$1F:
+      Result := OpVWBN;
   end;
 end;
 
 function DecodeVFPU6(Op: Cardinal): TPSPOpHandler;
 begin
   case (Op shr 23) and 7 of
-    0: Result := OpVMMUL;
-    1, 2, 3: Result := OpVTFM;
-    4: Result := OpVMSCL;
-    5: Result := OpVCRSPQMUL;
+    0:
+      Result := OpVMMUL;
+    1, 2, 3:
+      Result := OpVTFM;
+    4:
+      Result := OpVMSCL;
+    5:
+      Result := OpVCRSPQMUL;
     7:
       if ((Op shr 21) and 3) = 1 then
         Result := OpVROT
       else if ((Op shr 21) and 3) = 0 then
         case (Op shr 16) and 31 of
-          0: Result := OpVMMOV;
-          3: Result := OpVMIDT;
-          6: Result := OpVMZERO;
-          7: Result := OpVMONE;
+          0:
+            Result := OpVMMOV;
+          3:
+            Result := OpVMIDT;
+          6:
+            Result := OpVMZERO;
+          7:
+            Result := OpVMONE;
         else
           Result := OpReserved;
         end
@@ -2047,57 +2173,88 @@ begin
   case Op shr 26 of
     $12:
       case (Op shr 21) and 31 of
-        3: Result := OpMFV;
-        7: Result := OpMTV;
-        8: Result := OpBVC;
+        3:
+          Result := OpMFV;
+        7:
+          Result := OpMTV;
+        8:
+          Result := OpBVC;
       end;
     $18:
       case (Op shr 23) and 7 of
-        0: Result := FloatBinaryHandlers[0, VSz(Op) - 1];
-        1: Result := FloatBinaryHandlers[1, VSz(Op) - 1];
-        2: Result := OpVSBN;
-        7: Result := OpVDIV;
+        0:
+          Result := FloatBinaryHandlers[0, VSz(Op) - 1];
+        1:
+          Result := FloatBinaryHandlers[1, VSz(Op) - 1];
+        2:
+          Result := OpVSBN;
+        7:
+          Result := OpVDIV;
       end;
     $19:
       case (Op shr 23) and 7 of
-        0: Result := FloatBinaryHandlers[2, VSz(Op) - 1];
-        1: Result := OpVDOT;
-        2: Result := OpVSCL;
-        4: Result := OpVHDP;
-        5: Result := OpVCRS;
-        6: Result := OpVDET;
+        0:
+          Result := FloatBinaryHandlers[2, VSz(Op) - 1];
+        1:
+          Result := OpVDOT;
+        2:
+          Result := OpVSCL;
+        4:
+          Result := OpVHDP;
+        5:
+          Result := OpVCRS;
+        6:
+          Result := OpVDET;
       end;
     $1B:
       case (Op shr 23) and 7 of
-        0: Result := OpVCMP;
-        2: Result := OpVMIN;
-        3: Result := OpVMAX;
-        5: Result := OpVSCMP;
-        6: Result := OpVSGE;
-        7: Result := OpVSLT;
+        0:
+          Result := OpVCMP;
+        2:
+          Result := OpVMIN;
+        3:
+          Result := OpVMAX;
+        5:
+          Result := OpVSCMP;
+        6:
+          Result := OpVSGE;
+        7:
+          Result := OpVSLT;
       end;
-    $32: Result := OpLVS;
-    $34: Result := DecodeVFPU4(Op);
-    $35: Result := OpLVLRQ;
-    $36: Result := OpLVQ;
+    $32:
+      Result := OpLVS;
+    $34:
+      Result := DecodeVFPU4(Op);
+    $35:
+      Result := OpLVLRQ;
+    $36:
+      Result := OpLVQ;
     $37:
       case (Op shr 23) and 7 of
-        0, 1: Result := OpVPFXS;
-        2, 3: Result := OpVPFXT;
-        4, 5: Result := OpVPFXD;
-        6: Result := OpVIIM;
-        7: Result := OpVFIM;
+        0, 1:
+          Result := OpVPFXS;
+        2, 3:
+          Result := OpVPFXT;
+        4, 5:
+          Result := OpVPFXD;
+        6:
+          Result := OpVIIM;
+        7:
+          Result := OpVFIM;
       end;
-    $3A: Result := OpSVS;
-    $3C: Result := DecodeVFPU6(Op);
-    $3D: Result := OpSVLRQ;
-    $3E: Result := OpSVQ;
+    $3A:
+      Result := OpSVS;
+    $3C:
+      Result := DecodeVFPU6(Op);
+    $3D:
+      Result := OpSVLRQ;
+    $3E:
+      Result := OpSVQ;
     $3F:
       if (Op shr 16) = $FFFF then
         Result := OpVNOP;
   end;
 end;
-
 
 initialization
   InitTables;

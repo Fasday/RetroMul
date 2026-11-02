@@ -1,4 +1,4 @@
-unit RM.Vulkan.TexScale;
+﻿unit RM.Vulkan.TexScale;
 
 // Textures made larger for the Vulkan HLE renderers above 1x (RM.Vulkan.HLE):
 // an option, not the consoles' (which sample their textures as they are).
@@ -116,10 +116,14 @@ var
 function InShape(Shape: TBlendShape; U, V: Single): Boolean;
 begin
   case Shape of
-    bsCorner: Result := (U > 0.5) and (V > 0.5) and (Sqr(U - 0.5) + Sqr(V - 0.5) > 0.25);
-    bsDiagonal: Result := U + V > 1.5;
-    bsShallow: Result := U + 2 * V > 2;
-    bsSteep: Result := 2 * U + V > 2;
+    bsCorner:
+      Result := (U > 0.5) and (V > 0.5) and (Sqr(U - 0.5) + Sqr(V - 0.5) > 0.25);
+    bsDiagonal:
+      Result := U + V > 1.5;
+    bsShallow:
+      Result := U + 2 * V > 2;
+    bsSteep:
+      Result := 2 * U + V > 2;
   else
     Result := (U + 2 * V > 2) or (2 * U + V > 2);
   end;
@@ -340,7 +344,8 @@ begin
       if A >= 0.5 then
       begin
         var S := 255 / A;
-        Block[OY * DW + OX] := Channel(R * S) or (Channel(G * S) shl 8) or (Channel(B * S) shl 16) or (Channel(A) shl 24);
+        Block[OY * DW + OX] := Channel(R * S) or (Channel(G * S) shl 8) or (Channel(B * S) shl 16) or
+          (Channel(A) shl 24);
       end
       else
         Block[OY * DW + OX] := Colours[E] and $FFFFFF;
@@ -370,12 +375,10 @@ begin
       var KK := Keys[K];
       if ((KF = KG) and (KJ = KK)) or ((KF = KJ) and (KG = KK)) then
         Continue;
-      var JG := Distance(Texels[J - 1], Texels[F]) + Distance(Texels[F], Texels[G - PW]) +
-        Distance(Texels[J + PW], Texels[K]) + Distance(Texels[K], Texels[G + 1]) +
-        CentreWeight * Distance(Texels[J], Texels[G]);
-      var FK := Distance(Texels[F - 1], Texels[J]) + Distance(Texels[J], Texels[K + PW]) +
-        Distance(Texels[F - PW], Texels[G]) + Distance(Texels[G], Texels[K + 1]) +
-        CentreWeight * Distance(Texels[F], Texels[K]);
+      var JG := Distance(Texels[J - 1], Texels[F]) + Distance(Texels[F], Texels[G - PW]) + Distance(Texels[J + PW],
+        Texels[K]) + Distance(Texels[K], Texels[G + 1]) + CentreWeight * Distance(Texels[J], Texels[G]);
+      var FK := Distance(Texels[F - 1], Texels[J]) + Distance(Texels[J], Texels[K + PW]) + Distance(Texels[F - PW],
+        Texels[G]) + Distance(Texels[G], Texels[K + 1]) + CentreWeight * Distance(Texels[F], Texels[K]);
       var B := 0;
       if JG < FK then
       begin
@@ -451,10 +454,10 @@ begin
           Line := False
         else if (BottomLeft <> CornerNone) and (Distance(Texels[E], Texels[EC]) >= EqualDistance) then
           Line := False
-        // An L of one colour around the corner: only the corner is rounded.
-        else if (Distance(Texels[E], Texels[EI]) >= EqualDistance) and
-          (Distance(Texels[EG], Texels[EH]) < EqualDistance) and (Distance(Texels[EH], Texels[EI]) < EqualDistance) and
-          (Distance(Texels[EI], Texels[EF]) < EqualDistance) and (Distance(Texels[EF], Texels[EC]) < EqualDistance) then
+              // An L of one colour around the corner: only the corner is rounded.
+        else if (Distance(Texels[E], Texels[EI]) >= EqualDistance) and (Distance(Texels[EG], Texels[EH]) <
+          EqualDistance) and (Distance(Texels[EH], Texels[EI]) < EqualDistance) and (Distance(Texels[EI], Texels[EF]) <
+          EqualDistance) and (Distance(Texels[EF], Texels[EC]) < EqualDistance) then
           Line := False
         else
           Line := True;

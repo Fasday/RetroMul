@@ -1,4 +1,4 @@
-unit Core.Platforms.PSP.Renderer;
+﻿unit Core.Platforms.PSP.Renderer;
 
 // Owned by the PSP worker, inside Execute. The console and its memory outlive
 // this session; Reset and LoadExec keep the same GE engine and memory objects.
@@ -40,16 +40,18 @@ implementation
 
 uses
   PSP.GE
-  {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
-  , PSP.GE.VulkanLLE, PSP.GE.VulkanHLE
-  {$ENDIF}
-  ;
+{$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
+    , PSP.GE.VulkanLLE, PSP.GE.VulkanHLE
+{$ENDIF}
+    ;
 
 function PSPRendererName(Renderer: TPSPRenderer): string;
 begin
   case Renderer of
-    prVulkanLLE: Result := 'vulkan';
-    prVulkanHLE: Result := 'vulkan-hle';
+    prVulkanLLE:
+      Result := 'vulkan';
+    prVulkanHLE:
+      Result := 'vulkan-hle';
   else
     Result := 'cpu';
   end;
@@ -74,7 +76,7 @@ begin
   if Renderer = prCPU then
     Exit;
   var Reason: string;
-  {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
+{$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
   if Renderer = prVulkanHLE then
   begin
     var Backend: TGEVulkanHLEBackend;
@@ -93,8 +95,8 @@ begin
       begin
         FDescription := FDescription + Format(' at %dx', [Backend.Scale]);
         if Backend.TextureScale > 1 then
-          FDescription := FDescription + Format(', textures %dx %s', [Backend.TextureScale,
-            TexScaleFilterName(Backend.TextureFilter)]);
+          FDescription := FDescription + Format(', textures %dx %s',
+            [Backend.TextureScale, TexScaleFilterName(Backend.TextureFilter)]);
       end;
       Console.HLE.Log('gpu: ' + FDescription);
       Exit;
@@ -119,9 +121,9 @@ begin
       Exit;
     end;
   end;
-  {$ELSE}
+{$ELSE}
   Reason := 'this host is not qualified for Vulkan GE rendering';
-  {$ENDIF}
+{$ENDIF}
   FDescription := 'cpu: Vulkan unavailable (' + Reason + ')';
   Console.HLE.Log('gpu: unavailable (' + Reason + '), the GE draws on the CPU');
 end;
@@ -143,7 +145,7 @@ end;
 function TPSPRendererSession.Status: string;
 begin
   Result := FDescription;
-  {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
+{$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
   if FBackend = nil then
     Exit;
   if FKind = prVulkanHLE then
@@ -156,7 +158,7 @@ begin
     var S := TGEVulkanLLEBackend(FBackend).Stats;
     Result := Result + Format(' (%d batches, %d GPU primitives, %d CPU fallbacks)', [S.Batches, S.Prims, S.Fallbacks]);
   end;
-  {$ENDIF}
+{$ENDIF}
 end;
 
 end.

@@ -1,4 +1,4 @@
-unit PSP.Types;
+﻿unit PSP.Types;
 
 // Shared PSP constants, kernel error codes and small helpers. Define
 // PSP_CHECKED for range/overflow checks in diagnostics builds.
