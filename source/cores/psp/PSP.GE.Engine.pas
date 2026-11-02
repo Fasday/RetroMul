@@ -168,6 +168,7 @@ type
     procedure AdvanceVertices(Count: Integer; VType: Cardinal);
     procedure BoundingBox(Op: Cardinal);
     procedure BuildRaster;
+    procedure RasterChanged; inline;
     function ScissoredArea(X1, Y1, X2, Y2: Integer): Int64;
     procedure EmitTriangle(const A, B, C: TGEVertex; Odd: Boolean);
     procedure ClipTriangle(const A, B, C: TGEAsmVertex; Odd: Boolean);
@@ -269,6 +270,7 @@ begin
   FRaster.Tex.Cache := nil;
   Inc(FTexEpoch);
   FWorkers.ClutChanged;
+  RasterChanged;
 end;
 
 procedure TPSPGEEngine.Reset;
@@ -291,6 +293,7 @@ begin
   FRaster.Tex.Sampler := nil;
   FRaster.Tex.Cache := nil;
   Inc(FTexEpoch);
+  RasterChanged;
 end;
 
 function TPSPGEEngine.Address(Param: Cardinal): Cardinal;
@@ -344,6 +347,7 @@ begin
       begin
         Inc(FTexEpoch);
         FRaster.Tex.CacheEpoch := FTexEpoch;
+        RasterChanged;
       end;
     GE_LOADCLUT:
       begin
@@ -2678,6 +2682,13 @@ begin
   S.MaskA := C[GE_MASKALPHA] and $FF;
   GEPrepareRaster(S^);
   FWorkers.StateChanged;
+  RasterChanged;
+end;
+
+procedure TPSPGEEngine.RasterChanged;
+begin
+  if Backend <> nil then
+    Inc(Backend.RasterSerial);
 end;
 
 { Primitives }
@@ -3478,6 +3489,7 @@ begin
     FRaster.Dither := ((Op and $800000) <> 0) and not FRaster.ClearMode;
     FCullOn := ((Op and $80000) <> 0) and not FRaster.ClearMode;
     FCullCW := (Op and $100000) <> 0;
+    RasterChanged;
   end;
   V := Default(TGEVertex);
   V.X := Integer(C[$F0] and $FFFF);
@@ -3523,6 +3535,7 @@ begin
   FRaster.Tex.Sampler := nil;
   // The next primitive builds its state (and palette) again.
   FRasterKeyValid := False;
+  RasterChanged;
 end;
 
 // Transfers address VRAM's 8MB of mirrors with wrap-around at the end.

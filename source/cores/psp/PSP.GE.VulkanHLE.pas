@@ -156,6 +156,8 @@ type
     FLast: TGERaster;
     FLastClut: array[0..1023] of Byte;
     FLastKind: Integer;
+    // The engine's RasterSerial when FLast was last found current.
+    FLastSerial: UInt64;
     FStateValid: Boolean;
     // Clear-mode stencil writes take the primitive's alpha as the reference.
     FClearStencil: Boolean;
@@ -185,6 +187,7 @@ type
     procedure VRAMFault;
     procedure WatchFault;
     function SameState(const S: TGERaster; Kind: Integer): Boolean;
+    function CurrentState(const S: TGERaster; Kind: Integer): Boolean;
     procedure SetupState(const S: TGERaster; Kind: Integer);
     procedure ApplyBindings;
     procedure Emit(Kind: Integer; const S: TGERaster; V: PGEHLEVertex; Count: Integer; X1, Y1, X2, Y2: Integer);
@@ -1834,6 +1837,18 @@ begin
     Result := CompareMem(S.Tex.Clut, @FLastClut[0], SizeOf(FLastClut));
 end;
 
+// The state the draw being built was set up for: compared only when the
+// engine's serial says it may have changed.
+function TGEVulkanHLEBackend.CurrentState(const S: TGERaster; Kind: Integer): Boolean;
+begin
+  var Serial := FEngineBackend.RasterSerial;
+  if (Serial = FLastSerial) and (Kind = FLastKind) then
+    Exit(True);
+  Result := SameState(S, Kind);
+  if Result then
+    FLastSerial := Serial;
+end;
+
 // Whether the masks keep all of a channel's bits.
 function ChannelKept(Keep, Bits: Cardinal): Boolean; inline;
 begin
@@ -2151,6 +2166,7 @@ begin
 
   FLast := S;
   FLastKind := Kind;
+  FLastSerial := FEngineBackend.RasterSerial;
   if S.Textured and IsClutFormat(S.Tex.Format) and (S.Tex.Clut <> nil) then
     Move(S.Tex.Clut^, FLastClut[0], SizeOf(FLastClut));
   FTarget := T;
@@ -2232,7 +2248,7 @@ begin
     Exit;
   ReserveVertices(Count);
   var T := TGEHLETarget(FTarget);
-  if not FStateValid or not SameState(S, Kind) or ((Y2 >= T.Height) and (T.Height < T.MaxHeight)) then
+  if not FStateValid or not CurrentState(S, Kind) or ((Y2 >= T.Height) and (T.Height < T.MaxHeight)) then
   begin
     FNeedY := Y2;
     SetupState(S, Kind);

@@ -18,6 +18,9 @@ uses
 type
   TGERasterBackend = class
   public
+    // The engine changes it whenever the raster state (and the CLUT) it hands
+    // over may differ from the last: the same serial, the same state.
+    RasterSerial: UInt64;
     procedure DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex); virtual; abstract;
     procedure DrawSprite(const S: TGERaster; const V0, V1: TGEVertex); virtual; abstract;
     procedure DrawLine(const S: TGERaster; const V0, V1: TGEVertex); virtual; abstract;
