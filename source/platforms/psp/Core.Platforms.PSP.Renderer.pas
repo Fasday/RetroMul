@@ -16,7 +16,9 @@ type
   TPSPRendererSession = class
   private
     FConsole: TPSPConsole;
-    FBackend: TGERasterBackend;
+    // The renderer (owned), and what the GE engine draws through.
+    FBackend: TObject;
+    FEngineBackend: TGERasterBackend;
     FKind: TPSPRenderer;
     FDescription: string;
   public
@@ -79,10 +81,11 @@ begin
     if CreateGEVulkanHLEBackend(Console.Memory, Backend, Reason, '', Scale) then
     begin
       FBackend := Backend;
+      FEngineBackend := Backend.EngineBackend;
       FKind := prVulkanHLE;
       Backend.TextureScale := TextureScale;
       Backend.TextureFilter := TextureFilter;
-      TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := Backend;
+      TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := FEngineBackend;
       // Frames come from its images, at its resolution.
       Console.OnPresent := Backend.Present;
       FDescription := 'vulkan-hle: ' + Backend.Compute.Name;
@@ -103,6 +106,7 @@ begin
     if CreateGEVulkanLLEBackend(Console.Memory, False, Backend, Reason) then
     begin
       FBackend := Backend;
+      FEngineBackend := Backend;
       FKind := prVulkanLLE;
       Backend.OnMessage :=
         procedure(const Text: string)
@@ -129,7 +133,7 @@ begin
     if FKind = prVulkanHLE then
       FConsole.OnPresent := nil;
     var GE := TPSPGE(FConsole.System.Find(TPSPGE));
-    if GE.Engine.Backend = FBackend then
+    if GE.Engine.Backend = FEngineBackend then
       GE.Engine.Backend := nil;
     FBackend.Free;
   end;

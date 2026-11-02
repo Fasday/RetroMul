@@ -2,7 +2,8 @@ unit PSP.GE.VulkanHLE;
 
 // The GE's primitives drawn by a Vulkan graphics pipeline (HLE): fast, not bit
 // exact. PSP.GE.VulkanLLE is the bit-exact compute renderer; PSP.GE.Raster the
-// reference.
+// reference. The device, targets, coherence, texture cache, batches and frames
+// are RM.Vulkan.HLE's (TVulkanHLERenderer); here is what is the PSP's.
 //
 // The engine hands over every primitive transformed, lit and clipped, in the
 // target's pixels. They are drawn with the GPU's rasterizer into images that
@@ -16,12 +17,14 @@ unit PSP.GE.VulkanHLE;
 // newer pixels than guest memory. Any access to a held page, a GE access to
 // VRAM that may overlap one, a texture read from one and Sync bring every
 // target back: the GPU finishes, the images are read back into VRAM and the
-// holds released (an epoch ends). A target that is not held is compared with
+// holds released (a run ends). A target that is not held is compared with
 // what guest memory held when it was last loaded before it is drawn into
 // again, and reloaded when the CPU changed it. Textures are decoded on the CPU
-// (GEFetchTexel), cached, compared with their source bytes once an epoch and
+// (GEFetchTexel), cached, compared with their source bytes once a run and
 // watched (TPSPMemory.WatchPage) from then on; so are depth buffers that are
-// only read. The fragment shader samples texels itself, as the GE does
+// only read. The depth buffer of a target (its own address, stride and
+// permutation in VRAM) is the PSP's: loaded, compared, held, watched and read
+// back here. The fragment shader samples texels itself, as the GE does
 // (wrap, nearest, 4-bit bilinear weights, level of detail), and writes depth
 // as the GE rounds it; lines are drawn as the GE's pixels, one point each.
 {$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
@@ -31,37 +34,16 @@ unit PSP.GE.VulkanHLE;
 interface
 
 uses
-  System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections, System.Generics.Defaults,
-  System.UITypes, Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
-  PSP.GE.Backend, RM.Vulkan.TexScale, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
+  System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections,
+  Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
+  PSP.GE.Backend, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute, RM.Vulkan.HLE;
 
 type
-  TGEVulkanHLEStats = record
-    Draws, Prims, Submits, Flushes, TargetLoads, DepthLoads, DepthCopies, Readbacks: Int64;
-    TextureUploads, TextureHits, Pipelines, Presents, WatchFaults, TargetTextures: Int64;
-    // Uploads scaled (texture scaling), and the time scaling them.
-    TextureScales: Int64;
-    ScaleSeconds: Double;
-    // In flushes: waiting for the GPU, and everything (waiting and reading back).
-    WaitSeconds, FlushSeconds: Double;
-    // Setting up state (textures, targets, depth) for primitives, showing frames.
-    SetupSeconds, PresentSeconds: Double;
-  end;
-
-  TGEHLEImage = record
-    Image: VkImage;
-    Memory: VkDeviceMemory;
-    View: VkImageView;
-  end;
-
-  TGEHLETexture = class;
-
-  TGEHLETarget = class
+  // A target with what is the PSP's: its depth buffer, the stencil's mirror
+  // in the colour's alpha, and the sets of the down-sampling kernel and of
+  // shader blending.
+  TGEHLETarget = class(TVulkanHLETarget)
   public
-    Addr, Format, Stride: Cardinal;
-    // Width is the stride's; the height grows up to MaxHeight as drawing needs it.
-    Width, Height, MaxHeight: Integer;
-    Color, Depth: TGEHLEImage;
     // The depth and stencil aspects alone, for the down-sampling kernel.
     ZView, SView: VkImageView;
     DownSet: VkDescriptorSet;
@@ -69,30 +51,15 @@ type
     // sampled, and a framebuffer without attachments.
     BlendSet: VkDescriptorSet;
     BlendFramebuffer: VkFramebuffer;
-    // The image as a texture, made when one is drawn from it.
-    AsTexture: TGEHLETexture;
     // Drawing changed the stencil since the colour's alpha (its mirror) was
     // loaded.
     AlphaStale: Boolean;
-    LastUse: Int64;
-    Framebuffer: VkFramebuffer;
-    // Guest memory's colour bytes when the image was last made equal to it.
-    Shadow: TBytes;
-    Loaded: Boolean;
-    // Newer than guest memory, with the box drawn. Only the pages of the rows
-    // drawn (HeldY1..HeldY2) are held, the rest of the target's are watched:
-    // a write there makes the image Stale outside those rows (drawing there
-    // reads it back and loads it again).
-    Dirty: Boolean;
-    X1, Y1, X2, Y2: Integer;
-    HeldY1, HeldY2: Integer;
-    Stale: Boolean;
     // The depth buffer the depth aspect holds, as depth values when loaded.
     ZAddr, ZStride: Cardinal;
     ZPerm: Integer;
     ZLoaded: Boolean;
-    // The run (TGEVulkanHLEBackend.FRun) the depth image was last found equal
-    // to guest memory in, -1 for none.
+    // The run the depth image was last found equal to guest memory in, -1
+    // for none.
     ZVerified: Int64;
     // The run its depth pages were watched in.
     ZWatched: Int64;
@@ -101,36 +68,7 @@ type
     ZX1, ZY1, ZX2, ZY2: Integer;
     ZHeldY1, ZHeldY2: Integer;
     ZStale: Boolean;
-    function Bytes: Cardinal;
-  end;
-
-  TGEHLETexture = class
-  public
-    Key: UInt64;
-    // The GE's levels First.. in the image's mip levels 0..Count - 1.
-    First, Count: Integer;
-    Width, Height: Integer;
-    // The bytes it was decoded from: the levels', then the CLUT's. Without
-    // contiguous host bytes for its levels it cannot be compared and is decoded
-    // again in every GE run.
-    Source: TBytes;
-    Checkable: Boolean;
-    // The GE run (TGEVulkanHLEBackend.FRun) it was last compared or decoded in.
-    Verified: Int64;
-    // A render target's colour image used as the texture (not this object's).
-    Target: TGEHLETarget;
-    Image: TGEHLEImage;
-    // The image's texels per the GE's along a side: 1, or the texture scaling
-    // option's (ScaleTexture).
-    Scale: Integer;
-    // A scaled texture's bytes changing in close succession (in frames shown,
-    // the last at ChangedAt): it is made again unscaled.
-    Changes: Integer;
-    ChangedAt: Int64;
-    Sets: TDictionary<Cardinal, VkDescriptorSet>;
-    LastUse: Int64;
     constructor Create;
-    destructor Destroy; override;
   end;
 
   TGEHLEBox = array[0..3] of Single;
@@ -166,45 +104,29 @@ type
     TargetSet: VkDescriptorSet;
   end;
 
-  TGEHLESlot = record
-    Cmd: TVulkanCommands;
-    Vertices: TVulkanBuffer;
-    VertexCount: Integer;
-    Upload: TVulkanBuffer;
-    UploadUsed: Int64;
-  end;
-  PGEHLESlot = ^TGEHLESlot;
 
-  TGEVulkanHLEBackend = class(TGERasterBackend)
+  TGEVulkanHLEBackend = class;
+
+  // What the GE engine draws through (TPSPGEEngine.Backend): the renderer.
+  TGEHLEEngineBackend = class(TGERasterBackend)
+  private
+    FOwner: TGEVulkanHLEBackend;
+  public
+    constructor Create(Owner: TGEVulkanHLEBackend);
+    procedure DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex); override;
+    procedure DrawSprite(const S: TGERaster; const V0, V1: TGEVertex); override;
+    procedure DrawLine(const S: TGERaster; const V0, V1: TGEVertex); override;
+    procedure DrawPoint(const S: TGERaster; const V: TGEVertex); override;
+    procedure Access(Address, Size: Cardinal; Write: Boolean); override;
+    procedure Sync; override;
+    procedure Release; override;
+  end;
+
+  TGEVulkanHLEBackend = class(TVulkanHLERenderer)
   private
     FMemory: TPSPMemory;
-    FCompute: TVulkanCompute;
-    FAPI: TVulkanAPI;
-    FDevice: VkDevice;
-    FScale: Integer;
-    FDepthFormat: VkFormat;
-    FD24: Boolean;
-    FRenderPass: VkRenderPass;
-    FSetLayout: VkDescriptorSetLayout;
-    FLayout: VkPipelineLayout;
+    FEngineBackend: TGEHLEEngineBackend;
     FVertexModule, FFragmentModule: VkShaderModule;
-    FPool: VkDescriptorPool;
-    FPipelines: TDictionary<UInt64, VkPipeline>;
-    FSamplers: TDictionary<Cardinal, VkSampler>;
-    FTargets: TObjectList<TGEHLETarget>;
-    FTextures: TObjectDictionary<UInt64, TGEHLETexture>;
-    // Textures replaced while the GPU may still read them: destroyed once it
-    // has finished (DestroyRetired).
-    FRetired: TList<TGEHLETexture>;
-    // The texture scaling option (0 or 1 none, else the factor) and filter,
-    // and the texels being scaled.
-    FTextureScale: Integer;
-    FTextureFilter: TTexScaleFilter;
-    FScaleIn, FScaleOut: TArray<Cardinal>;
-    FDummy: TGEHLETexture;
-    FSlots: array[0..1] of TGEHLESlot;
-    FSlot: Integer;
-    FReadback: TVulkanBuffer;
     // The kernel that brings targets back to the PSP's resolution (at a scale)
     // and copies the frames shown.
     FDownSetLayout: VkDescriptorSetLayout;
@@ -221,120 +143,92 @@ type
     FBlendLayout: VkPipelineLayout;
     FBlendPool: VkDescriptorPool;
     FBlendPass: VkRenderPass;
-    FUseCounter: Int64;
-    // Recording: the render pass's target, what is bound, the draw being built.
-    FPass: TGEHLETarget;
-    FBoundPipeline: VkPipeline;
-    FBoundSet: VkDescriptorSet;
+    // Recording: what is bound besides the pipeline and the texture.
     FBoundScissor: VkRect2D;
     FBoundBlend: Cardinal;
     FBoundStencil: TGEHLEStencil;
     FBoundPush: array[0..21] of Cardinal;
     FBoundTargetSet: VkDescriptorSet;
-    FPassBlended: Boolean;
     FPushValid, FScissorValid, FBlendValid, FStencilValid: Boolean;
     // What the current state binds.
     FWant: TGEHLEBindings;
-    FDrawFirst, FDrawCount: Integer;
     // The state the draw being built was set up for.
     FLast: TGERaster;
     FLastClut: array[0..1023] of Byte;
     FLastKind: Integer;
     FStateValid: Boolean;
-    FTarget: TGEHLETarget;
     // Clear-mode stencil writes take the primitive's alpha as the reference.
     FClearStencil: Boolean;
     FDepthWrites, FDepthUsed: Boolean;
     // The lowest row the primitive being set up needs in its target.
     FNeedY: Integer;
-    // Counts GE runs and flushes: what was verified in the current one stands.
-    FRun: Int64;
-    FSetCount: Integer;
     FLine: TArray<TGEHLEVertex>;
-    // The shown frames' pixels (Present), reused once their reader let go.
-    FFrames: array[0..2] of TArray<TAlphaColor>;
-    FFlushing: Boolean;
-    FStats: TGEVulkanHLEStats;
-    function CreateImage(Format: VkFormat; Width, Height, Levels: Integer; Usage, Aspect: Cardinal): TGEHLEImage;
-    procedure DestroyImage(var Image: TGEHLEImage);
-    procedure CreateRenderPass;
-    procedure CreateLayout;
+    FDepthLoads, FDepthCopies: Int64;
     procedure CreateDown;
     procedure CreateDownSet(T: TGEHLETarget);
     procedure CreateBlend;
     procedure CreateBlendTarget(T: TGEHLETarget);
-    function CreateView(Image: VkImage; Format: VkFormat; Aspect: Cardinal): VkImageView;
     procedure RefreshAlpha(T: TGEHLETarget);
     procedure DownSample(T: TGEHLETarget; X, Y, W, H: Integer; Offset, What: Cardinal; Step: Integer = 0);
-    function Pipeline(Key: UInt64): VkPipeline;
-    function Sampler(Key: Cardinal): VkSampler;
-    function TextureSet(T: TGEHLETexture; SamplerKey: Cardinal): VkDescriptorSet;
-    procedure FreeSets(T: TGEHLETexture);
-    procedure DestroyTexture(T: TGEHLETexture);
-    procedure DestroyTarget(T: TGEHLETarget);
-    function Slot: PGEHLESlot;
-    procedure Record_;
-    procedure ImageBarrier;
-    procedure EndPass;
-    procedure BeginPass(T: TGEHLETarget; Blended: Boolean);
-    procedure FlushDraw;
-    procedure Submit;
-    procedure WaitAll;
-    function StageUpload(Bytes: Int64; out Offset: Int64): PByte;
-    procedure CopyToImage(Image: VkImage; Aspect: Cardinal; Offset: Int64; Level, X, Y, W, H: Integer);
-    function RangeHeld(Lo, Size: Cardinal): Boolean;
-    procedure HoldRows(T: TGEHLETarget; Y1, Y2: Integer);
     procedure HoldDepthRows(T: TGEHLETarget; Y1, Y2: Integer);
-    procedure HoldNewRows(T: TGEHLETarget; Y1, Y2: Integer);
-    procedure WatchTarget(T: TGEHLETarget);
+    procedure HoldNewDepthRows(T: TGEHLETarget; Y1, Y2: Integer);
     procedure WatchDepth(T: TGEHLETarget);
-    function FindTarget(const S: TGERaster): TGEHLETarget;
-    function BandRows(T: TGEHLETarget; Bytes: Integer): Integer;
-    procedure LoadTarget(T: TGEHLETarget);
-    procedure EnsureTarget(T: TGEHLETarget);
+    function TargetFor(const S: TGERaster): TGEHLETarget;
+    function BandRows(T: TVulkanHLETarget; Bytes: Integer): Integer;
+    procedure Store(T: TGEHLETarget);
     procedure EnsureDepth(T: TGEHLETarget; const S: TGERaster);
     procedure LoadDepth(T: TGEHLETarget);
     procedure CopyDepth(Source, Dest: TGEHLETarget);
-    function EnsureTexture(const S: TGERaster): TGEHLETexture;
-    function AddTexture(Key: UInt64; First, Count: Integer; const S: TGERaster; Scale: Integer): TGEHLETexture;
+    function EnsureTexture(const S: TGERaster): TVulkanHLETexture;
     function TextureScaleFor(const X: TGETexture; First, Count: Integer): Integer;
-    function Changing(T: TGEHLETexture): Boolean;
-    procedure DestroyRetired;
-    procedure SetTextureScale(Value: Integer);
-    function TargetTexture(const S: TGERaster): TGEHLETexture;
-    procedure DecodeTexture(T: TGEHLETexture; const S: TGERaster);
-    function SourceMatches(T: TGEHLETexture; const S: TGERaster): Boolean;
-    procedure ReadbackTarget(T: TGEHLETarget);
-    procedure FlushAll;
+    function TargetTexture(const S: TGERaster): TVulkanHLETexture;
     procedure VRAMFault;
     procedure WatchFault;
     function SameState(const S: TGERaster; Kind: Integer): Boolean;
     procedure SetupState(const S: TGERaster; Kind: Integer);
     procedure ApplyBindings;
     procedure Emit(Kind: Integer; const S: TGERaster; V: PGEHLEVertex; Count: Integer; X1, Y1, X2, Y2: Integer);
+  protected
+    procedure Unbound; override;
+    procedure FreeDevice; override;
+    function PipelineFor(Key: UInt64): VkPipeline; override;
+    function NewTarget: TVulkanHLETarget; override;
+    procedure InitTarget(T: TVulkanHLETarget); override;
+    procedure DestroyTarget(T: TVulkanHLETarget); override;
+    procedure LoadTarget(T: TVulkanHLETarget); override;
+    procedure StoreTarget(T: TVulkanHLETarget); override;
+    function TargetNewer(T: TVulkanHLETarget): Boolean; override;
+    procedure NewRun; override;
+    procedure DescribeTexture(Request: Pointer; out Width, Height, Levels, Scale: Integer); override;
+    function TextureMatches(T: TVulkanHLETexture; Request: Pointer): Boolean; override;
+    procedure DecodeTexture(T: TVulkanHLETexture; Request: Pointer); override;
+    procedure WatchTexture(T: TVulkanHLETexture; Request: Pointer); override;
+    function MemoryEquals(Addr: Cardinal; Data: PByte; Size: Cardinal): Boolean; override;
+    procedure ReadMemory(Addr: Cardinal; Data: PByte; Size: Cardinal); override;
+    procedure HoldMemory(Addr, Size: Cardinal); override;
+    function MemoryHeld(Addr, Size: Cardinal): Boolean; override;
+    procedure ReleaseHolds; override;
+    procedure WatchMemory(Addr, Size: Cardinal); override;
+    procedure ReleaseWatches; override;
+    procedure RecordFrame(T: TVulkanHLETarget; W, H: Integer); override;
   public
     // ShaderBlend: blend in the shader where the device can (else always the
     // fixed function's).
     constructor Create(Memory: TPSPMemory; Compute: TVulkanCompute; Scale: Integer = 1; ShaderBlend: Boolean = True);
     destructor Destroy; override;
-    procedure DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex); override;
-    procedure DrawSprite(const S: TGERaster; const V0, V1: TGEVertex); override;
-    procedure DrawLine(const S: TGERaster; const V0, V1: TGEVertex); override;
-    procedure DrawPoint(const S: TGERaster; const V: TGEVertex); override;
-    procedure Access(Address, Size: Cardinal; Write: Boolean); override;
-    procedure Sync; override;
-    procedure Release; override;
+    procedure DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
+    procedure DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
+    procedure DrawLine(const S: TGERaster; const V0, V1: TGEVertex);
+    procedure DrawPoint(const S: TGERaster; const V: TGEVertex);
+    // The engine is about to read (or write) guest memory from Address itself.
+    procedure Access(Address, Size: Cardinal; Write: Boolean);
     // The shown framebuffer at the scale, when a target holds it (TPSPConsole.OnPresent).
     function Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
-    property Compute: TVulkanCompute read FCompute;
-    property Scale: Integer read FScale;
-    // Textures made larger by ScaleTexture (2 to TexScaleMax; 0 or 1
-    // none) with the filter when the scale is above 1: an option that is not
-    // the GE's. Applies to textures uploaded from then on.
-    property TextureScale: Integer read FTextureScale write SetTextureScale;
-    property TextureFilter: TTexScaleFilter read FTextureFilter write FTextureFilter;
+    // What TPSPGEEngine.Backend is set to (owned by the renderer).
+    property EngineBackend: TGEHLEEngineBackend read FEngineBackend;
     property ShaderBlend: Boolean read FShaderBlend;
-    property Stats: TGEVulkanHLEStats read FStats;
+    property DepthLoads: Int64 read FDepthLoads;
+    property DepthCopies: Int64 read FDepthCopies;
   end;
 
 // An HLE backend on a Vulkan device with a graphics queue, or False with the
@@ -350,13 +244,6 @@ uses
 
 const
   VRAMMask = PSPVRAMSize - 1;
-  VertexCapacity = 1 shl 18;
-  // Release submits no fewer vertices.
-  ReleaseVertices = 6144;
-  UploadCapacity = 16 shl 20;
-  MaxTextures = 1024;
-  MaxTargets = 32;
-  MaxSets = 8192;
   // Texture bytes compared with their source at most (larger ones are
   // compared in their first bytes).
   MaxSource = 4 shl 20;
@@ -396,6 +283,16 @@ type
     LodSlope: Single;
     Blend, FixB, Keep, Stencil: Cardinal;
   end;
+
+  PGERaster = ^TGERaster;
+
+  // A texture as EnsureTexture asks for it (TVulkanHLERenderer.CachedTexture's
+  // request): the GE's levels First.. in the image's Count levels.
+  TGEHLETexRequest = record
+    S: PGERaster;
+    First, Count: Integer;
+  end;
+  PGEHLETexRequest = ^TGEHLETexRequest;
 
 function Bpp(Format: Cardinal): Cardinal; inline;
 begin
@@ -484,24 +381,54 @@ end;
 
 { TGEHLETarget }
 
-function TGEHLETarget.Bytes: Cardinal;
-begin
-  Result := Cardinal(Height) * Stride * Bpp(Format);
-end;
-
-{ TGEHLETexture }
-
-constructor TGEHLETexture.Create;
+constructor TGEHLETarget.Create;
 begin
   inherited;
-  Scale := 1;
-  Sets := TDictionary<Cardinal, VkDescriptorSet>.Create;
+  ZVerified := -1;
+  ZWatched := -1;
 end;
 
-destructor TGEHLETexture.Destroy;
+{ TGEHLEEngineBackend }
+
+constructor TGEHLEEngineBackend.Create(Owner: TGEVulkanHLEBackend);
 begin
-  Sets.Free;
-  inherited;
+  inherited Create;
+  FOwner := Owner;
+end;
+
+procedure TGEHLEEngineBackend.DrawTriangle(const S: TGERaster; const V0, V1, V2: TGEVertex);
+begin
+  FOwner.DrawTriangle(S, V0, V1, V2);
+end;
+
+procedure TGEHLEEngineBackend.DrawSprite(const S: TGERaster; const V0, V1: TGEVertex);
+begin
+  FOwner.DrawSprite(S, V0, V1);
+end;
+
+procedure TGEHLEEngineBackend.DrawLine(const S: TGERaster; const V0, V1: TGEVertex);
+begin
+  FOwner.DrawLine(S, V0, V1);
+end;
+
+procedure TGEHLEEngineBackend.DrawPoint(const S: TGERaster; const V: TGEVertex);
+begin
+  FOwner.DrawPoint(S, V);
+end;
+
+procedure TGEHLEEngineBackend.Access(Address, Size: Cardinal; Write: Boolean);
+begin
+  FOwner.Access(Address, Size, Write);
+end;
+
+procedure TGEHLEEngineBackend.Sync;
+begin
+  FOwner.Sync;
+end;
+
+procedure TGEHLEEngineBackend.Release;
+begin
+  FOwner.Release;
 end;
 
 { TGEVulkanHLEBackend }
@@ -537,278 +464,89 @@ constructor TGEVulkanHLEBackend.Create(Memory: TPSPMemory; Compute: TVulkanCompu
 var
   Props: VkFormatProperties;
 begin
-  inherited Create;
   FMemory := Memory;
-  FCompute := Compute;
-  FAPI := Compute.API;
-  FDevice := Compute.Device;
-  FScale := EnsureRange(Scale, 1, 8);
-  FPipelines := TDictionary<UInt64, VkPipeline>.Create;
-  FSamplers := TDictionary<Cardinal, VkSampler>.Create;
-  FTargets := TObjectList<TGEHLETarget>.Create(False);
-  FTextures := TObjectDictionary<UInt64, TGEHLETexture>.Create([]);
-  FRetired := TList<TGEHLETexture>.Create;
-  FAPI.vkGetPhysicalDeviceFormatProperties(Compute.PhysicalDevice, VK_FORMAT_D32_SFLOAT_S8_UINT, @Props);
-  if (Props.optimalTilingFeatures and VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) <> 0 then
-    FDepthFormat := VK_FORMAT_D32_SFLOAT_S8_UINT
-  else
-  begin
-    FAPI.vkGetPhysicalDeviceFormatProperties(Compute.PhysicalDevice, VK_FORMAT_D24_UNORM_S8_UINT, @Props);
-    if (Props.optimalTilingFeatures and VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) = 0 then
-      raise EVulkanError.Create('No depth/stencil format with 8 stencil bits.');
-    FDepthFormat := VK_FORMAT_D24_UNORM_S8_UINT;
-    FD24 := True;
-  end;
-  CreateRenderPass;
-  CreateLayout;
+  inherited Create(Compute, Scale, SizeOf(TGEHLEVertex), SizeOf(TGEHLEPush), PSPFrameWidth, PSPFrameHeight);
+  FEngineBackend := TGEHLEEngineBackend.Create(Self);
+  // The shader-blending pipelines and the down-sampling kernel write the
+  // colour as a storage image (RGBA8 storage is required of every device);
+  // the kernel samples the depth.
+  FColorUsage := FColorUsage or VK_IMAGE_USAGE_STORAGE_BIT;
+  FDepthUsage := FDepthUsage or VK_IMAGE_USAGE_SAMPLED_BIT;
   FVertexModule := Compute.CreateShaderModule(PSPGEHLEVertSPV);
   FFragmentModule := Compute.CreateShaderModule(PSPGEHLEFragSPV);
-  for var I := 0 to High(FSlots) do
-  begin
-    FSlots[I].Cmd := Compute.CreateCommands;
-    FSlots[I].Vertices := Compute.CreateBuffer(VertexCapacity * SizeOf(TGEHLEVertex), vbkShared,
-      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    FSlots[I].Upload := Compute.CreateBuffer(UploadCapacity, vbkUpload, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-  end;
-  // Also the frames shown at the scale.
-  FReadback := Compute.CreateBuffer(Max(UploadCapacity, PSPFrameWidth * PSPFrameHeight * 4 * FScale * FScale), vbkReadback,
-    VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   CreateDown;
   FAPI.vkGetPhysicalDeviceFormatProperties(Compute.PhysicalDevice, VK_FORMAT_R8G8B8A8_UNORM, @Props);
   FShaderBlend := ShaderBlend and Compute.Features.PixelInterlock and
     ((Props.optimalTilingFeatures and VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) <> 0);
   if FShaderBlend then
     CreateBlend;
-  // The texture of untextured draws: one opaque white texel.
-  FDummy := TGEHLETexture.Create;
-  FDummy.Width := 1;
-  FDummy.Height := 1;
-  FDummy.Count := 1;
-  FDummy.Image := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, 1, 1, 1,
-    VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-  var Offset: Int64;
-  PCardinal(StageUpload(4, Offset))^ := $FFFFFFFF;
-  CopyToImage(FDummy.Image.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, 0, 0, 0, 1, 1);
   FMemory.OnVRAMFault := VRAMFault;
   FMemory.OnWatchFault := WatchFault;
 end;
 
 destructor TGEVulkanHLEBackend.Destroy;
 begin
-  if FCompute <> nil then
+  // Guest memory stops calling back; what is drawn goes back to it
+  // (TVulkanHLERenderer.Destroy).
+  if (FCompute <> nil) and (FMemory <> nil) then
   begin
-    try
-      FlushAll;
-    except
-    end;
-    FCompute.WaitIdle;
     if Assigned(FMemory.OnVRAMFault) then
       FMemory.OnVRAMFault := nil;
     FMemory.OnWatchFault := nil;
-    for var T in FTargets do
-      DestroyTarget(T);
-    FTargets.Free;
-    for var T in FTextures.Values do
-      DestroyTexture(T);
-    FTextures.Free;
-    DestroyRetired;
-    FRetired.Free;
-    if FDummy <> nil then
-      DestroyTexture(FDummy);
-    for var P in FPipelines.Values do
-      FAPI.vkDestroyPipeline(FDevice, P, nil);
-    FPipelines.Free;
-    for var S in FSamplers.Values do
-      FAPI.vkDestroySampler(FDevice, S, nil);
-    FSamplers.Free;
-    for var I := 0 to High(FSlots) do
-    begin
-      FSlots[I].Cmd.Free;
-      FSlots[I].Vertices.Free;
-      FSlots[I].Upload.Free;
-    end;
-    FReadback.Free;
-    if FDownPipeline <> 0 then FAPI.vkDestroyPipeline(FDevice, FDownPipeline, nil);
-    if FDownModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FDownModule, nil);
-    if FDownPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FDownPool, nil);
-    if FDownLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FDownLayout, nil);
-    if FDownSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FDownSetLayout, nil);
-    if FBlendModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FBlendModule, nil);
-    if FBlendPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FBlendPool, nil);
-    if FBlendLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FBlendLayout, nil);
-    if FBlendSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FBlendSetLayout, nil);
-    if FBlendPass <> 0 then FAPI.vkDestroyRenderPass(FDevice, FBlendPass, nil);
-    if FVertexModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FVertexModule, nil);
-    if FFragmentModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FFragmentModule, nil);
-    if FPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FPool, nil);
-    if FLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FLayout, nil);
-    if FSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FSetLayout, nil);
-    if FRenderPass <> 0 then FAPI.vkDestroyRenderPass(FDevice, FRenderPass, nil);
-    FCompute.Free;
   end;
+  inherited;
+  FEngineBackend.Free;
+end;
+
+procedure TGEVulkanHLEBackend.FreeDevice;
+begin
+  if FDownPipeline <> 0 then FAPI.vkDestroyPipeline(FDevice, FDownPipeline, nil);
+  if FDownModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FDownModule, nil);
+  if FDownPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FDownPool, nil);
+  if FDownLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FDownLayout, nil);
+  if FDownSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FDownSetLayout, nil);
+  if FBlendModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FBlendModule, nil);
+  if FBlendPool <> 0 then FAPI.vkDestroyDescriptorPool(FDevice, FBlendPool, nil);
+  if FBlendLayout <> 0 then FAPI.vkDestroyPipelineLayout(FDevice, FBlendLayout, nil);
+  if FBlendSetLayout <> 0 then FAPI.vkDestroyDescriptorSetLayout(FDevice, FBlendSetLayout, nil);
+  if FBlendPass <> 0 then FAPI.vkDestroyRenderPass(FDevice, FBlendPass, nil);
+  if FVertexModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FVertexModule, nil);
+  if FFragmentModule <> 0 then FAPI.vkDestroyShaderModule(FDevice, FFragmentModule, nil);
   inherited;
 end;
 
-function TGEVulkanHLEBackend.CreateImage(Format: VkFormat; Width, Height, Levels: Integer;
-  Usage, Aspect: Cardinal): TGEHLEImage;
-var
-  Info: VkImageCreateInfo;
-  Req: VkMemoryRequirements;
-  Alloc: VkMemoryAllocateInfo;
-  View: VkImageViewCreateInfo;
-  B: VkImageMemoryBarrier;
+procedure TGEVulkanHLEBackend.Unbound;
 begin
-  Result := Default(TGEHLEImage);
-  Info := Default(VkImageCreateInfo);
-  Info.sType := VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-  Info.imageType := VK_IMAGE_TYPE_2D;
-  Info.format := Format;
-  Info.extent.width := Width;
-  Info.extent.height := Height;
-  Info.extent.depth := 1;
-  Info.mipLevels := Levels;
-  Info.arrayLayers := 1;
-  Info.samples := VK_SAMPLE_COUNT_1_BIT;
-  Info.tiling := VK_IMAGE_TILING_OPTIMAL;
-  Info.usage := Usage;
-  Info.sharingMode := VK_SHARING_MODE_EXCLUSIVE;
-  Info.initialLayout := VK_IMAGE_LAYOUT_UNDEFINED;
-  CheckVulkan(FAPI.vkCreateImage(FDevice, @Info, nil, @Result.Image), 'vkCreateImage');
-  FAPI.vkGetImageMemoryRequirements(FDevice, Result.Image, @Req);
-  Alloc := Default(VkMemoryAllocateInfo);
-  Alloc.sType := VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  Alloc.allocationSize := Req.size;
-  var MemoryType := FCompute.FindMemory(Req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, []);
-  if MemoryType < 0 then
-    MemoryType := FCompute.FindMemory(Req.memoryTypeBits, 0, []);
-  Alloc.memoryTypeIndex := MemoryType;
-  CheckVulkan(FAPI.vkAllocateMemory(FDevice, @Alloc, nil, @Result.Memory), 'vkAllocateMemory (image)');
-  CheckVulkan(FAPI.vkBindImageMemory(FDevice, Result.Image, Result.Memory, 0), 'vkBindImageMemory');
-  View := Default(VkImageViewCreateInfo);
-  View.sType := VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  View.image := Result.Image;
-  View.viewType := VK_IMAGE_VIEW_TYPE_2D;
-  View.format := Format;
-  View.subresourceRange.aspectMask := Aspect;
-  View.subresourceRange.levelCount := Levels;
-  View.subresourceRange.layerCount := 1;
-  CheckVulkan(FAPI.vkCreateImageView(FDevice, @View, nil, @Result.View), 'vkCreateImageView');
-  // Every image lives in the general layout.
-  Record_;
-  EndPass;
-  B := Default(VkImageMemoryBarrier);
-  B.sType := VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  B.dstAccessMask := VK_ACCESS_MEMORY_READ_BIT or VK_ACCESS_MEMORY_WRITE_BIT;
-  B.oldLayout := VK_IMAGE_LAYOUT_UNDEFINED;
-  B.newLayout := VK_IMAGE_LAYOUT_GENERAL;
-  B.srcQueueFamilyIndex := VK_QUEUE_FAMILY_IGNORED;
-  B.dstQueueFamilyIndex := VK_QUEUE_FAMILY_IGNORED;
-  B.image := Result.Image;
-  B.subresourceRange.aspectMask := Aspect;
-  B.subresourceRange.levelCount := Levels;
-  B.subresourceRange.layerCount := 1;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-    0, 0, nil, 0, nil, 1, @B);
+  FBoundTargetSet := 0;
+  FPushValid := False;
+  FScissorValid := False;
+  FBlendValid := False;
+  FStencilValid := False;
 end;
 
-procedure TGEVulkanHLEBackend.DestroyImage(var Image: TGEHLEImage);
+function TGEVulkanHLEBackend.NewTarget: TVulkanHLETarget;
 begin
-  if Image.View <> 0 then FAPI.vkDestroyImageView(FDevice, Image.View, nil);
-  if Image.Image <> 0 then FAPI.vkDestroyImage(FDevice, Image.Image, nil);
-  if Image.Memory <> 0 then FAPI.vkFreeMemory(FDevice, Image.Memory, nil);
-  Image := Default(TGEHLEImage);
+  Result := TGEHLETarget.Create;
 end;
 
-procedure TGEVulkanHLEBackend.CreateRenderPass;
-var
-  Attachments: array[0..1] of VkAttachmentDescription;
-  ColorRef, DepthRef: VkAttachmentReference;
-  Subpass: VkSubpassDescription;
-  Deps: array[0..1] of VkSubpassDependency;
-  Info: VkRenderPassCreateInfo;
+procedure TGEVulkanHLEBackend.InitTarget(T: TVulkanHLETarget);
 begin
-  Attachments[0] := Default(VkAttachmentDescription);
-  Attachments[0].format := VK_FORMAT_R8G8B8A8_UNORM;
-  Attachments[0].samples := VK_SAMPLE_COUNT_1_BIT;
-  Attachments[0].loadOp := VK_ATTACHMENT_LOAD_OP_LOAD;
-  Attachments[0].storeOp := VK_ATTACHMENT_STORE_OP_STORE;
-  Attachments[0].stencilLoadOp := VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  Attachments[0].stencilStoreOp := VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  Attachments[0].initialLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Attachments[0].finalLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Attachments[1] := Attachments[0];
-  Attachments[1].format := FDepthFormat;
-  Attachments[1].stencilLoadOp := VK_ATTACHMENT_LOAD_OP_LOAD;
-  Attachments[1].stencilStoreOp := VK_ATTACHMENT_STORE_OP_STORE;
-  ColorRef.attachment := 0;
-  ColorRef.layout := VK_IMAGE_LAYOUT_GENERAL;
-  DepthRef.attachment := 1;
-  DepthRef.layout := VK_IMAGE_LAYOUT_GENERAL;
-  Subpass := Default(VkSubpassDescription);
-  Subpass.pipelineBindPoint := VK_PIPELINE_BIND_POINT_GRAPHICS;
-  Subpass.colorAttachmentCount := 1;
-  Subpass.pColorAttachments := @ColorRef;
-  Subpass.pDepthStencilAttachment := @DepthRef;
-  // Transfers and earlier passes before, transfers after.
-  Deps[0] := Default(VkSubpassDependency);
-  Deps[0].srcSubpass := VK_SUBPASS_EXTERNAL;
-  Deps[0].dstSubpass := 0;
-  Deps[0].srcStageMask := VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-  Deps[0].dstStageMask := VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-  Deps[0].srcAccessMask := VK_ACCESS_MEMORY_WRITE_BIT;
-  Deps[0].dstAccessMask := VK_ACCESS_MEMORY_READ_BIT or VK_ACCESS_MEMORY_WRITE_BIT;
-  Deps[1] := Deps[0];
-  Deps[1].srcSubpass := 0;
-  Deps[1].dstSubpass := VK_SUBPASS_EXTERNAL;
-  Info := Default(VkRenderPassCreateInfo);
-  Info.sType := VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  Info.attachmentCount := 2;
-  Info.pAttachments := @Attachments[0];
-  Info.subpassCount := 1;
-  Info.pSubpasses := @Subpass;
-  Info.dependencyCount := 2;
-  Info.pDependencies := @Deps[0];
-  CheckVulkan(FAPI.vkCreateRenderPass(FDevice, @Info, nil, @FRenderPass), 'vkCreateRenderPass');
+  CreateDownSet(TGEHLETarget(T));
+  if FShaderBlend then
+    CreateBlendTarget(TGEHLETarget(T));
 end;
 
-procedure TGEVulkanHLEBackend.CreateLayout;
-var
-  Binding: VkDescriptorSetLayoutBinding;
-  SetInfo: VkDescriptorSetLayoutCreateInfo;
-  Push: VkPushConstantRange;
-  Info: VkPipelineLayoutCreateInfo;
-  PoolSize: VkDescriptorPoolSize;
-  PoolInfo: VkDescriptorPoolCreateInfo;
+function TGEVulkanHLEBackend.TargetNewer(T: TVulkanHLETarget): Boolean;
 begin
-  Binding := Default(VkDescriptorSetLayoutBinding);
-  Binding.binding := 0;
-  Binding.descriptorType := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  Binding.descriptorCount := 1;
-  Binding.stageFlags := VK_SHADER_STAGE_FRAGMENT_BIT;
-  SetInfo := Default(VkDescriptorSetLayoutCreateInfo);
-  SetInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  SetInfo.bindingCount := 1;
-  SetInfo.pBindings := @Binding;
-  CheckVulkan(FAPI.vkCreateDescriptorSetLayout(FDevice, @SetInfo, nil, @FSetLayout), 'vkCreateDescriptorSetLayout');
-  Push.stageFlags := VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT;
-  Push.offset := 0;
-  Push.size := SizeOf(TGEHLEPush);
-  Info := Default(VkPipelineLayoutCreateInfo);
-  Info.sType := VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  Info.setLayoutCount := 1;
-  Info.pSetLayouts := @FSetLayout;
-  Info.pushConstantRangeCount := 1;
-  Info.pPushConstantRanges := @Push;
-  CheckVulkan(FAPI.vkCreatePipelineLayout(FDevice, @Info, nil, @FLayout), 'vkCreatePipelineLayout');
-  PoolSize.&type := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  PoolSize.descriptorCount := MaxSets;
-  PoolInfo := Default(VkDescriptorPoolCreateInfo);
-  PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  PoolInfo.flags := VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  PoolInfo.maxSets := MaxSets;
-  PoolInfo.poolSizeCount := 1;
-  PoolInfo.pPoolSizes := @PoolSize;
-  CheckVulkan(FAPI.vkCreateDescriptorPool(FDevice, @PoolInfo, nil, @FPool), 'vkCreateDescriptorPool');
+  Result := T.Dirty or TGEHLETarget(T).ZDirty;
+end;
+
+// Everything set up is set up again (textures and depth buffers are compared
+// with guest memory again).
+procedure TGEVulkanHLEBackend.NewRun;
+begin
+  inherited;
+  FStateValid := False;
 end;
 
 // Key bits: 0-1 topology kind, 2 blend, 3-7 source factor, 8-12 destination
@@ -816,7 +554,7 @@ end;
 // function, 25 depth test, 26 depth write, 27-29 depth compare, 30 stencil
 // test, 31-33 stencil compare, 34-36 fail, 37-39 depth fail, 40-42 pass, 43
 // shader blending (no attachments: the rest of the key is unused).
-function TGEVulkanHLEBackend.Pipeline(Key: UInt64): VkPipeline;
+function TGEVulkanHLEBackend.PipelineFor(Key: UInt64): VkPipeline;
 var
   Stages: array[0..1] of VkPipelineShaderStageCreateInfo;
   Binding: VkVertexInputBindingDescription;
@@ -833,8 +571,6 @@ var
   DynamicStates: array[0..5] of VkDynamicState;
   Info: VkGraphicsPipelineCreateInfo;
 begin
-  if FPipelines.TryGetValue(Key, Result) then
-    Exit;
   for var I := 0 to 1 do
   begin
     Stages[I] := Default(VkPipelineShaderStageCreateInfo);
@@ -955,154 +691,20 @@ begin
   end;
   Info.basePipelineIndex := -1;
   CheckVulkan(FAPI.vkCreateGraphicsPipelines(FDevice, 0, 1, @Info, nil, @Result), 'vkCreateGraphicsPipelines');
-  FPipelines.Add(Key, Result);
-  Inc(FStats.Pipelines);
 end;
 
-// Key bits: 0 clamp U, 1 clamp V, 2 linear magnification, 3 linear
-// minification, 4 mipmaps, 5 linear between levels, 8-11 the highest level.
-function TGEVulkanHLEBackend.Sampler(Key: Cardinal): VkSampler;
-var
-  Info: VkSamplerCreateInfo;
+procedure TGEVulkanHLEBackend.DestroyTarget(T: TVulkanHLETarget);
 begin
-  if FSamplers.TryGetValue(Key, Result) then
-    Exit;
-  Info := Default(VkSamplerCreateInfo);
-  Info.sType := VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  Info.magFilter := (Key shr 2) and 1;
-  Info.minFilter := (Key shr 3) and 1;
-  Info.mipmapMode := (Key shr 5) and 1;
-  if (Key and 1) <> 0 then
-    Info.addressModeU := VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
-  else
-    Info.addressModeU := VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  if (Key and 2) <> 0 then
-    Info.addressModeV := VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
-  else
-    Info.addressModeV := VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  Info.addressModeW := VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  Info.minLod := 0;
-  if (Key and 16) <> 0 then
-    Info.maxLod := (Key shr 8) and 15
-  else
-    Info.maxLod := 0;
-  Info.borderColor := VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-  CheckVulkan(FAPI.vkCreateSampler(FDevice, @Info, nil, @Result), 'vkCreateSampler');
-  FSamplers.Add(Key, Result);
-end;
-
-function TGEVulkanHLEBackend.TextureSet(T: TGEHLETexture; SamplerKey: Cardinal): VkDescriptorSet;
-var
-  Alloc: VkDescriptorSetAllocateInfo;
-  ImageInfo: VkDescriptorImageInfo;
-  Write: VkWriteDescriptorSet;
-begin
-  if T.Sets.TryGetValue(SamplerKey, Result) then
-    Exit;
-  // The pool is full: once the GPU is done with them every set goes, and
-  // each texture makes the ones it needs again.
-  if FSetCount >= MaxSets then
-  begin
-    WaitAll;
-    DestroyRetired;
-    for var U in FTextures.Values do
-      FreeSets(U);
-    for var U in FTargets do
-      if U.AsTexture <> nil then
-        FreeSets(U.AsTexture);
-    FreeSets(FDummy);
-  end;
-  Alloc := Default(VkDescriptorSetAllocateInfo);
-  Alloc.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  Alloc.descriptorPool := FPool;
-  Alloc.descriptorSetCount := 1;
-  Alloc.pSetLayouts := @FSetLayout;
-  CheckVulkan(FAPI.vkAllocateDescriptorSets(FDevice, @Alloc, @Result), 'vkAllocateDescriptorSets');
-  ImageInfo.sampler := Sampler(SamplerKey);
-  ImageInfo.imageView := T.Image.View;
-  ImageInfo.imageLayout := VK_IMAGE_LAYOUT_GENERAL;
-  Write := Default(VkWriteDescriptorSet);
-  Write.sType := VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  Write.dstSet := Result;
-  Write.dstBinding := 0;
-  Write.descriptorCount := 1;
-  Write.descriptorType := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  Write.pImageInfo := @ImageInfo;
-  FAPI.vkUpdateDescriptorSets(FDevice, 1, @Write, 0, nil);
-  T.Sets.Add(SamplerKey, Result);
-  Inc(FSetCount);
-end;
-
-procedure TGEVulkanHLEBackend.FreeSets(T: TGEHLETexture);
-begin
-  for var S in T.Sets.Values do
-  begin
-    var H := S;
-    FAPI.vkFreeDescriptorSets(FDevice, FPool, 1, @H);
-    Dec(FSetCount);
-  end;
-  T.Sets.Clear;
-  if FBoundSet <> 0 then
-    FBoundSet := 0;
-end;
-
-procedure TGEVulkanHLEBackend.DestroyTexture(T: TGEHLETexture);
-begin
-  FreeSets(T);
-  DestroyImage(T.Image);
-  T.Free;
-end;
-
-// The GPU has finished (WaitAll).
-procedure TGEVulkanHLEBackend.DestroyRetired;
-begin
-  for var T in FRetired do
-    DestroyTexture(T);
-  FRetired.Clear;
-end;
-
-procedure TGEVulkanHLEBackend.SetTextureScale(Value: Integer);
-begin
-  if Value < 2 then
-    Value := 0;
-  FTextureScale := Min(Value, TexScaleMax);
-end;
-
-procedure TGEVulkanHLEBackend.DestroyTarget(T: TGEHLETarget);
-begin
-  if T.Framebuffer <> 0 then
-    FAPI.vkDestroyFramebuffer(FDevice, T.Framebuffer, nil);
-  if T.DownSet <> 0 then
-    FAPI.vkFreeDescriptorSets(FDevice, FDownPool, 1, @T.DownSet);
-  if T.BlendSet <> 0 then
-    FAPI.vkFreeDescriptorSets(FDevice, FBlendPool, 1, @T.BlendSet);
-  if T.BlendFramebuffer <> 0 then
-    FAPI.vkDestroyFramebuffer(FDevice, T.BlendFramebuffer, nil);
-  if T.AsTexture <> nil then
-  begin
-    FreeSets(T.AsTexture);
-    T.AsTexture.Free;
-  end;
-  if T.ZView <> 0 then FAPI.vkDestroyImageView(FDevice, T.ZView, nil);
-  if T.SView <> 0 then FAPI.vkDestroyImageView(FDevice, T.SView, nil);
-  DestroyImage(T.Color);
-  DestroyImage(T.Depth);
-  T.Free;
-end;
-
-function TGEVulkanHLEBackend.CreateView(Image: VkImage; Format: VkFormat; Aspect: Cardinal): VkImageView;
-var
-  View: VkImageViewCreateInfo;
-begin
-  View := Default(VkImageViewCreateInfo);
-  View.sType := VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  View.image := Image;
-  View.viewType := VK_IMAGE_VIEW_TYPE_2D;
-  View.format := Format;
-  View.subresourceRange.aspectMask := Aspect;
-  View.subresourceRange.levelCount := 1;
-  View.subresourceRange.layerCount := 1;
-  CheckVulkan(FAPI.vkCreateImageView(FDevice, @View, nil, @Result), 'vkCreateImageView');
+  var G := TGEHLETarget(T);
+  if G.DownSet <> 0 then
+    FAPI.vkFreeDescriptorSets(FDevice, FDownPool, 1, @G.DownSet);
+  if G.BlendSet <> 0 then
+    FAPI.vkFreeDescriptorSets(FDevice, FBlendPool, 1, @G.BlendSet);
+  if G.BlendFramebuffer <> 0 then
+    FAPI.vkDestroyFramebuffer(FDevice, G.BlendFramebuffer, nil);
+  if G.ZView <> 0 then FAPI.vkDestroyImageView(FDevice, G.ZView, nil);
+  if G.SView <> 0 then FAPI.vkDestroyImageView(FDevice, G.SView, nil);
+  inherited;
 end;
 
 // The down-sampling kernel (source/gpu/shaders/PSPGEHLEDown.comp): the
@@ -1143,15 +745,15 @@ begin
   Info.pPushConstantRanges := @Push;
   CheckVulkan(FAPI.vkCreatePipelineLayout(FDevice, @Info, nil, @FDownLayout), 'vkCreatePipelineLayout');
   Sizes[0].&type := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  Sizes[0].descriptorCount := 3 * (MaxTargets + 8);
+  Sizes[0].descriptorCount := 3 * (HLEMaxTargets + 8);
   Sizes[1].&type := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  Sizes[1].descriptorCount := MaxTargets + 8;
+  Sizes[1].descriptorCount := HLEMaxTargets + 8;
   Sizes[2].&type := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  Sizes[2].descriptorCount := MaxTargets + 8;
+  Sizes[2].descriptorCount := HLEMaxTargets + 8;
   PoolInfo := Default(VkDescriptorPoolCreateInfo);
   PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   PoolInfo.flags := VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  PoolInfo.maxSets := MaxTargets + 8;
+  PoolInfo.maxSets := HLEMaxTargets + 8;
   PoolInfo.poolSizeCount := 3;
   PoolInfo.pPoolSizes := @Sizes[0];
   CheckVulkan(FAPI.vkCreateDescriptorPool(FDevice, @PoolInfo, nil, @FDownPool), 'vkCreateDescriptorPool');
@@ -1211,13 +813,13 @@ begin
   Info.pPushConstantRanges := @Push;
   CheckVulkan(FAPI.vkCreatePipelineLayout(FDevice, @Info, nil, @FBlendLayout), 'vkCreatePipelineLayout');
   Sizes[0].&type := VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-  Sizes[0].descriptorCount := MaxTargets + 8;
+  Sizes[0].descriptorCount := HLEMaxTargets + 8;
   Sizes[1].&type := VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  Sizes[1].descriptorCount := 2 * (MaxTargets + 8);
+  Sizes[1].descriptorCount := 2 * (HLEMaxTargets + 8);
   PoolInfo := Default(VkDescriptorPoolCreateInfo);
   PoolInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   PoolInfo.flags := VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-  PoolInfo.maxSets := MaxTargets + 8;
+  PoolInfo.maxSets := HLEMaxTargets + 8;
   PoolInfo.poolSizeCount := 2;
   PoolInfo.pPoolSizes := @Sizes[0];
   CheckVulkan(FAPI.vkCreateDescriptorPool(FDevice, @PoolInfo, nil, @FBlendPool), 'vkCreateDescriptorPool');
@@ -1315,195 +917,19 @@ begin
   FPushValid := False;
 end;
 
-function TGEVulkanHLEBackend.Slot: PGEHLESlot;
-begin
-  Result := @FSlots[FSlot];
-end;
-
-procedure TGEVulkanHLEBackend.Record_;
-begin
-  var S := Slot;
-  if S.Cmd.Recording then
-    Exit;
-  // Waits for the slot's previous submission: its buffers are free again.
-  S.Cmd.Start;
-  S.VertexCount := 0;
-  S.UploadUsed := 0;
-  FPass := nil;
-  FDrawCount := 0;
-  FBoundPipeline := 0;
-  FBoundSet := 0;
-  FPushValid := False;
-  FScissorValid := False;
-  FBlendValid := False;
-  FStencilValid := False;
-end;
-
-// Everything before is visible to everything after (transfers, attachments,
-// shader reads).
-procedure TGEVulkanHLEBackend.ImageBarrier;
-var
-  B: VkMemoryBarrier;
-begin
-  B := Default(VkMemoryBarrier);
-  B.sType := VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-  B.srcAccessMask := VK_ACCESS_MEMORY_WRITE_BIT;
-  B.dstAccessMask := VK_ACCESS_MEMORY_READ_BIT or VK_ACCESS_MEMORY_WRITE_BIT;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-    0, 1, @B, 0, nil, 0, nil);
-end;
-
-procedure TGEVulkanHLEBackend.FlushDraw;
-begin
-  if FDrawCount = 0 then
-    Exit;
-  FAPI.vkCmdDraw(Slot.Cmd.Handle, FDrawCount, 1, FDrawFirst, 0);
-  Inc(FStats.Draws);
-  FDrawCount := 0;
-end;
-
-procedure TGEVulkanHLEBackend.EndPass;
-begin
-  FlushDraw;
-  if FPass = nil then
-    Exit;
-  FAPI.vkCmdEndRenderPass(Slot.Cmd.Handle);
-  FPass := nil;
-end;
-
-// The target's render pass: with its colour and depth/stencil attachments, or,
-// for the shader-blending pipelines, without attachments.
-procedure TGEVulkanHLEBackend.BeginPass(T: TGEHLETarget; Blended: Boolean);
-var
-  Info: VkRenderPassBeginInfo;
-  VP: VkViewport;
-  Offset: VkDeviceSize;
-begin
-  Record_;
-  if (FPass = T) and (FPassBlended = Blended) then
-    Exit;
-  EndPass;
-  // Everything recorded before is visible to the pass: the render passes'
-  // external dependencies alone proved not to be enough for a target drawn in
-  // one pass and sampled in the next (Tekken 6's glow).
-  ImageBarrier;
-  Info := Default(VkRenderPassBeginInfo);
-  Info.sType := VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-  if Blended then
-  begin
-    Info.renderPass := FBlendPass;
-    Info.framebuffer := T.BlendFramebuffer;
-  end
-  else
-  begin
-    Info.renderPass := FRenderPass;
-    Info.framebuffer := T.Framebuffer;
-  end;
-  Info.renderArea.extent.width := T.Width * FScale;
-  Info.renderArea.extent.height := T.Height * FScale;
-  var Cmd := Slot.Cmd.Handle;
-  FAPI.vkCmdBeginRenderPass(Cmd, @Info, VK_SUBPASS_CONTENTS_INLINE);
-  VP := Default(VkViewport);
-  VP.width := T.Width * FScale;
-  VP.height := T.Height * FScale;
-  VP.maxDepth := 1;
-  FAPI.vkCmdSetViewport(Cmd, 0, 1, @VP);
-  var Buffer := Slot.Vertices.Handle;
-  Offset := 0;
-  FAPI.vkCmdBindVertexBuffers(Cmd, 0, 1, @Buffer, @Offset);
-  FPass := T;
-  FPassBlended := Blended;
-  FBoundPipeline := 0;
-  FBoundSet := 0;
-  FBoundTargetSet := 0;
-  FPushValid := False;
-  FScissorValid := False;
-  FBlendValid := False;
-  FStencilValid := False;
-end;
-
-procedure TGEVulkanHLEBackend.Submit;
-begin
-  var S := Slot;
-  if not S.Cmd.Recording then
-    Exit;
-  EndPass;
-  S.Vertices.Flush(0, UInt64(S.VertexCount) * SizeOf(TGEHLEVertex));
-  S.Cmd.Submit;
-  Inc(FStats.Submits);
-  FSlot := (FSlot + 1) mod Length(FSlots);
-end;
-
-procedure TGEVulkanHLEBackend.WaitAll;
-begin
-  Submit;
-  for var I := 0 to High(FSlots) do
-    FSlots[I].Cmd.Wait;
-end;
-
-function TGEVulkanHLEBackend.StageUpload(Bytes: Int64; out Offset: Int64): PByte;
-begin
-  Record_;
-  EndPass;
-  if Bytes > UploadCapacity then
-    raise EVulkanError.CreateFmt('An upload of %d bytes is larger than the staging buffer.', [Bytes]);
-  var S := Slot;
-  Offset := (S.UploadUsed + 15) and not Int64(15);
-  if Offset + Bytes > UploadCapacity then
-  begin
-    Submit;
-    Record_;
-    S := Slot;
-    Offset := 0;
-  end;
-  S.UploadUsed := Offset + Bytes;
-  Result := S.Upload.Data + Offset;
-end;
-
-procedure TGEVulkanHLEBackend.CopyToImage(Image: VkImage; Aspect: Cardinal; Offset: Int64; Level, X, Y, W, H: Integer);
-var
-  Region: VkBufferImageCopy;
-begin
-  var S := Slot;
-  S.Upload.Flush(Offset, S.UploadUsed - Offset);
-  ImageBarrier;
-  Region := Default(VkBufferImageCopy);
-  Region.bufferOffset := Offset;
-  Region.imageSubresource.aspectMask := Aspect;
-  Region.imageSubresource.mipLevel := Level;
-  Region.imageSubresource.layerCount := 1;
-  Region.imageOffset.x := X;
-  Region.imageOffset.y := Y;
-  Region.imageExtent.width := W;
-  Region.imageExtent.height := H;
-  Region.imageExtent.depth := 1;
-  FAPI.vkCmdCopyBufferToImage(S.Cmd.Handle, S.Upload.Handle, Image, VK_IMAGE_LAYOUT_GENERAL, 1, @Region);
-  ImageBarrier;
-end;
-
 // A VRAM range (offsets, wrapping) with a held page.
-function TGEVulkanHLEBackend.RangeHeld(Lo, Size: Cardinal): Boolean;
+function TGEVulkanHLEBackend.MemoryHeld(Addr, Size: Cardinal): Boolean;
 begin
   if (FMemory.HeldVRAMPages = 0) or (Size = 0) then
     Exit(False);
   if Size >= PSPVRAMSize then
     Exit(True);
-  var First := Lo shr PSPPageShift;
-  var Last := (Lo + Size - 1) shr PSPPageShift;
+  var First := Addr shr PSPPageShift;
+  var Last := (Addr + Size - 1) shr PSPPageShift;
   for var P := First to Last do
     if FMemory.VRAMHeld(P and (PSPVRAMSize div PSPPageSize - 1)) then
       Exit(True);
   Result := False;
-end;
-
-// The pages of rows Y1..Y2 of a target.
-procedure TGEVulkanHLEBackend.HoldRows(T: TGEHLETarget; Y1, Y2: Integer);
-begin
-  var RowBytes := T.Stride * Bpp(T.Format);
-  var First := T.Addr + Cardinal(Y1) * RowBytes;
-  var Last := T.Addr + Cardinal(Y2 + 1) * RowBytes - 1;
-  for var P := First shr PSPPageShift to Last shr PSPPageShift do
-    FMemory.HoldVRAM(P and (PSPVRAMSize div PSPPageSize - 1));
 end;
 
 function DepthBytes(T: TGEHLETarget): Cardinal; inline;
@@ -1537,42 +963,6 @@ begin
   Result := False;
 end;
 
-function SameVRAM(M: TPSPMemory; Addr: Cardinal; const Shadow: TBytes): Boolean;
-begin
-  var N := Cardinal(Length(Shadow));
-  if N = 0 then
-    Exit(False);
-  var First := Min(N, PSPVRAMSize - Addr);
-  Result := CompareMem(@M.VRAM[Addr], @Shadow[0], First) and
-    ((First = N) or CompareMem(@M.VRAM[0], @Shadow[First], N - First));
-end;
-
-procedure CopyVRAM(M: TPSPMemory; Addr, N: Cardinal; var Shadow: TBytes);
-begin
-  SetLength(Shadow, N);
-  if N = 0 then
-    Exit;
-  var First := Min(N, PSPVRAMSize - Addr);
-  Move(M.VRAM[Addr], Shadow[0], First);
-  if First < N then
-    Move(M.VRAM[0], Shadow[First], N - First);
-end;
-
-// Rows Y1..Y2 of a target's shadow from guest memory.
-procedure CopyVRAMRows(M: TPSPMemory; T: TGEHLETarget; Y1, Y2: Integer);
-begin
-  var RowBytes := T.Stride * Bpp(T.Format);
-  for var Y := Y1 to Y2 do
-  begin
-    var Off := Cardinal(Y) * RowBytes;
-    var A := (T.Addr + Off) and VRAMMask;
-    var First := Min(RowBytes, PSPVRAMSize - A);
-    Move(M.VRAM[A], T.Shadow[Off], First);
-    if First < RowBytes then
-      Move(M.VRAM[0], T.Shadow[Off + First], RowBytes - First);
-  end;
-end;
-
 // Count depth values of row Y from X between guest memory and Values. The
 // depth permutations keep 32-byte blocks whole: each block is one run.
 procedure DepthRow(M: TPSPMemory; T: TGEHLETarget; X, Y, Count: Integer; Values: PWord; ToMemory: Boolean);
@@ -1592,91 +982,16 @@ begin
   end;
 end;
 
-function TGEVulkanHLEBackend.FindTarget(const S: TGERaster): TGEHLETarget;
-var
-  Info: VkFramebufferCreateInfo;
-  Views: array[0..1] of VkImageView;
+// The target S draws into, as tall as FNeedY needs.
+function TGEVulkanHLEBackend.TargetFor(const S: TGERaster): TGEHLETarget;
 begin
   var Addr := S.FBAddr and VRAMMask;
   var Fmt := S.FBFormat and 3;
   var Stride := Cardinal(EnsureRange(Integer(S.FBStride), 1, 1024));
   // Rows past the end of VRAM would come round to its start.
   var MaxH := EnsureRange(Integer(PSPVRAMSize div (Stride * Bpp(Fmt))), 1, 1024);
-  var NeedH := Min(FNeedY + 1, MaxH);
-  var Old: TGEHLETarget := nil;
-  for var T in FTargets do
-    if (T.Addr = Addr) and (T.Format = Fmt) and (T.Stride = Stride) then
-    begin
-      if T.Height >= NeedH then
-        Exit(T);
-      Old := T;
-      Break;
-    end;
-  var W := Integer(Stride);
   // Most targets are drawn whole: the display's height at least saves growing.
-  var H := Max(NeedH, Min(272, MaxH));
-  if Old <> nil then
-  begin
-    H := Max(H, Min(Old.Height * 2, MaxH));
-    // Its pixels go back to guest memory, the larger image starts from there.
-    FlushAll;
-    FTargets.Remove(Old);
-    if FTarget = Old then
-      FTarget := nil;
-    if FPass = Old then
-      FPass := nil;
-    DestroyTarget(Old);
-  end
-  else if FTargets.Count >= MaxTargets then
-  begin
-    // The longest unused target that guest memory holds in full goes.
-    var Oldest: TGEHLETarget := nil;
-    for var T in FTargets do
-      if not T.Dirty and (T <> FTarget) and ((Oldest = nil) or (T.LastUse < Oldest.LastUse)) then
-        Oldest := T;
-    if Oldest <> nil then
-    begin
-      WaitAll;
-      FTargets.Remove(Oldest);
-      DestroyTarget(Oldest);
-    end;
-  end;
-  Result := TGEHLETarget.Create;
-  Result.Addr := Addr;
-  Result.Format := Fmt;
-  Result.Stride := Stride;
-  Result.Width := W;
-  Result.Height := H;
-  Result.MaxHeight := MaxH;
-  Result.ZVerified := -1;
-  Result.ZWatched := -1;
-  var ColorUsage: Cardinal := VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
-    VK_IMAGE_USAGE_TRANSFER_DST_BIT or VK_IMAGE_USAGE_SAMPLED_BIT;
-  // The shader-blending pipelines and the down-sampling kernel write it as a
-  // storage image (RGBA8 storage is required of every device).
-  ColorUsage := ColorUsage or VK_IMAGE_USAGE_STORAGE_BIT;
-  Result.Color := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, W * FScale, H * FScale, 1, ColorUsage, VK_IMAGE_ASPECT_COLOR_BIT);
-  var DepthUsage: Cardinal := VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT or
-    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  // Sampled by the down-sampling kernel.
-  DepthUsage := DepthUsage or VK_IMAGE_USAGE_SAMPLED_BIT;
-  Result.Depth := CreateImage(FDepthFormat, W * FScale, H * FScale, 1, DepthUsage,
-    VK_IMAGE_ASPECT_DEPTH_BIT or VK_IMAGE_ASPECT_STENCIL_BIT);
-  Views[0] := Result.Color.View;
-  Views[1] := Result.Depth.View;
-  Info := Default(VkFramebufferCreateInfo);
-  Info.sType := VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-  Info.renderPass := FRenderPass;
-  Info.attachmentCount := 2;
-  Info.pAttachments := @Views[0];
-  Info.width := W * FScale;
-  Info.height := H * FScale;
-  Info.layers := 1;
-  CheckVulkan(FAPI.vkCreateFramebuffer(FDevice, @Info, nil, @Result.Framebuffer), 'vkCreateFramebuffer');
-  CreateDownSet(Result);
-  if FShaderBlend then
-    CreateBlendTarget(Result);
-  FTargets.Add(Result);
+  Result := TGEHLETarget(FindTarget(Addr, Fmt, Stride, Bpp(Fmt), Min(FNeedY + 1, MaxH), Min(272, MaxH), MaxH));
 end;
 
 // A target's inputs to the down-sampling kernel.
@@ -1723,14 +1038,14 @@ end;
 
 // Rows of PSP pixels a band of an upload holds: Bytes for each pixel at the
 // scale, and the staging buffer's half at most.
-function TGEVulkanHLEBackend.BandRows(T: TGEHLETarget; Bytes: Integer): Integer;
+function TGEVulkanHLEBackend.BandRows(T: TVulkanHLETarget; Bytes: Integer): Integer;
 begin
-  Result := EnsureRange((UploadCapacity div 2) div (T.Width * FScale * FScale * Bytes), 1, T.Height);
+  Result := EnsureRange((HLEUploadCapacity div 2) div (T.Width * FScale * FScale * Bytes), 1, T.Height);
 end;
 
 // Guest memory's pixels into the colour image and the stencil aspect, each
 // pixel as a block of the scale's size.
-procedure TGEVulkanHLEBackend.LoadTarget(T: TGEHLETarget);
+procedure TGEVulkanHLEBackend.LoadTarget(T: TVulkanHLETarget);
 var
   RowColor: TArray<Cardinal>;
   RowStencil: TBytes;
@@ -1783,22 +1098,7 @@ begin
     CopyToImage(T.Depth.Image, VK_IMAGE_ASPECT_STENCIL_BIT, Offset + ColorBytes, 0, 0, Y0 * FScale, SW, N * FScale);
     Inc(Y0, N);
   end;
-  CopyVRAM(FMemory, T.Addr, T.Bytes, T.Shadow);
-  T.Loaded := True;
-  T.AlphaStale := False;
-  Inc(FStats.TargetLoads);
-end;
-
-procedure TGEVulkanHLEBackend.EnsureTarget(T: TGEHLETarget);
-begin
-  if T.Dirty then
-    Exit;
-  if T.Loaded and SameVRAM(FMemory, T.Addr, T.Shadow) then
-    Exit;
-  // Another target's newer pixels there go back first.
-  if RangeHeld(T.Addr, T.Bytes) then
-    FlushAll;
-  LoadTarget(T);
+  TGEHLETarget(T).AlphaStale := False;
 end;
 
 procedure TGEVulkanHLEBackend.LoadDepth(T: TGEHLETarget);
@@ -1845,7 +1145,7 @@ begin
     Inc(Y0, N);
   end;
   T.ZLoaded := True;
-  Inc(FStats.DepthLoads);
+  Inc(FDepthLoads);
 end;
 
 function SameDepth(M: TPSPMemory; T: TGEHLETarget): Boolean;
@@ -1880,7 +1180,7 @@ begin
   FAPI.vkCmdCopyImage(Slot.Cmd.Handle, Source.Depth.Image, VK_IMAGE_LAYOUT_GENERAL, Dest.Depth.Image,
     VK_IMAGE_LAYOUT_GENERAL, 1, @Region);
   ImageBarrier;
-  Inc(FStats.DepthCopies);
+  Inc(FDepthCopies);
 end;
 
 procedure TGEVulkanHLEBackend.EnsureDepth(T: TGEHLETarget; const S: TGERaster);
@@ -1896,7 +1196,9 @@ begin
     FlushAll;
   // The newest values of this depth buffer may be another target's: they
   // move over on the GPU when that image covers this one, else through VRAM.
-  for var U in FTargets do
+  for var V in FTargets do
+  begin
+    var U := TGEHLETarget(V);
     if (U <> T) and U.ZDirty and (U.ZAddr = ZA) and (U.ZStride = ZS) and (U.ZPerm = ZP) then
     begin
       if (U.Width <> T.Width) or (U.Height < T.Height) then
@@ -1916,6 +1218,7 @@ begin
       U.ZDirty := False;
       Exit;
     end;
+  end;
   T.ZAddr := ZA; T.ZStride := ZS; T.ZPerm := ZP;
   // Compared in this run already: its pages are watched since.
   if Same and (T.ZVerified = FRun) then
@@ -1929,7 +1232,9 @@ begin
     FlushAll;
   // Targets drawn in turn with one depth buffer: the one that drew last
   // still has what guest memory has, and its image is copied on the GPU.
-  for var U in FTargets do
+  for var V in FTargets do
+  begin
+    var U := TGEHLETarget(V);
     if (U <> T) and U.ZLoaded and not U.ZDirty and (U.ZAddr = ZA) and (U.ZStride = ZS) and (U.ZPerm = ZP) and
       (U.Width = T.Width) and (U.Height >= T.Height) and
       ((U.ZVerified = FRun) or SameDepth(FMemory, U)) then
@@ -1941,14 +1246,21 @@ begin
       T.ZVerified := FRun;
       Exit;
     end;
+  end;
   LoadDepth(T);
   T.ZVerified := FRun;
 end;
 
-procedure TGEVulkanHLEBackend.ReadbackTarget(T: TGEHLETarget);
+// The colour and stencil of the box drawn, and the depth of the box written,
+// back into guest memory (one wait for the GPU).
+procedure TGEVulkanHLEBackend.StoreTarget(T: TVulkanHLETarget);
+begin
+  Store(TGEHLETarget(T));
+end;
+
+procedure TGEVulkanHLEBackend.Store(T: TGEHLETarget);
 var
   Regions: array[0..2] of VkBufferImageCopy;
-  HostBarrier: VkMemoryBarrier;
 begin
   var CW := 0; var CH := 0; var ZW := 0; var ZH := 0;
   if T.Dirty then
@@ -2024,12 +1336,7 @@ begin
       Inc(Count);
     end;
   end;
-  HostBarrier := Default(VkMemoryBarrier);
-  HostBarrier.sType := VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-  HostBarrier.srcAccessMask := VK_ACCESS_TRANSFER_WRITE_BIT or VK_ACCESS_SHADER_WRITE_BIT;
-  HostBarrier.dstAccessMask := VK_ACCESS_HOST_READ_BIT;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_TRANSFER_BIT or VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-    VK_PIPELINE_STAGE_HOST_BIT, 0, 1, @HostBarrier, 0, nil, 0, nil);
+  HostReadBarrier;
   WaitAll;
   if Count > 0 then
     FReadback.Invalidate;
@@ -2099,18 +1406,6 @@ begin
         Move(Row[0], T.ZShadow[Y * T.Width + T.ZX1], ZW * 2);
     end;
   end;
-  if T.Dirty then
-  begin
-    T.Dirty := False;
-    // The shadow is what the image holds: guest memory's in the rows drawn,
-    // and outside them what it was when loaded (the CPU may have written there
-    // since: the next use compares and loads the target again).
-    if (Cardinal(Length(T.Shadow)) <> T.Bytes) or (T.HeldY1 > T.HeldY2) then
-      CopyVRAM(FMemory, T.Addr, T.Bytes, T.Shadow)
-    else
-      CopyVRAMRows(FMemory, T, T.HeldY1, T.HeldY2);
-    T.Stale := False;
-  end;
   if T.ZDirty then
   begin
     T.ZDirty := False;
@@ -2123,47 +1418,6 @@ begin
       for var Y := 0 to T.Height - 1 do
         DepthRow(FMemory, T, 0, Y, T.Width, @T.ZShadow[Y * T.Width], False);
     end;
-  end;
-  Inc(FStats.Readbacks);
-end;
-
-procedure TGEVulkanHLEBackend.FlushAll;
-begin
-  if FFlushing then
-    Exit;
-  FFlushing := True;
-  var Watch := TStopwatch.StartNew;
-  try
-    WaitAll;
-    DestroyRetired;
-    FStats.WaitSeconds := FStats.WaitSeconds + Watch.Elapsed.TotalSeconds;
-    for var T in FTargets do
-      if T.Dirty or T.ZDirty then
-        ReadbackTarget(T);
-    FStats.FlushSeconds := FStats.FlushSeconds + Watch.Elapsed.TotalSeconds;
-    FMemory.ReleaseVRAM;
-    // Unwatched texture bytes may change from now on: textures are compared
-    // with them again.
-    FMemory.ReleaseWatches;
-    Inc(FRun);
-    FStateValid := False;
-    Inc(FStats.Flushes);
-    if FTextures.Count > MaxTextures then
-    begin
-      var List := FTextures.Values.ToArray;
-      TArray.Sort<TGEHLETexture>(List, TComparer<TGEHLETexture>.Construct(
-        function(const A, B: TGEHLETexture): Integer
-        begin
-          Result := CompareValue(A.LastUse, B.LastUse);
-        end));
-      for var I := 0 to Length(List) - MaxTextures * 3 div 4 - 1 do
-      begin
-        FTextures.Remove(List[I].Key);
-        DestroyTexture(List[I]);
-      end;
-    end;
-  finally
-    FFlushing := False;
   end;
 end;
 
@@ -2200,8 +1454,7 @@ end;
 procedure TGEVulkanHLEBackend.WatchFault;
 begin
   FMemory.ReleaseWatches;
-  Inc(FRun);
-  FStateValid := False;
+  NewRun;
   Inc(FStats.WatchFaults);
   var A := FMemory.WatchAddress and $1FFFFFFF;
   if (A < PSPVRAMBase) or (A >= PSPVRAMBase + 4 * PSPVRAMSize) then
@@ -2218,8 +1471,9 @@ begin
     Lo := A and VRAMMask;
     Size := Max(FMemory.WatchSize, 1);
   end;
-  for var T in FTargets do
+  for var U in FTargets do
   begin
+    var T := TGEHLETarget(U);
     if T.Dirty and not T.Stale and Overlaps(T.Addr, T.Bytes, Lo, Size) then
       T.Stale := True;
     if T.ZDirty and not T.ZStale and DepthOverlaps(T, Lo, Size) then
@@ -2294,9 +1548,50 @@ begin
   end;
 end;
 
-procedure WatchTexture(M: TPSPMemory; T: TGEHLETexture; const S: TGERaster);
+{ Guest memory: VRAM offsets, wrapping round VRAM }
+
+function TGEVulkanHLEBackend.MemoryEquals(Addr: Cardinal; Data: PByte; Size: Cardinal): Boolean;
 begin
-  for var I := T.First to T.First + T.Count - 1 do
+  var A := Addr and VRAMMask;
+  var First := Min(Size, PSPVRAMSize - A);
+  Result := CompareMem(@FMemory.VRAM[A], Data, First) and
+    ((First = Size) or CompareMem(@FMemory.VRAM[0], Data + First, Size - First));
+end;
+
+procedure TGEVulkanHLEBackend.ReadMemory(Addr: Cardinal; Data: PByte; Size: Cardinal);
+begin
+  var A := Addr and VRAMMask;
+  var First := Min(Size, PSPVRAMSize - A);
+  Move(FMemory.VRAM[A], Data^, First);
+  if First < Size then
+    Move(FMemory.VRAM[0], (Data + First)^, Size - First);
+end;
+
+// The pages of the range, in every mirror (TPSPMemory.HoldVRAM).
+procedure TGEVulkanHLEBackend.HoldMemory(Addr, Size: Cardinal);
+begin
+  for var P := Addr shr PSPPageShift to (Addr + Size - 1) shr PSPPageShift do
+    FMemory.HoldVRAM(P and (PSPVRAMSize div PSPPageSize - 1));
+end;
+
+procedure TGEVulkanHLEBackend.ReleaseHolds;
+begin
+  FMemory.ReleaseVRAM;
+end;
+
+procedure TGEVulkanHLEBackend.WatchMemory(Addr, Size: Cardinal);
+begin
+  WatchBytes(FMemory, PSPVRAMBase + Addr, Size);
+end;
+
+procedure TGEVulkanHLEBackend.ReleaseWatches;
+begin
+  FMemory.ReleaseWatches;
+end;
+
+procedure WatchTextureBytes(M: TPSPMemory; First, Count: Integer; const S: TGERaster);
+begin
+  for var I := First to First + Count - 1 do
     WatchBytes(M, S.Tex.Levels[I].Addr, Cardinal(Min(GELevelReach(S.Tex, S.Tex.Levels[I]), UInt64(MaxSource))));
 end;
 
@@ -2312,37 +1607,10 @@ begin
   end;
 end;
 
-// A target's pages, watched in every mirror.
-procedure TGEVulkanHLEBackend.WatchTarget(T: TGEHLETarget);
+// Rows Y1..Y2 of a target are drawn with depth writes: the depth's pages of
+// the rows not yet held are held.
+procedure TGEVulkanHLEBackend.HoldNewDepthRows(T: TGEHLETarget; Y1, Y2: Integer);
 begin
-  WatchBytes(FMemory, PSPVRAMBase + T.Addr, T.Bytes);
-end;
-
-// Rows Y1..Y2 of a target are drawn: the colour's pages, and the depth's when
-// it is written, of the rows not yet held are held.
-procedure TGEVulkanHLEBackend.HoldNewRows(T: TGEHLETarget; Y1, Y2: Integer);
-begin
-  if T.HeldY1 > T.HeldY2 then
-  begin
-    HoldRows(T, Y1, Y2);
-    T.HeldY1 := Y1;
-    T.HeldY2 := Y2;
-  end
-  else
-  begin
-    if Y1 < T.HeldY1 then
-    begin
-      HoldRows(T, Y1, T.HeldY1 - 1);
-      T.HeldY1 := Y1;
-    end;
-    if Y2 > T.HeldY2 then
-    begin
-      HoldRows(T, T.HeldY2 + 1, Y2);
-      T.HeldY2 := Y2;
-    end;
-  end;
-  if not FDepthWrites then
-    Exit;
   if T.ZHeldY1 > T.ZHeldY2 then
   begin
     HoldDepthRows(T, Y1, Y2);
@@ -2364,96 +1632,74 @@ begin
   end;
 end;
 
-function TGEVulkanHLEBackend.SourceMatches(T: TGEHLETexture; const S: TGERaster): Boolean;
+// The bytes a texture's texels come from: its levels', then the CLUT's.
+function SourceBytes(const R: TGEHLETexRequest; out Bytes: array of TVulkanHLEBytes): Integer;
+begin
+  var X: PGETexture := @R.S.Tex;
+  Result := 0;
+  for var I := R.First to R.First + R.Count - 1 do
+  begin
+    Bytes[Result].Data := X.Levels[I].Ptr;
+    Bytes[Result].Size := Integer(LevelBytes(X^, X.Levels[I]));
+    Inc(Result);
+  end;
+  if IsClutFormat(X.Format) and (X.Clut <> nil) then
+  begin
+    Bytes[Result].Data := X.Clut;
+    Bytes[Result].Size := 1024;
+    Inc(Result);
+  end;
+end;
+
+function TGEVulkanHLEBackend.TextureMatches(T: TVulkanHLETexture; Request: Pointer): Boolean;
+var
+  // The eight levels and the CLUT at most.
+  Bytes: array[0..8] of TVulkanHLEBytes;
 begin
   if not T.Checkable then
     Exit(False);
-  var Off := 0;
-  for var I := T.First to T.First + T.Count - 1 do
-  begin
-    var L: PGETexLevel := @S.Tex.Levels[I];
-    var N := Integer(LevelBytes(S.Tex, L^));
-    if (L.Ptr = nil) or (Off + N > Length(T.Source)) or ((N > 0) and not CompareMem(L.Ptr, @T.Source[Off], N)) then
-      Exit(False);
-    Inc(Off, N);
-  end;
-  if IsClutFormat(S.Tex.Format) and (S.Tex.Clut <> nil) then
-  begin
-    if (Off + 1024 > Length(T.Source)) or not CompareMem(S.Tex.Clut, @T.Source[Off], 1024) then
-      Exit(False);
-    Inc(Off, 1024);
-  end;
-  Result := Off = Length(T.Source);
+  var N := SourceBytes(PGEHLETexRequest(Request)^, Bytes);
+  Result := SameSource(T, Slice(Bytes, N));
 end;
 
-procedure TGEVulkanHLEBackend.DecodeTexture(T: TGEHLETexture; const S: TGERaster);
+procedure TGEVulkanHLEBackend.DecodeTexture(T: TVulkanHLETexture; Request: Pointer);
+var
+  // The eight levels and the CLUT at most.
+  Bytes: array[0..8] of TVulkanHLEBytes;
 begin
-  var X: PGETexture := @S.Tex;
-  var Clut := IsClutFormat(X.Format) and (X.Clut <> nil);
-  T.Checkable := True;
-  var Total := 0;
-  for var I := T.First to T.First + T.Count - 1 do
-    if X.Levels[I].Ptr = nil then
-      T.Checkable := False
-    else
-      Inc(Total, Integer(LevelBytes(X^, X.Levels[I])));
-  if Clut then
-    Inc(Total, 1024);
-  if T.Checkable then
+  var R := PGEHLETexRequest(Request);
+  var X: PGETexture := @R.S.Tex;
+  KeepSource(T, Slice(Bytes, SourceBytes(R^, Bytes)));
+  for var I := 0 to T.Levels - 1 do
   begin
-    SetLength(T.Source, Total);
-    var Off := 0;
-    for var I := T.First to T.First + T.Count - 1 do
-    begin
-      var N := Integer(LevelBytes(X^, X.Levels[I]));
-      if N > 0 then
-        Move(X.Levels[I].Ptr^, T.Source[Off], N);
-      Inc(Off, N);
-    end;
-    if Clut then
-      Move(X.Clut^, T.Source[Off], 1024);
-  end
-  else
-    T.Source := nil;
-  for var I := 0 to T.Count - 1 do
-  begin
-    var Level := T.First + I;
+    var Level := R.First + I;
     var W := Max(X.Levels[Level].Width, 1);
     var H := Max(X.Levels[Level].Height, 1);
-    var Offset: Int64;
-    var P: PCardinal;
-    // Scaled in host memory (the staging buffer is slow to read).
-    if T.Scale > 1 then
-    begin
-      if Length(FScaleIn) < W * H then
-        SetLength(FScaleIn, W * H);
-      P := @FScaleIn[0];
-    end
-    else
-      P := PCardinal(StageUpload(Int64(W) * H * 4, Offset));
-    var Q := P;
+    var P := LevelTexels(T, W, H);
     for var Y := 0 to H - 1 do
       for var XX := 0 to W - 1 do
       begin
-        Q^ := GEFetchTexel(X^, Level, XX, Y);
-        Inc(Q);
+        P^ := GEFetchTexel(X^, Level, XX, Y);
+        Inc(P);
       end;
-    if T.Scale > 1 then
-    begin
-      var Watch := TStopwatch.StartNew;
-      var N := W * H * T.Scale * T.Scale;
-      if Length(FScaleOut) < N then
-        SetLength(FScaleOut, N);
-      ScaleTexture(P, W, H, T.Scale, @FScaleOut[0], FTextureFilter);
-      Move(FScaleOut[0], StageUpload(Int64(N) * 4, Offset)^, N * 4);
-      Inc(FStats.TextureScales);
-      FStats.ScaleSeconds := FStats.ScaleSeconds + Watch.Elapsed.TotalSeconds;
-    end;
-    CopyToImage(T.Image.Image, VK_IMAGE_ASPECT_COLOR_BIT, Offset, I, 0, 0, W * T.Scale, H * T.Scale);
+    UploadLevel(T, I, W, H);
   end;
-  WatchTexture(FMemory, T, S);
-  T.Verified := FRun;
-  Inc(FStats.TextureUploads);
+end;
+
+procedure TGEVulkanHLEBackend.DescribeTexture(Request: Pointer; out Width, Height, Levels, Scale: Integer);
+begin
+  var R := PGEHLETexRequest(Request);
+  var X: PGETexture := @R.S.Tex;
+  Width := Max(X.Levels[R.First].Width, 1);
+  Height := Max(X.Levels[R.First].Height, 1);
+  Levels := R.Count;
+  Scale := TextureScaleFor(X^, R.First, R.Count);
+end;
+
+procedure TGEVulkanHLEBackend.WatchTexture(T: TVulkanHLETexture; Request: Pointer);
+begin
+  var R := PGEHLETexRequest(Request);
+  WatchTextureBytes(FMemory, R.First, R.Count, R.S^);
 end;
 
 // A render target drawn from as a texture, sampled from its image (at its
@@ -2461,7 +1707,7 @@ end;
 // format, address and stride, and an image that is current (newer than guest
 // memory with no stale rows, or equal to it). Not the target the draw renders
 // into, nor one that shares bytes with it. Nil when the texture is not one.
-function TGEVulkanHLEBackend.TargetTexture(const S: TGERaster): TGEHLETexture;
+function TGEVulkanHLEBackend.TargetTexture(const S: TGERaster): TVulkanHLETexture;
 begin
   Result := nil;
   var X: PGETexture := @S.Tex;
@@ -2483,7 +1729,7 @@ begin
   for var U in FTargets do
     if (U.Addr = A and VRAMMask) and (U.Format = Cardinal(X.Format)) and (U.Stride = Cardinal(L.BufWidth)) then
     begin
-      T := U;
+      T := TGEHLETarget(U);
       Break;
     end;
   if T = nil then
@@ -2496,28 +1742,22 @@ begin
     if T.Stale then
       Exit;
   end
-  else if not T.Loaded or RangeHeld(T.Addr, T.Bytes) or not SameVRAM(FMemory, T.Addr, T.Shadow) then
+  else if not T.Loaded or MemoryHeld(T.Addr, T.Bytes) or not ShadowMatches(T) then
     Exit;
   // Its alpha is its stencil.
   if T.AlphaStale then
     RefreshAlpha(T);
-  if T.AsTexture = nil then
-  begin
-    T.AsTexture := TGEHLETexture.Create;
-    T.AsTexture.Target := T;
-    T.AsTexture.Image := T.Color;
-    T.AsTexture.Count := 1;
-  end;
-  Result := T.AsTexture;
+  Result := TargetAsTexture(T);
   // The texture's size in the PSP's texels.
   Result.Width := Max(L.Width, 1);
   Result.Height := Max(L.Height, 1);
-  Inc(FStats.TargetTextures);
 end;
 
 // The texture of S's level (or of its levels, halving in size, when the level
 // of detail picks one), decoded, compared with its bytes, uploaded.
-function TGEVulkanHLEBackend.EnsureTexture(const S: TGERaster): TGEHLETexture;
+function TGEVulkanHLEBackend.EnsureTexture(const S: TGERaster): TVulkanHLETexture;
+var
+  Request: TGEHLETexRequest;
 begin
   var X: PGETexture := @S.Tex;
   var First := 0;
@@ -2542,7 +1782,7 @@ begin
     begin
       var A := X.Levels[I].Addr and $1FFFFFFF;
       if (A >= PSPVRAMBase) and (A < PSPVRAMBase + 4 * PSPVRAMSize) and (((A and PSPVRAMSize) <> 0) or
-        RangeHeld(A and VRAMMask, Cardinal(Min(GELevelReach(X^, X.Levels[I]), UInt64(PSPVRAMSize))))) then
+        MemoryHeld(A and VRAMMask, Cardinal(Min(GELevelReach(X^, X.Levels[I]), UInt64(PSPVRAMSize))))) then
       begin
         FlushAll;
         Break;
@@ -2564,83 +1804,27 @@ begin
     Key := FNV(Key, UInt64(Cardinal(X.Levels[I].Width)) or (UInt64(Cardinal(X.Levels[I].Height)) shl 16) or
       (UInt64(Cardinal(X.Levels[I].BufWidth)) shl 32));
   end;
-  Inc(FUseCounter);
-  if FTextures.TryGetValue(Key, Result) then
-  begin
-    if Result.Verified = FRun then
-      Inc(FStats.TextureHits)
-    else if SourceMatches(Result, S) then
-    begin
-      WatchTexture(FMemory, Result, S);
-      Result.Verified := FRun;
-      Inc(FStats.TextureHits);
-    end
-    else if (Result.Scale > 1) and Changing(Result) then
-    begin
-      // Bytes that keep changing (a video, textures streamed through one
-      // place): made again unscaled, the old image kept until the GPU is done.
-      FTextures.Remove(Key);
-      FRetired.Add(Result);
-      Result := AddTexture(Key, First, Count, S, 1);
-    end
-    else
-      DecodeTexture(Result, S);
-  end
-  else
-    Result := AddTexture(Key, First, Count, S, TextureScaleFor(X^, First, Count));
-  Result.LastUse := FUseCounter;
+  Request.S := @S;
+  Request.First := First;
+  Request.Count := Count;
+  Result := CachedTexture(Key, @Request);
 end;
 
-function TGEVulkanHLEBackend.AddTexture(Key: UInt64; First, Count: Integer; const S: TGERaster;
-  Scale: Integer): TGEHLETexture;
-begin
-  var X: PGETexture := @S.Tex;
-  Result := TGEHLETexture.Create;
-  Result.Key := Key;
-  Result.First := First;
-  Result.Count := Count;
-  Result.Width := Max(X.Levels[First].Width, 1);
-  Result.Height := Max(X.Levels[First].Height, 1);
-  Result.Scale := Scale;
-  Result.Image := CreateImage(VK_FORMAT_R8G8B8A8_UNORM, Result.Width * Scale, Result.Height * Scale, Count,
-    VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-  FTextures.Add(Key, Result);
-  DecodeTexture(Result, S);
-end;
-
-// The scale a new texture is made at: the option's above 1x, within 1024
-// texels a side; 1 for textures under 8 texels a side (ramps and tables,
-// whose smooth filtering scaling would break into steps), ones that are
-// decoded again in every GE run, and levels that do not halve in both
+// The scale a new texture is made at (ScaleFor); 1 for textures that are
+// decoded again in every GE run and levels that do not halve in both
 // directions.
 function TGEVulkanHLEBackend.TextureScaleFor(const X: TGETexture; First, Count: Integer): Integer;
 begin
   Result := 1;
-  if (FTextureScale < 2) or (FScale < 2) then
-    Exit;
   var W := Max(X.Levels[First].Width, 1);
   var H := Max(X.Levels[First].Height, 1);
-  if (W < 8) or (H < 8) then
-    Exit;
-  var F := Min(FTextureScale, 1024 div Max(W, H));
+  var F := ScaleFor(W, H);
   if F < 2 then
     Exit;
   for var I := First to First + Count - 1 do
     if (X.Levels[I].Ptr = nil) or ((W shr (I - First)) = 0) or ((H shr (I - First)) = 0) then
       Exit;
   Result := F;
-end;
-
-// A scaled texture's bytes changed: True when they did so last within a
-// second (60 frames shown).
-function TGEVulkanHLEBackend.Changing(T: TGEHLETexture): Boolean;
-begin
-  if (T.Changes > 0) and (FStats.Presents - T.ChangedAt <= 60) then
-    Inc(T.Changes)
-  else
-    T.Changes := 1;
-  T.ChangedAt := FStats.Presents;
-  Result := T.Changes >= 2;
 end;
 
 function TGEVulkanHLEBackend.SameState(const S: TGERaster; Kind: Integer): Boolean;
@@ -2761,32 +1945,23 @@ begin
   var Fmt := S.FBFormat and 3;
   var Clear := S.ClearMode;
   var Textured := S.Textured and not Clear;
-  var Tex := FDummy;
+  var Tex := FBlank;
   if Textured then
   begin
     Tex := TargetTexture(S);
     if Tex = nil then
       Tex := EnsureTexture(S);
   end;
-  var T := FindTarget(S);
+  var T := TargetFor(S);
   EnsureTarget(T);
   var DepthTest := not Clear and S.DepthTest;
   if DepthTest or (Clear and S.ClearDepth) then
     EnsureDepth(T, S);
   // The shader fetches texels itself: one sampler serves every texture.
   var TexSet := TextureSet(Tex, 0);
-  Inc(FUseCounter);
-  T.LastUse := FUseCounter;
   // From the first primitive on the target is newer than guest memory: the
   // rows drawn are held (Emit), the rest watched.
-  if not T.Dirty then
-  begin
-    T.Dirty := True;
-    T.X1 := MaxInt; T.Y1 := MaxInt; T.X2 := -1; T.Y2 := -1;
-    T.HeldY1 := MaxInt; T.HeldY2 := -1;
-    T.Stale := False;
-    WatchTarget(T);
-  end;
+  BeginDrawing(T);
   FDepthWrites := (DepthTest and S.DepthWrite) or (Clear and S.ClearDepth);
   FDepthUsed := DepthTest or (Clear and S.ClearDepth);
   if FDepthWrites and not T.ZDirty then
@@ -2853,7 +2028,7 @@ begin
       Push.TexFunc := Cardinal(S.TexFunc and 7) or (Cardinal(Ord(S.TexAlpha)) shl 3) or
         (Cardinal(Ord(S.ColorDouble)) shl 4) or (LodMode shl 5) or (Cardinal(Ord(S.Tex.Linear)) shl 7) or
         (Cardinal(S.Tex.MinFilter and 7) shl 8) or (Cardinal(Ord(S.Tex.ClampU)) shl 11) or
-        (Cardinal(Ord(S.Tex.ClampV)) shl 12) or (Cardinal(Tex.Count - 1) shl 13);
+        (Cardinal(Ord(S.Tex.ClampV)) shl 12) or (Cardinal(Tex.Levels - 1) shl 13);
       if Tex.Target <> nil then
         Push.TexFunc := Push.TexFunc or (Cardinal(1) shl 16) or (Cardinal(FScale) shl 17) or
           (Tex.Target.Format shl 21)
@@ -2989,7 +2164,10 @@ procedure TGEVulkanHLEBackend.ApplyBindings;
 var
   Consts: array[0..3] of Single;
 begin
-  BeginPass(FTarget, FWant.Blended);
+  if FWant.Blended then
+    BeginPass(FTarget, FBlendPass, TGEHLETarget(FTarget).BlendFramebuffer)
+  else
+    BeginPass(FTarget, FRenderPass, FTarget.Framebuffer);
   var Cmd := Slot.Cmd.Handle;
   // Both layouts take set 0 and the push constants alike.
   var Layout := FLayout;
@@ -3052,14 +2230,13 @@ begin
   Y2 := Min(Y2, Min(S.ScissorY2, 1023));
   if (X1 > X2) or (Y1 > Y2) then
     Exit;
-  if Slot.Cmd.Recording and (Slot.VertexCount + Count > VertexCapacity) then
-    Submit;
-  var T := FTarget;
+  ReserveVertices(Count);
+  var T := TGEHLETarget(FTarget);
   if not FStateValid or not SameState(S, Kind) or ((Y2 >= T.Height) and (T.Height < T.MaxHeight)) then
   begin
     FNeedY := Y2;
     SetupState(S, Kind);
-    T := FTarget;
+    T := TGEHLETarget(FTarget);
   end
   else if FPass <> T then
     ApplyBindings;
@@ -3075,9 +2252,11 @@ begin
     FlushAll;
     FNeedY := Y2;
     SetupState(S, Kind);
-    T := FTarget;
+    T := TGEHLETarget(FTarget);
   end;
   HoldNewRows(T, Y1, Y2);
+  if FDepthWrites then
+    HoldNewDepthRows(T, Y1, Y2);
   if FClearStencil then
   begin
     var A := V[Count - 1].Color shr 24;
@@ -3092,14 +2271,8 @@ begin
       FBoundStencil[2] := A;
     end;
   end;
-  var Sl := Slot;
-  if FDrawCount = 0 then
-    FDrawFirst := Sl.VertexCount;
-  Move(V^, PGEHLEVertex(Sl.Vertices.Data)[Sl.VertexCount], Count * SizeOf(TGEHLEVertex));
-  Inc(Sl.VertexCount, Count);
-  Inc(FDrawCount, Count);
-  T.X1 := Min(T.X1, X1); T.Y1 := Min(T.Y1, Y1);
-  T.X2 := Max(T.X2, X2); T.Y2 := Max(T.Y2, Y2);
+  AddVertices(V, Count);
+  Drawn(T, X1, Y1, X2, Y2);
   if FDepthWrites then
   begin
     T.ZX1 := Min(T.ZX1, X1); T.ZY1 := Min(T.ZY1, Y1);
@@ -3374,43 +2547,27 @@ begin
     Exit;
   var A := Address and $1FFFFFFF;
   if (A >= PSPVRAMBase) and (A < PSPVRAMBase + 4 * PSPVRAMSize) and
-    (((A and PSPVRAMSize) <> 0) or RangeHeld(A and VRAMMask, Size)) then
+    (((A and PSPVRAMSize) <> 0) or MemoryHeld(A and VRAMMask, Size)) then
     FlushAll;
 end;
 
-procedure TGEVulkanHLEBackend.Sync;
+// Opaque ARGB in the target format's precision, by the kernel.
+procedure TGEVulkanHLEBackend.RecordFrame(T: TVulkanHLETarget; W, H: Integer);
 begin
-  FlushAll;
-end;
-
-// The references to a dynamic array (System's header before its data).
-function DynArrayRefs(const A: TArray<TAlphaColor>): Integer;
-type
-  THeader = packed record
-    {$IFDEF CPU64BITS}Padding: Integer;{$ENDIF}
-    RefCount: Integer;
-    Length: NativeInt;
-  end;
-  PHeader = ^THeader;
-begin
-  if A = nil then
-    Exit(0);
-  Result := PHeader(PByte(Pointer(A)) - SizeOf(THeader))^.RefCount;
+  DownSample(TGEHLETarget(T), 0, 0, W, H, 0, 3, 1);
 end;
 
 // The display's framebuffer as the target image holds it, at the scale. The
 // image must be what the PSP would show: newer than guest memory (held), or
 // equal to it. Guest memory is left alone (nothing is read back).
 function TGEVulkanHLEBackend.Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
-var
-  HostBarrier: VkMemoryBarrier;
 begin
   Result := False;
   var A := Address and $1FFFFFFF;
   // The linear views of VRAM.
   if (A < PSPVRAMBase) or (A >= PSPVRAMBase + 4 * PSPVRAMSize) or ((A and PSPVRAMSize) <> 0) then
     Exit;
-  var T: TGEHLETarget := nil;
+  var T: TVulkanHLETarget := nil;
   for var U in FTargets do
     if (U.Addr = A and VRAMMask) and (U.Format = Format and 3) and (U.Stride = Stride) and
       (U.Width >= PSPFrameWidth) and (U.Height >= PSPFrameHeight) then
@@ -3420,70 +2577,14 @@ begin
     end;
   if T = nil then
     Exit;
-  if not T.Dirty and (not T.Loaded or RangeHeld(T.Addr, T.Bytes) or not SameVRAM(FMemory, T.Addr, T.Shadow)) then
+  if not T.Dirty and (not T.Loaded or MemoryHeld(T.Addr, T.Bytes) or not ShadowMatches(T)) then
     Exit;
   // Guest memory changed outside the rows drawn: the display reads it (and
   // the drawn rows back) instead.
   if T.Dirty and T.Stale then
     Exit;
-  var Watch := TStopwatch.StartNew;
-  var W := PSPFrameWidth * FScale;
-  var H := PSPFrameHeight * FScale;
-  Record_;
-  EndPass;
-  ImageBarrier;
-  // Opaque ARGB in the target format's precision, by the kernel.
-  DownSample(T, 0, 0, W, H, 0, 3, 1);
-  HostBarrier := Default(VkMemoryBarrier);
-  HostBarrier.sType := VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-  HostBarrier.srcAccessMask := VK_ACCESS_SHADER_WRITE_BIT;
-  HostBarrier.dstAccessMask := VK_ACCESS_HOST_READ_BIT;
-  FAPI.vkCmdPipelineBarrier(Slot.Cmd.Handle, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
-    @HostBarrier, 0, nil, 0, nil);
-  WaitAll;
-  FReadback.Invalidate(0, UInt64(W * H) * 4);
-  Frame.Width := W;
-  Frame.Height := H;
-  // A buffer of the pool that only the pool holds (the frames before may
-  // still be read), else a new one: no allocation and clearing each frame.
-  var Pick := -1;
-  for var I := 0 to High(FFrames) do
-    if (Length(FFrames[I]) = W * H) and (DynArrayRefs(FFrames[I]) = 1) then
-    begin
-      Pick := I;
-      Break;
-    end;
-  if Pick < 0 then
-  begin
-    Pick := 0;
-    for var I := 0 to High(FFrames) do
-      if (FFrames[I] = nil) or (DynArrayRefs(FFrames[I]) = 1) then
-      begin
-        Pick := I;
-        Break;
-      end;
-    FFrames[Pick] := nil;
-    SetLength(FFrames[Pick], W * H);
-  end;
-  Frame.Pixels := FFrames[Pick];
-  Move(FReadback.Data^, Frame.Pixels[0], W * H * 4);
-  Inc(FStats.Presents);
-  FStats.PresentSeconds := FStats.PresentSeconds + Watch.Elapsed.TotalSeconds;
+  ReadFrame(T, PSPFrameWidth * FScale, PSPFrameHeight * FScale, Frame);
   Result := True;
-end;
-// The GE stops: what is recorded starts on the GPU when it has finished the
-// previous submission (recording goes on in the other slot without waiting),
-// else it grows until then or until a Sync. The targets stay held.
-procedure TGEVulkanHLEBackend.Release;
-begin
-  if not Slot.Cmd.Recording or (FDrawCount = 0) and (Slot.VertexCount = 0) then
-    Exit;
-  // Small lists wait for more: a submission costs the driver more than it
-  // saves the GPU (Tekken 6: some 70 lists a frame).
-  if Slot.VertexCount < ReleaseVertices then
-    Exit;
-  if FSlots[(FSlot + 1) mod Length(FSlots)].Cmd.Done then
-    Submit;
 end;
 
 end.

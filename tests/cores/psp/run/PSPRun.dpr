@@ -490,7 +490,7 @@ begin
           HLE.TextureScale := TexScale;
           HLE.TextureFilter := TexFilter;
           Console.OnPresent := HLE.Present;
-          TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE;
+          TPSPGE(Console.System.Find(TPSPGE)).Engine.Backend := HLE.EngineBackend;
           if not Quiet then
             Writeln(ErrOutput, 'gpu hle: ' + HLE.Compute.Name + ', shader blending ' + BoolToStr(HLE.ShaderBlend, True));
         end
@@ -718,7 +718,7 @@ begin
         Writeln(ErrOutput, Format('gpu hle: %d prims in %d draws, %d submits, %d flushes (%d watch faults without), %d read back, ' +
           '%d target loads, %d depth loads, %d depth copies, %d textures uploaded, %d reused, %d from targets, %d pipelines; ' +
           '%.2fs flushing (%.2fs waiting), %.2fs setting up; %d frames shown at %dx in %.2fs; %d uploads scaled %dx in %.2fs',
-          [St.Prims, St.Draws, St.Submits, St.Flushes, St.WatchFaults, St.Readbacks, St.TargetLoads, St.DepthLoads, St.DepthCopies,
+          [St.Prims, St.Draws, St.Submits, St.Flushes, St.WatchFaults, St.Readbacks, St.TargetLoads, HLE.DepthLoads, HLE.DepthCopies,
           St.TextureUploads, St.TextureHits, St.TargetTextures, St.Pipelines, St.FlushSeconds, St.WaitSeconds, St.SetupSeconds,
           St.Presents, HLE.Scale, St.PresentSeconds, St.TextureScales, HLE.TextureScale, St.ScaleSeconds]));
       end
