@@ -112,6 +112,9 @@ type
     X1, Y1, X2, Y2: Integer;
     HeldY1, HeldY2: Integer;
     Stale: Boolean;
+    // Changes whenever the colour image may change (made, loaded, drawn):
+    // unique among the renderer's targets.
+    Version: Int64;
     function Bytes: Cardinal;
   end;
 
@@ -181,6 +184,11 @@ type
     FPassRenderPass: VkRenderPass;
     // The shown frames' pixels (ReadFrame), reused once their reader let go.
     FFrames: array[0..2] of TArray<TAlphaColor>;
+    // The last frame read, and the target and version it was read from.
+    FFrameTarget: TVulkanHLETarget;
+    FFrameVersion: Int64;
+    FFrameWidth, FFrameHeight: Integer;
+    FFramePixels: TArray<TAlphaColor>;
     FFlushing: Boolean;
     procedure CreateRenderPass;
     procedure CreateLayout(PushSize: Integer);
@@ -211,6 +219,8 @@ type
     // Counts runs: what was verified in the current one stands.
     FRun: Int64;
     FUseCounter: Int64;
+    // The last target version given out.
+    FVersion: Int64;
     // What is bound in the command buffer (0: nothing yet).
     FBoundPipeline: VkPipeline;
     FBoundSet: VkDescriptorSet;
@@ -336,6 +346,8 @@ type
     // W x H pixels of the target's colour image as the emulator shows them
     // (TAlphaColor, rows packed), from word 0 of FReadback.
     procedure RecordFrame(T: TVulkanHLETarget; W, H: Integer); virtual; abstract;
+    // The target's colour image changes (Drawn and loading do this).
+    procedure Changed(T: TVulkanHLETarget); inline;
     procedure ReadFrame(T: TVulkanHLETarget; W, H: Integer; var Frame: TEmulatorFrame);
   public
     // Scale: 1 to 8 times the console's resolution. VertexSize: the bytes of
@@ -1018,6 +1030,7 @@ begin
   Info.height := H * FScale;
   Info.layers := 1;
   CheckVulkan(FAPI.vkCreateFramebuffer(FDevice, @Info, nil, @Result.Framebuffer), 'vkCreateFramebuffer');
+  Changed(Result);
   InitTarget(Result);
   FTargets.Add(Result);
 end;
@@ -1033,6 +1046,8 @@ end;
 
 procedure TVulkanHLERenderer.DestroyTarget(T: TVulkanHLETarget);
 begin
+  if FFrameTarget = T then
+    FFrameTarget := nil;
   if T.Framebuffer <> 0 then
     FAPI.vkDestroyFramebuffer(FDevice, T.Framebuffer, nil);
   if T.AsTexture <> nil then
@@ -1060,6 +1075,7 @@ begin
   if MemoryHeld(T.Addr, T.Bytes) then
     FlushAll;
   LoadTarget(T);
+  Changed(T);
   SetLength(T.Shadow, T.Bytes);
   if Length(T.Shadow) > 0 then
     ReadMemory(T.Addr, @T.Shadow[0], Length(T.Shadow));
@@ -1083,8 +1099,15 @@ begin
   end;
 end;
 
+procedure TVulkanHLERenderer.Changed(T: TVulkanHLETarget);
+begin
+  Inc(FVersion);
+  T.Version := FVersion;
+end;
+
 procedure TVulkanHLERenderer.Drawn(T: TVulkanHLETarget; X1, Y1, X2, Y2: Integer);
 begin
+  Changed(T);
   T.X1 := Min(T.X1, X1); T.Y1 := Min(T.Y1, Y1);
   T.X2 := Max(T.X2, X2); T.Y2 := Max(T.Y2, Y2);
 end;
@@ -1422,6 +1445,16 @@ end;
 
 procedure TVulkanHLERenderer.ReadFrame(T: TVulkanHLETarget; W, H: Integer; var Frame: TEmulatorFrame);
 begin
+  // Nothing changed the image since the last frame read from it (a game
+  // drawing every other frame): that frame again, without the GPU.
+  if (T = FFrameTarget) and (T.Version = FFrameVersion) and (W = FFrameWidth) and (H = FFrameHeight) then
+  begin
+    Frame.Width := W;
+    Frame.Height := H;
+    Frame.Pixels := FFramePixels;
+    Inc(FStats.Presents);
+    Exit;
+  end;
   var Watch := TStopwatch.StartNew;
   Record_;
   EndPass;
@@ -1455,6 +1488,11 @@ begin
   end;
   Frame.Pixels := FFrames[Pick];
   Move(FReadback.Data^, Frame.Pixels[0], W * H * 4);
+  FFrameTarget := T;
+  FFrameVersion := T.Version;
+  FFrameWidth := W;
+  FFrameHeight := H;
+  FFramePixels := Frame.Pixels;
   Inc(FStats.Presents);
   FStats.PresentSeconds := FStats.PresentSeconds + Watch.Elapsed.TotalSeconds;
 end;
