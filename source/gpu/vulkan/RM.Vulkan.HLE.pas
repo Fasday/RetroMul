@@ -29,10 +29,13 @@ unit RM.Vulkan.HLE;
 //   releases all holds and watches and starts a new run. The rest of a Dirty
 //   target's bytes is watched (WatchMemory): a write there makes the target
 //   Stale outside the rows drawn (the subclass decides, it knows where the
-//   write went), and the next draw there flushes first. Textures are compared
-//   with their bytes once a run (Verified) and watched from then on. Sync is
-//   a FlushAll; the subclass calls it when the console needs memory complete
-//   (and whatever else drew there finished).
+//   write went), and the subclass flushes before it draws there. Textures
+//   are compared with their bytes once a run (Verified) and watched from then
+//   on. The base flushes by itself only when a target grows, when a target
+//   to load is held by another and when it is destroyed. Sync is a FlushAll:
+//   the subclass calls it when the console needs its memory complete without
+//   going through the holds (a saved state); Release when the console's GPU
+//   stops for now.
 // - Textures. TVulkanHLETexture holds a texture decoded to RGBA8, its levels
 //   as mip levels, keyed by the subclass (CachedTexture); the bytes it came
 //   from are kept (KeepSource) to be compared later (SameSource). With texture

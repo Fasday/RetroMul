@@ -7,6 +7,13 @@ now called Vulkan LLE (`PSP.GE.VulkanLLE`, formerly `PSP.GE.GPU`). It is
 unchanged and still bit exact. The design is our own and no other emulator's
 sources were consulted.
 
+What does not depend on the GE is in the common base `RM.Vulkan.HLE`
+(`TVulkanHLERenderer`): the device and its command slots, targets, coherence
+with guest memory, the texture cache, pipelines, batches and frames.
+`TGEVulkanHLEBackend` derives from it; the engine draws through its
+`EngineBackend`. How to build an HLE renderer for another console on the base
+is in **`HLE-RENDERERS.md`**.
+
 ## Selecting it
 
 - Frontend: *Settings → PSP video → Renderer*: CPU (software), Vulkan LLE or
@@ -158,7 +165,7 @@ the internal resolution is above 1×, with *Texture filter*
 (`[Video] TextureFilter=xbrz|hybrid|bicubic`; `PSPRun -texfilter`). It is not
 the GE's behaviour: it trades exactness for sharper or smoother textures.
 
-- `PSP.GE.TexScale` scales each decoded level on the CPU.
+- `RM.Vulkan.TexScale` scales each decoded level on the CPU.
   - xBRZ: edges at the corners between texels come from colour differences
     along the two diagonals of the 4×4 around them; each texel's block then
     takes the colour across the edge in its corners, cut diagonally, at half
@@ -169,7 +176,7 @@ the GE's behaviour: it trades exactness for sharper or smoother textures.
   - Hybrid: bicubic for texels that differ little from all eight around them
     (distance under 40), xBRZ's blocks elsewhere.
   - Textures of 64×64 and up are scaled in row bands on the thread pool.
-- The image holds the texels N times larger (`TGEHLETexture.Scale`); the
+- The image holds the texels N times larger (`TVulkanHLETexture.Scale`); the
   shader multiplies its coordinates by N (`TEX_SCALED`) and wraps at any size.
   The level of detail still comes from the GE's coordinates.
 - Not scaled: render targets used as textures (already at the internal
