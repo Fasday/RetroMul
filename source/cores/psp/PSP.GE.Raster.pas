@@ -110,7 +110,7 @@ function GETexLod(const S: TGERaster; G, Q, IW: Single): Integer;
 
 type
   // A triangle's depth as the GE interpolates it (recorded on a PSP-E1000,
-  // tests/cores/psp/hw/ge_zplane): from one vertex's depth (at AX, AY in 1/16
+  // probe ge_zplane): from one vertex's depth (at AX, AY in 1/16
   // pixels) by steps per 1/16 pixel in x and y, fixed point with 14 fraction
   // bits; a pixel takes the floor at its centre. Valid is False where the
   // depths or the area are beyond the range this is exact in.
@@ -135,7 +135,7 @@ type
     KS, KT: Integer;
   end;
 
-// Recorded on a PSP-E1000 (tests/cores/psp/hw/ge_uv: 730,000 pixels of
+// Recorded on a PSP-E1000 (probe ge_uv: 730,000 pixels of
 // through-mode triangles over textures of 32 to 512 texels, 99.99%; the
 // rest a texel up where the plane lands within a few thousandths of the
 // next): S and T, over the level 0 width and height, truncated to 15
@@ -143,7 +143,7 @@ type
 // where the coordinates are beyond the range this is exact in.
 function GEUVPlanes(const S: TGERaster; const V0, V1, V2: TGEVertex; out P: TGEUVPlanes): Boolean;
 // A sprite's texture coordinates as the same planes (recorded on a
-// PSP-E1000, tests/cores/psp/hw/ge_sprite: every sample of integer spans,
+// PSP-E1000, probe ge_sprite: every sample of integer spans,
 // 99.8% of fractional ones): a triangle of V0's corner and the corners beside
 // it along x and y, so the steps come from the reciprocal of width times
 // height. False where Q is not 1 or the planes are not exact.
@@ -203,7 +203,7 @@ type
 // automatic mode: log(G) - log(Q), G the primitive's largest step of S/w or
 // T/w per pixel and Q the pixel's Q/w (gpu/exact's auto lod job: 85% exact,
 // the rest one off from the vertex arithmetic); the slope mode: log(slope) -
-// log(1/w) (tests/cores/psp/hw/ge_lod: every sample), where 1/w is not
+// log(1/w) (probe ge_lod: every sample), where 1/w is not
 // positive slope times w.
 function GETexLod(const S: TGERaster; G, Q, IW: Single): Integer;
 begin
@@ -13158,7 +13158,7 @@ begin
 end;
 
 // The GE's reciprocal of a triangle's area (recorded on a PSP-E1000,
-// tests/cores/psp/hw/ge_recip: every one of the 2^16 mantissas): for the
+// probe ge_recip: every one of the 2^16 mantissas): for the
 // area's mantissa 1 + M16 / 2^16, 2^16 over it from a table of 256 segments
 // of M16, each from its node 2^27 / (256 + J) (in 2^-11) down by the slope
 // 2^24 / (256 + J)^2 a step of M16 (in 2^-8), both floored, the sum floored
@@ -13307,7 +13307,7 @@ begin
     Dec(Result);
 end;
 
-// Lines (recorded on a PSP-E1000, tests/cores/psp/hw/ge_line: every one of
+// Lines (recorded on a PSP-E1000, probe ge_line: every one of
 // 8,192 lines, and gpu/exact's line jobs): a pixel is drawn when the line
 // leaves its diamond (|x - cx| + |y - cy| < 1/2 pixel round the centre): the
 // first vertex inside it and the last not, or the line crossing it with
@@ -13707,7 +13707,7 @@ begin
           begin
             // One level of detail for 4 pixels of a row (x aligned to 4), at
             // the second of them (recorded on a PSP-E1000,
-            // tests/cores/psp/hw/ge_alod: 85% of perspective pixels exact
+            // probe ge_alod: 85% of perspective pixels exact
             // where each pixel's own was 75%; through mode all).
             var Off: Int64 := (PX and not 3) + 1 - PX;
             var WL0 := (E0 + Step0 * Off) * FArea;

@@ -1,7 +1,9 @@
 unit PSP.Crypto.Keys;
 
-// Numeric device data, kept separate from implementation. See
-// PSP.Crypto.md for sources and the reproducible importer.
+// Numeric device data, kept separate from implementation: published values
+// of the PSP Developer Wiki's Keys and Kirk pages (KIRK slots, PRX seeds,
+// the Pauth whitening constant, curve parameters), taken from saved copies of
+// those pages (their SHA-256 below), not discovered here.
 interface
 
 uses System.SysUtils;

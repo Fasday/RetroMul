@@ -31,7 +31,7 @@ type
   PGETexture = ^TGETexture;
 
   // The texture cache while a primitive textures from the pixels it draws
-  // (TGETexture.Cache; recorded on a PSP-E1000, tests/cores/psp/hw/ge_tcache):
+  // (TGETexture.Cache; recorded on a PSP-E1000, probe ge_tcache):
   // texels come from blocks of 8 rows of 16 bytes (a swizzled texture's
   // blocks), each loaded when first read after a TEXFLUSH, as memory held it
   // then. A load holds the pixels up GETexCacheMiss cycles, a pixel takes

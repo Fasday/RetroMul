@@ -1078,7 +1078,7 @@ begin
 end;
 
 // The vertex unit's matrix rows (recorded on a PSP-E1000 through the depth
-// it writes, tests/cores/psp/hw/ge_xform): a product keeps its bits down to
+// it writes, probe ge_xform): a product keeps its bits down to
 // 2^(ea + eb - 15) (ea, eb the factors' exponents), truncated; a row's terms
 // (three products and the term added) are truncated at the quantum of the
 // largest of them and summed, the sum cut to 16 bits. Normal or zero values
@@ -1555,7 +1555,7 @@ begin
   Result := (C shr Shift) and $FF;
 end;
 
-// Lighting works in 8 bits (recorded on a PSP-E1000, tests/cores/psp/hw): a
+// Lighting works in 8 bits (recorded on a PSP-E1000): a
 // factor in [0, 1] (N.L, a power, the attenuation, the spot factor) becomes
 // 256 times it, truncated, at most 255; two 8-bit values x and y multiply as
 // (x + 1/2) (y + 1/2) / 256, truncated (so times 255 changes nothing); the
@@ -2716,7 +2716,7 @@ end;
 { Patches }
 
 // Patches as the GE evaluates them (recorded on a PSP-E1000,
-// tests/cores/psp/hw/ge_patch and ge_spline: every point's depth and colour,
+// probes ge_patch and ge_spline: every point's depth and colour,
 // through mode and 3D): t = I / Div in 8 bits, floored from the nearer end
 // (PatchT); along v (each column), then along u. A curve is three levels of
 // steps between neighbours (de Casteljau's for Bezier, every step at t; de

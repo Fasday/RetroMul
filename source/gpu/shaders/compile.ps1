@@ -4,14 +4,15 @@
 # Vertex and fragment shaders get the stage in the name: Name.vert -> SPV.NameVert.pas
 # with NameVertSPV.
 # The units are committed, so building needs no Vulkan SDK; run this after
-# editing a shader. Without arguments it compiles this folder and the compute tests.
+# editing a shader. Without arguments it compiles this folder, and the compute
+# tests' shaders where they are present.
 param(
   [string[]]$Dirs = @(),
   [string]$Sdk = $env:VULKAN_SDK
 )
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\..\.."
-if ($Dirs.Count -eq 0) { $Dirs = @($PSScriptRoot, "$root\tests\gpu\vulkan\shaders") }
+if ($Dirs.Count -eq 0) { $Dirs = @($PSScriptRoot) + @("$root\tests\gpu\vulkan\shaders" | Where-Object { Test-Path $_ }) }
 if (-not $Sdk) { $Sdk = 'C:\VulkanSDK\1.4.363.0' }
 $glslc = Join-Path $Sdk 'Bin\glslc.exe'
 $val = Join-Path $Sdk 'Bin\spirv-val.exe'

@@ -3,8 +3,7 @@ unit RM.Vulkan.HLE;
 // The common part of the Vulkan HLE renderers: a console's GPU drawn with
 // Vulkan graphics pipelines in the host GPU's own arithmetic (fast, not bit
 // exact), at the console's resolution or a multiple of it (Scale). A console
-// derives its renderer from TVulkanHLERenderer; how to write one is in
-// tests/gpu/vulkan/HLE-RENDERERS.md.
+// derives its renderer from TVulkanHLERenderer.
 //
 // The contract:
 // - Device. The renderer owns a TVulkanCompute with a graphics queue (and

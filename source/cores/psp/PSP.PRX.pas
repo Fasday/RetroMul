@@ -2,7 +2,10 @@ unit PSP.PRX;
 
 // Independently authored envelope decoder: immutable input -> normalized
 // metadata -> authenticated KIRK envelope -> bounded ELF decompression.
-// Sources, derivation and numeric-key provenance are in PSP.Crypto.md.
+// The envelopes' layouts are the PSP Developer Wiki's (Keys, Kirk), the
+// fields' routing as uOFW's firmware analysis describes it, both checked
+// against real modules (header SHA-1 and KIRK authentication); the numeric
+// data is in PSP.Crypto.Keys.
 interface
 
 uses System.SysUtils, System.Classes;
