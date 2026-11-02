@@ -33,7 +33,7 @@ interface
 uses
   System.SysUtils, System.Math, System.Diagnostics, System.Generics.Collections, System.Generics.Defaults,
   System.UITypes, Core.Emulation.Types, PSP.Types, PSP.Memory, PSP.GE.Texture, PSP.GE.Raster,
-  PSP.GE.Backend, PSP.GE.TexScale, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
+  PSP.GE.Backend, RM.Vulkan.TexScale, RM.Vulkan.Bindings, RM.Vulkan.Loader, RM.Vulkan.Compute;
 
 type
   TGEVulkanHLEStats = record
@@ -121,7 +121,7 @@ type
     Target: TGEHLETarget;
     Image: TGEHLEImage;
     // The image's texels per the GE's along a side: 1, or the texture scaling
-    // option's (GEScaleTexture).
+    // option's (ScaleTexture).
     Scale: Integer;
     // A scaled texture's bytes changing in close succession (in frames shown,
     // the last at ChangedAt): it is made again unscaled.
@@ -199,7 +199,7 @@ type
     // The texture scaling option (0 or 1 none, else the factor) and filter,
     // and the texels being scaled.
     FTextureScale: Integer;
-    FTextureFilter: TGETextureFilter;
+    FTextureFilter: TTexScaleFilter;
     FScaleIn, FScaleOut: TArray<Cardinal>;
     FDummy: TGEHLETexture;
     FSlots: array[0..1] of TGEHLESlot;
@@ -328,11 +328,11 @@ type
     function Present(Address, Format, Stride: Cardinal; var Frame: TEmulatorFrame): Boolean;
     property Compute: TVulkanCompute read FCompute;
     property Scale: Integer read FScale;
-    // Textures made larger by GEScaleTexture (2 to GETextureScaleMax; 0 or 1
+    // Textures made larger by ScaleTexture (2 to TexScaleMax; 0 or 1
     // none) with the filter when the scale is above 1: an option that is not
     // the GE's. Applies to textures uploaded from then on.
     property TextureScale: Integer read FTextureScale write SetTextureScale;
-    property TextureFilter: TGETextureFilter read FTextureFilter write FTextureFilter;
+    property TextureFilter: TTexScaleFilter read FTextureFilter write FTextureFilter;
     property ShaderBlend: Boolean read FShaderBlend;
     property Stats: TGEVulkanHLEStats read FStats;
   end;
@@ -1065,7 +1065,7 @@ procedure TGEVulkanHLEBackend.SetTextureScale(Value: Integer);
 begin
   if Value < 2 then
     Value := 0;
-  FTextureScale := Min(Value, GETextureScaleMax);
+  FTextureScale := Min(Value, TexScaleMax);
 end;
 
 procedure TGEVulkanHLEBackend.DestroyTarget(T: TGEHLETarget);
@@ -2444,7 +2444,7 @@ begin
       var N := W * H * T.Scale * T.Scale;
       if Length(FScaleOut) < N then
         SetLength(FScaleOut, N);
-      GEScaleTexture(P, W, H, T.Scale, @FScaleOut[0], FTextureFilter);
+      ScaleTexture(P, W, H, T.Scale, @FScaleOut[0], FTextureFilter);
       Move(FScaleOut[0], StageUpload(Int64(N) * 4, Offset)^, N * 4);
       Inc(FStats.TextureScales);
       FStats.ScaleSeconds := FStats.ScaleSeconds + Watch.Elapsed.TotalSeconds;

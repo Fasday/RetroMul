@@ -1,44 +1,44 @@
-unit PSP.GE.TexScale;
+unit RM.Vulkan.TexScale;
 
-// Textures made larger for the Vulkan HLE renderer above 1x: an option, not
-// the GE's (which samples its textures as they are). Every texel becomes a
-// block of Factor x Factor; where the texels around one show an edge passing
-// by one of its corners, that corner of the block takes the colour across
-// the edge, cut along it: diagonally, at half or twice the diagonal's slope,
-// or as a rounded corner where the edge has no direction to follow (xBRZ).
+// Textures made larger for the Vulkan HLE renderers above 1x (RM.Vulkan.HLE):
+// an option, not the consoles' (which sample their textures as they are).
+// Every texel becomes a block of Factor x Factor; where the texels around one
+// show an edge passing by one of its corners, that corner of the block takes
+// the colour across the edge, cut along it: diagonally, at half or twice the
+// diagonal's slope, or as a rounded corner where the edge has no direction to
+// follow (xBRZ).
 // Bicubic: every pixel of the larger texture is a Catmull-Rom interpolation
 // of the 4x4 texels around it, smooth for painted and photographic
 // textures. Hybrid: bicubic where a texel differs little from all eight
 // around it, the edges' blocks elsewhere.
 //
-// The approach of the edges is xBRZ's: an edge at a corner is found from the colour
-// differences along the two diagonals of the 4x4 texels around it, the shape
+// The approach of the edges is xBRZ's: an edge at a corner is found from the
+// colour differences along the two diagonals of the 4x4 texels around it, the shape
 // of the blend from the 3x3 around the texel. The share of each pixel of a
 // block is the part of its area inside the shape (sampled 16x16), for any
 // factor. Colours are compared in Y'CbCr with alpha (transparent texels are
 // all alike) and mixed weighted by their alpha; the bicubic one is
 // interpolated with its colour premultiplied by its alpha.
-{$IFDEF PSP_CHECKED}{$Q+}{$R+}{$ELSE}{$O+}{$Q-}{$R-}{$ENDIF}
 {$EXCESSPRECISION OFF}
 {$POINTERMATH ON}
 
 interface
 
 const
-  GETextureScaleMax = 6;
+  TexScaleMax = 6;
 
 type
-  TGETextureFilter = (tfXBRZ, tfHybrid, tfBicubic);
+  TTexScaleFilter = (tfXBRZ, tfHybrid, tfBicubic);
 
 // Src: W x H texels ($AABBGGRR, rows packed); Dst: (W * Factor) x
-// (H * Factor), rows packed. Factor: 2 to GETextureScaleMax. Texels past the
+// (H * Factor), rows packed. Factor: 2 to TexScaleMax. Texels past the
 // edges count as the edge's.
-procedure GEScaleTexture(Src: PCardinal; W, H, Factor: Integer; Dst: PCardinal; Filter: TGETextureFilter = tfXBRZ);
+procedure ScaleTexture(Src: PCardinal; W, H, Factor: Integer; Dst: PCardinal; Filter: TTexScaleFilter = tfXBRZ);
 
 // The filters' names in the settings: xbrz, hybrid, bicubic (anything else is
 // xBRZ).
-function GETextureFilterName(Filter: TGETextureFilter): string;
-function GETextureFilterFromName(const Name: string): TGETextureFilter;
+function TexScaleFilterName(Filter: TTexScaleFilter): string;
+function TexScaleFilterFromName(const Name: string): TTexScaleFilter;
 
 implementation
 
@@ -46,16 +46,16 @@ uses
   System.SysUtils, System.Math, System.Classes, System.Threading;
 
 const
-  FilterNames: array[TGETextureFilter] of string = ('xbrz', 'hybrid', 'bicubic');
+  FilterNames: array[TTexScaleFilter] of string = ('xbrz', 'hybrid', 'bicubic');
 
-function GETextureFilterName(Filter: TGETextureFilter): string;
+function TexScaleFilterName(Filter: TTexScaleFilter): string;
 begin
   Result := FilterNames[Filter];
 end;
 
-function GETextureFilterFromName(const Name: string): TGETextureFilter;
+function TexScaleFilterFromName(const Name: string): TTexScaleFilter;
 begin
-  for var F := Low(TGETextureFilter) to High(TGETextureFilter) do
+  for var F := Low(TTexScaleFilter) to High(TTexScaleFilter) do
     if SameText(Name.Trim, FilterNames[F]) then
       Exit(F);
   Result := tfXBRZ;
@@ -110,8 +110,8 @@ type
 var
   // The share (of 256) of each pixel of a block the shape covers, in the
   // corner's frame, row by row.
-  Coverage: array[2..GETextureScaleMax, TBlendShape, 0..GETextureScaleMax * GETextureScaleMax - 1] of Word;
-  BicubicTaps: array[2..GETextureScaleMax, 0..GETextureScaleMax - 1] of TBicubicTap;
+  Coverage: array[2..TexScaleMax, TBlendShape, 0..TexScaleMax * TexScaleMax - 1] of Word;
+  BicubicTaps: array[2..TexScaleMax, 0..TexScaleMax - 1] of TBicubicTap;
 
 function InShape(Shape: TBlendShape; U, V: Single): Boolean;
 begin
@@ -127,7 +127,7 @@ end;
 
 procedure MakeCoverage;
 begin
-  for var F := 2 to GETextureScaleMax do
+  for var F := 2 to TexScaleMax do
     for var Shape := Low(TBlendShape) to High(TBlendShape) do
       for var J := 0 to F - 1 do
         for var I := 0 to F - 1 do
@@ -145,7 +145,7 @@ end;
 // centre: between it and the texel before or after.
 procedure MakeBicubic;
 begin
-  for var F := 2 to GETextureScaleMax do
+  for var F := 2 to TexScaleMax do
     for var O := 0 to F - 1 do
     begin
       var T: Single := (O + 0.5) / F - 0.5;
@@ -232,7 +232,7 @@ type
   // (repeating the edges), the corners' types from each 2x2 of texels.
   TTextureScaler = class
     W, H, PW, Factor: Integer;
-    Filter: TGETextureFilter;
+    Filter: TTexScaleFilter;
     Dst: PCardinal;
     Colours, Keys: TArray<Cardinal>;
     Texels: TArray<TTexelColour>;
@@ -241,14 +241,14 @@ type
     // (Y + 1) * (W + 1) + X + 1: the types of F's bottom right corner (bits
     // 0-1), K's top left (2-3), J's top right (4-5), G's bottom left (6-7).
     Blocks: TArray<Byte>;
-    constructor Create(Src: PCardinal; AW, AH, AFactor: Integer; ADst: PCardinal; AFilter: TGETextureFilter);
+    constructor Create(Src: PCardinal; AW, AH, AFactor: Integer; ADst: PCardinal; AFilter: TTexScaleFilter);
     procedure FindCorners(Y1, Y2: Integer);
     function OnEdge(E: Integer): Boolean;
     procedure DrawBicubic(E: Integer; Block: PCardinal; DW: Integer);
     procedure DrawRows(Y1, Y2: Integer);
   end;
 
-constructor TTextureScaler.Create(Src: PCardinal; AW, AH, AFactor: Integer; ADst: PCardinal; AFilter: TGETextureFilter);
+constructor TTextureScaler.Create(Src: PCardinal; AW, AH, AFactor: Integer; ADst: PCardinal; AFilter: TTexScaleFilter);
 begin
   inherited Create;
   W := AW;
@@ -309,7 +309,7 @@ end;
 // nothing is opaque, the texel's colour, transparent.
 procedure TTextureScaler.DrawBicubic(E: Integer; Block: PCardinal; DW: Integer);
 var
-  Rows: array[0..4, 0..GETextureScaleMax - 1] of TPremultiplied;
+  Rows: array[0..4, 0..TexScaleMax - 1] of TPremultiplied;
 begin
   for var RY := 0 to 4 do
     for var OX := 0 to Factor - 1 do
@@ -497,9 +497,9 @@ begin
     end;
 end;
 
-procedure GEScaleTexture(Src: PCardinal; W, H, Factor: Integer; Dst: PCardinal; Filter: TGETextureFilter);
+procedure ScaleTexture(Src: PCardinal; W, H, Factor: Integer; Dst: PCardinal; Filter: TTexScaleFilter);
 begin
-  var S := TTextureScaler.Create(Src, W, H, EnsureRange(Factor, 2, GETextureScaleMax), Dst, Filter);
+  var S := TTextureScaler.Create(Src, W, H, EnsureRange(Factor, 2, TexScaleMax), Dst, Filter);
   try
     // Bands of rows on the thread pool for larger textures; each pass writes
     // only its own rows.

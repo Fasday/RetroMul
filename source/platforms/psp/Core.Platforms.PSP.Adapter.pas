@@ -3,7 +3,7 @@ unit Core.Platforms.PSP.Adapter;
 interface
 
 uses System.SysUtils, System.Classes, System.IniFiles, System.SyncObjs,
-  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, PSP.GE.TexScale, Core.Platforms.PSP.Playback,
+  Core.Storage, Core.Emulation, PSP.Types, PSP.Media, PSP.Console, RM.Vulkan.TexScale, Core.Platforms.PSP.Playback,
   Core.Platforms.PSP.Renderer;
 
 type
@@ -16,7 +16,7 @@ type
     FRenderer: TPSPRenderer;
     FResolution: Integer;
     FTextureScale: Integer;
-    FTextureFilter: TGETextureFilter;
+    FTextureFilter: TTexScaleFilter;
     FLanguage, FButtonSwap: Integer;
     FNickname: string;
     FFontDirectory: string;
@@ -37,7 +37,7 @@ type
     // (Video/TextureScale), with the filter (Video/TextureFilter). Applied by
     // Start, as the renderer.
     property TextureScale: Integer read FTextureScale write FTextureScale;
-    property TextureFilter: TGETextureFilter read FTextureFilter write FTextureFilter;
+    property TextureFilter: TTexScaleFilter read FTextureFilter write FTextureFilter;
     property Language: Integer read FLanguage;
     property ButtonSwap: Integer read FButtonSwap;
     property Nickname: string read FNickname;
@@ -61,7 +61,7 @@ type
     FRenderer: TPSPRenderer;
     FResolution: Integer;
     FTextureScale: Integer;
-    FTextureFilter: TGETextureFilter;
+    FTextureFilter: TTexScaleFilter;
     FRendererStatus: string;
     FRate: TEmulationFrameRate;
     FSnapshotDone: TEvent;
@@ -74,7 +74,7 @@ type
   public
     constructor Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer = prCPU;
       const FontDirectory: string = ''; const SnapshotDirectory: string = ''; Resolution: Integer = 1;
-      TextureScale: Integer = 0; TextureFilter: TGETextureFilter = tfXBRZ);
+      TextureScale: Integer = 0; TextureFilter: TTexScaleFilter = tfXBRZ);
     destructor Destroy; override;
     procedure Configure(const Input: TEmulatorInput; Paused: Boolean; AudioEnabled: Boolean = True; Volume: Single = 1;
       Recompiler: Boolean = True);
@@ -163,10 +163,10 @@ begin
   FRecompiler := not SameText(Ini.ReadString('Emulation', 'Execution', 'jit'), 'interpreter');
   FRenderer := PSPRendererFromName(Ini.ReadString('Video', 'Renderer', 'cpu'));
   FResolution := EnsureRange(Ini.ReadInteger('Video', 'Resolution', FResolution), 1, 8);
-  FTextureScale := EnsureRange(Ini.ReadInteger('Video', 'TextureScale', FTextureScale), 0, GETextureScaleMax);
+  FTextureScale := EnsureRange(Ini.ReadInteger('Video', 'TextureScale', FTextureScale), 0, TexScaleMax);
   if FTextureScale = 1 then
     FTextureScale := 0;
-  FTextureFilter := GETextureFilterFromName(Ini.ReadString('Video', 'TextureFilter', GETextureFilterName(FTextureFilter)));
+  FTextureFilter := TexScaleFilterFromName(Ini.ReadString('Video', 'TextureFilter', TexScaleFilterName(FTextureFilter)));
   FLanguage := EnsureRange(Ini.ReadInteger('System', 'Language', FLanguage), 0, 11);
   FButtonSwap := EnsureRange(Ini.ReadInteger('System', 'ButtonSwap', FButtonSwap), 0, 1);
   FNickname := Ini.ReadString('System', 'Nickname', FNickname);
@@ -184,7 +184,7 @@ begin
   Ini.WriteString('Video', 'Renderer', PSPRendererName(FRenderer));
   Ini.WriteInteger('Video', 'Resolution', FResolution);
   Ini.WriteInteger('Video', 'TextureScale', FTextureScale);
-  Ini.WriteString('Video', 'TextureFilter', GETextureFilterName(FTextureFilter));
+  Ini.WriteString('Video', 'TextureFilter', TexScaleFilterName(FTextureFilter));
   Ini.WriteInteger('System', 'Language', FLanguage);
   Ini.WriteInteger('System', 'ButtonSwap', FButtonSwap);
   Ini.WriteString('System', 'Nickname', FNickname);
@@ -192,7 +192,7 @@ begin
 end;
 
 constructor TPSPWorker.Create(const ProgramData: TPSPProgram; const Storage: IStorage; Renderer: TPSPRenderer;
-  const FontDirectory, SnapshotDirectory: string; Resolution, TextureScale: Integer; TextureFilter: TGETextureFilter);
+  const FontDirectory, SnapshotDirectory: string; Resolution, TextureScale: Integer; TextureFilter: TTexScaleFilter);
 begin
   inherited Create(True);
   FreeOnTerminate := False;

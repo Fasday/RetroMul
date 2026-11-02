@@ -22,7 +22,7 @@ program PSPRun;
 uses
   Winapi.Windows, System.SysUtils, System.Math, System.Classes, System.IOUtils, System.Hash, System.Diagnostics, System.Generics.Collections,
   Core.Emulation.Types, PSP.Types, PSP.Media, PSP.CPU, PSP.Console, PSP.Kernel, PSP.HLE, PSP.Loader, PSP.GE, PSP.GE.VulkanLLE,
-  PSP.GE.VulkanHLE, PSP.GE.TexScale, PSP.Settings;
+  PSP.GE.VulkanHLE, RM.Vulkan.TexScale, PSP.Settings;
 
 type
   TPress = record
@@ -356,7 +356,7 @@ begin
       else if A = '-gpu-hle' then GPUMode := 3
       else if A = '-scale' then begin Inc(I); Scale := StrToInt(ParamStr(I)); end
       else if A = '-texscale' then begin Inc(I); TexScale := StrToInt(ParamStr(I)); end
-      else if A = '-texfilter' then begin Inc(I); TexFilter := GETextureFilterFromName(ParamStr(I)); end
+      else if A = '-texfilter' then begin Inc(I); TexFilter := TexScaleFilterFromName(ParamStr(I)); end
       else if A = '-fixed-blend' then FixedBlend := True
       else if A = '-vram' then begin Inc(I); VRAMFile := ParamStr(I); end
       else if A = '-wav' then begin Inc(I); WavFile := ParamStr(I); end

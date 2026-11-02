@@ -5,7 +5,7 @@ unit Core.Platforms.PSP.Renderer;
 interface
 
 uses
-  System.SysUtils, PSP.Console, PSP.GE.Backend, PSP.GE.TexScale;
+  System.SysUtils, PSP.Console, PSP.GE.Backend, RM.Vulkan.TexScale;
 
 type
   // CPU: PSP.GE.Raster, the reference. Vulkan LLE: the same pixel pipeline in
@@ -24,7 +24,7 @@ type
     // TextureScale and TextureFilter: its texture scaling above 1x (0 none,
     // else 2 to 6).
     constructor Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale: Integer = 1; TextureScale: Integer = 0;
-      TextureFilter: TGETextureFilter = tfXBRZ);
+      TextureFilter: TTexScaleFilter = tfXBRZ);
     destructor Destroy; override;
     function Status: string;
   end;
@@ -64,7 +64,7 @@ begin
 end;
 
 constructor TPSPRendererSession.Create(Console: TPSPConsole; Renderer: TPSPRenderer; Scale, TextureScale: Integer;
-  TextureFilter: TGETextureFilter);
+  TextureFilter: TTexScaleFilter);
 begin
   inherited Create;
   FConsole := Console;
@@ -91,7 +91,7 @@ begin
         FDescription := FDescription + Format(' at %dx', [Backend.Scale]);
         if Backend.TextureScale > 1 then
           FDescription := FDescription + Format(', textures %dx %s', [Backend.TextureScale,
-            GETextureFilterName(Backend.TextureFilter)]);
+            TexScaleFilterName(Backend.TextureFilter)]);
       end;
       Console.HLE.Log('gpu: ' + FDescription);
       Exit;

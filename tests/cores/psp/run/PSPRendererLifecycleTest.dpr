@@ -4,7 +4,7 @@ program PSPRendererLifecycleTest;
 
 uses
   System.SysUtils, System.Classes, System.IniFiles, Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer,
-  PSP.Types, PSP.Media, PSP.Console, PSP.GE, PSP.GE.Raster, PSP.GE.TexScale, Core.Emulation.Types;
+  PSP.Types, PSP.Media, PSP.Console, PSP.GE, PSP.GE.Raster, RM.Vulkan.TexScale, Core.Emulation.Types;
 
 type
   TConfigAccess = class(TPSPConfig)
