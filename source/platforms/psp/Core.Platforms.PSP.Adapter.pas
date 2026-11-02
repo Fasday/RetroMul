@@ -135,7 +135,7 @@ type
 
 implementation
 
-uses {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF} System.UITypes, System.Diagnostics, System.Math, Core.Platforms, Core.Platforms.PSP.Archive,
+uses {$IFDEF MSWINDOWS}Winapi.MMSystem,{$ENDIF} Core.MediaArchive, System.UITypes, System.Diagnostics, System.Math, Core.Platforms, Core.Platforms.PSP.Archive,
   PSP.Settings, Core.Snapshots, Core.SavePaths;
 
 const
@@ -597,8 +597,8 @@ begin
     SourceName := RomName;
     if SourceName.StartsWith('content://',True) then SourceName := ActualStorage.Describe(RomName).Name;
   end;
-  if SameText(ExtractFileExt(SourceName),'.zip') then
-    FProgram := ReadPSPArchive(Stream,ActualStorage,True)
+  if IsMediaArchive(SourceName) then
+    FProgram := ReadPSPArchive(OpenMediaArchive(Stream, SourceName, ActualStorage), ActualStorage, True)
   else
   begin
     FProgram := TPSPProgram.Read(Stream);
@@ -670,12 +670,15 @@ end;
 
 procedure TPSPCoreAdapter.Reset;
 begin
+  FPaused := False;
   if (FWorker <> nil) and FWorker.Finished then
   begin
     Stop;
     Start;
   end
-  else if FWorker <> nil then FWorker.RequestReset;
+  else if FWorker <> nil then
+    FWorker.RequestReset;
+  Configure;
 end;
 
 procedure TPSPCoreAdapter.ClearInput;
