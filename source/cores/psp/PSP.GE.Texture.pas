@@ -370,7 +370,7 @@ begin
   end;
   var Key := L.Addr + BlockOff;
   var Mask := Length(C.Keys) - 1;
-  var H := Integer(((Key shr 4) * Cardinal(2654435761)) shr 22) and Mask;
+  var H := Integer(((UInt64(Key shr 4) * 2654435761) and $FFFFFFFF) shr 22) and Mask;
   while C.Keys[H] <> 0 do
   begin
     if C.Keys[H] = Key + 1 then
@@ -381,7 +381,7 @@ begin
   begin
     FillChar(C.Keys[0], Length(C.Keys) * SizeOf(Cardinal), 0);
     C.Used := 0;
-    H := Integer(((Key shr 4) * Cardinal(2654435761)) shr 22) and Mask;
+    H := Integer(((UInt64(Key shr 4) * 2654435761) and $FFFFFFFF) shr 22) and Mask;
   end;
   C.Keys[H] := Key + 1;
   Inc(C.Used);
