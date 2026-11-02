@@ -35,6 +35,13 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   (`sweep/*.bin`, 32-bit little endian results in input order). 35 s on the
   PSP.
 
+- `vfpu_dot`: the VFPU dot product unit, vdot.q, vdot.t, vdot.p and vhdp.q
+  of 1M vector pairs from a fixed xorshift sequence (integer-only, so the
+  PC makes the same inputs) in four kinds: exponents spread wide, close
+  together (cancellation), a matrix row times a point with w = 1, and values
+  near 1 (`dot/results.bin`, four results a case; `dot/inputs.bin`, the first
+  65536 cases' inputs). 2.5 s on the PSP.
+
 - `ge_light`: the GE's lighting, one lit point per pixel with its own
   registers, 65536 samples a frame (`light/*.bin`, 272 rows of 512 8888
   pixels): light x material colour products, emissive plus global ambient,
@@ -161,6 +168,20 @@ The same PRX runs in the emulator (`PSPRun prog.prx -frames 200000`), where
   emulator's.
 
 ## Findings (PSP-E1000, 2026-10-31)
+
+- VFPU dot products (`vfpu_dot`, 2026-11-02): a single product through the
+  unit is the exact 48-bit product cut to 2^-23 of its exponent sum, then
+  rounded to 24 bits to nearest, ties to even, with no sticky bit (all
+  1,950 single-product cases). Sums of products of mixed signs: products
+  aligned to the largest exponent sum and cut toward zero one bit below
+  that grid, summed, the magnitude cut by that bit and rounded the same way
+  (two products: 99.9%). Sums of same-signed products round up or down one
+  step from that in 8% of cases, from bits not yet modelled. The core keeps
+  two bits below the grid for all (91-94% of each instruction bit exact,
+  98.7-99.1% within a step); its previous lane-by-lane model matched 32-55%.
+  In Tekken 6 the old model made a fighter's planted foot shake by a pixel
+  every frame (the game's foot placement solves on dot products); the real
+  PSP and the new model keep it still.
 
 - Through-mode positions are truncated to 1/16 pixel (a point at x.97 stays
   on pixel x).

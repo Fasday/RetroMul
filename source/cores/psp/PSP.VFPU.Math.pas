@@ -186,16 +186,25 @@ begin
 end;
 {$ENDIF}
 
-// The dot product unit adds the products in lane order. Each step aligns the
-// running sum and the next product to the larger of their exponents (for the
-// product, the sum of its operands' exponents), keeps 25 bits below that,
-// truncating, and truncates the sum back to 24 bits.
+// The dot product unit (recorded on a PSP-E1000, vfpu_dot: 1M random vectors
+// through vdot.q/t/p and vhdp.q; this model gives 91-94% of the results bit
+// exact, the rest one step off, mostly in sums of same-signed products). The
+// exact products are aligned to the largest exponent sum, each cut toward
+// zero to 2 bits below 2^-23 of it; their sum's magnitude loses those 2 bits
+// (cut) and is rounded to 24 bits to nearest, ties to even, without the bits
+// already cut.
 function VSum4(const A, B: array of Cardinal; Count: Integer; Skip: Cardinal): Cardinal;
+const
+  // Bits kept below the result grid while adding.
+  Guard = 2;
+var
+  Ms: array[0..3] of UInt64;
+  Rs: array[0..3] of Integer;
+  Ng: array[0..3] of Boolean;
 begin
   var InfSigns: Cardinal := 0;
-  var AccNeg := False;
-  var AccM: Cardinal := 0;
-  var AccE: Integer := 0;
+  var N := 0;
+  var MaxR := Low(Integer);
   for var I := 0 to Count - 1 do
   begin
     if (Skip shr I) and 1 <> 0 then
@@ -220,62 +229,72 @@ begin
     end;
     if (EX = 0) or (EY = 0) then
       Continue;
-    // Product = M * 2^(RP - 46), M in [2^46, 2^48).
-    var M := UInt64((X and $7FFFFF) or $800000) * UInt64((Y and $7FFFFF) or $800000);
-    var RP := EX + EY - 254;
-    var R := RP;
-    if (AccM <> 0) and (AccE > R) then
-      R := AccE;
-    var PSh := 21 + R - RP;
-    // Both aligned terms fit in 27 bits; only the exact product needs UInt64.
-    var PQ: Integer := 0;
-    if PSh < 48 then
-      PQ := Integer(M shr PSh);
-    var AQ: Integer := 0;
-    if AccM <> 0 then
-    begin
-      var D := R - AccE;
-      if D <= 2 then
-        AQ := Integer(AccM shl (2 - D))
-      else if D < 26 then
-        AQ := Integer(AccM shr (D - 2));
-    end;
-    if AccNeg then
-      AQ := -AQ;
-    if Neg then
-      PQ := -PQ;
-    var S := AQ + PQ;
-    if S = 0 then
-    begin
-      AccM := 0;
-      AccNeg := False;
-      Continue;
-    end;
-    AccNeg := S < 0;
-    var U := Cardinal(Abs(S));
-    var Top := TopBit32(U);
-    // Leading bit Top in units of 2^(R - 25): exponent R - 25 + Top.
-    AccE := R - 25 + Top;
-    if Top > 23 then
-      AccM := U shr (Top - 23)
-    else
-      AccM := U shl (23 - Top);
+    // Product = M * 2^(R - 46), M in [2^46, 2^48).
+    Ms[N] := UInt64((X and $7FFFFF) or $800000) * UInt64((Y and $7FFFFF) or $800000);
+    Rs[N] := EX + EY - 254;
+    Ng[N] := Neg;
+    if Rs[N] > MaxR then
+      MaxR := Rs[N];
+    Inc(N);
   end;
   if InfSigns = 1 then
     Exit($7F800000);
   if InfSigns = 2 then
     Exit($FF800000);
-  if AccM = 0 then
+  if N = 0 then
     Exit(0);
+  // In units of 2^(MaxR - 23 - Guard): at most 4 terms below 2^(26 + Guard).
+  var S: Int64 := 0;
+  for var I := 0 to N - 1 do
+  begin
+    var Sh := 23 - Guard + MaxR - Rs[I];
+    var V: Int64 := 0;
+    if Sh < 48 then
+      V := Int64(Ms[I] shr Sh);
+    if Ng[I] then
+      Dec(S, V)
+    else
+      Inc(S, V);
+  end;
   var SignBit: Cardinal := 0;
-  if AccNeg then
+  if S < 0 then
+  begin
     SignBit := $80000000;
-  var BE := AccE + 127;
+    S := -S;
+  end;
+  var U := Cardinal(UInt64(S) shr Guard);
+  if U = 0 then
+    Exit(0);
+  // U in units of 2^(MaxR - 23).
+  var Top := TopBit32(U);
+  var E := MaxR - 23;
+  var M: Cardinal;
+  if Top > 23 then
+  begin
+    var Sh := Top - 23;
+    M := U shr Sh;
+    var Rem := U - (M shl Sh);
+    var Half := Cardinal(1) shl (Sh - 1);
+    if (Rem > Half) or ((Rem = Half) and ((M and 1) <> 0)) then
+      Inc(M);
+    Inc(E, Sh);
+    if (M shr 24) <> 0 then
+    begin
+      M := M shr 1;
+      Inc(E);
+    end;
+  end
+  else
+  begin
+    M := U shl (23 - Top);
+    Dec(E, 23 - Top);
+  end;
+  var BE := E + 23 + 127;
   if BE >= 255 then
     Exit(SignBit or $7F800000);
   if BE <= 0 then
     Exit(SignBit);
-  Result := SignBit or (Cardinal(BE) shl 23) or (Cardinal(AccM) and $7FFFFF);
+  Result := SignBit or (Cardinal(BE) shl 23) or (M and $7FFFFF);
 end;
 
 { Function unit. Results carry 22 bits of mantissa. }
