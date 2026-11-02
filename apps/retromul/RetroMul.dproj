@@ -1167,6 +1167,7 @@
         <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Loader.pas"/>
         <DCCReference Include="..\..\source\gpu\vulkan\RM.Vulkan.Compute.pas"/>
         <DCCReference Include="..\..\source\platforms\psp\RM.Platforms.PSP.Settings.pas"/>
+        <DCCReference Include="..\..\source\platforms\psp\RM.Platforms.PSP.Input.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Console.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Emulation.pas"/>
         <DCCReference Include="..\..\source\cores\saturn\Saturn.Firmware.pas"/>

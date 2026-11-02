@@ -692,6 +692,7 @@ uses
   PSP.GE.Backend in '..\..\source\cores\psp\PSP.GE.Backend.pas',
   PSP.GE.Workers in '..\..\source\cores\psp\PSP.GE.Workers.pas',
   RM.Platforms.PSP.Settings in '..\..\source\platforms\psp\RM.Platforms.PSP.Settings.pas',
+  RM.Platforms.PSP.Input in '..\..\source\platforms\psp\RM.Platforms.PSP.Input.pas',
   {$IF (Defined(MSWINDOWS) or Defined(LINUX) or Defined(ANDROID)) and not Defined(CPUX86)}
   PSP.GE.VulkanLLE in '..\..\source\cores\psp\PSP.GE.VulkanLLE.pas',
   PSP.GE.VulkanHLE in '..\..\source\cores\psp\PSP.GE.VulkanHLE.pas',
