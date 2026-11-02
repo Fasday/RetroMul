@@ -60,6 +60,8 @@ type
     SpotRS: Single;
     SpotFinite: Boolean;
     KA, KB, KC, Cutoff, Expo: Single;
+    // Pos, KA, KB and KC finite.
+    PosFinite: Boolean;
     SpotPositive: Boolean;
     LA, LD, LS: TGERGB;
     // A directional light's (LType 0) vector and half vector as Light makes
@@ -99,6 +101,8 @@ type
     // element is normal or zero; else the two apply in turn.
     ViewWorld: array[0..2, 0..3] of Double;
     Combined: Boolean;
+    // Every element of ViewWorld, of World's, View's and Proj's rows Small24.
+    ViewWorldSmall, WorldSmall, ViewSmall, ProjSmall: Boolean;
     WorldS, TGen: TGESingle12;
     Bone: array[0..95] of Single;
     BoneCount: Integer;
@@ -1177,8 +1181,368 @@ begin
   Result := Sum24(Product24(Row[0], X), Product24(Row[1], Y), Product24(Row[2], Z), Term24(Row[3]));
 end;
 
-procedure Rows24(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer);
+{ Sum24 of three products and a term in the values' bits, for normal values
+  (or zeros) of exponents within 400 of 0: every product and sum then stays
+  well inside the double's normal range, and the cuts are those of
+  Product24, Term24 and Sum24 without their records and calls. }
+
+const
+  SignBit64 = UInt64($8000000000000000);
+  MagBits64 = UInt64($7FFFFFFFFFFFFFFF);
+
+function Small24(V: Double): Boolean; inline;
 begin
+  var X := (PUInt64(@V)^ shr 52) and $7FF;
+  Result := ((X > 1023 - 400) and (X < 1023 + 400)) or ((PUInt64(@V)^ shl 1) = 0);
+end;
+
+// Product24's value (bits) and quantum: a zero factor gives +0 and 0.
+procedure ProductBits(A, B: Double; out Bits: UInt64; out Q: Integer); inline;
+begin
+  var BA := PUInt64(@A)^;
+  var BB := PUInt64(@B)^;
+  if ((BA shl 1) = 0) or ((BB shl 1) = 0) then
+  begin
+    Bits := 0;
+    Q := 0;
+    Exit;
+  end;
+  var P := A * B;
+  var BP := PUInt64(@P)^;
+  Q := Integer((BA shr 52) and $7FF) + Integer((BB shr 52) and $7FF) - 2046 - 15;
+  // 15 or 16 bits below the leading one.
+  var Keep := Integer((BP shr 52) and $7FF) - 1023 - Q;
+  Bits := BP and not ((UInt64(1) shl (52 - Keep)) - 1);
+end;
+
+// TruncPow2 of a normal value or a zero (in bits) at 2^Q.
+function CutBits(Bits: UInt64; Q: Integer): Double; inline;
+begin
+  if (Bits shl 1) <> 0 then
+  begin
+    var Keep := Integer((Bits shr 52) and $7FF) - 1023 - Q;
+    if Keep < 0 then
+      Bits := Bits and SignBit64
+    else if Keep < 52 then
+      Bits := Bits and not ((UInt64(1) shl (52 - Keep)) - 1);
+  end;
+  Result := PDouble(@Bits)^;
+end;
+
+// Sum24(Product24(A0, B0), Product24(A1, B1), Product24(A2, B2), Term24(T))
+// for Small24 values.
+function Dot24Bits(A0, B0, A1, B1, A2, B2, T: Double): Double;
+var
+  V0, V1, V2, V3: UInt64;
+  Q0, Q1, Q2, Q3: Integer;
+begin
+  ProductBits(A0, B0, V0, Q0);
+  ProductBits(A1, B1, V1, Q1);
+  ProductBits(A2, B2, V2, Q2);
+  V3 := PUInt64(@T)^;
+  if (V3 shl 1) = 0 then
+    Q3 := 0
+  else
+    Q3 := Integer((V3 shr 52) and $7FF) - 1023 - 15;
+  // The largest magnitude, the first of equal ones, gives the quantum.
+  var L := V0 and MagBits64;
+  var Q := Q0;
+  if (V1 and MagBits64) > L then
+  begin
+    L := V1 and MagBits64;
+    Q := Q1;
+  end;
+  if (V2 and MagBits64) > L then
+  begin
+    L := V2 and MagBits64;
+    Q := Q2;
+  end;
+  if (V3 and MagBits64) > L then
+  begin
+    L := V3 and MagBits64;
+    Q := Q3;
+  end;
+  if L = 0 then
+    Exit(0);
+  Result := T24(CutBits(V0, Q) + CutBits(V1, Q) + CutBits(V2, Q) + CutBits(V3, Q));
+end;
+
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+// Dot24Bits(Row[0], X, Row[1], Y, Row[2], Z, Row[3]) in registers, for
+// Small24 values (the same steps in the same order).
+function Row24Asm(Row: PGERow24; X, Y, Z: Double): Double;
+asm
+  .PUSHNV RBX
+  .PUSHNV RSI
+  .PUSHNV RDI
+  .PUSHNV R12
+  .PUSHNV R13
+  .PUSHNV R14
+  // RCX Row (kept in RSI), XMM1..XMM3 X, Y, Z. Terms in R8..R11, quanta in
+  // EBX, EDI, R12D, R13D.
+  MOV RSI, RCX
+  // Product 0: the row's factor times X; a zero factor gives +0 and quantum 0.
+  MOV RAX, [RSI+0]
+  MOVQ RDX, XMM1
+  MOV RCX, RAX
+  ADD RCX, RCX
+  JZ @@Zero0
+  MOV RCX, RDX
+  ADD RCX, RCX
+  JZ @@Zero0
+  SHR RAX, 52
+  AND EAX, $7FF
+  SHR RDX, 52
+  AND EDX, $7FF
+  // Q := XA + XB - 2061; the product cut below 2^Q: 52 - Keep = XA + XB - XP - 986 bits.
+  LEA EBX, [RAX+RDX-2061]
+  LEA EDX, [RAX+RDX-986]
+  MOVSD XMM0, [RSI+0]
+  MULSD XMM0, XMM1
+  MOVQ R8, XMM0
+  MOV RAX, R8
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EDX, EAX
+  MOV ECX, EDX
+  SHR R8, CL
+  SHL R8, CL
+  JMP @@Done0
+@@Zero0:
+  XOR R8, R8
+  XOR EBX, EBX
+@@Done0:
+  // Product 1: the row's factor times Y; a zero factor gives +0 and quantum 0.
+  MOV RAX, [RSI+8]
+  MOVQ RDX, XMM2
+  MOV RCX, RAX
+  ADD RCX, RCX
+  JZ @@Zero1
+  MOV RCX, RDX
+  ADD RCX, RCX
+  JZ @@Zero1
+  SHR RAX, 52
+  AND EAX, $7FF
+  SHR RDX, 52
+  AND EDX, $7FF
+  // Q := XA + XB - 2061; the product cut below 2^Q: 52 - Keep = XA + XB - XP - 986 bits.
+  LEA EDI, [RAX+RDX-2061]
+  LEA EDX, [RAX+RDX-986]
+  MOVSD XMM0, [RSI+8]
+  MULSD XMM0, XMM2
+  MOVQ R9, XMM0
+  MOV RAX, R9
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EDX, EAX
+  MOV ECX, EDX
+  SHR R9, CL
+  SHL R9, CL
+  JMP @@Done1
+@@Zero1:
+  XOR R9, R9
+  XOR EDI, EDI
+@@Done1:
+  // Product 2: the row's factor times Z; a zero factor gives +0 and quantum 0.
+  MOV RAX, [RSI+16]
+  MOVQ RDX, XMM3
+  MOV RCX, RAX
+  ADD RCX, RCX
+  JZ @@Zero2
+  MOV RCX, RDX
+  ADD RCX, RCX
+  JZ @@Zero2
+  SHR RAX, 52
+  AND EAX, $7FF
+  SHR RDX, 52
+  AND EDX, $7FF
+  // Q := XA + XB - 2061; the product cut below 2^Q: 52 - Keep = XA + XB - XP - 986 bits.
+  LEA R12D, [RAX+RDX-2061]
+  LEA EDX, [RAX+RDX-986]
+  MOVSD XMM0, [RSI+16]
+  MULSD XMM0, XMM3
+  MOVQ R10, XMM0
+  MOV RAX, R10
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EDX, EAX
+  MOV ECX, EDX
+  SHR R10, CL
+  SHL R10, CL
+  JMP @@Done2
+@@Zero2:
+  XOR R10, R10
+  XOR R12D, R12D
+@@Done2:
+  // The term added, its quantum 16 bits below its leading one (zero: 0).
+  MOV R11, [RSI+24]
+  XOR R13D, R13D
+  MOV RAX, R11
+  ADD RAX, RAX
+  JZ @@TermZero
+  MOV RAX, R11
+  SHR RAX, 52
+  AND EAX, $7FF
+  LEA R13D, [RAX-1038]
+@@TermZero:
+  // The largest magnitude, the first of equal ones, gives the quantum (R14D).
+  MOV RDX, $7FFFFFFFFFFFFFFF
+  MOV RAX, R8
+  AND RAX, RDX
+  MOV R14D, EBX
+  MOV RCX, R9
+  AND RCX, RDX
+  CMP RCX, RAX
+  CMOVA RAX, RCX
+  CMOVA R14D, EDI
+  MOV RCX, R10
+  AND RCX, RDX
+  CMP RCX, RAX
+  CMOVA RAX, RCX
+  CMOVA R14D, R12D
+  MOV RCX, R11
+  AND RCX, RDX
+  CMP RCX, RAX
+  CMOVA RAX, RCX
+  CMOVA R14D, R13D
+  TEST RAX, RAX
+  JZ @@ZeroSum
+  // Term 0 cut at 2^Q (R14D): a zero kept, below 2^Q its sign alone.
+  MOV RAX, R8
+  ADD RAX, RAX
+  JZ @@Cut0
+  MOV RAX, R8
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EAX, 1023
+  SUB EAX, R14D
+  JS @@Sign0
+  MOV ECX, 52
+  SUB ECX, EAX
+  SHR R8, CL
+  SHL R8, CL
+  JMP @@Cut0
+@@Sign0:
+  MOV RAX, $8000000000000000
+  AND R8, RAX
+@@Cut0:
+  // Term 1 cut at 2^Q (R14D): a zero kept, below 2^Q its sign alone.
+  MOV RAX, R9
+  ADD RAX, RAX
+  JZ @@Cut1
+  MOV RAX, R9
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EAX, 1023
+  SUB EAX, R14D
+  JS @@Sign1
+  MOV ECX, 52
+  SUB ECX, EAX
+  SHR R9, CL
+  SHL R9, CL
+  JMP @@Cut1
+@@Sign1:
+  MOV RAX, $8000000000000000
+  AND R9, RAX
+@@Cut1:
+  // Term 2 cut at 2^Q (R14D): a zero kept, below 2^Q its sign alone.
+  MOV RAX, R10
+  ADD RAX, RAX
+  JZ @@Cut2
+  MOV RAX, R10
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EAX, 1023
+  SUB EAX, R14D
+  JS @@Sign2
+  MOV ECX, 52
+  SUB ECX, EAX
+  SHR R10, CL
+  SHL R10, CL
+  JMP @@Cut2
+@@Sign2:
+  MOV RAX, $8000000000000000
+  AND R10, RAX
+@@Cut2:
+  // Term 3 cut at 2^Q (R14D): a zero kept, below 2^Q its sign alone.
+  MOV RAX, R11
+  ADD RAX, RAX
+  JZ @@Cut3
+  MOV RAX, R11
+  SHR RAX, 52
+  AND EAX, $7FF
+  SUB EAX, 1023
+  SUB EAX, R14D
+  JS @@Sign3
+  MOV ECX, 52
+  SUB ECX, EAX
+  SHR R11, CL
+  SHL R11, CL
+  JMP @@Cut3
+@@Sign3:
+  MOV RAX, $8000000000000000
+  AND R11, RAX
+@@Cut3:
+  MOVQ XMM0, R8
+  MOVQ XMM4, R9
+  ADDSD XMM0, XMM4
+  MOVQ XMM4, R10
+  ADDSD XMM0, XMM4
+  MOVQ XMM4, R11
+  ADDSD XMM0, XMM4
+  // T24 of the sum: a zero kept, a normal one cut to 16 bits.
+  MOVQ RAX, XMM0
+  MOV RCX, RAX
+  SHR RCX, 52
+  AND ECX, $7FF
+  JZ @@Exit
+  MOV RCX, $FFFFFFE000000000
+  AND RAX, RCX
+  MOVQ XMM0, RAX
+  JMP @@Exit
+@@ZeroSum:
+  XORPD XMM0, XMM0
+@@Exit:
+end;
+{$ENDIF}
+
+function Dot24(A0, B0, A1, B1, A2, B2, T: Double): Double;
+begin
+  if Small24(A0) and Small24(B0) and Small24(A1) and Small24(B1) and Small24(A2) and Small24(B2) and Small24(T) then
+    Result := Dot24Bits(A0, B0, A1, B1, A2, B2, T)
+  else
+    Result := Sum24(Product24(A0, B0), Product24(A1, B1), Product24(A2, B2), Term24(T));
+end;
+
+// Every element of Count rows Small24.
+function RowsSmall(Rows: PGERow24; Count: Integer): Boolean;
+begin
+  for var I := 0 to Count - 1 do
+  begin
+    if not (Small24(Rows[0]) and Small24(Rows[1]) and Small24(Rows[2]) and Small24(Rows[3])) then
+      Exit(False);
+    Inc(Rows);
+  end;
+  Result := True;
+end;
+
+// Small: RowsSmall of the rows (known beforehand).
+procedure Rows24(Rows: PGERow24; X, Y, Z: Double; Res: PDouble; Count: Integer; Small: Boolean);
+begin
+  if Small and Small24(X) and Small24(Y) and Small24(Z) then
+  begin
+    for var I := 0 to Count - 1 do
+    begin
+      {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+      Res^ := Row24Asm(Rows, X, Y, Z);
+      {$ELSE}
+      Res^ := Dot24Bits(Rows[0], X, Rows[1], Y, Rows[2], Z, Rows[3]);
+      {$ENDIF}
+      Inc(Rows);
+      Inc(Res);
+    end;
+    Exit;
+  end;
   var Exact := Exact24(X) and Exact24(Y) and Exact24(Z);
   if Exact then
   begin
@@ -1463,7 +1827,18 @@ end;
 // of products (Sum24).
 function Length2F24(X, Y, Z: Double): Double;
 begin
-  Result := Sum24(Product24(X, X), Product24(Y, Y), Product24(Z, Z), Term24(0));
+  Result := Dot24(X, X, Y, Y, Z, Z, 0);
+end;
+
+// Neither an infinity nor a NaN; a NaN.
+function FiniteS(V: Single): Boolean; inline;
+begin
+  Result := (PCardinal(@V)^ and $7F800000) <> $7F800000;
+end;
+
+function NanS(V: Single): Boolean; inline;
+begin
+  Result := (PCardinal(@V)^ and $7FFFFFFF) > $7F800000;
 end;
 
 // A light's coordinate less the vertex's world one: the light's cut at the
@@ -1639,6 +2014,8 @@ begin
     U.KA := GEFloat(C[GE_LKA0 + L * 3]);
     U.KB := GEFloat(C[GE_LKA0 + L * 3 + 1]);
     U.KC := GEFloat(C[GE_LKA0 + L * 3 + 2]);
+    U.PosFinite := FiniteS(U.Pos.X) and FiniteS(U.Pos.Y) and FiniteS(U.Pos.Z) and FiniteS(U.KA) and
+      FiniteS(U.KB) and FiniteS(U.KC);
     U.SpotDir := Normalized(CmdVec(C^, GE_LDX0 + L * 3));
     var SD := CmdVec(C^, GE_LDX0 + L * 3);
     U.SpotRaw := Vec3(T24(SD.X), T24(SD.Y), T24(SD.Z));
@@ -1717,11 +2094,7 @@ begin
     else
     begin
       D := U.Pos;
-      var Finite := not (IsNan(D.X) or IsNan(D.Y) or IsNan(D.Z) or IsInfinite(D.X) or IsInfinite(D.Y) or
-        IsInfinite(D.Z) or IsNan(WP.X) or IsNan(WP.Y) or IsNan(WP.Z) or IsInfinite(WP.X) or IsInfinite(WP.Y) or
-        IsInfinite(WP.Z) or IsNan(U.KA) or IsNan(U.KB) or IsNan(U.KC) or IsInfinite(U.KA) or IsInfinite(U.KB) or
-        IsInfinite(U.KC));
-      if Finite then
+      if U.PosFinite and FiniteS(WP.X) and FiniteS(WP.Y) and FiniteS(WP.Z) then
       begin
         // The vector to the light (LightSub24), its squared length as a sum
         // of products, the length and the unit vector through RSqrt24
@@ -1757,13 +2130,12 @@ begin
     begin
       // The dot product with the direction as it was given, a sum of
       // products, times RSqrt24 of the direction's squared length (ge_spot).
-      if U.SpotFinite and not (IsNan(D.X) or IsNan(D.Y) or IsNan(D.Z)) then
-        CosA := T24(Sum24(Product24(T24(D.X), U.SpotRaw.X), Product24(T24(D.Y), U.SpotRaw.Y),
-          Product24(T24(D.Z), U.SpotRaw.Z), Term24(0)) * U.SpotRS)
+      if U.SpotFinite and not (NanS(D.X) or NanS(D.Y) or NanS(D.Z)) then
+        CosA := T24(Dot24(T24(D.X), U.SpotRaw.X, T24(D.Y), U.SpotRaw.Y, T24(D.Z), U.SpotRaw.Z, 0) * U.SpotRS)
       else
         CosA := Dot(D, U.SpotDir);
       // An infinite direction lights everything or nothing by its sign.
-      if IsNan(CosA) then
+      if NanS(CosA) then
         S8 := 255 * Ord(U.SpotPositive)
       else if CosA >= U.Cutoff then
         S8 := Frac8(GEPow(Max(CosA, 0), U.Expo))
@@ -1775,10 +2147,15 @@ begin
     if U.Kind = 2 then
       Diff := GEPow(Diff, FLight.Shine);
     D8 := Frac8(Diff);
-    // The spot factor scales the attenuated terms, each on its own.
-    for Ch := 0 to 2 do
-      Lit[Ch] := Lit[Ch] + Mul8(S8, Mul8(A8, Mul8(U.LA[Ch], MA[Ch]))) +
-        Mul8(S8, Mul8(A8, Mul8(D8, Mul8(U.LD[Ch], MD[Ch]))));
+    // The spot factor scales the attenuated terms, each on its own (a factor
+    // of 255 changes nothing).
+    if (S8 = 255) and (A8 = 255) then
+      for Ch := 0 to 2 do
+        Lit[Ch] := Lit[Ch] + Mul8(U.LA[Ch], MA[Ch]) + Mul8(D8, Mul8(U.LD[Ch], MD[Ch]))
+    else
+      for Ch := 0 to 2 do
+        Lit[Ch] := Lit[Ch] + Mul8(S8, Mul8(A8, Mul8(U.LA[Ch], MA[Ch]))) +
+          Mul8(S8, Mul8(A8, Mul8(D8, Mul8(U.LD[Ch], MD[Ch]))));
     if (U.Kind = 1) and (NdotL >= 0) then
     begin
       var VW := FLight.View;
@@ -1788,8 +2165,12 @@ begin
         H := Normalized(Vec3(D.X + VW.X, D.Y + VW.Y, D.Z + VW.Z));
       NdotH := MaxS(Dot(N, H), 0);
       var P8 := Frac8(GEPow(NdotH, FLight.Shine));
-      for Ch := 0 to 2 do
-        Spec[Ch] := Spec[Ch] + Mul8(S8, Mul8(A8, Mul8(P8, Mul8(U.LS[Ch], MS[Ch]))));
+      if (S8 = 255) and (A8 = 255) then
+        for Ch := 0 to 2 do
+          Spec[Ch] := Spec[Ch] + Mul8(P8, Mul8(U.LS[Ch], MS[Ch]))
+      else
+        for Ch := 0 to 2 do
+          Spec[Ch] := Spec[Ch] + Mul8(S8, Mul8(A8, Mul8(P8, Mul8(U.LS[Ch], MS[Ch]))));
     end;
   end;
   if FLight.Separate then
@@ -1878,13 +2259,13 @@ begin
   var A, B: array[0..2] of Double;
   var Q: array[0..3] of Double;
   if G.Combined then
-    Rows24(@G.ViewWorld[0], T24(P.X), T24(P.Y), T24(P.Z), @B[0], 3)
+    Rows24(@G.ViewWorld[0], T24(P.X), T24(P.Y), T24(P.Z), @B[0], 3, G.ViewWorldSmall)
   else
   begin
-    Rows24(@G.Rows[0], T24(P.X), T24(P.Y), T24(P.Z), @A[0], 3);
-    Rows24(@G.Rows[3], A[0], A[1], A[2], @B[0], 3);
+    Rows24(@G.Rows[0], T24(P.X), T24(P.Y), T24(P.Z), @A[0], 3, G.WorldSmall);
+    Rows24(@G.Rows[3], A[0], A[1], A[2], @B[0], 3, G.ViewSmall);
   end;
-  Rows24(@G.Rows[6], B[0], B[1], B[2], @Q[0], 4);
+  Rows24(@G.Rows[6], B[0], B[1], B[2], @Q[0], 4, G.ProjSmall);
   CX := Q[0];
   CY := Q[1];
   CZ := Q[2];
@@ -1941,6 +2322,10 @@ begin
       G.Combined := False;
   if G.Combined then
     CombineViewWorld(G.View, G.World, @G.ViewWorld[0]);
+  G.ViewWorldSmall := G.Combined and RowsSmall(@G.ViewWorld[0], 3);
+  G.WorldSmall := RowsSmall(@G.Rows[0], 3);
+  G.ViewSmall := RowsSmall(@G.Rows[3], 3);
+  G.ProjSmall := RowsSmall(@G.Rows[6], 4);
   G.XScale := GEFloat(C[GE_VIEWPORTXSCALE]);
   G.XCenter := GEFloat(C[GE_VIEWPORTXCENTER]);
   G.YScale := GEFloat(C[GE_VIEWPORTYSCALE]);
