@@ -178,6 +178,7 @@ type
     function TargetFor(const S: TGERaster): TGEHLETarget;
     function BandRows(T: TVulkanHLETarget; Bytes: Integer): Integer;
     procedure Store(T: TGEHLETarget);
+    procedure StoreDepth(T: TGEHLETarget);
     procedure EnsureDepth(T: TGEHLETarget; const S: TGERaster);
     procedure LoadDepth(T: TGEHLETarget);
     procedure CopyDepth(Source, Dest: TGEHLETarget);
@@ -1206,7 +1207,7 @@ begin
     begin
       if (U.Width <> T.Width) or (U.Height < T.Height) then
       begin
-        FlushAll;
+        StoreDepth(U);
         Break;
       end;
       CopyDepth(U, T);
@@ -1259,6 +1260,34 @@ end;
 procedure TGEVulkanHLEBackend.StoreTarget(T: TVulkanHLETarget);
 begin
   Store(TGEHLETarget(T));
+end;
+
+// T's newer depth alone back into guest memory (a FlushAll for one depth
+// buffer): its pages are no longer held unless another target holds them,
+// and a new run starts (what was compared with them is compared again).
+procedure TGEVulkanHLEBackend.StoreDepth(T: TGEHLETarget);
+begin
+  var Dirty := T.Dirty;
+  T.Dirty := False;
+  try
+    Store(T);
+  finally
+    T.Dirty := Dirty;
+  end;
+  Inc(FStats.Readbacks);
+  ReleaseHolds;
+  for var V in FTargets do
+  begin
+    var U := TGEHLETarget(V);
+    if U.Dirty and (U.HeldY1 <= U.HeldY2) then
+    begin
+      var RowBytes := U.Stride * U.PixelBytes;
+      HoldMemory(U.Addr + Cardinal(U.HeldY1) * RowBytes, Cardinal(U.HeldY2 - U.HeldY1 + 1) * RowBytes);
+    end;
+    if U.ZDirty and (U.ZHeldY1 <= U.ZHeldY2) then
+      HoldDepthRows(U, U.ZHeldY1, U.ZHeldY2);
+  end;
+  NewRun;
 end;
 
 procedure TGEVulkanHLEBackend.Store(T: TGEHLETarget);
