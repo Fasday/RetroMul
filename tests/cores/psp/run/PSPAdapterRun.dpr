@@ -2,7 +2,7 @@ program PSPAdapterRun;
 
 {$APPTYPE CONSOLE}
 
-// The actual factory/adapter/worker, paced with sound unless -mute.
+// The actual adapter and worker, paced with sound unless -mute.
 // PSPAdapterRun <file> <seconds> [out.png] [-mute] [-interpreter] [-gpu | -gpu-hle]
 // -frame N: capture exactly guest frame N (fail if it was missed).
 // -lifecycle: pause/resume, Reset, then Stop/Start during the run.
@@ -11,7 +11,7 @@ program PSPAdapterRun;
 
 uses
   System.SysUtils, System.Classes, System.Diagnostics, System.Hash, System.UITypes, Core.Emulation, Core.Emulation.Types,
-  Core.EmulatorFactory, Core.Snapshots, Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer;
+  Core.Storage, Core.Snapshots, Core.Platforms.PSP.Adapter, Core.Platforms.PSP.Renderer;
 
 function Hash(const Frame: TEmulatorFrame): string;
 begin
@@ -48,7 +48,15 @@ begin
       else OutFile := A;
       Inc(I);
     end;
-    var Core := CreateEmulationCore(Path);
+    // The core's registration with the factory is the frontend's
+    // (RM.Platforms.PSP): the adapter is made here as it makes it.
+    var Core: IEmulationCore;
+    var Stream := TStorage.Default.OpenRead(Path);
+    try
+      Core := TPSPCoreAdapter.Create(Stream, TStorage.Default, Path, '');
+    finally
+      Stream.Free;
+    end;
     Writeln('core: ', Core.Name);
     Core.Config.AudioEnabled := not Mute;
     var Config := Core.Config as TObject;

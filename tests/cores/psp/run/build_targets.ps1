@@ -6,7 +6,8 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\..\..\..\.."
 $studio = 'C:\Program Files (x86)\Embarcadero\Studio\37.0'
 $sources = Get-ChildItem "$root\source" -Recurse -Directory | Where-Object { $_.FullName -notmatch '\\ui(\\|$)|\\gpu' } | ForEach-Object FullName
-$paths = (@($PSScriptRoot) + $sources + @("$root\source")) -join ';'
+# Archives other than ZIP (Core.MediaArchive) come through Delphi7z.
+$paths = (@($PSScriptRoot) + $sources + @("$root\source", "$root\dependencies\Delphi7z")) -join ';'
 $env:PATH = "$studio\bin;$studio\bin64;$env:PATH"
 $failed = @()
 foreach ($t in $Targets) {

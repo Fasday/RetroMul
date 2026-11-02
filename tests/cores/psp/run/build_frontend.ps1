@@ -18,7 +18,9 @@ foreach ($base in @("$root\source", "$root\dependencies", "$root\apps\retromul")
     $_.FullName -notmatch '\\Fixes\\D(10|11|12)(\\|$)'
   } | ForEach-Object FullName
 }
-$paths = ($dirs | Select-Object -Unique) -join '%3B'
+# Relative to the project (dcc runs there): the command line stays under
+# Windows' limit with every source directory.
+$paths = ($dirs | Select-Object -Unique | ForEach-Object { '..\..' + $_.Substring($root.Length) }) -join '%3B'
 $log = "$PSScriptRoot\bin\frontend-$Platform-$Config.log"
 New-Item -ItemType Directory -Force "$PSScriptRoot\bin" | Out-Null
 & "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe" "$root\apps\retromul\RetroMul.dproj" /t:Build /nologo /v:minimal "/p:Platform=$Platform" "/p:Config=$Config" "/p:DCC_UnitSearchPath=$paths" /fl "/flp:LogFile=$log;Verbosity=normal"
