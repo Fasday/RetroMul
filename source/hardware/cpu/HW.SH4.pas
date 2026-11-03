@@ -5001,6 +5001,17 @@ end;
 // Common finite single-precision arithmetic has no operand normalization or
 // enabled traps. Keep its destination local instead of copying both FP banks.
 // Exceptional inputs/results still use the complete atomic exception path.
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+procedure ClearFiniteSSEExceptions;
+var
+  Flags: Cardinal;
+asm
+  STMXCSR Flags
+  AND Flags, $FFFFFFC0
+  LDMXCSR Flags
+end;
+{$ENDIF}
+
 function TSH4.TryFiniteFPU(I: PSH4Inst): Boolean;
 
   function NormalOrZero(Value: Cardinal): Boolean; inline;
@@ -5033,15 +5044,34 @@ begin
   end;
   var Saved := S.FR.U[I.N];
   S.FPSCR := OldFPSCR and not Cardinal(FPSCRDN);
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  // These Win64 handlers use SSE only. The RTL exception helpers also
+  // merge x87 state and repeatedly fetch MXCSR; none of that is needed for
+  // this guarded path (finite single operands, no enabled guest traps).
+  ClearFiniteSSEExceptions;
+  {$ELSE}
   FSetExceptFlag(0);
+  {$ENDIF}
   SH4FPOps[K](Self, I);
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  var HostFlags := ReadHostMXCSR;
+  {$ELSE}
   var HostFlags := FGetExceptFlag;
+  {$ENDIF}
   S.FPSCR := OldFPSCR;
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  var Ordinary := (HostFlags and $1D) = 0; // SSE invalid, zero divide, O, U
+  {$ELSE}
   var Ordinary := (HostFlags and (feeINVALID or feeDIVBYZERO or feeOVERFLOW or feeUNDERFLOW)) = 0;
+  {$ENDIF}
   Ordinary := Ordinary and NormalOrZero(S.FR.U[I.N]);
   if Ordinary then
   begin
+    {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+    var Events: Cardinal := Ord((HostFlags and $20) <> 0);
+    {$ELSE}
     var Events: Cardinal := Ord((HostFlags and feeINEXACT) <> 0);
+    {$ENDIF}
     S.FPSCR := (OldFPSCR and not Cardinal($3F000)) or (Events shl 12) or (Events shl 2);
     Exit(True);
   end;

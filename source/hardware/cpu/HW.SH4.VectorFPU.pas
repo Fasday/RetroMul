@@ -44,8 +44,54 @@ function SH4FIPR(const M, N: TSH4Vector; var FPSCR, Value: Cardinal): Boolean;
 function SH4FTRV(const Matrix: TSH4Matrix; var Vector: TSH4Vector; var FPSCR: Cardinal): Boolean;
 function SH4FSCA(Angle: Cardinal; var FPSCR, SinBits, CosBits: Cardinal): Boolean;
 function SH4FSRRA(var Value, FPSCR: Cardinal): Boolean;
+{$IFDEF SH4_FTRV_CACHE_STATS}
+procedure SH4TransformCacheStats(out Hits, Misses: Int64);
+{$ENDIF}
 
 implementation
+
+type
+  // Cache only the pure numeric output and cause, never FPSCR or the trap.
+  // Every input word plus RZ/DN is compared, not just the hash. Enables,
+  // sticky flags and PR are applied freshly by the public instruction.
+  TTransformEntry = record
+    Matrix: TSH4Matrix;
+    Input, Output: TSH4Vector;
+    Cause: Cardinal;
+    Mode: Byte;
+    Valid: Boolean;
+  end;
+  PTransformEntry = ^TTransformEntry;
+
+threadvar
+  // Pure results may be reused by CPUs on this thread and across a loaded
+  // snapshot; no guest state or memory address is part of their meaning.
+  TransformCache: array[0..1023] of TTransformEntry;
+  {$IFDEF SH4_FTRV_CACHE_STATS}
+  TransformHits, TransformMisses: Int64;
+  {$ENDIF}
+
+{$IFDEF SH4_FTRV_CACHE_STATS}
+procedure SH4TransformCacheStats(out Hits, Misses: Int64);
+begin
+  Hits := TransformHits;
+  Misses := TransformMisses;
+end;
+{$ENDIF}
+
+function SameTransform(const Entry: TTransformEntry; const Matrix: TSH4Matrix;
+  const Vector: TSH4Vector; Mode: Byte): Boolean;
+begin
+  if not Entry.Valid or (Entry.Mode <> Mode) then
+    Exit(False);
+  for var K := 0 to 3 do
+    if Entry.Input[K] <> Vector[K] then
+      Exit(False);
+  for var K := 0 to 15 do
+    if Entry.Matrix[K] <> Matrix[K] then
+      Exit(False);
+  Result := True;
+end;
 
 const
   QuietNaN = $7FBFFFFF;
@@ -174,7 +220,183 @@ begin
   FPSCR := (FPSCR and not Cardinal($3F000)) or (Cause shl 12) or ((Cause and 31) shl 2);
 end;
 
-function Dot(const Mul, Rec: TSH4Vector; RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
+function RoundDotSum(Value, MaxExponent: Integer; RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
+begin
+  Cause := 3;
+  if Value = 0 then
+    Exit(0);
+  var Sign: Cardinal := 0;
+  if Value < 0 then
+  begin
+    Sign := $80000000;
+    Value := -Value;
+  end;
+  var Sum := Cardinal(Value);
+  var Top := HighestBit(Sum);
+  var Exponent := Top + MaxExponent - 153;
+  var Shift := Top - 23;
+  if (Exponent < 1) and not DN then
+    Inc(Shift, 1 - Exponent);
+  var Q: Cardinal;
+  if Shift >= 32 then
+    Q := 0
+  else if Shift > 0 then
+  begin
+    Q := Sum shr Shift;
+    var Remainder := Sum and ((Cardinal(1) shl Shift) - 1);
+    var Half := Cardinal(1) shl (Shift - 1);
+    if not RZ and ((Remainder > Half) or ((Remainder = Half) and ((Q and 1) <> 0))) then
+      Inc(Q);
+  end
+  else
+    Q := Sum shl (-Shift);
+  if (Exponent < 1) and not DN then
+    Exit(Sign or Q);
+  if (Q shr 24) <> 0 then
+  begin
+    Q := Q shr 1;
+    Inc(Exponent);
+  end;
+  if Exponent < 1 then
+    Exit(Sign);
+  if Exponent >= 255 then
+  begin
+    Cause := 5;
+    if RZ then
+      Exit(Sign or $7F7FFFFF)
+    else
+      Exit(Sign or $7F800000);
+  end;
+  Cause := 1;
+  Result := Sign or (Cardinal(Exponent) shl 23) or (Q and $7FFFFF);
+end;
+
+function TryRoundInterval(LowSum, HighSum, MaxExponent: Integer; RZ, DN: Boolean;
+  out Bits, Cause: Cardinal): Boolean;
+begin
+  // One normalization suffices in the common signed normal binade.
+  var Sign: Cardinal := 0;
+  var Lo: Cardinal;
+  var Hi: Cardinal;
+  if LowSum > 0 then
+  begin
+    Lo := Cardinal(LowSum);
+    Hi := Cardinal(HighSum);
+  end
+  else if HighSum < 0 then
+  begin
+    Sign := $80000000;
+    Lo := Cardinal(-HighSum);
+    Hi := Cardinal(-LowSum);
+  end
+  else
+  begin
+    Lo := 0;
+    Hi := 0;
+  end;
+  if Lo <> 0 then
+  begin
+    var Top := HighestBit(Lo);
+    var Exponent := Top + MaxExponent - 153;
+    var Shift := Top - 23;
+    if (Cardinal(Exponent - 1) < 253) and ((Hi shr Top) = 1) and (Shift > 0) then
+    begin
+      var QLo := Lo shr Shift;
+      var QHi := Hi shr Shift;
+      if not RZ then
+      begin
+        var Bias := (Cardinal(1) shl (Shift - 1)) - 1;
+        QLo := (Lo + Bias + (QLo and 1)) shr Shift;
+        QHi := (Hi + Bias + (QHi and 1)) shr Shift;
+      end;
+      if QLo <> QHi then
+        Exit(False);
+      if (QLo shr 24) <> 0 then
+      begin
+        QLo := QLo shr 1;
+        Inc(Exponent);
+      end;
+      Bits := Sign or (Cardinal(Exponent) shl 23) or (QLo and $7FFFFF);
+      Cause := 1;
+      Exit(True);
+    end;
+  end;
+  Bits := RoundDotSum(LowSum, MaxExponent, RZ, DN, Cause);
+  if LowSum = HighSum then
+    Exit(True);
+  var OtherCause: Cardinal;
+  var Other := RoundDotSum(HighSum, MaxExponent, RZ, DN, OtherCause);
+  Result := (Bits = Other) and (Cause = OtherCause);
+end;
+
+function TryNormalDot(const Mul, Rec: TSH4Vector; RZ, DN: Boolean;
+  out Bits, Cause: Cardinal): Boolean;
+var
+  LowProduct, HighProduct: array[0..3] of Cardinal;
+  Exponents: array[0..3] of Integer;
+  Negative: array[0..3] of Boolean;
+begin
+  // Exact interval shortcut, not approximate arithmetic. ProductArray's
+  // discarded-row correction C satisfies 0 <= C <= $90000:
+  // rows 0..2 after their majority carry sum to at most 131051; rows 3..7
+  // to 305856; negative-row biases to 87381; parity adds at most 65536.
+  // Bound each 28-bit product using a full multiply. Alignment and signed
+  // addition preserve the bounds. Only accept when BOTH ends round to the
+  // same guest bits AND cause; otherwise use the complete Booth calculation.
+  var MaxExponent := 0;
+  for var K := 0 to 3 do
+  begin
+    var A := Mul[K];
+    var B := Rec[K];
+    var EA := Integer((A shr 23) and $FF);
+    var EB := Integer((B shr 23) and $FF);
+    if (EA = 255) or (EB = 255) then
+      Exit(False);
+    if not DN and (((EA = 0) and ((A and $7FFFFF) <> 0)) or
+      ((EB = 0) and ((B and $7FFFFF) <> 0))) then
+      Exit(False);
+    LowProduct[K] := 0;
+    HighProduct[K] := 0;
+    Exponents[K] := 0;
+    Negative[K] := ((A xor B) and $80000000) <> 0;
+    if (EA = 0) or (EB = 0) or (EA + EB <= 75) then
+      Continue;
+    var M := (A and $7FFFFF) or $800000;
+    var R := (B and $7FFFFF) or $800000;
+    var P := UInt64(M) * UInt64(R);
+    HighProduct[K] := Cardinal((P + $80000) shr 20);
+    if (R and $3FFFF) = 0 then
+      LowProduct[K] := HighProduct[K]
+    else
+      LowProduct[K] := Cardinal((P - $10000) shr 20);
+    Exponents[K] := EA + EB;
+    if EA + EB > MaxExponent then
+      MaxExponent := EA + EB;
+  end;
+  var LowSum := 0;
+  var HighSum := 0;
+  for var K := 0 to 3 do
+  begin
+    var Distance := MaxExponent - Exponents[K];
+    if Distance >= 28 then
+      Continue;
+    var Lo := Integer(LowProduct[K] shr Distance);
+    var Hi := Integer(HighProduct[K] shr Distance);
+    if Negative[K] then
+    begin
+      Dec(LowSum, Hi);
+      Dec(HighSum, Lo);
+    end
+    else
+    begin
+      Inc(LowSum, Lo);
+      Inc(HighSum, Hi);
+    end;
+  end;
+  Result := TryRoundInterval(LowSum, HighSum, MaxExponent, RZ, DN, Bits, Cause);
+end;
+
+function DotExact(const Mul, Rec: TSH4Vector; RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
 var
   ProductSign, ProductExponent: array[0..3] of Integer;
   ProductValue: array[0..3] of Int64;
@@ -293,52 +515,103 @@ begin
     else
       Inc(Sum, P);
   end;
-  Cause := 3; // Any zero or denormal finite result raises I and U.
-  if Sum = 0 then
-    Exit(0);
-  var Sign: Cardinal := 0;
-  if Sum < 0 then
+  // Four aligned 28-bit products sum to less than 2^30 in magnitude.
+  Result := RoundDotSum(Integer(Sum), MaxExponent, RZ, DN, Cause);
+end;
+
+function Dot(const Mul, Rec: TSH4Vector; RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
+begin
+  if not TryNormalDot(Mul, Rec, RZ, DN, Result, Cause) then
+    Result := DotExact(Mul, Rec, RZ, DN, Cause);
+end;
+
+function TryNormalTransform(const Matrix: TSH4Matrix; const Vector: TSH4Vector;
+  RZ, DN: Boolean; out Output: TSH4Vector; out Cause: Cardinal): Boolean;
+var
+  Mantissa, Exponent, Sign: TSH4Vector;
+  LowProduct, HighProduct: array[0..15] of Cardinal;
+  ProductExponent: array[0..15] of Integer;
+  Negative: array[0..15] of Boolean;
+  MaxExponent: array[0..3] of Integer;
+begin
+  // FTRV shares one vector between four rows. Decode each operand once,
+  // keep the column-major matrix in place, and only recompute ambiguous
+  // rows with the full multiplier (without repeating their interval test).
+  for var J := 0 to 3 do
   begin
-    Sign := $80000000;
-    Sum := -Sum;
+    var V := Vector[J];
+    Exponent[J] := (V shr 23) and $FF;
+    Mantissa[J] := V and $7FFFFF;
+    if (Exponent[J] = 255) or (not DN and (Exponent[J] = 0) and (Mantissa[J] <> 0)) then
+      Exit(False);
+    Mantissa[J] := Mantissa[J] or $800000;
+    Sign[J] := V and $80000000;
+    MaxExponent[J] := 0;
   end;
-  var Top := HighestBit(Cardinal(Sum));
-  var Exponent := Top + MaxExponent - 280 + 127;
-  var Shift := Top - 23;
-  if (Exponent < 1) and not DN then
-    Inc(Shift, 1 - Exponent);
-  var Q: Int64;
-  if Shift >= 62 then
-    Q := 0
-  else if Shift > 0 then
+  for var J := 0 to 3 do
+    for var K := 0 to 3 do
+    begin
+      var V := Matrix[J * 4 + K];
+      var E := Integer((V shr 23) and $FF);
+      var M := V and $7FFFFF;
+      if (E = 255) or (not DN and (E = 0) and (M <> 0)) then
+        Exit(False);
+      var Index := K * 4 + J;
+      Negative[Index] := ((Sign[J] xor V) and $80000000) <> 0;
+      LowProduct[Index] := 0;
+      HighProduct[Index] := 0;
+      ProductExponent[Index] := 0;
+      if (E = 0) or (Exponent[J] = 0) then
+        Continue;
+      Inc(E, Integer(Exponent[J]));
+      if E <= 75 then
+        Continue;
+      M := M or $800000;
+      var P := UInt64(Mantissa[J]) * UInt64(M);
+      HighProduct[Index] := Cardinal((P + $80000) shr 20);
+      if (M and $3FFFF) = 0 then
+        LowProduct[Index] := HighProduct[Index]
+      else
+        LowProduct[Index] := Cardinal((P - $10000) shr 20);
+      ProductExponent[Index] := E;
+      if E > MaxExponent[K] then
+        MaxExponent[K] := E;
+    end;
+  Cause := 0;
+  for var K := 0 to 3 do
   begin
-    Q := Sum shr Shift;
-    var Remainder := Sum and ((Int64(1) shl Shift) - 1);
-    var Half := Int64(1) shl (Shift - 1);
-    if not RZ and ((Remainder > Half) or ((Remainder = Half) and ((Q and 1) <> 0))) then
-      Inc(Q);
-  end
-  else
-    Q := Sum shl (-Shift);
-  if (Exponent < 1) and not DN then
-    Exit(Sign or Cardinal(Q));
-  if (Q shr 24) <> 0 then
-  begin
-    Q := Q shr 1;
-    Inc(Exponent);
+    var LowSum := 0;
+    var HighSum := 0;
+    for var J := 0 to 3 do
+    begin
+      var Index := K * 4 + J;
+      var Distance := MaxExponent[K] - ProductExponent[Index];
+      if Distance >= 28 then
+        Continue;
+      var Lo := Integer(LowProduct[Index] shr Distance);
+      var Hi := Integer(HighProduct[Index] shr Distance);
+      if Negative[Index] then
+      begin
+        Dec(LowSum, Hi);
+        Dec(HighSum, Lo);
+      end
+      else
+      begin
+        Inc(LowSum, Lo);
+        Inc(HighSum, Hi);
+      end;
+    end;
+    var C: Cardinal;
+    if not TryRoundInterval(LowSum, HighSum, MaxExponent[K], RZ, DN, Output[K], C) then
+    begin
+      var Row: TSH4Vector;
+      for var J := 0 to 3 do
+        Row[J] := Matrix[K + J * 4];
+      Output[K] := DotExact(Vector, Row, RZ, DN, C);
+    end;
+    Cause := Cause or C;
   end;
-  if Exponent < 1 then
-    Exit(Sign);
-  if Exponent >= 255 then
-  begin
-    Cause := 5;
-    if RZ then
-      Exit(Sign or $7F7FFFFF)
-    else
-      Exit(Sign or $7F800000);
-  end;
-  Cause := 1;
-  Result := Sign or (Cardinal(Exponent) shl 23) or (Cardinal(Q) and $7FFFFF);
+  Result := True;
 end;
 
 function SH4FIPR(const M, N: TSH4Vector; var FPSCR, Value: Cardinal): Boolean;
@@ -361,13 +634,38 @@ begin
     Exit;
   var Output, Row: TSH4Vector;
   var Cause: Cardinal := 0;
-  for var K := 0 to 3 do
+  var Mode := Byte(Ord((FPSCR and 3) = 1) or (Ord((FPSCR and DenormalMode) <> 0) shl 1));
+  var Hash := Vector[0] xor (Vector[1] shl 5) xor (Vector[1] shr 27) xor
+    (Vector[2] shl 13) xor (Vector[2] shr 19) xor Matrix[0] xor Matrix[5] xor Matrix[10];
+  Hash := Hash * Cardinal($9E3779B1);
+  var Entry: PTransformEntry := @TransformCache[Hash shr 22];
+  if SameTransform(Entry^, Matrix, Vector, Mode) then
   begin
-    for var J := 0 to 3 do
-      Row[J] := Matrix[K + J * 4];
-    var C: Cardinal;
-    Output[K] := Dot(Vector, Row, (FPSCR and 3) = 1, (FPSCR and DenormalMode) <> 0, C);
-    Cause := Cause or C;
+    Output := Entry.Output;
+    Cause := Entry.Cause;
+    {$IFDEF SH4_FTRV_CACHE_STATS}Inc(TransformHits);{$ENDIF}
+  end
+  else
+  begin
+    {$IFDEF SH4_FTRV_CACHE_STATS}Inc(TransformMisses);{$ENDIF}
+    if not TryNormalTransform(Matrix, Vector, (FPSCR and 3) = 1, (FPSCR and DenormalMode) <> 0, Output, Cause) then
+    begin
+      Cause := 0;
+      for var K := 0 to 3 do
+      begin
+        for var J := 0 to 3 do
+          Row[J] := Matrix[K + J * 4];
+        var C: Cardinal;
+        Output[K] := Dot(Vector, Row, (FPSCR and 3) = 1, (FPSCR and DenormalMode) <> 0, C);
+        Cause := Cause or C;
+      end;
+    end;
+    Entry.Matrix := Matrix;
+    Entry.Input := Vector;
+    Entry.Output := Output;
+    Entry.Cause := Cause;
+    Entry.Mode := Mode;
+    Entry.Valid := True;
   end;
   UpdateFPSCR(FPSCR, Cause);
   if not Result then
