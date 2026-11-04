@@ -409,6 +409,16 @@ begin
         W[9] := 31;
         Response := 8;
         Exit(7);
+      end
+      else if Func = MapleFuncLCD then
+      begin
+        // LCD: 48x32 dots (each less one), one colour without contrast levels.
+        // Windows CE games poll this; an error reply drops the controller
+        // on the same port for a few frames.
+        Reply[0] := MapleFuncLCD;
+        Reply[1] := $02101F2F;
+        Response := 8;
+        Exit(2);
       end;
     11:
       if (Func = MapleFuncStorage) and (Words >= 2) then
