@@ -50,6 +50,11 @@ procedure SH4TransformCacheStats(out Hits, Misses: Int64);
 
 implementation
 
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+uses
+  Winapi.Windows;
+{$ENDIF}
+
 type
   // Cache only the pure numeric output and cause, never FPSCR or the trap.
   // Every input word plus RZ/DN is compared, not just the hash. Enables,
@@ -525,6 +530,163 @@ begin
     Result := DotExact(Mul, Rec, RZ, DN, Cause);
 end;
 
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+// Exact normal FTRV interval bounds, four matrix rows in parallel. No floating
+// arithmetic: the scalar reference still rounds the bounds and resolves every
+// ambiguous row with the full Booth calculation. Win64 volatile registers only.
+type
+  TBoundsVector = array[0..3] of Integer;
+  TBoundsMatrix = array[0..3] of TBoundsVector;
+
+const
+  BoundsZero: TBoundsVector = (0, 0, 0, 0);
+  BoundsFF: TBoundsVector = (255, 255, 255, 255);
+  Bounds75: TBoundsVector = (75, 75, 75, 75);
+  BoundsMantissa: TBoundsVector = ($7FFFFF, $7FFFFF, $7FFFFF, $7FFFFF);
+  BoundsHidden: TBoundsVector = ($800000, $800000, $800000, $800000);
+  BoundsLowMask: TBoundsVector = ($3FFFF, $3FFFF, $3FFFF, $3FFFF);
+  BoundsRound: array[0..1] of UInt64 = ($80000, $80000);
+  BoundsSubtract: array[0..1] of UInt64 = ($10000, $10000);
+
+var
+  UseAVX2Bounds: Boolean;
+
+function TransformBoundsAVX2(const Matrix: TSH4Matrix; const Vector: TSH4Vector;
+  DN: Boolean; out LowSums, HighSums, MaxExponents: TBoundsVector): Boolean;
+var
+  ProductsLo, ProductsHi, Exponents, Signs, Active: TBoundsMatrix;
+  MaxE: TBoundsVector;
+asm
+  VPXOR XMM0, XMM0, XMM0
+  VMOVDQU MaxE, XMM0
+  XOR R10D, R10D
+  XOR R11D, R11D
+@Column:
+  VPBROADCASTD XMM0, DWORD PTR [RDX + R10 * 4]
+  VMOVDQU XMM1, [RCX + R11]
+  VPSRLD XMM2, XMM0, 23
+  VPAND XMM2, XMM2, BoundsFF
+  VPSRLD XMM3, XMM1, 23
+  VPAND XMM3, XMM3, BoundsFF
+  VPCMPEQD XMM4, XMM2, BoundsFF
+  VPCMPEQD XMM5, XMM3, BoundsFF
+  VPOR XMM4, XMM4, XMM5
+  VMOVMSKPS EAX, XMM4
+  TEST EAX, EAX
+  JNZ @Decline
+  TEST R8B, R8B
+  JNZ @ClassesOK
+  VPSLLD XMM4, XMM0, 1
+  VPCMPEQD XMM4, XMM4, BoundsZero
+  VPCMPEQD XMM5, XMM2, BoundsZero
+  VPANDN XMM4, XMM4, XMM5
+  VMOVMSKPS EAX, XMM4
+  TEST EAX, EAX
+  JNZ @Decline
+  VPSLLD XMM4, XMM1, 1
+  VPCMPEQD XMM4, XMM4, BoundsZero
+  VPCMPEQD XMM5, XMM3, BoundsZero
+  VPANDN XMM4, XMM4, XMM5
+  VMOVMSKPS EAX, XMM4
+  TEST EAX, EAX
+  JNZ @Decline
+@ClassesOK:
+  VPXOR XMM4, XMM0, XMM1
+  VPSRAD XMM4, XMM4, 31
+  LEA RAX, Signs
+  VMOVDQU [RAX + R11], XMM4
+  VPCMPEQD XMM4, XMM2, BoundsZero
+  VPCMPEQD XMM5, XMM3, BoundsZero
+  VPOR XMM4, XMM4, XMM5
+  VPADDD XMM2, XMM2, XMM3
+  VPCMPGTD XMM5, XMM2, Bounds75
+  VPANDN XMM4, XMM4, XMM5
+  LEA RAX, Active
+  VMOVDQU [RAX + R11], XMM4
+  VPAND XMM2, XMM2, XMM4
+  LEA RAX, Exponents
+  VMOVDQU [RAX + R11], XMM2
+  VPMAXSD XMM2, XMM2, MaxE
+  VMOVDQU MaxE, XMM2
+  VPAND XMM0, XMM0, BoundsMantissa
+  VPOR XMM0, XMM0, BoundsHidden
+  VPAND XMM1, XMM1, BoundsMantissa
+  VPOR XMM1, XMM1, BoundsHidden
+  VPMULUDQ XMM2, XMM0, XMM1
+  VPSRLDQ XMM3, XMM1, 4
+  VPMULUDQ XMM4, XMM0, XMM3
+  VPADDQ XMM3, XMM2, BoundsRound
+  VPADDQ XMM5, XMM4, BoundsRound
+  VPSRLQ XMM3, XMM3, 20
+  VPSRLQ XMM5, XMM5, 20
+  VPSHUFD XMM3, XMM3, $88
+  VPSHUFD XMM5, XMM5, $88
+  VPUNPCKLDQ XMM3, XMM3, XMM5
+  LEA RAX, Active
+  VPAND XMM3, XMM3, [RAX + R11]
+  LEA RAX, ProductsHi
+  VMOVDQU [RAX + R11], XMM3
+  VPSUBQ XMM2, XMM2, BoundsSubtract
+  VPSUBQ XMM4, XMM4, BoundsSubtract
+  VPSRLQ XMM2, XMM2, 20
+  VPSRLQ XMM4, XMM4, 20
+  VPSHUFD XMM2, XMM2, $88
+  VPSHUFD XMM4, XMM4, $88
+  VPUNPCKLDQ XMM2, XMM2, XMM4
+  VPAND XMM1, XMM1, BoundsLowMask
+  VPCMPEQD XMM1, XMM1, BoundsZero
+  VPANDN XMM2, XMM1, XMM2
+  VPAND XMM3, XMM3, XMM1
+  VPOR XMM2, XMM2, XMM3
+  LEA RAX, Active
+  VPAND XMM2, XMM2, [RAX + R11]
+  LEA RAX, ProductsLo
+  VMOVDQU [RAX + R11], XMM2
+  INC R10D
+  ADD R11D, 16
+  CMP R10D, 4
+  JL @Column
+  VPXOR XMM0, XMM0, XMM0
+  VPXOR XMM1, XMM1, XMM1
+  VMOVDQU XMM2, MaxE
+  LEA RCX, Exponents
+  LEA RDX, ProductsLo
+  LEA R10, ProductsHi
+  LEA R8, Signs
+  XOR R11D, R11D
+@SumColumn:
+  VPSUBD XMM3, XMM2, [RCX + R11]
+  VMOVDQU XMM4, [RDX + R11]
+  VPSRLVD XMM4, XMM4, XMM3
+  VMOVDQU XMM5, [R10 + R11]
+  VPSRLVD XMM5, XMM5, XMM3
+  VPXOR XMM3, XMM4, XMM5
+  VPAND XMM3, XMM3, [R8 + R11]
+  VPXOR XMM4, XMM4, XMM3
+  VPXOR XMM5, XMM5, XMM3
+  VPXOR XMM4, XMM4, [R8 + R11]
+  VPSUBD XMM4, XMM4, [R8 + R11]
+  VPXOR XMM5, XMM5, [R8 + R11]
+  VPSUBD XMM5, XMM5, [R8 + R11]
+  VPADDD XMM0, XMM0, XMM4
+  VPADDD XMM1, XMM1, XMM5
+  ADD R11D, 16
+  CMP R11D, 64
+  JL @SumColumn
+  VMOVDQU [R9], XMM0
+  MOV RAX, HighSums
+  VMOVDQU [RAX], XMM1
+  MOV RAX, MaxExponents
+  VMOVDQU [RAX], XMM2
+  MOV EAX, 1
+  JMP @Done
+@Decline:
+  XOR EAX, EAX
+@Done:
+  VZEROUPPER
+end;
+{$ENDIF}
+
 function TryNormalTransform(const Matrix: TSH4Matrix; const Vector: TSH4Vector;
   RZ, DN: Boolean; out Output: TSH4Vector; out Cause: Cardinal): Boolean;
 var
@@ -537,6 +699,28 @@ begin
   // FTRV shares one vector between four rows. Decode each operand once,
   // keep the column-major matrix in place, and only recompute ambiguous
   // rows with the full multiplier (without repeating their interval test).
+  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+  if UseAVX2Bounds then
+  begin
+    var LowSums, HighSums, MaxExponents: TBoundsVector;
+    if not TransformBoundsAVX2(Matrix, Vector, DN, LowSums, HighSums, MaxExponents) then
+      Exit(False);
+    Cause := 0;
+    for var K := 0 to 3 do
+    begin
+      var C: Cardinal;
+      if not TryRoundInterval(LowSums[K], HighSums[K], MaxExponents[K], RZ, DN, Output[K], C) then
+      begin
+        var Row: TSH4Vector;
+        for var J := 0 to 3 do
+          Row[J] := Matrix[K + J * 4];
+        Output[K] := DotExact(Vector, Row, RZ, DN, C);
+      end;
+      Cause := Cause or C;
+    end;
+    Exit(True);
+  end;
+  {$ENDIF}
   for var J := 0 to 3 do
   begin
     var V := Vector[J];
@@ -914,5 +1098,13 @@ begin
   if not Result then
     Value := Bits;
 end;
+
+{$IF Defined(CPUX64) and Defined(MSWINDOWS)}
+initialization
+  // PF_AVX2_INSTRUCTIONS_AVAILABLE: the OS also checks usable AVX state.
+  // Older Windows versions return false for unsupported feature queries.
+  UseAVX2Bounds := IsProcessorFeaturePresent(40);
+  {$IFDEF SH4_NO_AVX2}UseAVX2Bounds := False;{$ENDIF}
+{$ENDIF}
 
 end.
