@@ -398,7 +398,38 @@ begin
       Inc(HighSum, Hi);
     end;
   end;
-  Result := TryRoundInterval(LowSum, HighSum, MaxExponent, RZ, DN, Bits, Cause);
+  if TryRoundInterval(LowSum, HighSum, MaxExponent, RZ, DN, Bits, Cause) then
+    Exit(True);
+
+  // Classification and alignment are already known. Resolve only products
+  // whose aligned interval still differs; equal endpoints prove the exact
+  // aligned integer, even if the unaligned product was not yet determined.
+  // Every remaining uncertain product uses the complete Booth multiplier.
+  var Sum := 0;
+  for var K := 0 to 3 do
+  begin
+    var Distance := MaxExponent - Exponents[K];
+    if Distance >= 28 then
+      Continue;
+    var Lo := LowProduct[K] shr Distance;
+    var Hi := HighProduct[K] shr Distance;
+    var P: Integer;
+    if Lo = Hi then
+      P := Integer(Lo)
+    else
+    begin
+      var M := (Mul[K] and $7FFFFF) or $800000;
+      var R := (Rec[K] and $7FFFFF) or $800000;
+      var Exact := (ProductArray(Int64(R), Int64(M)) + ProductRound) shr 20;
+      P := Integer(Exact shr Distance);
+    end;
+    if Negative[K] then
+      Dec(Sum, P)
+    else
+      Inc(Sum, P);
+  end;
+  Bits := RoundDotSum(Sum, MaxExponent, RZ, DN, Cause);
+  Result := True;
 end;
 
 function DotExact(const Mul, Rec: TSH4Vector; RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
@@ -522,6 +553,41 @@ begin
   end;
   // Four aligned 28-bit products sum to less than 2^30 in magnitude.
   Result := RoundDotSum(Integer(Sum), MaxExponent, RZ, DN, Cause);
+end;
+
+function DotNormalExact(const Mul, Rec: TSH4Vector; MaxExponent: Integer;
+  RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
+begin
+  // The transform bounds have already classified every operand and found
+  // the row exponent. Reuse that proof instead of collecting/classifying
+  // products again in DotExact. Zero/allowed DN operands contribute zero.
+  var Sum := 0;
+  for var K := 0 to 3 do
+  begin
+    var A := Mul[K];
+    var B := Rec[K];
+    var EA := Integer((A shr 23) and $FF);
+    var EB := Integer((B shr 23) and $FF);
+    if (EA = 0) or (EB = 0) or (EA + EB <= 75) then
+      Continue;
+    var Distance := MaxExponent - EA - EB;
+    if Distance >= 28 then
+      Continue;
+    var M := (A and $7FFFFF) or $800000;
+    var R := (B and $7FFFFF) or $800000;
+    var Full := UInt64(M) * UInt64(R);
+    var Hi := Cardinal((Full + $80000) shr 20) shr Distance;
+    var Lo := Hi;
+    if (R and $3FFFF) <> 0 then
+      Lo := Cardinal((Full - $10000) shr 20) shr Distance;
+    if Lo <> Hi then
+      Lo := Cardinal((ProductArray(Int64(R), Int64(M)) + ProductRound) shr 20) shr Distance;
+    if ((A xor B) and $80000000) <> 0 then
+      Dec(Sum, Integer(Lo))
+    else
+      Inc(Sum, Integer(Lo));
+  end;
+  Result := RoundDotSum(Sum, MaxExponent, RZ, DN, Cause);
 end;
 
 function Dot(const Mul, Rec: TSH4Vector; RZ, DN: Boolean; out Cause: Cardinal): Cardinal;
@@ -714,7 +780,7 @@ begin
         var Row: TSH4Vector;
         for var J := 0 to 3 do
           Row[J] := Matrix[K + J * 4];
-        Output[K] := DotExact(Vector, Row, RZ, DN, C);
+        Output[K] := DotNormalExact(Vector, Row, MaxExponents[K], RZ, DN, C);
       end;
       Cause := Cause or C;
     end;
@@ -791,7 +857,7 @@ begin
       var Row: TSH4Vector;
       for var J := 0 to 3 do
         Row[J] := Matrix[K + J * 4];
-      Output[K] := DotExact(Vector, Row, RZ, DN, C);
+      Output[K] := DotNormalExact(Vector, Row, MaxExponent[K], RZ, DN, C);
     end;
     Cause := Cause or C;
   end;

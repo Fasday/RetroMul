@@ -376,7 +376,7 @@ type
     function Decode(Op: Word; Address, AMode: Cardinal; Slot: Boolean; out I: TSH4Inst): Boolean;
     function Execute(Insts: PSH4Inst; Count: Integer; out Next: Cardinal): Integer;
     // Operation handlers (SH4Ops); True stops the block.
-    function TryFiniteFPU(I: PSH4Inst): Boolean;
+    function OpFPUCheckedSlow(I: PSH4Inst): Boolean;
     function OpFPUChecked(I: PSH4Inst): Boolean;
     function OpNOP(I: PSH4Inst): Boolean;
     function OpMOV(I: PSH4Inst): Boolean;
@@ -4999,7 +4999,7 @@ begin
 end;
 
 // Common finite single-precision arithmetic has no operand normalization or
-// enabled traps. Keep its destination local instead of copying both FP banks.
+// enabled traps. Keep its destination local instead of copying the FP bank.
 // Exceptional inputs/results still use the complete atomic exception path.
 {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
 procedure ClearFiniteSSEExceptions;
@@ -5012,7 +5012,7 @@ asm
 end;
 {$ENDIF}
 
-function TSH4.TryFiniteFPU(I: PSH4Inst): Boolean;
+function TSH4.OpFPUChecked(I: PSH4Inst): Boolean;
 
   function NormalOrZero(Value: Cardinal): Boolean; inline;
   begin
@@ -5021,47 +5021,56 @@ function TSH4.TryFiniteFPU(I: PSH4Inst): Boolean;
   end;
 
 begin
-  Result := False;
   var OldFPSCR := S.FPSCR;
   if (OldFPSCR and $F80) <> 0 then
-    Exit;
+    Exit(OpFPUCheckedSlow(I));
   var K := TOp(I.Kind);
   case K of
     oFADD, oFSUB, oFMUL, oFDIV, oFCMPEQ, oFCMPGT:
       if not NormalOrZero(S.FR.U[I.N]) or not NormalOrZero(S.FR.U[I.M]) then
-        Exit;
+        Exit(OpFPUCheckedSlow(I));
     oFMAC:
       if not NormalOrZero(S.FR.U[I.N]) or not NormalOrZero(S.FR.U[I.M]) or not NormalOrZero(S.FR.U[1]) then
-        Exit;
+        Exit(OpFPUCheckedSlow(I));
   else
-    Exit;
+    Exit(OpFPUCheckedSlow(I));
   end;
   if K in [oFCMPEQ, oFCMPGT] then
   begin
-    SH4FPOps[K](Self, I);
+    if K = oFCMPEQ then
+      S.T := Cardinal(Ord(S.FR.S[I.N] = S.FR.S[I.M]))
+    else
+      S.T := Cardinal(Ord(S.FR.S[I.N] > S.FR.S[I.M]));
     S.FPSCR := OldFPSCR and not Cardinal($3F000);
-    Exit(True);
+    Exit(False);
   end;
   var Saved := S.FR.U[I.N];
-  S.FPSCR := OldFPSCR and not Cardinal(FPSCRDN);
   {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
-  // These Win64 handlers use SSE only. The RTL exception helpers also
+  // These guarded Win64 operations use SSE only. The RTL exception helpers also
   // merge x87 state and repeatedly fetch MXCSR; none of that is needed for
   // this guarded path (finite single operands, no enabled guest traps).
   ClearFiniteSSEExceptions;
   {$ELSE}
   FSetExceptFlag(0);
   {$ENDIF}
-  SH4FPOps[K](Self, I);
+  // The guarded operands need no DN flushing. Use the same Pascal arithmetic
+  // directly, without an indirect raw-handler call or temporary FPSCR writes.
+  case K of
+    oFADD: S.FR.S[I.N] := S.FR.S[I.N] + S.FR.S[I.M];
+    oFSUB: S.FR.S[I.N] := S.FR.S[I.N] - S.FR.S[I.M];
+    oFMUL: S.FR.S[I.N] := S.FR.S[I.N] * S.FR.S[I.M];
+    oFDIV: S.FR.S[I.N] := S.FR.S[I.N] / S.FR.S[I.M];
+    oFMAC:
+      begin
+        var V := Double(S.FR.S[1]) * Double(S.FR.S[I.M]) + Double(S.FR.S[I.N]);
+        S.FR.S[I.N] := RoundToSingle(V);
+      end;
+  end;
   {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   var HostFlags := ReadHostMXCSR;
-  {$ELSE}
-  var HostFlags := FGetExceptFlag;
-  {$ENDIF}
-  S.FPSCR := OldFPSCR;
-  {$IF Defined(CPUX64) and Defined(MSWINDOWS)}
   var Ordinary := (HostFlags and $1D) = 0; // SSE invalid, zero divide, O, U
   {$ELSE}
+  var HostFlags := FGetExceptFlag;
   var Ordinary := (HostFlags and (feeINVALID or feeDIVBYZERO or feeOVERFLOW or feeUNDERFLOW)) = 0;
   {$ENDIF}
   Ordinary := Ordinary and NormalOrZero(S.FR.U[I.N]);
@@ -5073,12 +5082,13 @@ begin
     var Events: Cardinal := Ord((HostFlags and feeINEXACT) <> 0);
     {$ENDIF}
     S.FPSCR := (OldFPSCR and not Cardinal($3F000)) or (Events shl 12) or (Events shl 2);
-    Exit(True);
+    Exit(False);
   end;
   S.FR.U[I.N] := Saved;
+  Result := OpFPUCheckedSlow(I);
 end;
 
-function TSH4.OpFPUChecked(I: PSH4Inst): Boolean;
+function TSH4.OpFPUCheckedSlow(I: PSH4Inst): Boolean;
 const
   EventI = 1;
   EventU = 2;
@@ -5146,8 +5156,6 @@ var
   end;
 
 begin
-  if TryFiniteFPU(I) then
-    Exit(False);
   var K := TOp(I.Kind);
   var OldFPSCR := S.FPSCR;
   var SavedFR := S.FR;
